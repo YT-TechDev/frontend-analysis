@@ -51,6 +51,8 @@ When an incident does occur, it is important to report it promptly. To report a 
 community conduct reports. Reports will be handled privately and shared only
 as reasonably necessary to evaluate and respond to the report.
 
+For this project, the project maintainers perform the Community Moderator and
+Community Manager responsibilities described in this document.
 
 Suspected security vulnerabilities must not be sent to the conduct-reporting
 address. Follow the private process in the repository [Security
