@@ -1,0 +1,147 @@
+name: Change proposal
+description: Propose a non-trivial architecture, API, dependency, compatibility, security, adapter, or behavioral change.
+title: "[Proposal]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Review the [contributor workflow](https://github.com/YT-TechDev/frontend-analysis/blob/main/.github/CONTRIBUTING.md), [Maintainership and Decision Authority](https://github.com/YT-TechDev/frontend-analysis/blob/main/docs/governance/MAINTAINERSHIP.md), and [Secure Development](https://github.com/YT-TechDev/frontend-analysis/blob/main/docs/development/SECURE_DEVELOPMENT.md).
+
+        Opening an Issue proposes a change; it does not grant approval. Implementation that crosses an approval boundary must wait for explicit maintainer approval. Active vulnerabilities must use the private process in the [Security Policy](https://github.com/YT-TechDev/frontend-analysis/security/policy), not this public form.
+
+  - type: textarea
+    id: problem_motivation
+    attributes:
+      label: Problem or motivation
+      description: What problem exists, who or what is affected, and why should it be addressed now?
+    validations:
+      required: true
+
+  - type: textarea
+    id: desired_result
+    attributes:
+      label: Desired result
+      description: Describe the observable or contractual result rather than implementation steps.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence_alternatives
+    attributes:
+      label: Evidence and alternatives
+      description: Provide relevant evidence, the current behavior or limitation, realistic alternatives considered, and why existing capabilities are insufficient. A complete architecture design is not required before discussion.
+    validations:
+      required: true
+
+  - type: textarea
+    id: in_scope
+    attributes:
+      label: In scope
+      description: Define the smallest coherent responsibility or behavior owned by this proposal.
+    validations:
+      required: true
+
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Out of scope
+      description: Identify adjacent work intentionally excluded.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: architecture_ownership_impact
+    attributes:
+      label: Architecture and ownership impact
+      options:
+        - No known impact
+        - Potential impact requiring maintainer review
+        - Uncertain and requires architecture review
+    validations:
+      required: true
+
+  - type: dropdown
+    id: public_api_compatibility_impact
+    attributes:
+      label: Public API and compatibility impact
+      options:
+        - No known impact
+        - Potential impact requiring maintainer review
+        - Uncertain and requires contract review
+    validations:
+      required: true
+
+  - type: dropdown
+    id: dependency_toolchain_impact
+    attributes:
+      label: Dependency and toolchain impact
+      options:
+        - No new dependency or toolchain decision
+        - New or changed dependency/toolchain decision proposed
+        - Uncertain and requires dependency review
+    validations:
+      required: true
+
+  - type: dropdown
+    id: security_unsafe_impact
+    attributes:
+      label: Security and unsafe impact
+      options:
+        - "No known security-sensitive or `unsafe` impact"
+        - Security-sensitive boundary or exception proposed
+        - "`unsafe Rust` proposed"
+        - Uncertain and requires security review
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact_details
+    attributes:
+      label: Impact details
+      description: Explain every selection other than a no-impact choice. Enter `None` only when all relevant selections indicate no known impact or no new decision.
+    validations:
+      required: true
+
+  - type: textarea
+    id: validation_plan
+    attributes:
+      label: Validation plan
+      description: Explain how the desired result and failure cases should be validated, such as automated tests, manual scenarios, compatibility checks, architecture or documentation review, and security-specific validation proportional to risk.
+    validations:
+      required: true
+
+  - type: textarea
+    id: documentation_impact
+    attributes:
+      label: Documentation impact
+      description: Which public, architecture, governance, or development documentation needs updating? Enter `None` with an explanation when no update is needed.
+    validations:
+      required: true
+
+  - type: textarea
+    id: risks_follow_up
+    attributes:
+      label: Risks and follow-up
+      description: Record known risks, unresolved questions, migration concerns, and intentionally deferred follow-up.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: final_acknowledgements
+    attributes:
+      label: Final acknowledgements
+      options:
+        - label: I searched existing Issues and Pull Requests.
+          required: true
+        - label: This proposal is focused and does not combine unrelated responsibilities.
+          required: true
+        - label: I understand that opening this Issue does not constitute approval.
+          required: true
+        - label: I will not proceed with approval-required implementation without explicit maintainer approval.
+          required: true
+        - label: I have not included active vulnerability details, credentials, private information, or private AI links.
+          required: true
+        - label: I will follow the [Code of Conduct](https://github.com/YT-TechDev/frontend-analysis/blob/main/.github/CODE_OF_CONDUCT.md).
+          required: true
+    validations:
+      required: true

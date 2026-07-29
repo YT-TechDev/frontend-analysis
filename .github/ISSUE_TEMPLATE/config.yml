@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/YT-TechDev/frontend-analysis/security/policy
+    about: Do not open a public Issue. Follow the repository's private vulnerability reporting process.
+  - name: Report a conduct concern
+    url: https://github.com/YT-TechDev/frontend-analysis/blob/main/.github/CODE_OF_CONDUCT.md
+    about: Follow the private conduct-reporting process defined by the Code of Conduct.
