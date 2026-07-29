@@ -95,9 +95,16 @@ neutral inputs, translates approved application requests into browser-specific
 operations, reports unsupported or lossy normalization honestly, and isolates
 engine differences.
 
-**Permitted dependencies:** An adapter may depend on approved neutral input and
-application contracts and, after focused approval, on its browser-specific
-protocol facilities. Each browser protocol remains isolated under its adapter.
+**Permitted dependencies:** An adapter may depend on approved,
+browser-independent boundary contracts that it must produce, consume, or
+conform to. This may include a future normalized-input contract accepted by
+Core, provided the stable browser-independent side of the boundary owns that
+contract. Such a contract dependency permits neither access to Core
+implementation details or internals nor redefinition of Core semantics, and it
+does not require the adapter to invoke Core directly. Concrete contract
+placement and orchestration remain deferred. After focused approval, an adapter
+may also depend on its browser-specific protocol facilities. Each browser
+protocol remains isolated under its adapter.
 
 **Exclusions and prohibited dependencies:** An adapter does not redefine Core
 analysis semantics, own product UI behavior, perform presentation formatting,
@@ -240,27 +247,36 @@ dependency-injection tool.
 ## Dependency Matrix
 
 Rows are source owners or interacting systems; columns are targets. “Contract
-consumption” means dependence only on the target's approved stable contract,
-not its internals. “External interaction” is runtime interaction, not a source
-dependency. “Allowed” never permits semantic redefinition.
+consumption” means the source may depend only on the target's approved stable
+contract definitions, not its implementation or internals. “Contract
+production” means the source produces values governed by the target contract
+without authority to redefine it. “External interaction” is runtime interaction
+with an external system, not a repository source dependency. “Allowed” is an
+internal self-relationship or explicitly permitted relationship that still
+respects semantic ownership. “Prohibited” permits no direct source dependency,
+implementation access, or semantic ownership transfer. “Not applicable” means
+no meaningful repository dependency relationship is represented.
 
 | From ↓ / To → | Browser Runtime | Browser Adapter | Core | Analysis Results | Presentation Adapter | Product |
 | --- | --- | --- | --- | --- | --- | --- |
 | Browser Runtime | Not applicable | External interaction | Prohibited | Prohibited | Prohibited | Prohibited |
-| Browser Adapter | External interaction | Allowed | Prohibited | Prohibited | Prohibited | Prohibited |
-| Core | Prohibited | Prohibited | Allowed | Contract consumption | Prohibited | Prohibited |
+| Browser Adapter | External interaction | Allowed | Contract consumption | Prohibited | Prohibited | Prohibited |
+| Core | Prohibited | Prohibited | Allowed | Contract production | Prohibited | Prohibited |
 | Analysis Results | Prohibited | Prohibited | Prohibited | Allowed | Prohibited | Prohibited |
 | Presentation Adapter | Prohibited | Prohibited | Prohibited | Contract consumption | Allowed | Prohibited |
 | Product | Prohibited | Contract consumption | Contract consumption | Contract consumption | Contract consumption | Allowed |
 
 The Browser Runtime is external and is not required to depend on this
 repository. Adapter “external interaction” covers protocol communication.
-Product consumption of a Browser Adapter means orchestration through its
-approved boundary, never access to raw protocol objects; consumption of Core
-means only an approved application contract, never internals. Core's Result
-contract consumption expresses production against the contract and does not
-require a separate crate. Runtime requests may travel opposite the observation
-pipeline without changing this compile-time matrix.
+Browser Adapter contract consumption permits only conformance to or use of
+stable browser-independent boundary contracts; it permits no Core implementation
+or internal access and requires no direct runtime dependency from Adapter to
+Core. Core contract production means Core produces Analysis Results according
+to the result contract. Analysis Results remain a domain contract boundary and
+are not required to be a separate crate. Product contract consumption remains
+orchestration through approved boundaries: it grants access to neither raw
+protocol objects nor Core internals. Runtime requests may travel opposite the
+observation pipeline without changing this compile-time matrix.
 
 ## Representative Scenarios
 
@@ -291,8 +307,11 @@ the review needed before a proposal may exceed the current contract.
 - **Owner:** Separate adapters own protocol decoding and normalization; Core
   owns analysis semantics.
 - **Boundary:** Browser Adapter to Core normalized-input boundary.
-- **Rationale:** Loss and unsupported observations remain explicit, and Core
-  does not branch on CDP or WebKit types.
+- **Rationale:** Adapters may consume or conform to the approved stable
+  browser-independent contract without accessing Core implementation details,
+  redefining Core semantics, or causing Core to branch on CDP or WebKit types.
+  Loss and unsupported observations remain explicit; direct orchestration is
+  unspecified.
 - **Escalation:** The neutral contract and any protocol dependency require
   focused approval; no input type is defined here.
 
@@ -301,8 +320,10 @@ the review needed before a proposal may exceed the current contract.
 - **Verdict:** Allowed.
 - **Owner:** Product owns the user request, orchestration coordinates it, and
   Core owns analysis.
-- **Boundary:** Explicit application boundary.
-- **Rationale:** Runtime control flow does not make Core depend on the UI.
+- **Boundary:** Explicit application boundary, through which Browser Adapter
+  and Core may each expose approved contracts to orchestration.
+- **Rationale:** Runtime control flow does not make Core depend on the UI and
+  does not decide concrete orchestration placement.
 - **Escalation:** A concrete application API requires focused approval.
 
 ### 5. Common logging helper referenced by every layer
