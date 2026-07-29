@@ -4,9 +4,11 @@
 
 This document defines technical and repository-governance authority for
 Frontend Analysis. It assigns accountability for decisions while keeping
-contributors able to propose and implement focused changes. It applies to this
-repository and remains applicable if the project later adds repositories or
-presentation layers.
+contributors able to propose and implement focused changes. This document
+governs this repository, including components and presentation layers contained
+in it. A future repository is governed by this document only when that
+repository explicitly adopts or references it. This document does not by itself
+assign maintainership or decision authority over another repository.
 
 This contract does not define legal ownership, employment relationships,
 organization-wide authority, a corporate structure, a formal voting system, a
@@ -266,7 +268,7 @@ means durable evidence in the named record, not private or transient context.
 | 7. An implementation agent decides a release is ready | The agent may report validation or prepare material only under an approved task; release action stops | Maintainer through an approved release task and durable release or publication record | Approved scope, version and compatibility decision, validation, artifacts, notes, and known risks |
 | 8. A contributor begins implementing an unapproved architecture proposal | The contributor may preserve exploratory evidence, but repository implementation stops | Maintainer before implementation, in a focused Issue or approved architecture record | Problem, current contract, alternatives, boundaries, trade-offs, compatibility impact, and validation expectations |
 | 9. A maintainer tries to weaken a security contract in an unrelated Pull Request | No participant may treat the unrelated change as approval; implementation stops and scope is separated | Explicit attributable maintainer approval before implementation, in a focused Issue; the authoritative security document must be updated if approved | Existing contract, motivation, threat or abuse analysis, alternatives, residual risks, compatibility impact, and validation plan; active vulnerability details remain private |
-| 10. A regular contributor with many valuable contributions requests maintainer status | The contributor may request consideration; no maintainer authority exists yet and ordinary contributions may continue | Existing maintainer, recorded publicly with authority scope before access is granted | Project need, appointment decision, defined responsibility and authority scope, access alignment, and any material governance update |
+| 10. A regular contributor with many valuable contributions requests maintainer status | The contributor may request consideration; no authority exists until the appointment record, required governance update, and access alignment are complete | While sole maintainer, `YT-TechDev`; later, only maintainers whose documented authority includes appointments, following the governance model then in force and within their delegated appointment scope | Project need, approval, responsibility and authority scope, required governance update, and access alignment, all recorded publicly before access is granted |
 | 11. Ownership ambiguity appears during implementation | Contributors or agents document it; implementation stops only at the ambiguous boundary | Maintainer in a focused Issue, Issue comment attached to the approved task, or approved architecture record before affected work resumes | Relevant contract, ambiguous ownership and lifecycle, realistic alternatives, dependency and compatibility effects, risks, and decision rationale |
 | 12. Two contributors prefer different architectures without new evidence | They may summarize existing positions; disputed implementation stops, and repeated argument does not expand scope | Maintainer in the focused Issue or approved architecture record | Existing contract, available evidence, alternatives, long-term maintenance trade-offs, risks, compatibility impact, and reasoned final decision |
 
@@ -281,11 +283,18 @@ confidentiality.
 ## Adding Future Maintainers
 
 Additional maintainers may be added when project needs justify shared
-authority. An existing maintainer must explicitly approve the appointment, and
-the appointment and authority scope must be recorded publicly. Repository
-access must match the documented responsibility. Authority may be
-repository-wide or limited to a clearly defined domain. This document must be
-updated when the authority model materially changes.
+authority. While `YT-TechDev` is the sole maintainer of record, `YT-TechDev`
+approves a new maintainer appointment. If the authority model later includes
+multiple or domain-scoped maintainers, appointments must follow the governance
+contract in force at that time and be approved only by the maintainer or
+maintainers whose documented authority includes maintainer appointments. A
+maintainer cannot grant repository authority broader than the appointment
+authority delegated to that maintainer.
+
+The appointment and its authority scope must be recorded publicly before
+access is granted. Repository access must match the documented responsibility.
+Authority may be repository-wide or limited to a clearly defined domain. This
+document must be updated when the authority model materially changes.
 
 Maintainer status is not automatically acquired through contribution volume or
 tool access. This path does not establish voting thresholds, elections,
