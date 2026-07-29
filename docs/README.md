@@ -38,6 +38,8 @@ neither an ADR process nor architecture contracts.
 | Contribution workflow | [Contributing](../.github/CONTRIBUTING.md) | Normative workflow contract | Issue-first boundaries, trivial-maintenance path, Pull Request workflow, validation reporting, AI-assisted contribution accountability, and review expectations. |
 | Secure development | [Secure Development](development/SECURE_DEVELOPMENT.md) | Normative security contract | Secrets, dependencies, untrusted input, logging, local data, network trust, security-sensitive work, and `unsafe Rust`. |
 | Maintainership and decision authority | [Maintainership and Decision Authority](governance/MAINTAINERSHIP.md) | Normative governance contract | Maintainer authority, approval boundaries, escalation, durable approval, and future-maintainer rules. |
+| Architecture principles | [Architecture Principles](architecture/PRINCIPLES.md) | Normative architecture contract | Browser independence, ownership, semantic integrity, dependency principles, abstraction criteria, and architecture decision tests. |
+| Architecture layers | [Architecture Layers and Boundaries](architecture/LAYERS.md) | Normative architecture contract | Layer responsibilities, exclusions, allowed dependencies, boundary crossings, and cross-cutting capability ownership. |
 | Documentation classification and precedence | This index | Normative documentation-governance contract | Documentation classes, source-of-truth selection, conflict handling, and index maintenance. It cannot redefine substantive authority owned by another specialized contract. |
 | Contribution templates | [Pull Request template](../.github/PULL_REQUEST_TEMPLATE.md) and [Issue templates](../.github/ISSUE_TEMPLATE/) | Non-authoritative entrypoints and information-collection forms | Route contributors and collect evidence; they do not approve architecture, public API, dependencies, security exceptions, `unsafe Rust`, releases, or governance changes. |
 
@@ -59,14 +61,17 @@ Authority follows topic ownership and specificity, not a single global ranking:
 6. This index determines documentation classification and the conflict
    procedure. The root README is an entrypoint and summary, not an alternate
    location for specialized contracts.
-7. Templates collect information but do not create approval. Guides and
+7. [Architecture Principles](architecture/PRINCIPLES.md) governs durable
+   architecture principles; [Architecture Layers and Boundaries](architecture/LAYERS.md)
+   governs layer responsibilities and dependency boundaries.
+8. Templates collect information but do not create approval. Guides and
    examples cannot override normative contracts.
-8. Task Issues may narrow approved implementation scope but cannot silently
+9. Task Issues may narrow approved implementation scope but cannot silently
    weaken architecture, security, compatibility, or governance invariants.
-9. A Pull Request merge does not silently create a new contract.
-10. Recency, file location, branch name, commit order, document length, silence,
+10. A Pull Request merge does not silently create a new contract.
+11. Recency, file location, branch name, commit order, document length, silence,
     or lack of objections does not determine authority or resolve a conflict.
-11. Private AI conversations and undocumented verbal discussions are not
+12. Private AI conversations and undocumented verbal discussions are not
     durable sources of truth.
 
 When documents govern unrelated topics, neither is globally higher: the
