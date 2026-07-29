@@ -64,6 +64,9 @@ or alternatives, stop implementation at that boundary, and request maintainer
 review. Detailed architecture policy remains deferred to the relevant approved
 Issue.
 
+Maintainer responsibilities and approval boundaries are defined in
+[Maintainership and Decision Authority](../docs/governance/MAINTAINERSHIP.md).
+
 ## Issues and Scope
 
 A non-trivial Issue should provide enough context for review:
