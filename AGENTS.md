@@ -43,6 +43,10 @@ Read only documents relevant to actual or discovered impacts; do not explore bro
 7. Inspect the final changed-file list and diff.
 8. Report results, limitations, deviations, risks, and unresolved work.
 
+For detailed execution stages, escalation classification, validation duties,
+and completion reporting, see the
+[Implementation Agent Workflow](docs/development/AGENT_WORKFLOW.md).
+
 Architecture precedes implementation. Missing design is not permission to invent it; stop at unresolved architecture or ownership boundaries. Review generated changes like human-written changes. Report out-of-scope issues instead of fixing them; broad refactoring requires approved scope.
 
 Keep the diff focused. Prohibit unrelated formatting, opportunistic refactoring, hidden behavior changes, unrequested migrations or breaks, and speculative helpers, frameworks, plugin systems, abstraction hierarchies, or future infrastructure. Do not expand dependencies, CI, workflows, settings, releases, or documentation unless in scope. Never weaken a contract for convenience or bypass boundaries through generic `common`, `shared`, or `utils` modules.
@@ -100,3 +104,4 @@ Do not claim work not performed, omit failed validation, or present proposed arc
 - [ADR Process](docs/decisions/README.md)
 - [Contributing](.github/CONTRIBUTING.md)
 - [Security Policy](SECURITY.md)
+- [Implementation Agent Workflow](docs/development/AGENT_WORKFLOW.md)

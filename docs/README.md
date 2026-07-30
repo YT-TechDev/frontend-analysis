@@ -32,6 +32,7 @@ record must still satisfy the
 | Area | Authoritative location | Classification | Ownership |
 | --- | --- | --- | --- |
 | Shared implementation-agent contract | [Repository Agent Contract](../AGENTS.md) | Normative agent execution contract and router | Shared role boundaries, scope discipline, scope-relevant document routing, escalation, validation honesty, repository side effects, and completion-report minimums. |
+| Implementation-agent workflow | [Implementation Agent Workflow](development/AGENT_WORKFLOW.md) | Normative development workflow contract | Detailed execution stages, required inputs, escalation classification, validation, diff review, partial completion, and completion reporting for implementation agents. |
 | Project overview and entrypoint | [Root README](../README.md) | Guide and repository entrypoint | Maintainers approve project-purpose changes; contributors and agents may update the summary within approved scope. It is not the full source of truth for specialized contracts. |
 | Licensing | [MIT License](../LICENSE) | Legal license artifact | The license text governs licensing only. This index does not interpret, modify, or override it. |
 | Vulnerability reporting | [Security Policy](../SECURITY.md) | Normative contract | Private vulnerability reporting, supported-version handling, sensitive communication, and coordinated disclosure. |
@@ -50,10 +51,13 @@ record must still satisfy the
 
 Authority follows topic ownership and specificity, not a single global ranking:
 
-1. The root [`AGENTS.md`](../AGENTS.md) governs shared implementation-agent
-   execution behavior and routing. It does not override specialized normative
-   contracts. Tool-specific supplements may add constraints but cannot weaken
-   this shared contract.
+1. The root [`AGENTS.md`](../AGENTS.md) governs the concise shared
+   implementation-agent execution contract and routing. The [Implementation
+   Agent Workflow](development/AGENT_WORKFLOW.md) governs detailed workflow
+   mechanics. [`CLAUDE.md`](../CLAUDE.md) adds Claude Code-specific constraints
+   and cannot weaken either shared contract. None overrides specialized
+   architecture, security, governance, compatibility, or contribution
+   contracts.
 2. Each normative topic has one authoritative location, and its specialized
    normative document governs the topic it explicitly owns.
 3. A general summary does not override a specialized contract.
