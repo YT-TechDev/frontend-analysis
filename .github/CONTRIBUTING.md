@@ -125,6 +125,43 @@ Contributors must:
 
 All changes must also follow [Secure Development](../docs/development/SECURE_DEVELOPMENT.md).
 
+## Current Rust Bootstrap Workflow
+
+`rustup` is a prerequisite. The repository toolchain file selects Rust `1.97.1`
+with rustfmt and Clippy. Prepare that exact toolchain when it is not already
+installed:
+
+```bash
+rustup toolchain install 1.97.1 \
+  --profile minimal \
+  --component rustfmt \
+  --component clippy
+```
+
+The currently operational validation is toolchain identity and Cargo metadata:
+
+```bash
+rustup show active-toolchain
+rustc --version --verbose
+cargo --version --verbose
+cargo fmt --version
+cargo clippy --version
+cargo metadata --offline --format-version 1 --no-deps
+```
+
+Metadata is expected to report zero packages and zero workspace members.
+Source formatting, Clippy source lint, `cargo check`, `cargo test`,
+rustdoc/doctest, features, dependency/advisory audit, and cross-target builds
+are `Not applicable — no package or target exists`.
+
+Do not add a placeholder crate or treat the toolchain pin as MSRV. A toolchain
+change requires a focused Issue and Pull Request, official release review,
+validation, and maintainer approval. The first crate and source-level policy
+require separately approved work. [ADR 0001](../docs/decisions/0001-repository-topology-and-workspace-ownership.md)
+owns topology, [ADR 0002](../docs/decisions/0002-rust-bootstrap-toolchain-and-validation-policy.md)
+owns bootstrap policy, and [Validation and Completion Evidence](../docs/development/VALIDATION.md)
+owns validation applicability and evidence.
+
 ## Validation and Documentation
 
 Every contribution must follow [Validation and Completion
@@ -138,9 +175,10 @@ specialized contracts may require additional evidence. Contributors must:
 - report Failed, Blocked, unavailable, Not run, and Not applicable checks
   honestly rather than claiming checks that were not performed.
 
-Documentation-only changes use the contract's documentation baseline. Future
-Rust work uses its conditional Rust baseline only after a workspace exists and
-only for supported feature and platform combinations. Passing validation does
+Documentation-only changes use the contract's documentation baseline. Rust
+source-level work uses its conditional Rust baseline only after a package or
+target exists and only for Issue-selected feature and platform combinations.
+Passing validation does
 not grant architecture, API, dependency, security, compatibility, `unsafe`, or
 release approval.
 
