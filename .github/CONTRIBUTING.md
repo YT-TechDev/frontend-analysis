@@ -127,25 +127,22 @@ All changes must also follow [Secure Development](../docs/development/SECURE_DEV
 
 ## Validation and Documentation
 
-Until the repository-wide validation contract is approved, every contributor
-must:
+Every contribution must follow [Validation and Completion
+Evidence](../docs/development/VALIDATION.md). The active Issue and affected
+specialized contracts may require additional evidence. Contributors must:
 
 - inspect the final diff;
 - run validation appropriate to the changed files and behavior;
 - update documentation when contracts or behavior change;
 - accurately record commands and manual checks; and
-- report skipped, unavailable, blocked, or failing validation rather than
-  claiming checks that were not run.
+- report Failed, Blocked, unavailable, Not run, and Not applicable checks
+  honestly rather than claiming checks that were not performed.
 
-For documentation-only changes, validation should include, as applicable,
-Markdown rendering review, relative-link validation, spelling and terminology
-review, scope review, and checks for stale or contradictory statements.
-
-For future Rust changes, baseline validation categories include formatting,
-linting, tests, build or type validation, and documentation validation. Add
-checks proportional to API, security, platform, or compatibility impact. Use
-the commands available in the repository at that time rather than inventing or
-claiming unavailable checks.
+Documentation-only changes use the contract's documentation baseline. Future
+Rust work uses its conditional Rust baseline only after a workspace exists and
+only for supported feature and platform combinations. Passing validation does
+not grant architecture, API, dependency, security, compatibility, `unsafe`, or
+release approval.
 
 ## AI-Assisted Contributions
 

@@ -33,6 +33,7 @@ record must still satisfy the
 | --- | --- | --- | --- |
 | Shared implementation-agent contract | [Repository Agent Contract](../AGENTS.md) | Normative agent execution contract and router | Shared role boundaries, scope discipline, scope-relevant document routing, escalation, validation honesty, repository side effects, and completion-report minimums. |
 | Implementation-agent workflow | [Implementation Agent Workflow](development/AGENT_WORKFLOW.md) | Normative development workflow contract | Detailed execution stages, required inputs, escalation classification, validation, diff review, partial completion, and completion reporting for implementation agents. |
+| Validation and completion evidence | [Validation and Completion Evidence](development/VALIDATION.md) | Normative development-validation contract | General validation principles, change-class evidence, future Rust baseline categories, manual-validation records, check statuses, failure handling, and validation evidence inside completion records. |
 | Issue hierarchy and slicing | [Issue Model](development/ISSUE_MODEL.md) | Normative development-governance contract | Parent, Child, Leaf, and standalone Leaf responsibilities; hierarchy selection; dependencies; Pull Request slicing; milestone assignment; scope expansion; and Issue completion. |
 | Project overview and entrypoint | [Root README](../README.md) | Guide and repository entrypoint | Maintainers approve project-purpose changes; contributors and agents may update the summary within approved scope. It is not the full source of truth for specialized contracts. |
 | Licensing | [MIT License](../LICENSE) | Legal license artifact | The license text governs licensing only. This index does not interpret, modify, or override it. |
@@ -83,11 +84,14 @@ Authority follows topic ownership and specificity, not a single global ranking:
 10. Templates collect information but do not create approval. Guides and
    examples cannot override normative contracts.
 11. The [Issue Model](development/ISSUE_MODEL.md) governs Issue hierarchy and
-    slicing mechanics. Active Issues define scoped work but cannot override a
-    specialized normative contract. The [Implementation Agent Workflow](development/AGENT_WORKFLOW.md)
-    governs agent execution within that Issue contract. After approval, the
-    future validation contract will govern detailed completion evidence; no
-    such document is linked before it exists.
+    slicing mechanics. An active Leaf owns task-specific acceptance criteria and
+    required checks but cannot override specialized requirements. [Validation
+    and Completion Evidence](development/VALIDATION.md) governs general evidence
+    by change class and risk; specialized contracts add domain requirements.
+    The [Implementation Agent Workflow](development/AGENT_WORKFLOW.md) governs
+    execution stages and the overall completion report. Templates only collect
+    evidence and create no approval. Passing checks do not override architecture,
+    security, governance, or compatibility contracts.
 12. A Pull Request merge does not silently create a new contract.
 13. Recency, file location, branch name, commit order, document length, silence,
     or lack of objections does not determine authority or resolve a conflict.

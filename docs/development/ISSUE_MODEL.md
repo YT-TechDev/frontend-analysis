@@ -209,8 +209,9 @@ implementation begins only after required decisions and approvals are durable.
 Aggregate fields describe coordination rather than copying Leaf implementation
 detail. Parent validation demonstrates the overall outcome; Child validation
 demonstrates the workstream; Leaf validation demonstrates its executable
-result. Issue #22 owns the future detailed validation and completion-evidence
-matrix after approval.
+result. The Issue Model requires Leaves to identify validation; [Validation and
+Completion Evidence](VALIDATION.md) defines general evidence, the active Leaf
+adds task-specific requirements, and specialized contracts add domain evidence.
 
 ## Relationships and Discoverability
 
@@ -522,7 +523,6 @@ automation, dependency bots, Issue generators, automatic Pull-Request-to-Leaf
 enforcement, release planning, and cross-repository orchestration tooling.
 Durable Issue links are sufficient for this repository today.
 
-The detailed validation and completion-evidence matrix is owned by
-[Issue #22](https://github.com/YT-TechDev/frontend-analysis/issues/22) and is
-not defined here. This document neither creates nor links a nonexistent
-validation document. The [MIT License](../../LICENSE) remains unchanged.
+Issue completion uses [Validation and Completion Evidence](VALIDATION.md) while
+this document retains hierarchy, slicing, Leaf-field, and closure ownership.
+The [MIT License](../../LICENSE) remains unchanged.
