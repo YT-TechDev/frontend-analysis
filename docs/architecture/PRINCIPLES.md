@@ -191,7 +191,10 @@ A proposed architecture change must answer:
 12. Has explicit maintainer approval been recorded?
 
 This checklist collects decision evidence; completing it does not approve a
-change.
+change. Significant architecture decisions matching the triggers in the
+[Architecture Decision Record Process](../decisions/README.md) must be recorded
+through that process. Neither this checklist nor an ADR approves a decision by
+itself.
 
 ## Prohibited Shortcuts
 

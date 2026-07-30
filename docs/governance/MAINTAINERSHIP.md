@@ -181,7 +181,7 @@ Valid locations include:
 - a focused GitHub Issue or Issue comment;
 - an approved Pull Request review;
 - an approved governance or architecture document; or
-- a future approved architecture decision record.
+- an [accepted Architecture Decision Record](../decisions/README.md).
 
 Approval is not established by silence, lack of objections, an agent's
 conclusion, a private AI conversation, an unrecorded verbal discussion,
@@ -248,9 +248,11 @@ understand:
 - validation expectations; and
 - follow-up work.
 
-A full architecture decision record is not required for every trivial change.
-Until a formal architecture-decision-record process is approved, focused
-Issues, Pull Requests, and approved documentation are valid durable records.
+Significant decisions matching the triggers in the
+[Architecture Decision Record process](../decisions/README.md) follow that
+process. A full ADR is not required for every trivial or routine change. When
+an ADR is not required, focused Issues, Pull Requests, reviews, and approved
+documentation remain valid durable records.
 
 ## Authority Scenarios
 
