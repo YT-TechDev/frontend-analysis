@@ -1,0 +1,105 @@
+name: Rust Bootstrap
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  rust-bootstrap:
+    name: Rust bootstrap metadata
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Verify accepted manifests
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          expected_cargo = (
+              "[workspace]\n"
+              "members = []\n"
+              'resolver = "3"\n'
+          )
+          expected_toolchain = (
+              "[toolchain]\n"
+              'channel = "1.97.1"\n'
+              'components = ["clippy", "rustfmt"]\n'
+              'profile = "minimal"\n'
+          )
+
+          if Path("Cargo.toml").read_text(encoding="utf-8") != expected_cargo:
+              raise SystemExit("Cargo.toml does not match the accepted bootstrap contract")
+
+          if Path("rust-toolchain.toml").read_text(encoding="utf-8") != expected_toolchain:
+              raise SystemExit(
+                  "rust-toolchain.toml does not match the accepted bootstrap contract"
+              )
+
+          if Path("Cargo.lock").exists():
+              raise SystemExit("Cargo.lock is not allowed in the zero-member bootstrap")
+
+          rust_sources = sorted(Path(".").rglob("*.rs"))
+          if rust_sources:
+              raise SystemExit(f"Rust source is not allowed: {rust_sources}")
+          PY
+
+      - name: Install accepted Rust toolchain
+        shell: bash
+        run: |
+          rustup toolchain install 1.97.1 \
+            --profile minimal \
+            --component rustfmt \
+            --component clippy
+
+      - name: Record accepted toolchain
+        shell: bash
+        run: |
+          rustup show active-toolchain
+          rustc --version --verbose
+          cargo --version --verbose
+          cargo fmt --version
+          cargo clippy --version
+
+          rustup show active-toolchain | grep -E '^1\.97\.1-'
+          rustc --version | grep -E '^rustc 1\.97\.1([[:space:]]|$)'
+          cargo --version | grep -E '^cargo 1\.97\.1([[:space:]]|$)'
+
+      - name: Validate zero-member metadata
+        shell: bash
+        run: |
+          cargo metadata --offline --format-version 1 --no-deps |
+          python3 -c '
+          import json
+          import sys
+
+          metadata = json.load(sys.stdin)
+          package_count = len(metadata["packages"])
+          member_count = len(metadata["workspace_members"])
+
+          print(f"packages={package_count}")
+          print(f"workspace_members={member_count}")
+
+          if package_count != 0 or member_count != 0:
+              raise SystemExit("expected zero packages and zero workspace members")
+          '
+
+      - name: Verify clean validation result
+        shell: bash
+        run: |
+          test ! -e Cargo.lock
+          if find . -type f -name '*.rs' -print -quit | grep -q .; then
+            echo "Rust source is not allowed in the zero-member bootstrap"
+            exit 1
+          fi
+          test -z "$(git status --short)"
