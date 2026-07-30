@@ -31,6 +31,7 @@ record must still satisfy the
 
 | Area | Authoritative location | Classification | Ownership |
 | --- | --- | --- | --- |
+| Shared implementation-agent contract | [Repository Agent Contract](../AGENTS.md) | Normative agent execution contract and router | Shared role boundaries, scope discipline, scope-relevant document routing, escalation, validation honesty, repository side effects, and completion-report minimums. |
 | Project overview and entrypoint | [Root README](../README.md) | Guide and repository entrypoint | Maintainers approve project-purpose changes; contributors and agents may update the summary within approved scope. It is not the full source of truth for specialized contracts. |
 | Licensing | [MIT License](../LICENSE) | Legal license artifact | The license text governs licensing only. This index does not interpret, modify, or override it. |
 | Vulnerability reporting | [Security Policy](../SECURITY.md) | Normative contract | Private vulnerability reporting, supported-version handling, sensitive communication, and coordinated disclosure. |
@@ -49,35 +50,39 @@ record must still satisfy the
 
 Authority follows topic ownership and specificity, not a single global ranking:
 
-1. Each normative topic has one authoritative location, and its specialized
+1. The root [`AGENTS.md`](../AGENTS.md) governs shared implementation-agent
+   execution behavior and routing. It does not override specialized normative
+   contracts. Tool-specific supplements may add constraints but cannot weaken
+   this shared contract.
+2. Each normative topic has one authoritative location, and its specialized
    normative document governs the topic it explicitly owns.
-2. A general summary does not override a specialized contract.
-3. [Maintainership and Decision Authority](governance/MAINTAINERSHIP.md)
+3. A general summary does not override a specialized contract.
+4. [Maintainership and Decision Authority](governance/MAINTAINERSHIP.md)
    determines maintainer authority and valid approval.
-4. The [Security Policy](../SECURITY.md) determines vulnerability reporting;
+5. The [Security Policy](../SECURITY.md) determines vulnerability reporting;
    [Secure Development](development/SECURE_DEVELOPMENT.md) determines secure
    implementation requirements.
-5. The [Code of Conduct](../.github/CODE_OF_CONDUCT.md) determines community
+6. The [Code of Conduct](../.github/CODE_OF_CONDUCT.md) determines community
    conduct, and [Contributing](../.github/CONTRIBUTING.md) determines the
    contribution workflow.
-6. This index determines documentation classification and the conflict
+7. This index determines documentation classification and the conflict
    procedure. The root README is an entrypoint and summary, not an alternate
    location for specialized contracts.
-7. [Architecture Principles](architecture/PRINCIPLES.md) governs durable
+8. [Architecture Principles](architecture/PRINCIPLES.md) governs durable
    architecture principles; [Architecture Layers and Boundaries](architecture/LAYERS.md)
    governs layer responsibilities and dependency boundaries; and [Rust Core
    Contracts](architecture/RUST_CORE_CONTRACTS.md) governs Rust-specific Core
    design constraints.
-8. The [ADR Process](decisions/README.md) governs ADR mechanics. ADRs do not
+9. The [ADR Process](decisions/README.md) governs ADR mechanics. ADRs do not
    override specialized normative contracts.
-9. Templates collect information but do not create approval. Guides and
+10. Templates collect information but do not create approval. Guides and
    examples cannot override normative contracts.
-10. Task Issues may narrow approved implementation scope but cannot silently
+11. Task Issues may narrow approved implementation scope but cannot silently
    weaken architecture, security, compatibility, or governance invariants.
-11. A Pull Request merge does not silently create a new contract.
-12. Recency, file location, branch name, commit order, document length, silence,
+12. A Pull Request merge does not silently create a new contract.
+13. Recency, file location, branch name, commit order, document length, silence,
     or lack of objections does not determine authority or resolve a conflict.
-13. Private AI conversations and undocumented verbal discussions are not
+14. Private AI conversations and undocumented verbal discussions are not
     durable sources of truth.
 
 When documents govern unrelated topics, neither is globally higher: the
