@@ -21,11 +21,11 @@ This index does not interpret, modify, or replace the [MIT License](../LICENSE).
 | Example | Illustrates one possible use, workflow, structure, or output. | May become outdated, is not a compatibility commitment, and cannot become mandatory architecture without the approved decision process. |
 | Task and evidence record | Focused Issues, Pull Requests, reviews, test results, and completion reports that define or demonstrate scoped work. | May contain explicit maintainer approval, implementation scope, and validation evidence, but is not automatically normative merely because it exists or was merged. |
 
-Until a formal architecture-decision-record process is approved, focused
-Issues, Issue comments, Pull Requests, and approved documentation may serve as
-durable decision records when they satisfy the
-[maintainership requirements](governance/MAINTAINERSHIP.md). This index creates
-neither an ADR process nor architecture contracts.
+The [ADR Process](decisions/README.md) defines when significant decisions
+require an ADR. When its triggers do not apply, focused Issues, Issue comments,
+Pull Requests, and approved documentation remain valid durable records. Every
+record must still satisfy the
+[maintainership requirements](governance/MAINTAINERSHIP.md).
 
 ## Current Documentation Map
 
@@ -38,6 +38,7 @@ neither an ADR process nor architecture contracts.
 | Contribution workflow | [Contributing](../.github/CONTRIBUTING.md) | Normative workflow contract | Issue-first boundaries, trivial-maintenance path, Pull Request workflow, validation reporting, AI-assisted contribution accountability, and review expectations. |
 | Secure development | [Secure Development](development/SECURE_DEVELOPMENT.md) | Normative security contract | Secrets, dependencies, untrusted input, logging, local data, network trust, security-sensitive work, and `unsafe Rust`. |
 | Maintainership and decision authority | [Maintainership and Decision Authority](governance/MAINTAINERSHIP.md) | Normative governance contract | Maintainer authority, approval boundaries, escalation, durable approval, and future-maintainer rules. |
+| Architecture decision records | [ADR Process](decisions/README.md) | Normative decision-record process | ADR triggers, naming, required fields, status lifecycle, approval relationship, deprecation, and supersession. |
 | Architecture principles | [Architecture Principles](architecture/PRINCIPLES.md) | Normative architecture contract | Browser independence, ownership, semantic integrity, dependency principles, abstraction criteria, and architecture decision tests. |
 | Architecture layers | [Architecture Layers and Boundaries](architecture/LAYERS.md) | Normative architecture contract | Layer responsibilities, exclusions, allowed dependencies, boundary crossings, and cross-cutting capability ownership. |
 | Rust Core contracts | [Rust Core Contracts](architecture/RUST_CORE_CONTRACTS.md) | Normative Rust architecture contract | Ownership, borrowing, mutation, domain types, errors, concurrency, async boundaries, visibility, compatibility, and Rust-specific unsafe implementation constraints. |
@@ -67,14 +68,16 @@ Authority follows topic ownership and specificity, not a single global ranking:
    governs layer responsibilities and dependency boundaries; and [Rust Core
    Contracts](architecture/RUST_CORE_CONTRACTS.md) governs Rust-specific Core
    design constraints.
-8. Templates collect information but do not create approval. Guides and
+8. The [ADR Process](decisions/README.md) governs ADR mechanics. ADRs do not
+   override specialized normative contracts.
+9. Templates collect information but do not create approval. Guides and
    examples cannot override normative contracts.
-9. Task Issues may narrow approved implementation scope but cannot silently
+10. Task Issues may narrow approved implementation scope but cannot silently
    weaken architecture, security, compatibility, or governance invariants.
-10. A Pull Request merge does not silently create a new contract.
-11. Recency, file location, branch name, commit order, document length, silence,
+11. A Pull Request merge does not silently create a new contract.
+12. Recency, file location, branch name, commit order, document length, silence,
     or lack of objections does not determine authority or resolve a conflict.
-12. Private AI conversations and undocumented verbal discussions are not
+13. Private AI conversations and undocumented verbal discussions are not
     durable sources of truth.
 
 When documents govern unrelated topics, neither is globally higher: the
@@ -148,7 +151,8 @@ or comment on the old record with its superseded status, replacement, effective
 change, and migration or compatibility consequences. Do not delete history
 solely because it is obsolete. Sensitive vulnerability information remains
 subject to the private Security Policy process and must not be exposed to
-preserve public history. This index defines no ADR numbering or status system.
+preserve public history. The [ADR Process](decisions/README.md) defines
+ADR-specific naming, status, deprecation, and supersession mechanics.
 
 ## Ownership and Update Expectations
 
