@@ -43,9 +43,13 @@ formats, compatibility, dependencies, security boundaries, untrusted input,
 browser adapters, concurrency or asynchronous behavior, `unsafe Rust`, multiple
 modules or contract domains, or behavior that requires design discussion.
 
-Complex work may be decomposed into coordinated Issues when one Pull Request
-would otherwise mix distinct responsibilities. The detailed decomposition
-model is deferred to the relevant approved Issue.
+Non-trivial work should use the proportional hierarchy in the
+[Issue Model](../docs/development/ISSUE_MODEL.md). Use a standalone executable
+Leaf when one coherent responsibility needs durable scope; add Parent and Child
+Issues only when they provide real coordination or workstream ownership. Do not
+create them when a standalone Leaf—or the direct trivial Pull Request path
+above—is sufficient. Before implementation, an executable Leaf must resolve
+applicable design and approval boundaries.
 
 ## Architecture-First Changes
 

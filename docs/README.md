@@ -33,6 +33,7 @@ record must still satisfy the
 | --- | --- | --- | --- |
 | Shared implementation-agent contract | [Repository Agent Contract](../AGENTS.md) | Normative agent execution contract and router | Shared role boundaries, scope discipline, scope-relevant document routing, escalation, validation honesty, repository side effects, and completion-report minimums. |
 | Implementation-agent workflow | [Implementation Agent Workflow](development/AGENT_WORKFLOW.md) | Normative development workflow contract | Detailed execution stages, required inputs, escalation classification, validation, diff review, partial completion, and completion reporting for implementation agents. |
+| Issue hierarchy and slicing | [Issue Model](development/ISSUE_MODEL.md) | Normative development-governance contract | Parent, Child, Leaf, and standalone Leaf responsibilities; hierarchy selection; dependencies; Pull Request slicing; milestone assignment; scope expansion; and Issue completion. |
 | Project overview and entrypoint | [Root README](../README.md) | Guide and repository entrypoint | Maintainers approve project-purpose changes; contributors and agents may update the summary within approved scope. It is not the full source of truth for specialized contracts. |
 | Licensing | [MIT License](../LICENSE) | Legal license artifact | The license text governs licensing only. This index does not interpret, modify, or override it. |
 | Vulnerability reporting | [Security Policy](../SECURITY.md) | Normative contract | Private vulnerability reporting, supported-version handling, sensitive communication, and coordinated disclosure. |
@@ -81,8 +82,12 @@ Authority follows topic ownership and specificity, not a single global ranking:
    override specialized normative contracts.
 10. Templates collect information but do not create approval. Guides and
    examples cannot override normative contracts.
-11. Task Issues may narrow approved implementation scope but cannot silently
-   weaken architecture, security, compatibility, or governance invariants.
+11. The [Issue Model](development/ISSUE_MODEL.md) governs Issue hierarchy and
+    slicing mechanics. Active Issues define scoped work but cannot override a
+    specialized normative contract. The [Implementation Agent Workflow](development/AGENT_WORKFLOW.md)
+    governs agent execution within that Issue contract. After approval, the
+    future validation contract will govern detailed completion evidence; no
+    such document is linked before it exists.
 12. A Pull Request merge does not silently create a new contract.
 13. Recency, file location, branch name, commit order, document length, silence,
     or lack of objections does not determine authority or resolve a conflict.
