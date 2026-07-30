@@ -49,6 +49,110 @@ record must still satisfy the
 | Documentation classification and precedence | This index | Normative documentation-governance contract | Documentation classes, source-of-truth selection, conflict handling, and index maintenance. It cannot redefine substantive authority owned by another specialized contract. |
 | Contribution templates | [Pull Request template](../.github/PULL_REQUEST_TEMPLATE.md) and [Issue templates](../.github/ISSUE_TEMPLATE/) | Non-authoritative entrypoints and information-collection forms | Route contributors and collect evidence; they do not approve architecture, public API, dependencies, security exceptions, `unsafe Rust`, releases, or governance changes. |
 
+## Current Rust Bootstrap State
+
+This section is an explanatory current-state guide. It summarizes the merged
+bootstrap for discoverability and has no independent normative authority.
+
+### Repository Role
+
+`YT-TechDev/frontend-analysis` is the initial Core-focused Rust workspace owner;
+this does not establish a permanent monorepo. Accepted [ADR 0001](decisions/0001-repository-topology-and-workspace-ownership.md)
+owns topology and extraction review, while accepted [ADR 0002](decisions/0002-rust-bootstrap-toolchain-and-validation-policy.md)
+owns the toolchain and bootstrap policy. Future extraction requires a new
+accepted ADR after the objective triggers in ADR 0001 are met.
+
+### Current Workspace
+
+The root is a virtual Cargo workspace using resolver 3. It intentionally has
+zero packages, zero workspace members, zero crates, no `.rs` source, zero Rust
+dependencies, and no `Cargo.lock`. It defines no package, public API, or product
+behavior.
+
+### Contributor Setup and Validation
+
+With `rustup` available, the repository toolchain file selects Rust `1.97.1`,
+rustfmt, and Clippy. Install the exact toolchain when needed:
+
+```bash
+rustup toolchain install 1.97.1 \
+  --profile minimal \
+  --component rustfmt \
+  --component clippy
+```
+
+Run the currently operational identity and metadata validation:
+
+```bash
+rustup show active-toolchain
+rustc --version --verbose
+cargo --version --verbose
+cargo fmt --version
+cargo clippy --version
+cargo metadata --offline --format-version 1 --no-deps
+```
+
+Use this deterministic standard-library check for the workspace counts:
+
+```bash
+cargo metadata --offline --format-version 1 --no-deps |
+python3 -c '
+import json
+import sys
+
+metadata = json.load(sys.stdin)
+package_count = len(metadata["packages"])
+member_count = len(metadata["workspace_members"])
+
+print(f"packages={package_count}")
+print(f"workspace_members={member_count}")
+
+if package_count != 0 or member_count != 0:
+    raise SystemExit("expected zero packages and zero workspace members")
+'
+```
+
+The contributor workflow is owned by [Contributing](../.github/CONTRIBUTING.md),
+and evidence status is owned by [Validation and Completion Evidence](development/VALIDATION.md).
+
+### Validation Applicability
+
+| Category | Current status | Reason |
+| --- | --- | --- |
+| Toolchain identity | Applicable | Exact Rust `1.97.1` is pinned. |
+| Cargo metadata | Applicable | Validates the real zero-member workspace. |
+| Source formatting | Not applicable | No package or target exists. |
+| Clippy source lint | Not applicable | No package or target exists. |
+| Check/test/rustdoc/doctest | Not applicable | No package or target exists. |
+| Features/dependency/advisory | Not applicable | No feature or dependency graph exists. |
+| Cross-target build | Not applicable | No package, target matrix, or artifact exists. |
+
+### Deferred Decisions
+
+| Deferred decision | Future owner |
+| --- | --- |
+| First crate/package name and boundary | Future Core-domain Issue/ADR |
+| Package metadata and publication | Future Core-domain Issue/ADR |
+| Workspace lint inheritance | First-package focused Issue |
+| Dependencies and features | Focused dependency Issue |
+| `Cargo.lock` ownership | First-package or focused dependency Issue |
+| MSRV | Focused compatibility Issue/ADR |
+| Target and browser support | Focused compatibility Issue/ADR |
+| Public API and serialized formats | Future Core-domain Issue/ADR |
+| Parser and protocol libraries | Focused dependency and boundary Issue |
+| Async runtime and concurrency | Future Core-domain Issue/ADR |
+| WASM, FFI, and unsafe implementation | Focused compatibility/security Issue/ADR |
+| Metadata-only CI | Issue #45 |
+| Release automation | Future release Issue |
+| Required status checks | Separate repository-setting Issue |
+| Browser Adapter and presentation/product repository placement | Future topology/placement ADR |
+
+### Meaning of Bootstrap PASS
+
+Completion of Milestone #2 permits planning of the next, separately scoped
+Core-domain milestone only. It approves no production implementation or public
+contract.
+
 ## Source-of-Truth Rules
 
 Authority follows topic ownership and specificity, not a single global ranking:

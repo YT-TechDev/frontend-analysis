@@ -161,11 +161,35 @@ meaning or valid links.
 
 ## Future Rust Baseline
 
-This section becomes operational only after an approved Rust workspace exists.
-During the current documentation-only foundation milestone, Rust commands are
-Not applicable. Future baseline categories are formatting, linting,
-compile/type checking, tests, documentation, and build or artifact verification
-when the task produces an artifact. Standard baseline forms are:
+### Current zero-member bootstrap state
+
+The merged virtual workspace makes toolchain identity and Cargo metadata
+operational now:
+
+```text
+rustup show active-toolchain
+rustc --version --verbose
+cargo --version --verbose
+cargo fmt --version
+cargo clippy --version
+cargo metadata --offline --format-version 1 --no-deps
+```
+
+Evidence MUST objectively assert that `packages` count is zero and
+`workspace_members` count is zero. It MUST also confirm that no package, Rust
+source, dependency, feature, build script, `Cargo.lock`, or unexpected generated
+file exists. Passing metadata is not source validation.
+
+Source formatting, Clippy source lint, `cargo check`, `cargo test`, rustdoc,
+doctest, feature combinations, dependency/advisory audit, and cross-target
+build are `Not applicable` while no package or target exists.
+
+### Future package state
+
+Only after a package or target exists, and the active Issue selects applicable
+features and platforms, baseline categories become formatting, linting,
+compile/type checking, tests, documentation, and build or artifact verification.
+Standard future forms are:
 
 ```text
 cargo fmt --all -- --check
@@ -175,9 +199,9 @@ cargo test --workspace --all-targets --all-features
 cargo doc --workspace --all-features --no-deps
 ```
 
-These are future forms, not currently available commands. Once a workspace
-defines repository-owned commands, use those. `--all-features` applies only
-when all features are intended to compose; mutually exclusive,
+These are future forms, not commands applicable to the current zero-member
+workspace. `--all-features` MUST NOT be enabled automatically; use it only when
+approved features are intended to compose. Mutually exclusive,
 platform-specific, or capability-specific features require an Issue-defined
 matrix. Platform targets require the relevant environment or an honestly
 reported limitation. Treat documentation warnings as errors when an approved
@@ -185,9 +209,10 @@ cross-platform method exists. Add `cargo build` for deliverable artifacts or
 build-specific behavior, and examples, doctests, benches, or target checks only
 when affected.
 
-This contract creates no MSRV, channel, feature, target, or CI policy and
-selects no extra test, lint, coverage, or compatibility tool. Successful
-compilation or `cargo check` never replaces behavioral tests.
+This contract creates no MSRV, target, CI, coverage, dependency-tool, feature,
+channel, or compatibility promise and selects no extra test or lint tool.
+Successful compilation or `cargo check` never replaces behavioral tests.
+Passing source validation creates no architecture approval.
 
 ## Internal Rust Changes
 
