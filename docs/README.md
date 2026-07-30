@@ -40,6 +40,7 @@ neither an ADR process nor architecture contracts.
 | Maintainership and decision authority | [Maintainership and Decision Authority](governance/MAINTAINERSHIP.md) | Normative governance contract | Maintainer authority, approval boundaries, escalation, durable approval, and future-maintainer rules. |
 | Architecture principles | [Architecture Principles](architecture/PRINCIPLES.md) | Normative architecture contract | Browser independence, ownership, semantic integrity, dependency principles, abstraction criteria, and architecture decision tests. |
 | Architecture layers | [Architecture Layers and Boundaries](architecture/LAYERS.md) | Normative architecture contract | Layer responsibilities, exclusions, allowed dependencies, boundary crossings, and cross-cutting capability ownership. |
+| Rust Core contracts | [Rust Core Contracts](architecture/RUST_CORE_CONTRACTS.md) | Normative Rust architecture contract | Ownership, borrowing, mutation, domain types, errors, concurrency, async boundaries, visibility, compatibility, and Rust-specific unsafe implementation constraints. |
 | Documentation classification and precedence | This index | Normative documentation-governance contract | Documentation classes, source-of-truth selection, conflict handling, and index maintenance. It cannot redefine substantive authority owned by another specialized contract. |
 | Contribution templates | [Pull Request template](../.github/PULL_REQUEST_TEMPLATE.md) and [Issue templates](../.github/ISSUE_TEMPLATE/) | Non-authoritative entrypoints and information-collection forms | Route contributors and collect evidence; they do not approve architecture, public API, dependencies, security exceptions, `unsafe Rust`, releases, or governance changes. |
 
@@ -63,7 +64,9 @@ Authority follows topic ownership and specificity, not a single global ranking:
    location for specialized contracts.
 7. [Architecture Principles](architecture/PRINCIPLES.md) governs durable
    architecture principles; [Architecture Layers and Boundaries](architecture/LAYERS.md)
-   governs layer responsibilities and dependency boundaries.
+   governs layer responsibilities and dependency boundaries; and [Rust Core
+   Contracts](architecture/RUST_CORE_CONTRACTS.md) governs Rust-specific Core
+   design constraints.
 8. Templates collect information but do not create approval. Guides and
    examples cannot override normative contracts.
 9. Task Issues may narrow approved implementation scope but cannot silently
