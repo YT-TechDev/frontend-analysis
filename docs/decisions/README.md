@@ -322,6 +322,7 @@ does not confer authority.
 | ADR | Title | Status | Date | Replaces |
 | --- | --- | --- | --- | --- |
 | [0001](0001-repository-topology-and-workspace-ownership.md) | Repository topology and workspace ownership | Accepted | 2026-07-30 | None |
+| [0002](0002-rust-bootstrap-toolchain-and-validation-policy.md) | Rust bootstrap toolchain and validation policy | Proposed | 2026-07-30 | None |
 
 ## Representative Classifications
 
