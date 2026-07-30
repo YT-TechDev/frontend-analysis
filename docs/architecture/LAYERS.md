@@ -14,6 +14,10 @@ security-sensitive implementation by
 [Secure Development](../development/SECURE_DEVELOPMENT.md). This contract
 selects no implementation mechanism.
 
+[Rust Core Contracts](RUST_CORE_CONTRACTS.md) governs Rust-specific Core
+ownership, mutation, type, error, concurrency, async, visibility,
+compatibility, and unsafe constraints.
+
 ## Conceptual Analysis Pipeline
 
 ```text

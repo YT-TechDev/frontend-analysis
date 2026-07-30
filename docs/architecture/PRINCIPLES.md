@@ -74,8 +74,8 @@ No layer may silently redefine semantics owned by another layer. Ownership
 must not be resolved through global mutable state, arbitrary cloning, shared
 mutable utility modules, untyped maps, hidden callbacks, framework context, or
 transport objects leaking across boundaries. This rule does not prescribe
-concrete Rust ownership types; Rust-specific ownership and type contracts are
-deferred to focused future work.
+concrete Rust ownership types; Rust-specific ownership and type constraints are
+governed by [Rust Core Contracts](RUST_CORE_CONTRACTS.md).
 
 ## Stable Dependency Direction
 
