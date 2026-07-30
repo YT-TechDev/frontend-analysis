@@ -237,9 +237,10 @@ and error output, and final diff inspection.
 - A validation failure that reveals an architectural defect MUST be escalated
   before implementation continues.
 
-A future repository-wide validation contract may add general requirements.
-Security-sensitive work MUST satisfy both that contract, once approved, and
-the security-specific requirements here.
+Security-sensitive work MUST satisfy [Validation and Completion
+Evidence](VALIDATION.md) and every security-specific requirement here. The
+general contract does not reduce security evidence or permit public disclosure
+of sensitive information.
 
 The following examples make common outcomes explicit:
 

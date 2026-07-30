@@ -123,6 +123,7 @@ Select additional sources by impact:
 | Significant architecture decision or supersession | [ADR Process](../decisions/README.md) |
 | Contribution, branches, PRs, reviews, or shared Git workflow | [Contributing](../../.github/CONTRIBUTING.md) |
 | Vulnerability reporting | [Security Policy](../../SECURITY.md) |
+| Validation planning, change-class evidence, manual checks, check statuses, or completion evidence | [Validation and Completion Evidence](VALIDATION.md) |
 | Claude Code-specific execution | [Claude Code Supplement](../../CLAUDE.md), only when Claude Code is active |
 
 Do not load every document for every task. Expand context only when discovered
@@ -185,9 +186,10 @@ concurrency, async, or unsafe scope, stop and escalate.
 
 ## Stage 6: Validate Proportionately
 
-Plan validation from (1) active-Issue requirements, (2) affected specialized
-contracts, and (3) relevant existing repository checks. Validate behavior or
-contract meaning, not syntax or compilation alone.
+Plan validation from (1) active-Issue requirements, (2) [Validation and
+Completion Evidence](VALIDATION.md), (3) affected specialized contracts, and
+(4) existing repository capabilities. Validate behavior or contract meaning,
+not syntax or compilation alone.
 
 Agents MUST run available relevant checks, record exact checks and results,
 inspect failures rather than retry blindly, use focused checks before broader
@@ -200,12 +202,9 @@ documentation task unless required; weaken or delete tests; treat skipped tests
 as passing; claim CI when none ran; or claim browser, platform, security,
 performance, or compatibility validation without evidence.
 
-Documentation validation SHOULD cover relevant changed-file scope, relative
-links, Markdown structure or rendering, placeholders, private or sensitive
-content, trailing whitespace, final newline, and diff whitespace. Future code
-validation SHOULD use repository-owned commands when available. This workflow
-does not prescribe package, compiler, browser, or platform commands before the
-repository adopts them.
+Use the validation contract's change-class evidence and record format. This
+workflow still requires available relevant checks, exact records, failure
+inspection, preserved evidence, honest omissions, and no weakened tests.
 
 ## Stage 7: Review the Final Diff
 
@@ -289,22 +288,12 @@ A pre-existing unrelated defect is reported and left unchanged unless it
 directly blocks the task, a focused adjacent fix is correctness-required and
 permitted, no new boundary is crossed, and the change is explicitly reported.
 
-## Validation Contract
+## Validation Contract Routing
 
-| Change class | Minimum evidence |
-| --- | --- |
-| Documentation-only | Links, scope, placeholders/private content, Markdown, whitespace, and diff review |
-| Internal implementation | Focused behavior tests plus existing formatting, lint, and type checks |
-| Public or compatibility surface | Focused tests, consumer or fixture evidence, migration review, and documentation review |
-| Dependency change | Necessity, alternatives, manifest and lock diff, and security, license, and compatibility review |
-| Security-sensitive | Secure Development-required evidence and redaction |
-| Concurrency or async | Ordering, cancellation, errors, lifecycle, backpressure, and determinism evidence |
-| Unsafe | Full focused unsafe evidence and approval before implementation |
-| Browser adapter | Protocol isolation, normalization loss or unsupported evidence, and Core independence |
-| Core behavior | Browser-independent inputs, deterministic meaning, owned errors, and no outer-dependency leakage |
-
-This table does not prescribe tools not adopted by the repository. The active
-Issue and repository capabilities determine exact checks.
+[Validation and Completion Evidence](VALIDATION.md) owns the detailed
+change-class evidence matrix and per-check record. This workflow owns execution
+and escalation mechanics. Specialized contracts may add evidence, and exact
+tools depend on the live repository and active Issue.
 
 ## Partial and Blocked Work
 
@@ -362,11 +351,15 @@ List files, behavior, contracts, and necessary adjacent changes.
 
 ## Validation Performed
 
-For each check, state the command or manual check, result, and relevant evidence.
+For each check, use the validation contract's [validation-record
+format](VALIDATION.md#validation-record), including the exact command or manual
+method, status, evidence, and limitations.
 
 ## Validation Not Performed
 
-For each omitted check, state the check, reason, and resulting limitation or risk.
+For each omitted check, use the validation contract's [validation-record
+format](VALIDATION.md#validation-record) and state the reason and resulting
+limitation or risk.
 
 ## Contract Impact
 

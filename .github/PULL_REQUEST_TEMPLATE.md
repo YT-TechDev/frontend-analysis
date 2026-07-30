@@ -44,17 +44,30 @@ Do not include active vulnerability details in a public Pull Request.
 
 ## Validation
 
+Follow [Validation and Completion
+Evidence](../docs/development/VALIDATION.md).
+
+### Validation target
+
+<!--
+Identify the tested commit SHA or Pull Request head and relevant environment,
+platform, browser, toolchain, or fixture.
+-->
+
 ### Automated checks
 
-<!-- List exact commands and results. -->
+<!-- For each check, list the exact command or repository-owned check, status,
+and relevant evidence or artifact reference. -->
 
 ### Manual checks
 
-<!-- List manual scenarios and results. -->
+<!-- For each scenario, list environment and preconditions, exact steps,
+expected and actual observations, status, limitations, and safe artifacts. -->
 
-### Checks not run
+### Checks not run, blocked, or failed
 
-<!-- List unavailable, skipped, blocked, or failing checks and explain why. -->
+<!-- For each required or considered check, list status, reason, limitation or
+risk, and an approved substitute when one exists. -->
 
 ## Documentation
 
@@ -83,6 +96,9 @@ conversation exports, or model marketing.
 ## Checklist
 
 - [ ] I inspected the final diff.
+- [ ] The validation target is identified.
+- [ ] Evidence follows the validation contract.
+- [ ] Failed and unavailable checks are not hidden.
 - [ ] The change is focused and does not contain unrelated cleanup.
 - [ ] The Pull Request matches its linked Issue or qualifies as trivial,
       self-contained maintenance.
