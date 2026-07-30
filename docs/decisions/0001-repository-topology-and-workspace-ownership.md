@@ -2,11 +2,11 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Proposed |
+| Status | Accepted |
 | Date | 2026-07-30 |
 | Decision owner / approver | YT-TechDev |
 | Linked Issue | [#41](https://github.com/YT-TechDev/frontend-analysis/issues/41) |
-| Related Pull Request | Pending — to be updated after Pull Request creation |
+| Related Pull Request | [#47](https://github.com/YT-TechDev/frontend-analysis/pull/47) |
 | Supersedes | None |
 | Superseded by | None |
 | Affected normative contracts | None — existing architecture contracts already define the required browser-independent and layer boundaries while deliberately deferring workspace and crate structure; this ADR records repository ownership and bootstrap topology without changing those invariants. |
@@ -53,9 +53,9 @@ Decision drivers are:
 
 ## Decision
 
-This ADR proposes **Option C**.
+This ADR selects **Option C**.
 
-If accepted, `YT-TechDev/frontend-analysis` initially owns the Rust Core
+`YT-TechDev/frontend-analysis` initially owns the Rust Core
 workspace and its workspace-level contracts. The repository's current role is
 initially **Core-focused**: it provides the governance and tooling foundation
 for the browser-independent Core while the first production domain boundary is
@@ -196,7 +196,7 @@ planning may temporarily share Issue and repository surfaces. Preventing
 inertia requires maintainers to apply the triggers and keep deferred placement
 decisions out of bootstrap work.
 
-Option C is proposed because it meets the current need with the fewest
+Option C is selected because it meets the current need with the fewest
 unsupported commitments. Its temporary role, objective triggers, and required
 future ADR provide a bounded path to separation when evidence exists.
 
@@ -245,7 +245,7 @@ movement. Reversal requires a new accepted ADR, satisfaction of an objective
 review trigger, and a planned migration covering ownership, governance,
 security reporting, authority, versions, releases, contributors, history,
 compatibility, and consumers. Until that process is complete, the current
-repository remains the proposed initial workspace owner.
+repository remains the accepted initial workspace owner.
 
 ## Compatibility and Migration
 
@@ -276,7 +276,7 @@ automatically.
 
 ## Validation
 
-Drafting this Proposed ADR does not claim that downstream bootstrap checks have
+Acceptance of this ADR does not claim that downstream bootstrap checks have
 passed. Before implementation, and again in the final bootstrap PASS/NO-GO
 audit, evidence must confirm:
 
@@ -293,19 +293,19 @@ audit, evidence must confirm:
 - the final bootstrap audit records an explicit PASS or NO-GO with the evidence
   and any unavailable checks required by the repository validation contract.
 
-Documentation review of this proposal must also confirm the ADR number,
-required sections, relative links, Proposed status, pending approval, stated
-deferrals, unchanged normative architecture invariants, and absence of private
-AI links, transcripts, credentials, implementation, or fabricated approval.
+Documentation review of this accepted record must also confirm the ADR number,
+required sections, relative links, Accepted status, durable approval evidence,
+stated deferrals, unchanged normative architecture invariants, and absence of
+private AI links, transcripts, credentials, implementation, or fabricated
+approval.
 
 ## Follow-Up
 
-- Maintainer review must explicitly accept or reject this Proposed ADR. If
-  accepted, a focused revision must record attributable, decision-specific,
-  durable approval and update the status and index; this draft and its Pull
-  Request do not provide that approval.
-- Issue #42 may define bootstrap toolchain and validation policy only after this
-  ADR is accepted.
+- ADR 0001 is accepted through the durable maintainer approval recorded in
+  Issue #41. Issue #42 may proceed only after this ADR and index update are
+  merged.
+- Issue #42 owns bootstrap toolchain and validation policy after this ADR and
+  index update are merged.
 - Issue #43 may implement only the approved minimal scaffold after Issues #41
   and #42.
 - A separately planned and approved Core-domain milestone owns the first
@@ -315,15 +315,22 @@ AI links, transcripts, credentials, implementation, or fabricated approval.
 
 ## Approval
 
-Approval is pending. This ADR cannot become `Accepted` until a current
-maintainer provides explicit, attributable, decision-specific, durable approval.
-No approval date or approval link exists yet, and proposal authorship, Issue or
-milestone placement, Pull Request creation or merge, implementation-agent text,
-silence, and lack of objections do not constitute approval.
+Approved by `YT-TechDev`, the current maintainer of record, on 2026-07-30.
+
+Durable approval:
+[Issue #41 maintainer architecture decision](https://github.com/YT-TechDev/frontend-analysis/issues/41#issuecomment-5128242841)
+
+The approval is decision-specific and accepts Option C, the initial
+Core-focused repository role, the zero-production-member virtual-workspace
+transition state, the objective extraction-review triggers, and all stated
+boundaries and deferrals. Any substantive change requires renewed maintainer
+review.
 
 ## References
 
 - [Issue #41: repository topology and workspace ownership](https://github.com/YT-TechDev/frontend-analysis/issues/41)
+- [Issue #41 maintainer architecture decision](https://github.com/YT-TechDev/frontend-analysis/issues/41#issuecomment-5128242841)
+- [Pull Request #47](https://github.com/YT-TechDev/frontend-analysis/pull/47)
 - [Parent Issue #40](https://github.com/YT-TechDev/frontend-analysis/issues/40)
 - [Issue #42](https://github.com/YT-TechDev/frontend-analysis/issues/42)
 - [Issue #43](https://github.com/YT-TechDev/frontend-analysis/issues/43)

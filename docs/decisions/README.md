@@ -321,7 +321,7 @@ does not confer authority.
 
 | ADR | Title | Status | Date | Replaces |
 | --- | --- | --- | --- | --- |
-| [0001](0001-repository-topology-and-workspace-ownership.md) | Repository topology and workspace ownership | Proposed | 2026-07-30 | None |
+| [0001](0001-repository-topology-and-workspace-ownership.md) | Repository topology and workspace ownership | Accepted | 2026-07-30 | None |
 
 ## Representative Classifications
 
