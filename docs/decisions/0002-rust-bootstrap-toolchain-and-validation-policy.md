@@ -2,11 +2,11 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Proposed |
+| Status | Accepted |
 | Date | 2026-07-30 |
 | Decision owner / approver | YT-TechDev |
 | Linked Issue | [#42](https://github.com/YT-TechDev/frontend-analysis/issues/42) |
-| Related Pull Request | Pending — to be updated immediately after Pull Request creation |
+| Related Pull Request | [#48](https://github.com/YT-TechDev/frontend-analysis/pull/48) |
 | Supersedes | None |
 | Superseded by | None |
 | Affected normative contracts | None at this decision stage — existing maintainership, architecture, Rust Core, security, and validation contracts already require explicit approval and evidence while deliberately selecting no toolchain or workspace implementation. This ADR defines the bootstrap policy within those boundaries. Issue #44 may later update contributor-facing documentation to reflect accepted commands without weakening the owning contracts. |
@@ -17,7 +17,7 @@
 this repository as the initial Core-focused Rust workspace owner. It selects a
 root virtual workspace with zero production members as a temporary bootstrap
 transition, without approving a permanent monorepo, crate, package, API,
-dependency, runtime, publication, release, or product boundary. This proposal
+dependency, runtime, publication, release, or product boundary. This decision
 preserves that topology decision rather than reopening it.
 
 The repository currently has no Cargo manifest, Rust source, toolchain file,
@@ -46,12 +46,14 @@ maintainable toolchain ownership, and reversibility.
 
 ## Decision
 
-This ADR is a proposal only. It authorizes no implementation until explicit,
-durable maintainer acceptance.
+This ADR records the accepted bootstrap policy. Acceptance authorizes only the
+downstream work explicitly assigned to Issues #43 through #46 and does not
+itself implement or validate that work.
 
 ### Root workspace contract
 
-Subject to acceptance, Issue #43 will create only this root virtual workspace:
+Under this accepted policy, Issue #43 may create only this root virtual
+workspace:
 
 ```toml
 [workspace]
@@ -122,7 +124,7 @@ does not establish permanent source-wide warnings-as-errors. The first package
 requires focused lint-scope review.
 
 The repository rule remains: `unsafe Rust is prohibited without an explicitly
-approved focused Issue.` For the first real member, the proposed enforcement is
+approved focused Issue.` For the first real member, the selected enforcement is
 workspace-inherited Rust lint `unsafe_code = "deny"`, with every member opting
 in through `[lints] workspace = true`. `deny` is chosen instead of irreversible
 `forbid(unsafe_code)` so a future explicitly approved, contained exception
@@ -159,8 +161,7 @@ is installed merely to make decision validation appear broader.
 
 ### GitHub Actions and required checks
 
-After policy acceptance and scaffold completion, Issue #45 owns one
-metadata-only workflow with:
+After scaffold completion, Issue #45 owns one metadata-only workflow with:
 
 - `pull_request` and `push` limited to `main`, with no path filters;
 - no `pull_request_target`;
@@ -201,11 +202,11 @@ support, target matrix, `no_std`, WASM compatibility, and MSRV.
 ## Alternatives Considered
 
 The alternatives below are ranked by fit with the current zero-member state;
-the first option in each group is proposed.
+the first option in each group is selected.
 
 ### Toolchain selection
 
-1. **Exact `1.97.1` pin — proposed.** It provides repeatable contributor and
+1. **Exact `1.97.1` pin — selected.** It provides repeatable contributor and
    CI behavior, incorporates the miscompilation fix, and makes updates visible.
    It costs ongoing focused maintenance and initial installation, but is easy
    to reverse through review and has low false-contract risk when clearly
@@ -224,7 +225,7 @@ the first option in each group is proposed.
 
 ### Workspace transition
 
-1. **Zero-member virtual workspace with a hard gate — proposed.** It preserves
+1. **Zero-member virtual workspace with a hard gate — selected.** It preserves
    ADR 0001, avoids a false crate boundary, and is cheaply reversible, while
    imposing exact-version validation because documentation gives no broad
    guarantee. Contributors receive an honest transition state.
@@ -242,7 +243,7 @@ the first option in each group is proposed.
 
 ### MSRV
 
-1. **No MSRV promise — proposed.** It honestly reflects absent consumers and
+1. **No MSRV promise — selected.** It honestly reflects absent consumers and
    package constraints. It preserves full future choice with minimal
    maintenance, provided documentation prevents contributors mistaking the pin
    for a floor.
@@ -255,7 +256,7 @@ the first option in each group is proposed.
 
 ### Unsafe enforcement
 
-1. **Future workspace-inherited `deny` — proposed.** It gives visible,
+1. **Future workspace-inherited `deny` — selected.** It gives visible,
    consistent enforcement while allowing a narrower future approved exception.
    Members must explicitly opt in, creating modest review overhead but clear
    contributor behavior and good reversibility.
@@ -268,7 +269,7 @@ the first option in each group is proposed.
 
 ### Workspace tables
 
-1. **Defer tables until a real member — proposed.** Every table then has an
+1. **Defer tables until a real member — selected.** Every table then has an
    operational inheritor or consumer. This minimizes maintenance and false
    policy signals, though first-member work must add and review them.
 2. **Create inert package/dependency/lint tables now — rejected.** They may
@@ -278,7 +279,7 @@ the first option in each group is proposed.
 
 ### Validation and CI
 
-1. **Metadata-only validation — proposed.** It tests the only real artifact and
+1. **Metadata-only validation — selected.** It tests the only real artifact and
    zero-member invariant locally and later in least-privilege CI. It is narrow,
    understandable, and maintainable, but provides no source assurance.
 2. **Vacuous source commands — rejected.** They look familiar but have no target
@@ -293,7 +294,7 @@ the first option in each group is proposed.
 
 ### Cargo.lock
 
-1. **Defer until an artifact and dependency graph exist — proposed.** There is
+1. **Defer until an artifact and dependency graph exist — selected.** There is
    no resolution to preserve today. This avoids a meaningless file and keeps
    later application-versus-library ownership explicit, at the cost of making
    lockfile policy future work.
@@ -364,7 +365,7 @@ to this accepted policy requires an ADR amendment with renewed durable
 approval; replacement of its foundational workspace/toolchain approach or a
 new durable architecture/compatibility choice requires a new ADR. Required
 checks, branch protection, or other repository settings require a separate
-focused repository-setting Issue. None is authorized by this proposal.
+focused repository-setting Issue. None is authorized by this decision.
 
 ## Compatibility and Migration
 
@@ -390,7 +391,7 @@ Policy](../../SECURITY.md) remain authoritative.
 
 The [MIT License](../../LICENSE) is unchanged. Dependency license review is
 `Not applicable` until a dependency exists. `unsafe Rust` remains prohibited
-without an explicitly approved focused Issue; this proposal grants no
+without an explicitly approved focused Issue; this decision grants no
 exception.
 
 ## Validation
@@ -412,36 +413,48 @@ evidence must demonstrate:
 - Issue #46's independent final PASS/NO-GO audit with failures and unavailable
   checks reported under the validation contract.
 
-ADR review must also verify the filename and number, every template section,
-relative links, Proposed status until approval, exact `1.97.1` pin, MSRV
-deferral, hard zero-member gate, `deny` rationale, absent inert tables, all
-scope deferrals, and absence of private AI links, transcripts, secrets,
-implementation, or fabricated approval.
+Accepted-record review must also verify the filename and number, every template
+section, relative links, `Accepted` status, exact `1.97.1` pin and its
+distinction from MSRV, the hard zero-member Issue #43 validation gate, the
+future `unsafe_code = "deny"` rationale, absence of inert workspace tables, all
+scope deferrals, Pull Request #48, durable maintainer approval evidence, and
+absence of private AI links, transcripts, secrets, implementation, or
+fabricated approval.
 
 ## Follow-Up
 
-- `YT-TechDev` owns approval or rejection of ADR 0002.
-- Issue #43 owns only the accepted scaffold and its hard validation gate.
-- Issue #44 owns contributor documentation after the scaffold merges.
-- Issue #45 owns the metadata-only workflow after policy acceptance and
-  scaffold completion.
-- Issue #46 owns an independent final bootstrap audit.
+- ADR 0002 is accepted through the durable maintainer approval recorded in
+  Issue #42.
+- Issue #43 may begin only after ADR 0002 and the index update are merged and
+  Issue #42 is completed; it owns only the accepted scaffold and hard gate.
+- Issue #44 remains blocked on scaffold completion.
+- Issue #45 remains blocked on policy acceptance and scaffold completion.
+- Issue #46 remains blocked on completion of all prerequisite Leaves.
 - A separate future Issue owns any required-check repository setting.
-- Future Core-domain work owns the first crate, domain, lint, and API choices.
-
-None of Issues #43, #44, #45, or #46 is authorized to start by this Proposed
-record.
+- Future Core-domain work owns the first crate, domain, lint, API, dependency,
+  MSRV, target, compatibility, publication, and release decisions.
 
 ## Approval
 
-Approval is pending. ADR 0002 cannot become `Accepted` until `YT-TechDev`, the
-maintainer of record, provides explicit, attributable, decision-specific, and
-durable approval. Authorship, Issue or milestone placement, Pull Request
-creation or merge, and silence do not constitute approval.
+Approved by `YT-TechDev`, the current maintainer of record, on 2026-07-30.
+
+Durable approval:
+[Issue #42 maintainer architecture decision](https://github.com/YT-TechDev/frontend-analysis/issues/42#issuecomment-5129465895)
+
+The approval is decision-specific and accepts the exact Rust `1.97.1`
+development and CI pin, the temporary zero-production-member virtual workspace
+with its hard validation gate, the toolchain-update policy, the MSRV and
+compatibility deferrals, the future `unsafe_code = "deny"` strategy, the
+zero-dependency and no-lockfile bootstrap boundary, the metadata-only CI policy,
+the required-check deferral, and all stated boundaries and follow-up ownership.
+
+Any substantive change requires renewed maintainer review.
 
 ## References
 
 - [Issue #42: Rust bootstrap toolchain and validation policy](https://github.com/YT-TechDev/frontend-analysis/issues/42)
+- [Issue #42 maintainer architecture decision](https://github.com/YT-TechDev/frontend-analysis/issues/42#issuecomment-5129465895)
+- [Pull Request #48](https://github.com/YT-TechDev/frontend-analysis/pull/48)
 - [Parent Issue #40](https://github.com/YT-TechDev/frontend-analysis/issues/40)
 - [ADR 0001](0001-repository-topology-and-workspace-ownership.md)
 - [Rust 1.97.1 announcement](https://blog.rust-lang.org/2026/07/16/Rust-1.97.1/)
