@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Proposed |
+| Status | Accepted |
 | Date | 2026-07-31 |
 | Decision owner / approver | `YT-TechDev` |
 | Linked Issue | [#82](https://github.com/YT-TechDev/frontend-analysis/issues/82) |
@@ -420,21 +420,26 @@ ADR. It may be recorded later as execution evidence only.
 
 ## Approval
 
-**Approval is pending.** This ADR is `Proposed` and has not been approved.
+**Accepted by `YT-TechDev` on 2026-07-31.**
 
-`Proposed` status authorizes no implementation, no production work, no public
-API, no dependency, no parser, and no milestone planning. It records a
-proposal under review.
+The repository owner explicitly approved the ADR 0006 deferral decision in the
+[repository-owner decision on Issue #82](https://github.com/YT-TechDev/frontend-analysis/issues/82#issuecomment-5144134648).
 
-Approval requires an explicit, attributable, decision-specific, and durable
-decision by `YT-TechDev`, the current maintainer of record, recorded on
-[Issue #82](https://github.com/YT-TechDev/frontend-analysis/issues/82). A
-separate status-recording Pull Request then sets `Accepted` or `Rejected`
-without materially rewriting the reviewed decision package.
+`Accepted` approves `PRODUCTION WORK DEFERRED — NO QUALIFIED ANALYSIS SLICE`,
+the seven-item decision package, and the ten-item objective reconsideration
+gate recorded by this ADR.
 
-Accepting this ADR would approve the decision to defer. It would not approve
-production work. An accepted deferral authorizes only future architecture-first
-planning after the objective reconsideration triggers are satisfied.
+This acceptance approves the decision to defer. It does not approve or
+authorize production implementation, a production milestone, a grammar
+family, an analysis question, a parser, a dependency, a result model, an error
+model, a crate, a module, a public API, serialization, source-map capability, a
+Browser Adapter contract, a product surface, a package-version change,
+publication, or release work.
+
+This accepted deferral authorizes only a future architecture-first production
+milestone planning execution after the objective reconsideration gate is
+satisfied as durable evidence. It does not automatically authorize
+implementation.
 
 ## References
 
@@ -462,3 +467,4 @@ planning after the objective reconsideration triggers are satisfied.
 - [Secure Development](../development/SECURE_DEVELOPMENT.md)
 - [Maintainership and Decision Authority](../governance/MAINTAINERSHIP.md)
 - [Architecture Decision Record Process](README.md)
+- [ADR 0006 repository-owner approval](https://github.com/YT-TechDev/frontend-analysis/issues/82#issuecomment-5144134648)
