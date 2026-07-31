@@ -2,14 +2,14 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Proposed |
+| Status | Accepted |
 | Date | 2026-07-31 |
-| Decision owner / approver | Awaiting explicit review by `YT-TechDev`; no maintainer approval is claimed |
+| Decision owner / approver | `YT-TechDev` |
 | Linked Issue | [#70](https://github.com/YT-TechDev/frontend-analysis/issues/70) |
-| Related Pull Request | None at proposal creation |
+| Related Pull Request | [#74](https://github.com/YT-TechDev/frontend-analysis/pull/74) |
 | Supersedes | None |
 | Superseded by | None |
-| Affected normative contracts | None proposed — this record specializes the existing Validated Source Anchors domain within the current architecture, Rust Core, security, and validation contracts; it does not change those contracts. If review identifies a conflict, implementation must stop and the owning normative contract must be addressed separately. |
+| Affected normative contracts | None — this record specializes the existing Validated Source Anchors domain within the current architecture, Rust Core, security, and validation contracts; it changes none of those contracts. |
 
 ## Context
 
@@ -37,20 +37,26 @@ terminators, protocol-specific position encodings, transformed-source and
 source-map positions, and presentation columns remain explicit conversions
 owned outside Core.
 
-This proposal must preserve exact source evidence, validation precedence,
+This decision preserves exact source evidence, validation precedence,
 browser independence, deterministic behavior, source-content safety, the
 single-crate dependency boundary, and the absence of an external compatibility
-promise. While this ADR remains Proposed, it authorizes no Rust
-implementation. Issue [#71](https://github.com/YT-TechDev/frontend-analysis/issues/71)
-remains blocked until explicit maintainer approval is recorded and a separate
-focused Pull Request changes ADR 0005 and the ADR index to Accepted.
+promise. ADR 0005 is accepted through the durable maintainer approval recorded
+on Issue [#70](https://github.com/YT-TechDev/frontend-analysis/issues/70#issuecomment-5140484732).
+Rust implementation remains blocked until the focused Pull Request recording
+this Accepted status is merged.
 
 ## Decision
 
-If accepted, Core will expose a detached projection named
-`RawSourceCoordinate`. The broader name `SourceCoordinate` is neither proposed
-nor reserved: occupying it now would prematurely constrain future parser,
-protocol, transformed-source, source-map, or presentation coordinate domains.
+ADR 0005 is accepted. Frontend Analysis Core owns the deterministic derivation
+of `RawSourceCoordinate` values from validated `SourceAnchor` endpoints under
+the semantic package below. Issue
+[#71](https://github.com/YT-TechDev/frontend-analysis/issues/71) may begin only
+after the Pull Request recording this Accepted status is merged.
+
+Core exposes a detached projection named `RawSourceCoordinate`. The broader
+name `SourceCoordinate` is neither included nor reserved: occupying it now
+would prematurely constrain future parser, protocol, transformed-source,
+source-map, or presentation coordinate domains.
 
 ### Authority, units, and provenance
 
@@ -77,9 +83,9 @@ source evidence. Future Analysis Results should continue retaining
 `SourceAnchor` whenever exact source evidence is required unless a later
 accepted contract decides otherwise.
 
-### Proposed public surface
+### Public surface
 
-The complete proposed public surface is exactly:
+The complete accepted public surface is exactly:
 
 - `RawSourceCoordinate`, because consumers need a named, grammar-neutral value
   that can be returned from an anchor and retained independently;
@@ -88,9 +94,9 @@ The complete proposed public surface is exactly:
 - `RawSourceCoordinate::byte_offset`, because consumers must access the
   authoritative validated location rather than reconstruct it from derived
   values;
-- `RawSourceCoordinate::line_index`, because the proposal's Core-owned raw line
+- `RawSourceCoordinate::line_index`, because the decision's Core-owned raw line
   projection is otherwise inaccessible;
-- `RawSourceCoordinate::byte_column`, because the proposal's explicitly
+- `RawSourceCoordinate::byte_column`, because the decision's explicitly
   byte-based raw column is otherwise inaccessible;
 - `SourceAnchor::start_coordinate`, because only the anchor can pair retained
   source evidence with its already validated start endpoint without accepting
@@ -111,7 +117,7 @@ The following are deliberately excluded:
 - `SourceText::coordinate`, because accepting an arbitrary offset would create
   a second validation entry point and bypass the anchor-owned provenance;
 - a `SourceCoordinate` alias, because it would imply or reserve broader
-  semantics this proposal does not define;
+  semantics this decision does not define;
 - a new error type, because projection after validation is infallible;
 - unchecked construction, because externally influenced invalid offsets must
   not bypass typed validation;
@@ -127,7 +133,7 @@ The following are deliberately excluded:
 - reverse conversion, because a detached projection does not retain source
   evidence and cannot reconstruct or validate a `SourceAnchor`.
 
-No other public item or trait is part of this proposal.
+No other public item or trait is part of this decision.
 
 ### Raw newline semantics
 
@@ -147,7 +153,7 @@ protocol layers may interpret any of these values differently, but must perform
 an explicit conversion under their own contracts.
 
 The following tables exhaust every valid byte boundary in each source and are
-normative examples of the proposed transition rules.
+normative examples of the accepted transition rules.
 
 #### Empty source
 
@@ -254,11 +260,11 @@ unchanged precedence from ADR 0004:
 5. success.
 
 Externally influenced invalid input must not become an ordinary panic path.
-This proposal neither changes nor duplicates ADR 0004 validation semantics.
+This decision neither changes nor duplicates ADR 0004 validation semantics.
 
 ### Initial implementation posture and determinism
 
-If accepted, the initial implementation will derive coordinates on demand,
+The initial implementation will derive coordinates on demand,
 with no retained public line index, observable cache, public cache
 configuration, or source duplication. It will remain standard-library-only,
 synchronous, deterministic, and safe Rust.
@@ -286,7 +292,7 @@ type, or cache state. No new error or log output may expose source content.
 
 ### Crate, dependency, and package-version boundary
 
-If accepted, implementation will extend the existing
+Implementation will extend the existing
 `frontend-analysis-core` crate. Exactly one production crate, one workspace
 member, and one library target remain; zero third-party dependencies remain.
 There will be no new feature, build script, generated code, target, crate, or CI
@@ -297,7 +303,7 @@ a projection inseparable from `SourceAnchor` evidence.
 The later implementation Issue
 [#71](https://github.com/YT-TechDev/frontend-analysis/issues/71) is planned to
 update the private package version from `0.3.0` to `0.4.0` and synchronize the
-corresponding root `Cargo.lock` entry. This proposal Pull Request makes neither
+corresponding root `Cargo.lock` entry. This acceptance Pull Request makes neither
 change. That future synchronization will not imply crates.io publication,
 external release, stable external SemVer, MSRV, serialization compatibility,
 ABI stability, or release automation.
@@ -448,16 +454,16 @@ than preserve a boundary.
   is gone; documentation must preserve `SourceAnchor` as the authoritative
   retained evidence type.
 - Repeated on-demand prefix scans are a residual CPU-amplification risk for
-  future high-volume consumers. Measurement, rather than this proposal, must
+  future high-volume consumers. Measurement, rather than this decision, must
   justify any optimization.
 - Debug or future logging could leak sensitive source content; the structural
   numeric-only rule and security validation mitigate that risk.
 
 ### Reversibility
 
-While Proposed, the record can be revised or rejected without Rust API or data
-migration. After acceptance and implementation, private scanning mechanics can
-change while semantics remain stable. Changing units, newline transitions,
+Before acceptance, the proposal could be revised or rejected without Rust API
+or data migration cost. After acceptance and implementation, private scanning
+mechanics can change while semantics remain stable. Changing units, newline transitions,
 provenance, public names, or endpoint ownership would require a new focused
 Issue, explicit approval, compatibility analysis, and normally a superseding
 ADR. Removing the workspace-facing API would require migration of workspace
@@ -468,8 +474,9 @@ their own required approval.
 ## Compatibility and Migration
 
 Existing source-anchor API, validation precedence, retained-source behavior,
-and fragment behavior remain unchanged. If accepted, the proposed API is
-additive and workspace-facing, not a stable external SDK. Existing callers need
+and fragment behavior remain unchanged. The accepted API direction is additive
+and workspace-facing, not a stable external SDK; implementation has not yet
+occurred. Existing callers need
 no migration, and parser, adapter, product, and presentation consumers are not
 silently converted.
 
@@ -487,10 +494,11 @@ contract and approval.
 Source text may contain secrets. Complete source, fragments, and storage details
 must not appear in `Debug`, error, log, or validation output; only approved
 identity and numeric structural evidence may be exposed. No new error or log
-path is proposed. Malformed or externally influenced ranges remain handled by
-the existing typed validation and must not become ordinary panics.
+path is introduced by this decision. Malformed or externally influenced ranges
+remain handled by the existing typed validation and must not become ordinary
+panics.
 
-The proposal introduces no `unsafe` Rust, filesystem or network access,
+The decision introduces no `unsafe` Rust, filesystem or network access,
 external dependency, or supply-chain expansion. It authorizes no performance
 optimization without evidence. Repeated on-demand scans remain the identified
 residual CPU-amplification risk for future high-volume consumers. The
@@ -503,7 +511,7 @@ redistribution obligation is added.
 
 ## Validation
 
-If accepted, Issue #71 must validate the implementation with focused tests that
+Issue #71 must validate the implementation with focused tests that
 cover every table row in this ADR, including empty source, end-of-source,
 LF, lone CR, CRLF interior and completion boundaries, text around CRLF, and the
 mixed sequence. Tests must also cover multi-byte UTF-8 byte columns for `é`,
@@ -514,7 +522,7 @@ projection; and the absence of source content in `Debug`.
 Tests must demonstrate that FF, VT, NEL, U+2028, and U+2029 do not cause raw
 line transitions, projection introduces no error or panic path, and existing
 `SourceText::anchor` validation precedence is unchanged. API review must verify
-that only the proposed public items and traits exist and excluded constructors,
+that only the accepted public items and traits exist and excluded constructors,
 aliases, conversions, traits, cache configuration, and serialization remain
 absent.
 
@@ -523,15 +531,14 @@ formatting, Clippy with warnings denied, all workspace tests, locked offline
 metadata, rustdoc with warnings denied, and diff checks. Metadata and validator
 evidence must continue to show `production`, one package, one workspace member,
 zero dependencies, and one library target. Documentation review must verify
-links, tables, Proposed status, approval evidence, and unchanged normative
-contracts. Passing validation does not accept this ADR or authorize work before
-the required approval record.
+links, tables, Accepted status, approval evidence, and unchanged normative
+contracts. Passing documentation validation does not claim that future
+implementation validation has already passed.
 
 ## Follow-Up
 
-- [#71](https://github.com/YT-TechDev/frontend-analysis/issues/71) is the
-  blocked implementation work and may begin only after explicit maintainer
-  approval and a separate documentation-only Accepted-status Pull Request.
+- ADR 0005 is accepted. [#71](https://github.com/YT-TechDev/frontend-analysis/issues/71)
+  may begin only after this acceptance Pull Request merges.
 - [#72](https://github.com/YT-TechDev/frontend-analysis/issues/72) is later
   contract-test and contributor-documentation work.
 - [#73](https://github.com/YT-TechDev/frontend-analysis/issues/73) is the
@@ -540,18 +547,34 @@ the required approval record.
   diagnostics, serialization, and performance optimization remain separately
   planned future work.
 
-This proposal authorizes none of these follow-ups beyond the current milestone
-contract.
+This decision authorizes none of these follow-ups beyond Issue #71 and
+Milestone #4. Reverse mapping, parser/protocol conversion, retained indexing,
+source maps, diagnostics, serialization, and performance optimization remain
+separately planned and unauthorized.
 
 ## Approval
 
-Pending.
+Approved by `YT-TechDev`, the current maintainer of record, on 2026-07-31.
 
-No maintainer approval is claimed by this Proposed ADR or by merging its
-proposal Pull Request. `YT-TechDev` must record an explicit, attributable,
-decision-specific approval or rejection on Issue #70. If approved, a separate
-documentation-only Pull Request must update this ADR and the ADR index to
-Accepted and link the durable approval record before Issue #71 may begin.
+Durable approval:
+
+- [Issue #70 maintainer decision](https://github.com/YT-TechDev/frontend-analysis/issues/70#issuecomment-5140484732)
+
+The approval accepts the complete semantic package recorded by ADR 0005,
+including Core ownership, `RawSourceCoordinate` naming, authoritative UTF-8 byte
+offsets, zero-based raw line and byte-column units, LF/lone-CR/CRLF semantics,
+CRLF-interior behavior, endpoint-only construction, provenance, lifecycle,
+public and trait surfaces, compatibility boundaries, security posture, initial
+on-demand implementation, and explicit non-goals.
+
+The approval authorizes only the focused implementation and validation sequence
+for Milestone #4 after this Accepted-status Pull Request merges. It does not
+authorize parser, Browser Adapter, protocol, Unicode-display, reverse mapping,
+source maps, diagnostics, Analysis Results, serialization, publication,
+release, or product work.
+
+Any substantive change to the accepted semantics requires renewed architecture
+review and, where applicable, a new or superseding ADR.
 
 ## References
 
@@ -560,6 +583,9 @@ Accepted and link the durable approval record before Issue #71 may begin.
 - [Issue #71: blocked implementation](https://github.com/YT-TechDev/frontend-analysis/issues/71)
 - [Issue #72: later contract tests and contributor documentation](https://github.com/YT-TechDev/frontend-analysis/issues/72)
 - [Issue #73: independent final audit](https://github.com/YT-TechDev/frontend-analysis/issues/73)
+- [Proposal Pull Request #74](https://github.com/YT-TechDev/frontend-analysis/pull/74)
+- [Proposal merge commit `2bc20d73940e7469f554c4d3ee622096f4a07194`](https://github.com/YT-TechDev/frontend-analysis/commit/2bc20d73940e7469f554c4d3ee622096f4a07194)
+- [Issue #70 maintainer decision](https://github.com/YT-TechDev/frontend-analysis/issues/70#issuecomment-5140484732)
 - [ADR 0003: Validated Source Anchors as the first Rust Core domain](0003-validated-source-anchors-first-rust-core-domain.md)
 - [ADR 0004: Validated Source Anchor Semantics](0004-validated-source-anchor-semantics.md)
 - [Architecture Principles](../architecture/PRINCIPLES.md)
