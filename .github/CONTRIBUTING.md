@@ -71,6 +71,14 @@ Issue.
 Maintainer responsibilities and approval boundaries are defined in
 [Maintainership and Decision Authority](../docs/governance/MAINTAINERSHIP.md).
 
+Contributions touching the current source-anchor domain must also follow the
+[Validated Source Anchors Guide](../docs/architecture/VALIDATED_SOURCE_ANCHORS.md):
+preserve exact UTF-8 source semantics and half-open UTF-8 byte ranges; keep
+parser and browser-protocol concepts outside Core; convert external offset
+units before crossing the Core boundary; and do not expose storage
+representation or add serialization, dependencies, concurrency, or wider
+public APIs without focused approval.
+
 ## Issues and Scope
 
 A non-trivial Issue should provide enough context for review:

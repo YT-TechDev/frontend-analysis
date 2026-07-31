@@ -33,7 +33,7 @@ record must still satisfy the
 | --- | --- | --- | --- |
 | Shared implementation-agent contract | [Repository Agent Contract](../AGENTS.md) | Normative agent execution contract and router | Shared role boundaries, scope discipline, scope-relevant document routing, escalation, validation honesty, repository side effects, and completion-report minimums. |
 | Implementation-agent workflow | [Implementation Agent Workflow](development/AGENT_WORKFLOW.md) | Normative development workflow contract | Detailed execution stages, required inputs, escalation classification, validation, diff review, partial completion, and completion reporting for implementation agents. |
-| Validation and completion evidence | [Validation and Completion Evidence](development/VALIDATION.md) | Normative development-validation contract | General validation principles, change-class evidence, future Rust baseline categories, manual-validation records, check statuses, failure handling, and validation evidence inside completion records. |
+| Validation and completion evidence | [Validation and Completion Evidence](development/VALIDATION.md) | Normative development-validation contract | General validation principles, change-class evidence, current Rust baseline categories, manual-validation records, check statuses, failure handling, and validation evidence inside completion records. |
 | Issue hierarchy and slicing | [Issue Model](development/ISSUE_MODEL.md) | Normative development-governance contract | Parent, Child, Leaf, and standalone Leaf responsibilities; hierarchy selection; dependencies; Pull Request slicing; milestone assignment; scope expansion; and Issue completion. |
 | Project overview and entrypoint | [Root README](../README.md) | Guide and repository entrypoint | Maintainers approve project-purpose changes; contributors and agents may update the summary within approved scope. It is not the full source of truth for specialized contracts. |
 | Licensing | [MIT License](../LICENSE) | Legal license artifact | The license text governs licensing only. This index does not interpret, modify, or override it. |
@@ -46,112 +46,77 @@ record must still satisfy the
 | Architecture principles | [Architecture Principles](architecture/PRINCIPLES.md) | Normative architecture contract | Browser independence, ownership, semantic integrity, dependency principles, abstraction criteria, and architecture decision tests. |
 | Architecture layers | [Architecture Layers and Boundaries](architecture/LAYERS.md) | Normative architecture contract | Layer responsibilities, exclusions, allowed dependencies, boundary crossings, and cross-cutting capability ownership. |
 | Rust Core contracts | [Rust Core Contracts](architecture/RUST_CORE_CONTRACTS.md) | Normative Rust architecture contract | Ownership, borrowing, mutation, domain types, errors, concurrency, async boundaries, visibility, compatibility, and Rust-specific unsafe implementation constraints. |
+| Validated Source Anchors Guide | [Validated Source Anchors Guide](architecture/VALIDATED_SOURCE_ANCHORS.md) | Guide | Contributor guidance for current source-anchor semantics, layer consumption, accepted and rejected responsibilities, and review triggers. |
 | Documentation classification and precedence | This index | Normative documentation-governance contract | Documentation classes, source-of-truth selection, conflict handling, and index maintenance. It cannot redefine substantive authority owned by another specialized contract. |
 | Contribution templates | [Pull Request template](../.github/PULL_REQUEST_TEMPLATE.md) and [Issue templates](../.github/ISSUE_TEMPLATE/) | Non-authoritative entrypoints and information-collection forms | Route contributors and collect evidence; they do not approve architecture, public API, dependencies, security exceptions, `unsafe Rust`, releases, or governance changes. |
 
-## Current Rust Bootstrap State
+## Current Rust Core State
 
-This section is an explanatory current-state guide. It summarizes the merged
-bootstrap for discoverability and has no independent normative authority.
+This explanatory current-state guide has no independent normative authority.
+The root remains a virtual Cargo workspace using resolver 3. Exactly one
+production member exists: `crates/frontend-analysis-core`, whose private
+`frontend-analysis-core` package sets `publish = false` and uses Edition 2024.
+The root `Cargo.lock` is committed. The crate has zero third-party dependencies
+and currently owns only Validated Source Anchors; it is not a generic utility
+layer.
 
-### Repository Role
-
-`YT-TechDev/frontend-analysis` is the initial Core-focused Rust workspace owner;
-this does not establish a permanent monorepo. Accepted [ADR 0001](decisions/0001-repository-topology-and-workspace-ownership.md)
-owns topology and extraction review, while accepted [ADR 0002](decisions/0002-rust-bootstrap-toolchain-and-validation-policy.md)
-owns the toolchain and bootstrap policy. Future extraction requires a new
-accepted ADR after the objective triggers in ADR 0001 are met.
-
-### Current Workspace
-
-The root is a virtual Cargo workspace using resolver 3. It intentionally has
-zero packages, zero workspace members, zero crates, no `.rs` source, zero Rust
-dependencies, and no `Cargo.lock`. It defines no package, public API, or product
-behavior.
+Accepted [ADR 0001](decisions/0001-repository-topology-and-workspace-ownership.md)
+owns topology and extraction review, [ADR 0002](decisions/0002-rust-bootstrap-toolchain-and-validation-policy.md)
+owns toolchain policy, [ADR 0003](decisions/0003-validated-source-anchors-first-rust-core-domain.md)
+owns the selected domain and crate boundary, and [ADR 0004](decisions/0004-validated-source-anchor-semantics.md)
+owns its semantics.
 
 ### Contributor Setup and Validation
 
-With `rustup` available, the repository toolchain file selects Rust `1.97.1`,
-rustfmt, and Clippy. Install the exact toolchain when needed:
+With `rustup` available, install the selected Rust `1.97.1` toolchain when
+needed, then run the production checks:
 
 ```bash
 rustup toolchain install 1.97.1 \
   --profile minimal \
   --component rustfmt \
   --component clippy
+python3 .github/scripts/validate-rust-workspace-state.py .
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-targets --all-features
+cargo metadata --offline --format-version 1 --locked
 ```
 
-Run the currently operational identity and metadata validation:
-
-```bash
-rustup show active-toolchain
-rustc --version --verbose
-cargo --version --verbose
-cargo fmt --version
-cargo clippy --version
-cargo metadata --offline --format-version 1 --no-deps
-```
-
-Use this deterministic standard-library check for the workspace counts:
-
-```bash
-cargo metadata --offline --format-version 1 --no-deps |
-python3 -c '
-import json
-import sys
-
-metadata = json.load(sys.stdin)
-package_count = len(metadata["packages"])
-member_count = len(metadata["workspace_members"])
-
-print(f"packages={package_count}")
-print(f"workspace_members={member_count}")
-
-if package_count != 0 or member_count != 0:
-    raise SystemExit("expected zero packages and zero workspace members")
-'
-```
-
-The contributor workflow is owned by [Contributing](../.github/CONTRIBUTING.md),
-and evidence status is owned by [Validation and Completion Evidence](development/VALIDATION.md).
+The production validator must print exactly `production`. The contributor
+workflow is owned by [Contributing](../.github/CONTRIBUTING.md), and evidence
+status is owned by [Validation and Completion Evidence](development/VALIDATION.md).
 
 ### Validation Applicability
 
 | Category | Current status | Reason |
 | --- | --- | --- |
 | Toolchain identity | Applicable | Exact Rust `1.97.1` is pinned. |
-| Cargo metadata | Applicable | Validates the real zero-member workspace. |
-| Source formatting | Not applicable | No package or target exists. |
-| Clippy source lint | Not applicable | No package or target exists. |
-| Check/test/rustdoc/doctest | Not applicable | No package or target exists. |
-| Features/dependency/advisory | Not applicable | No feature or dependency graph exists. |
-| Cross-target build | Not applicable | No package, target matrix, or artifact exists. |
+| Workspace policy and locked Cargo metadata | Applicable | One package, one member, zero dependencies, one library target, and the committed lockfile are validated. |
+| Source formatting | Applicable | Production Rust source exists. |
+| Clippy source lint | Applicable | The production library and all targets are linted with warnings denied. |
+| Tests | Applicable | Implementation and public-contract tests validate the current domain. |
+| Rustdoc | Applicable when required by the change | Rust documentation can be built with warnings denied. |
+| Cross-target build | Not applicable by default | No target matrix or additional artifact is approved. |
 
 ### Deferred Decisions
 
 | Deferred decision | Future owner |
 | --- | --- |
-| First crate/package name and boundary | Future Core-domain Issue/ADR |
-| Package metadata and publication | Future Core-domain Issue/ADR |
-| Workspace lint inheritance | First-package focused Issue |
+| New domains and additional crates | Focused domain Issue/ADR |
 | Dependencies and features | Focused dependency Issue |
-| `Cargo.lock` ownership | First-package or focused dependency Issue |
-| MSRV | Focused compatibility Issue/ADR |
-| Target and browser support | Focused compatibility Issue/ADR |
-| Public API and serialized formats | Future Core-domain Issue/ADR |
-| Parser and protocol libraries | Focused dependency and boundary Issue |
-| Async runtime and concurrency | Future Core-domain Issue/ADR |
-| WASM, FFI, and unsafe implementation | Focused compatibility/security Issue/ADR |
-| Metadata-only CI | Issue #45 |
+| Parsers, browser protocols, and Browser Adapters | Focused dependency and boundary Issue/ADR |
+| Line/column indexes and source maps | Focused domain Issue/ADR |
+| Serialization | Focused compatibility Issue/ADR |
+| MSRV and target support | Focused compatibility Issue/ADR |
+| Concurrency and async runtime | Focused domain Issue/ADR |
+| WASM, FFI, and unsafe exceptions | Focused compatibility/security Issue/ADR |
 | Release automation | Future release Issue |
-| Required status checks | Separate repository-setting Issue |
-| Browser Adapter and presentation/product repository placement | Future topology/placement ADR |
+| Repository extraction | Future topology/placement ADR when ADR 0001 triggers are met |
 
-### Meaning of Bootstrap PASS
-
-Completion of Milestone #2 permits planning of the next, separately scoped
-Core-domain milestone only. It approves no production implementation or public
-contract.
+Current completion does not imply completion of a parser, Browser Adapter,
+analysis-result model, CLI, desktop, VS Code, web product, serialization, or
+release policy. Returning to the zero-member bootstrap is not accepted.
 
 ## Source-of-Truth Rules
 
