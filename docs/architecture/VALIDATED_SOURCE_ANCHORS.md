@@ -5,7 +5,9 @@
 This non-normative guide helps contributors work within the approved Validated
 Source Anchors contracts. [ADR 0003](../decisions/0003-validated-source-anchors-first-rust-core-domain.md)
 owns the selected domain and crate boundary, [ADR 0004](../decisions/0004-validated-source-anchor-semantics.md)
-owns source-anchor semantics, [Architecture Layers](LAYERS.md) owns layer
+owns source-anchor semantics, and [ADR 0005](../decisions/0005-raw-source-coordinate-semantics.md)
+owns raw source-coordinate semantics. The [Raw Source Coordinates Guide](RAW_SOURCE_COORDINATES.md)
+provides its explanatory contributor guidance. [Architecture Layers](LAYERS.md) owns layer
 responsibilities, and [Rust Core Contracts](RUST_CORE_CONTRACTS.md) owns general
 Rust design constraints. This guide explains those decisions; it does not
 create a stable external API, serialization format, release promise, MSRV,
@@ -13,11 +15,13 @@ WASM, FFI, or browser compatibility guarantee.
 
 ## Current domain responsibility
 
-`frontend-analysis-core` currently owns only caller-supplied,
-browser-independent `SourceId` values; immutable ownership of exact UTF-8
-source; validated half-open UTF-8 byte ranges; owned `SourceAnchor` values;
-exact fragment borrowing; and deterministic typed range errors. This is the
-first Core domain, not a generic utility layer.
+`frontend-analysis-core` currently owns two related domains: Validated Source
+Anchors and Raw Source Line Coordinates. The anchor domain owns caller-supplied
+`SourceId` values, immutable exact UTF-8 source, validated half-open UTF-8 byte
+ranges, retained `SourceAnchor` values, exact fragment borrowing, and typed
+range errors. Raw coordinates are detached projections of validated endpoints;
+they do not replace anchors as authoritative evidence. These are focused Core
+domains, not a generic utility layer.
 
 ## Core invariants
 
@@ -44,7 +48,7 @@ implementations currently exist.
 | Caller or source acquisition boundary | Own exact input acquisition and assign a scoped `SourceId`. |
 | Parser | Compute parser-owned tokens or syntax and map accepted positions to authoritative UTF-8 byte offsets. |
 | Browser Adapter | Convert protocol-specific identities and offset units before crossing into Core. |
-| Frontend Analysis Core | Validate and retain browser-independent source anchors. |
+| Frontend Analysis Core | Validate and retain browser-independent source anchors; derive accepted raw coordinates from validated endpoints. |
 | Analysis Results | Retain approved anchors as provenance when later contracts authorize result models. |
 | Presentation | Render or explain approved result data without redefining source-anchor semantics. |
 
@@ -61,8 +65,10 @@ implementations currently exist.
 - Adding CDP, WebKit, Firefox, frame, realm, target, or browser-session types to
   Core, or passing browser-protocol offset units directly to `SourceText::anchor`.
 - Storing parser tokens or AST nodes in this domain.
-- Adding line/column indexing, source maps, file or URL loading, or a source
-  registry.
+- Adding retained line indexes, reverse coordinate mapping, source maps, file
+  or URL loading, or a source registry.
+- Projecting unvalidated arbitrary offsets or importing parser, protocol, or
+  presentation coordinate semantics.
 - Generating global IDs in Core or treating content hashes as implicit
   source-instance identity.
 - Adding serialization derives, dependencies for convenience, or speculative
@@ -83,6 +89,8 @@ Caller or approved boundary requests [start, end)
 Core validates ordering, bounds, and UTF-8 boundaries
     ↓
 SourceAnchor retains source identity, range, and exact fragment access
+    ↓
+Start or end projection derives a detached RawSourceCoordinate
 ```
 
 A Browser Adapter or parser must normalize its own offset system before
@@ -127,7 +135,7 @@ match source.anchor(2, 2) {
 
 A focused Issue and architecture review are required before adding new
 Core-owned source concepts, another crate, another public type or method,
-offset-unit conversion, line indexes, serialization, dependencies,
+offset-unit conversion, retained line indexes, reverse mapping, serialization, dependencies,
 concurrency, `Send` or `Sync` promises, parsers, Browser Adapter integration,
 source registries, or file or URL loading.
 

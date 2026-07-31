@@ -13,20 +13,25 @@ this role does not establish a permanent monorepo. The root remains a virtual
 Cargo workspace and currently contains exactly one production member:
 `crates/frontend-analysis-core`. The private `frontend-analysis-core` package
 sets `publish = false`, has zero third-party Rust dependencies, and is validated
-with the committed root `Cargo.lock`. Its current production responsibility is
-limited to Validated Source Anchors.
+with the committed root `Cargo.lock`. Its current production responsibility
+includes Validated Source Anchors and Raw Source Line Coordinates. Raw
+coordinates preserve authoritative UTF-8 byte offsets; they do not imply
+parser, browser-protocol, Unicode-display, or presentation position
+compatibility.
 
 Rust `1.97.1` is pinned for reproducible development and CI, but the pin is not
 an MSRV promise. See the [documentation index](docs/README.md) for detailed
 current-state and validation guidance and the
 [Validated Source Anchors Guide](docs/architecture/VALIDATED_SOURCE_ANCHORS.md)
-for source-anchor contributor guidance. Accepted
+and [Raw Source Coordinates Guide](docs/architecture/RAW_SOURCE_COORDINATES.md)
+for contributor guidance. Accepted
 [ADR 0001](docs/decisions/0001-repository-topology-and-workspace-ownership.md),
 [ADR 0002](docs/decisions/0002-rust-bootstrap-toolchain-and-validation-policy.md),
 [ADR 0003](docs/decisions/0003-validated-source-anchors-first-rust-core-domain.md),
-and [ADR 0004](docs/decisions/0004-validated-source-anchor-semantics.md) own the
-applicable topology, toolchain, crate-boundary, and source-anchor semantic
-decisions.
+[ADR 0004](docs/decisions/0004-validated-source-anchor-semantics.md), and
+[ADR 0005](docs/decisions/0005-raw-source-coordinate-semantics.md) own the
+applicable topology, toolchain, crate-boundary, source-anchor, and raw
+source-coordinate decisions.
 
 This state does not imply completion or approval of parsers, Browser Adapters,
 browser protocols, analysis-result models, diagnostics or evidence graphs,

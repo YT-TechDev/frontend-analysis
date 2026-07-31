@@ -71,13 +71,17 @@ Issue.
 Maintainer responsibilities and approval boundaries are defined in
 [Maintainership and Decision Authority](../docs/governance/MAINTAINERSHIP.md).
 
-Contributions touching the current source-anchor domain must also follow the
-[Validated Source Anchors Guide](../docs/architecture/VALIDATED_SOURCE_ANCHORS.md):
-preserve exact UTF-8 source semantics and half-open UTF-8 byte ranges; keep
-parser and browser-protocol concepts outside Core; convert external offset
-units before crossing the Core boundary; and do not expose storage
-representation or add serialization, dependencies, concurrency, or wider
-public APIs without focused approval.
+Contributions touching the current Core domains must also follow the
+[Validated Source Anchors Guide](../docs/architecture/VALIDATED_SOURCE_ANCHORS.md)
+and [Raw Source Coordinates Guide](../docs/architecture/RAW_SOURCE_COORDINATES.md).
+Preserve exact UTF-8 source semantics, half-open ranges, and authoritative UTF-8
+byte offsets. Treat raw line indexes and byte columns as zero-based derived
+values, distinct from Unicode, UTF-16, parser, protocol, editor, and
+presentation coordinates, and preserve the accepted CRLF-interior semantics.
+Keep source content out of `Debug`, errors, and logs. Do not add public
+constructors, arbitrary-offset projection, reverse mapping, retained indexes,
+observable caches, serialization, dependencies, concurrency, or broader public
+APIs without focused approval.
 
 ## Issues and Scope
 
@@ -154,6 +158,12 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-targets --all-features
 cargo metadata --offline --format-version 1 --locked
+```
+
+When public API or documentation work requires it, also run:
+
+```bash
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
 ```
 
 The validator must print `production`. Metadata must report exactly one package
