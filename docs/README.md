@@ -47,6 +47,7 @@ record must still satisfy the
 | Architecture layers | [Architecture Layers and Boundaries](architecture/LAYERS.md) | Normative architecture contract | Layer responsibilities, exclusions, allowed dependencies, boundary crossings, and cross-cutting capability ownership. |
 | Rust Core contracts | [Rust Core Contracts](architecture/RUST_CORE_CONTRACTS.md) | Normative Rust architecture contract | Ownership, borrowing, mutation, domain types, errors, concurrency, async boundaries, visibility, compatibility, and Rust-specific unsafe implementation constraints. |
 | Validated Source Anchors Guide | [Validated Source Anchors Guide](architecture/VALIDATED_SOURCE_ANCHORS.md) | Guide | Contributor guidance for current source-anchor semantics, layer consumption, accepted and rejected responsibilities, and review triggers. |
+| Raw Source Coordinates Guide | [Raw Source Coordinates Guide](architecture/RAW_SOURCE_COORDINATES.md) | Guide | Explanatory contributor guidance for the accepted raw coordinate projection, units, layer conversions, and review triggers. |
 | Documentation classification and precedence | This index | Normative documentation-governance contract | Documentation classes, source-of-truth selection, conflict handling, and index maintenance. It cannot redefine substantive authority owned by another specialized contract. |
 | Contribution templates | [Pull Request template](../.github/PULL_REQUEST_TEMPLATE.md) and [Issue templates](../.github/ISSUE_TEMPLATE/) | Non-authoritative entrypoints and information-collection forms | Route contributors and collect evidence; they do not approve architecture, public API, dependencies, security exceptions, `unsafe Rust`, releases, or governance changes. |
 
@@ -57,14 +58,15 @@ The root remains a virtual Cargo workspace using resolver 3. Exactly one
 production member exists: `crates/frontend-analysis-core`, whose private
 `frontend-analysis-core` package sets `publish = false` and uses Edition 2024.
 The root `Cargo.lock` is committed. The crate has zero third-party dependencies
-and currently owns only Validated Source Anchors; it is not a generic utility
-layer.
+and currently owns Validated Source Anchors and Raw Source Line Coordinates; it
+is not a generic utility layer.
 
 Accepted [ADR 0001](decisions/0001-repository-topology-and-workspace-ownership.md)
 owns topology and extraction review, [ADR 0002](decisions/0002-rust-bootstrap-toolchain-and-validation-policy.md)
 owns toolchain policy, [ADR 0003](decisions/0003-validated-source-anchors-first-rust-core-domain.md)
-owns the selected domain and crate boundary, and [ADR 0004](decisions/0004-validated-source-anchor-semantics.md)
-owns its semantics.
+owns the selected domain and crate boundary, [ADR 0004](decisions/0004-validated-source-anchor-semantics.md)
+owns source-anchor semantics, and accepted [ADR 0005](decisions/0005-raw-source-coordinate-semantics.md)
+owns raw source-coordinate semantics.
 
 ### Contributor Setup and Validation
 
@@ -106,7 +108,7 @@ status is owned by [Validation and Completion Evidence](development/VALIDATION.m
 | New domains and additional crates | Focused domain Issue/ADR |
 | Dependencies and features | Focused dependency Issue |
 | Parsers, browser protocols, and Browser Adapters | Focused dependency and boundary Issue/ADR |
-| Line/column indexes and source maps | Focused domain Issue/ADR |
+| Retained line indexes, reverse coordinate mapping, parser/protocol conversion, and source maps | Focused domain or boundary Issue/ADR |
 | Serialization | Focused compatibility Issue/ADR |
 | MSRV and target support | Focused compatibility Issue/ADR |
 | Concurrency and async runtime | Focused domain Issue/ADR |
