@@ -2,6 +2,8 @@ use std::error::Error;
 use std::fmt;
 use std::rc::Rc;
 
+use crate::RawSourceCoordinate;
+
 /// A caller-supplied, browser-independent source identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SourceId(u64);
@@ -144,6 +146,34 @@ impl SourceAnchor {
     /// Borrows the exact retained substring without allocating or normalizing.
     pub fn fragment(&self) -> &str {
         &self.source.text[self.range.start..self.range.end]
+    }
+
+    /// Projects the validated inclusive start endpoint to a raw coordinate.
+    ///
+    /// The authoritative byte offset and the derived line index and UTF-8 byte
+    /// column are zero-based and grammar-neutral. The returned value is
+    /// detached from the source text; this anchor remains the retained source
+    /// evidence.
+    pub fn start_coordinate(&self) -> RawSourceCoordinate {
+        RawSourceCoordinate::from_validated_endpoint(
+            self.source.id,
+            &self.source.text,
+            self.range.start,
+        )
+    }
+
+    /// Projects the validated exclusive end endpoint to a raw coordinate.
+    ///
+    /// The authoritative byte offset and the derived line index and UTF-8 byte
+    /// column are zero-based and grammar-neutral. The returned value is
+    /// detached from the source text; this anchor remains the retained source
+    /// evidence.
+    pub fn end_coordinate(&self) -> RawSourceCoordinate {
+        RawSourceCoordinate::from_validated_endpoint(
+            self.source.id,
+            &self.source.text,
+            self.range.end,
+        )
     }
 }
 
