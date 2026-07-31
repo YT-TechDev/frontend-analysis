@@ -326,7 +326,7 @@ does not confer authority.
 | [0003](0003-validated-source-anchors-first-rust-core-domain.md) | Establish Validated Source Anchors as the first Rust Core domain | Accepted | 2026-07-31 | None |
 | [0004](0004-validated-source-anchor-semantics.md) | Define Validated Source Anchor Semantics | Accepted | 2026-07-31 | None |
 | [0005](0005-raw-source-coordinate-semantics.md) | Raw Source Coordinate Semantics | Accepted | 2026-07-31 | None |
-| [0006](0006-qualify-first-source-anchored-analysis-vertical-slice.md) | Qualify the First Source-Anchored Analysis Vertical Slice | Proposed | 2026-07-31 | None |
+| [0006](0006-qualify-first-source-anchored-analysis-vertical-slice.md) | Qualify the First Source-Anchored Analysis Vertical Slice | Accepted | 2026-07-31 | None |
 
 ## Representative Classifications
 
