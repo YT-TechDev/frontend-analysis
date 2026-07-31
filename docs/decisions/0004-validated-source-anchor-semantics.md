@@ -2,14 +2,14 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Proposed |
+| Status | Accepted |
 | Date | 2026-07-31 |
-| Decision owner / approver | Awaiting explicit review by `YT-TechDev`; no maintainer approval is claimed |
+| Decision owner / approver | YT-TechDev |
 | Linked Issue | [#54](https://github.com/YT-TechDev/frontend-analysis/issues/54) |
-| Related Pull Request | None at proposal creation |
+| Related Pull Request | [#60](https://github.com/YT-TechDev/frontend-analysis/pull/60) |
 | Supersedes | None |
 | Superseded by | None |
-| Affected normative contracts | None proposed — this record specializes the source-anchor domain selected by ADR 0003 within the existing architecture, Rust Core, security, and validation contracts; it changes none of those contracts. |
+| Affected normative contracts | None — this record specializes the source-anchor domain selected by ADR 0003 within the existing architecture, Rust Core, security, and validation contracts; it changes none of those contracts. |
 
 ## Context
 
@@ -17,7 +17,7 @@ Accepted [ADR 0003](0003-validated-source-anchors-first-rust-core-domain.md)
 selects Validated Source Anchors as the first Rust Core domain and assigns it
 browser-independent source identity, immutable source ownership, validated byte
 ranges, owned anchors, deterministic validation, and domain errors. It
-deliberately leaves their exact semantics to this proposal. Issue #55 cannot
+deliberately leaves their exact semantics to this decision. Issue #55 cannot
 implement the domain without resolving those choices first.
 
 The input may originate outside Core and must be treated as potentially
@@ -26,28 +26,30 @@ and multiple anchors may refer to one source without each retaining a complete
 copy. The milestone excludes dependencies, global state, concurrency, async,
 serialization, parsers, browser protocols, source maps, and product behavior.
 
-This proposal is one tightly coupled semantic package: the ownership choice
+This decision is one tightly coupled semantic package: the ownership choice
 determines lifetime and auto-trait behavior; byte-range invariants determine
 safe fragment access; identity determines provenance; and deterministic typed
 errors make invalid external input ordinary domain behavior. It constrains the
 future Issue #55 implementation without prescribing complete Rust source or
 final method signatures.
 
-No normative contract update is proposed. The package applies the existing
+No normative contract update is required. The package applies the existing
 [Architecture Principles](../architecture/PRINCIPLES.md),
 [Architecture Layers](../architecture/LAYERS.md),
 [Rust Core Contracts](../architecture/RUST_CORE_CONTRACTS.md),
 [Secure Development](../development/SECURE_DEVELOPMENT.md), and
 [Validation](../development/VALIDATION.md) requirements to the first domain. It
 does not change a layer, dependency direction, security exception, validation
-rule, or general Rust policy. If maintainers revise this proposal so that it
+rule, or general Rust policy. If maintainers revise this decision so that it
 conflicts with one of those contracts, review must stop and the owning
 normative contract must be addressed explicitly.
 
 ## Decision
 
-If accepted, the following package is the complete semantic authority for
-Issue #55. While this ADR remains Proposed, it authorizes no implementation.
+ADR 0004 is accepted and the following package is the complete semantic
+authority for Issue #55. Implementation may begin only after the Pull Request
+accepting this ADR is merged, and remains constrained by ADR 0003, ADR 0004,
+and Issue #55. Acceptance authorizes no work outside the approved milestone.
 
 ### Domain model and source input
 
@@ -233,7 +235,7 @@ does not promise crates.io publication or a stable external Rust API.
 
 ### Trait policy
 
-The smallest proposed trait surface is:
+The smallest accepted trait surface is:
 
 | Concept | Required | Deliberately absent or deferred |
 | --- | --- | --- |
@@ -459,7 +461,7 @@ authority if they remain explicit.
 ## Compatibility and Migration
 
 No production crate, Rust API, serialized data, protocol, product, or adapter
-consumer exists to migrate in this proposal. If accepted, Issue #55 establishes
+consumer exists to migrate in this decision. Issue #55 establishes
 the initial workspace-facing semantics. There is no implicit conversion from a
 browser protocol offset; adapters must identify units and normalize them before
 Core validation.
@@ -481,17 +483,17 @@ does not establish a general logging policy. Immutable storage exposes no
 mutation path and uses no unsafe code, global state, thread, lock, network, file
 system, or background service.
 
-This documentation-only proposal introduces no dependency and therefore no new
+This documentation-only decision introduces no dependency and therefore no new
 supply-chain or third-party license impact. Future repository-authored code
 remains under the MIT License. [Secure Development](../development/SECURE_DEVELOPMENT.md)
 continues to govern untrusted input and sensitive output.
 
 ## Validation
 
-This proposal must be validated by:
+This decision must be validated by:
 
-- conformance with the current ADR template, unused number, Proposed status,
-  index entry, and non-approval lifecycle language;
+- conformance with the current ADR template, Accepted status, index entry, and
+  approval lifecycle language;
 - resolution of every relative documentation link;
 - independent byte-length and UTF-8 boundary checks for the ASCII and
   multi-byte examples;
@@ -504,7 +506,7 @@ This proposal must be validated by:
   dependency, workspace, lint, toolchain, CI, or repository-setting change is
   included.
 
-If accepted, Issue #55 must add behavioral tests for every valid and invalid
+Issue #55 must add behavioral tests for every valid and invalid
 example, error field and precedence combination, exact fragments, source
 lifetime independence, shared clone behavior without complete-source
 duplication, identity distinctions, deterministic repetition, and the reviewed
@@ -514,26 +516,32 @@ authorize broader semantics.
 
 ## Follow-Up
 
-- `YT-TechDev` must explicitly review, revise or approve this proposal under
-  [Issue #54](https://github.com/YT-TechDev/frontend-analysis/issues/54).
-- Issue #55 remains blocked until ADR 0004 is explicitly accepted with durable,
-  decision-specific approval.
-- After acceptance, Issue #55 may implement only this domain and must verify
-  actual visibility and auto-trait consequences before exposing them.
-- Any concurrency, serialization, alternate offset, parser, adapter, or broader
-  public API requirement needs separately approved scope.
+- ADR 0004 is accepted. Issue #55 may begin after the Pull Request accepting
+  this ADR is merged and may implement only the accepted domain.
+- Issue #55 must review actual visibility and auto-trait consequences before
+  exposing them.
+- Concurrency, serialization, alternate offsets, parser work, adapters, broader
+  public APIs, and other deferred capabilities require separate approval.
+- Final milestone completion remains subject to independent audit
+  [Issue #58](https://github.com/YT-TechDev/frontend-analysis/issues/58).
 
 ## Approval
 
-Approval is pending explicit review by `YT-TechDev`, the current maintainer of
-record. No maintainer approval is claimed. This Proposed ADR does not authorize
-implementation, and Issue #55 remains blocked.
+Approved by `YT-TechDev`, the current maintainer of record, on 2026-07-31.
 
-ADR 0004 may become Accepted only after explicit, attributable,
-decision-specific, durable maintainer approval is recorded here with the
-approver identity, date, and durable approval link. Pull Request merge alone is
-not implicit approval. Until that record exists, the status must remain
-Proposed and Issue #54 must remain open for the decision review.
+Durable approval:
+
+- [Issue #54 maintainer architecture decision](https://github.com/YT-TechDev/frontend-analysis/issues/54#issuecomment-5138469533)
+
+The approval accepts the complete semantic package recorded by ADR 0004,
+including source provenance, immutable shared ownership, UTF-8 byte-range
+semantics, empty ranges, deterministic validation precedence, typed errors,
+fragment semantics, identity, visibility, traits, compatibility boundaries,
+and explicit non-goals.
+
+The approval does not authorize work beyond Issue #55 or Milestone #3. Any
+substantive change to these semantics requires renewed architecture review and,
+where applicable, a new ADR.
 
 ## References
 
@@ -541,6 +549,8 @@ Proposed and Issue #54 must remain open for the decision review.
 - [Parent Issue #52](https://github.com/YT-TechDev/frontend-analysis/issues/52)
 - [Prerequisite Issue #53](https://github.com/YT-TechDev/frontend-analysis/issues/53)
 - [Implementation Issue #55](https://github.com/YT-TechDev/frontend-analysis/issues/55)
+- [Proposal Pull Request #60](https://github.com/YT-TechDev/frontend-analysis/pull/60)
+- [Issue #54 maintainer architecture decision](https://github.com/YT-TechDev/frontend-analysis/issues/54#issuecomment-5138469533)
 - [Merged prerequisite Pull Request #59](https://github.com/YT-TechDev/frontend-analysis/pull/59)
 - [Milestone 3](https://github.com/YT-TechDev/frontend-analysis/milestone/3)
 - [ADR 0001](0001-repository-topology-and-workspace-ownership.md)
