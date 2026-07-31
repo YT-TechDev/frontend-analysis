@@ -1,0 +1,8 @@
+[package]
+name = "frontend-analysis-core"
+version = "0.3.0"
+edition.workspace = true
+publish = false
+
+[lints]
+workspace = true
