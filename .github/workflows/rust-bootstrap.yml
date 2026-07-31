@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   rust-bootstrap:
-    name: Rust bootstrap metadata
+    name: Rust workspace validation
     runs-on: ubuntu-latest
 
     steps:
@@ -19,40 +19,6 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-
-      - name: Verify accepted manifests
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          expected_cargo = (
-              "[workspace]\n"
-              "members = []\n"
-              'resolver = "3"\n'
-          )
-          expected_toolchain = (
-              "[toolchain]\n"
-              'channel = "1.97.1"\n'
-              'components = ["clippy", "rustfmt"]\n'
-              'profile = "minimal"\n'
-          )
-
-          if Path("Cargo.toml").read_text(encoding="utf-8") != expected_cargo:
-              raise SystemExit("Cargo.toml does not match the accepted bootstrap contract")
-
-          if Path("rust-toolchain.toml").read_text(encoding="utf-8") != expected_toolchain:
-              raise SystemExit(
-                  "rust-toolchain.toml does not match the accepted bootstrap contract"
-              )
-
-          if Path("Cargo.lock").exists():
-              raise SystemExit("Cargo.lock is not allowed in the zero-member bootstrap")
-
-          rust_sources = sorted(Path(".").rglob("*.rs"))
-          if rust_sources:
-              raise SystemExit(f"Rust source is not allowed: {rust_sources}")
-          PY
 
       - name: Install accepted Rust toolchain
         shell: bash
@@ -75,7 +41,17 @@ jobs:
           rustc --version | grep -E '^rustc 1\.97\.1([[:space:]]|$)'
           cargo --version | grep -E '^cargo 1\.97\.1([[:space:]]|$)'
 
+      # Bootstrap acceptance only bridges #62 to #55. Issue #57 must remove it;
+      # production validation is not final until then and creates no permanent contract.
+      - name: Classify accepted workspace state
+        id: workspace
+        shell: bash
+        run: |
+          state="$(python3 .github/scripts/validate-rust-workspace-state.py .)"
+          printf 'state=%s\n' "$state" >> "$GITHUB_OUTPUT"
+
       - name: Validate zero-member metadata
+        if: steps.workspace.outputs.state == 'bootstrap'
         shell: bash
         run: |
           cargo metadata --offline --format-version 1 --no-deps |
@@ -94,12 +70,60 @@ jobs:
               raise SystemExit("expected zero packages and zero workspace members")
           '
 
+      - name: Record bootstrap source checks as not applicable
+        if: steps.workspace.outputs.state == 'bootstrap'
+        shell: bash
+        run: |
+          echo "Formatting: Not applicable — no target exists"
+          echo "Clippy: Not applicable — no target exists"
+          echo "Build: Not applicable — no target exists"
+          echo "Tests: Not applicable — no target exists"
+
+      - name: Validate production source
+        if: steps.workspace.outputs.state == 'production'
+        shell: bash
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
+          cargo test --workspace --all-targets --all-features
+
+      - name: Validate locked production metadata
+        if: steps.workspace.outputs.state == 'production'
+        shell: bash
+        run: |
+          cargo metadata --offline --format-version 1 --locked |
+          python3 -c '
+          import json
+          import sys
+          from pathlib import Path
+
+          metadata = json.load(sys.stdin)
+          packages = metadata["packages"]
+          members = metadata["workspace_members"]
+          expected_manifest = Path("crates/frontend-analysis-core/Cargo.toml").resolve()
+
+          if len(packages) != 1 or len(members) != 1:
+              raise SystemExit("expected exactly one package and workspace member")
+          package = packages[0]
+          if package["id"] != members[0] or package["name"] != "frontend-analysis-core":
+              raise SystemExit("unexpected production package identity")
+          if Path(package["manifest_path"]).resolve() != expected_manifest:
+              raise SystemExit("unexpected production package manifest path")
+          if package["dependencies"]:
+              raise SystemExit("production package dependencies are not allowed")
+          targets = package["targets"]
+          if len(targets) != 1 or targets[0]["kind"] != ["lib"]:
+              raise SystemExit("expected only the approved library target")
+          '
+
       - name: Verify clean validation result
         shell: bash
         run: |
-          test ! -e Cargo.lock
-          if find . -type f -name '*.rs' -print -quit | grep -q .; then
-            echo "Rust source is not allowed in the zero-member bootstrap"
-            exit 1
+          if [[ "${{ steps.workspace.outputs.state }}" == "bootstrap" ]]; then
+            test ! -e Cargo.lock
+            if find . -type f -name '*.rs' -print -quit | grep -q .; then
+              echo "Rust source is not allowed in the zero-member bootstrap"
+              exit 1
+            fi
           fi
           test -z "$(git status --short)"
