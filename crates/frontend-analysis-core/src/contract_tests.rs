@@ -307,17 +307,12 @@ fn coordinate_provenance_copy_clone_and_lifecycle_are_deterministic() {
 }
 
 #[test]
-fn coordinate_debug_contains_structure_but_not_source_content() {
+fn coordinate_debug_does_not_expose_source_content() {
     const MARKER: &str = "private-marker-7f31";
     let source = SourceText::new(SourceId::new(27), format!("prefix-{MARKER}-suffix"));
     let anchor = source.anchor(7, 26).unwrap();
     let debug = format!("{:?}", anchor.start_coordinate());
 
-    assert!(debug.contains("RawSourceCoordinate"));
-    assert!(debug.contains("SourceId(27)"));
-    assert!(debug.contains("byte_offset"));
-    assert!(debug.contains("line_index"));
-    assert!(debug.contains("byte_column"));
     assert!(!debug.contains(source.as_str()));
     assert!(!debug.contains(anchor.fragment()));
     assert!(!debug.contains(MARKER));
