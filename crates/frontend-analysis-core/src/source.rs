@@ -52,9 +52,9 @@ struct SourceData {
 
 /// Immutable, Core-owned UTF-8 source text.
 ///
-/// Clones and anchors privately share immutable storage with [`Rc`]. This
-/// single-threaded ownership model deliberately provides no thread-safety
-/// guarantee.
+/// Clones and anchors privately share immutable source storage. The selected
+/// ownership model is deliberately single-threaded and creates no `Send` or
+/// `Sync` guarantee.
 #[derive(Clone)]
 pub struct SourceText {
     inner: Rc<SourceData>,
@@ -122,7 +122,8 @@ impl fmt::Debug for SourceText {
 /// An owned reference to an exact fragment of immutable source text.
 ///
 /// The anchor retains its source independently of the originating handle. Its
-/// private [`Rc`] storage is intentionally single-threaded.
+/// private shared ownership model is deliberately single-threaded and creates
+/// no `Send` or `Sync` guarantee.
 #[derive(Clone)]
 pub struct SourceAnchor {
     source: Rc<SourceData>,
