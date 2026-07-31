@@ -128,7 +128,7 @@ change, inspects the diff, and reports validation honestly.
 | --- | --- | --- |
 | Documentation-only | Documentation baseline and universal checks | Documentation Index and affected contract |
 | Root agent or governance contract | Documentation baseline, routing/import review, scenarios | Shared Agent Contract, Maintainership |
-| Internal Rust implementation | Future Rust baseline, focused behavior/regression tests | Rust Core Contracts |
+| Internal Rust implementation | Rust baseline, focused behavior/regression tests | Rust Core Contracts |
 | Public Rust API | Rust baseline and intentional public-surface evidence | Rust Core Contracts, Maintainership |
 | Serialized representation | Rust baseline and representation/semantic compatibility evidence | Owning public/result contract |
 | Dependency or toolchain | Need, resolution, supply-chain, and baseline evidence | Secure Development, Maintainership |
@@ -159,60 +159,32 @@ No Markdown linter is required while none is configured. Record it as Not run
 or Not applicable with the reason. Rendering alone does not prove correct
 meaning or valid links.
 
-## Future Rust Baseline
+## Rust Baseline
 
-### Current zero-member bootstrap state
+### Current production package state
 
-The merged virtual workspace makes toolchain identity and Cargo metadata
-operational now:
+The current Rust baseline is:
 
-```text
-rustup show active-toolchain
-rustc --version --verbose
-cargo --version --verbose
-cargo fmt --version
-cargo clippy --version
-cargo metadata --offline --format-version 1 --no-deps
-```
-
-Evidence MUST objectively assert that `packages` count is zero and
-`workspace_members` count is zero. It MUST also confirm that no package, Rust
-source, dependency, feature, build script, `Cargo.lock`, or unexpected generated
-file exists. Passing metadata is not source validation.
-
-Source formatting, Clippy source lint, `cargo check`, `cargo test`, rustdoc,
-doctest, feature combinations, dependency/advisory audit, and cross-target
-build are `Not applicable` while no package or target exists.
-
-### Future package state
-
-Only after a package or target exists, and the active Issue selects applicable
-features and platforms, baseline categories become formatting, linting,
-compile/type checking, tests, documentation, and build or artifact verification.
-Standard future forms are:
-
-```text
+```bash
+python3 .github/scripts/validate-rust-workspace-state.py .
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo check --workspace --all-targets --all-features
 cargo test --workspace --all-targets --all-features
-cargo doc --workspace --all-features --no-deps
+cargo metadata --offline --format-version 1 --locked
 ```
 
-These are future forms, not commands applicable to the current zero-member
-workspace. `--all-features` MUST NOT be enabled automatically; use it only when
-approved features are intended to compose. Mutually exclusive,
-platform-specific, or capability-specific features require an Issue-defined
-matrix. Platform targets require the relevant environment or an honestly
-reported limitation. Treat documentation warnings as errors when an approved
-cross-platform method exists. Add `cargo build` for deliverable artifacts or
-build-specific behavior, and examples, doctests, benches, or target checks only
-when affected.
+The validator MUST report `production`. Locked Cargo metadata MUST report
+exactly one package and exactly one workspace member, both identifying
+`frontend-analysis-core` at its approved manifest path. It MUST also report
+zero dependencies and only the approved library target. The root `Cargo.lock`
+is committed and validation MUST use `--locked`. Source formatting, Clippy, and
+tests are applicable to the current package.
 
-This contract creates no MSRV, target, CI, coverage, dependency-tool, feature,
-channel, or compatibility promise and selects no extra test or lint tool.
-Successful compilation or `cargo check` never replaces behavioral tests.
-Passing source validation creates no architecture approval.
+Public-API, rustdoc, platform, feature, security, performance, and specialized
+checks remain change-class dependent and require the evidence selected by the
+active Issue and owning contracts. This baseline creates no MSRV, target,
+browser, release, or compatibility promise and selects no additional tool.
+Successful CI is validation evidence, not architecture approval.
 
 ## Internal Rust Changes
 
@@ -469,8 +441,8 @@ completion result.
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `SECURITY.md` change | Documentation, security | Documentation and universal checks | Policy discoverability, Secure Development consistency, private route and sensitive-content review | Link resolution, structure, `git diff --check` | GitHub placement/discoverability when accessible; never send a test report | Rust/browser Not applicable; live recognition Not run if inaccessible | Maintainer security review | Only when the private route remains usable and clear |
 | Root agent-file change | Documentation, agent contract | Documentation and universal checks | Import/routing, ownership/duplication, concise size, representative task simulations | Link/import review, structure, `git diff --check` | Safe runtime tool-context check when available | Runtime check Not run if unavailable; current Rust baseline Not applicable | Maintainer contract review | Only when routing and simulations agree |
-| Future private Rust refactor | Internal Rust | Future Rust baseline and universal checks | Behavior/regression; unchanged API, serialization, semantics, dependencies; ownership/panic/error/visibility/determinism | Format, lint, check/build as affected, tests, docs | Only affected interactive/platform behavior | Public approval Not applicable absent public change | Existing contract plus ordinary review | Introduced required failure blocks completion |
-| Future public Rust type change | Public API | Rust baseline and universal checks | Surface/rustdoc/use, compatibility, migration/deprecation, features/platforms; serialization only if affected; ADR if triggered | Format, lint, check/build as affected, tests, docs, consumer compile use | Supported consumer scenario where useful | Unsupported platforms recorded | Explicit maintainer approval | Compile success alone cannot complete |
+| Private Rust refactor | Internal Rust | Rust baseline and universal checks | Behavior/regression; unchanged API, serialization, semantics, dependencies; ownership/panic/error/visibility/determinism | Format, lint/check/build as affected, tests, docs | Only affected interactive/platform behavior | Public approval Not applicable absent public change | Existing contract plus ordinary review | Introduced required failure blocks completion |
+| Public Rust type change | Public API | Rust baseline and universal checks | Surface/rustdoc/use, compatibility, migration/deprecation, features/platforms; serialization only if affected; ADR if triggered | Format, lint/check/build as affected, tests, docs, consumer compile use | Supported consumer scenario where useful | Unsupported platforms recorded | Explicit maintainer approval | Compile success alone cannot complete |
 | New dependency | Dependency/toolchain | Universal and applicable Rust baseline | Need/alternatives, manifest/lock/transitives, features, maintenance, security, license, platform, leakage; ADR if foundational | Resolution/tree tools actually adopted plus baseline | Manual source review | Unavailable advisory sources recorded | Explicit approval before addition | No addition or completion before approval/evidence |
 | Browser adapter normalization | Adapter, Core boundary | Rust baseline when code exists and universal checks | Known/unknown/unsupported/missing/partial/malformed/lossy mappings, containment, units/order/errors, deterministic fixtures, engine version, redaction | Adapter fixtures/regressions and Rust baseline | Live browser only for a live claim | Live check honestly unavailable; fixtures never relabeled live | Architecture/adapter owner approval as required | Only claims actually evidenced behavior |
 | Performance optimization using `unsafe` | Performance, unsafe, security | Rust baseline, correctness, reproducible measurement | Safe alternatives, complete unsafe containment, selected static/dynamic/fuzz/sanitizer/interpreter/platform evidence | Approved Rust checks and baseline/candidate benchmark | Platform/hardware reproduction | Every unavailable check and residual risk | Focused Issue and explicit approval before implementation | Compilation or one timing never completes; unapproved work stops |

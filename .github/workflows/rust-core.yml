@@ -1,0 +1,64 @@
+name: Rust Core
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  rust-core:
+    name: Rust workspace validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install accepted Rust toolchain
+        shell: bash
+        run: |
+          rustup toolchain install 1.97.1 \
+            --profile minimal \
+            --component rustfmt \
+            --component clippy
+
+      - name: Record accepted toolchain
+        shell: bash
+        run: |
+          rustup show active-toolchain
+          rustc --version --verbose
+          cargo --version --verbose
+          cargo fmt --version
+          cargo clippy --version
+
+          rustup show active-toolchain | grep -E '^1\.97\.1-'
+          rustc --version | grep -E '^rustc 1\.97\.1([[:space:]]|$)'
+          cargo --version | grep -E '^cargo 1\.97\.1([[:space:]]|$)'
+
+      - name: Validate production workspace policy
+        shell: bash
+        run: |
+          state="$(python3 .github/scripts/validate-rust-workspace-state.py .)"
+          test "$state" = production
+
+      - name: Validate formatting
+        run: cargo fmt --all -- --check
+
+      - name: Validate Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Run tests
+        run: cargo test --workspace --all-targets --all-features
+
+      - name: Validate locked metadata
+        run: cargo metadata --offline --format-version 1 --locked
+
+      - name: Verify clean validation result
+        shell: bash
+        run: test -z "$(git status --short)"

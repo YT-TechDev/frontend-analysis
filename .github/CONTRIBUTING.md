@@ -125,7 +125,7 @@ Contributors must:
 
 All changes must also follow [Secure Development](../docs/development/SECURE_DEVELOPMENT.md).
 
-## Current Rust Bootstrap Workflow
+## Current Rust Workspace Validation
 
 `rustup` is a prerequisite. The repository toolchain file selects Rust `1.97.1`
 with rustfmt and Clippy. Prepare that exact toolchain when it is not already
@@ -138,28 +138,29 @@ rustup toolchain install 1.97.1 \
   --component clippy
 ```
 
-The currently operational validation is toolchain identity and Cargo metadata:
+Run the current production Rust baseline locally:
 
 ```bash
-rustup show active-toolchain
-rustc --version --verbose
-cargo --version --verbose
-cargo fmt --version
-cargo clippy --version
-cargo metadata --offline --format-version 1 --no-deps
+python3 .github/scripts/validate-rust-workspace-state.py .
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-targets --all-features
+cargo metadata --offline --format-version 1 --locked
 ```
 
-Metadata is expected to report zero packages and zero workspace members.
-Source formatting, Clippy source lint, `cargo check`, `cargo test`,
-rustdoc/doctest, features, dependency/advisory audit, and cross-target builds
-are `Not applicable — no package or target exists`.
+The validator must print `production`. Metadata must report exactly one package
+and workspace member: `frontend-analysis-core` at its approved manifest path,
+with zero dependencies and only its approved library target. `Cargo.lock` is
+committed, and metadata validation uses `--locked`. Formatting, Clippy, and
+tests are applicable to the current source. Returning the workspace to zero
+members is a policy failure.
 
-Do not add a placeholder crate or treat the toolchain pin as MSRV. A toolchain
-change requires a focused Issue and Pull Request, official release review,
-validation, and maintainer approval. The first crate and source-level policy
-require separately approved work. [ADR 0001](../docs/decisions/0001-repository-topology-and-workspace-ownership.md)
+Do not treat the toolchain pin as an MSRV. A toolchain change requires a focused
+Issue and Pull Request, official release review, validation, and maintainer
+approval. Passing CI does not authorize API, dependency, architecture, unsafe,
+parser, browser, serialization, or release changes. [ADR 0001](../docs/decisions/0001-repository-topology-and-workspace-ownership.md)
 owns topology, [ADR 0002](../docs/decisions/0002-rust-bootstrap-toolchain-and-validation-policy.md)
-owns bootstrap policy, and [Validation and Completion Evidence](../docs/development/VALIDATION.md)
+owns the toolchain policy, and [Validation and Completion Evidence](../docs/development/VALIDATION.md)
 owns validation applicability and evidence.
 
 ## Validation and Documentation
@@ -176,9 +177,8 @@ specialized contracts may require additional evidence. Contributors must:
   honestly rather than claiming checks that were not performed.
 
 Documentation-only changes use the contract's documentation baseline. Rust
-source-level work uses its conditional Rust baseline only after a package or
-target exists and only for Issue-selected feature and platform combinations.
-Passing validation does
+source-level work uses the current Rust baseline plus any change-class checks
+selected by the active Issue and affected contracts. Passing validation does
 not grant architecture, API, dependency, security, compatibility, `unsafe`, or
 release approval.
 
