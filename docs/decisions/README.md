@@ -324,6 +324,7 @@ does not confer authority.
 | [0001](0001-repository-topology-and-workspace-ownership.md) | Repository topology and workspace ownership | Accepted | 2026-07-30 | None |
 | [0002](0002-rust-bootstrap-toolchain-and-validation-policy.md) | Rust bootstrap toolchain and validation policy | Accepted | 2026-07-30 | None |
 | [0003](0003-validated-source-anchors-first-rust-core-domain.md) | Establish Validated Source Anchors as the first Rust Core domain | Accepted | 2026-07-31 | None |
+| [0004](0004-validated-source-anchor-semantics.md) | Define Validated Source Anchor Semantics | Proposed | 2026-07-31 | None |
 
 ## Representative Classifications
 
