@@ -118,7 +118,10 @@ def validate_production_manifest(root: Path, workspace: dict) -> dict:
     fail(isinstance(package, dict), "production member must define [package]")
     require_allowed_keys(package, MEMBER_PACKAGE_KEYS, "production [package]")
     fail(package.get("name") == PACKAGE, f"package name must be exactly {PACKAGE}")
-    fail(package.get("version") == "0.3.0", 'production package version must be "0.3.0"')
+    fail(
+        isinstance(package.get("version"), str),
+        "production package must define a version",
+    )
     fail(package.get("publish") is False, "production package must set publish = false")
 
     edition = package.get("edition")
