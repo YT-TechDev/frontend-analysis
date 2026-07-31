@@ -24,6 +24,11 @@ TOOLCHAIN = (
 )
 MEMBER = "crates/frontend-analysis-core"
 PACKAGE = "frontend-analysis-core"
+ROOT_KEYS = {"workspace"}
+WORKSPACE_KEYS = {"lints", "members", "package", "resolver"}
+WORKSPACE_PACKAGE_KEYS = {"edition"}
+MEMBER_KEYS = {"lints", "package"}
+MEMBER_PACKAGE_KEYS = {"edition", "name", "publish", "version"}
 
 
 class PolicyError(Exception):
@@ -33,6 +38,15 @@ class PolicyError(Exception):
 def fail(condition: bool, message: str) -> None:
     if not condition:
         raise PolicyError(message)
+
+
+def require_allowed_keys(table: dict, allowed: set[str], description: str) -> None:
+    unexpected = sorted(set(table) - allowed)
+    fail(
+        not unexpected,
+        f"{description} contains unapproved keys: {unexpected}; "
+        f"allowed keys are {sorted(allowed)}",
+    )
 
 
 def load_toml(path: Path) -> dict:
@@ -95,13 +109,44 @@ def validate_bootstrap(root: Path, metadata: dict) -> None:
     )
 
 
+def validate_production_root(manifest: dict) -> dict:
+    require_allowed_keys(manifest, ROOT_KEYS, "root manifest")
+    workspace = manifest.get("workspace")
+    fail(isinstance(workspace, dict), "root Cargo.toml must define [workspace]")
+    require_allowed_keys(workspace, WORKSPACE_KEYS, "[workspace]")
+    fail(workspace.get("members") == [MEMBER], f"workspace member must be exactly {MEMBER}")
+    fail(workspace.get("resolver") == "3", 'workspace resolver must be exactly "3"')
+
+    workspace_package = workspace.get("package")
+    if workspace_package is not None:
+        fail(isinstance(workspace_package, dict), "[workspace.package] must be a table")
+        require_allowed_keys(
+            workspace_package,
+            WORKSPACE_PACKAGE_KEYS,
+            "[workspace.package]",
+        )
+        fail(
+            workspace_package.get("edition") == "2024",
+            '[workspace.package] may contain only edition = "2024"',
+        )
+
+    fail(
+        workspace.get("lints") == {"rust": {"unsafe_code": "deny"}},
+        'workspace lint policy must contain only rust.unsafe_code = "deny"',
+    )
+    return workspace
+
+
 def validate_production_manifest(root: Path, workspace: dict) -> dict:
     member_manifest = root / MEMBER / "Cargo.toml"
     fail(member_manifest.is_file(), f"required member manifest is missing: {MEMBER}/Cargo.toml")
     member = load_toml(member_manifest)
+    require_allowed_keys(member, MEMBER_KEYS, "production member manifest")
     package = member.get("package")
     fail(isinstance(package, dict), "production member must define [package]")
+    require_allowed_keys(package, MEMBER_PACKAGE_KEYS, "production [package]")
     fail(package.get("name") == PACKAGE, f"package name must be exactly {PACKAGE}")
+    fail(isinstance(package.get("version"), str), "production package must define a version")
     fail(package.get("publish") is False, "production package must set publish = false")
 
     edition = package.get("edition")
@@ -117,24 +162,11 @@ def validate_production_manifest(root: Path, workspace: dict) -> dict:
         isinstance(lints, dict) and lints == {"workspace": True},
         "production package must opt into workspace lints with [lints] workspace = true",
     )
-    fail(
-        workspace.get("lints", {}).get("rust", {}).get("unsafe_code") == "deny",
-        'workspace lint policy must set unsafe_code = "deny"',
-    )
-
-    fail("build" not in package, "production package must not configure a build script")
     fail(not (root / MEMBER / "build.rs").exists(), "production package must not have build.rs")
-    for table in ("dependencies", "dev-dependencies", "build-dependencies"):
-        fail(not member.get(table), f"production package must have no {table}")
-    fail(not member.get("target"), "production package must have no target-specific configuration")
     return member
 
 
-def validate_production(root: Path, workspace: dict, metadata: dict) -> None:
-    lockfile = root / "Cargo.lock"
-    fail(lockfile.is_file(), "production workspace requires a committed Cargo.lock")
-    validate_production_manifest(root, workspace)
-
+def validate_production(root: Path, metadata: dict) -> None:
     packages = metadata["packages"]
     members = metadata["workspace_members"]
     fail(len(packages) == 1, "production metadata must report exactly one package")
@@ -186,8 +218,14 @@ def classify(root: Path) -> str:
         validate_bootstrap(root, metadata)
         return "bootstrap"
     if members == [MEMBER]:
+        workspace = validate_production_root(manifest)
+        fail(
+            (root / "Cargo.lock").is_file(),
+            "production workspace requires a committed Cargo.lock",
+        )
+        validate_production_manifest(root, workspace)
         metadata = cargo_metadata(root, locked=True)
-        validate_production(root, workspace, metadata)
+        validate_production(root, metadata)
         return "production"
     raise PolicyError(
         f"workspace members must be exactly [] or [{MEMBER!r}]; found {members!r}"
