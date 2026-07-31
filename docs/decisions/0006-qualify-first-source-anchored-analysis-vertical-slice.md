@@ -6,7 +6,7 @@
 | Date | 2026-07-31 |
 | Decision owner / approver | `YT-TechDev` |
 | Linked Issue | [#82](https://github.com/YT-TechDev/frontend-analysis/issues/82) |
-| Related Pull Request | <PROPOSED_ADR_PULL_REQUEST> |
+| Related Pull Request | [#84](https://github.com/YT-TechDev/frontend-analysis/pull/84) |
 | Supersedes | None |
 | Superseded by | None |
 | Affected normative contracts | None — this record defers production expansion within the existing architecture, Rust Core, security, and validation contracts and changes none of them. |
