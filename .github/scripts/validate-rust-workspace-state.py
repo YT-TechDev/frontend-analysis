@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Classify the two Rust workspace states temporarily accepted by CI.
-
-Bootstrap acceptance only bridges Issues #62 and #55. Issue #57 must remove
-that branch; neither it nor this production check is a permanent CI contract.
-"""
+"""Validate the approved production Rust workspace policy."""
 
 from __future__ import annotations
 
@@ -15,7 +11,6 @@ import sys
 import tomllib
 
 
-BOOTSTRAP_MANIFEST = '[workspace]\nmembers = []\nresolver = "3"\n'
 TOOLCHAIN = (
     "[toolchain]\n"
     'channel = "1.97.1"\n'
@@ -59,17 +54,15 @@ def load_toml(path: Path) -> dict:
         raise PolicyError(f"invalid TOML in {path}: {error}") from error
 
 
-def cargo_metadata(root: Path, *, locked: bool) -> dict:
+def cargo_metadata(root: Path) -> dict:
     command = [
         "cargo",
         "metadata",
         "--offline",
         "--format-version",
         "1",
-        "--no-deps",
+        "--locked",
     ]
-    if locked:
-        command.append("--locked")
     result = subprocess.run(command, cwd=root, capture_output=True, text=True)
     if result.returncode:
         detail = result.stderr.strip() or result.stdout.strip()
@@ -93,22 +86,6 @@ def validate_toolchain(root: Path) -> None:
     )
 
 
-def validate_bootstrap(root: Path, metadata: dict) -> None:
-    manifest = root / "Cargo.toml"
-    fail(
-        manifest.read_text(encoding="utf-8") == BOOTSTRAP_MANIFEST,
-        "bootstrap Cargo.toml does not match the exact accepted virtual workspace",
-    )
-    fail(not (root / "Cargo.lock").exists(), "Cargo.lock is not allowed in bootstrap")
-    sources = rust_sources(root)
-    fail(not sources, f"Rust source is not allowed in bootstrap: {sources}")
-    fail(len(metadata["packages"]) == 0, "bootstrap metadata must report zero packages")
-    fail(
-        len(metadata["workspace_members"]) == 0,
-        "bootstrap metadata must report zero workspace members",
-    )
-
-
 def validate_production_root(manifest: dict) -> dict:
     require_allowed_keys(manifest, ROOT_KEYS, "root manifest")
     workspace = manifest.get("workspace")
@@ -118,17 +95,12 @@ def validate_production_root(manifest: dict) -> dict:
     fail(workspace.get("resolver") == "3", 'workspace resolver must be exactly "3"')
 
     workspace_package = workspace.get("package")
-    if workspace_package is not None:
-        fail(isinstance(workspace_package, dict), "[workspace.package] must be a table")
-        require_allowed_keys(
-            workspace_package,
-            WORKSPACE_PACKAGE_KEYS,
-            "[workspace.package]",
-        )
-        fail(
-            workspace_package.get("edition") == "2024",
-            '[workspace.package] may contain only edition = "2024"',
-        )
+    fail(isinstance(workspace_package, dict), "[workspace.package] must be a table")
+    require_allowed_keys(workspace_package, WORKSPACE_PACKAGE_KEYS, "[workspace.package]")
+    fail(
+        workspace_package.get("edition") == "2024",
+        '[workspace.package] must contain only edition = "2024"',
+    )
 
     fail(
         workspace.get("lints") == {"rust": {"unsafe_code": "deny"}},
@@ -146,7 +118,10 @@ def validate_production_manifest(root: Path, workspace: dict) -> dict:
     fail(isinstance(package, dict), "production member must define [package]")
     require_allowed_keys(package, MEMBER_PACKAGE_KEYS, "production [package]")
     fail(package.get("name") == PACKAGE, f"package name must be exactly {PACKAGE}")
-    fail(isinstance(package.get("version"), str), "production package must define a version")
+    fail(
+        isinstance(package.get("version"), str),
+        "production package must define a version",
+    )
     fail(package.get("publish") is False, "production package must set publish = false")
 
     edition = package.get("edition")
@@ -202,7 +177,7 @@ def validate_production(root: Path, metadata: dict) -> None:
     fail(not outside, f"Rust source exists outside {MEMBER}/src: {outside}")
 
 
-def classify(root: Path) -> str:
+def validate_workspace(root: Path) -> None:
     fail(root.is_dir(), f"repository root is not a directory: {root}")
     validate_toolchain(root)
     manifest_path = root / "Cargo.toml"
@@ -211,25 +186,14 @@ def classify(root: Path) -> str:
     workspace = manifest.get("workspace")
     fail(isinstance(workspace, dict), "root Cargo.toml must define [workspace]")
     fail(workspace.get("resolver") == "3", 'workspace resolver must be exactly "3"')
-    members = workspace.get("members")
-
-    if members == []:
-        metadata = cargo_metadata(root, locked=False)
-        validate_bootstrap(root, metadata)
-        return "bootstrap"
-    if members == [MEMBER]:
-        workspace = validate_production_root(manifest)
-        fail(
-            (root / "Cargo.lock").is_file(),
-            "production workspace requires a committed Cargo.lock",
-        )
-        validate_production_manifest(root, workspace)
-        metadata = cargo_metadata(root, locked=True)
-        validate_production(root, metadata)
-        return "production"
-    raise PolicyError(
-        f"workspace members must be exactly [] or [{MEMBER!r}]; found {members!r}"
+    workspace = validate_production_root(manifest)
+    fail(
+        (root / "Cargo.lock").is_file(),
+        "production workspace requires a committed Cargo.lock",
     )
+    validate_production_manifest(root, workspace)
+    metadata = cargo_metadata(root)
+    validate_production(root, metadata)
 
 
 def main() -> int:
@@ -237,11 +201,11 @@ def main() -> int:
     parser.add_argument("repository_root", nargs="?", default=".", type=Path)
     args = parser.parse_args()
     try:
-        state = classify(args.repository_root.resolve())
+        validate_workspace(args.repository_root.resolve())
     except (OSError, KeyError, TypeError, PolicyError) as error:
         print(f"Rust workspace state rejected: {error}", file=sys.stderr)
         return 1
-    print(state)
+    print("production")
     return 0
 
 
