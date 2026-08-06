@@ -323,14 +323,12 @@ impl HtmlTokenizerRunResult {
     }
 
     pub(crate) fn is_complete_with_diagnostics(&self) -> bool {
-        matches!(&self.completion, HtmlTokenizerCompletion::Complete) && !self.diagnostics.is_empty()
+        matches!(&self.completion, HtmlTokenizerCompletion::Complete)
+            && !self.diagnostics.is_empty()
     }
 
     pub(crate) fn is_incomplete(&self) -> bool {
-        matches!(
-            &self.completion,
-            HtmlTokenizerCompletion::Incomplete(_)
-        )
+        matches!(&self.completion, HtmlTokenizerCompletion::Incomplete(_))
     }
 }
 
@@ -690,36 +688,34 @@ fn validate_completion(
                 return Err(HtmlTokenizerRunContractError::ConfigurationFailureMismatch);
             }
         }
-        HtmlTokenizerCompletion::Incomplete(cause) => {
-            match cause {
-                HtmlTokenizerIncompleteCause::UnsupportedCapability(unsupported) => {
-                    validate_unsupported(source_text, tokens, coverage, unsupported)?;
-                }
-                HtmlTokenizerIncompleteCause::ResourceLimit(limit) => {
-                    validate_resource_limit(source_text, coverage, limits, usage, limit)?;
-                }
-                HtmlTokenizerIncompleteCause::InvalidConfiguration(failure) => {
-                    if limits.configuration_failure() != Some(*failure) {
-                        return Err(HtmlTokenizerRunContractError::ConfigurationFailureMismatch);
-                    }
-                    if coverage.processed_end() != 0
-                        || !tokens.is_empty()
-                        || !diagnostics.is_empty()
-                        || usage.transition_steps() != 0
-                        || usage.emitted_tokens() != 0
-                        || usage.diagnostics() != 0
-                        || usage.peak_attributes_per_tag() != 0
-                        || usage.retained_interpreted_bytes() != 0
-                        || usage.peak_temporary_buffer_bytes() != 0
-                    {
-                        return Err(
-                            HtmlTokenizerRunContractError::InvalidConfigurationMustPrecedeProcessing,
-                        );
-                    }
-                }
-                HtmlTokenizerIncompleteCause::InternalInvariantFailure(_) => {}
+        HtmlTokenizerCompletion::Incomplete(cause) => match cause {
+            HtmlTokenizerIncompleteCause::UnsupportedCapability(unsupported) => {
+                validate_unsupported(source_text, tokens, coverage, unsupported)?;
             }
-        }
+            HtmlTokenizerIncompleteCause::ResourceLimit(limit) => {
+                validate_resource_limit(source_text, coverage, limits, usage, limit)?;
+            }
+            HtmlTokenizerIncompleteCause::InvalidConfiguration(failure) => {
+                if limits.configuration_failure() != Some(*failure) {
+                    return Err(HtmlTokenizerRunContractError::ConfigurationFailureMismatch);
+                }
+                if coverage.processed_end() != 0
+                    || !tokens.is_empty()
+                    || !diagnostics.is_empty()
+                    || usage.transition_steps() != 0
+                    || usage.emitted_tokens() != 0
+                    || usage.diagnostics() != 0
+                    || usage.peak_attributes_per_tag() != 0
+                    || usage.retained_interpreted_bytes() != 0
+                    || usage.peak_temporary_buffer_bytes() != 0
+                {
+                    return Err(
+                        HtmlTokenizerRunContractError::InvalidConfigurationMustPrecedeProcessing,
+                    );
+                }
+            }
+            HtmlTokenizerIncompleteCause::InternalInvariantFailure(_) => {}
+        },
     }
     Ok(())
 }
