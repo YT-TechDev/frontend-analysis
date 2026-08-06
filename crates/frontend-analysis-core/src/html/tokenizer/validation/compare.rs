@@ -58,11 +58,8 @@ fn compare_run(
             "expected.tokens.length",
         ));
     }
-    for (index, (expected_token, observed_token)) in expected
-        .tokens
-        .iter()
-        .zip(&observed.tokens)
-        .enumerate()
+    for (index, (expected_token, observed_token)) in
+        expected.tokens.iter().zip(&observed.tokens).enumerate()
     {
         compare_token(fixture_id, index, expected_token, observed_token)?;
     }
@@ -86,16 +83,10 @@ fn compare_run(
         }
     }
     if expected.coverage != observed.coverage {
-        return Err(ObservationMismatch::new(
-            fixture_id,
-            "expected.coverage",
-        ));
+        return Err(ObservationMismatch::new(fixture_id, "expected.coverage"));
     }
     if expected.completion != observed.completion {
-        return Err(ObservationMismatch::new(
-            fixture_id,
-            "expected.completion",
-        ));
+        return Err(ObservationMismatch::new(fixture_id, "expected.completion"));
     }
     if expected.limits != observed.limits {
         return Err(ObservationMismatch::new(fixture_id, "expected.limits"));
@@ -168,10 +159,7 @@ fn compare_token(
                     "interpreted_name",
                     expected_interpreted_name == observed_interpreted_name,
                 ),
-                (
-                    "self_closing_solidus",
-                    expected_solidus == observed_solidus,
-                ),
+                ("self_closing_solidus", expected_solidus == observed_solidus),
                 ("close_delimiter", expected_close == observed_close),
             ] {
                 if !equal {
@@ -202,10 +190,7 @@ fn compare_token(
         }
         (Token::EndOfFile { at: expected_at }, Token::EndOfFile { at: observed_at }) => {
             if expected_at != observed_at {
-                return Err(ObservationMismatch::new(
-                    fixture_id,
-                    format!("{prefix}.at"),
-                ));
+                return Err(ObservationMismatch::new(fixture_id, format!("{prefix}.at")));
             }
         }
         _ => {
