@@ -10,7 +10,7 @@ pub(super) fn add_adversarial(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         "reconsume does not duplicate or omit authored bytes",
         "<1",
         "<1",
-        vec![diagnostic(DiagnosticCode::InvalidFirstCharacterOfTagName, 1, 2, DiagnosticContext::TagOpen, DiagnosticHandling::Recovered(RecoveryKind::ReconsumedInData), DiagnosticSubject::InputLocation)],
+        vec![diagnostic(DiagnosticCode::InvalidFirstCharacterOfTagName, 1, 2, DiagnosticContext::TagOpen, DiagnosticHandling::Recovered(RecoveryKind::EmittedLiteralMarkupPrefix), DiagnosticSubject::InputLocation)],
         None,
     ));
     fixtures.push(complete_text(
@@ -77,17 +77,16 @@ pub(super) fn add_adversarial(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         None,
         1,
     ));
-    fixtures.push(complete_text(
-        "ADV-008",
-        FixtureCategory::Adversarial,
-        "equal-offset diagnostics preserve observation order",
-        "\0",
-        "\u{fffd}",
+    let adv8 = "<a =>";
+    fixtures.push(complete_tag_fixture(
+        "ADV-008", "equal-offset diagnostics preserve transition observation order", adv8,
+        TokenKind::StartTag, 0, 5, 0, 1, 1, 2, "a",
+        vec![attribute_missing(adv8, 3, 4, 3, 4, "=", AttributeDisposition::Effective)],
+        None, 4, 5,
         vec![
-            diagnostic(DiagnosticCode::ControlCharacterInInputStream, 0, 1, DiagnosticContext::InputPreprocessing, DiagnosticHandling::Continued, DiagnosticSubject::InputLocation),
-            diagnostic(DiagnosticCode::UnexpectedNullCharacter, 0, 1, DiagnosticContext::Data, DiagnosticHandling::Recovered(RecoveryKind::ReplacedNullWithReplacementCharacter), DiagnosticSubject::InputLocation),
+            diagnostic(DiagnosticCode::UnexpectedEqualsSignBeforeAttributeName, 3, 4, DiagnosticContext::BeforeAttributeName, DiagnosticHandling::Recovered(RecoveryKind::StartedAttributeAtUnexpectedEqualsSign), DiagnosticSubject::EmittedToken(0)),
+            diagnostic(DiagnosticCode::UnexpectedCharacterInAttributeName, 3, 4, DiagnosticContext::AttributeName, DiagnosticHandling::Continued, DiagnosticSubject::EmittedToken(0)),
         ],
-        None,
     ));
     let adv9 = "<a x='";
     fixtures.push(complete(
@@ -111,4 +110,3 @@ pub(super) fn add_adversarial(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         None,
     ));
 }
-
