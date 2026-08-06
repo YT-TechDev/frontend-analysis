@@ -457,9 +457,11 @@ fn eof_bom_redaction_and_panic_contracts_hold() {
 
     const MARKER: &str = "private-token-marker-51f2";
     let private = source(20, MARKER);
-    let token =
-        HtmlCharacterToken::new(anchor(&private, 0, private.as_str().len()), MARKER.to_owned())
-            .unwrap();
+    let token = HtmlCharacterToken::new(
+        anchor(&private, 0, private.as_str().len()),
+        MARKER.to_owned(),
+    )
+    .unwrap();
     let debug = format!("{token:?}");
     assert!(!debug.contains(MARKER));
     assert!(debug.contains("interpreted_byte_len"));
