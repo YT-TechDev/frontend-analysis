@@ -90,7 +90,10 @@ fn preprocessing_fixture_distinguishes_ff_control_null_and_noncharacter() {
         .into_iter()
         .find(|fixture| fixture.id == "PRE-010")
         .unwrap();
-    assert_eq!(fixture.source_bytes, "\u{000c}\u{0001}\0\u{fdd0}".as_bytes());
+    assert_eq!(
+        fixture.source_bytes,
+        "\u{000c}\u{0001}\0\u{fdd0}".as_bytes()
+    );
     let codes: Vec<DiagnosticCode> = fixture
         .expected
         .0
@@ -106,9 +109,18 @@ fn preprocessing_fixture_distinguishes_ff_control_null_and_noncharacter() {
             DiagnosticCode::NoncharacterInInputStream,
         ]
     );
-    assert_eq!(fixture.expected.0.diagnostics[0].location, ByteSpan::new(1, 2));
-    assert_eq!(fixture.expected.0.diagnostics[1].location, ByteSpan::new(2, 3));
-    assert_eq!(fixture.expected.0.diagnostics[2].location, ByteSpan::new(3, 6));
+    assert_eq!(
+        fixture.expected.0.diagnostics[0].location,
+        ByteSpan::new(1, 2)
+    );
+    assert_eq!(
+        fixture.expected.0.diagnostics[1].location,
+        ByteSpan::new(2, 3)
+    );
+    assert_eq!(
+        fixture.expected.0.diagnostics[2].location,
+        ByteSpan::new(3, 6)
+    );
 }
 
 #[test]
