@@ -2,8 +2,8 @@ pub(super) const MAX_GENERATED_CASES: usize = 4_096;
 pub(super) const MAX_SOURCE_BYTES: usize = 64;
 
 const ALPHABET: &[&str] = &[
-    "a", "Z", "0", "9", "<", ">", "/", "=", "&", "!", "?", " ", "\t", "\n",
-    "\r", "\u{000c}", "\0", "'", "\"", "é", "界", "ß",
+    "a", "Z", "0", "9", "<", ">", "/", "=", "&", "!", "?", " ", "\t", "\n", "\r", "\u{000c}", "\0",
+    "'", "\"", "é", "界", "ß",
 ];
 
 const SEEDS: &[&str] = &[
