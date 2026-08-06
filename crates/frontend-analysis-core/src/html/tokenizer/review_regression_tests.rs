@@ -102,11 +102,9 @@ fn invalid_configuration_precedes_the_source_byte_limit() {
         HtmlPreprocessingEvidence::new(&source, None).unwrap(),
         Vec::new(),
         coverage(&source, 0),
-        HtmlTokenizerCompletion::Incomplete(
-            HtmlTokenizerIncompleteCause::InvalidConfiguration(
-                HtmlTokenizerConfigurationFailure::ZeroTransitionStepLimit,
-            ),
-        ),
+        HtmlTokenizerCompletion::Incomplete(HtmlTokenizerIncompleteCause::InvalidConfiguration(
+            HtmlTokenizerConfigurationFailure::ZeroTransitionStepLimit,
+        )),
         invalid_limits,
         usage(&source, 0, 0, 0),
     )
@@ -118,9 +116,8 @@ fn invalid_configuration_precedes_the_source_byte_limit() {
 #[test]
 fn stopped_diagnostic_cannot_be_reported_as_complete() {
     let source = source(103, "");
-    let eof = HtmlToken::EndOfFile(
-        HtmlEndOfFileToken::new(&source, anchor(&source, 0, 0)).unwrap(),
-    );
+    let eof =
+        HtmlToken::EndOfFile(HtmlEndOfFileToken::new(&source, anchor(&source, 0, 0)).unwrap());
 
     assert_eq!(
         HtmlTokenizerRunResult::new(
@@ -149,18 +146,8 @@ fn stopped_diagnostic_cannot_be_reported_as_complete() {
 fn stopped_diagnostic_must_be_the_last_observed_diagnostic() {
     let source = source(104, "ab");
     let diagnostics = vec![
-        diagnostic(
-            &source,
-            0,
-            1,
-            HtmlTokenizerDiagnosticHandling::Stopped,
-        ),
-        diagnostic(
-            &source,
-            1,
-            2,
-            HtmlTokenizerDiagnosticHandling::Continued,
-        ),
+        diagnostic(&source, 0, 1, HtmlTokenizerDiagnosticHandling::Stopped),
+        diagnostic(&source, 1, 2, HtmlTokenizerDiagnosticHandling::Continued),
     ];
 
     assert_eq!(
