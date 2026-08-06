@@ -9,7 +9,7 @@ use super::super::result::{
 };
 use super::compare::compare;
 use super::corpus::initial_corpus;
-use super::expected::{ByteSpan, ObservedRun, Token};
+use super::expected::{ByteSpan, DiagnosticCode, ObservedRun, Token};
 use super::fixture::{FixtureCategory, validate_corpus};
 use super::generated::{
     MAX_GENERATED_CASES, MAX_SOURCE_BYTES, generated_inputs, minimization_candidates,
@@ -63,19 +63,72 @@ fn initial_ids_are_stable_and_contiguous_within_each_category() {
 }
 
 #[test]
-fn empty_run_observation_matches_the_independent_pre_001_fixture() {
+fn empty_run_observation_is_stable_across_three_runs_and_source_ids() {
     let fixture = initial_corpus()
         .into_iter()
         .find(|fixture| fixture.id == "PRE-001")
         .unwrap();
 
     let first = observed_empty_run(10);
-    let second = observed_empty_run(11);
-    compare(fixture.id, &fixture.expected, &first).unwrap();
-    compare(fixture.id, &fixture.expected, &second).unwrap();
+    let second = observed_empty_run(10);
+    let third = observed_empty_run(10);
+    let alternate_source_id = observed_empty_run(11);
+    for observed in [&first, &second, &third, &alternate_source_id] {
+        compare(fixture.id, &fixture.expected, observed).unwrap();
+    }
+    assert_eq!(first, second);
+    assert_eq!(second, third);
     assert_eq!(
-        first, second,
+        first, alternate_source_id,
         "SourceId must not change semantic observation"
+    );
+}
+
+#[test]
+fn preprocessing_fixture_distinguishes_ff_control_null_and_noncharacter() {
+    let fixture = initial_corpus()
+        .into_iter()
+        .find(|fixture| fixture.id == "PRE-010")
+        .unwrap();
+    assert_eq!(fixture.source_bytes, "\u{000c}\u{0001}\0\u{fdd0}".as_bytes());
+    let codes: Vec<DiagnosticCode> = fixture
+        .expected
+        .0
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.code)
+        .collect();
+    assert_eq!(
+        codes,
+        vec![
+            DiagnosticCode::ControlCharacterInInputStream,
+            DiagnosticCode::UnexpectedNullCharacter,
+            DiagnosticCode::NoncharacterInInputStream,
+        ]
+    );
+    assert_eq!(fixture.expected.0.diagnostics[0].location, ByteSpan::new(1, 2));
+    assert_eq!(fixture.expected.0.diagnostics[1].location, ByteSpan::new(2, 3));
+    assert_eq!(fixture.expected.0.diagnostics[2].location, ByteSpan::new(3, 6));
+}
+
+#[test]
+fn equal_offset_diagnostics_preserve_transition_order() {
+    let fixture = initial_corpus()
+        .into_iter()
+        .find(|fixture| fixture.id == "ADV-008")
+        .unwrap();
+    assert_eq!(fixture.expected.0.diagnostics.len(), 2);
+    assert_eq!(
+        fixture.expected.0.diagnostics[0].code,
+        DiagnosticCode::UnexpectedEqualsSignBeforeAttributeName
+    );
+    assert_eq!(
+        fixture.expected.0.diagnostics[1].code,
+        DiagnosticCode::UnexpectedCharacterInAttributeName
+    );
+    assert_eq!(
+        fixture.expected.0.diagnostics[0].location,
+        fixture.expected.0.diagnostics[1].location
     );
 }
 
