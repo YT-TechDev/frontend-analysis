@@ -3,7 +3,9 @@ use std::fmt;
 
 use crate::{SourceAnchor, SourceId, SourceText};
 
-use super::diagnostic::{HtmlTokenizerDiagnostic, HtmlTokenizerDiagnosticSubject};
+use super::diagnostic::{
+    HtmlTokenizerDiagnostic, HtmlTokenizerDiagnosticHandling, HtmlTokenizerDiagnosticSubject,
+};
 use super::resource::{
     HtmlTokenizerConfigurationFailure, HtmlTokenizerInvariantFailure, HtmlTokenizerLimits,
     HtmlTokenizerResource, HtmlTokenizerResourceLimit, HtmlTokenizerUsage,
@@ -257,10 +259,17 @@ impl HtmlTokenizerRunResult {
         limits: HtmlTokenizerLimits,
         usage: HtmlTokenizerUsage,
     ) -> Result<Self, HtmlTokenizerRunContractError> {
-        validate_preprocessing(source_text, &preprocessing)?;
+        validate_configuration_cause(limits, &completion)?;
         validate_coverage_identity(source_text, &coverage)?;
+        validate_preprocessing(source_text, &preprocessing, &coverage)?;
         validate_tokens(source_text, &tokens, &coverage, &completion)?;
-        validate_diagnostics(source_text, &tokens, &diagnostics, &coverage)?;
+        validate_diagnostics(
+            source_text,
+            &tokens,
+            &diagnostics,
+            &coverage,
+            &completion,
+        )?;
         validate_usage(
             source_text,
             &tokens,
@@ -369,6 +378,7 @@ pub(crate) enum HtmlTokenizerRunContractError {
     CoverageMustStartAtZero,
     CoverageMustEndAtSourceEnd,
     CoverageMustPartitionSource,
+    PreprocessingOutsideProcessedPrefix,
     CompleteCoverageRequired,
     IncompleteResultMustNotContainEof,
     CompleteResultMustContainExactlyOneEof,
@@ -379,6 +389,12 @@ pub(crate) enum HtmlTokenizerRunContractError {
     },
     DiagnosticOrder,
     DiagnosticOutsideProcessedPrefix {
+        diagnostic_index: usize,
+    },
+    StoppedDiagnosticRequiresIncompleteResult {
+        diagnostic_index: usize,
+    },
+    StoppedDiagnosticMustBeLast {
         diagnostic_index: usize,
     },
     InvalidDiagnosticTokenReference {
@@ -439,12 +455,38 @@ impl fmt::Display for HtmlTokenizerRunContractError {
 
 impl Error for HtmlTokenizerRunContractError {}
 
+fn validate_configuration_cause(
+    limits: HtmlTokenizerLimits,
+    completion: &HtmlTokenizerCompletion,
+) -> Result<(), HtmlTokenizerRunContractError> {
+    match (limits.configuration_failure(), completion) {
+        (
+            Some(expected),
+            HtmlTokenizerCompletion::Incomplete(
+                HtmlTokenizerIncompleteCause::InvalidConfiguration(actual),
+            ),
+        ) if expected == *actual => Ok(()),
+        (Some(_), _) => Err(HtmlTokenizerRunContractError::ConfigurationFailureMismatch),
+        (
+            None,
+            HtmlTokenizerCompletion::Incomplete(
+                HtmlTokenizerIncompleteCause::InvalidConfiguration(_),
+            ),
+        ) => Err(HtmlTokenizerRunContractError::ConfigurationFailureMismatch),
+        (None, _) => Ok(()),
+    }
+}
+
 fn validate_preprocessing(
     source_text: &SourceText,
     preprocessing: &HtmlPreprocessingEvidence,
+    coverage: &HtmlTokenizerCoverage,
 ) -> Result<(), HtmlTokenizerRunContractError> {
     if let Some(bom) = preprocessing.skipped_leading_bom() {
         require_source(source_text.id(), bom, HtmlRunEvidenceRole::PreprocessingBom)?;
+        if bom.range().end() > coverage.processed_end() {
+            return Err(HtmlTokenizerRunContractError::PreprocessingOutsideProcessedPrefix);
+        }
     }
     Ok(())
 }
@@ -528,6 +570,7 @@ fn validate_diagnostics(
     tokens: &[HtmlToken],
     diagnostics: &[HtmlTokenizerDiagnostic],
     coverage: &HtmlTokenizerCoverage,
+    completion: &HtmlTokenizerCompletion,
 ) -> Result<(), HtmlTokenizerRunContractError> {
     let mut previous_start = 0;
     for (index, diagnostic) in diagnostics.iter().enumerate() {
@@ -544,6 +587,21 @@ fn validate_diagnostics(
             );
         }
         previous_start = location.range().start();
+
+        if matches!(diagnostic.handling(), HtmlTokenizerDiagnosticHandling::Stopped) {
+            if matches!(completion, HtmlTokenizerCompletion::Complete) {
+                return Err(
+                    HtmlTokenizerRunContractError::StoppedDiagnosticRequiresIncompleteResult {
+                        diagnostic_index: index,
+                    },
+                );
+            }
+            if index + 1 != diagnostics.len() {
+                return Err(HtmlTokenizerRunContractError::StoppedDiagnosticMustBeLast {
+                    diagnostic_index: index,
+                });
+            }
+        }
 
         match diagnostic.subject() {
             HtmlTokenizerDiagnosticSubject::InputLocation => {}
@@ -643,17 +701,18 @@ fn validate_usage(
         );
     }
 
-    let exceeded_resource = match completion {
+    let skipped_resource = match completion {
         HtmlTokenizerCompletion::Incomplete(HtmlTokenizerIncompleteCause::ResourceLimit(limit)) => {
             Some(limit.resource())
         }
+        HtmlTokenizerCompletion::Incomplete(
+            HtmlTokenizerIncompleteCause::InvalidConfiguration(_),
+        ) => Some(HtmlTokenizerResource::SourceBytes),
         _ => None,
     };
 
     for resource in HtmlTokenizerResource::ALL {
-        if resource == HtmlTokenizerResource::SourceBytes
-            && exceeded_resource == Some(HtmlTokenizerResource::SourceBytes)
-        {
+        if skipped_resource == Some(resource) {
             continue;
         }
         let value = usage.value_for(resource);
@@ -684,9 +743,6 @@ fn validate_completion(
             if !coverage.is_complete() {
                 return Err(HtmlTokenizerRunContractError::CompleteCoverageRequired);
             }
-            if limits.configuration_failure().is_some() {
-                return Err(HtmlTokenizerRunContractError::ConfigurationFailureMismatch);
-            }
         }
         HtmlTokenizerCompletion::Incomplete(cause) => match cause {
             HtmlTokenizerIncompleteCause::UnsupportedCapability(unsupported) => {
@@ -695,10 +751,7 @@ fn validate_completion(
             HtmlTokenizerIncompleteCause::ResourceLimit(limit) => {
                 validate_resource_limit(source_text, coverage, limits, usage, limit)?;
             }
-            HtmlTokenizerIncompleteCause::InvalidConfiguration(failure) => {
-                if limits.configuration_failure() != Some(*failure) {
-                    return Err(HtmlTokenizerRunContractError::ConfigurationFailureMismatch);
-                }
+            HtmlTokenizerIncompleteCause::InvalidConfiguration(_) => {
                 if coverage.processed_end() != 0
                     || !tokens.is_empty()
                     || !diagnostics.is_empty()
