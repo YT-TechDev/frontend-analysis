@@ -33,9 +33,7 @@ fn preprocessing(source: &SourceText) -> HtmlPreprocessingEvidence {
 
 fn eof(source: &SourceText) -> HtmlToken {
     let end = source.as_str().len();
-    HtmlToken::EndOfFile(
-        HtmlEndOfFileToken::new(source, anchor(source, end, end)).unwrap(),
-    )
+    HtmlToken::EndOfFile(HtmlEndOfFileToken::new(source, anchor(source, end, end)).unwrap())
 }
 
 fn character(source: &SourceText, start: usize, end: usize, interpreted: &str) -> HtmlToken {
@@ -117,16 +115,19 @@ fn clean_complete_empty_input_has_one_eof_and_full_coverage() {
     assert!(!result.is_complete_with_diagnostics());
     assert!(!result.is_incomplete());
     assert_eq!(result.tokens().len(), 1);
-    assert_eq!(result.diagnostics().len(), 0);
+    assert!(result.diagnostics().is_empty());
     assert!(result.coverage().is_complete());
     assert_eq!(result.usage().emitted_tokens(), 1);
     assert_eq!(result.limits().max_emitted_tokens(), 1_000);
     assert!(result.preprocessing().skipped_leading_bom().is_none());
-    assert!(matches!(result.completion(), HtmlTokenizerCompletion::Complete));
+    assert!(matches!(
+        result.completion(),
+        HtmlTokenizerCompletion::Complete
+    ));
 }
 
 #[test]
-fn complete_recovered_result_preserves_raw_and_interpreted_evidence() {
+fn complete_recovered_result_preserves_diagnostic_and_token_evidence() {
     let source = src(2, "\0é");
     let tokens = vec![
         character(&source, 0, 1, "\u{fffd}"),
@@ -214,7 +215,7 @@ fn diagnostics_allow_equal_offsets_but_reject_backward_order() {
 }
 
 #[test]
-fn abandoned_region_and_token_relations_are_validated() {
+fn abandoned_regions_and_token_relations_are_validated() {
     let source = src(4, "<a");
     let abandoned = HtmlTokenizerDiagnostic::new(
         &source,
@@ -287,9 +288,9 @@ fn unsupported_input_before_output_preserves_unprocessed_suffix() {
         preprocessing(&source),
         Vec::new(),
         coverage(&source, 0),
-        HtmlTokenizerCompletion::Incomplete(
-            HtmlTokenizerIncompleteCause::UnsupportedCapability(unsupported),
-        ),
+        HtmlTokenizerCompletion::Incomplete(HtmlTokenizerIncompleteCause::UnsupportedCapability(
+            unsupported,
+        )),
         limits(),
         usage(&source, 1, 0, 0, 0, 0, 0),
     )
@@ -322,9 +323,9 @@ fn context_mode_can_stop_after_a_complete_emitted_tag() {
         preprocessing(&source),
         Vec::new(),
         coverage(&source, 8),
-        HtmlTokenizerCompletion::Incomplete(
-            HtmlTokenizerIncompleteCause::UnsupportedCapability(unsupported),
-        ),
+        HtmlTokenizerCompletion::Incomplete(HtmlTokenizerIncompleteCause::UnsupportedCapability(
+            unsupported,
+        )),
         limits(),
         usage(&source, 8, 1, 0, 0, 6, 0),
     )
@@ -443,9 +444,9 @@ fn every_resource_dimension_has_explicit_limit_evidence() {
             preprocessing(&source),
             diagnostics,
             coverage(&source, processed_end),
-            HtmlTokenizerCompletion::Incomplete(
-                HtmlTokenizerIncompleteCause::ResourceLimit(limit_evidence),
-            ),
+            HtmlTokenizerCompletion::Incomplete(HtmlTokenizerIncompleteCause::ResourceLimit(
+                limit_evidence,
+            )),
             run_limits,
             run_usage,
         )
@@ -463,11 +464,9 @@ fn invalid_configuration_is_distinct_and_precedes_processing() {
         preprocessing(&source),
         Vec::new(),
         coverage(&source, 0),
-        HtmlTokenizerCompletion::Incomplete(
-            HtmlTokenizerIncompleteCause::InvalidConfiguration(
-                HtmlTokenizerConfigurationFailure::ZeroTransitionStepLimit,
-            ),
-        ),
+        HtmlTokenizerCompletion::Incomplete(HtmlTokenizerIncompleteCause::InvalidConfiguration(
+            HtmlTokenizerConfigurationFailure::ZeroTransitionStepLimit,
+        )),
         transition_limits,
         usage(&source, 0, 0, 0, 0, 0, 0),
     )
@@ -481,11 +480,9 @@ fn invalid_configuration_is_distinct_and_precedes_processing() {
         preprocessing(&source),
         Vec::new(),
         coverage(&source, 0),
-        HtmlTokenizerCompletion::Incomplete(
-            HtmlTokenizerIncompleteCause::InvalidConfiguration(
-                HtmlTokenizerConfigurationFailure::ZeroEmittedTokenLimit,
-            ),
-        ),
+        HtmlTokenizerCompletion::Incomplete(HtmlTokenizerIncompleteCause::InvalidConfiguration(
+            HtmlTokenizerConfigurationFailure::ZeroEmittedTokenLimit,
+        )),
         token_limits,
         usage(&source, 0, 0, 0, 0, 0, 0),
     )
@@ -571,7 +568,7 @@ fn coverage_and_completion_contradictions_are_rejected() {
 }
 
 #[test]
-fn resource_and_aggregate_debug_output_redacts_source_content() {
+fn aggregate_debug_output_redacts_source_content() {
     const SECRET: &str = "private-run-result-marker";
     let source = src(12, SECRET);
     let unsupported = HtmlTokenizerUnsupportedCapability::new(
@@ -587,9 +584,9 @@ fn resource_and_aggregate_debug_output_redacts_source_content() {
         preprocessing(&source),
         Vec::new(),
         coverage(&source, 0),
-        HtmlTokenizerCompletion::Incomplete(
-            HtmlTokenizerIncompleteCause::UnsupportedCapability(unsupported),
-        ),
+        HtmlTokenizerCompletion::Incomplete(HtmlTokenizerIncompleteCause::UnsupportedCapability(
+            unsupported,
+        )),
         limits(),
         usage(&source, 1, 0, 0, 0, 0, 0),
     )
