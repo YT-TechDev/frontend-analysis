@@ -3,7 +3,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use super::token::*;
 use crate::{SourceAnchor, SourceId, SourceText};
 
-fn source(id: u64, text: &str) -> SourceText {
+fn src(id: u64, text: &str) -> SourceText {
     SourceText::new(SourceId::new(id), text.to_owned())
 }
 
@@ -33,7 +33,7 @@ fn boolean_attribute(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn tag(
+fn mk_tag(
     source: &SourceText,
     kind: HtmlTagKind,
     complete: (usize, usize),
@@ -56,7 +56,7 @@ fn tag(
 
 #[test]
 fn character_tokens_preserve_raw_and_interpreted_evidence() {
-    let source = source(1, "aé\r\n\0");
+    let source = src(1, "aé\r\n\0");
     let token = HtmlCharacterToken::new(
         anchor(&source, 0, source.as_str().len()),
         "aé\n\u{fffd}".to_owned(),
@@ -81,7 +81,7 @@ fn character_tokens_preserve_raw_and_interpreted_evidence() {
 
 #[test]
 fn tags_preserve_names_attributes_duplicates_and_delimiters() {
-    let source = source(2, "<DIV ID=x id='y'>");
+    let source = src(2, "<DIV ID=x id='y'>");
     let first = HtmlAttributeEvidence::new(
         anchor(&source, 5, 9),
         name(&source, 5, 7, "id"),
@@ -106,7 +106,7 @@ fn tags_preserve_names_attributes_duplicates_and_delimiters() {
         HtmlAttributeDisposition::DuplicateOf { first_index: 0 },
     )
     .unwrap();
-    let tag = tag(
+    let tag = mk_tag(
         &source,
         HtmlTagKind::Start,
         (0, 17),
@@ -131,8 +131,8 @@ fn tags_preserve_names_attributes_duplicates_and_delimiters() {
     );
     assert_eq!(tag.close_delimiter().fragment(), ">");
 
-    let end_source = source(3, "</DIV>");
-    let end = tag(
+    let end_source = src(3, "</DIV>");
+    let end = mk_tag(
         &end_source,
         HtmlTagKind::End,
         (0, 6),
@@ -145,8 +145,8 @@ fn tags_preserve_names_attributes_duplicates_and_delimiters() {
     .unwrap();
     assert_eq!(end.open_delimiter().fragment(), "</");
 
-    let self_closing_source = source(4, "<img/>");
-    let self_closing = tag(
+    let self_closing_source = src(4, "<img/>");
+    let self_closing = mk_tag(
         &self_closing_source,
         HtmlTagKind::Start,
         (0, 6),
@@ -162,7 +162,7 @@ fn tags_preserve_names_attributes_duplicates_and_delimiters() {
 
 #[test]
 fn attribute_value_forms_remain_distinct() {
-    let boolean_source = source(5, "disabled");
+    let boolean_source = src(5, "disabled");
     let boolean = boolean_attribute(
         &boolean_source,
         0,
@@ -175,7 +175,7 @@ fn attribute_value_forms_remain_distinct() {
         HtmlAttributeValueSyntax::Missing
     ));
 
-    let missing_source = source(6, "foo=   ");
+    let missing_source = src(6, "foo=   ");
     let missing = HtmlAttributeEvidence::new(
         anchor(&missing_source, 0, 7),
         name(&missing_source, 0, 3, "foo"),
@@ -192,7 +192,7 @@ fn attribute_value_forms_remain_distinct() {
         HtmlAttributeValueSyntax::MissingAfterEquals { .. }
     ));
 
-    let unquoted_source = source(7, "foo=é");
+    let unquoted_source = src(7, "foo=é");
     let unquoted = HtmlAttributeEvidence::new(
         anchor(&unquoted_source, 0, 6),
         name(&unquoted_source, 0, 3, "foo"),
@@ -209,7 +209,7 @@ fn attribute_value_forms_remain_distinct() {
         HtmlAttributeValueSyntax::Unquoted { .. }
     ));
 
-    let quoted_source = source(8, "foo=\"\" bar='y'");
+    let quoted_source = src(8, "foo=\"\" bar='y'");
     let empty = HtmlAttributeEvidence::new(
         anchor(&quoted_source, 0, 6),
         name(&quoted_source, 0, 3, "foo"),
@@ -248,8 +248,8 @@ fn attribute_value_forms_remain_distinct() {
 
 #[test]
 fn invalid_source_ranges_delimiters_and_attribute_syntax_are_rejected() {
-    let owner = source(9, "<a>");
-    let foreign = source(10, "a");
+    let owner = src(9, "<a>");
+    let foreign = src(10, "a");
     assert_eq!(
         HtmlTagToken::new(
             HtmlTagKind::Start,
@@ -268,7 +268,7 @@ fn invalid_source_ranges_delimiters_and_attribute_syntax_are_rejected() {
         }
     );
 
-    let outside = source(11, "x<a>y");
+    let outside = src(11, "x<a>y");
     assert_eq!(
         HtmlTagToken::new(
             HtmlTagKind::Start,
@@ -285,9 +285,9 @@ fn invalid_source_ranges_delimiters_and_attribute_syntax_are_rejected() {
         }
     );
 
-    let wrong = source(12, "[a>");
+    let wrong = src(12, "[a>");
     assert_eq!(
-        tag(
+        mk_tag(
             &wrong,
             HtmlTagKind::Start,
             (0, 3),
@@ -304,7 +304,7 @@ fn invalid_source_ranges_delimiters_and_attribute_syntax_are_rejected() {
         }
     );
 
-    let empty_unquoted = source(13, "foo=");
+    let empty_unquoted = src(13, "foo=");
     assert_eq!(
         HtmlAttributeEvidence::new(
             anchor(&empty_unquoted, 0, 4),
@@ -323,7 +323,7 @@ fn invalid_source_ranges_delimiters_and_attribute_syntax_are_rejected() {
 
 #[test]
 fn duplicate_and_order_invariants_are_enforced() {
-    let source = source(14, "<a x x x>");
+    let source = src(14, "<a x x x>");
     let first = boolean_attribute(&source, 3, 4, "x", HtmlAttributeDisposition::Effective);
     let duplicate = boolean_attribute(
         &source,
@@ -340,7 +340,7 @@ fn duplicate_and_order_invariants_are_enforced() {
         HtmlAttributeDisposition::DuplicateOf { first_index: 1 },
     );
     assert_eq!(
-        tag(
+        mk_tag(
             &source,
             HtmlTagKind::Start,
             (0, 9),
@@ -357,7 +357,7 @@ fn duplicate_and_order_invariants_are_enforced() {
         }
     );
 
-    let source = source(15, "<a x x>");
+    let source = src(15, "<a x x>");
     let first = boolean_attribute(&source, 3, 4, "x", HtmlAttributeDisposition::Effective);
     let invalid_reference = boolean_attribute(
         &source,
@@ -367,7 +367,7 @@ fn duplicate_and_order_invariants_are_enforced() {
         HtmlAttributeDisposition::DuplicateOf { first_index: 1 },
     );
     assert_eq!(
-        tag(
+        mk_tag(
             &source,
             HtmlTagKind::Start,
             (0, 7),
@@ -384,7 +384,7 @@ fn duplicate_and_order_invariants_are_enforced() {
         }
     );
 
-    let source = source(16, "<a x y>");
+    let source = src(16, "<a x y>");
     let first = boolean_attribute(&source, 3, 4, "x", HtmlAttributeDisposition::Effective);
     let wrong_name = boolean_attribute(
         &source,
@@ -394,7 +394,7 @@ fn duplicate_and_order_invariants_are_enforced() {
         HtmlAttributeDisposition::DuplicateOf { first_index: 0 },
     );
     assert_eq!(
-        tag(
+        mk_tag(
             &source,
             HtmlTagKind::Start,
             (0, 7),
@@ -411,11 +411,11 @@ fn duplicate_and_order_invariants_are_enforced() {
         }
     );
 
-    let source = source(17, "<a x x>");
+    let source = src(17, "<a x x>");
     let first = boolean_attribute(&source, 3, 4, "x", HtmlAttributeDisposition::Effective);
     let second = boolean_attribute(&source, 5, 6, "x", HtmlAttributeDisposition::Effective);
     assert_eq!(
-        tag(
+        mk_tag(
             &source,
             HtmlTagKind::Start,
             (0, 7),
@@ -435,7 +435,7 @@ fn duplicate_and_order_invariants_are_enforced() {
 
 #[test]
 fn eof_bom_redaction_and_panic_contracts_hold() {
-    let source = source(18, "abc");
+    let source = src(18, "abc");
     let eof = HtmlEndOfFileToken::new(&source, anchor(&source, 3, 3)).unwrap();
     assert!(eof.source().range().is_empty());
     assert_eq!(
@@ -447,7 +447,7 @@ fn eof_bom_redaction_and_panic_contracts_hold() {
         HtmlTokenContractError::EndOfFileMustBeEmpty
     );
 
-    let bom_source = source(19, "\u{feff}<a>");
+    let bom_source = src(19, "\u{feff}<a>");
     let evidence =
         HtmlPreprocessingEvidence::new(&bom_source, Some(anchor(&bom_source, 0, 3))).unwrap();
     assert_eq!(
@@ -456,7 +456,7 @@ fn eof_bom_redaction_and_panic_contracts_hold() {
     );
 
     const MARKER: &str = "private-token-marker-51f2";
-    let private = source(20, MARKER);
+    let private = src(20, MARKER);
     let token = HtmlCharacterToken::new(
         anchor(&private, 0, private.as_str().len()),
         MARKER.to_owned(),
@@ -469,9 +469,9 @@ fn eof_bom_redaction_and_panic_contracts_hold() {
     assert!(!format!("{error:?}").contains(MARKER));
     assert!(!error.to_string().contains(MARKER));
 
-    let malformed = source(21, "<a/ >");
+    let malformed = src(21, "<a/ >");
     let result = catch_unwind(AssertUnwindSafe(|| {
-        tag(
+        mk_tag(
             &malformed,
             HtmlTagKind::Start,
             (0, 5),
@@ -491,7 +491,7 @@ fn eof_bom_redaction_and_panic_contracts_hold() {
 
 #[test]
 fn token_variants_preserve_deterministic_vec_order() {
-    let source = source(22, "x");
+    let source = src(22, "x");
     let tokens = [
         HtmlToken::Character(
             HtmlCharacterToken::new(anchor(&source, 0, 1), "x".to_owned()).unwrap(),
@@ -507,9 +507,9 @@ fn token_variants_preserve_deterministic_vec_order() {
         other => panic!("unexpected token: {other:?}"),
     }
 
-    let tag_source = source(23, "<a>");
+    let tag_source = src(23, "<a>");
     let token = HtmlToken::Tag(
-        tag(
+        mk_tag(
             &tag_source,
             HtmlTagKind::Start,
             (0, 3),
