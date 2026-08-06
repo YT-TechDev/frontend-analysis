@@ -261,7 +261,10 @@ fn transition_steps_are_not_derivable_from_utf8_byte_length() {
     assert_eq!(fixture.source_bytes.len(), 5);
     assert_eq!(fixture.expected.0.tokens.len(), 2);
     assert_eq!(fixture.expected.0.usage.transition_steps, 3);
-    assert_ne!(fixture.expected.0.usage.transition_steps, fixture.source_bytes.len());
+    assert_ne!(
+        fixture.expected.0.usage.transition_steps,
+        fixture.source_bytes.len()
+    );
 }
 
 #[test]
@@ -326,7 +329,7 @@ fn transition_step_commits_before_resource_refusal_without_partial_mutation() {
     assert_eq!(retained.expected.0.usage.peak_temporary_buffer_bytes, 0);
     assert_eq!(retained.expected.0.limits.temporary_buffer_bytes, 1_024);
     assert!(matches!(
-        retained.expected.0.completion,
+        &retained.expected.0.completion,
         Completion::ResourceLimit {
             resource: Resource::RetainedInterpretedBytes,
             attempted: 1,
@@ -338,7 +341,7 @@ fn transition_step_commits_before_resource_refusal_without_partial_mutation() {
 #[test]
 fn no_initial_fixture_claims_temporary_buffer_execution_coverage() {
     assert!(!initial_corpus().iter().any(|fixture| matches!(
-        fixture.expected.0.completion,
+        &fixture.expected.0.completion,
         Completion::ResourceLimit {
             resource: Resource::TemporaryBufferBytes,
             ..
