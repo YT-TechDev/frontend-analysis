@@ -43,7 +43,7 @@ pub(super) fn add_diagnostics(fixtures: &mut Vec<HtmlTokenizerFixture>) {
     fixtures.push(complete_text(
         "ERR-005",
         FixtureCategory::Diagnostic,
-        "invalid first tag-name character is reconsumed in Data",
+        "invalid first tag-name character emits the literal prefix and reconsumes in Data",
         "<1",
         "<1",
         vec![diagnostic(DiagnosticCode::InvalidFirstCharacterOfTagName, 1, 2, DiagnosticContext::TagOpen, DiagnosticHandling::Recovered(RecoveryKind::EmittedLiteralMarkupPrefix), DiagnosticSubject::InputLocation)],
@@ -88,11 +88,14 @@ pub(super) fn add_diagnostics(fixtures: &mut Vec<HtmlTokenizerFixture>) {
 
     let err9 = "<a =x>";
     fixtures.push(complete_tag_fixture(
-        "ERR-009", "equals sign starts an attribute name with an explicit diagnostic", err9,
+        "ERR-009", "equals sign starts an attribute name and is reconsumed in Attribute name", err9,
         TokenKind::StartTag, 0, 6, 0, 1, 1, 2, "a",
         vec![attribute_missing(err9, 3, 5, 3, 5, "=x", AttributeDisposition::Effective)],
         None, 5, 6,
-        vec![diagnostic(DiagnosticCode::UnexpectedEqualsSignBeforeAttributeName, 3, 4, DiagnosticContext::BeforeAttributeName, DiagnosticHandling::Recovered(RecoveryKind::StartedAttributeAtUnexpectedEqualsSign), DiagnosticSubject::EmittedToken(0))],
+        vec![
+            diagnostic(DiagnosticCode::UnexpectedEqualsSignBeforeAttributeName, 3, 4, DiagnosticContext::BeforeAttributeName, DiagnosticHandling::Recovered(RecoveryKind::StartedAttributeAtUnexpectedEqualsSign), DiagnosticSubject::EmittedToken(0)),
+            diagnostic(DiagnosticCode::UnexpectedCharacterInAttributeName, 3, 4, DiagnosticContext::AttributeName, DiagnosticHandling::Continued, DiagnosticSubject::EmittedToken(0)),
+        ],
     ));
     let err10 = "<a x\"y>";
     fixtures.push(complete_tag_fixture(
@@ -162,4 +165,3 @@ pub(super) fn add_diagnostics(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         vec![diagnostic(DiagnosticCode::EndTagWithTrailingSolidus, 3, 4, DiagnosticContext::SelfClosingStartTag, DiagnosticHandling::Recovered(RecoveryKind::PreservedEndTagLexicalEvidence), DiagnosticSubject::EmittedToken(0))],
     ));
 }
-
