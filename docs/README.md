@@ -46,6 +46,7 @@ record must still satisfy the
 | Architecture principles | [Architecture Principles](architecture/PRINCIPLES.md) | Normative architecture contract | Browser independence, ownership, semantic integrity, dependency principles, abstraction criteria, and architecture decision tests. |
 | Architecture layers | [Architecture Layers and Boundaries](architecture/LAYERS.md) | Normative architecture contract | Layer responsibilities, exclusions, allowed dependencies, boundary crossings, and cross-cutting capability ownership. |
 | Rust Core contracts | [Rust Core Contracts](architecture/RUST_CORE_CONTRACTS.md) | Normative Rust architecture contract | Ownership, borrowing, mutation, domain types, errors, concurrency, async boundaries, visibility, compatibility, and Rust-specific unsafe implementation constraints. |
+| Source parser ownership | [Source Parser Ownership](architecture/SOURCE_PARSER_OWNERSHIP.md) | Normative architecture contract | Project-owned HTML, CSS, and ECMAScript parser authority; retained-source provenance; capability and result integrity; third-party parser policy; implementation sequencing; validation; and parser-specific security boundaries. |
 | Validated Source Anchors Guide | [Validated Source Anchors Guide](architecture/VALIDATED_SOURCE_ANCHORS.md) | Guide | Contributor guidance for current source-anchor semantics, layer consumption, accepted and rejected responsibilities, and review triggers. |
 | Raw Source Coordinates Guide | [Raw Source Coordinates Guide](architecture/RAW_SOURCE_COORDINATES.md) | Guide | Explanatory contributor guidance for the accepted raw coordinate projection, units, layer conversions, and review triggers. |
 | Documentation classification and precedence | This index | Normative documentation-governance contract | Documentation classes, source-of-truth selection, conflict handling, and index maintenance. It cannot redefine substantive authority owned by another specialized contract. |
@@ -59,14 +60,17 @@ production member exists: `crates/frontend-analysis-core`, whose private
 `frontend-analysis-core` package sets `publish = false` and uses Edition 2024.
 The root `Cargo.lock` is committed. The crate has zero third-party dependencies
 and currently owns Validated Source Anchors and Raw Source Line Coordinates; it
-is not a generic utility layer.
+is not a generic utility layer. Project-owned source parser architecture is
+approved, but no parser implementation or public parser API is complete yet.
 
 Accepted [ADR 0001](decisions/0001-repository-topology-and-workspace-ownership.md)
 owns topology and extraction review, [ADR 0002](decisions/0002-rust-bootstrap-toolchain-and-validation-policy.md)
 owns toolchain policy, [ADR 0003](decisions/0003-validated-source-anchors-first-rust-core-domain.md)
 owns the selected domain and crate boundary, [ADR 0004](decisions/0004-validated-source-anchor-semantics.md)
-owns source-anchor semantics, and accepted [ADR 0005](decisions/0005-raw-source-coordinate-semantics.md)
-owns raw source-coordinate semantics.
+owns source-anchor semantics, accepted [ADR 0005](decisions/0005-raw-source-coordinate-semantics.md)
+owns raw source-coordinate semantics, and accepted
+[ADR 0007](decisions/0007-own-lossless-source-parsers.md) owns the project-owned
+lossless source-parser strategy and language sequencing.
 
 ### Contributor Setup and Validation
 
@@ -107,7 +111,8 @@ status is owned by [Validation and Completion Evidence](development/VALIDATION.m
 | --- | --- |
 | New domains and additional crates | Focused domain Issue/ADR |
 | Dependencies and features | Focused dependency Issue |
-| Parsers, browser protocols, and Browser Adapters | Focused dependency and boundary Issue/ADR |
+| Source-parser algorithms, module or crate placement, capability slices, and public APIs | Focused parser work under #106, #107, and #108 |
+| Browser protocols and Browser Adapters | Focused dependency and boundary Issue/ADR |
 | Retained line indexes, reverse coordinate mapping, parser/protocol conversion, and source maps | Focused domain or boundary Issue/ADR |
 | Serialization | Focused compatibility Issue/ADR |
 | MSRV and target support | Focused compatibility Issue/ADR |
@@ -147,9 +152,11 @@ Authority follows topic ownership and specificity, not a single global ranking:
    location for specialized contracts.
 8. [Architecture Principles](architecture/PRINCIPLES.md) governs durable
    architecture principles; [Architecture Layers and Boundaries](architecture/LAYERS.md)
-   governs layer responsibilities and dependency boundaries; and [Rust Core
+   governs layer responsibilities and dependency boundaries; [Rust Core
    Contracts](architecture/RUST_CORE_CONTRACTS.md) governs Rust-specific Core
-   design constraints.
+   design constraints; and [Source Parser Ownership](architecture/SOURCE_PARSER_OWNERSHIP.md)
+   governs project-owned language-parser authority, provenance, capability,
+   third-party comparison boundaries, sequencing, and parser validation.
 9. The [ADR Process](decisions/README.md) governs ADR mechanics. ADRs do not
    override specialized normative contracts.
 10. Templates collect information but do not create approval. Guides and
