@@ -29,9 +29,7 @@ impl fmt::Display for FixturePolicyError {
 
 impl std::error::Error for FixturePolicyError {}
 
-pub(super) fn validate_policy(
-    fixtures: &[HtmlTokenizerFixture],
-) -> Result<(), FixturePolicyError> {
+pub(super) fn validate_policy(fixtures: &[HtmlTokenizerFixture]) -> Result<(), FixturePolicyError> {
     for fixture in fixtures {
         validate_fixture_policy(fixture)?;
     }
@@ -71,8 +69,8 @@ fn validate_fixture_policy(fixture: &HtmlTokenizerFixture) -> Result<(), Fixture
         ));
     }
 
-    let exceeded_resource = match run.completion {
-        Completion::ResourceLimit { resource, .. } => Some(resource),
+    let exceeded_resource = match &run.completion {
+        Completion::ResourceLimit { resource, .. } => Some(*resource),
         _ => None,
     };
     for resource in resources() {
@@ -103,7 +101,12 @@ fn validate_fixture_policy(fixture: &HtmlTokenizerFixture) -> Result<(), Fixture
             }
             match trigger {
                 super::expected::UnsupportedTrigger::Input(span) => {
-                    validate_span(fixture.id, source, *span, "completion.unsupported.input_span")?;
+                    validate_span(
+                        fixture.id,
+                        source,
+                        *span,
+                        "completion.unsupported.input_span",
+                    )?;
                     if span.start != run.coverage.processed_prefix.end {
                         return Err(FixturePolicyError::new(
                             fixture.id,
@@ -153,7 +156,7 @@ fn validate_fixture_policy(fixture: &HtmlTokenizerFixture) -> Result<(), Fixture
                 ));
             }
             validate_span(fixture.id, source, *at, "completion.resource.at")?;
-            if *limit != limit_for(run, *resource) || attempted <= limit {
+            if *limit != limit_for(run, *resource) || *attempted <= *limit {
                 return Err(FixturePolicyError::new(
                     fixture.id,
                     "completion.resource.policy",
@@ -178,7 +181,7 @@ fn validate_fixture_policy(fixture: &HtmlTokenizerFixture) -> Result<(), Fixture
             } else {
                 let committed = usage_for(run, *resource);
                 let exact_increment = matches!(
-                    resource,
+                    *resource,
                     Resource::TransitionSteps
                         | Resource::EmittedTokens
                         | Resource::Diagnostics
@@ -280,7 +283,13 @@ fn token_interpreted_bytes(token: &Token) -> usize {
             interpreted_name,
             attributes,
             ..
-        } => interpreted_name.len() + attributes.iter().map(attribute_interpreted_bytes).sum::<usize>(),
+        } => {
+            interpreted_name.len()
+                + attributes
+                    .iter()
+                    .map(attribute_interpreted_bytes)
+                    .sum::<usize>()
+        }
         Token::EndOfFile { .. } => 0,
     }
 }
