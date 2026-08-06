@@ -1,6 +1,7 @@
 //! Internal HTML source-parser contracts.
 
 pub(crate) mod token;
+pub(crate) mod tokenizer;
 
 #[cfg(test)]
 mod token_contract_matrix_tests;
