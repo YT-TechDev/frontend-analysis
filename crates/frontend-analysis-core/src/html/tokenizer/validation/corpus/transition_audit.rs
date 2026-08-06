@@ -36,89 +36,29 @@
 
 #[rustfmt::skip]
 pub(super) const TRANSITION_STEP_AUDIT: &[(&str, usize)] = &[
-    // PRE: normalized input units plus conceptual EOF.
-    ("PRE-001", 1),
-    ("PRE-002", 2),
-    ("PRE-003", 3),
-    ("PRE-004", 2),
-    ("PRE-005", 3),
-    ("PRE-006", 2),
-    ("PRE-007", 2),
-    ("PRE-008", 2),
-    ("PRE-009", 4),
-    ("PRE-010", 5),
-
-    // TOK: direct state examinations, including reconsume.
-    ("TOK-001", 4),
-    ("TOK-002", 4),
-    ("TOK-003", 5),
-    ("TOK-004", 7),
-    ("TOK-005", 6),
-    ("TOK-006", 8),
-    ("TOK-007", 7),
-    ("TOK-008", 9),
-    ("TOK-009", 11),
-    ("TOK-010", 18),
-    ("TOK-011", 18),
-    ("TOK-012", 6),
-
-    // ERR: diagnostic emission itself does not add a transition.
-    ("ERR-001", 2),
-    ("ERR-002", 2),
-    ("ERR-003", 2),
+    ("PRE-001", 1), ("PRE-002", 2), ("PRE-003", 3), ("PRE-004", 2),
+    ("PRE-005", 3), ("PRE-006", 2), ("PRE-007", 2), ("PRE-008", 2),
+    ("PRE-009", 4), ("PRE-010", 5),
+    ("TOK-001", 4), ("TOK-002", 4), ("TOK-003", 5), ("TOK-004", 7),
+    ("TOK-005", 6), ("TOK-006", 8), ("TOK-007", 7), ("TOK-008", 9),
+    ("TOK-009", 11), ("TOK-010", 18), ("TOK-011", 18), ("TOK-012", 6),
+    ("ERR-001", 2), ("ERR-002", 2), ("ERR-003", 2),
     ("ERR-004", 2), // Data('<') + TagOpen(EOF); both tokens emit in TagOpen.
     ("ERR-005", 4), // One reconsume instruction; authored '1' is examined twice.
-    ("ERR-006", 2),
-    ("ERR-007", 4),
-    ("ERR-008", 4),
-    ("ERR-009", 9),
-    ("ERR-010", 11),
-    ("ERR-011", 9),
-    ("ERR-012", 13),
-    ("ERR-013", 16),
-    ("ERR-014", 12),
-    ("ERR-015", 13),
-    ("ERR-016", 10),
-    ("ERR-017", 7),
-
-    // UNSUP: discovery dispatch commits; coverage is tracked separately.
-    ("UNSUP-001", 1),
-    ("UNSUP-002", 9),
-    ("UNSUP-003", 2),
-    ("UNSUP-004", 2),
-    ("UNSUP-005", 8),
-    ("UNSUP-006", 11),
-    ("UNSUP-007", 8),
-    ("UNSUP-008", 6),
-    ("UNSUP-009", 9),
-    ("UNSUP-010", 10),
-    ("UNSUP-011", 11),
-    ("UNSUP-012", 9),
-    ("UNSUP-013", 11),
-    ("UNSUP-014", 12),
-
-    // RES: committed transition usage at the refusal boundary.
-    ("RES-001", 0),
-    ("RES-002", 1),
-    ("RES-003", 2),
-    ("RES-004", 1),
-    ("RES-005", 9),
-    ("RES-006", 2),
+    ("ERR-006", 2), ("ERR-007", 4), ("ERR-008", 4), ("ERR-009", 9),
+    ("ERR-010", 11), ("ERR-011", 9), ("ERR-012", 13), ("ERR-013", 16),
+    ("ERR-014", 12), ("ERR-015", 13), ("ERR-016", 10), ("ERR-017", 7),
+    ("UNSUP-001", 1), ("UNSUP-002", 9), ("UNSUP-003", 2), ("UNSUP-004", 2),
+    ("UNSUP-005", 8), ("UNSUP-006", 11), ("UNSUP-007", 8), ("UNSUP-008", 6),
+    ("UNSUP-009", 9), ("UNSUP-010", 10), ("UNSUP-011", 11), ("UNSUP-012", 9),
+    ("UNSUP-013", 11), ("UNSUP-014", 12),
+    ("RES-001", 0), ("RES-002", 1), ("RES-003", 2), ("RES-004", 1),
+    ("RES-005", 9), ("RES-006", 2),
     ("RES-007", 3), // RetainedInterpretedBytes in the active tag-name builder.
-    ("RES-008", 0),
-    ("RES-009", 0),
-
-    // ADV: cross-cutting state traces.
-    ("ADV-001", 4),
-    ("ADV-002", 4),
-    ("ADV-003", 25),
-    ("ADV-004", 13),
-    ("ADV-005", 6),
-    ("ADV-006", 13),
-    ("ADV-007", 13),
-    ("ADV-008", 8),
-    ("ADV-009", 9),
-    ("ADV-010", 65),
+    ("RES-008", 0), ("RES-009", 0),
+    ("ADV-001", 4), ("ADV-002", 4), ("ADV-003", 25), ("ADV-004", 13),
+    ("ADV-005", 6), ("ADV-006", 13), ("ADV-007", 13), ("ADV-008", 8),
+    ("ADV-009", 9), ("ADV-010", 65),
 ];
 
 #[cfg(test)]
@@ -126,8 +66,8 @@ mod tests {
     use std::collections::BTreeSet;
 
     use super::super::initial_corpus;
+    use super::super::super::expected::{Completion, Resource};
     use super::TRANSITION_STEP_AUDIT;
-    use crate::html::tokenizer::validation::expected::{Completion, Resource};
 
     #[test]
     fn transition_audit_covers_every_fixture_and_matches_corpus() {
