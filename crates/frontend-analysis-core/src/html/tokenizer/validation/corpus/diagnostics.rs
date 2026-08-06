@@ -45,8 +45,8 @@ pub(super) fn add_diagnostics(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         "<",
         vec![diagnostic(DiagnosticCode::EofBeforeTagName, 1, 1, DiagnosticContext::TagOpen, DiagnosticHandling::Recovered(RecoveryKind::EmittedLiteralMarkupPrefix), DiagnosticSubject::InputLocation)],
         None,
-        // Data(<)+TagOpen(EOF, emit literal '<', fallback Data)+Data(EOF, emit EOF) = 3
-        3,
+        // Data(<)+TagOpen(EOF, emit literal '<' and EOF in the same dispatch) = 2
+        2,
     ));
     fixtures.push(complete_text(
         "ERR-005",
@@ -56,7 +56,8 @@ pub(super) fn add_diagnostics(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         "<1",
         vec![diagnostic(DiagnosticCode::InvalidFirstCharacterOfTagName, 1, 2, DiagnosticContext::TagOpen, DiagnosticHandling::Recovered(RecoveryKind::EmittedLiteralMarkupPrefix), DiagnosticSubject::InputLocation)],
         None,
-        // Data(<)+TagOpen('1',reconsume Data)+Data(reconsume '1')+Data(EOF) = 4
+        // Data(<)+TagOpen('1', one reconsume instruction into Data)
+        // +Data(reconsumed '1')+Data(EOF) = 4
         4,
     ));
     fixtures.push(incomplete(
