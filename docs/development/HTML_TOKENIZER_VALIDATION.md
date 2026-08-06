@@ -58,11 +58,66 @@ ranges are not required to cover bytes that the HTML algorithm deliberately
 ignores or abandons, such as an incomplete tag builder. Therefore candidate
 proof that consume and reconsume neither duplicate nor omit input belongs to the
 #113 state-machine validation, where cursor transitions and committed resource
-counters exist. This foundation does not invent a second tokenizer trace or
-infer cursor behavior from output shape.
+counters exist. This foundation does not invent a second tokenizer or infer
+cursor behavior from candidate output.
 
 A malformed fixture is a failed test. Comparison code must not compensate for
 or normalize it.
+
+## Transition-Step Accounting
+
+Expected `usage.transition_steps` is authored directly against the pinned
+WHATWG states approved by #109 and the #111 counting rule: one transition step
+per attempted specification-state dispatch, including a dispatch caused by a
+reconsume instruction. It is never derived from UTF-8 byte length, Unicode
+scalar count, emitted token count, diagnostic count, or a sum of those
+quantities.
+
+The accounting boundary is precise:
+
+- CR and CRLF preprocessing may produce one normalized input unit;
+- a leading BOM skip and preprocessing-only diagnostic do not add tokenizer
+  transitions;
+- examining a normalized unit under a state is one transition;
+- one reconsume instruction causes one additional state examination of the same
+  authored input unit;
+- examining conceptual EOF under the current state is one transition;
+- token or diagnostic emission performed inside that dispatch is not an
+  additional transition;
+- a non-transition resource refusal commits the examining transition but
+  refuses its specific sub-effect without partial mutation;
+- an attempted transition rejected by the `TransitionSteps` limit does not
+  increment committed transition usage.
+
+`crates/frontend-analysis-core/src/html/tokenizer/validation/corpus/transition_audit.rs`
+contains an independently authored 72-entry committed-count inventory and
+mechanically checks exact corpus-ID and count agreement. The complete reviewable
+derivation is distributed beside the fixtures: PRE, TOK, ERR, and ADV cases
+have ordered state traces; the context-changing UNSUP group has one explicit
+formula parameterized by authored name length; and every RES case records
+preprocessing, attempted and committed transitions, refusal operation,
+attempted resource value, and source boundary.
+
+## Resource Ownership
+
+Active token builders own interpreted evidence that can become emitted output.
+Tag names, attribute names, attribute values, and collected character output
+therefore count toward `RetainedInterpretedBytes` while their builders are
+active. They are not temporary buffers.
+
+`TemporaryBufferBytes` is reserved for a genuine state-local scratch buffer
+whose contents are not yet retained output evidence, such as a future
+character-reference or script-matching temporary buffer. The first bounded Data
+capability owns no such buffer, so the initial 72-fixture corpus intentionally
+contains no `TemporaryBufferBytes` exhaustion result. Execution coverage for
+that resource is:
+
+```text
+Blocked — no approved first-slice state owns a genuine state-local temporary buffer.
+```
+
+It must not be reported as Passed or simulated through a retained tag/name/value
+builder.
 
 ## Actual Observation and Comparison
 

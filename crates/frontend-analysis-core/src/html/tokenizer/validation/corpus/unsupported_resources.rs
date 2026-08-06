@@ -12,6 +12,10 @@ pub(super) fn add_unsupported(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         Capability::CharacterReference(CharacterReferenceContext::Data),
         Availability::Deferred,
         ByteSpan::new(0, 1),
+        // Data('&', discovers CharacterReference required) = 1.
+        // Coverage stays empty: the trigger byte is not fully consumed by
+        // an approved transition; coverage and step accounting are separate.
+        1,
     ));
     fixtures.push(unsupported_input(
         "UNSUP-002",
@@ -21,6 +25,10 @@ pub(super) fn add_unsupported(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         Capability::CharacterReference(CharacterReferenceContext::AttributeValue),
         Availability::Deferred,
         ByteSpan::new(5, 6),
+        // Data<+TagOpen(a,reconsume)+TagName(reconsume a)+TagName(sp)+BeforeAttrName(x,create,reconsume)
+        // +AttrName(reconsume x)+AttrName(=) [7 steps, processed_end=5]
+        // +BeforeAttrValue('&',reconsume Unquoted)+Unquoted(reconsume '&', discovers capability) = 9
+        9,
     ));
     fixtures.push(unsupported_input(
         "UNSUP-003",
@@ -30,6 +38,8 @@ pub(super) fn add_unsupported(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         Capability::MarkupDeclaration,
         Availability::Deferred,
         ByteSpan::new(0, 2),
+        // Data(<)+TagOpen('!', discovers MarkupDeclaration required) = 2.
+        2,
     ));
     fixtures.push(unsupported_input(
         "UNSUP-004",
@@ -39,6 +49,8 @@ pub(super) fn add_unsupported(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         Capability::ProcessingInstruction,
         Availability::Deferred,
         ByteSpan::new(0, 2),
+        // Data(<)+TagOpen('?', discovers ProcessingInstruction required) = 2
+        2,
     ));
 
     for (id, purpose, source, name_end, name, mode) in [
@@ -69,6 +81,11 @@ pub(super) fn add_unsupported(fixtures: &mut Vec<HtmlTokenizerFixture>) {
             name_end,
             tag_end,
         );
+        // For a context-changing name of N normalized ASCII units:
+        // Data('<') + TagOpen(first, reconsume) + N TagName examinations
+        // (including the reconsumed first unit) + TagName('>') = N + 3.
+        // The tag is emitted and processing stops at the empty boundary after
+        // '>'; the following authored data unit remains unprocessed.
         fixtures.push(incomplete(
             id,
             FixtureCategory::Unsupported,
@@ -93,57 +110,35 @@ pub(super) fn add_unsupported(fixtures: &mut Vec<HtmlTokenizerFixture>) {
 
 #[rustfmt::skip]
 pub(super) fn add_resources(fixtures: &mut Vec<HtmlTokenizerFixture>) {
+    // No normalized unit or state transition is attempted: source-size
+    // preflight rejects attempted=2 at the empty boundary before processing.
     fixtures.push(resource_fixture(
-        "RES-001",
-        "source byte limit before preprocessing",
-        "ab",
-        0,
-        Vec::new(),
-        Vec::new(),
-        Resource::SourceBytes,
-        1,
-        2,
-        ByteSpan::new(0, 0),
-        usage("ab", 0, 0, 0, 0, 0, 0),
+        "RES-001", "source byte limit before preprocessing", "ab", 0,
+        Vec::new(), Vec::new(), Resource::SourceBytes, 1, 2,
+        ByteSpan::new(0, 0), usage("ab", 0, 0, 0, 0, 0, 0),
     ));
+    // Data('a') commits. Data(EOF) is attempted=2 but cannot commit because
+    // TransitionSteps itself is limited to 1; processed_end remains 1.
     fixtures.push(resource_fixture(
-        "RES-002",
-        "transition step limit preserves processed evidence",
-        "a",
-        1,
-        vec![character("a", 0, 1, "a")],
-        Vec::new(),
-        Resource::TransitionSteps,
-        1,
-        2,
-        ByteSpan::new(1, 1),
+        "RES-002", "transition step limit preserves processed evidence", "a", 1,
+        vec![character("a", 0, 1, "a")], Vec::new(),
+        Resource::TransitionSteps, 1, 2, ByteSpan::new(1, 1),
         usage("a", 1, 1, 0, 0, 1, 0),
     ));
+    // Data('a') and Data(EOF) both commit. EOF emission attempts token 2 and
+    // is refused; token emission is not an additional transition.
     fixtures.push(resource_fixture(
-        "RES-003",
-        "emitted-token limit rejects EOF after character output",
-        "a",
-        1,
-        vec![character("a", 0, 1, "a")],
-        Vec::new(),
-        Resource::EmittedTokens,
-        1,
-        2,
-        ByteSpan::new(1, 1),
+        "RES-003", "emitted-token limit rejects EOF after character output", "a", 1,
+        vec![character("a", 0, 1, "a")], Vec::new(),
+        Resource::EmittedTokens, 1, 2, ByteSpan::new(1, 1),
         usage("a", 2, 1, 0, 0, 1, 0),
     ));
+    // Data(NUL) commits, but diagnostic append attempted=1 is refused before
+    // replacement/recovery mutation; processed_end remains 0.
     fixtures.push(resource_fixture(
-        "RES-004",
-        "diagnostic limit terminates before recovery mutation",
-        "\0",
-        0,
-        Vec::new(),
-        Vec::new(),
-        Resource::Diagnostics,
-        0,
-        1,
-        ByteSpan::new(0, 1),
-        usage("\0", 1, 0, 0, 0, 0, 0),
+        "RES-004", "diagnostic limit terminates before recovery mutation", "\0", 0,
+        Vec::new(), Vec::new(), Resource::Diagnostics, 0, 1,
+        ByteSpan::new(0, 1), usage("\0", 1, 0, 0, 0, 0, 0),
     ));
     fixtures.push(resource_fixture(
         "RES-005",
@@ -156,62 +151,54 @@ pub(super) fn add_resources(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         1,
         2,
         ByteSpan::new(5, 5),
-        usage("<a x y>", 6, 0, 0, 1, 2, 0),
+        // Data<+TagOpen(a,reconsume)+TagName(reconsume a)+TagName(sp)+BeforeAttrName(x,create,reconsume)
+        // +AttrName(reconsume x)+AttrName(sp,reconsume AfterAttrName)+AfterAttrName(reconsume sp)
+        // [8 committed, processed_end=5] +AfterAttrName(y, attempts second attribute creation)
+        // commits as transition 9, while attempted attribute count 2 is refused.
+        usage("<a x y>", 9, 0, 0, 1, 2, 0),
     ));
+    // Data('a') commits one retained byte. Data('b') commits transition 2,
+    // but retained interpreted byte attempted=2 is refused at boundary 1.
     fixtures.push(resource_fixture(
-        "RES-006",
-        "retained interpreted byte limit",
-        "ab",
-        1,
-        vec![character("ab", 0, 1, "a")],
-        Vec::new(),
-        Resource::RetainedInterpretedBytes,
-        1,
-        2,
-        ByteSpan::new(1, 1),
+        "RES-006", "retained interpreted byte limit", "ab", 1,
+        vec![character("ab", 0, 1, "a")], Vec::new(),
+        Resource::RetainedInterpretedBytes, 1, 2, ByteSpan::new(1, 1),
         usage("ab", 2, 1, 0, 0, 1, 0),
     ));
     fixtures.push(resource_fixture(
         "RES-007",
-        "temporary buffer byte limit",
+        "retained interpreted byte limit in active tag-name builder",
         "<a",
         1,
         Vec::new(),
         Vec::new(),
-        Resource::TemporaryBufferBytes,
+        Resource::RetainedInterpretedBytes,
         0,
         1,
         ByteSpan::new(1, 1),
-        usage("<a", 1, 0, 0, 0, 0, 0),
+        // Data(<)+TagOpen(a,create tag,reconsume) [2 committed, processed_end=1]
+        // +TagName(reconsumed a) commits transition 3, but the active builder's
+        // retained interpreted name append attempted=1 is refused. This is not
+        // TemporaryBufferBytes: the tag-name builder owns retained output evidence.
+        usage("<a", 3, 0, 0, 0, 0, 0),
     ));
 
     let mut zero_steps = Limits::generous();
     zero_steps.transition_steps = 0;
     fixtures.push(incomplete(
-        "RES-008",
-        FixtureCategory::Resource,
-        "zero transition-step configuration fails before processing",
-        "",
-        0,
-        Vec::new(),
-        Vec::new(),
+        "RES-008", FixtureCategory::Resource,
+        "zero transition-step configuration fails before processing", "", 0,
+        Vec::new(), Vec::new(),
         Completion::InvalidConfiguration(ConfigurationFailure::ZeroTransitionStepLimit),
-        zero_steps,
-        usage("", 0, 0, 0, 0, 0, 0),
+        zero_steps, usage("", 0, 0, 0, 0, 0, 0),
     ));
     let mut zero_tokens = Limits::generous();
     zero_tokens.emitted_tokens = 0;
     fixtures.push(incomplete(
-        "RES-009",
-        FixtureCategory::Resource,
-        "zero emitted-token configuration fails before processing",
-        "",
-        0,
-        Vec::new(),
-        Vec::new(),
+        "RES-009", FixtureCategory::Resource,
+        "zero emitted-token configuration fails before processing", "", 0,
+        Vec::new(), Vec::new(),
         Completion::InvalidConfiguration(ConfigurationFailure::ZeroEmittedTokenLimit),
-        zero_tokens,
-        usage("", 0, 0, 0, 0, 0, 0),
+        zero_tokens, usage("", 0, 0, 0, 0, 0, 0),
     ));
 }
-

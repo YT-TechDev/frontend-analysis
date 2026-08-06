@@ -10,7 +10,7 @@ use super::super::result::{
 use super::compare::compare;
 use super::corpus::initial_corpus;
 use super::expected::{
-    ByteSpan, Completion, DiagnosticCode, ObservedRun, Token, UnsupportedTrigger,
+    ByteSpan, Completion, DiagnosticCode, ObservedRun, Resource, Token, UnsupportedTrigger,
 };
 use super::fixture::{FixtureCategory, validate_corpus};
 use super::generated::{
@@ -246,6 +246,122 @@ fn understated_usage_is_rejected_by_policy_validation() {
         .unwrap_err()
         .to_string();
     assert!(error.contains("TOK-008.usage.peak_attributes_per_tag"));
+}
+
+fn find(id: &str) -> super::fixture::HtmlTokenizerFixture {
+    initial_corpus()
+        .into_iter()
+        .find(|fixture| fixture.id == id)
+        .unwrap_or_else(|| panic!("missing fixture {id}"))
+}
+
+#[test]
+fn transition_steps_are_not_derivable_from_utf8_byte_length() {
+    let fixture = find("PRE-003");
+    assert_eq!(fixture.source_bytes.len(), 5);
+    assert_eq!(fixture.expected.0.tokens.len(), 2);
+    assert_eq!(fixture.expected.0.usage.transition_steps, 3);
+    assert_ne!(
+        fixture.expected.0.usage.transition_steps,
+        fixture.source_bytes.len()
+    );
+}
+
+#[test]
+fn transition_steps_are_not_derivable_from_crlf_byte_count() {
+    let lf = find("PRE-006");
+    let cr = find("PRE-007");
+    let crlf = find("PRE-008");
+    assert_eq!(lf.source_bytes.len(), 1);
+    assert_eq!(cr.source_bytes.len(), 1);
+    assert_eq!(crlf.source_bytes.len(), 2);
+    assert_eq!(lf.expected.0.usage.transition_steps, 2);
+    assert_eq!(cr.expected.0.usage.transition_steps, 2);
+    assert_eq!(crlf.expected.0.usage.transition_steps, 2);
+}
+
+#[test]
+fn transition_steps_include_one_reconsume_instruction_for_invalid_tag_open() {
+    // TagOpen examines '1', issues one reconsume instruction, and Data then
+    // examines the same authored input unit a second time. EOF is step four.
+    let fixture = find("ERR-005");
+    assert_eq!(fixture.source_bytes.len(), 2);
+    assert_eq!(fixture.expected.0.usage.transition_steps, 4);
+}
+
+#[test]
+fn tag_open_eof_emission_remains_one_state_dispatch() {
+    // TagOpen(EOF) emits both the literal '<' and EOF in one state dispatch.
+    let fixture = find("ERR-004");
+    assert_eq!(fixture.expected.0.usage.transition_steps, 2);
+    assert_eq!(fixture.expected.0.tokens.len(), 2);
+}
+
+#[test]
+fn transition_steps_are_not_derivable_from_diagnostic_count_alone() {
+    let noncharacter = find("ERR-001");
+    let control = find("ERR-002");
+    assert_eq!(noncharacter.expected.0.diagnostics.len(), 1);
+    assert_eq!(control.expected.0.diagnostics.len(), 1);
+    assert_ne!(noncharacter.source_bytes.len(), control.source_bytes.len());
+    assert_eq!(noncharacter.expected.0.usage.transition_steps, 2);
+    assert_eq!(control.expected.0.usage.transition_steps, 2);
+}
+
+#[test]
+fn transition_step_commits_even_when_token_emission_is_refused() {
+    let fixture = find("RES-003");
+    assert_eq!(fixture.expected.0.usage.emitted_tokens, 1);
+    assert_eq!(fixture.expected.0.usage.transition_steps, 2);
+}
+
+#[test]
+fn transition_step_commits_before_resource_refusal_without_partial_mutation() {
+    let attrs = find("RES-005");
+    assert_eq!(attrs.expected.0.usage.transition_steps, 9);
+    assert_eq!(attrs.expected.0.usage.peak_attributes_per_tag, 1);
+    assert_eq!(attrs.expected.0.limits.attributes_per_tag, 1);
+
+    let retained = find("RES-007");
+    assert_eq!(retained.expected.0.usage.transition_steps, 3);
+    assert_eq!(retained.expected.0.usage.retained_interpreted_bytes, 0);
+    assert_eq!(retained.expected.0.limits.retained_interpreted_bytes, 0);
+    assert_eq!(retained.expected.0.usage.peak_temporary_buffer_bytes, 0);
+    assert_eq!(retained.expected.0.limits.temporary_buffer_bytes, 1_024);
+    assert!(matches!(
+        &retained.expected.0.completion,
+        Completion::ResourceLimit {
+            resource: Resource::RetainedInterpretedBytes,
+            attempted: 1,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn no_initial_fixture_claims_temporary_buffer_execution_coverage() {
+    assert!(!initial_corpus().iter().any(|fixture| matches!(
+        &fixture.expected.0.completion,
+        Completion::ResourceLimit {
+            resource: Resource::TemporaryBufferBytes,
+            ..
+        }
+    )));
+}
+
+#[test]
+fn transition_steps_are_not_derivable_from_the_retired_sum_heuristic() {
+    for (id, old_heuristic) in [
+        ("PRE-003", 7usize),
+        ("PRE-008", 4),
+        ("TOK-009", 9),
+        ("ERR-013", 13),
+        ("RES-005", 6),
+        ("RES-007", 1),
+    ] {
+        let fixture = find(id);
+        assert_ne!(fixture.expected.0.usage.transition_steps, old_heuristic);
+    }
 }
 
 fn observed_empty_run(source_id: u64) -> ObservedRun {

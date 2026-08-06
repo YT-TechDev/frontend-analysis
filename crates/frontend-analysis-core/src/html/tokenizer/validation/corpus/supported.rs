@@ -12,6 +12,8 @@ pub(super) fn add_supported_tokens(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         "abc",
         Vec::new(),
         None,
+        // Data('a')+Data('b')+Data('c')+Data(EOF) = 4
+        4,
     ));
     fixtures.push(complete_text(
         "TOK-002",
@@ -21,6 +23,8 @@ pub(super) fn add_supported_tokens(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         "é界ß",
         Vec::new(),
         None,
+        // 3 scalar Data transitions + Data(EOF) = 4
+        4,
     ));
     fixtures.push(complete_tag_fixture(
         "TOK-003",
@@ -39,6 +43,8 @@ pub(super) fn add_supported_tokens(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         2,
         3,
         Vec::new(),
+        // Data('<')+TagOpen('a',create,reconsume)+TagName(reconsume 'a')+TagName('>',emit)+Data(EOF) = 5
+        5,
     ));
     fixtures.push(complete_tag_fixture(
         "TOK-004",
@@ -57,6 +63,8 @@ pub(super) fn add_supported_tokens(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         4,
         5,
         Vec::new(),
+        // Data<+TagOpen(D,reconsume)+TagName(D,i,V)+TagName(>,emit)+Data(EOF) = 1+1+3+1+1 = 7
+        7,
     ));
     fixtures.push(complete_tag_fixture(
         "TOK-005",
@@ -75,6 +83,8 @@ pub(super) fn add_supported_tokens(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         3,
         4,
         Vec::new(),
+        // Data<+TagOpen(/)+EndTagOpen(a,reconsume)+TagName(reconsume a)+TagName(>,emit)+Data(EOF) = 6
+        6,
     ));
     fixtures.push(complete_tag_fixture(
         "TOK-006",
@@ -93,6 +103,8 @@ pub(super) fn add_supported_tokens(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         5,
         6,
         Vec::new(),
+        // Data<+TagOpen(/)+EndTagOpen(D,reconsume)+TagName(D,I,V)+TagName(>,emit)+Data(EOF) = 1+1+1+3+1+1 = 8
+        8,
     ));
     fixtures.push(complete_tag_fixture(
         "TOK-007",
@@ -111,6 +123,9 @@ pub(super) fn add_supported_tokens(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         3,
         4,
         Vec::new(),
+        // Data<+TagOpen(a,reconsume)+TagName(reconsume a)+TagName(sp -> BeforeAttrName)
+        // +BeforeAttrName(>,reconsume AfterAttrName)+AfterAttrName(reconsume >,emit)+Data(EOF) = 7
+        7,
     ));
     fixtures.push(complete_tag_fixture(
         "TOK-008",
@@ -129,6 +144,9 @@ pub(super) fn add_supported_tokens(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         4,
         5,
         Vec::new(),
+        // Data<+TagOpen(a,reconsume)+TagName(reconsume a)+TagName(sp)+BeforeAttrName(x,create,reconsume)
+        // +AttrName(reconsume x)+AttrName(>,reconsume AfterAttrName)+AfterAttrName(reconsume >,emit)+Data(EOF) = 9
+        9,
     ));
     fixtures.push(complete_tag_fixture(
         "TOK-009",
@@ -160,6 +178,10 @@ pub(super) fn add_supported_tokens(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         6,
         7,
         Vec::new(),
+        // Data<+TagOpen(a,reconsume)+TagName(reconsume a)+TagName(sp)+BeforeAttrName(x,create,reconsume)
+        // +AttrName(reconsume x)+AttrName(=)+BeforeAttrValue(y,reconsume Unquoted)+Unquoted(reconsume y)
+        // +Unquoted(>,emit)+Data(EOF) = 11
+        11,
     ));
     let tok10 = "<a x=\"\" y=\"z\">";
     fixtures.push(complete_tag_fixture(
@@ -182,6 +204,11 @@ pub(super) fn add_supported_tokens(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         13,
         14,
         Vec::new(),
+        // Data<+TagOpen(a,reconsume)+TagName(reconsume a)+TagName(sp)+BeforeAttrName(x,create,reconsume)
+        // +AttrName(reconsume x)+AttrName(=)+BeforeAttrValue(")+DoubleQuoted(")+AfterAttrValueQuoted(sp)
+        // +BeforeAttrName(y,create,reconsume)+AttrName(reconsume y)+AttrName(=)+BeforeAttrValue(")
+        // +DoubleQuoted(z)+DoubleQuoted(")+AfterAttrValueQuoted(>,emit)+Data(EOF) = 18
+        18,
     ));
     let tok11 = "<a x='' y='z'>";
     fixtures.push(complete_tag_fixture(
@@ -204,6 +231,8 @@ pub(super) fn add_supported_tokens(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         13,
         14,
         Vec::new(),
+        // Same shape as TOK-010 with single quotes = 18
+        18,
     ));
     fixtures.push(complete_tag_fixture(
         "TOK-012",
@@ -222,5 +251,7 @@ pub(super) fn add_supported_tokens(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         3,
         4,
         Vec::new(),
+        // Data<+TagOpen(a,reconsume)+TagName(reconsume a)+TagName(/)+SelfClosing(>,emit)+Data(EOF) = 6
+        6,
      ));
 }

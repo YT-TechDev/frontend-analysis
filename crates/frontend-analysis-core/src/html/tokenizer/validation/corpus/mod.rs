@@ -3,6 +3,7 @@ mod diagnostics;
 mod helpers;
 mod preprocessing;
 mod supported;
+mod transition_audit;
 mod unsupported_resources;
 
 use super::fixture::HtmlTokenizerFixture;
