@@ -3,7 +3,6 @@ mod diagnostics;
 mod helpers;
 mod preprocessing;
 mod supported;
-#[rustfmt::skip]
 mod transition_audit;
 mod unsupported_resources;
 
