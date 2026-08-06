@@ -64,6 +64,21 @@ infer cursor behavior from output shape.
 A malformed fixture is a failed test. Comparison code must not compensate for
 or normalize it.
 
+## Transition-Step Accounting
+
+Expected `usage.transition_steps` for every fixture is authored directly
+against the pinned WHATWG states approved by #109 and the #111 counting rule:
+one transition step per attempted specification-state transition, including
+a reconsume transition. It is never derived from UTF-8 byte length, Unicode
+scalar count, emitted token count, diagnostic count, or a sum of those
+quantities; a preprocessing diagnostic, a resource refusal, and EOF
+processing are each distinct from an attempted transition and must not be
+conflated with it. `crates/frontend-analysis-core/src/html/tokenizer/validation/corpus/transition_audit.rs`
+records the independently derived, per-fixture committed step count for the
+full 72-fixture inventory, cross-checked by a dedicated test against the
+corpus. The full ordered state trace for each fixture is recorded as a
+comment above that fixture's construction in the relevant `corpus/*.rs` file.
+
 ## Actual Observation and Comparison
 
 The test-only observation adapter reads crate-private production accessors and

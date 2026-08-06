@@ -19,6 +19,7 @@ pub(super) fn complete_tag_fixture(
     close_start: usize,
     close_end: usize,
     diagnostics: Vec<Diagnostic>,
+    transition_steps: usize,
 ) -> HtmlTokenizerFixture {
     let token = tag(
         source,
@@ -55,9 +56,11 @@ pub(super) fn complete_tag_fixture(
         diagnostics,
         None,
         peak_attributes,
+        transition_steps,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn complete_text(
     id: &'static str,
     category: FixtureCategory,
@@ -66,15 +69,31 @@ pub(super) fn complete_text(
     interpreted: &'static str,
     diagnostics: Vec<Diagnostic>,
     bom: Option<ByteSpan>,
+    transition_steps: usize,
 ) -> HtmlTokenizerFixture {
     let mut tokens = Vec::new();
     if !source.is_empty() {
         tokens.push(character(source, 0, source.len(), interpreted));
     }
     tokens.push(eof(source.len()));
-    complete(id, category, purpose, source, tokens, diagnostics, bom, 0)
+    complete(
+        id,
+        category,
+        purpose,
+        source,
+        tokens,
+        diagnostics,
+        bom,
+        0,
+        transition_steps,
+    )
 }
 
+/// `transition_steps` is authored independently from candidate output: it is
+/// the count of attempted specification-state transitions (including
+/// reconsume) derived directly from the pinned WHATWG states approved in
+/// #109/#111, per the audit table in `transition_audit.rs`. It MUST NOT be
+/// derived from source byte length, token count, or diagnostic count.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn complete(
     id: &'static str,
@@ -85,6 +104,7 @@ pub(super) fn complete(
     diagnostics: Vec<Diagnostic>,
     bom: Option<ByteSpan>,
     peak_attributes: usize,
+    transition_steps: usize,
 ) -> HtmlTokenizerFixture {
     let interpreted_bytes = tokens.iter().map(token_interpreted_bytes).sum();
     let run = CanonicalRun {
@@ -95,10 +115,7 @@ pub(super) fn complete(
         },
         usage: usage(
             source,
-            source
-                .len()
-                .saturating_add(tokens.len())
-                .saturating_add(diagnostics.len()),
+            transition_steps,
             tokens.len(),
             diagnostics.len(),
             peak_attributes,
@@ -162,6 +179,12 @@ pub(super) fn fixture(
     }
 }
 
+/// `transition_steps` is authored independently from candidate output, per
+/// the audit table in `transition_audit.rs`. Coverage (`processed_end`) and
+/// `transition_steps` are orthogonal: a capability-boundary discovery step
+/// still counts as one attempted transition even where the triggering bytes
+/// remain in the unprocessed suffix (#111 coverage rule).
+#[allow(clippy::too_many_arguments)]
 pub(super) fn unsupported_input(
     id: &'static str,
     purpose: &'static str,
@@ -170,6 +193,7 @@ pub(super) fn unsupported_input(
     capability: Capability,
     availability: Availability,
     trigger: ByteSpan,
+    transition_steps: usize,
 ) -> HtmlTokenizerFixture {
     incomplete(
         id,
@@ -185,7 +209,7 @@ pub(super) fn unsupported_input(
             trigger: UnsupportedTrigger::Input(trigger),
         },
         Limits::generous(),
-        usage(source, processed_end.saturating_add(1), 0, 0, 0, 0, 0),
+        usage(source, transition_steps, 0, 0, 0, 0, 0),
     )
 }
 

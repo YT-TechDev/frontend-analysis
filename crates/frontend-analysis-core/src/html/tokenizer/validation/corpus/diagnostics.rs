@@ -12,6 +12,8 @@ pub(super) fn add_diagnostics(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         "\u{fdd0}",
         vec![diagnostic(DiagnosticCode::NoncharacterInInputStream, 0, 3, DiagnosticContext::InputPreprocessing, DiagnosticHandling::Continued, DiagnosticSubject::InputLocation)],
         None,
+        // Data(scalar) + Data(EOF) = 2
+        2,
     ));
     fixtures.push(complete_text(
         "ERR-002",
@@ -21,6 +23,8 @@ pub(super) fn add_diagnostics(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         "\u{0001}",
         vec![diagnostic(DiagnosticCode::ControlCharacterInInputStream, 0, 1, DiagnosticContext::InputPreprocessing, DiagnosticHandling::Continued, DiagnosticSubject::InputLocation)],
         None,
+        // Data(scalar) + Data(EOF) = 2
+        2,
     ));
     fixtures.push(complete_text(
         "ERR-003",
@@ -30,6 +34,8 @@ pub(super) fn add_diagnostics(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         "\u{fffd}",
         vec![diagnostic(DiagnosticCode::UnexpectedNullCharacter, 0, 1, DiagnosticContext::Data, DiagnosticHandling::Recovered(RecoveryKind::ReplacedNullWithReplacementCharacter), DiagnosticSubject::InputLocation)],
         None,
+        // Data(NUL) + Data(EOF) = 2
+        2,
     ));
     fixtures.push(complete_text(
         "ERR-004",
@@ -39,6 +45,8 @@ pub(super) fn add_diagnostics(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         "<",
         vec![diagnostic(DiagnosticCode::EofBeforeTagName, 1, 1, DiagnosticContext::TagOpen, DiagnosticHandling::Recovered(RecoveryKind::EmittedLiteralMarkupPrefix), DiagnosticSubject::InputLocation)],
         None,
+        // Data(<)+TagOpen(EOF, emit literal '<', fallback Data)+Data(EOF, emit EOF) = 3
+        3,
     ));
     fixtures.push(complete_text(
         "ERR-005",
@@ -48,6 +56,8 @@ pub(super) fn add_diagnostics(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         "<1",
         vec![diagnostic(DiagnosticCode::InvalidFirstCharacterOfTagName, 1, 2, DiagnosticContext::TagOpen, DiagnosticHandling::Recovered(RecoveryKind::EmittedLiteralMarkupPrefix), DiagnosticSubject::InputLocation)],
         None,
+        // Data(<)+TagOpen('1',reconsume Data)+Data(reconsume '1')+Data(EOF) = 4
+        4,
     ));
     fixtures.push(incomplete(
         "ERR-006",
@@ -63,6 +73,8 @@ pub(super) fn add_diagnostics(fixtures: &mut Vec<HtmlTokenizerFixture>) {
             trigger: UnsupportedTrigger::Input(ByteSpan::new(2, 2)),
         },
         Limits::generous(),
+        // Data(<)+TagOpen('?', UnexpectedQuestionMarkInsteadOfTagName, deferred PI) = 2
+        // (already hand-authored correctly; matches the corrected model)
         usage("<?", 2, 0, 1, 0, 0, 0),
     ));
     fixtures.push(complete(
@@ -74,6 +86,8 @@ pub(super) fn add_diagnostics(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         vec![diagnostic(DiagnosticCode::MissingEndTagName, 2, 3, DiagnosticContext::EndTagOpen, DiagnosticHandling::Recovered(RecoveryKind::IgnoredUnexpectedInput), DiagnosticSubject::InputLocation)],
         None,
         0,
+        // Data(<)+TagOpen(/)+EndTagOpen(>,MissingEndTagName,switch Data)+Data(EOF) = 4
+        4,
     ));
     fixtures.push(complete(
         "ERR-008",
@@ -84,6 +98,8 @@ pub(super) fn add_diagnostics(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         vec![diagnostic(DiagnosticCode::EofInTag, 2, 2, DiagnosticContext::TagName, DiagnosticHandling::Recovered(RecoveryKind::AbandonedIncompleteTagAtEof), DiagnosticSubject::AbandonedInput(ByteSpan::new(0, 2)))],
         None,
         0,
+        // Data(<)+TagOpen(a,reconsume)+TagName(reconsume a)+TagName(EOF, EofInTag) = 4
+        4,
     ));
 
     let err9 = "<a =x>";
@@ -96,6 +112,9 @@ pub(super) fn add_diagnostics(fixtures: &mut Vec<HtmlTokenizerFixture>) {
             diagnostic(DiagnosticCode::UnexpectedEqualsSignBeforeAttributeName, 3, 4, DiagnosticContext::BeforeAttributeName, DiagnosticHandling::Recovered(RecoveryKind::StartedAttributeAtUnexpectedEqualsSign), DiagnosticSubject::EmittedToken(0)),
             diagnostic(DiagnosticCode::UnexpectedCharacterInAttributeName, 3, 4, DiagnosticContext::AttributeName, DiagnosticHandling::Continued, DiagnosticSubject::EmittedToken(0)),
         ],
+        // Data<+TagOpen(a,reconsume)+TagName(reconsume a)+TagName(sp)+BeforeAttrName(=,start attr '=')
+        // +AttrName(x,append)+AttrName(>,reconsume AfterAttrName)+AfterAttrName(reconsume >,emit)+Data(EOF) = 9
+        9,
     ));
     let err10 = "<a x\"y>";
     fixtures.push(complete_tag_fixture(
@@ -104,6 +123,10 @@ pub(super) fn add_diagnostics(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         vec![attribute_missing(err10, 3, 6, 3, 6, "x\"y", AttributeDisposition::Effective)],
         None, 6, 7,
         vec![diagnostic(DiagnosticCode::UnexpectedCharacterInAttributeName, 4, 5, DiagnosticContext::AttributeName, DiagnosticHandling::Continued, DiagnosticSubject::EmittedToken(0))],
+        // Data<+TagOpen(a,reconsume)+TagName(reconsume a)+TagName(sp)+BeforeAttrName(x,create,reconsume)
+        // +AttrName(reconsume x)+AttrName(",append)+AttrName(y,append)+AttrName(>,reconsume AfterAttrName)
+        // +AfterAttrName(reconsume >,emit)+Data(EOF) = 11
+        11,
     ));
     let err11 = "<a x=>";
     fixtures.push(complete_tag_fixture(
@@ -112,6 +135,9 @@ pub(super) fn add_diagnostics(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         vec![attribute_missing_after_equals(err11, 3, 5, 3, 4, "x", 4, 5, 5, AttributeDisposition::Effective)],
         None, 5, 6,
         vec![diagnostic(DiagnosticCode::MissingAttributeValue, 5, 6, DiagnosticContext::BeforeAttributeValue, DiagnosticHandling::Recovered(RecoveryKind::CompletedTagWithMissingAttributeValue), DiagnosticSubject::EmittedToken(0))],
+        // Data<+TagOpen(a,reconsume)+TagName(reconsume a)+TagName(sp)+BeforeAttrName(x,create,reconsume)
+        // +AttrName(reconsume x)+AttrName(=)+BeforeAttrValue(>,MissingAttributeValue,emit)+Data(EOF) = 9
+        9,
     ));
     let err12 = "<a x=a\"b>";
     fixtures.push(complete_tag_fixture(
@@ -120,6 +146,10 @@ pub(super) fn add_diagnostics(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         vec![attribute_unquoted(err12, 3, 8, 3, 4, "x", 4, 5, 5, 8, "a\"b", AttributeDisposition::Effective)],
         None, 8, 9,
         vec![diagnostic(DiagnosticCode::UnexpectedCharacterInUnquotedAttributeValue, 6, 7, DiagnosticContext::AttributeValueUnquoted, DiagnosticHandling::Continued, DiagnosticSubject::EmittedToken(0))],
+        // Data<+TagOpen(a,reconsume)+TagName(reconsume a)+TagName(sp)+BeforeAttrName(x,create,reconsume)
+        // +AttrName(reconsume x)+AttrName(=)+BeforeAttrValue(a,reconsume Unquoted)+Unquoted(reconsume a)
+        // +Unquoted(",append)+Unquoted(b,append)+Unquoted(>,emit)+Data(EOF) = 13
+        13,
     ));
     let err13 = "<a x=\"y\"z>";
     fixtures.push(complete_tag_fixture(
@@ -131,6 +161,11 @@ pub(super) fn add_diagnostics(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         ],
         None, 9, 10,
         vec![diagnostic(DiagnosticCode::MissingWhitespaceBetweenAttributes, 8, 9, DiagnosticContext::AfterAttributeValueQuoted, DiagnosticHandling::Recovered(RecoveryKind::ReconsumedBeforeAttributeName), DiagnosticSubject::EmittedToken(0))],
+        // Data<+TagOpen(a,reconsume)+TagName(reconsume a)+TagName(sp)+BeforeAttrName(x,create,reconsume)
+        // +AttrName(reconsume x)+AttrName(=)+BeforeAttrValue(")+DoubleQuoted(y,append)+DoubleQuoted(",close)
+        // +AfterAttrValueQuoted(z,MissingWhitespace,reconsume BeforeAttrName)+BeforeAttrName(z,create,reconsume)
+        // +AttrName(reconsume z)+AttrName(>,reconsume AfterAttrName)+AfterAttrName(reconsume >,emit)+Data(EOF) = 16
+        16,
     ));
     let err14 = "<a /x>";
     fixtures.push(complete_tag_fixture(
@@ -139,6 +174,11 @@ pub(super) fn add_diagnostics(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         vec![attribute_missing(err14, 4, 5, 4, 5, "x", AttributeDisposition::Effective)],
         None, 5, 6,
         vec![diagnostic(DiagnosticCode::UnexpectedSolidusInTag, 3, 4, DiagnosticContext::SelfClosingStartTag, DiagnosticHandling::Recovered(RecoveryKind::ReconsumedBeforeAttributeName), DiagnosticSubject::EmittedToken(0))],
+        // Data<+TagOpen(a,reconsume)+TagName(reconsume a)+TagName(sp)+BeforeAttrName(/,reconsume AfterAttrName)
+        // +AfterAttrName(/,SelfClosing)+SelfClosing(x,UnexpectedSolidus,reconsume BeforeAttrName)
+        // +BeforeAttrName(x,create,reconsume)+AttrName(reconsume x)+AttrName(>,reconsume AfterAttrName)
+        // +AfterAttrName(reconsume >,emit)+Data(EOF) = 12
+        12,
     ));
     let err15 = "<a x x>";
     fixtures.push(complete_tag_fixture(
@@ -150,6 +190,11 @@ pub(super) fn add_diagnostics(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         ],
         None, 6, 7,
         vec![diagnostic(DiagnosticCode::DuplicateAttribute, 5, 6, DiagnosticContext::AttributeName, DiagnosticHandling::Recovered(RecoveryKind::PreservedDuplicateAttributeOccurrence), DiagnosticSubject::EmittedToken(0))],
+        // Data<+TagOpen(a,reconsume)+TagName(reconsume a)+TagName(sp)+BeforeAttrName(x,create,reconsume)
+        // +AttrName(reconsume x)+AttrName(sp,reconsume AfterAttrName)+AfterAttrName(reconsume sp,ignore)
+        // +AfterAttrName(x,create,reconsume)+AttrName(reconsume x)+AttrName(>,reconsume AfterAttrName)
+        // +AfterAttrName(reconsume >,emit)+Data(EOF) = 13
+        13,
     ));
     let err16 = "</a x>";
     fixtures.push(complete_tag_fixture(
@@ -158,10 +203,17 @@ pub(super) fn add_diagnostics(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         vec![attribute_missing(err16, 4, 5, 4, 5, "x", AttributeDisposition::Effective)],
         None, 5, 6,
         vec![diagnostic(DiagnosticCode::EndTagWithAttributes, 4, 5, DiagnosticContext::AttributeName, DiagnosticHandling::Recovered(RecoveryKind::PreservedEndTagLexicalEvidence), DiagnosticSubject::EmittedToken(0))],
+        // Data<+TagOpen(/)+EndTagOpen(a,reconsume)+TagName(reconsume a)+TagName(sp)
+        // +BeforeAttrName(x,create,reconsume)+AttrName(reconsume x)+AttrName(>,reconsume AfterAttrName)
+        // +AfterAttrName(reconsume >,emit)+Data(EOF) = 10
+        10,
     ));
     fixtures.push(complete_tag_fixture(
         "ERR-017", "end tag with trailing self-closing solidus", "</a/>",
         TokenKind::EndTag, 0, 5, 0, 2, 2, 3, "a", Vec::new(), Some((3, 4)), 4, 5,
         vec![diagnostic(DiagnosticCode::EndTagWithTrailingSolidus, 3, 4, DiagnosticContext::SelfClosingStartTag, DiagnosticHandling::Recovered(RecoveryKind::PreservedEndTagLexicalEvidence), DiagnosticSubject::EmittedToken(0))],
+        // Data<+TagOpen(/)+EndTagOpen(a,reconsume)+TagName(reconsume a)+TagName(/)
+        // +SelfClosing(>,emit)+Data(EOF) = 7
+        7,
     ));
 }

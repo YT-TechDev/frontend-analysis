@@ -13,6 +13,8 @@ pub(super) fn add_preprocessing(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         Vec::new(),
         None,
         0,
+        // Data(EOF) = 1
+        1,
     ));
     fixtures.push(complete_text(
         "PRE-002",
@@ -22,6 +24,8 @@ pub(super) fn add_preprocessing(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         "a",
         Vec::new(),
         None,
+        // Data('a') + Data(EOF) = 2
+        2,
     ));
     fixtures.push(complete_text(
         "PRE-003",
@@ -31,6 +35,8 @@ pub(super) fn add_preprocessing(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         "é界",
         Vec::new(),
         None,
+        // Data('é') + Data('界') + Data(EOF) = 3 (two scalar Data transitions plus EOF)
+        3,
     ));
     fixtures.push(complete(
         "PRE-004",
@@ -41,6 +47,9 @@ pub(super) fn add_preprocessing(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         Vec::new(),
         Some(ByteSpan::new(0, 3)),
         0,
+        // BOM skip is preprocessing, not a transition step.
+        // Data('a') + Data(EOF) = 2
+        2,
     ));
     fixtures.push(complete_text(
         "PRE-005",
@@ -50,6 +59,8 @@ pub(super) fn add_preprocessing(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         "a\u{feff}",
         Vec::new(),
         None,
+        // Data('a') + Data('\u{feff}') + Data(EOF) = 3
+        3,
     ));
     fixtures.push(complete_text(
         "PRE-006",
@@ -59,6 +70,8 @@ pub(super) fn add_preprocessing(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         "\n",
         Vec::new(),
         None,
+        // Data('\n') + Data(EOF) = 2
+        2,
     ));
     fixtures.push(complete_text(
         "PRE-007",
@@ -68,6 +81,9 @@ pub(super) fn add_preprocessing(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         "\n",
         Vec::new(),
         None,
+        // preprocessing normalizes CR to one interpreted LF unit;
+        // Data(LF unit) + Data(EOF) = 2
+        2,
     ));
     fixtures.push(complete_text(
         "PRE-008",
@@ -77,6 +93,8 @@ pub(super) fn add_preprocessing(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         "\n",
         Vec::new(),
         None,
+        // one normalized input unit plus EOF: Data(LF unit) + Data(EOF) = 2
+        2,
     ));
     fixtures.push(complete_text(
         "PRE-009",
@@ -86,6 +104,8 @@ pub(super) fn add_preprocessing(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         "\n\n\n",
         Vec::new(),
         None,
+        // three normalized LF units (CRLF, LF, CR) + EOF = 4
+        4,
     ));
     let pre10 = "\u{000c}\u{0001}\0\u{fdd0}";
     fixtures.push(complete_text(
@@ -121,5 +141,9 @@ pub(super) fn add_preprocessing(fixtures: &mut Vec<HtmlTokenizerFixture>) {
             ),
         ],
         None,
+        // 4 Data-context scalar units (FF, U+0001, NUL, U+FDD0) + Data(EOF) = 5.
+        // Preprocessing diagnostics (InputPreprocessing context) annotate
+        // input-unit creation and add no extra transition step.
+        5,
     ));
 }

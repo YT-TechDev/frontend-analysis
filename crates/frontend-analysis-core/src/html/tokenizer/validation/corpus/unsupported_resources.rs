@@ -12,6 +12,11 @@ pub(super) fn add_unsupported(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         Capability::CharacterReference(CharacterReferenceContext::Data),
         Availability::Deferred,
         ByteSpan::new(0, 1),
+        // Data('&', discovers CharacterReference required) = 1.
+        // Coverage stays empty: the trigger byte is not "fully consumed by
+        // an approved transition" (#111 coverage rule), independent of the
+        // committed transition-step count.
+        1,
     ));
     fixtures.push(unsupported_input(
         "UNSUP-002",
@@ -21,6 +26,11 @@ pub(super) fn add_unsupported(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         Capability::CharacterReference(CharacterReferenceContext::AttributeValue),
         Availability::Deferred,
         ByteSpan::new(5, 6),
+        // Data<+TagOpen(a,reconsume)+TagName(reconsume a)+TagName(sp)+BeforeAttrName(x,create,reconsume)
+        // +AttrName(reconsume x)+AttrName(=) [7 steps, matches processed_end=5]
+        // +BeforeAttrValue('&',reconsume Unquoted, always-approved generic dispatch)
+        // +Unquoted(reconsume '&', discovers CharacterReference required) = 9
+        9,
     ));
     fixtures.push(unsupported_input(
         "UNSUP-003",
@@ -30,6 +40,10 @@ pub(super) fn add_unsupported(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         Capability::MarkupDeclaration,
         Availability::Deferred,
         ByteSpan::new(0, 2),
+        // Data(<, always-approved, unconditional TagOpen switch)
+        // +TagOpen('!', discovers MarkupDeclaration required) = 2.
+        // Coverage stays empty per the same trigger-span rule as UNSUP-001.
+        2,
     ));
     fixtures.push(unsupported_input(
         "UNSUP-004",
@@ -39,6 +53,8 @@ pub(super) fn add_unsupported(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         Capability::ProcessingInstruction,
         Availability::Deferred,
         ByteSpan::new(0, 2),
+        // Data(<)+TagOpen('?', discovers ProcessingInstruction required) = 2
+        2,
     ));
 
     for (id, purpose, source, name_end, name, mode) in [
@@ -156,7 +172,14 @@ pub(super) fn add_resources(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         1,
         2,
         ByteSpan::new(5, 5),
-        usage("<a x y>", 6, 0, 0, 1, 2, 0),
+        // Data<+TagOpen(a,reconsume)+TagName(reconsume a)+TagName(sp)+BeforeAttrName(x,create,reconsume)
+        // +AttrName(reconsume x)+AttrName(sp,reconsume AfterAttrName)+AfterAttrName(reconsume sp,ignore)
+        // [8 steps, matches processed_end=5]
+        // +AfterAttrName(y, attempts create 2nd attribute -- refused: exceeds
+        // AttributesPerTag limit=1, but the examining step itself still
+        // commits per #111 "attempted" wording, mirroring how a resource
+        // refusal on one dimension does not block the step's own commit) = 9
+        usage("<a x y>", 9, 0, 0, 1, 2, 0),
     ));
     fixtures.push(resource_fixture(
         "RES-006",
@@ -182,7 +205,11 @@ pub(super) fn add_resources(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         0,
         1,
         ByteSpan::new(1, 1),
-        usage("<a", 1, 0, 0, 0, 0, 0),
+        // Data(<)+TagOpen(a, create tag, reconsume -- no buffer write yet)
+        // [2 steps, matches processed_end=1]
+        // +TagName(reconsume a, attempts append to the 0-limit temp name
+        // buffer -- refused, but the examining step itself still commits) = 3
+        usage("<a", 3, 0, 0, 0, 0, 0),
     ));
 
     let mut zero_steps = Limits::generous();

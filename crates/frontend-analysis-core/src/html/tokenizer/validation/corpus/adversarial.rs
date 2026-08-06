@@ -12,6 +12,8 @@ pub(super) fn add_adversarial(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         "<1",
         vec![diagnostic(DiagnosticCode::InvalidFirstCharacterOfTagName, 1, 2, DiagnosticContext::TagOpen, DiagnosticHandling::Recovered(RecoveryKind::EmittedLiteralMarkupPrefix), DiagnosticSubject::InputLocation)],
         None,
+        // Data(<)+TagOpen('1',reconsume Data)+Data(reconsume '1')+Data(EOF) = 4
+        4,
     ));
     fixtures.push(complete_text(
         "ADV-002",
@@ -21,6 +23,8 @@ pub(super) fn add_adversarial(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         "<>",
         vec![diagnostic(DiagnosticCode::InvalidFirstCharacterOfTagName, 1, 2, DiagnosticContext::TagOpen, DiagnosticHandling::Recovered(RecoveryKind::EmittedLiteralMarkupPrefix), DiagnosticSubject::InputLocation)],
         None,
+        // Data(<)+TagOpen('>',reconsume Data)+Data(reconsume '>')+Data(EOF) = 4
+        4,
     ));
     let adv3 = "<a x=1 y='2' z=\"3\">";
     fixtures.push(complete_tag_fixture(
@@ -32,6 +36,13 @@ pub(super) fn add_adversarial(fixtures: &mut Vec<HtmlTokenizerFixture>) {
             attribute_double(adv3, 13, 18, 13, 14, "z", 14, 15, 15, 16, 16, 17, 17, 18, "3", AttributeDisposition::Effective),
         ],
         None, 18, 19, Vec::new(),
+        // Data<+TagOpen(a,reconsume)+TagName(reconsume a)+TagName(sp)+BeforeAttrName(x,create,reconsume)
+        // +AttrName(reconsume x)+AttrName(=)+BeforeAttrValue(1,reconsume Unquoted)+Unquoted(reconsume 1)
+        // +Unquoted(sp,BeforeAttrName)+BeforeAttrName(y,create,reconsume)+AttrName(reconsume y)+AttrName(=)
+        // +BeforeAttrValue(')+SingleQuoted(2,append)+SingleQuoted(',close)+AfterAttrValueQuoted(sp)
+        // +BeforeAttrName(z,create,reconsume)+AttrName(reconsume z)+AttrName(=)+BeforeAttrValue(")
+        // +DoubleQuoted(3,append)+DoubleQuoted(",close)+AfterAttrValueQuoted(>,emit)+Data(EOF) = 25
+        25,
     ));
     let adv4 = "<a X x>";
     fixtures.push(complete_tag_fixture(
@@ -43,12 +54,16 @@ pub(super) fn add_adversarial(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         ],
         None, 6, 7,
         vec![diagnostic(DiagnosticCode::DuplicateAttribute, 5, 6, DiagnosticContext::AttributeName, DiagnosticHandling::Recovered(RecoveryKind::PreservedDuplicateAttributeOccurrence), DiagnosticSubject::EmittedToken(0))],
+        // same shape as ERR-015 = 13
+        13,
     ));
     let adv5 = "<a\0>";
     fixtures.push(complete_tag_fixture(
         "ADV-005", "NUL in tag name retains raw byte and replacement interpretation", adv5,
         TokenKind::StartTag, 0, 4, 0, 1, 1, 3, "a\u{fffd}", Vec::new(), None, 3, 4,
         vec![diagnostic(DiagnosticCode::UnexpectedNullCharacter, 2, 3, DiagnosticContext::TagName, DiagnosticHandling::Recovered(RecoveryKind::ReplacedNullWithReplacementCharacter), DiagnosticSubject::EmittedToken(0))],
+        // Data<+TagOpen(a,reconsume)+TagName(reconsume a)+TagName(NUL,append)+TagName(>,emit)+Data(EOF) = 6
+        6,
     ));
     let adv6 = "<a x\0=y\0>";
     fixtures.push(complete_tag_fixture(
@@ -60,6 +75,10 @@ pub(super) fn add_adversarial(fixtures: &mut Vec<HtmlTokenizerFixture>) {
             diagnostic(DiagnosticCode::UnexpectedNullCharacter, 4, 5, DiagnosticContext::AttributeName, DiagnosticHandling::Recovered(RecoveryKind::ReplacedNullWithReplacementCharacter), DiagnosticSubject::EmittedToken(0)),
             diagnostic(DiagnosticCode::UnexpectedNullCharacter, 7, 8, DiagnosticContext::AttributeValueUnquoted, DiagnosticHandling::Recovered(RecoveryKind::ReplacedNullWithReplacementCharacter), DiagnosticSubject::EmittedToken(0)),
         ],
+        // Data<+TagOpen(a,reconsume)+TagName(reconsume a)+TagName(sp)+BeforeAttrName(x,create,reconsume)
+        // +AttrName(reconsume x)+AttrName(NUL,append)+AttrName(=)+BeforeAttrValue(y,reconsume Unquoted)
+        // +Unquoted(reconsume y)+Unquoted(NUL,append)+Unquoted(>,emit)+Data(EOF) = 13
+        13,
     ));
     let adv7 = "é<a x=界>ß";
     fixtures.push(complete(
@@ -76,6 +95,11 @@ pub(super) fn add_adversarial(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         Vec::new(),
         None,
         1,
+        // Data(é)+Data(<)+TagOpen(a,reconsume)+TagName(reconsume a)+TagName(sp)
+        // +BeforeAttrName(x,create,reconsume)+AttrName(reconsume x)+AttrName(=)
+        // +BeforeAttrValue(界,reconsume Unquoted)+Unquoted(reconsume 界)+Unquoted(>,emit)
+        // +Data(ß)+Data(EOF) = 13
+        13,
     ));
     let adv8 = "<a =>";
     fixtures.push(complete_tag_fixture(
@@ -87,6 +111,9 @@ pub(super) fn add_adversarial(fixtures: &mut Vec<HtmlTokenizerFixture>) {
             diagnostic(DiagnosticCode::UnexpectedEqualsSignBeforeAttributeName, 3, 4, DiagnosticContext::BeforeAttributeName, DiagnosticHandling::Recovered(RecoveryKind::StartedAttributeAtUnexpectedEqualsSign), DiagnosticSubject::EmittedToken(0)),
             diagnostic(DiagnosticCode::UnexpectedCharacterInAttributeName, 3, 4, DiagnosticContext::AttributeName, DiagnosticHandling::Continued, DiagnosticSubject::EmittedToken(0)),
         ],
+        // Data<+TagOpen(a,reconsume)+TagName(reconsume a)+TagName(sp)+BeforeAttrName(=,start attr '=')
+        // +AttrName(>,reconsume AfterAttrName)+AfterAttrName(reconsume >,emit)+Data(EOF) = 8
+        8,
     ));
     let adv9 = "<a x='";
     fixtures.push(complete(
@@ -98,6 +125,9 @@ pub(super) fn add_adversarial(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         vec![diagnostic(DiagnosticCode::EofInTag, 6, 6, DiagnosticContext::AttributeValueSingleQuoted, DiagnosticHandling::Recovered(RecoveryKind::AbandonedIncompleteTagAtEof), DiagnosticSubject::AbandonedInput(ByteSpan::new(0, 6)))],
         None,
         0,
+        // Data<+TagOpen(a,reconsume)+TagName(reconsume a)+TagName(sp)+BeforeAttrName(x,create,reconsume)
+        // +AttrName(reconsume x)+AttrName(=)+BeforeAttrValue(')+SingleQuoted(EOF,EofInTag) = 9
+        9,
     ));
     let adv10 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     fixtures.push(complete_text(
@@ -108,5 +138,7 @@ pub(super) fn add_adversarial(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         adv10,
         Vec::new(),
         None,
+        // 64 Data('a') steps + Data(EOF) = 65
+        65,
     ));
 }
