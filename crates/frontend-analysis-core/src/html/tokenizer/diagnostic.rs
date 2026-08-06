@@ -102,7 +102,11 @@ impl HtmlTokenizerDiagnostic {
         handling: HtmlTokenizerDiagnosticHandling,
         subject: HtmlTokenizerDiagnosticSubject,
     ) -> Result<Self, HtmlTokenizerDiagnosticContractError> {
-        validate_source(source_text.id(), &location, HtmlDiagnosticEvidenceRole::Location)?;
+        validate_source(
+            source_text.id(),
+            &location,
+            HtmlDiagnosticEvidenceRole::Location,
+        )?;
         if let HtmlTokenizerDiagnosticSubject::AbandonedInput { region } = &subject {
             validate_source(
                 source_text.id(),
@@ -112,9 +116,7 @@ impl HtmlTokenizerDiagnostic {
             if location.range().start() < region.range().start()
                 || location.range().end() > region.range().end()
             {
-                return Err(
-                    HtmlTokenizerDiagnosticContractError::LocationOutsideAbandonedRegion,
-                );
+                return Err(HtmlTokenizerDiagnosticContractError::LocationOutsideAbandonedRegion);
             }
         }
 
