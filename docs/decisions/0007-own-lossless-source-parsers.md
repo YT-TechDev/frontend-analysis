@@ -6,10 +6,10 @@
 | Date | 2026-08-06 |
 | Decision owner / approver | YT-TechDev |
 | Linked Issue | [#105](https://github.com/YT-TechDev/frontend-analysis/issues/105) |
-| Related Pull Request | Pending |
+| Related Pull Request | [#118](https://github.com/YT-TechDev/frontend-analysis/pull/118) |
 | Supersedes | None |
 | Superseded by | None |
-| Affected normative contracts | `docs/architecture/PRINCIPLES.md`, `docs/architecture/LAYERS.md`, `docs/architecture/RUST_CORE_CONTRACTS.md` |
+| Affected normative contracts | `docs/architecture/SOURCE_PARSER_OWNERSHIP.md`, `docs/README.md` |
 
 ## Context
 
@@ -69,6 +69,14 @@ stable public parser API is selected by this ADR.
 The first integrated vertical slice is a bounded HTML tokenizer and analysis
 parser connected to the existing `SourceText`, `SourceId`, `SourceRange`,
 `SourceAnchor`, and raw-coordinate contracts.
+
+`docs/architecture/PRINCIPLES.md`, `docs/architecture/LAYERS.md`, and
+`docs/architecture/RUST_CORE_CONTRACTS.md` were reviewed and remain unchanged.
+Their browser independence, Core ownership, dependency direction, evidence,
+determinism, error, panic, visibility, compatibility, async, concurrency, and
+unsafe constraints already permit this decision. The new specialized
+`docs/architecture/SOURCE_PARSER_OWNERSHIP.md` contract defines the parser-specific
+rules without weakening or duplicating those general contracts.
 
 ## Alternatives Considered
 
@@ -258,11 +266,13 @@ Durable approval:
 
 - [Issue #104](https://github.com/YT-TechDev/frontend-analysis/issues/104)
 - [Issue #105](https://github.com/YT-TechDev/frontend-analysis/issues/105)
+- [Pull Request #118](https://github.com/YT-TechDev/frontend-analysis/pull/118)
 - [HTML workstream #106](https://github.com/YT-TechDev/frontend-analysis/issues/106)
 - [CSS workstream #107](https://github.com/YT-TechDev/frontend-analysis/issues/107)
 - [ECMAScript workstream #108](https://github.com/YT-TechDev/frontend-analysis/issues/108)
 - [Architecture Principles](../architecture/PRINCIPLES.md)
 - [Architecture Layers](../architecture/LAYERS.md)
 - [Rust Core Contracts](../architecture/RUST_CORE_CONTRACTS.md)
+- [Source Parser Ownership](../architecture/SOURCE_PARSER_OWNERSHIP.md)
 - [Raw Source Coordinate Semantics](0005-raw-source-coordinate-semantics.md)
 - [First Source-Anchored Slice Qualification](0006-qualify-first-source-anchored-analysis-vertical-slice.md)
