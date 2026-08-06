@@ -3,6 +3,10 @@ use std::collections::BTreeMap;
 use crate::html::token::{HtmlEndOfFileToken, HtmlPreprocessingEvidence, HtmlToken};
 use crate::{SourceId, SourceText};
 
+use super::super::resource::{HtmlTokenizerLimits, HtmlTokenizerUsage};
+use super::super::result::{
+    HtmlTokenizerCompletion, HtmlTokenizerCoverage, HtmlTokenizerRunResult,
+};
 use super::compare::compare;
 use super::corpus::initial_corpus;
 use super::expected::{ByteSpan, ObservedRun, Token};
@@ -11,8 +15,6 @@ use super::generated::{
     MAX_GENERATED_CASES, MAX_SOURCE_BYTES, generated_inputs, minimization_candidates,
 };
 use super::observe::observe;
-use super::super::resource::{HtmlTokenizerLimits, HtmlTokenizerUsage};
-use super::super::result::{HtmlTokenizerCompletion, HtmlTokenizerCoverage, HtmlTokenizerRunResult};
 
 #[test]
 fn initial_inventory_contains_exactly_72_unique_fixtures() {
@@ -20,10 +22,12 @@ fn initial_inventory_contains_exactly_72_unique_fixtures() {
     assert_eq!(fixtures.len(), 72);
     validate_corpus(&fixtures).unwrap();
 
-    let counts = fixtures.iter().fold(BTreeMap::new(), |mut counts, fixture| {
-        *counts.entry(fixture.category).or_insert(0usize) += 1;
-        counts
-    });
+    let counts = fixtures
+        .iter()
+        .fold(BTreeMap::new(), |mut counts, fixture| {
+            *counts.entry(fixture.category).or_insert(0usize) += 1;
+            counts
+        });
     assert_eq!(counts.get(&FixtureCategory::Preprocessing), Some(&10));
     assert_eq!(counts.get(&FixtureCategory::SupportedToken), Some(&12));
     assert_eq!(counts.get(&FixtureCategory::Diagnostic), Some(&17));
@@ -51,7 +55,10 @@ fn initial_ids_are_stable_and_contiguous_within_each_category() {
         let expected: Vec<String> = (1..=count)
             .map(|index| format!("{prefix}-{index:03}"))
             .collect();
-        assert_eq!(actual, expected.iter().map(String::as_str).collect::<Vec<_>>());
+        assert_eq!(
+            actual,
+            expected.iter().map(String::as_str).collect::<Vec<_>>()
+        );
     }
 }
 
@@ -66,7 +73,10 @@ fn empty_run_observation_matches_the_independent_pre_001_fixture() {
     let second = observed_empty_run(11);
     compare(fixture.id, &fixture.expected, &first).unwrap();
     compare(fixture.id, &fixture.expected, &second).unwrap();
-    assert_eq!(first, second, "SourceId must not change semantic observation");
+    assert_eq!(
+        first, second,
+        "SourceId must not change semantic observation"
+    );
 }
 
 #[test]
@@ -91,7 +101,11 @@ fn bounded_generator_is_reproducible_valid_and_ordered() {
     assert_eq!(first, second);
     assert_eq!(first.len(), MAX_GENERATED_CASES);
     assert!(first.iter().all(|value| value.len() <= MAX_SOURCE_BYTES));
-    assert!(first.iter().all(|value| std::str::from_utf8(value.as_bytes()).is_ok()));
+    assert!(
+        first
+            .iter()
+            .all(|value| std::str::from_utf8(value.as_bytes()).is_ok())
+    );
     assert!(first.iter().any(|value| value.contains('\0')));
     assert!(first.iter().any(|value| value.contains('界')));
 }
@@ -104,10 +118,13 @@ fn minimization_order_is_stable_shortest_first_and_utf8_safe() {
     assert_eq!(first.first().map(String::as_str), Some(""));
     assert!(first.windows(2).all(|pair| {
         pair[0].len() < pair[1].len()
-            || (pair[0].len() == pair[1].len()
-                && pair[0].as_bytes() <= pair[1].as_bytes())
+            || (pair[0].len() == pair[1].len() && pair[0].as_bytes() <= pair[1].as_bytes())
     }));
-    assert!(first.iter().all(|value| value.is_char_boundary(value.len())));
+    assert!(
+        first
+            .iter()
+            .all(|value| value.is_char_boundary(value.len()))
+    );
 }
 
 #[test]
