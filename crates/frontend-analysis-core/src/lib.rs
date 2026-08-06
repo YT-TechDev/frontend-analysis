@@ -1,5 +1,9 @@
 //! Browser-independent validated source anchoring and raw coordinate primitives.
 
+// The approved HTML token contracts are intentionally internal until the first
+// tokenizer and Core integration consume them under Issues #113 and #116.
+#[allow(dead_code)]
+mod html;
 mod raw_source_coordinate;
 mod source;
 
