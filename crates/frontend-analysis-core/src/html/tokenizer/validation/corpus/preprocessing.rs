@@ -87,34 +87,34 @@ pub(super) fn add_preprocessing(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         Vec::new(),
         None,
     ));
-    let pre10 = "\u{000c}\0\u{fdd0}";
+    let pre10 = "\u{000c}\u{0001}\0\u{fdd0}";
     fixtures.push(complete_text(
         "PRE-010",
         FixtureCategory::Preprocessing,
         "FF NUL control and noncharacter locations are explicit",
         pre10,
-        "\u{000c}\u{fffd}\u{fdd0}",
+        "\u{000c}\u{0001}\u{fffd}\u{fdd0}",
         vec![
             diagnostic(
                 DiagnosticCode::ControlCharacterInInputStream,
-                0,
                 1,
+                2,
                 DiagnosticContext::InputPreprocessing,
                 DiagnosticHandling::Continued,
                 DiagnosticSubject::InputLocation,
             ),
             diagnostic(
                 DiagnosticCode::UnexpectedNullCharacter,
-                1,
                 2,
+                3,
                 DiagnosticContext::Data,
                 DiagnosticHandling::Recovered(RecoveryKind::ReplacedNullWithReplacementCharacter),
                 DiagnosticSubject::InputLocation,
             ),
             diagnostic(
                 DiagnosticCode::NoncharacterInInputStream,
-                2,
-                5,
+                3,
+                6,
                 DiagnosticContext::InputPreprocessing,
                 DiagnosticHandling::Continued,
                 DiagnosticSubject::InputLocation,
@@ -123,4 +123,3 @@ pub(super) fn add_preprocessing(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         None,
     ));
 }
-
