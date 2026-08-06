@@ -198,7 +198,7 @@ pub(super) fn add_supported_tokens(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         "a",
         vec![
             attribute_single(tok11, 3, 7, 3, 4, "x", 4, 5, 5, 6, 6, 6, 6, 7, "", AttributeDisposition::Effective),
-            attribute_single(tok11, 8, 13, 8, 9, "y", 9, 10, 10, 11, 11, 12, 12, 13, "z", AtributeDisposition::Effective),
+            attribute_single(tok11, 8, 13, 8, 9, "y", 9, 10, 10, 11, 11, 12, 12, 13, "z", AttributeDisposition::Effective),
         ],
         None,
         13,
@@ -224,4 +224,3 @@ pub(super) fn add_supported_tokens(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         Vec::new(),
      ));
 }
-
