@@ -4,141 +4,121 @@
 //! # Authority
 //!
 //! This audit table is authored directly against the pinned WHATWG states
-//! approved in #109 (Data, Tag open, End tag open, Tag name, Before
-//! attribute name, Attribute name, After attribute name, Before attribute
-//! value, Attribute value double/single/unquoted, After attribute value
-//! (quoted), Self-closing start tag) and the #111 counting rule: "one
-//! transition step per attempted specification-state transition, including
-//! reconsume." It does not consult, generate from, or compare against any
-//! production tokenizer implementation; #113 has not implemented one.
+//! approved in #109 and the #111 counting rule: one transition step per
+//! attempted specification-state transition, including reconsume. It does
+//! not consult, generate from, or compare against a production tokenizer.
 //!
-//! # Adopted derivation model
+//! # Derivation model
 //!
-//! 1. Each preprocessed input unit (already CRLF/CR-normalized to a single
-//!    interpreted LF unit where applicable) or the conceptual EOF unit,
-//!    examined under a specification state -- whether by fresh consumption
-//!    or by reconsume -- is exactly one committed transition step.
-//! 2. A leading UTF-8 BOM skip is input preprocessing, not a transition
-//!    step (#109 §3).
-//! 3. A diagnostic detected purely during preprocessing input-unit creation
-//!    (`DiagnosticContext::InputPreprocessing`) adds no extra step; the
-//!    flagged unit still costs exactly one step when a state examines it.
-//! 4. A step whose dispatch discovers that the required destination is an
-//!    unimplemented capability still counts as one attempted transition (the
-//!    discovery itself); no further steps are attempted. Coverage
-//!    (`processed_prefix`/`unprocessed_suffix`) is governed separately by
-//!    the already-approved #111 rule that trigger bytes remain unprocessed
-//!    unless fully consumed by an approved transition -- coverage and
-//!    transition-step accounting are orthogonal and are not required to
-//!    advance together.
-//! 5. A step whose sub-effect (token emission, diagnostic append, attribute
-//!    creation, buffer growth) would exceed a resource limit *other than*
-//!    `transition_steps` still counts as one attempted transition; only the
-//!    specific sub-effect is refused and nothing after it is attempted.
-//! 6. A step that would itself exceed the `transition_steps` limit does not
-//!    commit (self-referential: the thing being limited is the count of
-//!    attempted transitions).
+//! 1. Each normalized input unit, or conceptual EOF, examined under one
+//!    specification state is one transition step. A reconsume instruction
+//!    causes one additional examination of the same unit under another state.
+//! 2. Leading-BOM skipping and input-preprocessing diagnostics are not state
+//!    transitions. The resulting normalized unit still costs one step when a
+//!    tokenizer state examines it.
+//! 3. Examining conceptual EOF is one transition step. Emitting EOF or another
+//!    token inside that same state dispatch is not an additional step.
+//! 4. Unsupported-capability discovery counts as the attempted dispatch that
+//!    discovered it. Coverage remains independently governed by the approved
+//!    processed-prefix rule.
+//! 5. A non-`TransitionSteps` resource refusal commits the examining state
+//!    transition but refuses its specific sub-effect without partial mutation.
+//! 6. A transition that would exceed `TransitionSteps` is attempted but does
+//!    not increment committed transition usage.
 //!
-//! Rules 5 and 6 are cross-checked by [`RES-002`] (transition_steps is the
-//! limited resource: the next step does not commit) versus [`RES-003`],
-//! [`RES-004`], [`RES-006`] (a different resource is limited: the examining
-//! step commits, only its specific sub-effect is refused).
-//!
-//! # Reading this table
-//!
-//! Each entry is `(fixture_id, committed transition_steps)`. The full
-//! ordered per-fixture state trace (attempted transitions, reconsume points,
-//! and the terminal transition or refusal) is recorded as a comment directly
-//! above that fixture's construction in `preprocessing.rs`, `supported.rs`,
-//! `diagnostics.rs`, `unsupported_resources.rs`, and `adversarial.rs`. This
-//! table exists to make the full 72-fixture inventory reviewable in one
-//! place and to be mechanically cross-checked against the corpus by
-//! [`transition_audit_covers_every_fixture_and_matches_corpus`].
+//! Each entry below records the committed step count. The full reviewable
+//! derivation is distributed with the fixture that owns it: every PRE, TOK,
+//! ERR, and ADV fixture has an ordered state trace next to construction;
+//! UNSUP-001..004 have explicit traces and UNSUP-005..014 share the documented
+//! context-changing-name formula; every RES fixture records preprocessing,
+//! attempted/committed steps, refusal operation, attempted value, and boundary.
+//! This table mechanically proves complete ID coverage and count agreement.
+
 #[rustfmt::skip]
 pub(super) const TRANSITION_STEP_AUDIT: &[(&str, usize)] = &[
-    // PRE: input preprocessing and UTF-8/CRLF/BOM evidence.
-    ("PRE-001", 1),  // Data(EOF)
-    ("PRE-002", 2),  // Data('a')+Data(EOF)
-    ("PRE-003", 3),  // Data('é')+Data('界')+Data(EOF) -- two scalar units, not 5 UTF-8 bytes
-    ("PRE-004", 2),  // BOM skip is not a step; Data('a')+Data(EOF)
-    ("PRE-005", 3),  // Data('a')+Data(U+FEFF)+Data(EOF)
-    ("PRE-006", 2),  // Data(LF)+Data(EOF)
-    ("PRE-007", 2),  // CR normalizes to one LF unit; Data(LF)+Data(EOF)
-    ("PRE-008", 2),  // CRLF normalizes to one LF unit; Data(LF)+Data(EOF) -- not 2 raw bytes
-    ("PRE-009", 4),  // three normalized LF units (CRLF, LF, CR) + Data(EOF)
-    ("PRE-010", 5),  // 4 Data-context scalar units (FF, U+0001, NUL, U+FDD0) + Data(EOF)
+    // PRE: normalized input units plus conceptual EOF.
+    ("PRE-001", 1),
+    ("PRE-002", 2),
+    ("PRE-003", 3),
+    ("PRE-004", 2),
+    ("PRE-005", 3),
+    ("PRE-006", 2),
+    ("PRE-007", 2),
+    ("PRE-008", 2),
+    ("PRE-009", 4),
+    ("PRE-010", 5),
 
-    // TOK: clean supported token observations.
-    ("TOK-001", 4),  // Data('a')+Data('b')+Data('c')+Data(EOF)
-    ("TOK-002", 4),  // 3 scalar Data transitions + Data(EOF)
-    ("TOK-003", 5),  // <a>
-    ("TOK-004", 7),  // <DiV>
-    ("TOK-005", 6),  // </a>
-    ("TOK-006", 8),  // </DIV>
-    ("TOK-007", 7),  // <a >
-    ("TOK-008", 9),  // <a x>
-    ("TOK-009", 11), // <a x=y>
-    ("TOK-010", 18), // <a x="" y="z">
-    ("TOK-011", 18), // <a x='' y='z'>
-    ("TOK-012", 6),  // <a/>
+    // TOK: direct state examinations, including reconsume.
+    ("TOK-001", 4),
+    ("TOK-002", 4),
+    ("TOK-003", 5),
+    ("TOK-004", 7),
+    ("TOK-005", 6),
+    ("TOK-006", 8),
+    ("TOK-007", 7),
+    ("TOK-008", 9),
+    ("TOK-009", 11),
+    ("TOK-010", 18),
+    ("TOK-011", 18),
+    ("TOK-012", 6),
 
-    // ERR: one primary case per approved diagnostic code.
-    ("ERR-001", 2),  // Data(U+FDD0)+Data(EOF)
-    ("ERR-002", 2),  // Data(U+0001)+Data(EOF)
-    ("ERR-003", 2),  // Data(NUL)+Data(EOF)
-    ("ERR-004", 3),  // Data(<)+TagOpen(EOF, literal '<')+Data(EOF)
-    ("ERR-005", 4),  // Data(<)+TagOpen('1',reconsume Data)+Data(reconsume '1')+Data(EOF)
-    ("ERR-006", 2),  // Data(<)+TagOpen('?', deferred PI) -- already hand-authored correctly
-    ("ERR-007", 4),  // </>
-    ("ERR-008", 4),  // <a  (EOF in tag name)
-    ("ERR-009", 9),  // <a =x>
-    ("ERR-010", 11), // <a x"y>
-    ("ERR-011", 9),  // <a x=>
-    ("ERR-012", 13), // <a x=a"b>
-    ("ERR-013", 16), // <a x="y"z>
-    ("ERR-014", 12), // <a /x>
-    ("ERR-015", 13), // <a x x>
-    ("ERR-016", 10), // </a x>
-    ("ERR-017", 7),  // </a/>
+    // ERR: diagnostic emission itself does not add a transition.
+    ("ERR-001", 2),
+    ("ERR-002", 2),
+    ("ERR-003", 2),
+    ("ERR-004", 2), // Data('<') + TagOpen(EOF); both tokens emit in TagOpen.
+    ("ERR-005", 4), // One reconsume instruction; authored '1' is examined twice.
+    ("ERR-006", 2),
+    ("ERR-007", 4),
+    ("ERR-008", 4),
+    ("ERR-009", 9),
+    ("ERR-010", 11),
+    ("ERR-011", 9),
+    ("ERR-012", 13),
+    ("ERR-013", 16),
+    ("ERR-014", 12),
+    ("ERR-015", 13),
+    ("ERR-016", 10),
+    ("ERR-017", 7),
 
-    // UNSUP: explicit unsupported/deferred capability boundaries.
-    ("UNSUP-001", 1),  // Data('&', discovers CharacterReference)
-    ("UNSUP-002", 9),  // <a x=&x> -- 7 committed + BeforeAttrValue('&') + Unquoted(reconsume '&', discovers)
-    ("UNSUP-003", 2),  // Data(<, always-approved)+TagOpen('!', discovers MarkupDeclaration)
-    ("UNSUP-004", 2),  // Data(<)+TagOpen('?', discovers ProcessingInstruction)
-    ("UNSUP-005", 8),  // <title>x   (N+3 formula, N=5)
-    ("UNSUP-006", 11), // <textarea>x (N=8)
-    ("UNSUP-007", 8),  // <style>x (N=5)
-    ("UNSUP-008", 6),  // <xmp>x (N=3)
-    ("UNSUP-009", 9),  // <iframe>x (N=6)
-    ("UNSUP-010", 10), // <noembed>x (N=7)
-    ("UNSUP-011", 11), // <noframes>x (N=8)
-    ("UNSUP-012", 9),  // <script>x (N=6)
-    ("UNSUP-013", 11), // <noscript>x (N=8)
-    ("UNSUP-014", 12), // <plaintext>x (N=9)
+    // UNSUP: discovery dispatch commits; coverage is tracked separately.
+    ("UNSUP-001", 1),
+    ("UNSUP-002", 9),
+    ("UNSUP-003", 2),
+    ("UNSUP-004", 2),
+    ("UNSUP-005", 8),
+    ("UNSUP-006", 11),
+    ("UNSUP-007", 8),
+    ("UNSUP-008", 6),
+    ("UNSUP-009", 9),
+    ("UNSUP-010", 10),
+    ("UNSUP-011", 11),
+    ("UNSUP-012", 9),
+    ("UNSUP-013", 11),
+    ("UNSUP-014", 12),
 
-    // RES: resource and invalid-configuration states.
-    ("RES-001", 0), // SourceBytes checked before preprocessing: no steps attempted
-    ("RES-002", 1), // transition_steps is the limited resource itself (rule 6)
-    ("RES-003", 2), // EmittedTokens limited; Data(EOF) step still commits (rule 5)
-    ("RES-004", 1), // Diagnostics limited; Data(NUL) step still commits (rule 5)
-    ("RES-005", 9), // AttributesPerTag limited; AfterAttributeName('y') step still commits (rule 5)
-    ("RES-006", 2), // RetainedInterpretedBytes limited; Data('b') step still commits (rule 5)
-    ("RES-007", 3), // TemporaryBufferBytes limited; TagName(reconsume 'a') step still commits (rule 5)
-    ("RES-008", 0), // InvalidConfiguration before any processing
-    ("RES-009", 0), // InvalidConfiguration before any processing
+    // RES: committed transition usage at the refusal boundary.
+    ("RES-001", 0),
+    ("RES-002", 1),
+    ("RES-003", 2),
+    ("RES-004", 1),
+    ("RES-005", 9),
+    ("RES-006", 2),
+    ("RES-007", 3), // RetainedInterpretedBytes in the active tag-name builder.
+    ("RES-008", 0),
+    ("RES-009", 0),
 
-    // ADV: adversarial and cross-cutting invariants.
-    ("ADV-001", 4),  // <1
-    ("ADV-002", 4),  // <>
-    ("ADV-003", 25), // <a x=1 y='2' z="3">
-    ("ADV-004", 13), // <a X x>
-    ("ADV-005", 6),  // <a\0>
-    ("ADV-006", 13), // <a x\0=y\0>
-    ("ADV-007", 13), // é<a x=界>ß
-    ("ADV-008", 8),  // <a =>
-    ("ADV-009", 9),  // <a x='  (EOF in single-quoted value)
-    ("ADV-010", 65), // 64 'a' characters + Data(EOF)
+    // ADV: cross-cutting state traces.
+    ("ADV-001", 4),
+    ("ADV-002", 4),
+    ("ADV-003", 25),
+    ("ADV-004", 13),
+    ("ADV-005", 6),
+    ("ADV-006", 13),
+    ("ADV-007", 13),
+    ("ADV-008", 8),
+    ("ADV-009", 9),
+    ("ADV-010", 65),
 ];
 
 #[cfg(test)]
@@ -147,29 +127,20 @@ mod tests {
 
     use super::super::initial_corpus;
     use super::TRANSITION_STEP_AUDIT;
+    use crate::html::tokenizer::validation::expected::{Completion, Resource};
 
     #[test]
     fn transition_audit_covers_every_fixture_and_matches_corpus() {
         let fixtures = initial_corpus();
-        assert_eq!(
-            fixtures.len(),
-            TRANSITION_STEP_AUDIT.len(),
-            "audit table must cover exactly the initial 72-fixture inventory"
-        );
+        assert_eq!(fixtures.len(), 72);
+        assert_eq!(fixtures.len(), TRANSITION_STEP_AUDIT.len());
 
         let audit_ids: BTreeSet<&str> =
             TRANSITION_STEP_AUDIT.iter().map(|(id, _)| *id).collect();
-        assert_eq!(
-            audit_ids.len(),
-            TRANSITION_STEP_AUDIT.len(),
-            "audit table must not contain duplicate fixture IDs"
-        );
+        assert_eq!(audit_ids.len(), TRANSITION_STEP_AUDIT.len());
 
         let corpus_ids: BTreeSet<&str> = fixtures.iter().map(|fixture| fixture.id).collect();
-        assert_eq!(
-            audit_ids, corpus_ids,
-            "audit table fixture IDs must exactly match the corpus inventory"
-        );
+        assert_eq!(audit_ids, corpus_ids);
 
         for fixture in &fixtures {
             let (_, expected_steps) = TRANSITION_STEP_AUDIT
@@ -179,10 +150,41 @@ mod tests {
             assert_eq!(
                 fixture.expected.0.usage.transition_steps,
                 *expected_steps,
-                "{}: fixture usage.transition_steps must match the independently \
-                 derived audit value",
+                "{}: fixture usage.transition_steps must match the independent audit",
                 fixture.id
             );
         }
+    }
+
+    #[test]
+    fn reviewed_edge_cases_and_resource_ownership_are_fixed() {
+        let steps = |id| {
+            TRANSITION_STEP_AUDIT
+                .iter()
+                .find(|(fixture_id, _)| *fixture_id == id)
+                .map(|(_, value)| *value)
+                .unwrap()
+        };
+        assert_eq!(steps("ERR-004"), 2);
+        assert_eq!(steps("ERR-005"), 4);
+        assert_eq!(steps("RES-007"), 3);
+
+        let fixtures = initial_corpus();
+        let res7 = fixtures.iter().find(|fixture| fixture.id == "RES-007").unwrap();
+        assert!(matches!(
+            res7.expected.0.completion,
+            Completion::ResourceLimit {
+                resource: Resource::RetainedInterpretedBytes,
+                attempted: 1,
+                ..
+            }
+        ));
+        assert!(!fixtures.iter().any(|fixture| matches!(
+            fixture.expected.0.completion,
+            Completion::ResourceLimit {
+                resource: Resource::TemporaryBufferBytes,
+                ..
+            }
+        )));
     }
 }
