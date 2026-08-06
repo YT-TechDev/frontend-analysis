@@ -263,13 +263,7 @@ impl HtmlTokenizerRunResult {
         validate_coverage_identity(source_text, &coverage)?;
         validate_preprocessing(source_text, &preprocessing, &coverage)?;
         validate_tokens(source_text, &tokens, &coverage, &completion)?;
-        validate_diagnostics(
-            source_text,
-            &tokens,
-            &diagnostics,
-            &coverage,
-            &completion,
-        )?;
+        validate_diagnostics(source_text, &tokens, &diagnostics, &coverage, &completion)?;
         validate_usage(
             source_text,
             &tokens,
@@ -588,7 +582,10 @@ fn validate_diagnostics(
         }
         previous_start = location.range().start();
 
-        if matches!(diagnostic.handling(), HtmlTokenizerDiagnosticHandling::Stopped) {
+        if matches!(
+            diagnostic.handling(),
+            HtmlTokenizerDiagnosticHandling::Stopped
+        ) {
             if matches!(completion, HtmlTokenizerCompletion::Complete) {
                 return Err(
                     HtmlTokenizerRunContractError::StoppedDiagnosticRequiresIncompleteResult {
