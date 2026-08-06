@@ -119,7 +119,10 @@ pub(crate) enum HtmlTokenizerUnsupportedTrigger {
 impl HtmlTokenizerUnsupportedTrigger {
     fn anchor(&self) -> &SourceAnchor {
         match self {
-            Self::Input(anchor) | Self::EmittedToken { boundary: anchor, .. } => anchor,
+            Self::Input(anchor)
+            | Self::EmittedToken {
+                boundary: anchor, ..
+            } => anchor,
         }
     }
 }
@@ -210,7 +213,9 @@ impl fmt::Debug for HtmlTokenizerIncompleteCause {
                 .debug_tuple("UnsupportedCapability")
                 .field(value)
                 .finish(),
-            Self::ResourceLimit(value) => formatter.debug_tuple("ResourceLimit").field(value).finish(),
+            Self::ResourceLimit(value) => {
+                formatter.debug_tuple("ResourceLimit").field(value).finish()
+            }
             Self::InvalidConfiguration(value) => formatter
                 .debug_tuple("InvalidConfiguration")
                 .field(value)
@@ -256,7 +261,14 @@ impl HtmlTokenizerRunResult {
         validate_coverage_identity(source_text, &coverage)?;
         validate_tokens(source_text, &tokens, &coverage, &completion)?;
         validate_diagnostics(source_text, &tokens, &diagnostics, &coverage)?;
-        validate_usage(source_text, &tokens, &diagnostics, limits, usage, &completion)?;
+        validate_usage(
+            source_text,
+            &tokens,
+            &diagnostics,
+            limits,
+            usage,
+            &completion,
+        )?;
         validate_completion(
             source_text,
             &tokens,
@@ -307,17 +319,18 @@ impl HtmlTokenizerRunResult {
     }
 
     pub(crate) fn is_clean_complete(&self) -> bool {
-        matches!(self.completion, HtmlTokenizerCompletion::Complete)
-            && self.diagnostics.is_empty()
+        matches!(&self.completion, HtmlTokenizerCompletion::Complete) && self.diagnostics.is_empty()
     }
 
     pub(crate) fn is_complete_with_diagnostics(&self) -> bool {
-        matches!(self.completion, HtmlTokenizerCompletion::Complete)
-            && !self.diagnostics.is_empty()
+        matches!(&self.completion, HtmlTokenizerCompletion::Complete) && !self.diagnostics.is_empty()
     }
 
     pub(crate) fn is_incomplete(&self) -> bool {
-        matches!(self.completion, HtmlTokenizerCompletion::Incomplete(_))
+        matches!(
+            &self.completion,
+            HtmlTokenizerCompletion::Incomplete(_)
+        )
     }
 }
 
@@ -443,8 +456,14 @@ fn validate_coverage_identity(
     coverage: &HtmlTokenizerCoverage,
 ) -> Result<(), HtmlTokenizerRunContractError> {
     for (role, anchor) in [
-        (HtmlRunEvidenceRole::ProcessedPrefix, coverage.processed_prefix()),
-        (HtmlRunEvidenceRole::UnprocessedSuffix, coverage.unprocessed_suffix()),
+        (
+            HtmlRunEvidenceRole::ProcessedPrefix,
+            coverage.processed_prefix(),
+        ),
+        (
+            HtmlRunEvidenceRole::UnprocessedSuffix,
+            coverage.unprocessed_suffix(),
+        ),
     ] {
         require_source(source_text.id(), anchor, role)?;
     }
@@ -520,9 +539,11 @@ fn validate_diagnostics(
             return Err(HtmlTokenizerRunContractError::DiagnosticOrder);
         }
         if location.range().end() > coverage.processed_end() {
-            return Err(HtmlTokenizerRunContractError::DiagnosticOutsideProcessedPrefix {
-                diagnostic_index: index,
-            });
+            return Err(
+                HtmlTokenizerRunContractError::DiagnosticOutsideProcessedPrefix {
+                    diagnostic_index: index,
+                },
+            );
         }
         previous_start = location.range().start();
 
@@ -530,16 +551,20 @@ fn validate_diagnostics(
             HtmlTokenizerDiagnosticSubject::InputLocation => {}
             HtmlTokenizerDiagnosticSubject::EmittedToken { token_index } => {
                 let Some(token) = tokens.get(*token_index) else {
-                    return Err(HtmlTokenizerRunContractError::InvalidDiagnosticTokenReference {
-                        diagnostic_index: index,
-                        token_index: *token_index,
-                    });
+                    return Err(
+                        HtmlTokenizerRunContractError::InvalidDiagnosticTokenReference {
+                            diagnostic_index: index,
+                            token_index: *token_index,
+                        },
+                    );
                 };
                 if matches!(token, HtmlToken::EndOfFile(_)) {
-                    return Err(HtmlTokenizerRunContractError::DiagnosticMustNotReferenceEof {
-                        diagnostic_index: index,
-                        token_index: *token_index,
-                    });
+                    return Err(
+                        HtmlTokenizerRunContractError::DiagnosticMustNotReferenceEof {
+                            diagnostic_index: index,
+                            token_index: *token_index,
+                        },
+                    );
                 }
             }
             HtmlTokenizerDiagnosticSubject::AbandonedInput { region } => {
@@ -549,9 +574,11 @@ fn validate_diagnostics(
                     HtmlRunEvidenceRole::DiagnosticAbandonedRegion,
                 )?;
                 if region.range().end() > coverage.processed_end() {
-                    return Err(HtmlTokenizerRunContractError::DiagnosticOutsideProcessedPrefix {
-                        diagnostic_index: index,
-                    });
+                    return Err(
+                        HtmlTokenizerRunContractError::DiagnosticOutsideProcessedPrefix {
+                            diagnostic_index: index,
+                        },
+                    );
                 }
             }
         }
@@ -581,10 +608,12 @@ fn validate_usage(
         });
     }
     if usage.diagnostics() != diagnostics.len() {
-        return Err(HtmlTokenizerRunContractError::UsageDiagnosticCountMismatch {
-            expected: diagnostics.len(),
-            actual: usage.diagnostics(),
-        });
+        return Err(
+            HtmlTokenizerRunContractError::UsageDiagnosticCountMismatch {
+                expected: diagnostics.len(),
+                actual: usage.diagnostics(),
+            },
+        );
     }
 
     let minimum_attributes = tokens
@@ -661,32 +690,36 @@ fn validate_completion(
                 return Err(HtmlTokenizerRunContractError::ConfigurationFailureMismatch);
             }
         }
-        HtmlTokenizerCompletion::Incomplete(cause) => match cause {
-            HtmlTokenizerIncompleteCause::UnsupportedCapability(unsupported) => {
-                validate_unsupported(source_text, tokens, coverage, unsupported)?;
-            }
-            HtmlTokenizerIncompleteCause::ResourceLimit(limit) => {
-                validate_resource_limit(source_text, coverage, limits, usage, limit)?;
-            }
-            HtmlTokenizerIncompleteCause::InvalidConfiguration(failure) => {
-                if limits.configuration_failure() != Some(*failure) {
-                    return Err(HtmlTokenizerRunContractError::ConfigurationFailureMismatch);
+        HtmlTokenizerCompletion::Incomplete(cause) => {
+            match cause {
+                HtmlTokenizerIncompleteCause::UnsupportedCapability(unsupported) => {
+                    validate_unsupported(source_text, tokens, coverage, unsupported)?;
                 }
-                if coverage.processed_end() != 0
-                    || !tokens.is_empty()
-                    || !diagnostics.is_empty()
-                    || usage.transition_steps() != 0
-                    || usage.emitted_tokens() != 0
-                    || usage.diagnostics() != 0
-                    || usage.peak_attributes_per_tag() != 0
-                    || usage.retained_interpreted_bytes() != 0
-                    || usage.peak_temporary_buffer_bytes() != 0
-                {
-                    return Err(HtmlTokenizerRunContractError::InvalidConfigurationMustPrecedeProcessing);
+                HtmlTokenizerIncompleteCause::ResourceLimit(limit) => {
+                    validate_resource_limit(source_text, coverage, limits, usage, limit)?;
                 }
+                HtmlTokenizerIncompleteCause::InvalidConfiguration(failure) => {
+                    if limits.configuration_failure() != Some(*failure) {
+                        return Err(HtmlTokenizerRunContractError::ConfigurationFailureMismatch);
+                    }
+                    if coverage.processed_end() != 0
+                        || !tokens.is_empty()
+                        || !diagnostics.is_empty()
+                        || usage.transition_steps() != 0
+                        || usage.emitted_tokens() != 0
+                        || usage.diagnostics() != 0
+                        || usage.peak_attributes_per_tag() != 0
+                        || usage.retained_interpreted_bytes() != 0
+                        || usage.peak_temporary_buffer_bytes() != 0
+                    {
+                        return Err(
+                            HtmlTokenizerRunContractError::InvalidConfigurationMustPrecedeProcessing,
+                        );
+                    }
+                }
+                HtmlTokenizerIncompleteCause::InternalInvariantFailure(_) => {}
             }
-            HtmlTokenizerIncompleteCause::InternalInvariantFailure(_) => {}
-        },
+        }
     }
     Ok(())
 }
@@ -705,7 +738,9 @@ fn validate_unsupported(
     match unsupported.trigger() {
         HtmlTokenizerUnsupportedTrigger::Input(anchor) => {
             if anchor.range().start() != coverage.processed_end() {
-                return Err(HtmlTokenizerRunContractError::UnsupportedInputMustStartAtCoverageBoundary);
+                return Err(
+                    HtmlTokenizerRunContractError::UnsupportedInputMustStartAtCoverageBoundary,
+                );
             }
         }
         HtmlTokenizerUnsupportedTrigger::EmittedToken {
@@ -713,22 +748,30 @@ fn validate_unsupported(
             boundary,
         } => {
             let Some(token) = tokens.get(*token_index) else {
-                return Err(HtmlTokenizerRunContractError::InvalidUnsupportedTokenReference {
-                    token_index: *token_index,
-                });
+                return Err(
+                    HtmlTokenizerRunContractError::InvalidUnsupportedTokenReference {
+                        token_index: *token_index,
+                    },
+                );
             };
             if matches!(token, HtmlToken::EndOfFile(_)) {
-                return Err(HtmlTokenizerRunContractError::UnsupportedTriggerMustReferenceNonEofToken {
-                    token_index: *token_index,
-                });
+                return Err(
+                    HtmlTokenizerRunContractError::UnsupportedTriggerMustReferenceNonEofToken {
+                        token_index: *token_index,
+                    },
+                );
             }
             if boundary.range().end() > coverage.processed_end() {
-                return Err(HtmlTokenizerRunContractError::UnsupportedTokenBoundaryOutsideProcessedPrefix);
+                return Err(
+                    HtmlTokenizerRunContractError::UnsupportedTokenBoundaryOutsideProcessedPrefix,
+                );
             }
             if !boundary.range().is_empty()
                 || boundary.range().start() != token_anchor(token).range().end()
             {
-                return Err(HtmlTokenizerRunContractError::UnsupportedTokenBoundaryMustFollowReferencedToken);
+                return Err(
+                    HtmlTokenizerRunContractError::UnsupportedTokenBoundaryMustFollowReferencedToken,
+                );
             }
         }
     }
@@ -795,9 +838,7 @@ fn token_anchor(token: &HtmlToken) -> &SourceAnchor {
     }
 }
 
-fn token_interpreted_bytes(
-    token: &HtmlToken,
-) -> Result<usize, HtmlTokenizerRunContractError> {
+fn token_interpreted_bytes(token: &HtmlToken) -> Result<usize, HtmlTokenizerRunContractError> {
     match token {
         HtmlToken::Character(token) => Ok(token.interpreted().len()),
         HtmlToken::Tag(token) => token.attributes().iter().try_fold(
