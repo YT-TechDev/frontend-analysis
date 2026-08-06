@@ -2,6 +2,7 @@ use super::super::expected::*;
 use super::super::fixture::{FixtureCategory, HtmlTokenizerFixture};
 use super::helpers::*;
 
+#[rustfmt::skip]
 pub(super) fn add_preprocessing(fixtures: &mut Vec<HtmlTokenizerFixture>) {
     fixtures.push(complete(
         "PRE-001",
@@ -122,3 +123,4 @@ pub(super) fn add_preprocessing(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         None,
     ));
 }
+

@@ -2,32 +2,59 @@ use super::super::expected::*;
 use super::super::fixture::{FixtureCategory, HtmlTokenizerFixture};
 use super::helpers::*;
 
+#[rustfmt::skip]
 pub(super) fn add_diagnostics(fixtures: &mut Vec<HtmlTokenizerFixture>) {
     fixtures.push(complete_text(
-        "ERR-001", FixtureCategory::Diagnostic, "NoncharacterInInputStream diagnostic",
-        "\u{fdd0}", "\u{fdd0}",
-        vec![diagnostic(DiagnosticCode::NoncharacterInInputStream, 0, 3, DiagnosticContext::InputPreprocessing, DiagnosticHandling::Continued, DiagnosticSubject::InputLocation)], None,
+        "ERR-001",
+        FixtureCategory::Diagnostic,
+        "NoncharacterInInputStream diagnostic",
+        "\u{fdd0}",
+        "\u{fdd0}",
+        vec![diagnostic(DiagnosticCode::NoncharacterInInputStream, 0, 3, DiagnosticContext::InputPreprocessing, DiagnosticHandling::Continued, DiagnosticSubject::InputLocation)],
+        None,
     ));
     fixtures.push(complete_text(
-        "ERR-002", FixtureCategory::Diagnostic, "ControlCharacterInInputStream diagnostic",
-        "\u{0001}", "\u{0001}",
-        vec![diagnostic(DiagnosticCode::ControlCharacterInInputStream, 0, 1, DiagnosticContext::InputPreprocessing, DiagnosticHandling::Continued, DiagnosticSubject::InputLocation)], None,
+        "ERR-002",
+        FixtureCategory::Diagnostic,
+        "ControlCharacterInInputStream diagnostic",
+        "\u{0001}",
+        "\u{0001}",
+        vec![diagnostic(DiagnosticCode::ControlCharacterInInputStream, 0, 1, DiagnosticContext::InputPreprocessing, DiagnosticHandling::Continued, DiagnosticSubject::InputLocation)],
+        None,
     ));
     fixtures.push(complete_text(
-        "ERR-003", FixtureCategory::Diagnostic, "UnexpectedNullCharacter replacement", "\0", "\u{fffd}",
-        vec![diagnostic(DiagnosticCode::UnexpectedNullCharacter, 0, 1, DiagnosticContext::Data, DiagnosticHandling::Recovered(RecoveryKind::ReplacedNullWithReplacementCharacter), DiagnosticSubject::InputLocation)], None,
+        "ERR-003",
+        FixtureCategory::Diagnostic,
+        "UnexpectedNullCharacter replacement",
+        "\0",
+        "\u{fffd}",
+        vec![diagnostic(DiagnosticCode::UnexpectedNullCharacter, 0, 1, DiagnosticContext::Data, DiagnosticHandling::Recovered(RecoveryKind::ReplacedNullWithReplacementCharacter), DiagnosticSubject::InputLocation)],
+        None,
     ));
     fixtures.push(complete_text(
-        "ERR-004", FixtureCategory::Diagnostic, "EOF before a tag name emits the literal markup prefix", "<", "<",
-        vec![diagnostic(DiagnosticCode::EofBeforeTagName, 1, 1, DiagnosticContext::TagOpen, DiagnosticHandling::Recovered(RecoveryKind::EmittedLiteralMarkupPrefix), DiagnosticSubject::InputLocation)], None,
+        "ERR-004",
+        FixtureCategory::Diagnostic,
+        "EOF before a tag name emits the literal markup prefix",
+        "<",
+        "<",
+        vec![diagnostic(DiagnosticCode::EofBeforeTagName, 1, 1, DiagnosticContext::TagOpen, DiagnosticHandling::Recovered(RecoveryKind::EmittedLiteralMarkupPrefix), DiagnosticSubject::InputLocation)],
+        None,
     ));
     fixtures.push(complete_text(
-        "ERR-005", FixtureCategory::Diagnostic, "invalid first tag-name character is reconsumed in Data", "<1", "<1",
-        vec![diagnostic(DiagnosticCode::InvalidFirstCharacterOfTagName, 1, 2, DiagnosticContext::TagOpen, DiagnosticHandling::Recovered(RecoveryKind::EmittedLiteralMarkupPrefix), DiagnosticSubject::InputLocation)], None,
+        "ERR-005",
+        FixtureCategory::Diagnostic,
+        "invalid first tag-name character is reconsumed in Data",
+        "<1",
+        "<1",
+        vec![diagnostic(DiagnosticCode::InvalidFirstCharacterOfTagName, 1, 2, DiagnosticContext::TagOpen, DiagnosticHandling::Recovered(RecoveryKind::EmittedLiteralMarkupPrefix), DiagnosticSubject::InputLocation)],
+        None,
     ));
     fixtures.push(incomplete(
-        "ERR-006", FixtureCategory::Diagnostic,
-        "question mark after tag open records the parse error before unsupported PI recovery", "<?", 2,
+        "ERR-006",
+        FixtureCategory::Diagnostic,
+        "question mark after tag open records the parse error before unsupported PI recovery",
+        "<?",
+        2,
         Vec::new(),
         vec![diagnostic(DiagnosticCode::UnexpectedQuestionMarkInsteadOfTagName, 1, 2, DiagnosticContext::TagOpen, DiagnosticHandling::Stopped, DiagnosticSubject::InputLocation)],
         Completion::Unsupported {
@@ -35,17 +62,28 @@ pub(super) fn add_diagnostics(fixtures: &mut Vec<HtmlTokenizerFixture>) {
             availability: Availability::Deferred,
             trigger: UnsupportedTrigger::Input(ByteSpan::new(2, 2)),
         },
-        Limits::generous(), usage("<?", 2, 0, 1, 0, 0, 0),
+        Limits::generous(),
+        usage("<?", 2, 0, 1, 0, 0, 0),
     ));
     fixtures.push(complete(
-        "ERR-007", FixtureCategory::Diagnostic, "missing end-tag name", "</>", vec![eof(3)],
+        "ERR-007",
+        FixtureCategory::Diagnostic,
+        "missing end-tag name",
+        "</>",
+        vec![eof(3)],
         vec![diagnostic(DiagnosticCode::MissingEndTagName, 2, 3, DiagnosticContext::EndTagOpen, DiagnosticHandling::Recovered(RecoveryKind::IgnoredUnexpectedInput), DiagnosticSubject::InputLocation)],
-        None, 0,
+        None,
+        0,
     ));
     fixtures.push(complete(
-        "ERR-008", FixtureCategory::Diagnostic, "EOF in tag abandons the incomplete builder", "<a", vec![eof(2)],
+        "ERR-008",
+        FixtureCategory::Diagnostic,
+        "EOF in tag abandons the incomplete builder",
+        "<a",
+        vec![eof(2)],
         vec![diagnostic(DiagnosticCode::EofInTag, 2, 2, DiagnosticContext::TagName, DiagnosticHandling::Recovered(RecoveryKind::AbandonedIncompleteTagAtEof), DiagnosticSubject::AbandonedInput(ByteSpan::new(0, 2)))],
-        None, 0,
+        None,
+        0,
     ));
 
     let err9 = "<a =x>";
@@ -124,3 +162,4 @@ pub(super) fn add_diagnostics(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         vec![diagnostic(DiagnosticCode::EndTagWithTrailingSolidus, 3, 4, DiagnosticContext::SelfClosingStartTag, DiagnosticHandling::Recovered(RecoveryKind::PreservedEndTagLexicalEvidence), DiagnosticSubject::EmittedToken(0))],
     ));
 }
+
