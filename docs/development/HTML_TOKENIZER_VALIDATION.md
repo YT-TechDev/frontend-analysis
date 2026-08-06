@@ -90,13 +90,13 @@ The accounting boundary is precise:
   increment committed transition usage.
 
 `crates/frontend-analysis-core/src/html/tokenizer/validation/corpus/transition_audit.rs`
-contains an independently authored 72-entry count inventory and mechanically
-checks exact corpus-ID and committed-count agreement. The complete derivation
-artifact is distributed beside the fixtures: PRE, TOK, ERR, and ADV cases have
-ordered state traces; the context-changing UNSUP group has one explicit formula
-parameterized by authored name length; and every RES case records preprocessing,
-attempted and committed transitions, refusal operation, attempted resource
-value, and source boundary.
+contains an independently authored 72-entry committed-count inventory and
+mechanically checks exact corpus-ID and count agreement. The complete reviewable
+derivation is distributed beside the fixtures: PRE, TOK, ERR, and ADV cases
+have ordered state traces; the context-changing UNSUP group has one explicit
+formula parameterized by authored name length; and every RES case records
+preprocessing, attempted and committed transitions, refusal operation,
+attempted resource value, and source boundary.
 
 ## Resource Ownership
 
