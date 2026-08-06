@@ -21,8 +21,19 @@ pub(super) fn complete_tag_fixture(
     diagnostics: Vec<Diagnostic>,
 ) -> HtmlTokenizerFixture {
     let token = tag(
-        source, kind, complete_start, complete_end, open_start, open_end, name_start, name_end,
-        interpreted_name, attributes, solidus, close_start, close_end,
+        source,
+        kind,
+        complete_start,
+        complete_end,
+        open_start,
+        open_end,
+        name_start,
+        name_end,
+        interpreted_name,
+        attributes,
+        solidus,
+        close_start,
+        close_end,
     );
     let peak_attributes = match &token {
         Token::Tag { attributes, .. } => attributes.len(),
@@ -174,15 +185,7 @@ pub(super) fn unsupported_input(
             trigger: UnsupportedTrigger::Input(trigger),
         },
         Limits::generous(),
-        usage(
-            source,
-            processed_end.saturating_add(1),
-            0,
-            0,
-            0,
-            0,
-            0,
-        ),
+        usage(source, processed_end.saturating_add(1), 0, 0, 0, 0, 0),
     )
 }
 
