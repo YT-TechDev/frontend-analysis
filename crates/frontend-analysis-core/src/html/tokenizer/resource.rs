@@ -61,9 +61,7 @@ impl HtmlTokenizerLimits {
         self.max_temporary_buffer_bytes
     }
 
-    pub(crate) const fn configuration_failure(
-        self,
-    ) -> Option<HtmlTokenizerConfigurationFailure> {
+    pub(crate) const fn configuration_failure(self) -> Option<HtmlTokenizerConfigurationFailure> {
         if self.max_transition_steps == 0 {
             Some(HtmlTokenizerConfigurationFailure::ZeroTransitionStepLimit)
         } else if self.max_emitted_tokens == 0 {
@@ -80,9 +78,7 @@ impl HtmlTokenizerLimits {
             HtmlTokenizerResource::EmittedTokens => self.max_emitted_tokens,
             HtmlTokenizerResource::Diagnostics => self.max_diagnostics,
             HtmlTokenizerResource::AttributesPerTag => self.max_attributes_per_tag,
-            HtmlTokenizerResource::RetainedInterpretedBytes => {
-                self.max_retained_interpreted_bytes
-            }
+            HtmlTokenizerResource::RetainedInterpretedBytes => self.max_retained_interpreted_bytes,
             HtmlTokenizerResource::TemporaryBufferBytes => self.max_temporary_buffer_bytes,
         }
     }
@@ -202,18 +198,15 @@ impl HtmlTokenizerResourceLimit {
         at: SourceAnchor,
     ) -> Result<Self, HtmlTokenizerResourceContractError> {
         if at.source_id() != source_text.id() {
-            return Err(
-                HtmlTokenizerResourceContractError::SourceIdentityMismatch {
-                    expected: source_text.id(),
-                    actual: at.source_id(),
-                },
-            );
+            return Err(HtmlTokenizerResourceContractError::SourceIdentityMismatch {
+                expected: source_text.id(),
+                actual: at.source_id(),
+            });
         }
         if attempted <= limit {
-            return Err(HtmlTokenizerResourceContractError::AttemptedMustExceedLimit {
-                limit,
-                attempted,
-            });
+            return Err(
+                HtmlTokenizerResourceContractError::AttemptedMustExceedLimit { limit, attempted },
+            );
         }
         Ok(Self {
             resource,
