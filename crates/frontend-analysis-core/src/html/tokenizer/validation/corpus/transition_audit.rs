@@ -110,9 +110,12 @@ mod tests {
         assert_eq!(steps("RES-007"), 3);
 
         let fixtures = initial_corpus();
-        let res7 = fixtures.iter().find(|fixture| fixture.id == "RES-007").unwrap();
+        let res7 = fixtures
+            .iter()
+            .find(|fixture| fixture.id == "RES-007")
+            .unwrap();
         assert!(matches!(
-            res7.expected.0.completion,
+            &res7.expected.0.completion,
             Completion::ResourceLimit {
                 resource: Resource::RetainedInterpretedBytes,
                 attempted: 1,
@@ -120,7 +123,7 @@ mod tests {
             }
         ));
         assert!(!fixtures.iter().any(|fixture| matches!(
-            fixture.expected.0.completion,
+            &fixture.expected.0.completion,
             Completion::ResourceLimit {
                 resource: Resource::TemporaryBufferBytes,
                 ..
