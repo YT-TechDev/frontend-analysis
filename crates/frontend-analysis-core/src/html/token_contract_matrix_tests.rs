@@ -307,12 +307,7 @@ fn every_nested_evidence_class_rejects_foreign_source_identity() {
     let bom_source = src(116, "\u{feff}");
     let foreign_bom_source = src(117, "\u{feff}");
     assert_contract_error(
-        || {
-            HtmlPreprocessingEvidence::new(
-                &bom_source,
-                Some(anchor(&foreign_bom_source, 0, 3)),
-            )
-        },
+        || HtmlPreprocessingEvidence::new(&bom_source, Some(anchor(&foreign_bom_source, 0, 3))),
         HtmlTokenContractError::SourceIdentityMismatch {
             role: HtmlEvidenceRole::LeadingBom,
             expected: bom_source.id(),
