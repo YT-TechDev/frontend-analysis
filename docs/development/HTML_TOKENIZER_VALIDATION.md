@@ -52,6 +52,15 @@ invalid nesting, invalid EOF meaning, broken coverage, unordered diagnostics,
 invalid subjects, stopped-diagnostic contradictions, BOM evidence outside the
 processed prefix, and inconsistent completion policy.
 
+The coverage pair accounts for every source byte exactly once as processed or
+unprocessed, and emitted top-level source ranges must not overlap. Emitted token
+ranges are not required to cover bytes that the HTML algorithm deliberately
+ignores or abandons, such as an incomplete tag builder. Therefore candidate
+proof that consume and reconsume neither duplicate nor omit input belongs to the
+#113 state-machine validation, where cursor transitions and committed resource
+counters exist. This foundation does not invent a second tokenizer trace or
+infer cursor behavior from output shape.
+
 A malformed fixture is a failed test. Comparison code must not compensate for
 or normalize it.
 
@@ -70,7 +79,10 @@ Mismatch reports identify the fixture and first owned semantic path.
 Repeated candidate validation must run each fixture at least three times with
 identical source and limits. It must also repeat with another `SourceId`; source
 identity must remain validated by production contracts but must not alter the
-semantic observation.
+semantic observation. Before #113 provides the candidate entry point, #112
+proves this comparison path using a production-constructed empty complete run;
+full-corpus candidate execution remains blocked rather than being reported as
+Passed.
 
 ## Deterministic Generated Inputs
 
