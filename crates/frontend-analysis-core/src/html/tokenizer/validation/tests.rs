@@ -9,18 +9,22 @@ use super::super::result::{
 };
 use super::compare::compare;
 use super::corpus::initial_corpus;
-use super::expected::{ByteSpan, DiagnosticCode, ObservedRun, Token};
+use super::expected::{
+    ByteSpan, Completion, DiagnosticCode, ObservedRun, Token, UnsupportedTrigger,
+};
 use super::fixture::{FixtureCategory, validate_corpus};
 use super::generated::{
     MAX_GENERATED_CASES, MAX_SOURCE_BYTES, generated_inputs, minimization_candidates,
 };
 use super::observe::observe;
+use super::policy::validate_policy;
 
 #[test]
 fn initial_inventory_contains_exactly_72_unique_fixtures() {
     let fixtures = initial_corpus();
     assert_eq!(fixtures.len(), 72);
     validate_corpus(&fixtures).unwrap();
+    validate_policy(&fixtures).unwrap();
 
     let counts = fixtures
         .iter()
@@ -213,6 +217,35 @@ fn malformed_gold_fixture_is_rejected_before_candidate_execution() {
     let error = fixture.validate().unwrap_err().to_string();
     assert!(error.contains("PRE-001.coverage"));
     assert!(!error.contains("source_bytes"));
+}
+
+#[test]
+fn malformed_unsupported_trigger_is_rejected_by_policy_validation() {
+    let mut fixture = initial_corpus()
+        .into_iter()
+        .find(|fixture| fixture.id == "UNSUP-001")
+        .unwrap();
+    let Completion::Unsupported { trigger, .. } = &mut fixture.expected.0.completion else {
+        panic!("UNSUP-001 must remain unsupported");
+    };
+    *trigger = UnsupportedTrigger::Input(ByteSpan::new(1, 2));
+    let error = validate_policy(std::slice::from_ref(&fixture))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("UNSUP-001.completion.unsupported.input_boundary"));
+}
+
+#[test]
+fn understated_usage_is_rejected_by_policy_validation() {
+    let mut fixture = initial_corpus()
+        .into_iter()
+        .find(|fixture| fixture.id == "TOK-008")
+        .unwrap();
+    fixture.expected.0.usage.peak_attributes_per_tag = 0;
+    let error = validate_policy(std::slice::from_ref(&fixture))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("TOK-008.usage.peak_attributes_per_tag"));
 }
 
 fn observed_empty_run(source_id: u64) -> ObservedRun {
