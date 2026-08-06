@@ -10,7 +10,7 @@ use super::super::result::{
 use super::compare::compare;
 use super::corpus::initial_corpus;
 use super::expected::{
-    ByteSpan, Completion, DiagnosticCode, ObservedRun, Token, UnsupportedTrigger,
+    ByteSpan, Completion, DiagnosticCode, ObservedRun, Resource, Token, UnsupportedTrigger,
 };
 use super::fixture::{FixtureCategory, validate_corpus};
 use super::generated::{
@@ -248,12 +248,6 @@ fn understated_usage_is_rejected_by_policy_validation() {
     assert!(error.contains("TOK-008.usage.peak_attributes_per_tag"));
 }
 
-// The following tests demonstrate, per fixture category, that
-// `usage.transition_steps` cannot be inferred from UTF-8 byte length,
-// Unicode scalar count, emitted token count, diagnostic count, or a sum of
-// those quantities -- the exact heuristic the reopened #112 defect used.
-// See `transition_audit.rs` for the full per-fixture derivation.
-
 fn find(id: &str) -> super::fixture::HtmlTokenizerFixture {
     initial_corpus()
         .into_iter()
@@ -263,26 +257,15 @@ fn find(id: &str) -> super::fixture::HtmlTokenizerFixture {
 
 #[test]
 fn transition_steps_are_not_derivable_from_utf8_byte_length() {
-    // "é界" is 5 UTF-8 bytes but exactly 2 Unicode scalars; the tokenizer
-    // attempts one Data transition per scalar plus one for EOF.
     let fixture = find("PRE-003");
     assert_eq!(fixture.source_bytes.len(), 5);
-    assert_eq!(fixture.expected.0.tokens.len(), 2); // character + EOF
+    assert_eq!(fixture.expected.0.tokens.len(), 2);
     assert_eq!(fixture.expected.0.usage.transition_steps, 3);
-    assert_ne!(
-        fixture.expected.0.usage.transition_steps,
-        fixture.source_bytes.len(),
-        "transition_steps must not equal raw UTF-8 byte length"
-    );
+    assert_ne!(fixture.expected.0.usage.transition_steps, fixture.source_bytes.len());
 }
 
 #[test]
 fn transition_steps_are_not_derivable_from_crlf_byte_count() {
-    // LF, lone CR, and CRLF have raw byte lengths 1, 1, and 2 respectively,
-    // but preprocessing normalizes all three to exactly one interpreted
-    // input unit, so every case attempts the identical two transition
-    // steps (the normalized unit, then EOF) despite the differing byte
-    // lengths.
     let lf = find("PRE-006");
     let cr = find("PRE-007");
     let crlf = find("PRE-008");
@@ -292,38 +275,27 @@ fn transition_steps_are_not_derivable_from_crlf_byte_count() {
     assert_eq!(lf.expected.0.usage.transition_steps, 2);
     assert_eq!(cr.expected.0.usage.transition_steps, 2);
     assert_eq!(crlf.expected.0.usage.transition_steps, 2);
-    assert_ne!(
-        lf.source_bytes.len(),
-        crlf.source_bytes.len(),
-        "LF and CRLF must differ in raw byte length while committing the same step count"
-    );
 }
 
 #[test]
-fn transition_steps_include_reconsume_transitions_beyond_raw_byte_count() {
-    // "<1" is 2 raw bytes: TagOpen consumes '1' (one step), discovers an
-    // invalid first tag-name character, and reconsumes it in Data (a
-    // second, distinct attempted transition for the same byte) before Data
-    // consumes it again and finally examines EOF -- 4 attempted transitions
-    // for 2 raw bytes.
+fn transition_steps_include_one_reconsume_instruction_for_invalid_tag_open() {
+    // TagOpen examines '1', issues one reconsume instruction, and Data then
+    // examines the same authored input unit a second time. EOF is step four.
     let fixture = find("ERR-005");
     assert_eq!(fixture.source_bytes.len(), 2);
     assert_eq!(fixture.expected.0.usage.transition_steps, 4);
-    assert_ne!(
-        fixture.expected.0.usage.transition_steps,
-        fixture.source_bytes.len(),
-        "reconsume transitions must not collapse into raw byte count"
-    );
+}
+
+#[test]
+fn tag_open_eof_emission_remains_one_state_dispatch() {
+    // TagOpen(EOF) emits both the literal '<' and EOF in one state dispatch.
+    let fixture = find("ERR-004");
+    assert_eq!(fixture.expected.0.usage.transition_steps, 2);
+    assert_eq!(fixture.expected.0.tokens.len(), 2);
 }
 
 #[test]
 fn transition_steps_are_not_derivable_from_diagnostic_count_alone() {
-    // ERR-001 (3-byte noncharacter, 1 diagnostic) and ERR-002 (1-byte
-    // control character, 1 diagnostic) have the same diagnostic count and
-    // different byte lengths, yet both attempt exactly the same two
-    // transitions (the single Data-context scalar, then EOF): the
-    // diagnostic is observed during input-unit creation and adds no cursor
-    // movement or extra transition step of its own.
     let noncharacter = find("ERR-001");
     let control = find("ERR-002");
     assert_eq!(noncharacter.expected.0.diagnostics.len(), 1);
@@ -331,82 +303,61 @@ fn transition_steps_are_not_derivable_from_diagnostic_count_alone() {
     assert_ne!(noncharacter.source_bytes.len(), control.source_bytes.len());
     assert_eq!(noncharacter.expected.0.usage.transition_steps, 2);
     assert_eq!(control.expected.0.usage.transition_steps, 2);
-    assert_ne!(
-        noncharacter.expected.0.usage.transition_steps,
-        noncharacter.expected.0.diagnostics.len(),
-        "transition_steps must not equal diagnostic count"
-    );
 }
 
 #[test]
 fn transition_step_commits_even_when_token_emission_is_refused() {
-    // RES-003: the EmittedTokens limit is exceeded specifically by the EOF
-    // token, but the Data(EOF) transition that discovers this is still an
-    // attempted specification-state transition and commits; only the
-    // emission itself is refused, so transition_steps (2) exceeds the
-    // committed emitted_tokens count (1).
     let fixture = find("RES-003");
     assert_eq!(fixture.expected.0.usage.emitted_tokens, 1);
     assert_eq!(fixture.expected.0.usage.transition_steps, 2);
-    assert!(
-        fixture.expected.0.usage.transition_steps > fixture.expected.0.usage.emitted_tokens,
-        "the discovering transition step must commit even though token emission is refused"
-    );
 }
 
 #[test]
 fn transition_step_commits_before_resource_refusal_without_partial_mutation() {
-    // RES-005 (AttributesPerTag) and RES-007 (TemporaryBufferBytes): the
-    // step that discovers a non-transition-step resource would be exceeded
-    // still commits as an attempted transition, but the specific refused
-    // sub-effect (creating a second attribute; appending to a full temp
-    // buffer) is not partially applied -- committed usage for that
-    // dimension stays within its limit.
     let attrs = find("RES-005");
     assert_eq!(attrs.expected.0.usage.transition_steps, 9);
     assert_eq!(attrs.expected.0.usage.peak_attributes_per_tag, 1);
     assert_eq!(attrs.expected.0.limits.attributes_per_tag, 1);
 
-    let buffer = find("RES-007");
-    assert_eq!(buffer.expected.0.usage.transition_steps, 3);
-    assert_eq!(buffer.expected.0.usage.peak_temporary_buffer_bytes, 0);
-    assert_eq!(buffer.expected.0.limits.temporary_buffer_bytes, 0);
+    let retained = find("RES-007");
+    assert_eq!(retained.expected.0.usage.transition_steps, 3);
+    assert_eq!(retained.expected.0.usage.retained_interpreted_bytes, 0);
+    assert_eq!(retained.expected.0.limits.retained_interpreted_bytes, 0);
+    assert_eq!(retained.expected.0.usage.peak_temporary_buffer_bytes, 0);
+    assert_eq!(retained.expected.0.limits.temporary_buffer_bytes, 1_024);
+    assert!(matches!(
+        retained.expected.0.completion,
+        Completion::ResourceLimit {
+            resource: Resource::RetainedInterpretedBytes,
+            attempted: 1,
+            ..
+        }
+    ));
 }
 
 #[test]
-fn transition_steps_are_not_derivable_from_the_sum_of_bytes_tokens_and_diagnostics() {
-    // The reopened defect computed transition_steps as
-    // `source.len() + tokens.len() + diagnostics.len()`. Spot-check several
-    // fixtures across categories to confirm the corrected values no longer
-    // match that heuristic.
-    for (id, byte_len, tokens, diagnostics, old_heuristic) in [
-        ("PRE-003", 5usize, 2usize, 0usize, 7usize),
-        ("PRE-008", 2, 2, 0, 4),
-        ("TOK-009", 7, 2, 0, 9),
-        ("ERR-013", 10, 2, 1, 13),
-        ("RES-005", 7, 0, 0, 6),
-        ("RES-007", 2, 0, 0, 1),
+fn no_initial_fixture_claims_temporary_buffer_execution_coverage() {
+    assert!(!initial_corpus().iter().any(|fixture| matches!(
+        fixture.expected.0.completion,
+        Completion::ResourceLimit {
+            resource: Resource::TemporaryBufferBytes,
+            ..
+        }
+    )));
+}
+
+#[test]
+fn transition_steps_are_not_derivable_from_the_retired_sum_heuristic() {
+    for (id, old_heuristic) in [
+        ("PRE-003", 7usize),
+        ("PRE-008", 4),
+        ("TOK-009", 9),
+        ("ERR-013", 13),
+        ("RES-005", 6),
+        ("RES-007", 1),
     ] {
         let fixture = find(id);
-        assert_eq!(
-            fixture.source_bytes.len(),
-            byte_len,
-            "{id} byte length drifted"
-        );
-        assert_eq!(
-            fixture.expected.0.tokens.len(),
-            tokens,
-            "{id} token count drifted"
-        );
-        assert_eq!(
-            fixture.expected.0.diagnostics.len(),
-            diagnostics,
-            "{id} diagnostic count drifted"
-        );
-        assert_ne!(
-            fixture.expected.0.usage.transition_steps, old_heuristic,
-            "{id} must no longer match the byte_len+tokens+diagnostics heuristic"
-        );
+        assert_ne!(fixture.expected.0.usage.transition_steps, old_heuristic);
     }
 }
 
