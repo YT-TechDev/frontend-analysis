@@ -24,7 +24,7 @@ pub(super) fn initial_corpus() -> Vec<HtmlTokenizerFixture> {
 /// is a separate corpus from [`initial_corpus`]: it does not count toward,
 /// renumber, or alter the immutable 72-fixture initial inventory.
 pub(super) fn supplemental_regression_corpus() -> Vec<HtmlTokenizerFixture> {
-    let mut fixtures = Vec::with_capacity(3);
+    let mut fixtures = Vec::with_capacity(4);
     regressions::add_regressions(&mut fixtures);
     fixtures
 }

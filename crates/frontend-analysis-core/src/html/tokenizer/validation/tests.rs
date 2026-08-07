@@ -433,9 +433,9 @@ fn find_regression(id: &str) -> super::fixture::HtmlTokenizerFixture {
 }
 
 #[test]
-fn supplemental_regression_corpus_contains_exactly_three_stable_reg_113_fixtures() {
+fn supplemental_regression_corpus_contains_exactly_four_stable_reg_113_fixtures() {
     let fixtures = supplemental_regression_corpus();
-    assert_eq!(fixtures.len(), 3);
+    assert_eq!(fixtures.len(), 4);
     validate_corpus(&fixtures).unwrap();
     validate_policy(&fixtures).unwrap();
 
@@ -449,7 +449,7 @@ fn supplemental_regression_corpus_contains_exactly_three_stable_reg_113_fixtures
                 .iter()
                 .filter(|f| f.category == FixtureCategory::Regression)
                 .count()
-                == 3,
+                == 4,
             "all supplemental fixtures must use FixtureCategory::Regression"
         );
     }
@@ -457,6 +457,7 @@ fn supplemental_regression_corpus_contains_exactly_three_stable_reg_113_fixtures
     assert_eq!(
         ids,
         vec![
+            "REG-113-end-tag-atomic-diagnostics-limit-refusal",
             "REG-113-end-tag-attributes-emission-refusal",
             "REG-113-end-tag-trailing-solidus-emission-refusal",
             "REG-113-missing-attribute-value-emission-refusal",
@@ -479,9 +480,9 @@ fn initial_corpus_is_unaffected_by_the_supplemental_regression_layer() {
 }
 
 #[test]
-fn aggregate_candidate_independent_corpus_is_75_with_unique_ids() {
+fn aggregate_candidate_independent_corpus_is_76_with_unique_ids() {
     let aggregate = all_candidate_independent_corpus();
-    assert_eq!(aggregate.len(), 75, "72 initial + 3 supplemental");
+    assert_eq!(aggregate.len(), 76, "72 initial + 4 supplemental");
 
     let ids: Vec<&str> = aggregate.iter().map(|fixture| fixture.id).collect();
     let unique: std::collections::BTreeSet<&str> = ids.iter().copied().collect();
@@ -496,6 +497,10 @@ fn aggregate_candidate_independent_corpus_is_75_with_unique_ids() {
     assert_eq!(
         aggregate[72].id,
         "REG-113-end-tag-attributes-emission-refusal"
+    );
+    assert_eq!(
+        aggregate[75].id,
+        "REG-113-end-tag-atomic-diagnostics-limit-refusal"
     );
 
     validate_corpus(&aggregate).unwrap();
@@ -714,6 +719,79 @@ fn end_tag_attributes_and_solidus_diagnostics_are_emission_conditioned_by_contra
             ),
         "MissingAttributeValue must remain present via AbandonedInput"
     );
+}
+
+#[test]
+fn end_tag_atomic_diagnostics_limit_refusal_matches_independently_derived_gold() {
+    let fixture = find_regression("REG-113-end-tag-atomic-diagnostics-limit-refusal");
+    let run = &fixture.expected.0;
+
+    assert_eq!(fixture.source_bytes, b"</a x/>");
+    assert_eq!(run.tokens.len(), 0, "no end-tag token must emit");
+    assert!(
+        !run.tokens
+            .iter()
+            .any(|token| matches!(token, Token::EndOfFile { .. })),
+        "no EOF token must follow a refused compound operation"
+    );
+    assert_eq!(run.diagnostics.len(), 0, "no diagnostic must commit");
+    assert!(
+        !run.diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == DiagnosticCode::EndTagWithAttributes),
+        "EndTagWithAttributes must be absent from expected diagnostics"
+    );
+    assert!(
+        !run.diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == DiagnosticCode::EndTagWithTrailingSolidus),
+        "EndTagWithTrailingSolidus must be absent from expected diagnostics"
+    );
+
+    assert_eq!(run.coverage.processed_prefix.end, 6);
+    assert_eq!(run.coverage.unprocessed_suffix, ByteSpan::new(6, 7));
+
+    assert!(matches!(
+        &run.completion,
+        Completion::ResourceLimit {
+            resource: Resource::Diagnostics,
+            limit: 1,
+            attempted: 2,
+            at,
+        } if *at == ByteSpan::new(6, 6)
+    ));
+
+    assert_eq!(run.usage.transition_steps, 10);
+    assert_eq!(run.usage.emitted_tokens, 0);
+    assert_eq!(run.usage.diagnostics, 0);
+    assert_eq!(run.usage.peak_attributes_per_tag, 1);
+    assert_eq!(run.usage.retained_interpreted_bytes, 2);
+    assert_eq!(run.usage.peak_temporary_buffer_bytes, 0);
+
+    validate_policy(std::slice::from_ref(&fixture)).unwrap();
+}
+
+#[test]
+fn diagnostics_resource_policy_accepts_attempted_beyond_a_single_increment() {
+    // Merged #111 (PR #128) allows one atomic operation to require more than
+    // one pending diagnostic at once, so the #112 policy must accept
+    // Diagnostics attempted = committed + N for N >= 1, not only N == 1.
+    // The new REG-113 fixture is exactly this case: committed = 0, limit = 1,
+    // attempted = 2 (N = 2), independent of any producer output.
+    let fixture = find_regression("REG-113-end-tag-atomic-diagnostics-limit-refusal");
+    let run = &fixture.expected.0;
+    assert_eq!(run.usage.diagnostics, 0, "committed diagnostics");
+    assert_eq!(run.limits.diagnostics, 1, "diagnostics limit");
+    assert!(matches!(
+        &run.completion,
+        Completion::ResourceLimit {
+            resource: Resource::Diagnostics,
+            limit: 1,
+            attempted: 2,
+            ..
+        }
+    ));
+    validate_policy(std::slice::from_ref(&fixture)).unwrap();
 }
 
 fn observed_empty_run(source_id: u64) -> ObservedRun {
