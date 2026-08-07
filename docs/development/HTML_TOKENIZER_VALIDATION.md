@@ -226,21 +226,24 @@ supplemental regression corpus are separate inventories:
 | Corpus | Count | ID prefix | Mutability |
 | --- | ---: | --- | --- |
 | Initial corpus | 72 | `PRE-`, `TOK-`, `ERR-`, `UNSUP-`, `RES-`, `ADV-` | Immutable; see [Initial Inventory](#initial-inventory) |
-| Supplemental regression corpus | 3 | `REG-<issue>-<slug>` | Grows by durable addition only |
-| Total candidate-independent corpus | 75 | both of the above | — |
+| Supplemental regression corpus | 4 | `REG-<issue>-<slug>` | Grows by durable addition only |
+| Current candidate-independent total | 76 | initial corpus plus supplemental regression corpus | — |
 
 The initial corpus never grows to absorb supplemental fixtures, and the
 supplemental corpus never renumbers or replaces an initial fixture. Adding a
 `REG-` fixture is not an "Adding or removing an initial fixture" event under
 [Initial Inventory](#initial-inventory) and needs no change to the 72-count.
 
-The current supplemental inventory contains exactly three fixtures, added to
-capture the cross-product of the [Emission-Conditioned Diagnostic
+The current supplemental inventory contains exactly four fixtures. The first
+three capture the cross-product of the [Emission-Conditioned Diagnostic
 Contract](#emission-conditioned-diagnostic-contract) with top-level
 `EmittedTokens` resource refusal, once merged #111 clarified that
 `EndTagWithAttributes` and `EndTagWithTrailingSolidus` are
 emission-conditioned while every other first-slice diagnostic code, such as
-`MissingAttributeValue`, remains observation-conditioned:
+`MissingAttributeValue`, remains observation-conditioned. The fourth captures
+the cross-product of both emission-conditioned end-tag diagnostics with an
+atomic `Diagnostics` resource refusal, per [Atomic Multi-Diagnostic Resource
+Accounting](#atomic-multi-diagnostic-resource-accounting):
 
 - `REG-113-end-tag-attributes-emission-refusal`: an authored end tag with
   attribute evidence (`z</a x>`) whose token emission is refused by an
@@ -254,6 +257,21 @@ emission-conditioned while every other first-slice diagnostic code, such as
   because `Recovered(CompletedTagWithMissingAttributeValue)` denotes
   builder/token-construction completion and commits independently of the
   separately refused emitted-vector insertion.
+- `REG-113-end-tag-atomic-diagnostics-limit-refusal`: an authored end tag
+  with both attribute evidence and a trailing solidus (`</a x/>`), where
+  successful emission would require committing both
+  `EndTagWithAttributes` and `EndTagWithTrailingSolidus` together with the
+  end-tag token. With a `Diagnostics` limit of 1 and zero diagnostics
+  committed, the atomic operation requires 2 pending diagnostics and is
+  refused as a whole: no end-tag token, no diagnostic, and no EOF token
+  result. This fixture requires the test-only `#112` fixture policy to
+  accept `Diagnostics` `attempted = committed + N` for `N >= 1` rather than
+  assuming every `Diagnostics` refusal satisfies `attempted = committed +
+  1`; that policy assumption was corrected in
+  `crates/frontend-analysis-core/src/html/tokenizer/validation/policy.rs`
+  to match the merged #111 contract already described above.
+  `TransitionSteps`, `EmittedTokens`, and `AttributesPerTag` remain the only
+  resources the policy still treats as exact-single-increment.
 
 Every expected observation in the supplemental corpus was derived directly
 from the pinned WHATWG algorithm and the approved #109/#110/merged #111

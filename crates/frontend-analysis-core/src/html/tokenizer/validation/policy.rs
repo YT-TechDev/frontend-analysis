@@ -180,11 +180,16 @@ fn validate_fixture_policy(fixture: &HtmlTokenizerFixture) -> Result<(), Fixture
                 }
             } else {
                 let committed = usage_for(run, *resource);
+                // Diagnostics is deliberately excluded: merged #111 (PR #128)
+                // allows one atomic operation to require multiple pending
+                // diagnostics at once, so `attempted` may exceed `committed`
+                // by more than one. TransitionSteps, EmittedTokens, and
+                // AttributesPerTag remain exact-single-increment because each
+                // refused attempt is a single discrete unit.
                 let exact_increment = matches!(
                     *resource,
                     Resource::TransitionSteps
                         | Resource::EmittedTokens
-                        | Resource::Diagnostics
                         | Resource::AttributesPerTag
                 );
                 let expected_attempted = committed.checked_add(1).ok_or_else(|| {

@@ -196,8 +196,72 @@ fn missing_attribute_value_emission_refusal() -> HtmlTokenizerFixture {
     )
 }
 
+/// `REG-113-end-tag-atomic-diagnostics-limit-refusal`
+///
+/// Source: `</a x/>`. The end-tag builder for `a` collects both an
+/// attribute (`x`) and a trailing solidus, so successful emission would
+/// require committing both emission-conditioned diagnostic facts,
+/// `EndTagWithAttributes` and `EndTagWithTrailingSolidus` (#111), together
+/// with the end-tag token itself. With `max_diagnostics = 1` and zero
+/// diagnostics committed so far, the compound operation requires 2 pending
+/// diagnostics against a limit of 1, so the whole atomic operation --
+/// both diagnostics and the token emission alike -- is refused (merged #111
+/// atomic multi-diagnostic resource accounting, PR #128). No end-tag token,
+/// no diagnostic, and no EOF token results.
+fn end_tag_atomic_diagnostics_limit_refusal() -> HtmlTokenizerFixture {
+    let source = "</a x/>";
+    // Independently derived state-dispatch trace (#109), cross-checked
+    // against ERR-016 ("</a x>") and ERR-017 ("</a/>"):
+    //   1. Data('<')                                     -- switches TagOpen
+    //   2. TagOpen('/')                                    -- switches EndTagOpen
+    //   3. EndTagOpen('a', reconsume)                      -- creates end tag, reconsume TagName
+    //   4. TagName(reconsumed 'a')                         -- appends name "a"
+    //   5. TagName(' ')                                    -- switches BeforeAttributeName
+    //   6. BeforeAttributeName('x', create, reconsume)      -- creates attribute, reconsume AttributeName
+    //   7. AttributeName(reconsumed 'x')                    -- appends attribute name "x"
+    //   8. AttributeName('/', reconsume)                    -- switches AfterAttributeName, reconsume
+    //   9. AfterAttributeName(reconsumed '/')                -- switches SelfClosingStartTag
+    //  10. SelfClosingStartTag('>', compound emission attempt refused) -- commits
+    //      the dispatch; the atomic compound operation (both
+    //      emission-conditioned diagnostics plus token emission) requires 2
+    //      pending diagnostics against Diagnostics limit=1 with 0 committed,
+    //      so the whole operation is refused. No further dispatch (no EOF)
+    //      follows a refused run.
+    let transition_steps = 10;
+    let processed_end = 6; // excludes the refused '>' at [6, 7)
+
+    let mut limits = Limits::generous();
+    limits.diagnostics = 1;
+
+    incomplete(
+        "REG-113-end-tag-atomic-diagnostics-limit-refusal",
+        FixtureCategory::Regression,
+        "the atomic multi-diagnostic end-tag emission attempt is refused by \
+         the Diagnostics resource limit when the required pending \
+         diagnostics (EndTagWithAttributes and EndTagWithTrailingSolidus) \
+         exceed the configured limit, per merged #111 atomic multi-diagnostic \
+         resource accounting",
+        source,
+        processed_end,
+        Vec::new(),
+        Vec::new(),
+        Completion::ResourceLimit {
+            resource: Resource::Diagnostics,
+            limit: 1,
+            attempted: 2,
+            at: ByteSpan::new(processed_end, processed_end),
+        },
+        limits,
+        // retained_interpreted_bytes = abandoned tag name "a" (1) +
+        // abandoned attribute name "x" (1) = 2. The trailing solidus
+        // contributes no interpreted bytes.
+        usage(source, transition_steps, 0, 0, 1, 2, 0),
+    )
+}
+
 pub(super) fn add_regressions(fixtures: &mut Vec<HtmlTokenizerFixture>) {
     fixtures.push(end_tag_attributes_emission_refusal());
     fixtures.push(end_tag_trailing_solidus_emission_refusal());
     fixtures.push(missing_attribute_value_emission_refusal());
+    fixtures.push(end_tag_atomic_diagnostics_limit_refusal());
 }
