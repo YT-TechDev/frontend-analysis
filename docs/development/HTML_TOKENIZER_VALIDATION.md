@@ -142,6 +142,45 @@ the pinned WHATWG snapshot, cross-checked against `ERR-006`, and not from any
 production tokenizer's output. The stable fixture ID and the 72-fixture
 initial inventory are unchanged.
 
+## Emission-Conditioned Diagnostic Contract
+
+The #111 domain contract distinguishes observation-conditioned diagnostics
+from emission-conditioned diagnostics. `EndTagWithAttributes` and
+`EndTagWithTrailingSolidus` are the only first-slice diagnostic codes
+classified emission-conditioned: their underlying parse-error fact exists
+only once the corresponding end-tag token emission commits. A final
+`HtmlTokenizerRunResult` containing either diagnostic must relate it to
+`EmittedToken { token_index }` referencing an emitted `HtmlToken::Tag` of
+kind `End` carrying the corresponding structured evidence (non-empty
+attributes, or a recorded trailing solidus). If the end-tag token does not
+emit, the diagnostic itself must not appear in the final result.
+
+Every other first-slice diagnostic code remains observation-conditioned: its
+underlying fact becomes true once the approved specification observation and
+its committed recovery sub-effect occur, and it does not become false merely
+because a later, independent top-level token emission is refused. Such a
+diagnostic may validly finish with `AbandonedInput { region }` when the tag
+was completed or partially constructed but never emitted.
+`Recovered(CompletedTagWithMissingAttributeValue)` denotes builder/
+token-construction completion, not emitted-vector insertion, and does not
+itself require token emission.
+
+This is a project-owned contract clarification rather than a pinned-standard
+requirement: the pinned WHATWG snapshot distinguishes end-tag-token creation
+from end-tag-token emission and defines both diagnostics as conditions on the
+emitted end-tag token, but assigns no diagnostic-subject or termination model
+of its own.
+
+`crates/frontend-analysis-core/src/html/tokenizer/result.rs` enforces this at
+`HtmlTokenizerRunResult::new` through the crate-private
+`HtmlTokenizerDiagnosticCode::is_emission_conditioned` classifier and
+dedicated `HtmlTokenizerRunContractError` variants. The existing `ERR-016`
+and `ERR-017` fixture location/context policy (first authored attribute
+name / `AttributeName`, and the authored trailing solidus /
+`SelfClosingStartTag`) is unchanged, and the 72-fixture initial corpus is
+unchanged. Supplemental cross-product regression coverage for this
+distinction is deferred to a separate #112 follow-up.
+
 ## Actual Observation and Comparison
 
 The test-only observation adapter reads crate-private production accessors and
