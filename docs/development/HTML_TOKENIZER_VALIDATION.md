@@ -307,10 +307,18 @@ Mismatch reports identify the fixture and first owned semantic path.
 Repeated candidate validation must run each fixture at least three times with
 identical source and limits. It must also repeat with another `SourceId`; source
 identity must remain validated by production contracts but must not alter the
-semantic observation. Before #113 provides the candidate entry point, #112
-proves this comparison path using a production-constructed empty complete run;
-full-corpus candidate execution remains blocked rather than being reported as
-Passed.
+semantic observation.
+
+#113 connects the production `tokenize` entry point to this comparison path in
+`validation/execute.rs`. Full-corpus candidate execution now runs against the
+complete 76-fixture candidate-independent corpus (72 initial plus 4
+supplemental regression fixtures). The `UNSUP-004` gold was independently
+remediated under #112 and merged by PR #125, as recorded above in "UNSUP-004
+Correction"; #113 consumes the corrected gold without modifying it. The
+production tokenizer matches all 76 candidate-independent fixtures, including
+`REG-113-end-tag-atomic-diagnostics-limit-refusal` after the atomic
+`Diagnostics` preflight correction described in [Atomic Multi-Diagnostic
+Resource Accounting](#atomic-multi-diagnostic-resource-accounting).
 
 ## Deterministic Generated Inputs
 
