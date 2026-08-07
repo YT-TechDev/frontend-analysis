@@ -8,9 +8,12 @@ use super::super::result::{
     HtmlTokenizerCompletion, HtmlTokenizerCoverage, HtmlTokenizerRunResult,
 };
 use super::compare::compare;
-use super::corpus::initial_corpus;
+use super::corpus::{
+    all_candidate_independent_corpus, initial_corpus, supplemental_regression_corpus,
+};
 use super::expected::{
-    ByteSpan, Completion, DiagnosticCode, ObservedRun, Resource, Token, UnsupportedTrigger,
+    ByteSpan, Completion, DiagnosticCode, DiagnosticHandling, DiagnosticSubject, ObservedRun,
+    Resource, Token, UnsupportedTrigger,
 };
 use super::fixture::{FixtureCategory, validate_corpus};
 use super::generated::{
@@ -419,6 +422,297 @@ fn err_006_and_unsup_004_share_the_same_tag_open_question_mark_prefix() {
     assert_eq!(
         unsup_004.expected.0.coverage.unprocessed_suffix,
         ByteSpan::new(2, 4)
+    );
+}
+
+fn find_regression(id: &str) -> super::fixture::HtmlTokenizerFixture {
+    supplemental_regression_corpus()
+        .into_iter()
+        .find(|fixture| fixture.id == id)
+        .unwrap_or_else(|| panic!("missing regression fixture {id}"))
+}
+
+#[test]
+fn supplemental_regression_corpus_contains_exactly_three_stable_reg_113_fixtures() {
+    let fixtures = supplemental_regression_corpus();
+    assert_eq!(fixtures.len(), 3);
+    validate_corpus(&fixtures).unwrap();
+    validate_policy(&fixtures).unwrap();
+
+    let mut ids: Vec<&str> = fixtures.iter().map(|fixture| fixture.id).collect();
+    let unique: std::collections::BTreeSet<&str> = ids.iter().copied().collect();
+    assert_eq!(unique.len(), ids.len(), "supplemental IDs must be unique");
+    for id in &ids {
+        assert!(id.starts_with("REG-113-"), "{id} must start with REG-113-");
+        assert!(
+            fixtures
+                .iter()
+                .filter(|f| f.category == FixtureCategory::Regression)
+                .count()
+                == 3,
+            "all supplemental fixtures must use FixtureCategory::Regression"
+        );
+    }
+    ids.sort_unstable();
+    assert_eq!(
+        ids,
+        vec![
+            "REG-113-end-tag-attributes-emission-refusal",
+            "REG-113-end-tag-trailing-solidus-emission-refusal",
+            "REG-113-missing-attribute-value-emission-refusal",
+        ]
+    );
+
+    // Deterministic and self-validating: rebuilding the corpus twice yields
+    // an identical, independently re-validating result.
+    let rebuilt = supplemental_regression_corpus();
+    assert_eq!(rebuilt.len(), fixtures.len());
+    validate_corpus(&rebuilt).unwrap();
+    validate_policy(&rebuilt).unwrap();
+}
+
+#[test]
+fn initial_corpus_is_unaffected_by_the_supplemental_regression_layer() {
+    // The historical 72-fixture initial inventory must remain unchanged in
+    // both count and category composition after adding the REG- layer.
+    assert_eq!(initial_corpus().len(), 72);
+}
+
+#[test]
+fn aggregate_candidate_independent_corpus_is_75_with_unique_ids() {
+    let aggregate = all_candidate_independent_corpus();
+    assert_eq!(aggregate.len(), 75, "72 initial + 3 supplemental");
+
+    let ids: Vec<&str> = aggregate.iter().map(|fixture| fixture.id).collect();
+    let unique: std::collections::BTreeSet<&str> = ids.iter().copied().collect();
+    assert_eq!(
+        unique.len(),
+        ids.len(),
+        "aggregate corpus must contain no duplicate IDs across both layers"
+    );
+
+    // Deterministic concatenation: initial corpus first, then supplemental.
+    assert_eq!(aggregate[71].id, "ADV-010");
+    assert_eq!(
+        aggregate[72].id,
+        "REG-113-end-tag-attributes-emission-refusal"
+    );
+
+    validate_corpus(&aggregate).unwrap();
+    validate_policy(&aggregate).unwrap();
+}
+
+#[test]
+fn end_tag_emission_refusal_regressions_contain_zero_diagnostics_and_no_end_tag_or_eof() {
+    for id in [
+        "REG-113-end-tag-attributes-emission-refusal",
+        "REG-113-end-tag-trailing-solidus-emission-refusal",
+    ] {
+        let fixture = find_regression(id);
+        let run = &fixture.expected.0;
+        assert!(
+            run.diagnostics.is_empty(),
+            "{id} must record zero diagnostics"
+        );
+        assert_eq!(
+            run.tokens.len(),
+            1,
+            "{id} must contain exactly one prior token"
+        );
+        assert!(
+            matches!(&run.tokens[0], Token::Character { interpreted, .. } if interpreted == "z")
+        );
+        assert!(
+            !run.tokens
+                .iter()
+                .any(|token| matches!(token, Token::EndOfFile { .. })),
+            "{id} must contain no EOF token"
+        );
+        assert!(
+            !run.tokens
+                .iter()
+                .any(|token| matches!(token, Token::Tag { .. })),
+            "{id} must contain no end-tag token"
+        );
+        assert!(matches!(
+            &run.completion,
+            Completion::ResourceLimit {
+                resource: Resource::EmittedTokens,
+                limit: 1,
+                attempted: 2,
+                ..
+            }
+        ));
+    }
+}
+
+#[test]
+fn missing_attribute_value_regression_keeps_one_observation_conditioned_diagnostic() {
+    let fixture = find_regression("REG-113-missing-attribute-value-emission-refusal");
+    let run = &fixture.expected.0;
+
+    assert_eq!(run.tokens.len(), 1, "must contain exactly one prior token");
+    assert!(matches!(&run.tokens[0], Token::Character { interpreted, .. } if interpreted == "z"));
+    assert!(
+        !run.tokens
+            .iter()
+            .any(|token| matches!(token, Token::EndOfFile { .. }))
+    );
+    assert!(
+        !run.tokens
+            .iter()
+            .any(|token| matches!(token, Token::Tag { .. }))
+    );
+
+    assert_eq!(run.diagnostics.len(), 1);
+    let diagnostic = &run.diagnostics[0];
+    assert_eq!(diagnostic.code, DiagnosticCode::MissingAttributeValue);
+    assert!(matches!(
+        diagnostic.handling,
+        DiagnosticHandling::Recovered(
+            super::expected::RecoveryKind::CompletedTagWithMissingAttributeValue
+        )
+    ));
+    assert!(matches!(
+        diagnostic.subject,
+        DiagnosticSubject::AbandonedInput(_)
+    ));
+
+    assert!(matches!(
+        &run.completion,
+        Completion::ResourceLimit {
+            resource: Resource::EmittedTokens,
+            limit: 1,
+            attempted: 2,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn regression_transition_and_usage_values_are_independently_authored() {
+    let end_tag_attributes = find_regression("REG-113-end-tag-attributes-emission-refusal");
+    assert_eq!(end_tag_attributes.source_bytes, b"z</a x>");
+    assert_eq!(end_tag_attributes.expected.0.usage.transition_steps, 10);
+    assert_eq!(end_tag_attributes.expected.0.usage.emitted_tokens, 1);
+    assert_eq!(end_tag_attributes.expected.0.usage.diagnostics, 0);
+    assert_eq!(
+        end_tag_attributes.expected.0.usage.peak_attributes_per_tag,
+        1
+    );
+    assert_eq!(
+        end_tag_attributes
+            .expected
+            .0
+            .usage
+            .retained_interpreted_bytes,
+        3
+    );
+    assert_eq!(
+        end_tag_attributes
+            .expected
+            .0
+            .usage
+            .peak_temporary_buffer_bytes,
+        0
+    );
+    assert_eq!(
+        end_tag_attributes.expected.0.coverage.processed_prefix.end,
+        6
+    );
+
+    let end_tag_solidus = find_regression("REG-113-end-tag-trailing-solidus-emission-refusal");
+    assert_eq!(end_tag_solidus.source_bytes, b"z</a/>");
+    assert_eq!(end_tag_solidus.expected.0.usage.transition_steps, 7);
+    assert_eq!(end_tag_solidus.expected.0.usage.emitted_tokens, 1);
+    assert_eq!(end_tag_solidus.expected.0.usage.diagnostics, 0);
+    assert_eq!(end_tag_solidus.expected.0.usage.peak_attributes_per_tag, 0);
+    assert_eq!(
+        end_tag_solidus.expected.0.usage.retained_interpreted_bytes,
+        2
+    );
+    assert_eq!(
+        end_tag_solidus.expected.0.usage.peak_temporary_buffer_bytes,
+        0
+    );
+    assert_eq!(end_tag_solidus.expected.0.coverage.processed_prefix.end, 5);
+
+    let missing_value = find_regression("REG-113-missing-attribute-value-emission-refusal");
+    assert_eq!(missing_value.source_bytes, b"z<a b=>");
+    assert_eq!(missing_value.expected.0.usage.transition_steps, 9);
+    assert_eq!(missing_value.expected.0.usage.emitted_tokens, 1);
+    assert_eq!(missing_value.expected.0.usage.diagnostics, 1);
+    assert_eq!(missing_value.expected.0.usage.peak_attributes_per_tag, 1);
+    assert_eq!(missing_value.expected.0.usage.retained_interpreted_bytes, 3);
+    assert_eq!(
+        missing_value.expected.0.usage.peak_temporary_buffer_bytes,
+        0
+    );
+    assert_eq!(missing_value.expected.0.coverage.processed_prefix.end, 7);
+}
+
+#[test]
+fn end_tag_attributes_and_solidus_diagnostics_are_emission_conditioned_by_contrast() {
+    // The primary purpose of this supplemental layer: EndTagWithAttributes
+    // and EndTagWithTrailingSolidus are emission-conditioned and therefore
+    // absent after non-emission (ERR-016/ERR-017 show them present only when
+    // the end-tag token actually emits). MissingAttributeValue is
+    // observation-conditioned and remains present via AbandonedInput once
+    // its builder-level recovery already committed.
+    let err_016 = find("ERR-016");
+    assert_eq!(
+        err_016.expected.0.diagnostics[0].code,
+        DiagnosticCode::EndTagWithAttributes
+    );
+    assert!(matches!(
+        err_016.expected.0.diagnostics[0].subject,
+        DiagnosticSubject::EmittedToken(_)
+    ));
+
+    let err_017 = find("ERR-017");
+    assert_eq!(
+        err_017.expected.0.diagnostics[0].code,
+        DiagnosticCode::EndTagWithTrailingSolidus
+    );
+    assert!(matches!(
+        err_017.expected.0.diagnostics[0].subject,
+        DiagnosticSubject::EmittedToken(_)
+    ));
+
+    let reg_attributes = find_regression("REG-113-end-tag-attributes-emission-refusal");
+    assert!(
+        !reg_attributes
+            .expected
+            .0
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == DiagnosticCode::EndTagWithAttributes),
+        "EndTagWithAttributes must not appear when emission is refused"
+    );
+
+    let reg_solidus = find_regression("REG-113-end-tag-trailing-solidus-emission-refusal");
+    assert!(
+        !reg_solidus
+            .expected
+            .0
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == DiagnosticCode::EndTagWithTrailingSolidus),
+        "EndTagWithTrailingSolidus must not appear when emission is refused"
+    );
+
+    let reg_missing_value = find_regression("REG-113-missing-attribute-value-emission-refusal");
+    assert!(
+        reg_missing_value
+            .expected
+            .0
+            .diagnostics
+            .iter()
+            .any(
+                |diagnostic| diagnostic.code == DiagnosticCode::MissingAttributeValue
+                    && matches!(diagnostic.subject, DiagnosticSubject::AbandonedInput(_))
+            ),
+        "MissingAttributeValue must remain present via AbandonedInput"
     );
 }
 

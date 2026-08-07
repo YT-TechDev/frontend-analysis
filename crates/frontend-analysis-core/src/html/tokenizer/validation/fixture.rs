@@ -14,6 +14,10 @@ pub(super) enum FixtureCategory {
     Unsupported,
     Resource,
     Adversarial,
+    /// Supplemental candidate-independent regression coverage. Distinct from
+    /// the six initial-corpus categories: `REG-` fixtures never count toward
+    /// the immutable 72-fixture initial inventory.
+    Regression,
 }
 
 impl FixtureCategory {
@@ -25,6 +29,7 @@ impl FixtureCategory {
             Self::Unsupported => "UNSUP-",
             Self::Resource => "RES-",
             Self::Adversarial => "ADV-",
+            Self::Regression => "REG-",
         }
     }
 }
