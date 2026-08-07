@@ -1316,3 +1316,100 @@ fn end_tag_with_trailing_solidus_rejects_wrong_qualifying_tag_correlation() {
         }
     );
 }
+
+#[test]
+fn diagnostics_resource_limit_accepts_atomic_multi_diagnostic_attempt() {
+    // One indivisible logical operation may require more than one
+    // diagnostic to commit atomically. The rejected operation therefore
+    // reports `attempted = committed + N` for `N >= 1`, not only
+    // `committed + 1`: here `committed = 0` and `attempted = 2` for a
+    // `max_diagnostics` limit of `1`. No rejected diagnostic appears in the
+    // final diagnostics vector because the operation is atomic.
+    let source = src(26, "x");
+    let run_limits = HtmlTokenizerLimits::new(10, 10, 10, 1, 10, 10, 10);
+    let run_usage = usage(&source, 1, 0, 0, 0, 0, 0);
+    let limit_evidence = HtmlTokenizerResourceLimit::new(
+        &source,
+        HtmlTokenizerResource::Diagnostics,
+        1,
+        2,
+        anchor(&source, 1, 1),
+    )
+    .unwrap();
+
+    let result = HtmlTokenizerRunResult::new(
+        &source,
+        Vec::new(),
+        preprocessing(&source),
+        Vec::new(),
+        coverage(&source, 1),
+        HtmlTokenizerCompletion::Incomplete(HtmlTokenizerIncompleteCause::ResourceLimit(
+            limit_evidence,
+        )),
+        run_limits,
+        run_usage,
+    )
+    .unwrap();
+
+    assert!(result.is_incomplete());
+    assert!(result.diagnostics().is_empty());
+    assert_eq!(result.usage().diagnostics(), 0);
+}
+
+#[test]
+fn diagnostics_resource_limit_rejects_attempted_not_exceeding_committed() {
+    // The relaxation to `attempted = committed + N` still requires
+    // `attempted > committed`: an attempted value that does not exceed
+    // already-committed usage remains invalid evidence.
+    let source = src(27, "xy");
+    let diagnostics = vec![
+        diagnostic(&source, 0, 1, HtmlTokenizerDiagnosticSubject::InputLocation),
+        diagnostic(&source, 1, 2, HtmlTokenizerDiagnosticSubject::InputLocation),
+    ];
+    let run_limits = HtmlTokenizerLimits::new(10, 10, 10, 1, 10, 10, 10);
+    let run_usage = usage(&source, 2, 0, 2, 0, 0, 0);
+    let limit_evidence = HtmlTokenizerResourceLimit::new(
+        &source,
+        HtmlTokenizerResource::Diagnostics,
+        1,
+        2,
+        anchor(&source, 2, 2),
+    )
+    .unwrap();
+
+    assert_eq!(
+        HtmlTokenizerRunResult::new(
+            &source,
+            Vec::new(),
+            preprocessing(&source),
+            diagnostics,
+            coverage(&source, 2),
+            HtmlTokenizerCompletion::Incomplete(HtmlTokenizerIncompleteCause::ResourceLimit(
+                limit_evidence,
+            )),
+            run_limits,
+            run_usage,
+        )
+        .unwrap_err(),
+        HtmlTokenizerRunContractError::ResourceLimitAttemptMismatch
+    );
+}
+
+#[test]
+fn diagnostics_resource_limit_constructor_rejects_attempted_not_exceeding_limit() {
+    let source = src(28, "x");
+    assert_eq!(
+        HtmlTokenizerResourceLimit::new(
+            &source,
+            HtmlTokenizerResource::Diagnostics,
+            1,
+            1,
+            anchor(&source, 1, 1),
+        )
+        .unwrap_err(),
+        HtmlTokenizerResourceContractError::AttemptedMustExceedLimit {
+            limit: 1,
+            attempted: 1,
+        }
+    );
+}

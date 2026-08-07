@@ -119,6 +119,35 @@ Blocked — no approved first-slice state owns a genuine state-local temporary b
 It must not be reported as Passed or simulated through a retained tag/name/value
 builder.
 
+## Atomic Multi-Diagnostic Resource Accounting
+
+The #111 domain contract defines a resource limit's `attempted` value as the
+would-be logical usage of the rejected operation, and each limit as an
+inclusive maximum of committed logical usage; committed usage remains
+unchanged on refusal because the rejected operation applies no partial
+mutation.
+
+`TransitionSteps`, `EmittedTokens`, and `AttributesPerTag` are structurally
+single-unit operations in the first capability slice: one attempted
+specification-state dispatch, one top-level token insertion, and one authored
+attribute occurrence, respectively, so their rejected evidence always
+satisfies `attempted = committed + 1`.
+
+`Diagnostics` is not structurally guaranteed to be a one-unit-at-a-time
+resource request. A single valid tokenizer operation may require more than
+one diagnostic to become valid together and commits them atomically;
+refusing that operation therefore reports the combined would-be usage of the
+whole atomic request, not a single unit. `Diagnostics` resource-limit
+evidence may legitimately satisfy `attempted = committed + N` for any `N >=
+1`, while still requiring `attempted > committed` and `attempted > limit`.
+Ordinary one-diagnostic append behavior is unchanged and remains the common
+`attempted = committed + 1` case.
+
+This clarification introduces no reservation semantics, no new resource
+variant, and no new public or domain type. It corrects only how many
+diagnostics one rejected atomic operation may represent in already-approved
+`HtmlTokenizerResourceLimit` evidence.
+
 ## UNSUP-004 Correction
 
 The initial `UNSUP-004` fixture (`"<?x>"`, processing-instruction boundary)

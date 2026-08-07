@@ -963,11 +963,15 @@ fn validate_resource_limit(
         }
     } else {
         let committed = usage.value_for(resource_limit.resource());
+        // Diagnostics may commit multiple units atomically (one logical
+        // operation can require several diagnostics to become valid
+        // together), so it cannot share the exact-single-increment
+        // invariant that holds for the other structurally one-unit-at-a-time
+        // resources.
         let exact_increment = matches!(
             resource_limit.resource(),
             HtmlTokenizerResource::TransitionSteps
                 | HtmlTokenizerResource::EmittedTokens
-                | HtmlTokenizerResource::Diagnostics
                 | HtmlTokenizerResource::AttributesPerTag
         );
         if resource_limit.attempted() <= committed
