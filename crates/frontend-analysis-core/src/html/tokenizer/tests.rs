@@ -65,12 +65,34 @@ fn end_tag(
     attributes: Vec<HtmlAttributeEvidence>,
     self_closing_solidus: Option<SourceAnchor>,
 ) -> HtmlToken {
+    end_tag_at(
+        source,
+        0,
+        name_end,
+        complete_end,
+        interpreted,
+        attributes,
+        self_closing_solidus,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn end_tag_at(
+    source: &SourceText,
+    start: usize,
+    name_end: usize,
+    complete_end: usize,
+    interpreted: &str,
+    attributes: Vec<HtmlAttributeEvidence>,
+    self_closing_solidus: Option<SourceAnchor>,
+) -> HtmlToken {
     HtmlToken::Tag(
         HtmlTagToken::new(
             HtmlTagKind::End,
-            anchor(source, 0, complete_end),
-            anchor(source, 0, 2),
-            HtmlNameEvidence::new(anchor(source, 2, name_end), interpreted.to_owned()).unwrap(),
+            anchor(source, start, complete_end),
+            anchor(source, start, start + 2),
+            HtmlNameEvidence::new(anchor(source, start + 2, name_end), interpreted.to_owned())
+                .unwrap(),
             attributes,
             self_closing_solidus,
             anchor(source, complete_end - 1, complete_end),
@@ -756,19 +778,24 @@ fn first_capability_vocabularies_are_finite_and_explicit() {
 
 #[test]
 fn observation_conditioned_diagnostic_survives_top_level_non_emission() {
-    let source = src(13, "z<a b");
+    // Approved `MissingAttributeValue` observation, matching the `ERR-011`
+    // shape (`<a x=>`: `>` observed in `BeforeAttributeValue` after `=`),
+    // prefixed with an already-emitted character token so this fixture
+    // exercises non-emission of the *tag*, not of the diagnostic-adjacent
+    // evidence itself.
+    let source = src(13, "z<a b=>");
     let tokens = vec![character(&source, 0, 1, "z")];
     let diagnostic = diagnostic_full(
         &source,
         HtmlTokenizerDiagnosticCode::MissingAttributeValue,
-        4,
-        5,
-        HtmlTokenizerDiagnosticContext::AfterAttributeName,
+        6,
+        7,
+        HtmlTokenizerDiagnosticContext::BeforeAttributeValue,
         HtmlTokenizerDiagnosticHandling::Recovered(
             HtmlTokenizerRecoveryKind::CompletedTagWithMissingAttributeValue,
         ),
         HtmlTokenizerDiagnosticSubject::AbandonedInput {
-            region: anchor(&source, 1, 5),
+            region: anchor(&source, 1, 7),
         },
     );
     let limit_evidence = HtmlTokenizerResourceLimit::new(
@@ -776,7 +803,7 @@ fn observation_conditioned_diagnostic_survives_top_level_non_emission() {
         HtmlTokenizerResource::EmittedTokens,
         1,
         2,
-        anchor(&source, 5, 5),
+        anchor(&source, 7, 7),
     )
     .unwrap();
 
@@ -785,12 +812,12 @@ fn observation_conditioned_diagnostic_survives_top_level_non_emission() {
         tokens,
         preprocessing(&source),
         vec![diagnostic],
-        coverage(&source, 5),
+        coverage(&source, 7),
         HtmlTokenizerCompletion::Incomplete(HtmlTokenizerIncompleteCause::ResourceLimit(
             limit_evidence,
         )),
         HtmlTokenizerLimits::new(1_000, 1_000, 1, 1_000, 1_000, 1_000, 1_000),
-        usage(&source, 6, 1, 1, 0, 3, 0),
+        usage(&source, 8, 1, 1, 0, 3, 0),
     )
     .unwrap();
 
@@ -1161,6 +1188,118 @@ fn end_tag_with_trailing_solidus_rejects_input_location_subject() {
         .unwrap_err(),
         HtmlTokenizerRunContractError::EmissionConditionedSubjectMustBeEmittedToken {
             diagnostic_index: 0,
+            code: HtmlTokenizerDiagnosticCode::EndTagWithTrailingSolidus,
+        }
+    );
+}
+
+#[test]
+fn end_tag_with_attributes_rejects_wrong_qualifying_tag_correlation() {
+    let source = src(24, "</a x></b y>");
+    let tokens = vec![
+        end_tag_at(
+            &source,
+            0,
+            3,
+            6,
+            "a",
+            vec![boolean_attribute(&source, 4, 5, "x")],
+            None,
+        ),
+        end_tag_at(
+            &source,
+            6,
+            9,
+            12,
+            "b",
+            vec![boolean_attribute(&source, 10, 11, "y")],
+            None,
+        ),
+        eof(&source),
+    ];
+    let diagnostic = diagnostic_full(
+        &source,
+        HtmlTokenizerDiagnosticCode::EndTagWithAttributes,
+        10,
+        11,
+        HtmlTokenizerDiagnosticContext::AttributeName,
+        HtmlTokenizerDiagnosticHandling::Recovered(
+            HtmlTokenizerRecoveryKind::PreservedEndTagLexicalEvidence,
+        ),
+        HtmlTokenizerDiagnosticSubject::EmittedToken { token_index: 0 },
+    );
+
+    assert_eq!(
+        HtmlTokenizerRunResult::new(
+            &source,
+            tokens,
+            preprocessing(&source),
+            vec![diagnostic],
+            coverage(&source, 12),
+            HtmlTokenizerCompletion::Complete,
+            limits(),
+            usage(&source, 12, 3, 1, 1, 4, 0),
+        )
+        .unwrap_err(),
+        HtmlTokenizerRunContractError::EmissionConditionedDiagnosticOutsideReferencedTag {
+            diagnostic_index: 0,
+            token_index: 0,
+            code: HtmlTokenizerDiagnosticCode::EndTagWithAttributes,
+        }
+    );
+}
+
+#[test]
+fn end_tag_with_trailing_solidus_rejects_wrong_qualifying_tag_correlation() {
+    let source = src(25, "</a/></b/>");
+    let tokens = vec![
+        end_tag_at(
+            &source,
+            0,
+            3,
+            5,
+            "a",
+            Vec::new(),
+            Some(anchor(&source, 3, 4)),
+        ),
+        end_tag_at(
+            &source,
+            5,
+            8,
+            10,
+            "b",
+            Vec::new(),
+            Some(anchor(&source, 8, 9)),
+        ),
+        eof(&source),
+    ];
+    let diagnostic = diagnostic_full(
+        &source,
+        HtmlTokenizerDiagnosticCode::EndTagWithTrailingSolidus,
+        8,
+        9,
+        HtmlTokenizerDiagnosticContext::SelfClosingStartTag,
+        HtmlTokenizerDiagnosticHandling::Recovered(
+            HtmlTokenizerRecoveryKind::PreservedEndTagLexicalEvidence,
+        ),
+        HtmlTokenizerDiagnosticSubject::EmittedToken { token_index: 0 },
+    );
+
+    assert_eq!(
+        HtmlTokenizerRunResult::new(
+            &source,
+            tokens,
+            preprocessing(&source),
+            vec![diagnostic],
+            coverage(&source, 10),
+            HtmlTokenizerCompletion::Complete,
+            limits(),
+            usage(&source, 10, 3, 1, 0, 2, 0),
+        )
+        .unwrap_err(),
+        HtmlTokenizerRunContractError::EmissionConditionedDiagnosticOutsideReferencedTag {
+            diagnostic_index: 0,
+            token_index: 0,
             code: HtmlTokenizerDiagnosticCode::EndTagWithTrailingSolidus,
         }
     );

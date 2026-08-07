@@ -414,6 +414,11 @@ pub(crate) enum HtmlTokenizerRunContractError {
         token_index: usize,
         code: HtmlTokenizerDiagnosticCode,
     },
+    EmissionConditionedDiagnosticOutsideReferencedTag {
+        diagnostic_index: usize,
+        token_index: usize,
+        code: HtmlTokenizerDiagnosticCode,
+    },
     UnsupportedInputMustStartAtCoverageBoundary,
     InvalidUnsupportedTokenReference {
         token_index: usize,
@@ -654,6 +659,7 @@ fn validate_diagnostics(
                         diagnostic.code(),
                         *token_index,
                         token,
+                        location,
                     )?;
                 }
             }
@@ -677,14 +683,18 @@ fn validate_diagnostics(
 }
 
 /// Validates that an emission-conditioned diagnostic's `EmittedToken` subject
-/// resolves to an end-tag token actually carrying the structured evidence its
-/// code requires. Uses only structured #110 token evidence, never source
-/// text or string parsing.
+/// resolves to the corresponding end-tag token: one that both carries the
+/// structured evidence its code requires and whose complete authored range
+/// contains the diagnostic's own location. Containment prevents a diagnostic
+/// from correctly referencing a *different* qualifying end tag elsewhere in
+/// the run. Uses only structured #110 token evidence, never source text or
+/// string parsing.
 fn validate_emission_conditioned_evidence(
     diagnostic_index: usize,
     code: HtmlTokenizerDiagnosticCode,
     token_index: usize,
     token: &HtmlToken,
+    location: &SourceAnchor,
 ) -> Result<(), HtmlTokenizerRunContractError> {
     let HtmlToken::Tag(tag) = token else {
         return Err(
@@ -714,6 +724,19 @@ fn validate_emission_conditioned_evidence(
     if !evidence_present {
         return Err(
             HtmlTokenizerRunContractError::EmissionConditionedEvidenceMissing {
+                diagnostic_index,
+                token_index,
+                code,
+            },
+        );
+    }
+    let complete = tag.complete();
+    if complete.source_id() != location.source_id()
+        || location.range().start() < complete.range().start()
+        || location.range().end() > complete.range().end()
+    {
+        return Err(
+            HtmlTokenizerRunContractError::EmissionConditionedDiagnosticOutsideReferencedTag {
                 diagnostic_index,
                 token_index,
                 code,
