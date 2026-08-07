@@ -364,6 +364,64 @@ fn transition_steps_are_not_derivable_from_the_retired_sum_heuristic() {
     }
 }
 
+#[test]
+fn err_006_and_unsup_004_share_the_same_tag_open_question_mark_prefix() {
+    // ERR-006 ("<?") and UNSUP-004 ("<?x>") both dispatch TagOpen on '?'.
+    // The pinned WHATWG Tag open state emits
+    // UnexpectedQuestionMarkInsteadOfTagName unconditionally on '?' before
+    // deferring to the unsupported processing-instruction boundary, so both
+    // fixtures must record an identical diagnostic and completion for that
+    // shared dispatch, independent of what follows in the source.
+    let err_006 = find("ERR-006");
+    let unsup_004 = find("UNSUP-004");
+
+    for fixture in [&err_006, &unsup_004] {
+        assert_eq!(fixture.expected.0.usage.transition_steps, 2);
+        assert_eq!(fixture.expected.0.diagnostics.len(), 1);
+
+        let diagnostic = &fixture.expected.0.diagnostics[0];
+        assert_eq!(
+            diagnostic.code,
+            DiagnosticCode::UnexpectedQuestionMarkInsteadOfTagName
+        );
+        assert_eq!(diagnostic.location, ByteSpan::new(1, 2));
+        assert_eq!(
+            diagnostic.context,
+            super::expected::DiagnosticContext::TagOpen
+        );
+        assert_eq!(
+            diagnostic.handling,
+            super::expected::DiagnosticHandling::Stopped
+        );
+        assert_eq!(
+            diagnostic.subject,
+            super::expected::DiagnosticSubject::InputLocation
+        );
+
+        assert_eq!(fixture.expected.0.coverage.processed_prefix.end, 2);
+
+        let Completion::Unsupported {
+            capability,
+            availability,
+            trigger,
+        } = &fixture.expected.0.completion
+        else {
+            panic!("{}: completion must remain Unsupported", fixture.id);
+        };
+        assert_eq!(
+            *capability,
+            super::expected::Capability::ProcessingInstruction
+        );
+        assert_eq!(*availability, super::expected::Availability::Deferred);
+        assert_eq!(*trigger, UnsupportedTrigger::Input(ByteSpan::new(2, 2)));
+    }
+
+    assert_eq!(
+        unsup_004.expected.0.coverage.unprocessed_suffix,
+        ByteSpan::new(2, 4)
+    );
+}
+
 fn observed_empty_run(source_id: u64) -> ObservedRun {
     let source = SourceText::new(SourceId::new(source_id), String::new());
     let eof = HtmlToken::EndOfFile(

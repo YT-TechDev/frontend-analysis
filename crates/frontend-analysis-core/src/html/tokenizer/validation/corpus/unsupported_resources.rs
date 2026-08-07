@@ -41,16 +41,36 @@ pub(super) fn add_unsupported(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         // Data(<)+TagOpen('!', discovers MarkupDeclaration required) = 2.
         2,
     ));
-    fixtures.push(unsupported_input(
+    // Not built with unsupported_input(): that helper always authors zero
+    // diagnostics, but TagOpen('?') is also the primary dispatch for
+    // UnexpectedQuestionMarkInsteadOfTagName (see ERR-006, source "<?").
+    // The pinned WHATWG Tag open state requires that parse error
+    // unconditionally on '?', regardless of what follows, so this fixture
+    // must record it too; the trailing authored "x>" remains unprocessed.
+    fixtures.push(incomplete(
         "UNSUP-004",
+        FixtureCategory::Unsupported,
         "processing instruction boundary",
         "<?x>",
-        0,
-        Capability::ProcessingInstruction,
-        Availability::Deferred,
-        ByteSpan::new(0, 2),
-        // Data(<)+TagOpen('?', discovers ProcessingInstruction required) = 2
         2,
+        Vec::new(),
+        vec![diagnostic(
+            DiagnosticCode::UnexpectedQuestionMarkInsteadOfTagName,
+            1,
+            2,
+            DiagnosticContext::TagOpen,
+            DiagnosticHandling::Stopped,
+            DiagnosticSubject::InputLocation,
+        )],
+        Completion::Unsupported {
+            capability: Capability::ProcessingInstruction,
+            availability: Availability::Deferred,
+            trigger: UnsupportedTrigger::Input(ByteSpan::new(2, 2)),
+        },
+        Limits::generous(),
+        // Data(<)+TagOpen('?', UnexpectedQuestionMarkInsteadOfTagName,
+        // deferred PI) = 2 — the same TagOpen('?') dispatch as ERR-006.
+        usage("<?x>", 2, 0, 1, 0, 0, 0),
     ));
 
     for (id, purpose, source, name_end, name, mode) in [

@@ -119,6 +119,29 @@ Blocked — no approved first-slice state owns a genuine state-local temporary b
 It must not be reported as Passed or simulated through a retained tag/name/value
 builder.
 
+## UNSUP-004 Correction
+
+The initial `UNSUP-004` fixture (`"<?x>"`, processing-instruction boundary)
+omitted the mandatory `TagOpen('?')` parse-error observation. It recorded no
+diagnostics and a trigger spanning `[0,2)`, even though `TagOpen` examining
+`?` is the same dispatch that the pinned WHATWG Tag open state requires to
+emit `UnexpectedQuestionMarkInsteadOfTagName` unconditionally, regardless of
+what follows.
+
+`ERR-006` (`"<?"`) already recorded that diagnostic correctly for the
+identical dispatch and served as an independent same-dispatch cross-check.
+`UNSUP-004` was corrected to match `ERR-006`'s prefix: one
+`UnexpectedQuestionMarkInsteadOfTagName` diagnostic at `[1,2)`, a processed
+prefix of `[0,2)`, and an `Unsupported(ProcessingInstruction)` trigger of
+`[2,2)`, with the trailing authored `"x>"` left in the unprocessed suffix.
+`transition_steps` remains `2`; the correction changes recorded diagnostics
+and coverage, not step accounting.
+
+The correction was derived directly from the #109/#111 approved contracts and
+the pinned WHATWG snapshot, cross-checked against `ERR-006`, and not from any
+production tokenizer's output. The stable fixture ID and the 72-fixture
+initial inventory are unchanged.
+
 ## Actual Observation and Comparison
 
 The test-only observation adapter reads crate-private production accessors and
