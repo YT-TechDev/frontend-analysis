@@ -127,6 +127,14 @@ inclusive maximum of committed logical usage; committed usage remains
 unchanged on refusal because the rejected operation applies no partial
 mutation.
 
+For every non-`SourceBytes` resource-limit termination, the result
+constructor independently validates `committed <= limit` for the resource
+that caused the termination, since the general usage/limit check
+deliberately skips that resource. Combined with the constructor-enforced
+`attempted > limit`, this implies `attempted > committed` for every valid
+`HtmlTokenizerResourceLimit`. `SourceBytes` retains its dedicated
+source-length validation and is not subject to this generic guard.
+
 `TransitionSteps`, `EmittedTokens`, and `AttributesPerTag` are structurally
 single-unit operations in the first capability slice: one attempted
 specification-state dispatch, one top-level token insertion, and one authored

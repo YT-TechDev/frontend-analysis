@@ -1356,11 +1356,22 @@ fn diagnostics_resource_limit_accepts_atomic_multi_diagnostic_attempt() {
     assert_eq!(result.usage().diagnostics(), 0);
 }
 
+// `HtmlTokenizerResourceLimit::new` already enforces `attempted > limit`,
+// and the terminal resource's committed usage is now independently checked
+// against `limit` below. Together those two constructor/aggregate
+// invariants imply `attempted > committed` for every valid
+// `HtmlTokenizerResourceLimit`: `attempted > limit >= committed`. An
+// isolated `attempted <= committed` case therefore cannot be constructed
+// without first violating `committed <= limit`, so it is no longer
+// independently testable through valid evidence; the committed-over-limit
+// regressions below cover the only reachable malformed shape.
+
 #[test]
-fn diagnostics_resource_limit_rejects_attempted_not_exceeding_committed() {
-    // The relaxation to `attempted = committed + N` still requires
-    // `attempted > committed`: an attempted value that does not exceed
-    // already-committed usage remains invalid evidence.
+fn diagnostics_resource_limit_rejects_committed_over_limit() {
+    // `committed = 2` already exceeds `limit = 1` before the rejected
+    // operation is even considered: the run was over budget before the
+    // supposedly rejected attempt. This must be rejected for exceeding the
+    // configured limit, independent of the `attempted` value.
     let source = src(27, "xy");
     let diagnostics = vec![
         diagnostic(&source, 0, 1, HtmlTokenizerDiagnosticSubject::InputLocation),
@@ -1372,7 +1383,7 @@ fn diagnostics_resource_limit_rejects_attempted_not_exceeding_committed() {
         &source,
         HtmlTokenizerResource::Diagnostics,
         1,
-        2,
+        3,
         anchor(&source, 2, 2),
     )
     .unwrap();
@@ -1391,7 +1402,52 @@ fn diagnostics_resource_limit_rejects_attempted_not_exceeding_committed() {
             run_usage,
         )
         .unwrap_err(),
-        HtmlTokenizerRunContractError::ResourceLimitAttemptMismatch
+        HtmlTokenizerRunContractError::UsageExceedsLimit {
+            resource: HtmlTokenizerResource::Diagnostics,
+            usage: 2,
+            limit: 1,
+        }
+    );
+}
+
+#[test]
+fn emitted_tokens_resource_limit_rejects_committed_over_limit() {
+    // The committed-over-limit guard is shared by every non-`SourceBytes`
+    // resource, not special-cased to `Diagnostics`. `EmittedTokens` remains
+    // an exact-single-increment resource, so this proves the shared guard
+    // fires before that stricter check is even reached.
+    let source = src(29, "ab");
+    let tokens = vec![character(&source, 0, 1, "a"), character(&source, 1, 2, "b")];
+    let run_limits = HtmlTokenizerLimits::new(10, 10, 1, 10, 10, 10, 10);
+    let run_usage = usage(&source, 2, 2, 0, 0, 2, 0);
+    let limit_evidence = HtmlTokenizerResourceLimit::new(
+        &source,
+        HtmlTokenizerResource::EmittedTokens,
+        1,
+        3,
+        anchor(&source, 2, 2),
+    )
+    .unwrap();
+
+    assert_eq!(
+        HtmlTokenizerRunResult::new(
+            &source,
+            tokens,
+            preprocessing(&source),
+            Vec::new(),
+            coverage(&source, 2),
+            HtmlTokenizerCompletion::Incomplete(HtmlTokenizerIncompleteCause::ResourceLimit(
+                limit_evidence,
+            )),
+            run_limits,
+            run_usage,
+        )
+        .unwrap_err(),
+        HtmlTokenizerRunContractError::UsageExceedsLimit {
+            resource: HtmlTokenizerResource::EmittedTokens,
+            usage: 2,
+            limit: 1,
+        }
     );
 }
 

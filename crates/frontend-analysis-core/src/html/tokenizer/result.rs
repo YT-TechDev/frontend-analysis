@@ -963,6 +963,16 @@ fn validate_resource_limit(
         }
     } else {
         let committed = usage.value_for(resource_limit.resource());
+        // validate_usage() deliberately skips the resource that caused this
+        // termination, so committed usage for that resource is only checked
+        // against its configured limit here.
+        if committed > resource_limit.limit() {
+            return Err(HtmlTokenizerRunContractError::UsageExceedsLimit {
+                resource: resource_limit.resource(),
+                usage: committed,
+                limit: resource_limit.limit(),
+            });
+        }
         // Diagnostics may commit multiple units atomically (one logical
         // operation can require several diagnostics to become valid
         // together), so it cannot share the exact-single-increment
