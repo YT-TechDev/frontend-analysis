@@ -4,13 +4,14 @@ use std::fmt;
 use crate::{SourceAnchor, SourceId, SourceText};
 
 use super::diagnostic::{
-    HtmlTokenizerDiagnostic, HtmlTokenizerDiagnosticHandling, HtmlTokenizerDiagnosticSubject,
+    HtmlTokenizerDiagnostic, HtmlTokenizerDiagnosticCode, HtmlTokenizerDiagnosticHandling,
+    HtmlTokenizerDiagnosticSubject,
 };
 use super::resource::{
     HtmlTokenizerConfigurationFailure, HtmlTokenizerInvariantFailure, HtmlTokenizerLimits,
     HtmlTokenizerResource, HtmlTokenizerResourceLimit, HtmlTokenizerUsage,
 };
-use crate::html::token::{HtmlPreprocessingEvidence, HtmlToken};
+use crate::html::token::{HtmlPreprocessingEvidence, HtmlTagKind, HtmlToken};
 
 #[derive(Clone)]
 pub(crate) struct HtmlTokenizerCoverage {
@@ -399,6 +400,25 @@ pub(crate) enum HtmlTokenizerRunContractError {
         diagnostic_index: usize,
         token_index: usize,
     },
+    EmissionConditionedSubjectMustBeEmittedToken {
+        diagnostic_index: usize,
+        code: HtmlTokenizerDiagnosticCode,
+    },
+    EmissionConditionedTokenMustBeEndTag {
+        diagnostic_index: usize,
+        token_index: usize,
+        code: HtmlTokenizerDiagnosticCode,
+    },
+    EmissionConditionedEvidenceMissing {
+        diagnostic_index: usize,
+        token_index: usize,
+        code: HtmlTokenizerDiagnosticCode,
+    },
+    EmissionConditionedDiagnosticOutsideReferencedTag {
+        diagnostic_index: usize,
+        token_index: usize,
+        code: HtmlTokenizerDiagnosticCode,
+    },
     UnsupportedInputMustStartAtCoverageBoundary,
     InvalidUnsupportedTokenReference {
         token_index: usize,
@@ -600,6 +620,20 @@ fn validate_diagnostics(
             }
         }
 
+        if diagnostic.code().is_emission_conditioned()
+            && !matches!(
+                diagnostic.subject(),
+                HtmlTokenizerDiagnosticSubject::EmittedToken { .. }
+            )
+        {
+            return Err(
+                HtmlTokenizerRunContractError::EmissionConditionedSubjectMustBeEmittedToken {
+                    diagnostic_index: index,
+                    code: diagnostic.code(),
+                },
+            );
+        }
+
         match diagnostic.subject() {
             HtmlTokenizerDiagnosticSubject::InputLocation => {}
             HtmlTokenizerDiagnosticSubject::EmittedToken { token_index } => {
@@ -619,6 +653,15 @@ fn validate_diagnostics(
                         },
                     );
                 }
+                if diagnostic.code().is_emission_conditioned() {
+                    validate_emission_conditioned_evidence(
+                        index,
+                        diagnostic.code(),
+                        *token_index,
+                        token,
+                        location,
+                    )?;
+                }
             }
             HtmlTokenizerDiagnosticSubject::AbandonedInput { region } => {
                 require_source(
@@ -635,6 +678,70 @@ fn validate_diagnostics(
                 }
             }
         }
+    }
+    Ok(())
+}
+
+/// Validates that an emission-conditioned diagnostic's `EmittedToken` subject
+/// resolves to the corresponding end-tag token: one that both carries the
+/// structured evidence its code requires and whose complete authored range
+/// contains the diagnostic's own location. Containment prevents a diagnostic
+/// from correctly referencing a *different* qualifying end tag elsewhere in
+/// the run. Uses only structured #110 token evidence, never source text or
+/// string parsing.
+fn validate_emission_conditioned_evidence(
+    diagnostic_index: usize,
+    code: HtmlTokenizerDiagnosticCode,
+    token_index: usize,
+    token: &HtmlToken,
+    location: &SourceAnchor,
+) -> Result<(), HtmlTokenizerRunContractError> {
+    let HtmlToken::Tag(tag) = token else {
+        return Err(
+            HtmlTokenizerRunContractError::EmissionConditionedTokenMustBeEndTag {
+                diagnostic_index,
+                token_index,
+                code,
+            },
+        );
+    };
+    if tag.kind() != HtmlTagKind::End {
+        return Err(
+            HtmlTokenizerRunContractError::EmissionConditionedTokenMustBeEndTag {
+                diagnostic_index,
+                token_index,
+                code,
+            },
+        );
+    }
+    let evidence_present = match code {
+        HtmlTokenizerDiagnosticCode::EndTagWithAttributes => !tag.attributes().is_empty(),
+        HtmlTokenizerDiagnosticCode::EndTagWithTrailingSolidus => {
+            tag.self_closing_solidus().is_some()
+        }
+        _ => false,
+    };
+    if !evidence_present {
+        return Err(
+            HtmlTokenizerRunContractError::EmissionConditionedEvidenceMissing {
+                diagnostic_index,
+                token_index,
+                code,
+            },
+        );
+    }
+    let complete = tag.complete();
+    if complete.source_id() != location.source_id()
+        || location.range().start() < complete.range().start()
+        || location.range().end() > complete.range().end()
+    {
+        return Err(
+            HtmlTokenizerRunContractError::EmissionConditionedDiagnosticOutsideReferencedTag {
+                diagnostic_index,
+                token_index,
+                code,
+            },
+        );
     }
     Ok(())
 }
