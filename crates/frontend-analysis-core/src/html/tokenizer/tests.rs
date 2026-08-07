@@ -1316,3 +1316,156 @@ fn end_tag_with_trailing_solidus_rejects_wrong_qualifying_tag_correlation() {
         }
     );
 }
+
+#[test]
+fn diagnostics_resource_limit_accepts_atomic_multi_diagnostic_attempt() {
+    // One indivisible logical operation may require more than one
+    // diagnostic to commit atomically. The rejected operation therefore
+    // reports `attempted = committed + N` for `N >= 1`, not only
+    // `committed + 1`: here `committed = 0` and `attempted = 2` for a
+    // `max_diagnostics` limit of `1`. No rejected diagnostic appears in the
+    // final diagnostics vector because the operation is atomic.
+    let source = src(26, "x");
+    let run_limits = HtmlTokenizerLimits::new(10, 10, 10, 1, 10, 10, 10);
+    let run_usage = usage(&source, 1, 0, 0, 0, 0, 0);
+    let limit_evidence = HtmlTokenizerResourceLimit::new(
+        &source,
+        HtmlTokenizerResource::Diagnostics,
+        1,
+        2,
+        anchor(&source, 1, 1),
+    )
+    .unwrap();
+
+    let result = HtmlTokenizerRunResult::new(
+        &source,
+        Vec::new(),
+        preprocessing(&source),
+        Vec::new(),
+        coverage(&source, 1),
+        HtmlTokenizerCompletion::Incomplete(HtmlTokenizerIncompleteCause::ResourceLimit(
+            limit_evidence,
+        )),
+        run_limits,
+        run_usage,
+    )
+    .unwrap();
+
+    assert!(result.is_incomplete());
+    assert!(result.diagnostics().is_empty());
+    assert_eq!(result.usage().diagnostics(), 0);
+}
+
+// `HtmlTokenizerResourceLimit::new` already enforces `attempted > limit`,
+// and the terminal resource's committed usage is now independently checked
+// against `limit` below. Together those two constructor/aggregate
+// invariants imply `attempted > committed` for every valid
+// `HtmlTokenizerResourceLimit`: `attempted > limit >= committed`. An
+// isolated `attempted <= committed` case therefore cannot be constructed
+// without first violating `committed <= limit`, so it is no longer
+// independently testable through valid evidence; the committed-over-limit
+// regressions below cover the only reachable malformed shape.
+
+#[test]
+fn diagnostics_resource_limit_rejects_committed_over_limit() {
+    // `committed = 2` already exceeds `limit = 1` before the rejected
+    // operation is even considered: the run was over budget before the
+    // supposedly rejected attempt. This must be rejected for exceeding the
+    // configured limit, independent of the `attempted` value.
+    let source = src(27, "xy");
+    let diagnostics = vec![
+        diagnostic(&source, 0, 1, HtmlTokenizerDiagnosticSubject::InputLocation),
+        diagnostic(&source, 1, 2, HtmlTokenizerDiagnosticSubject::InputLocation),
+    ];
+    let run_limits = HtmlTokenizerLimits::new(10, 10, 10, 1, 10, 10, 10);
+    let run_usage = usage(&source, 2, 0, 2, 0, 0, 0);
+    let limit_evidence = HtmlTokenizerResourceLimit::new(
+        &source,
+        HtmlTokenizerResource::Diagnostics,
+        1,
+        3,
+        anchor(&source, 2, 2),
+    )
+    .unwrap();
+
+    assert_eq!(
+        HtmlTokenizerRunResult::new(
+            &source,
+            Vec::new(),
+            preprocessing(&source),
+            diagnostics,
+            coverage(&source, 2),
+            HtmlTokenizerCompletion::Incomplete(HtmlTokenizerIncompleteCause::ResourceLimit(
+                limit_evidence,
+            )),
+            run_limits,
+            run_usage,
+        )
+        .unwrap_err(),
+        HtmlTokenizerRunContractError::UsageExceedsLimit {
+            resource: HtmlTokenizerResource::Diagnostics,
+            usage: 2,
+            limit: 1,
+        }
+    );
+}
+
+#[test]
+fn emitted_tokens_resource_limit_rejects_committed_over_limit() {
+    // The committed-over-limit guard is shared by every non-`SourceBytes`
+    // resource, not special-cased to `Diagnostics`. `EmittedTokens` remains
+    // an exact-single-increment resource, so this proves the shared guard
+    // fires before that stricter check is even reached.
+    let source = src(29, "ab");
+    let tokens = vec![character(&source, 0, 1, "a"), character(&source, 1, 2, "b")];
+    let run_limits = HtmlTokenizerLimits::new(10, 10, 1, 10, 10, 10, 10);
+    let run_usage = usage(&source, 2, 2, 0, 0, 2, 0);
+    let limit_evidence = HtmlTokenizerResourceLimit::new(
+        &source,
+        HtmlTokenizerResource::EmittedTokens,
+        1,
+        3,
+        anchor(&source, 2, 2),
+    )
+    .unwrap();
+
+    assert_eq!(
+        HtmlTokenizerRunResult::new(
+            &source,
+            tokens,
+            preprocessing(&source),
+            Vec::new(),
+            coverage(&source, 2),
+            HtmlTokenizerCompletion::Incomplete(HtmlTokenizerIncompleteCause::ResourceLimit(
+                limit_evidence,
+            )),
+            run_limits,
+            run_usage,
+        )
+        .unwrap_err(),
+        HtmlTokenizerRunContractError::UsageExceedsLimit {
+            resource: HtmlTokenizerResource::EmittedTokens,
+            usage: 2,
+            limit: 1,
+        }
+    );
+}
+
+#[test]
+fn diagnostics_resource_limit_constructor_rejects_attempted_not_exceeding_limit() {
+    let source = src(28, "x");
+    assert_eq!(
+        HtmlTokenizerResourceLimit::new(
+            &source,
+            HtmlTokenizerResource::Diagnostics,
+            1,
+            1,
+            anchor(&source, 1, 1),
+        )
+        .unwrap_err(),
+        HtmlTokenizerResourceContractError::AttemptedMustExceedLimit {
+            limit: 1,
+            attempted: 1,
+        }
+    );
+}
