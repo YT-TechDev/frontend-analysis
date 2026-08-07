@@ -179,7 +179,63 @@ and `ERR-017` fixture location/context policy (first authored attribute
 name / `AttributeName`, and the authored trailing solidus /
 `SelfClosingStartTag`) is unchanged, and the 72-fixture initial corpus is
 unchanged. Supplemental cross-product regression coverage for this
-distinction is deferred to a separate #112 follow-up.
+distinction is added by the supplemental regression corpus below.
+
+## Supplemental Regression Corpus
+
+The initial corpus (72 immutable specification-derived fixtures) and the
+supplemental regression corpus are separate inventories:
+
+| Corpus | Count | ID prefix | Mutability |
+| --- | ---: | --- | --- |
+| Initial corpus | 72 | `PRE-`, `TOK-`, `ERR-`, `UNSUP-`, `RES-`, `ADV-` | Immutable; see [Initial Inventory](#initial-inventory) |
+| Supplemental regression corpus | 3 | `REG-<issue>-<slug>` | Grows by durable addition only |
+| Total candidate-independent corpus | 75 | both of the above | — |
+
+The initial corpus never grows to absorb supplemental fixtures, and the
+supplemental corpus never renumbers or replaces an initial fixture. Adding a
+`REG-` fixture is not an "Adding or removing an initial fixture" event under
+[Initial Inventory](#initial-inventory) and needs no change to the 72-count.
+
+The current supplemental inventory contains exactly three fixtures, added to
+capture the cross-product of the [Emission-Conditioned Diagnostic
+Contract](#emission-conditioned-diagnostic-contract) with top-level
+`EmittedTokens` resource refusal, once merged #111 clarified that
+`EndTagWithAttributes` and `EndTagWithTrailingSolidus` are
+emission-conditioned while every other first-slice diagnostic code, such as
+`MissingAttributeValue`, remains observation-conditioned:
+
+- `REG-113-end-tag-attributes-emission-refusal`: an authored end tag with
+  attribute evidence (`z</a x>`) whose token emission is refused by an
+  `EmittedTokens` limit of 1; `EndTagWithAttributes` must not appear.
+- `REG-113-end-tag-trailing-solidus-emission-refusal`: an authored end tag
+  with a trailing solidus (`z</a/>`) under the same refusal;
+  `EndTagWithTrailingSolidus` must not appear.
+- `REG-113-missing-attribute-value-emission-refusal`: an authored start tag
+  with a missing attribute value (`z<a b=>`) under the same refusal;
+  `MissingAttributeValue` remains present with an `AbandonedInput` subject,
+  because `Recovered(CompletedTagWithMissingAttributeValue)` denotes
+  builder/token-construction completion and commits independently of the
+  separately refused emitted-vector insertion.
+
+Every expected observation in the supplemental corpus was derived directly
+from the pinned WHATWG algorithm and the approved #109/#110/merged #111
+contracts, cross-checked against the existing `ERR-011`, `ERR-016`, and
+`ERR-017` fixtures. No production tokenizer candidate output was used as the
+gold oracle for these fixtures.
+
+`crates/frontend-analysis-core/src/html/tokenizer/validation/corpus/regressions.rs`
+holds the fixture definitions and their independent transition-dispatch
+derivations. `crates/.../validation/corpus/mod.rs` exposes
+`supplemental_regression_corpus()` as a corpus separate from
+`initial_corpus()`, and `all_candidate_independent_corpus()` as their
+deterministic concatenation (initial corpus first, then supplemental) for
+future candidate validation. All three entry points remain test-only.
+
+Future corrected defects extend this supplemental corpus with additional
+durable `REG-<issue>-<slug>` fixtures. They do not renumber or inflate the
+historical 72-fixture initial inventory documented in [Initial
+Inventory](#initial-inventory).
 
 ## Actual Observation and Comparison
 
