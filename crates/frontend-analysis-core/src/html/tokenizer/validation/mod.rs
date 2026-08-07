@@ -1,6 +1,8 @@
 mod compare;
 #[rustfmt::skip]
 mod corpus;
+#[cfg(test)]
+mod execute;
 mod expected;
 #[rustfmt::skip]
 mod fixture;
