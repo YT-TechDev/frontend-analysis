@@ -817,11 +817,23 @@ fn observation_conditioned_diagnostic_survives_top_level_non_emission() {
             limit_evidence,
         )),
         HtmlTokenizerLimits::new(1_000, 1_000, 1, 1_000, 1_000, 1_000, 1_000),
-        usage(&source, 8, 1, 1, 0, 3, 0),
+        // 9 attempted transitions: Data('z'), Data('<'), TagOpen('a', reconsume),
+        // TagName(reconsumed 'a'), TagName(space), BeforeAttributeName('b',
+        // create, reconsume), AttributeName(reconsumed 'b'), AttributeName('='),
+        // BeforeAttributeValue('>') — the dispatch where MissingAttributeValue is
+        // observed, CompletedTagWithMissingAttributeValue commits, and the
+        // separate top-level tag emission is refused by the EmittedTokens
+        // resource limit. The refusal commits this ninth transition without a
+        // trailing EOF dispatch, since the run stops incomplete. Attribute `b`
+        // was recognized and finalized in the active tag builder before that
+        // emission refusal, so peak_attributes_per_tag is 1.
+        usage(&source, 9, 1, 1, 1, 3, 0),
     )
     .unwrap();
 
     assert!(result.is_incomplete());
+    assert_eq!(result.usage().transition_steps(), 9);
+    assert_eq!(result.usage().peak_attributes_per_tag(), 1);
     assert_eq!(
         result.diagnostics()[0].handling(),
         HtmlTokenizerDiagnosticHandling::Recovered(
