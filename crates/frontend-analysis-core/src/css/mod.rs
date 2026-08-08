@@ -7,3 +7,5 @@ pub(crate) mod tokenizer;
 mod token_tests;
 #[cfg(test)]
 mod tokenizer_contract_tests;
+#[cfg(test)]
+mod validation;
