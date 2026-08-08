@@ -129,10 +129,9 @@ impl CssTokenizerRunError {
         index: usize,
         error: CssTokenizerDiagnosticContractError,
     ) -> Self {
-        Self::InternalInvariantFailure(CssTokenizerInvariantViolation::DiagnosticContractViolation {
-            index,
-            error,
-        })
+        Self::InternalInvariantFailure(
+            CssTokenizerInvariantViolation::DiagnosticContractViolation { index, error },
+        )
     }
 }
 
@@ -144,9 +143,9 @@ impl From<CssTokenizerInvalidConfiguration> for CssTokenizerRunError {
 
 impl From<SourceRangeError> for CssTokenizerRunError {
     fn from(error: SourceRangeError) -> Self {
-        Self::InternalInvariantFailure(CssTokenizerInvariantViolation::SourceRangeContractViolation {
-            error,
-        })
+        Self::InternalInvariantFailure(
+            CssTokenizerInvariantViolation::SourceRangeContractViolation { error },
+        )
     }
 }
 
