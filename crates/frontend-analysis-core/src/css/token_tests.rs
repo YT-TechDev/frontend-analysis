@@ -26,9 +26,8 @@ fn number_value(
     exponent: Option<(Option<CssExponentSign>, &str)>,
     sign: Option<CssNumberSign>,
 ) -> CssNumericValue {
-    let exponent = exponent.map(|(sign, digits)| {
-        CssDecimalExponent::new(sign, digits.to_owned()).unwrap()
-    });
+    let exponent =
+        exponent.map(|(sign, digits)| CssDecimalExponent::new(sign, digits.to_owned()).unwrap());
     CssNumericValue::new(
         CssDecimalValue::new(
             integer_digits.to_owned(),
@@ -51,10 +50,7 @@ fn first_capability_token_vocabulary_constructs_with_source_evidence() {
     let cases = vec![
         (r"c\6F lor", CssTokenKind::Ident("color".to_owned())),
         (r"f\6fo(", CssTokenKind::Function("foo".to_owned())),
-        (
-            r"@m\65 dia",
-            CssTokenKind::AtKeyword("media".to_owned()),
-        ),
+        (r"@m\65 dia", CssTokenKind::AtKeyword("media".to_owned())),
         (
             r"#i\64",
             CssTokenKind::Hash {
@@ -180,11 +176,8 @@ fn preprocessing_sensitive_raw_evidence_can_differ_from_semantic_payload() {
 #[test]
 fn decimal_components_preserve_large_exponents_without_float_conversion() {
     let exponent_digits = "9".repeat(256);
-    let exponent = CssDecimalExponent::new(
-        Some(CssExponentSign::Minus),
-        exponent_digits.clone(),
-    )
-    .unwrap();
+    let exponent =
+        CssDecimalExponent::new(Some(CssExponentSign::Minus), exponent_digits.clone()).unwrap();
     let decimal = CssDecimalValue::new(
         "123456789012345678901234567890".to_owned(),
         "00000000000000000001".to_owned(),
@@ -198,10 +191,7 @@ fn decimal_components_preserve_large_exponents_without_float_conversion() {
         value.decimal().integer_digits(),
         "123456789012345678901234567890"
     );
-    assert_eq!(
-        value.decimal().fraction_digits(),
-        "00000000000000000001"
-    );
+    assert_eq!(value.decimal().fraction_digits(), "00000000000000000001");
     let exponent = value.decimal().exponent().unwrap();
     assert_eq!(exponent.sign(), Some(CssExponentSign::Minus));
     assert_eq!(exponent.digits(), exponent_digits);
@@ -216,12 +206,7 @@ fn integer_and_number_type_are_structurally_distinguished() {
     let decimal = number_value("12", "5", None, None);
     assert_eq!(decimal.required_number_type(), CssNumberType::Number);
 
-    let exponent = number_value(
-        "12",
-        "",
-        Some((Some(CssExponentSign::Plus), "3")),
-        None,
-    );
+    let exponent = number_value("12", "", Some((Some(CssExponentSign::Plus), "3")), None);
     assert_eq!(exponent.required_number_type(), CssNumberType::Number);
 }
 
@@ -285,12 +270,7 @@ fn empty_token_source_and_wrong_fixed_spelling_are_rejected() {
     );
 
     assert_eq!(
-        CssToken::new(
-            &source,
-            source.anchor(0, 1).unwrap(),
-            CssTokenKind::Colon,
-        )
-        .unwrap_err(),
+        CssToken::new(&source, source.anchor(0, 1).unwrap(), CssTokenKind::Colon,).unwrap_err(),
         CssTokenContractError::FixedSpellingMismatch {
             role: CssTokenEvidenceRole::FixedToken,
             expected: ":",
@@ -522,16 +502,10 @@ fn lexical_items_preserve_source_order_for_consecutive_comments() {
 
 #[test]
 fn lexical_order_rejects_cross_source_comparison() {
-    let first = CssLexicalItem::SemanticToken(whole_token(
-        51,
-        "a",
-        CssTokenKind::Ident("a".to_owned()),
-    ));
-    let second = CssLexicalItem::SemanticToken(whole_token(
-        52,
-        "b",
-        CssTokenKind::Ident("b".to_owned()),
-    ));
+    let first =
+        CssLexicalItem::SemanticToken(whole_token(51, "a", CssTokenKind::Ident("a".to_owned())));
+    let second =
+        CssLexicalItem::SemanticToken(whole_token(52, "b", CssTokenKind::Ident("b".to_owned())));
 
     assert_eq!(
         first.compare_source_order(&second).unwrap_err(),

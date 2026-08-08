@@ -65,16 +65,8 @@ impl CssDecimalValue {
         fraction_digits: String,
         exponent: Option<CssDecimalExponent>,
     ) -> Result<Self, CssTokenContractError> {
-        validate_digits(
-            &integer_digits,
-            CssTokenEvidenceRole::IntegerDigits,
-            false,
-        )?;
-        validate_digits(
-            &fraction_digits,
-            CssTokenEvidenceRole::FractionDigits,
-            true,
-        )?;
+        validate_digits(&integer_digits, CssTokenEvidenceRole::IntegerDigits, false)?;
+        validate_digits(&fraction_digits, CssTokenEvidenceRole::FractionDigits, true)?;
         Ok(Self {
             integer_digits,
             fraction_digits,
@@ -302,11 +294,7 @@ impl CssCommentEvidence {
         open_delimiter: SourceAnchor,
         termination: CssCommentTermination,
     ) -> Result<Self, CssTokenContractError> {
-        same_source(
-            source_text.id(),
-            &complete,
-            CssTokenEvidenceRole::Comment,
-        )?;
+        same_source(source_text.id(), &complete, CssTokenEvidenceRole::Comment)?;
         same_source(
             source_text.id(),
             &open_delimiter,
@@ -441,14 +429,8 @@ impl CssLexicalItem {
             return Err(CssLexicalOrderError::SourceIdentityMismatch { expected, actual });
         }
 
-        Ok((
-            self.source().range().start(),
-            self.source().range().end(),
-        )
-            .cmp(&(
-                other.source().range().start(),
-                other.source().range().end(),
-            )))
+        Ok((self.source().range().start(), self.source().range().end())
+            .cmp(&(other.source().range().start(), other.source().range().end())))
     }
 }
 
@@ -541,10 +523,7 @@ impl fmt::Display for CssTokenContractError {
 
 impl Error for CssTokenContractError {}
 
-fn validate_kind(
-    source: &SourceAnchor,
-    kind: &CssTokenKind,
-) -> Result<(), CssTokenContractError> {
+fn validate_kind(source: &SourceAnchor, kind: &CssTokenKind) -> Result<(), CssTokenContractError> {
     match kind {
         CssTokenKind::Ident(value) => required_value(value, CssTokenEvidenceRole::IdentValue),
         CssTokenKind::Function(value) => {
@@ -574,9 +553,7 @@ fn validate_kind(
             }
             Ok(())
         }
-        CssTokenKind::Number { value, number_type } => {
-            validate_number_type(value, *number_type)
-        }
+        CssTokenKind::Number { value, number_type } => validate_number_type(value, *number_type),
         CssTokenKind::Dimension {
             value,
             number_type,
@@ -635,10 +612,7 @@ fn validate_digits(
     Ok(())
 }
 
-fn required_value(
-    value: &str,
-    role: CssTokenEvidenceRole,
-) -> Result<(), CssTokenContractError> {
+fn required_value(value: &str, role: CssTokenEvidenceRole) -> Result<(), CssTokenContractError> {
     if value.is_empty() {
         return Err(CssTokenContractError::EmptyInterpretedValue { role });
     }
