@@ -1,13 +1,13 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::{SourceAnchor, SourceId, SourceText};
+use crate::{SourceAnchor, SourceId, SourceRangeError, SourceText};
 
-use super::super::token::CssLexicalItem;
+use super::super::token::{CssLexicalItem, CssTokenContractError};
 use super::diagnostic::{CssTokenizerDiagnostic, CssTokenizerDiagnosticContractError};
 use super::resource::{
-    CssTokenizerInvalidConfiguration, CssTokenizerResourceKind, CssTokenizerResourceLimitEvidence,
-    CssTokenizerResourceUsage,
+    CssTokenizerInvalidConfiguration, CssTokenizerResourceContractError, CssTokenizerResourceKind,
+    CssTokenizerResourceLimitEvidence, CssTokenizerResourceUsage,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,9 +124,44 @@ pub(crate) enum CssTokenizerRunError {
     InternalInvariantFailure(CssTokenizerInvariantViolation),
 }
 
+impl CssTokenizerRunError {
+    pub(crate) fn diagnostic_contract_violation(
+        index: usize,
+        error: CssTokenizerDiagnosticContractError,
+    ) -> Self {
+        Self::InternalInvariantFailure(
+            CssTokenizerInvariantViolation::DiagnosticContractViolation { index, error },
+        )
+    }
+}
+
 impl From<CssTokenizerInvalidConfiguration> for CssTokenizerRunError {
     fn from(value: CssTokenizerInvalidConfiguration) -> Self {
         Self::InvalidConfiguration(value)
+    }
+}
+
+impl From<SourceRangeError> for CssTokenizerRunError {
+    fn from(error: SourceRangeError) -> Self {
+        Self::InternalInvariantFailure(
+            CssTokenizerInvariantViolation::SourceRangeContractViolation { error },
+        )
+    }
+}
+
+impl From<CssTokenContractError> for CssTokenizerRunError {
+    fn from(error: CssTokenContractError) -> Self {
+        Self::InternalInvariantFailure(CssTokenizerInvariantViolation::LexicalContractViolation {
+            error,
+        })
+    }
+}
+
+impl From<CssTokenizerResourceContractError> for CssTokenizerRunError {
+    fn from(error: CssTokenizerResourceContractError) -> Self {
+        Self::InternalInvariantFailure(CssTokenizerInvariantViolation::ResourceContractViolation {
+            error,
+        })
     }
 }
 
@@ -155,6 +190,15 @@ pub(crate) enum CssTokenizerInvariantViolation {
         role: CssTokenizerRunEvidenceRole,
         expected: SourceId,
         actual: SourceId,
+    },
+    SourceRangeContractViolation {
+        error: SourceRangeError,
+    },
+    LexicalContractViolation {
+        error: CssTokenContractError,
+    },
+    ResourceContractViolation {
+        error: CssTokenizerResourceContractError,
     },
     MissingLeadingBomEvidence,
     UnexpectedLeadingBomEvidence,
@@ -486,4 +530,142 @@ fn invariant<T>(violation: CssTokenizerInvariantViolation) -> Result<T, CssToken
 
 fn same_anchor(left: &SourceAnchor, right: &SourceAnchor) -> bool {
     left.source_id() == right.source_id() && left.range() == right.range()
+}
+
+#[cfg(test)]
+mod producer_contract_tests {
+    use super::*;
+    use crate::css::token::{CssToken, CssTokenKind};
+    use crate::css::tokenizer::diagnostic::{
+        CssTokenizerDiagnosticCode, CssTokenizerDiagnosticContext, CssTokenizerDiagnosticSubject,
+        CssTokenizerRecovery,
+    };
+    use crate::css::tokenizer::resource::{
+        CssTokenizerResourceKind, CssTokenizerResourceLimitEvidence,
+    };
+
+    fn source(id: u64, text: &str) -> SourceText {
+        SourceText::new(SourceId::new(id), text.to_owned())
+    }
+
+    #[test]
+    fn source_range_contract_error_preserves_typed_internal_failure() {
+        let source = source(1, "é");
+        let error = source.anchor(1, 1).unwrap_err();
+
+        assert_eq!(
+            CssTokenizerRunError::from(error),
+            CssTokenizerRunError::InternalInvariantFailure(
+                CssTokenizerInvariantViolation::SourceRangeContractViolation { error }
+            )
+        );
+    }
+
+    #[test]
+    fn lexical_contract_error_preserves_typed_internal_failure() {
+        let source = source(2, "f");
+        let error = CssToken::new(
+            &source,
+            source.anchor(0, 1).unwrap(),
+            CssTokenKind::Function("f".to_owned()),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            CssTokenizerRunError::from(error.clone()),
+            CssTokenizerRunError::InternalInvariantFailure(
+                CssTokenizerInvariantViolation::LexicalContractViolation { error }
+            )
+        );
+    }
+
+    #[test]
+    fn resource_contract_error_preserves_typed_internal_failure() {
+        let source = source(3, "a");
+        let error = CssTokenizerResourceLimitEvidence::new(
+            &source,
+            CssTokenizerResourceKind::LexicalItems,
+            1,
+            1,
+            source.anchor(0, 0).unwrap(),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            CssTokenizerRunError::from(error),
+            CssTokenizerRunError::InternalInvariantFailure(
+                CssTokenizerInvariantViolation::ResourceContractViolation { error }
+            )
+        );
+    }
+
+    #[test]
+    fn diagnostic_contract_error_uses_existing_indexed_invariant_path() {
+        let source = source(4, "\\\n");
+        let error = CssTokenizerDiagnostic::new(
+            &source,
+            CssTokenizerDiagnosticCode::InvalidEscape,
+            source.anchor(0, 1).unwrap(),
+            CssTokenizerDiagnosticContext::Url,
+            CssTokenizerRecovery::EmitBadUrl,
+            CssTokenizerDiagnosticSubject::InputLocation,
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            CssTokenizerRunError::diagnostic_contract_violation(7, error),
+            CssTokenizerRunError::InternalInvariantFailure(
+                CssTokenizerInvariantViolation::DiagnosticContractViolation { index: 7, error }
+            )
+        );
+    }
+
+    #[test]
+    fn malformed_css_diagnostic_remains_distinct_from_producer_failure() {
+        let source = source(5, "\"");
+        let diagnostic = CssTokenizerDiagnostic::new(
+            &source,
+            CssTokenizerDiagnosticCode::EofInString,
+            source.anchor(1, 1).unwrap(),
+            CssTokenizerDiagnosticContext::String,
+            CssTokenizerRecovery::EmitStringAtEndOfInput,
+            CssTokenizerDiagnosticSubject::InputLocation,
+        )
+        .unwrap();
+
+        assert_eq!(diagnostic.code(), CssTokenizerDiagnosticCode::EofInString);
+    }
+
+    #[test]
+    fn wrapped_producer_failures_do_not_disclose_retained_source() {
+        const SECRET: &str = "producer-contract-secret";
+        let source = source(6, SECRET);
+
+        let source_error = source.anchor(1, usize::MAX).unwrap_err();
+        let lexical_error = CssToken::new(
+            &source,
+            source.anchor(0, SECRET.len()).unwrap(),
+            CssTokenKind::Function("secret".to_owned()),
+        )
+        .unwrap_err();
+        let resource_error = CssTokenizerResourceLimitEvidence::new(
+            &source,
+            CssTokenizerResourceKind::SourceBytes,
+            1,
+            1,
+            source.anchor(0, 0).unwrap(),
+        )
+        .unwrap_err();
+
+        let errors = [
+            CssTokenizerRunError::from(source_error),
+            CssTokenizerRunError::from(lexical_error),
+            CssTokenizerRunError::from(resource_error),
+        ];
+
+        for error in errors {
+            assert!(!format!("{error:?}").contains(SECRET));
+            assert!(!error.to_string().contains(SECRET));
+        }
+    }
 }
