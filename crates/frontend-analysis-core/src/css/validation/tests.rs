@@ -281,8 +281,14 @@ fn resource_lifecycle_foundation_covers_every_approved_resource_kind() {
     let fixtures = resource_limit_fixtures();
     assert_eq!(fixtures.len(), 6);
 
+    let mut ids = BTreeSet::new();
     let mut kinds = BTreeSet::new();
     for fixture in &fixtures {
+        assert!(
+            ids.insert(fixture.id),
+            "duplicate resource fixture id {}",
+            fixture.id
+        );
         validate_fixture(fixture).unwrap();
         assert_eq!(fixture.completion, GoldCompletion::Incomplete);
         match fixture.termination {

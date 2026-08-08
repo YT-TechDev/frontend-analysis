@@ -275,8 +275,8 @@ pub(super) fn specification_fixtures() -> Vec<GoldFixture> {
             "CSS-IDENT-VARIANTS-001",
             GoldGroup::IdentEscape,
             1201,
-            "a -a --a é \\g \\61 \\000061 \\61  \\0",
-            34,
+            "a -a --a é \\g \\61  \\000061  \\61  \\0",
+            36,
             None,
             vec![
                 token(0, 1, GoldTokenKind::Ident("a")),
@@ -289,13 +289,13 @@ pub(super) fn specification_fixtures() -> Vec<GoldFixture> {
                 token(11, 12, GoldTokenKind::Whitespace),
                 token(12, 14, GoldTokenKind::Ident("g")),
                 token(14, 15, GoldTokenKind::Whitespace),
-                token(15, 18, GoldTokenKind::Ident("a")),
-                token(18, 19, GoldTokenKind::Whitespace),
-                token(19, 26, GoldTokenKind::Ident("a")),
-                token(26, 27, GoldTokenKind::Whitespace),
-                token(27, 31, GoldTokenKind::Ident("a")),
-                token(31, 32, GoldTokenKind::Whitespace),
-                token(32, 34, GoldTokenKind::Ident("�")),
+                token(15, 19, GoldTokenKind::Ident("a")),
+                token(19, 20, GoldTokenKind::Whitespace),
+                token(20, 28, GoldTokenKind::Ident("a")),
+                token(28, 29, GoldTokenKind::Whitespace),
+                token(29, 33, GoldTokenKind::Ident("a")),
+                token(33, 34, GoldTokenKind::Whitespace),
+                token(34, 36, GoldTokenKind::Ident("�")),
             ],
             vec![],
             vec![],
@@ -304,8 +304,8 @@ pub(super) fn specification_fixtures() -> Vec<GoldFixture> {
             "CSS-IDENT-SPECIAL-001",
             GoldGroup::IdentEscape,
             1202,
-            "f\\6fo( @m\\65 dia #abc #123 #\\61 1p\\78",
-            37,
+            "f\\6fo( @m\\65 dia #abc #123 #\\61  1p\\78",
+            38,
             None,
             vec![
                 token(0, 6, GoldTokenKind::Function("foo")),
@@ -332,16 +332,16 @@ pub(super) fn specification_fixtures() -> Vec<GoldFixture> {
                 token(26, 27, GoldTokenKind::Whitespace),
                 token(
                     27,
-                    31,
+                    32,
                     GoldTokenKind::Hash {
                         value: "a",
                         hash_type: GoldHashType::Id,
                     },
                 ),
-                token(31, 32, GoldTokenKind::Whitespace),
+                token(32, 33, GoldTokenKind::Whitespace),
                 token(
-                    32,
-                    37,
+                    33,
+                    38,
                     GoldTokenKind::Dimension {
                         number: integer(None, "1"),
                         unit: "px",
@@ -603,8 +603,8 @@ pub(super) fn specification_fixtures() -> Vec<GoldFixture> {
             "CSS-NUMERIC-VARIANTS-001",
             GoldGroup::Numeric,
             1501,
-            "0 1 +1 -1 .5 1.5 1. 1e2 1E+2 1e-2 1% 1px 1.5px 1p\\78 123456789012345678901234567890 1e999999999999999999999999999999",
-            116,
+            "0 1 +1 -1 .5 1.5 1. 1e2 1E+2 1e-2 1% 1px 1.5px 1p\\78  123456789012345678901234567890 1e999999999999999999999999999999",
+            117,
             None,
             vec![
                 token(0, 1, GoldTokenKind::Number(integer(None, "0"))),
@@ -678,22 +678,22 @@ pub(super) fn specification_fixtures() -> Vec<GoldFixture> {
                 token(46, 47, GoldTokenKind::Whitespace),
                 token(
                     47,
-                    52,
+                    53,
                     GoldTokenKind::Dimension {
                         number: integer(None, "1"),
                         unit: "px",
                     },
                 ),
-                token(52, 53, GoldTokenKind::Whitespace),
+                token(53, 54, GoldTokenKind::Whitespace),
                 token(
-                    53,
-                    83,
+                    54,
+                    84,
                     GoldTokenKind::Number(integer(None, "123456789012345678901234567890")),
                 ),
-                token(83, 84, GoldTokenKind::Whitespace),
+                token(84, 85, GoldTokenKind::Whitespace),
                 token(
-                    84,
-                    116,
+                    85,
+                    117,
                     GoldTokenKind::Number(number(
                         None,
                         "1",
@@ -801,24 +801,38 @@ pub(super) fn specification_fixtures() -> Vec<GoldFixture> {
 
 pub(super) fn resource_limit_fixtures() -> Vec<GoldFixture> {
     [
-        (1901, GoldResourceKind::SourceBytes),
-        (1902, GoldResourceKind::AlgorithmSteps),
-        (1903, GoldResourceKind::LexicalItems),
-        (1904, GoldResourceKind::Diagnostics),
-        (1905, GoldResourceKind::RetainedInterpretedBytes),
-        (1906, GoldResourceKind::TemporaryBufferBytes),
+        (
+            "CSS-RESOURCE-SOURCE-BYTES-001",
+            1901,
+            GoldResourceKind::SourceBytes,
+        ),
+        (
+            "CSS-RESOURCE-ALGORITHM-STEPS-001",
+            1902,
+            GoldResourceKind::AlgorithmSteps,
+        ),
+        (
+            "CSS-RESOURCE-LEXICAL-ITEMS-001",
+            1903,
+            GoldResourceKind::LexicalItems,
+        ),
+        (
+            "CSS-RESOURCE-DIAGNOSTICS-001",
+            1904,
+            GoldResourceKind::Diagnostics,
+        ),
+        (
+            "CSS-RESOURCE-RETAINED-INTERPRETED-BYTES-001",
+            1905,
+            GoldResourceKind::RetainedInterpretedBytes,
+        ),
+        (
+            "CSS-RESOURCE-TEMPORARY-BUFFER-BYTES-001",
+            1906,
+            GoldResourceKind::TemporaryBufferBytes,
+        ),
     ]
     .into_iter()
-    .map(|(source_id, kind)| {
-        GoldFixture::resource_limited(
-            "CSS-RESOURCE-LIMIT-FOUNDATION-001",
-            source_id,
-            "a",
-            1,
-            kind,
-            0,
-            1,
-        )
-    })
+    .map(|(id, source_id, kind)| GoldFixture::resource_limited(id, source_id, "a", 1, kind, 0, 1))
     .collect()
 }

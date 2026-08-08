@@ -357,6 +357,7 @@ pub(super) enum GoldValidationError {
     InvalidDiagnosticSubject,
     InvalidDiagnosticHandling,
     InvalidPreprocessedUnitOrder,
+    PreprocessingCoverageGap,
     CompletionTerminationMismatch,
     InvalidTerminal,
     ResourceAttemptDidNotExceedLimit,
@@ -445,6 +446,19 @@ pub(super) fn validate_fixture(fixture: &GoldFixture) -> Result<(), GoldValidati
             return Err(GoldValidationError::InvalidPreprocessedUnitOrder);
         }
         previous_unit_end = Some(unit.raw.end);
+    }
+
+    if fixture.group == GoldGroup::InputPreprocessing {
+        let mut expected_unit_start = fixture.leading_bom.map_or(0, |range| range.end);
+        for unit in &fixture.preprocessed_units {
+            if unit.raw.start != expected_unit_start {
+                return Err(GoldValidationError::PreprocessingCoverageGap);
+            }
+            expected_unit_start = unit.raw.end;
+        }
+        if expected_unit_start != fixture.byte_len {
+            return Err(GoldValidationError::PreprocessingCoverageGap);
+        }
     }
 
     Ok(())
