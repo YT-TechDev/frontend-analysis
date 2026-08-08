@@ -1,8 +1,7 @@
 use super::gold::{
-    GoldCommentTermination, GoldCompletion, GoldDiagnostic, GoldDiagnosticCode,
-    GoldDiagnosticContext, GoldDiagnosticSubject, GoldFixture, GoldGroup, GoldHashType,
-    GoldLexicalItem, GoldNumber, GoldPreprocessedUnit, GoldRange, GoldRecovery, GoldResourceKind,
-    GoldSign, GoldTermination, GoldTokenKind,
+    GoldCommentTermination, GoldDiagnostic, GoldDiagnosticCode, GoldDiagnosticContext,
+    GoldDiagnosticSubject, GoldFixture, GoldGroup, GoldHashType, GoldLexicalItem, GoldNumber,
+    GoldPreprocessedUnit, GoldRange, GoldRecovery, GoldResourceKind, GoldSign, GoldTokenKind,
 };
 
 fn r(start: usize, end: usize) -> GoldRange {
@@ -600,6 +599,71 @@ pub(super) fn specification_fixtures() -> Vec<GoldFixture> {
             vec![],
         ),
         GoldFixture::complete(
+            "CSS-URL-BAD-WHITESPACE-CONTINUATION-001",
+            GoldGroup::Urls,
+            1407,
+            "url(a b)",
+            8,
+            None,
+            vec![token(0, 8, GoldTokenKind::BadUrl)],
+            vec![],
+            vec![],
+        ),
+        GoldFixture::complete(
+            "CSS-URL-BAD-APOSTROPHE-001",
+            GoldGroup::Urls,
+            1408,
+            "url(a'b)",
+            8,
+            None,
+            vec![token(0, 8, GoldTokenKind::BadUrl)],
+            vec![diagnostic(
+                GoldDiagnosticCode::InvalidUrlCodePoint,
+                5,
+                6,
+                GoldDiagnosticContext::Url,
+                GoldRecovery::EmitBadUrl,
+                GoldDiagnosticSubject::LexicalItem(0),
+            )],
+            vec![],
+        ),
+        GoldFixture::complete(
+            "CSS-URL-BAD-LEFT-PAREN-001",
+            GoldGroup::Urls,
+            1409,
+            "url(a(b)",
+            8,
+            None,
+            vec![token(0, 8, GoldTokenKind::BadUrl)],
+            vec![diagnostic(
+                GoldDiagnosticCode::InvalidUrlCodePoint,
+                5,
+                6,
+                GoldDiagnosticContext::Url,
+                GoldRecovery::EmitBadUrl,
+                GoldDiagnosticSubject::LexicalItem(0),
+            )],
+            vec![],
+        ),
+        GoldFixture::complete(
+            "CSS-URL-BAD-REMNANTS-EOF-001",
+            GoldGroup::Urls,
+            1410,
+            "url(a\"",
+            6,
+            None,
+            vec![token(0, 6, GoldTokenKind::BadUrl)],
+            vec![diagnostic(
+                GoldDiagnosticCode::InvalidUrlCodePoint,
+                5,
+                6,
+                GoldDiagnosticContext::Url,
+                GoldRecovery::EmitBadUrl,
+                GoldDiagnosticSubject::LexicalItem(0),
+            )],
+            vec![],
+        ),
+        GoldFixture::complete(
             "CSS-NUMERIC-VARIANTS-001",
             GoldGroup::Numeric,
             1501,
@@ -775,64 +839,57 @@ pub(super) fn specification_fixtures() -> Vec<GoldFixture> {
             vec![],
             vec![],
         ),
-        GoldFixture {
-            id: "CSS-DIAGNOSTIC-INPUT-REGION-001",
-            group: GoldGroup::Lifecycle,
-            source_id: 1801,
-            source: "a",
-            byte_len: 1,
-            leading_bom: None,
-            items: vec![token(0, 1, GoldTokenKind::Ident("a"))],
-            diagnostics: vec![diagnostic(
-                GoldDiagnosticCode::EofInString,
-                1,
-                1,
-                GoldDiagnosticContext::String,
-                GoldRecovery::EmitStringAtEndOfInput,
-                GoldDiagnosticSubject::InputRegion(r(0, 1)),
-            )],
-            preprocessed_units: vec![],
-            terminal: r(1, 1),
-            completion: GoldCompletion::Complete,
-            termination: GoldTermination::EndOfInput,
-        },
     ]
 }
 
-pub(super) fn resource_limit_fixtures() -> Vec<GoldFixture> {
+pub(super) fn resource_limit_contract_fixtures() -> Vec<GoldFixture> {
     [
         (
             "CSS-RESOURCE-SOURCE-BYTES-001",
             1901,
             GoldResourceKind::SourceBytes,
+            0,
+            1,
         ),
         (
             "CSS-RESOURCE-ALGORITHM-STEPS-001",
             1902,
             GoldResourceKind::AlgorithmSteps,
+            1,
+            2,
         ),
         (
             "CSS-RESOURCE-LEXICAL-ITEMS-001",
             1903,
             GoldResourceKind::LexicalItems,
+            0,
+            1,
         ),
         (
             "CSS-RESOURCE-DIAGNOSTICS-001",
             1904,
             GoldResourceKind::Diagnostics,
+            0,
+            1,
         ),
         (
             "CSS-RESOURCE-RETAINED-INTERPRETED-BYTES-001",
             1905,
             GoldResourceKind::RetainedInterpretedBytes,
+            0,
+            1,
         ),
         (
             "CSS-RESOURCE-TEMPORARY-BUFFER-BYTES-001",
             1906,
             GoldResourceKind::TemporaryBufferBytes,
+            0,
+            1,
         ),
     ]
     .into_iter()
-    .map(|(id, source_id, kind)| GoldFixture::resource_limited(id, source_id, "a", 1, kind, 0, 1))
+    .map(|(id, source_id, kind, limit, attempted)| {
+        GoldFixture::resource_limited(id, source_id, "a", 1, kind, limit, attempted)
+    })
     .collect()
 }

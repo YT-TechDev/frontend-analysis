@@ -1,14 +1,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::fixtures::{resource_limit_fixtures, specification_fixtures};
+use super::fixtures::{resource_limit_contract_fixtures, specification_fixtures};
 use super::generated::{
     GENERATED_INPUT_COUNT, GENERATED_MAX_BYTES, GENERATOR_REVISION, GENERATOR_SEED,
     alphabet_contains_required_boundaries, assert_deterministic_replay, generated_inputs,
 };
 use super::gold::{
-    GoldCompletion, GoldDiagnosticCode, GoldDiagnosticSubject, GoldFixture, GoldGroup,
-    GoldHashType, GoldLexicalItem, GoldNumber, GoldNumberType, GoldResourceKind, GoldSign,
-    GoldTermination, GoldTokenKind, validate_fixture,
+    GoldCompletion, GoldDiagnostic, GoldDiagnosticCode, GoldDiagnosticContext,
+    GoldDiagnosticSubject, GoldFixture, GoldGroup, GoldHashType, GoldLexicalItem, GoldNumber,
+    GoldNumberType, GoldRange, GoldRecovery, GoldResourceKind, GoldSign, GoldTermination,
+    GoldTokenKind, validate_fixture,
 };
 
 fn fixture<'a>(fixtures: &'a [GoldFixture], id: &str) -> &'a GoldFixture {
@@ -21,7 +22,7 @@ fn fixture<'a>(fixtures: &'a [GoldFixture], id: &str) -> &'a GoldFixture {
 #[test]
 fn specification_fixture_inventory_is_self_consistent_and_unique() {
     let fixtures = specification_fixtures();
-    assert_eq!(fixtures.len(), 33);
+    assert_eq!(fixtures.len(), 36);
 
     let mut ids = BTreeSet::new();
     for fixture in &fixtures {
@@ -48,11 +49,11 @@ fn fixture_groups_cover_the_approved_first_capability_matrix() {
     assert_eq!(counts[&GoldGroup::Comments], 3);
     assert_eq!(counts[&GoldGroup::IdentEscape], 4);
     assert_eq!(counts[&GoldGroup::Strings], 4);
-    assert_eq!(counts[&GoldGroup::Urls], 6);
+    assert_eq!(counts[&GoldGroup::Urls], 10);
     assert_eq!(counts[&GoldGroup::Numeric], 1);
     assert_eq!(counts[&GoldGroup::Fixed], 1);
     assert_eq!(counts[&GoldGroup::Historical], 2);
-    assert_eq!(counts[&GoldGroup::Lifecycle], 1);
+    assert!(!counts.contains_key(&GoldGroup::Lifecycle));
 }
 
 #[test]
@@ -62,9 +63,6 @@ fn every_first_slice_token_class_has_candidate_independent_gold() {
     let mut semantic_checksum = 0usize;
 
     for fixture in &fixtures {
-        if fixture.group == GoldGroup::Lifecycle {
-            continue;
-        }
         for item in &fixture.items {
             if let GoldLexicalItem::Token { kind, .. } = item {
                 actual.insert(kind.class_name());
@@ -109,7 +107,6 @@ fn every_first_slice_diagnostic_code_has_normative_gold() {
     let fixtures = specification_fixtures();
     let actual: BTreeSet<_> = fixtures
         .iter()
-        .filter(|fixture| fixture.group != GoldGroup::Lifecycle)
         .flat_map(|fixture| fixture.diagnostics.iter().map(|diagnostic| diagnostic.code))
         .collect();
 
@@ -277,8 +274,8 @@ fn mandatory_historical_regressions_preserve_exact_lexical_boundaries() {
 }
 
 #[test]
-fn resource_lifecycle_foundation_covers_every_approved_resource_kind() {
-    let fixtures = resource_limit_fixtures();
+fn resource_lifecycle_contract_covers_every_approved_resource_kind() {
+    let fixtures = resource_limit_contract_fixtures();
     assert_eq!(fixtures.len(), 6);
 
     let mut ids = BTreeSet::new();
@@ -299,8 +296,15 @@ fn resource_lifecycle_foundation_covers_every_approved_resource_kind() {
                 terminal,
             } => {
                 kinds.insert(kind);
-                assert_eq!(limit, 0);
-                assert_eq!(attempted, 1);
+                // CssTokenizerLimits rejects a zero algorithm-step budget as an
+                // invalid configuration, so that kind alone uses limit=1/attempted=2.
+                if kind == GoldResourceKind::AlgorithmSteps {
+                    assert_eq!(limit, 1);
+                    assert_eq!(attempted, 2);
+                } else {
+                    assert_eq!(limit, 0);
+                    assert_eq!(attempted, 1);
+                }
                 assert_eq!(terminal.start, 0);
                 assert_eq!(terminal.end, 0);
             }
@@ -322,11 +326,79 @@ fn resource_lifecycle_foundation_covers_every_approved_resource_kind() {
 }
 
 #[test]
-fn diagnostic_subject_model_includes_input_location_without_making_it_an_oracle() {
-    assert_eq!(
-        GoldDiagnosticSubject::InputLocation,
-        GoldDiagnosticSubject::InputLocation
+fn diagnostic_subject_model_supports_input_location_and_input_region() {
+    // This exercises the GoldDiagnosticSubject::InputLocation and InputRegion
+    // variants directly against the gold model's own validator. It is
+    // deliberately not part of specification_fixtures(): these ad hoc
+    // fixtures exist only to prove the model's subject-containment rules,
+    // not as normative tokenizer recognition gold for #136.
+    let location_subject = GoldFixture::complete(
+        "GOLD-MODEL-DIAGNOSTIC-SUBJECT-INPUT-LOCATION-001",
+        GoldGroup::Strings,
+        9001,
+        "\"a",
+        2,
+        None,
+        vec![GoldLexicalItem::Token {
+            range: GoldRange::new(0, 2),
+            kind: GoldTokenKind::String("a"),
+        }],
+        vec![GoldDiagnostic {
+            code: GoldDiagnosticCode::EofInString,
+            location: GoldRange::new(2, 2),
+            context: GoldDiagnosticContext::String,
+            recovery: GoldRecovery::EmitStringAtEndOfInput,
+            subject: GoldDiagnosticSubject::InputLocation,
+        }],
+        vec![],
     );
+    validate_fixture(&location_subject)
+        .expect("InputLocation diagnostic subject must validate unconditionally");
+
+    let region_subject = GoldFixture::complete(
+        "GOLD-MODEL-DIAGNOSTIC-SUBJECT-INPUT-REGION-001",
+        GoldGroup::Strings,
+        9002,
+        "\"a",
+        2,
+        None,
+        vec![GoldLexicalItem::Token {
+            range: GoldRange::new(0, 2),
+            kind: GoldTokenKind::String("a"),
+        }],
+        vec![GoldDiagnostic {
+            code: GoldDiagnosticCode::EofInString,
+            location: GoldRange::new(2, 2),
+            context: GoldDiagnosticContext::String,
+            recovery: GoldRecovery::EmitStringAtEndOfInput,
+            subject: GoldDiagnosticSubject::InputRegion(GoldRange::new(0, 2)),
+        }],
+        vec![],
+    );
+    validate_fixture(&region_subject)
+        .expect("InputRegion diagnostic subject must validate when it contains the location");
+
+    let region_subject_out_of_bounds = GoldFixture::complete(
+        "GOLD-MODEL-DIAGNOSTIC-SUBJECT-INPUT-REGION-002",
+        GoldGroup::Strings,
+        9003,
+        "\"a",
+        2,
+        None,
+        vec![GoldLexicalItem::Token {
+            range: GoldRange::new(0, 2),
+            kind: GoldTokenKind::String("a"),
+        }],
+        vec![GoldDiagnostic {
+            code: GoldDiagnosticCode::EofInString,
+            location: GoldRange::new(2, 2),
+            context: GoldDiagnosticContext::String,
+            recovery: GoldRecovery::EmitStringAtEndOfInput,
+            subject: GoldDiagnosticSubject::InputRegion(GoldRange::new(0, 1)),
+        }],
+        vec![],
+    );
+    assert!(validate_fixture(&region_subject_out_of_bounds).is_err());
 }
 
 #[test]
