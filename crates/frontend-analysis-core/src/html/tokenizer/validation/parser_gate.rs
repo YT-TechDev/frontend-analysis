@@ -8,7 +8,7 @@
 //! existing gold; it only reuses [`super::corpus::all_candidate_independent_corpus`]
 //! as evidence for a capability the #112/#113 foundation predates.
 
-use crate::html::parser::analyze_explicit_start_tags;
+use crate::html::parser::{HtmlExplicitStartTagAnalysis, analyze_explicit_start_tags};
 use crate::{SourceId, SourceText};
 
 use super::super::producer::tokenize;
@@ -16,6 +16,7 @@ use super::super::resource::HtmlTokenizerLimits;
 use super::corpus::all_candidate_independent_corpus;
 use super::expected::{Limits, Token, TokenKind};
 use super::fixture::HtmlTokenizerFixture;
+use super::generated::{MAX_GENERATED_CASES, MAX_SOURCE_BYTES, generated_inputs};
 use super::observe::observe;
 
 fn to_html_limits(limits: Limits) -> HtmlTokenizerLimits {
@@ -166,17 +167,7 @@ fn parser_analysis_is_deterministic_across_repeats_and_source_ids() {
             let source = SourceText::new(SourceId::new(source_id), text.clone());
             let run = tokenize(&source, limits);
             let analysis = analyze_explicit_start_tags(run).unwrap();
-            let signature: Vec<_> = analysis
-                .occurrences()
-                .iter()
-                .map(|occurrence| {
-                    (
-                        occurrence.origin_token_index(),
-                        occurrence.complete().range(),
-                        occurrence.raw_name().range(),
-                    )
-                })
-                .collect();
+            let signature = occurrence_signature(&analysis);
             if let Some(previous_signature) = &previous {
                 assert_eq!(
                     &signature, previous_signature,
@@ -187,4 +178,157 @@ fn parser_analysis_is_deterministic_across_repeats_and_source_ids() {
             previous = Some(signature);
         }
     }
+}
+
+/// A structural occurrence signature: only parser-owned meaning
+/// (`origin_token_index`, `complete` range, `raw_name` range), never
+/// authored source content. Used to compare two analyses of equal retained
+/// source without a stable serialization commitment.
+fn occurrence_signature(
+    analysis: &HtmlExplicitStartTagAnalysis,
+) -> Vec<(usize, crate::SourceRange, crate::SourceRange)> {
+    analysis
+        .occurrences()
+        .iter()
+        .map(|occurrence| {
+            (
+                occurrence.origin_token_index(),
+                occurrence.complete().range(),
+                occurrence.raw_name().range(),
+            )
+        })
+        .collect()
+}
+
+/// Reuses the existing bounded, deterministic, dependency-free generator
+/// (`generated.rs`, already exercised against the tokenizer alone in
+/// `execute.rs`) to drive `SourceText -> tokenize(...) ->
+/// analyze_explicit_start_tags(...)` directly, with no `catch_unwind`: a
+/// production panic on any of the 4,096 generated cases fails this test
+/// naturally rather than being caught and downgraded. This is the
+/// parser-specific property/fuzz-smoke gate #115 requires; the pre-existing
+/// `execute.rs` generated-input test only reaches the tokenizer/observation
+/// layer and never calls the analysis parser.
+#[test]
+fn parser_handles_all_generated_inputs_without_panic_and_preserves_properties() {
+    let limits = to_html_limits(Limits::generous());
+    let inputs = generated_inputs();
+    assert_eq!(inputs.len(), MAX_GENERATED_CASES);
+
+    let mut failures = Vec::new();
+    for (index, input) in inputs.iter().enumerate() {
+        assert!(input.len() <= MAX_SOURCE_BYTES);
+        let byte_len = input.len();
+
+        let primary_source = SourceText::new(SourceId::new(1), input.clone());
+        let primary_run = tokenize(&primary_source, limits);
+        let primary_observed_before = observe(&primary_source, &primary_run);
+
+        // A. The currently valid production tokenizer result must produce
+        // Ok(HtmlExplicitStartTagAnalysis); any contract error here is a
+        // parser regression, not an expected outcome, and is recorded as a
+        // failure rather than downgraded to ordinary case reporting.
+        let primary_analysis = match analyze_explicit_start_tags(primary_run) {
+            Ok(analysis) => analysis,
+            Err(error) => {
+                failures.push(format!(
+                    "case {index} (source byte length {byte_len}): parser contract error {error:?} from a valid tokenizer result"
+                ));
+                continue;
+            }
+        };
+
+        // B. Tokenizer evidence (tokens, preprocessing, diagnostics,
+        // coverage, completion, limits, usage) is unchanged across the
+        // parser boundary.
+        let primary_observed_after = observe(&primary_source, primary_analysis.tokenizer_run());
+        if primary_observed_before != primary_observed_after {
+            failures.push(format!(
+                "case {index} (source byte length {byte_len}): retained tokenizer evidence changed through the parser boundary"
+            ));
+        }
+
+        // F. Completeness monotonicity: zero occurrences from an incomplete
+        // tokenizer run must remain incomplete, never reinterpreted as clean
+        // absence. (Full completion equality is already covered by B.)
+        if primary_analysis.occurrences().is_empty()
+            && primary_analysis.tokenizer_run().is_incomplete()
+        {
+            // Exercised, not a failure: an incomplete run legitimately
+            // projects zero occurrences without becoming clean success.
+        }
+
+        for occurrence in primary_analysis.occurrences() {
+            // C. Occurrence source identity.
+            if occurrence.complete().source_id() != primary_source.id()
+                || occurrence.raw_name().source_id() != primary_source.id()
+            {
+                failures.push(format!(
+                    "case {index} (source byte length {byte_len}): occurrence source identity mismatch"
+                ));
+            }
+            // D. Range containment: complete.start <= raw_name.start and
+            // raw_name.end <= complete.end, using already-validated
+            // SourceAnchor ranges with no source rescan.
+            if occurrence.complete().range().start() > occurrence.raw_name().range().start()
+                || occurrence.raw_name().range().end() > occurrence.complete().range().end()
+            {
+                failures.push(format!(
+                    "case {index} (source byte length {byte_len}): raw_name range escapes complete range"
+                ));
+            }
+        }
+
+        // E. Deterministic source/token ordering: adjacent occurrences move
+        // strictly forward in both origin token index and complete range.
+        for pair in primary_analysis.occurrences().windows(2) {
+            if pair[1].origin_token_index() <= pair[0].origin_token_index()
+                || pair[1].complete().range().start() < pair[0].complete().range().end()
+            {
+                failures.push(format!(
+                    "case {index} (source byte length {byte_len}): occurrence ordering moved backward"
+                ));
+            }
+        }
+
+        let primary_signature = occurrence_signature(&primary_analysis);
+
+        // G. Repeat determinism with the same SourceId.
+        let repeat_source = SourceText::new(SourceId::new(1), input.clone());
+        let repeat_run = tokenize(&repeat_source, limits);
+        match analyze_explicit_start_tags(repeat_run) {
+            Ok(repeat_analysis) => {
+                if occurrence_signature(&repeat_analysis) != primary_signature {
+                    failures.push(format!(
+                        "case {index} (source byte length {byte_len}): non-deterministic across repeated runs with equal SourceId"
+                    ));
+                }
+            }
+            Err(error) => failures.push(format!(
+                "case {index} (source byte length {byte_len}): repeat-run parser contract error {error:?}"
+            )),
+        }
+
+        // G. An alternate SourceId must not alter occurrence ranges,
+        // ordering, or count.
+        let alternate_source = SourceText::new(SourceId::new(2), input.clone());
+        let alternate_run = tokenize(&alternate_source, limits);
+        match analyze_explicit_start_tags(alternate_run) {
+            Ok(alternate_analysis) => {
+                if occurrence_signature(&alternate_analysis) != primary_signature {
+                    failures.push(format!(
+                        "case {index} (source byte length {byte_len}): occurrence signature changed with a different SourceId"
+                    ));
+                }
+            }
+            Err(error) => failures.push(format!(
+                "case {index} (source byte length {byte_len}): alternate-SourceId parser contract error {error:?}"
+            )),
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "generated parser-property failures:\n{}",
+        failures.join("\n")
+    );
 }

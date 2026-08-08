@@ -1,14 +1,8 @@
 use crate::{SourceAnchor, SourceId, SourceText};
 
-use super::super::token::{
-    HtmlCharacterToken, HtmlEndOfFileToken, HtmlNameEvidence, HtmlPreprocessingEvidence,
-    HtmlTagKind, HtmlTagToken, HtmlToken,
-};
 use super::super::tokenizer::producer::tokenize;
-use super::super::tokenizer::resource::{HtmlTokenizerLimits, HtmlTokenizerUsage};
-use super::super::tokenizer::result::{
-    HtmlTokenizerCompletion, HtmlTokenizerCoverage, HtmlTokenizerRunResult,
-};
+use super::super::tokenizer::resource::HtmlTokenizerLimits;
+use super::super::tokenizer::result::HtmlTokenizerRunResult;
 use super::*;
 
 fn src(id: u64, text: &str) -> SourceText {
@@ -21,95 +15,6 @@ fn anchor(source: &SourceText, start: usize, end: usize) -> SourceAnchor {
 
 fn generous_limits() -> HtmlTokenizerLimits {
     HtmlTokenizerLimits::new(1_000, 1_000, 1_000, 1_000, 1_000, 1_000, 1_000)
-}
-
-fn coverage(source: &SourceText, processed_end: usize) -> HtmlTokenizerCoverage {
-    HtmlTokenizerCoverage::new(
-        source,
-        anchor(source, 0, processed_end),
-        anchor(source, processed_end, source.as_str().len()),
-    )
-    .unwrap()
-}
-
-fn preprocessing(source: &SourceText) -> HtmlPreprocessingEvidence {
-    HtmlPreprocessingEvidence::new(source, None).unwrap()
-}
-
-fn eof(source: &SourceText) -> HtmlToken {
-    let end = source.as_str().len();
-    HtmlToken::EndOfFile(HtmlEndOfFileToken::new(source, anchor(source, end, end)).unwrap())
-}
-
-fn start_tag_at(
-    source: &SourceText,
-    start: usize,
-    name_end: usize,
-    complete_end: usize,
-    interpreted: &str,
-) -> HtmlToken {
-    HtmlToken::Tag(
-        HtmlTagToken::new(
-            HtmlTagKind::Start,
-            anchor(source, start, complete_end),
-            anchor(source, start, start + 1),
-            HtmlNameEvidence::new(anchor(source, start + 1, name_end), interpreted.to_owned())
-                .unwrap(),
-            Vec::new(),
-            None,
-            anchor(source, complete_end - 1, complete_end),
-        )
-        .unwrap(),
-    )
-}
-
-fn end_tag_at(
-    source: &SourceText,
-    start: usize,
-    name_end: usize,
-    complete_end: usize,
-    interpreted: &str,
-) -> HtmlToken {
-    HtmlToken::Tag(
-        HtmlTagToken::new(
-            HtmlTagKind::End,
-            anchor(source, start, complete_end),
-            anchor(source, start, start + 2),
-            HtmlNameEvidence::new(anchor(source, start + 2, name_end), interpreted.to_owned())
-                .unwrap(),
-            Vec::new(),
-            None,
-            anchor(source, complete_end - 1, complete_end),
-        )
-        .unwrap(),
-    )
-}
-
-fn character_at(source: &SourceText, start: usize, end: usize, interpreted: &str) -> HtmlToken {
-    HtmlToken::Character(
-        HtmlCharacterToken::new(anchor(source, start, end), interpreted.to_owned()).unwrap(),
-    )
-}
-
-/// Builds a `Complete` tokenizer run out of already-constructed tokens
-/// (excluding EOF, which is appended automatically), with generous limits
-/// and usage evidence loose enough to satisfy `HtmlTokenizerRunResult`'s
-/// self-validation without needing exact transition/byte accounting.
-fn complete_run(source: &SourceText, mut tokens: Vec<HtmlToken>) -> HtmlTokenizerRunResult {
-    tokens.push(eof(source));
-    let token_count = tokens.len();
-    let end = source.as_str().len();
-    HtmlTokenizerRunResult::new(
-        source,
-        tokens,
-        preprocessing(source),
-        Vec::new(),
-        coverage(source, end),
-        HtmlTokenizerCompletion::Complete,
-        generous_limits(),
-        HtmlTokenizerUsage::new(end, token_count, token_count, 0, 0, 100, 0),
-    )
-    .unwrap()
 }
 
 fn tokenize_source(source: &SourceText) -> HtmlTokenizerRunResult {
@@ -151,6 +56,9 @@ fn multiple_start_tags_with_character_data_are_ordered_and_distinct() {
         assert!(occurrence.raw_name().range().start() >= occurrence.complete().range().start());
         assert!(occurrence.raw_name().range().end() <= occurrence.complete().range().end());
     }
+
+    // Origin indexes strictly increase in tokenizer/source order.
+    assert!(occurrences[0].origin_token_index() < occurrences[1].origin_token_index());
 }
 
 // 2. Duplicate raw spellings at different offsets remain distinct
@@ -281,190 +189,6 @@ fn end_tag_only_input_produces_zero_start_tag_occurrences() {
 
     let analysis = analyze_explicit_start_tags(run).unwrap();
     assert!(start_tag_occurrences(&analysis).is_empty());
-}
-
-// 10. Parser-boundary contract corruption: each invalid relationship
-// between occurrences and the retained tokenizer run is rejected as a
-// typed contract error, not a panic or silent success.
-
-fn single_start_tag_run() -> (SourceText, HtmlTokenizerRunResult) {
-    let source = src(100, "<div>");
-    let run = complete_run(&source, vec![start_tag_at(&source, 0, 4, 5, "div")]);
-    (source, run)
-}
-
-#[test]
-fn contract_rejects_out_of_bounds_origin_token_index() {
-    let (source, run) = single_start_tag_run();
-    let occurrence = HtmlExplicitStartTagOccurrence {
-        origin_token_index: 5,
-        complete: anchor(&source, 0, 5),
-        raw_name: anchor(&source, 1, 4),
-    };
-    assert_eq!(
-        HtmlExplicitStartTagAnalysis::new(run, vec![occurrence]).unwrap_err(),
-        HtmlAnalysisParserContractError::InvalidOriginTokenIndex {
-            occurrence_index: 0,
-            origin_token_index: 5,
-        }
-    );
-}
-
-#[test]
-fn contract_rejects_origin_token_that_is_not_a_tag() {
-    let source = src(101, "x<div>");
-    let run = complete_run(
-        &source,
-        vec![
-            character_at(&source, 0, 1, "x"),
-            start_tag_at(&source, 1, 5, 6, "div"),
-        ],
-    );
-    let occurrence = HtmlExplicitStartTagOccurrence {
-        origin_token_index: 0,
-        complete: anchor(&source, 1, 6),
-        raw_name: anchor(&source, 2, 5),
-    };
-    assert_eq!(
-        HtmlExplicitStartTagAnalysis::new(run, vec![occurrence]).unwrap_err(),
-        HtmlAnalysisParserContractError::OriginTokenNotTag {
-            occurrence_index: 0,
-            origin_token_index: 0,
-        }
-    );
-}
-
-#[test]
-fn contract_rejects_origin_token_that_is_an_end_tag() {
-    // Exactly one real start tag exists (`div` at token index 0), so the
-    // occurrence-count invariant is satisfied; the single occurrence is
-    // deliberately mispointed at the end tag (token index 1) instead, to
-    // isolate the token-kind check from the inventory check.
-    let source = src(102, "<div></div>");
-    let run = complete_run(
-        &source,
-        vec![
-            start_tag_at(&source, 0, 4, 5, "div"),
-            end_tag_at(&source, 5, 10, 11, "div"),
-        ],
-    );
-    let occurrence = HtmlExplicitStartTagOccurrence {
-        origin_token_index: 1,
-        complete: anchor(&source, 5, 11),
-        raw_name: anchor(&source, 7, 10),
-    };
-    assert_eq!(
-        HtmlExplicitStartTagAnalysis::new(run, vec![occurrence]).unwrap_err(),
-        HtmlAnalysisParserContractError::OriginTokenNotStartTag {
-            occurrence_index: 0,
-            origin_token_index: 1,
-        }
-    );
-}
-
-#[test]
-fn contract_rejects_mismatched_complete_anchor() {
-    let (source, run) = single_start_tag_run();
-    let occurrence = HtmlExplicitStartTagOccurrence {
-        origin_token_index: 0,
-        complete: anchor(&source, 0, 4),
-        raw_name: anchor(&source, 1, 4),
-    };
-    assert_eq!(
-        HtmlExplicitStartTagAnalysis::new(run, vec![occurrence]).unwrap_err(),
-        HtmlAnalysisParserContractError::CompleteEvidenceMismatch {
-            occurrence_index: 0,
-            origin_token_index: 0,
-        }
-    );
-}
-
-#[test]
-fn contract_rejects_mismatched_raw_name_anchor() {
-    let (source, run) = single_start_tag_run();
-    let occurrence = HtmlExplicitStartTagOccurrence {
-        origin_token_index: 0,
-        complete: anchor(&source, 0, 5),
-        raw_name: anchor(&source, 1, 3),
-    };
-    assert_eq!(
-        HtmlExplicitStartTagAnalysis::new(run, vec![occurrence]).unwrap_err(),
-        HtmlAnalysisParserContractError::RawNameEvidenceMismatch {
-            occurrence_index: 0,
-            origin_token_index: 0,
-        }
-    );
-}
-
-#[test]
-fn contract_rejects_out_of_order_occurrences() {
-    let source = src(103, "<div><span>");
-    let run = complete_run(
-        &source,
-        vec![
-            start_tag_at(&source, 0, 4, 5, "div"),
-            start_tag_at(&source, 5, 10, 11, "span"),
-        ],
-    );
-    let occurrences = vec![
-        HtmlExplicitStartTagOccurrence {
-            origin_token_index: 1,
-            complete: anchor(&source, 5, 11),
-            raw_name: anchor(&source, 6, 10),
-        },
-        HtmlExplicitStartTagOccurrence {
-            origin_token_index: 0,
-            complete: anchor(&source, 0, 5),
-            raw_name: anchor(&source, 1, 4),
-        },
-    ];
-    assert_eq!(
-        HtmlExplicitStartTagAnalysis::new(run, occurrences).unwrap_err(),
-        HtmlAnalysisParserContractError::OccurrenceOrderViolation {
-            occurrence_index: 1
-        }
-    );
-}
-
-#[test]
-fn contract_rejects_missing_start_tag_occurrence() {
-    let source = src(104, "<div><span>");
-    let run = complete_run(
-        &source,
-        vec![
-            start_tag_at(&source, 0, 4, 5, "div"),
-            start_tag_at(&source, 5, 10, 11, "span"),
-        ],
-    );
-    let occurrence = HtmlExplicitStartTagOccurrence {
-        origin_token_index: 0,
-        complete: anchor(&source, 0, 5),
-        raw_name: anchor(&source, 1, 4),
-    };
-    assert_eq!(
-        HtmlExplicitStartTagAnalysis::new(run, vec![occurrence]).unwrap_err(),
-        HtmlAnalysisParserContractError::OccurrenceInventoryMismatch {
-            expected: 2,
-            actual: 1,
-        }
-    );
-}
-
-#[test]
-fn contract_rejects_extra_occurrence() {
-    let (source, run) = single_start_tag_run();
-    let occurrence = HtmlExplicitStartTagOccurrence {
-        origin_token_index: 0,
-        complete: anchor(&source, 0, 5),
-        raw_name: anchor(&source, 1, 4),
-    };
-    assert_eq!(
-        HtmlExplicitStartTagAnalysis::new(run, vec![occurrence.clone(), occurrence]).unwrap_err(),
-        HtmlAnalysisParserContractError::OccurrenceInventoryMismatch {
-            expected: 1,
-            actual: 2,
-        }
-    );
 }
 
 // Determinism: equal retained source, configuration, and implementation

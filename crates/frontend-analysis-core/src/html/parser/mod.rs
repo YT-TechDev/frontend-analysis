@@ -4,6 +4,34 @@
 //! start-tag occurrences, per the model approved in #114. This is a
 //! capability-specific projection, not tree construction: matching, nesting,
 //! and synthesized structure remain out of scope for this slice.
+//!
+//! [`analyze_explicit_start_tags`] performs exactly one traversal of
+//! [`HtmlTokenizerRunResult::tokens`]. Every occurrence is constructed
+//! directly from the single token being visited during that traversal, so
+//! the relationships #114 requires to hold between an occurrence and its
+//! originating token are established by construction rather than by a
+//! second pass that re-fetches and re-compares tokenizer evidence:
+//!
+//! - the occurrence's `origin_token_index` is the current enumerated index;
+//! - the visited token is known to be `HtmlToken::Tag` because that is what
+//!   was just pattern-matched;
+//! - the visited tag's kind is known to be `Start` because that is what was
+//!   just checked;
+//! - `complete` and `raw_name` are literal clones of that same tag's own
+//!   `complete()` and `name().source()`, so they cannot diverge from it;
+//! - `raw_name` remains contained in `complete` transitively, through the
+//!   containment [`HtmlTagToken::new`](super::token::HtmlTagToken::new)
+//!   already enforces for every validated tokenizer token;
+//! - origin indexes strictly increase, because they are read off a forward
+//!   `enumerate()` over the token slice and an occurrence is only appended
+//!   while visiting the token it describes.
+//!
+//! The one relationship not fixed purely by local control flow is the final
+//! occurrence-vector inventory (no start tag missing, no extra entry); that
+//! is still established by construction (one occurrence is appended for
+//! every, and only every, encountered `Start` tag), but is additionally
+//! proven with two counters accumulated during the same traversal, compared
+//! once after the loop, with no second scan of the token slice.
 
 use std::error::Error;
 use std::fmt;
@@ -69,17 +97,6 @@ pub(crate) struct HtmlExplicitStartTagAnalysis {
 }
 
 impl HtmlExplicitStartTagAnalysis {
-    fn new(
-        tokenizer_run: HtmlTokenizerRunResult,
-        occurrences: Vec<HtmlExplicitStartTagOccurrence>,
-    ) -> Result<Self, HtmlAnalysisParserContractError> {
-        validate_occurrences(&tokenizer_run, &occurrences)?;
-        Ok(Self {
-            tokenizer_run,
-            occurrences,
-        })
-    }
-
     /// The retained validated tokenizer run. Tokenizer diagnostics,
     /// coverage, completion, and resource evidence remain authoritative
     /// here rather than being re-encoded into a parser-specific duplicate.
@@ -108,35 +125,24 @@ impl fmt::Debug for HtmlExplicitStartTagAnalysis {
 /// tokenizer result that produced them. Distinct from tokenizer diagnostics:
 /// this is a parser-boundary invariant failure, not tokenizer-observed
 /// input evidence.
+///
+/// Under the corrected single-pass construction (see the module
+/// documentation), every relationship except final inventory is established
+/// by construction and cannot independently diverge, so this vocabulary
+/// intentionally no longer contains the wrong-token-kind,
+/// wrong-origin-index, and evidence-mismatch variants an earlier two-pass
+/// design used: those checks compared an occurrence against a token
+/// re-fetched by index in a second pass, and that second pass no longer
+/// exists. `OccurrenceInventoryMismatch` remains as an explicit,
+/// zero-extra-traversal proof that one occurrence was appended for every,
+/// and only every, encountered `Start` tag; it is not reachable through any
+/// current call path, since both counters it compares are always advanced
+/// together, but it protects that guarantee against a future edit to the
+/// traversal that decouples them, without requiring a second token scan to
+/// check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HtmlAnalysisParserContractError {
-    InvalidOriginTokenIndex {
-        occurrence_index: usize,
-        origin_token_index: usize,
-    },
-    OriginTokenNotTag {
-        occurrence_index: usize,
-        origin_token_index: usize,
-    },
-    OriginTokenNotStartTag {
-        occurrence_index: usize,
-        origin_token_index: usize,
-    },
-    CompleteEvidenceMismatch {
-        occurrence_index: usize,
-        origin_token_index: usize,
-    },
-    RawNameEvidenceMismatch {
-        occurrence_index: usize,
-        origin_token_index: usize,
-    },
-    OccurrenceOrderViolation {
-        occurrence_index: usize,
-    },
-    OccurrenceInventoryMismatch {
-        expected: usize,
-        actual: usize,
-    },
+    OccurrenceInventoryMismatch { expected: usize, actual: usize },
 }
 
 impl fmt::Display for HtmlAnalysisParserContractError {
@@ -154,102 +160,47 @@ impl Error for HtmlAnalysisParserContractError {}
 /// occurrences.
 ///
 /// Consumes one already-validated [`HtmlTokenizerRunResult`] by value and
-/// iterates its tokens exactly once, in order. Every [`HtmlTagKind::Start`]
-/// tag projects one occurrence; end tags, character data, and EOF are
-/// consumed as validated input but not projected. No source rescan,
-/// endpoint reconstruction, or token replay occurs. Parser result
-/// completeness never exceeds the retained tokenizer run's completeness,
-/// since it derives entirely from tokens already present in that run.
+/// performs exactly one traversal of its tokens, in order. Every
+/// [`HtmlTagKind::Start`] tag projects one occurrence, constructed directly
+/// from the tag being visited; end tags, character data, and EOF are
+/// consumed as validated input but not projected. No source rescan, second
+/// token-slice scan, endpoint reconstruction, or token replay occurs. Parser
+/// result completeness never exceeds the retained tokenizer run's
+/// completeness, since it derives entirely from tokens already present in
+/// that run.
 pub(crate) fn analyze_explicit_start_tags(
     tokenizer_run: HtmlTokenizerRunResult,
 ) -> Result<HtmlExplicitStartTagAnalysis, HtmlAnalysisParserContractError> {
-    let occurrences = tokenizer_run
-        .tokens()
-        .iter()
-        .enumerate()
-        .filter_map(|(origin_token_index, token)| match token {
-            HtmlToken::Tag(tag) if tag.kind() == HtmlTagKind::Start => {
-                Some(HtmlExplicitStartTagOccurrence {
-                    origin_token_index,
-                    complete: tag.complete().clone(),
-                    raw_name: tag.name().source().clone(),
-                })
-            }
-            _ => None,
-        })
-        .collect();
+    let mut occurrences = Vec::new();
+    let mut start_tag_count: usize = 0;
 
-    HtmlExplicitStartTagAnalysis::new(tokenizer_run, occurrences)
-}
+    for (origin_token_index, token) in tokenizer_run.tokens().iter().enumerate() {
+        let HtmlToken::Tag(tag) = token else {
+            continue;
+        };
+        if tag.kind() != HtmlTagKind::Start {
+            continue;
+        }
 
-fn validate_occurrences(
-    tokenizer_run: &HtmlTokenizerRunResult,
-    occurrences: &[HtmlExplicitStartTagOccurrence],
-) -> Result<(), HtmlAnalysisParserContractError> {
-    let tokens = tokenizer_run.tokens();
-    let expected_count = tokens
-        .iter()
-        .filter(|token| matches!(token, HtmlToken::Tag(tag) if tag.kind() == HtmlTagKind::Start))
-        .count();
-    if occurrences.len() != expected_count {
+        start_tag_count += 1;
+        occurrences.push(HtmlExplicitStartTagOccurrence {
+            origin_token_index,
+            complete: tag.complete().clone(),
+            raw_name: tag.name().source().clone(),
+        });
+    }
+
+    if start_tag_count != occurrences.len() {
         return Err(
             HtmlAnalysisParserContractError::OccurrenceInventoryMismatch {
-                expected: expected_count,
+                expected: start_tag_count,
                 actual: occurrences.len(),
             },
         );
     }
 
-    let mut previous_origin_token_index: Option<usize> = None;
-    for (occurrence_index, occurrence) in occurrences.iter().enumerate() {
-        let Some(token) = tokens.get(occurrence.origin_token_index) else {
-            return Err(HtmlAnalysisParserContractError::InvalidOriginTokenIndex {
-                occurrence_index,
-                origin_token_index: occurrence.origin_token_index,
-            });
-        };
-        let HtmlToken::Tag(tag) = token else {
-            return Err(HtmlAnalysisParserContractError::OriginTokenNotTag {
-                occurrence_index,
-                origin_token_index: occurrence.origin_token_index,
-            });
-        };
-        if tag.kind() != HtmlTagKind::Start {
-            return Err(HtmlAnalysisParserContractError::OriginTokenNotStartTag {
-                occurrence_index,
-                origin_token_index: occurrence.origin_token_index,
-            });
-        }
-        if tag.complete().source_id() != occurrence.complete.source_id()
-            || tag.complete().range() != occurrence.complete.range()
-        {
-            return Err(HtmlAnalysisParserContractError::CompleteEvidenceMismatch {
-                occurrence_index,
-                origin_token_index: occurrence.origin_token_index,
-            });
-        }
-        if tag.name().source().source_id() != occurrence.raw_name.source_id()
-            || tag.name().source().range() != occurrence.raw_name.range()
-        {
-            return Err(HtmlAnalysisParserContractError::RawNameEvidenceMismatch {
-                occurrence_index,
-                origin_token_index: occurrence.origin_token_index,
-            });
-        }
-        // Containment of raw_name within complete is not re-checked here: it
-        // is guaranteed transitively, since occurrence.complete now equals
-        // tag.complete() exactly, occurrence.raw_name now equals
-        // tag.name().source() exactly, and HtmlTagToken::new already
-        // enforces that a tag's name is contained within its own complete
-        // range for every validated tokenizer token.
-        if let Some(previous) = previous_origin_token_index
-            && occurrence.origin_token_index <= previous
-        {
-            return Err(HtmlAnalysisParserContractError::OccurrenceOrderViolation {
-                occurrence_index,
-            });
-        }
-        previous_origin_token_index = Some(occurrence.origin_token_index);
-    }
-    Ok(())
+    Ok(HtmlExplicitStartTagAnalysis {
+        tokenizer_run,
+        occurrences,
+    })
 }

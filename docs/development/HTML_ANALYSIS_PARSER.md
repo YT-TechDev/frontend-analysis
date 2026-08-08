@@ -52,24 +52,38 @@ remain distinct occurrences.
 input but are not projected by this capability; they are not thereby
 classified unsupported. EOF is termination evidence only.
 
-## Source Evidence
+## Source Evidence and Single-Pass Execution
 
-Every occurrence's `complete` and `raw_name` anchors are cloned directly from
-already-validated tokenizer evidence (`HtmlTagToken::complete()` and
-`HtmlTagToken::name().source()`). The parser performs no source rescan,
-delimiter scan, decoded-length inference, endpoint reconstruction, or token
-replay.
+`analyze_explicit_start_tags` performs exactly one traversal of
+`HtmlTokenizerRunResult::tokens()`. Every occurrence's `complete` and
+`raw_name` anchors are cloned directly from the single tokenizer token being
+visited (`HtmlTagToken::complete()` and `HtmlTagToken::name().source()`) at
+the moment that token is inspected. The parser performs no source rescan,
+delimiter scan, decoded-length inference, endpoint reconstruction, token
+replay, or second scan of the token slice.
 
-The resulting `HtmlExplicitStartTagAnalysis` validates, before becoming
-trusted, that every occurrence's origin token index is in bounds and
-references an `HtmlToken::Tag` of kind `Start`; that the occurrence's
-`complete` and `raw_name` anchors exactly match that token's own evidence;
-that occurrences appear in strictly increasing origin-token order; and that
-the occurrence vector exactly covers every start-tag token in the retained
-run, with no token missing and no extra occurrence. A violated relationship
-returns a deterministic, owned `HtmlAnalysisParserContractError` rather than
-panicking or silently dropping evidence. This failure channel is distinct
-from tokenizer diagnostics.
+Because each occurrence is constructed directly from the token it describes
+during that one traversal, most of the relationships #114 requires are
+established by construction rather than by a later independent check: the
+origin token index is the current enumerated index; the visited token is
+already known to be `HtmlToken::Tag` of kind `Start`, because that is what
+was just matched; `complete` and `raw_name` are literal clones of that same
+token's own evidence, so they cannot diverge from it; containment of
+`raw_name` within `complete` holds transitively through the containment
+`HtmlTagToken::new` already enforces for every validated tokenizer token; and
+origin indexes strictly increase, because they are read off a forward
+`enumerate()` and an occurrence is only appended while visiting the token it
+describes.
+
+The one relationship not fixed purely by that local control flow — that the
+occurrence vector exactly covers every start-tag token, with none missing and
+none extra — is still established by construction (one occurrence is
+appended for every, and only every, encountered `Start` tag), and is
+additionally proven with two counters accumulated during the same traversal
+and compared once after the loop, with no second scan of the token slice. A
+violated relationship there returns a deterministic, owned
+`HtmlAnalysisParserContractError` rather than panicking or silently dropping
+evidence. This failure channel is distinct from tokenizer diagnostics.
 
 ## Completeness Propagation
 
@@ -114,14 +128,14 @@ commitment is introduced by this capability.
 ## Resource and WASM Implications
 
 The parser is synchronous, single-owner, iterative, and non-recursive: one
-pass over the retained tokenizer token slice, with no source rescan, no
-second tokenizer, and no external parser dependency. Expected cost is linear
-in token count, with storage proportional to the number of projected
-start-tag occurrences. No new parser-specific resource taxonomy is
-introduced: the tokenizer's own bounded execution and retained result remain
-the authoritative resource evidence for this slice. The implementation
-introduces no native-only assumption that would prevent equivalent analysis
-meaning under a future approved WASM target.
+traversal of the retained tokenizer token slice, with no source rescan, no
+second token-slice scan, no second tokenizer, and no external parser
+dependency. Expected cost is linear in token count, with storage proportional
+to the number of projected start-tag occurrences. No new parser-specific
+resource taxonomy is introduced: the tokenizer's own bounded execution and
+retained result remain the authoritative resource evidence for this slice.
+The implementation introduces no native-only assumption that would prevent
+equivalent analysis meaning under a future approved WASM target.
 
 ## Extension Boundary
 
@@ -133,7 +147,7 @@ existing authored occurrences as synthesized structure, and must not
 introduce a generic shared parser/event abstraction across HTML, CSS, and
 ECMAScript without a demonstrated cross-language invariant.
 
-## Candidate-Independent Validation
+## Candidate-Independent and Generated Validation
 
 Production parser output is not its own oracle. Expected occurrence
 projections are derived independently by filtering the existing 76
@@ -145,6 +159,21 @@ This module lives beside the tokenizer's own candidate-independent tests so
 it can reuse the existing private fixture/gold types without widening their
 visibility or duplicating the 76-fixture corpus; it does not add, remove, or
 modify any tokenizer fixture.
+
+The same module also drives the existing bounded, deterministic, dependency-
+free generator (`validation/generated.rs`, 4,096 cases of up to 64 UTF-8
+bytes each, already used for tokenizer-only validation in `execute.rs`)
+directly through `SourceText -> tokenize(...) -> analyze_explicit_start_tags(...)`,
+with no `catch_unwind`, so a production panic on any generated case fails the
+test naturally. For every generated case it validates: the parser succeeds
+for every currently-valid production tokenizer result; retained tokenizer
+evidence (tokens, preprocessing, diagnostics, coverage, completion, limits,
+usage) is unchanged across the parser boundary; every occurrence's anchors
+share the source's identity; `raw_name` stays contained in `complete`;
+adjacent occurrences move strictly forward in both origin index and range;
+and repeated analysis of equal retained source is deterministic, including
+under an alternate `SourceId`. No new generator, fuzz dependency, or fuzz
+toolchain is introduced.
 
 ## Core Integration Boundary
 
