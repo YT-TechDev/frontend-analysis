@@ -260,6 +260,43 @@ pub(crate) enum CssTokenizerInvariantViolation {
         expected: usize,
         actual: usize,
     },
+    ResourceAccountingOverflow {
+        kind: CssTokenizerResourceKind,
+        current: usize,
+        additional: usize,
+    },
+}
+
+/// Computes `current + additional` for one [`CssTokenizerResourceKind`] using
+/// checked `usize` arithmetic.
+///
+/// This helper draws the line between **committed** resource usage and a
+/// **prospective** resource attempt. Callers must treat the returned value as
+/// prospective only: committed usage for the owning resource kind may become
+/// this value only at the point where the owning operation actually commits.
+/// A prospective value that exceeds a configured limit is `ResourceLimit`
+/// evidence, not committed usage, and committed usage must remain unchanged
+/// when the owning operation does not commit.
+///
+/// If `current + additional` is not representable as `usize`, the prospective
+/// value itself cannot be computed, so it cannot be reported as a
+/// representable `attempted` value for `ResourceLimit`. That case is instead
+/// an [`CssTokenizerRunError::InternalInvariantFailure`] carrying
+/// [`CssTokenizerInvariantViolation::ResourceAccountingOverflow`].
+pub(crate) fn checked_resource_add(
+    kind: CssTokenizerResourceKind,
+    current: usize,
+    additional: usize,
+) -> Result<usize, CssTokenizerRunError> {
+    current
+        .checked_add(additional)
+        .ok_or(CssTokenizerRunError::InternalInvariantFailure(
+            CssTokenizerInvariantViolation::ResourceAccountingOverflow {
+                kind,
+                current,
+                additional,
+            },
+        ))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -634,6 +671,76 @@ mod producer_contract_tests {
         .unwrap();
 
         assert_eq!(diagnostic.code(), CssTokenizerDiagnosticCode::EofInString);
+    }
+
+    #[test]
+    fn checked_resource_add_returns_exact_prospective_value_at_boundary() {
+        let result =
+            checked_resource_add(CssTokenizerResourceKind::AlgorithmSteps, usize::MAX - 1, 1);
+
+        assert_eq!(result, Ok(usize::MAX));
+    }
+
+    #[test]
+    fn checked_resource_add_reports_typed_overflow_with_exact_fields() {
+        let result = checked_resource_add(CssTokenizerResourceKind::AlgorithmSteps, usize::MAX, 1);
+
+        assert_eq!(
+            result,
+            Err(CssTokenizerRunError::InternalInvariantFailure(
+                CssTokenizerInvariantViolation::ResourceAccountingOverflow {
+                    kind: CssTokenizerResourceKind::AlgorithmSteps,
+                    current: usize::MAX,
+                    additional: 1,
+                }
+            ))
+        );
+    }
+
+    #[test]
+    fn checked_resource_add_overflow_is_generic_across_every_resource_kind() {
+        let kinds = [
+            CssTokenizerResourceKind::SourceBytes,
+            CssTokenizerResourceKind::AlgorithmSteps,
+            CssTokenizerResourceKind::LexicalItems,
+            CssTokenizerResourceKind::Diagnostics,
+            CssTokenizerResourceKind::RetainedInterpretedBytes,
+            CssTokenizerResourceKind::TemporaryBufferBytes,
+        ];
+
+        for kind in kinds {
+            let result = checked_resource_add(kind, usize::MAX, 1);
+
+            assert_eq!(
+                result,
+                Err(CssTokenizerRunError::InternalInvariantFailure(
+                    CssTokenizerInvariantViolation::ResourceAccountingOverflow {
+                        kind,
+                        current: usize::MAX,
+                        additional: 1,
+                    }
+                ))
+            );
+        }
+    }
+
+    #[test]
+    fn resource_accounting_overflow_debug_and_display_disclose_only_structural_fields() {
+        let error = CssTokenizerRunError::InternalInvariantFailure(
+            CssTokenizerInvariantViolation::ResourceAccountingOverflow {
+                kind: CssTokenizerResourceKind::TemporaryBufferBytes,
+                current: usize::MAX,
+                additional: 1,
+            },
+        );
+
+        let debug = format!("{error:?}");
+        let display = error.to_string();
+
+        assert!(debug.contains("ResourceAccountingOverflow"));
+        assert!(debug.contains("TemporaryBufferBytes"));
+        assert!(debug.contains(&usize::MAX.to_string()));
+        assert!(display.contains("ResourceAccountingOverflow"));
     }
 
     #[test]
