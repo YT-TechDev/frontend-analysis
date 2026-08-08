@@ -3,12 +3,12 @@ use std::fmt;
 
 use crate::{SourceAnchor, SourceId, SourceText};
 
+use super::super::token::CssLexicalItem;
 use super::diagnostic::{CssTokenizerDiagnostic, CssTokenizerDiagnosticContractError};
 use super::resource::{
     CssTokenizerInvalidConfiguration, CssTokenizerResourceKind, CssTokenizerResourceLimitEvidence,
     CssTokenizerResourceUsage,
 };
-use super::super::token::CssLexicalItem;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssTokenizerCompletion {
@@ -267,28 +267,20 @@ fn validate_run(
     if unprocessed_remainder.range().start() != terminal_offset
         || unprocessed_remainder.range().end() != source_len
     {
-        return invariant(CssTokenizerInvariantViolation::UnprocessedRemainderMismatch {
-            terminal: terminal_offset,
-            source_len,
-            actual_start: unprocessed_remainder.range().start(),
-            actual_end: unprocessed_remainder.range().end(),
-        });
+        return invariant(
+            CssTokenizerInvariantViolation::UnprocessedRemainderMismatch {
+                terminal: terminal_offset,
+                source_len,
+                actual_start: unprocessed_remainder.range().start(),
+                actual_end: unprocessed_remainder.range().end(),
+            },
+        );
     }
 
     validate_bom(source_text, leading_bom)?;
     validate_completion(source_len, terminal_offset, completion, termination)?;
-    validate_lexical_coverage(
-        expected_source,
-        leading_bom,
-        lexical_items,
-        terminal_offset,
-    )?;
-    validate_diagnostics(
-        expected_source,
-        diagnostics,
-        lexical_items,
-        terminal_offset,
-    )?;
+    validate_lexical_coverage(expected_source, leading_bom, lexical_items, terminal_offset)?;
+    validate_diagnostics(expected_source, diagnostics, lexical_items, terminal_offset)?;
     validate_resource_counts(resources, lexical_items.len(), diagnostics.len())?;
 
     if let CssTokenizerTermination::ResourceLimit(limit) = termination {
@@ -436,10 +428,9 @@ fn validate_diagnostics(
         previous_key = Some(key);
 
         if let Err(error) = diagnostic.validate_subject(lexical_items) {
-            return invariant(CssTokenizerInvariantViolation::DiagnosticContractViolation {
-                index,
-                error,
-            });
+            return invariant(
+                CssTokenizerInvariantViolation::DiagnosticContractViolation { index, error },
+            );
         }
     }
 
