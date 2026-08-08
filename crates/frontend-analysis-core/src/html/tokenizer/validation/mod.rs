@@ -9,6 +9,8 @@ mod fixture;
 mod generated;
 #[rustfmt::skip]
 mod observe;
+#[cfg(test)]
+mod parser_gate;
 mod policy;
 
 #[cfg(test)]
