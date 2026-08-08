@@ -218,6 +218,7 @@ pub(crate) enum CssTokenizerInvariantViolation {
     },
 }
 
+#[allow(clippy::too_many_arguments)]
 fn validate_run(
     source_text: &SourceText,
     leading_bom: Option<&SourceAnchor>,
