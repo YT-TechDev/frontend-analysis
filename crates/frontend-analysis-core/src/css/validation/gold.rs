@@ -363,7 +363,7 @@ pub(super) enum GoldValidationError {
 }
 
 pub(super) fn validate_fixture(fixture: &GoldFixture) -> Result<(), GoldValidationError> {
-    if fixture.source.as_bytes().len() != fixture.byte_len {
+    if fixture.source.len() != fixture.byte_len {
         return Err(GoldValidationError::ByteLengthMismatch);
     }
 
