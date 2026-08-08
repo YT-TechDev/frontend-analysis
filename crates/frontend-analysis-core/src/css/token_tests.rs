@@ -430,8 +430,8 @@ fn eof_comment_that_does_not_reach_source_end_is_rejected() {
 
 #[test]
 fn comment_component_source_mismatch_is_rejected() {
-    let source = source(47, "/**/");
     let other = source(48, "/**/");
+    let source = source(47, "/**/");
 
     assert_eq!(
         CssCommentEvidence::new(
