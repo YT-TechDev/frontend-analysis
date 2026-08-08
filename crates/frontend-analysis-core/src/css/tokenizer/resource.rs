@@ -145,10 +145,9 @@ impl CssTokenizerResourceLimitEvidence {
             });
         }
         if attempted <= limit {
-            return Err(CssTokenizerResourceContractError::AttemptDidNotExceedLimit {
-                limit,
-                attempted,
-            });
+            return Err(
+                CssTokenizerResourceContractError::AttemptDidNotExceedLimit { limit, attempted },
+            );
         }
 
         Ok(Self {
@@ -218,7 +217,10 @@ pub(crate) enum CssTokenizerResourceContractError {
 
 impl fmt::Display for CssTokenizerResourceContractError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "CSS tokenizer resource contract violation: {self:?}")
+        write!(
+            formatter,
+            "CSS tokenizer resource contract violation: {self:?}"
+        )
     }
 }
 
