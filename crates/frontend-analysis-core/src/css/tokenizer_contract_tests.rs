@@ -158,8 +158,8 @@ fn every_first_slice_diagnostic_has_one_explicit_handling_contract() {
 
 #[test]
 fn diagnostic_rejects_wrong_handling_and_cross_source_evidence() {
-    let source = source(4, "x");
     let other = source(5, "x");
+    let source = source(4, "x");
 
     assert!(matches!(
         CssTokenizerDiagnostic::new(
