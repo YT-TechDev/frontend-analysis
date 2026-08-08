@@ -65,7 +65,9 @@ impl PartialEq for CssTokenizerDiagnosticSubject {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::InputLocation, Self::InputLocation) => true,
-            (Self::LexicalItem { index: left }, Self::LexicalItem { index: right }) => left == right,
+            (Self::LexicalItem { index: left }, Self::LexicalItem { index: right }) => {
+                left == right
+            }
             (Self::InputRegion { region: left }, Self::InputRegion { region: right }) => {
                 same_anchor(left, right)
             }
@@ -177,9 +179,11 @@ impl CssTokenizerDiagnostic {
                     });
                 }
                 if !contains_anchor(item.source(), &self.location) {
-                    return Err(CssTokenizerDiagnosticContractError::LocationOutsideLexicalItem {
-                        index: *index,
-                    });
+                    return Err(
+                        CssTokenizerDiagnosticContractError::LocationOutsideLexicalItem {
+                            index: *index,
+                        },
+                    );
                 }
                 Ok(())
             }
@@ -255,7 +259,10 @@ pub(crate) enum CssTokenizerDiagnosticContractError {
 
 impl fmt::Display for CssTokenizerDiagnosticContractError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "CSS tokenizer diagnostic contract violation: {self:?}")
+        write!(
+            formatter,
+            "CSS tokenizer diagnostic contract violation: {self:?}"
+        )
     }
 }
 
@@ -304,11 +311,13 @@ fn require_source(
 ) -> Result<(), CssTokenizerDiagnosticContractError> {
     let actual = anchor.source_id();
     if actual != expected {
-        return Err(CssTokenizerDiagnosticContractError::SourceIdentityMismatch {
-            role,
-            expected,
-            actual,
-        });
+        return Err(
+            CssTokenizerDiagnosticContractError::SourceIdentityMismatch {
+                role,
+                expected,
+                actual,
+            },
+        );
     }
     Ok(())
 }
