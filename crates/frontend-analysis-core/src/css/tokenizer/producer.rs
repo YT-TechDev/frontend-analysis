@@ -23,6 +23,7 @@ use super::resource::{
 };
 use super::result::{
     CssTokenizerCompletion, CssTokenizerRunError, CssTokenizerRunResult, CssTokenizerTermination,
+    checked_resource_add,
 };
 
 /// Tokenizes `source_text` under `limits`, producing the complete default
@@ -71,6 +72,12 @@ impl From<CssTokenizerResourceContractError> for Flow {
     }
 }
 
+impl From<CssTokenizerRunError> for Flow {
+    fn from(error: CssTokenizerRunError) -> Self {
+        Self::Invariant(error)
+    }
+}
+
 struct PendingDiagnostic {
     code: CssTokenizerDiagnosticCode,
     location: SourceAnchor,
@@ -95,7 +102,6 @@ struct Producer<'a> {
     peak_temporary_buffer_bytes: usize,
     pending_diagnostics: Vec<PendingDiagnostic>,
     scratch_live: usize,
-    scratch_peak: usize,
 }
 
 impl<'a> Producer<'a> {
@@ -112,7 +118,6 @@ impl<'a> Producer<'a> {
             peak_temporary_buffer_bytes: 0,
             pending_diagnostics: Vec::new(),
             scratch_live: 0,
-            scratch_peak: 0,
         }
     }
 
@@ -143,8 +148,12 @@ impl<'a> Producer<'a> {
                 break;
             }
 
-            let prospective_items = self.lexical_items.len() + 1;
             let items_limit = self.limits.limit(CssTokenizerResourceKind::LexicalItems);
+            let prospective_items = checked_resource_add(
+                CssTokenizerResourceKind::LexicalItems,
+                self.lexical_items.len(),
+                1,
+            )?;
             if prospective_items > items_limit {
                 return Err(Flow::Terminate(Terminate {
                     kind: CssTokenizerResourceKind::LexicalItems,
@@ -171,27 +180,42 @@ impl<'a> Producer<'a> {
     fn begin_item(&mut self) {
         self.pending_diagnostics.clear();
         self.scratch_live = 0;
-        self.scratch_peak = 0;
     }
 
     fn step(&mut self) -> Result<(), Flow> {
-        self.algorithm_steps += 1;
         let limit = self.limits.limit(CssTokenizerResourceKind::AlgorithmSteps);
-        if self.algorithm_steps > limit {
+        let prospective = checked_resource_add(
+            CssTokenizerResourceKind::AlgorithmSteps,
+            self.algorithm_steps,
+            1,
+        )?;
+        if prospective > limit {
             return Err(Flow::Terminate(Terminate {
                 kind: CssTokenizerResourceKind::AlgorithmSteps,
                 limit,
-                attempted: self.algorithm_steps,
+                attempted: prospective,
             }));
         }
+        self.algorithm_steps = prospective;
         Ok(())
     }
 
+    /// Grows the current item's live scratch usage by `additional` bytes.
+    ///
+    /// `peak_temporary_buffer_bytes` is a whole-run high-water mark, so it is
+    /// updated immediately on every successful growth rather than deferred
+    /// to lexical-item commit: if a later resource limit aborts the item,
+    /// the scratch work already performed for it must still count toward
+    /// the observed peak.
     fn grow_scratch(&mut self, additional: usize) -> Result<(), Flow> {
-        let prospective = self.scratch_live + additional;
         let limit = self
             .limits
             .limit(CssTokenizerResourceKind::TemporaryBufferBytes);
+        let prospective = checked_resource_add(
+            CssTokenizerResourceKind::TemporaryBufferBytes,
+            self.scratch_live,
+            additional,
+        )?;
         if prospective > limit {
             return Err(Flow::Terminate(Terminate {
                 kind: CssTokenizerResourceKind::TemporaryBufferBytes,
@@ -200,12 +224,8 @@ impl<'a> Producer<'a> {
             }));
         }
         self.scratch_live = prospective;
-        self.scratch_peak = self.scratch_peak.max(self.scratch_live);
+        self.peak_temporary_buffer_bytes = self.peak_temporary_buffer_bytes.max(self.scratch_live);
         Ok(())
-    }
-
-    fn shrink_scratch(&mut self, amount: usize) {
-        self.scratch_live = self.scratch_live.saturating_sub(amount);
     }
 
     fn push_diagnostic(
@@ -226,8 +246,12 @@ impl<'a> Producer<'a> {
     }
 
     fn commit(&mut self, recognized: RecognizedItem) -> Result<(), Flow> {
-        let prospective_diagnostics = self.diagnostics.len() + self.pending_diagnostics.len();
         let diagnostics_limit = self.limits.limit(CssTokenizerResourceKind::Diagnostics);
+        let prospective_diagnostics = checked_resource_add(
+            CssTokenizerResourceKind::Diagnostics,
+            self.diagnostics.len(),
+            self.pending_diagnostics.len(),
+        )?;
         if prospective_diagnostics > diagnostics_limit {
             return Err(Flow::Terminate(Terminate {
                 kind: CssTokenizerResourceKind::Diagnostics,
@@ -236,10 +260,14 @@ impl<'a> Producer<'a> {
             }));
         }
 
-        let prospective_retained = self.retained_interpreted_bytes + recognized.retained_bytes;
         let retained_limit = self
             .limits
             .limit(CssTokenizerResourceKind::RetainedInterpretedBytes);
+        let prospective_retained = checked_resource_add(
+            CssTokenizerResourceKind::RetainedInterpretedBytes,
+            self.retained_interpreted_bytes,
+            recognized.retained_bytes,
+        )?;
         if prospective_retained > retained_limit {
             return Err(Flow::Terminate(Terminate {
                 kind: CssTokenizerResourceKind::RetainedInterpretedBytes,
@@ -271,7 +299,6 @@ impl<'a> Producer<'a> {
 
         self.committed_pos = end;
         self.retained_interpreted_bytes = prospective_retained;
-        self.peak_temporary_buffer_bytes = self.peak_temporary_buffer_bytes.max(self.scratch_peak);
         Ok(())
     }
 
@@ -350,7 +377,7 @@ impl<'a> Producer<'a> {
         end: usize,
     ) -> Result<RecognizedItem, Flow> {
         let anchor = self.source_text.anchor(start, end)?;
-        let retained_bytes = retained_bytes_for_kind(&kind);
+        let retained_bytes = retained_bytes_for_kind(&kind)?;
         let token = CssToken::new(self.source_text, anchor, kind)?;
         Ok(RecognizedItem {
             item: CssLexicalItem::SemanticToken(token),
@@ -595,6 +622,12 @@ impl<'a> Producer<'a> {
                 Ok('\u{FFFD}')
             }
             Some(unit) if unit.semantic().is_ascii_hexdigit() => {
+                // The hex-digit scratch buffer is a nested temporary whose
+                // exact lifetime is known structurally: it lives only for
+                // this escape and never overlaps other scratch growth, so
+                // its release is an exact checkpoint restore rather than a
+                // subtraction at the resource-accounting boundary.
+                let scratch_before_hex = self.scratch_live;
                 let mut hex = String::new();
                 self.grow_scratch(1)?;
                 hex.push(unit.semantic());
@@ -619,7 +652,7 @@ impl<'a> Producer<'a> {
                 let code_point = hex.chars().fold(0u32, |accumulator, character| {
                     accumulator * 16 + character.to_digit(16).unwrap_or(0)
                 });
-                self.shrink_scratch(hex.len());
+                self.scratch_live = scratch_before_hex;
 
                 let decoded = if code_point == 0
                     || (0xD800..=0xDFFF).contains(&code_point)
@@ -835,13 +868,13 @@ impl<'a> Producer<'a> {
             let paren_end = cursor.raw_position();
 
             // CSS Syntax §4.3.4 can consume part of a whitespace run while
-            // disambiguating a quoted `url(` from an unquoted one. Those
-            // code points are only ever peeked here (never committed via
-            // `cursor.consume`), so recognition of the following item
-            // naturally resumes at `paren_end` and reclaims the complete
-            // authored whitespace run for the next semantic token. See the
-            // #136 "quoted url( disambiguation whitespace provenance"
-            // qualification.
+            // disambiguating a quoted `url(` from an unquoted one. Per the
+            // #136 "quoted url( disambiguation uses a non-committing probe"
+            // architecture amendment, only a copy of the cursor examines
+            // that whitespace; the real cursor never consumes it, so
+            // recognition of the following item naturally resumes at
+            // `paren_end` and reclaims the complete authored whitespace run
+            // for the next semantic token.
             let mut probe = *cursor;
             loop {
                 self.step()?;
@@ -970,17 +1003,25 @@ impl<'a> Producer<'a> {
     }
 }
 
-fn retained_bytes_for_kind(kind: &CssTokenKind) -> usize {
+fn retained_bytes_for_kind(kind: &CssTokenKind) -> Result<usize, CssTokenizerRunError> {
     match kind {
         CssTokenKind::Ident(value)
         | CssTokenKind::Function(value)
         | CssTokenKind::AtKeyword(value)
         | CssTokenKind::String(value)
-        | CssTokenKind::Url(value) => value.len(),
-        CssTokenKind::Hash { value, .. } => value.len(),
-        CssTokenKind::Number { value, .. } => numeric_retained_bytes(value),
-        CssTokenKind::Percentage { value } => numeric_retained_bytes(value),
-        CssTokenKind::Dimension { value, unit, .. } => numeric_retained_bytes(value) + unit.len(),
+        | CssTokenKind::Url(value) => Ok(value.len()),
+        CssTokenKind::Hash { value, .. } => Ok(value.len()),
+        CssTokenKind::Number { value, .. } | CssTokenKind::Percentage { value } => {
+            numeric_retained_bytes(value)
+        }
+        CssTokenKind::Dimension { value, unit, .. } => {
+            let numeric = numeric_retained_bytes(value)?;
+            checked_resource_add(
+                CssTokenizerResourceKind::RetainedInterpretedBytes,
+                numeric,
+                unit.len(),
+            )
+        }
         CssTokenKind::BadString
         | CssTokenKind::BadUrl
         | CssTokenKind::Delim(_)
@@ -995,17 +1036,25 @@ fn retained_bytes_for_kind(kind: &CssTokenKind) -> usize {
         | CssTokenKind::LeftParenthesis
         | CssTokenKind::RightParenthesis
         | CssTokenKind::LeftCurlyBracket
-        | CssTokenKind::RightCurlyBracket => 0,
+        | CssTokenKind::RightCurlyBracket => Ok(0),
     }
 }
 
-fn numeric_retained_bytes(value: &CssNumericValue) -> usize {
+fn numeric_retained_bytes(value: &CssNumericValue) -> Result<usize, CssTokenizerRunError> {
     let decimal = value.decimal();
-    decimal.integer_digits().len()
-        + decimal.fraction_digits().len()
-        + decimal
-            .exponent()
-            .map_or(0, |exponent| exponent.digits().len())
+    let total = checked_resource_add(
+        CssTokenizerResourceKind::RetainedInterpretedBytes,
+        decimal.integer_digits().len(),
+        decimal.fraction_digits().len(),
+    )?;
+    match decimal.exponent() {
+        Some(exponent) => checked_resource_add(
+            CssTokenizerResourceKind::RetainedInterpretedBytes,
+            total,
+            exponent.digits().len(),
+        ),
+        None => Ok(total),
+    }
 }
 
 fn diagnostic_handling(
