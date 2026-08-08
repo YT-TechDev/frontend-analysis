@@ -538,9 +538,7 @@ fn validate_diagnostic(
     }
 }
 
-const fn expected_handling(
-    code: GoldDiagnosticCode,
-) -> (GoldDiagnosticContext, GoldRecovery) {
+const fn expected_handling(code: GoldDiagnosticCode) -> (GoldDiagnosticContext, GoldRecovery) {
     match code {
         GoldDiagnosticCode::InvalidEscape => (
             GoldDiagnosticContext::TokenStart,
@@ -562,10 +560,9 @@ const fn expected_handling(
             GoldDiagnosticContext::Url,
             GoldRecovery::EmitUrlAtEndOfInput,
         ),
-        GoldDiagnosticCode::InvalidUrlCodePoint | GoldDiagnosticCode::InvalidUrlEscape => (
-            GoldDiagnosticContext::Url,
-            GoldRecovery::EmitBadUrl,
-        ),
+        GoldDiagnosticCode::InvalidUrlCodePoint | GoldDiagnosticCode::InvalidUrlEscape => {
+            (GoldDiagnosticContext::Url, GoldRecovery::EmitBadUrl)
+        }
         GoldDiagnosticCode::EofInEscape => (
             GoldDiagnosticContext::Escape,
             GoldRecovery::SubstituteReplacementCharacterForEofEscape,

@@ -25,7 +25,11 @@ fn specification_fixture_inventory_is_self_consistent_and_unique() {
 
     let mut ids = BTreeSet::new();
     for fixture in &fixtures {
-        assert!(ids.insert(fixture.id), "duplicate fixture id {}", fixture.id);
+        assert!(
+            ids.insert(fixture.id),
+            "duplicate fixture id {}",
+            fixture.id
+        );
         validate_fixture(fixture).unwrap_or_else(|error| {
             panic!("fixture {} failed self-validation: {error:?}", fixture.id)
         });
@@ -206,10 +210,7 @@ fn string_backslash_eof_is_eof_in_string_not_eof_in_escape() {
     let fixture = fixture(&fixtures, "CSS-STRING-BACKSLASH-EOF-001");
     assert_eq!(fixture.source.as_bytes(), b"\"a\\");
     assert_eq!(fixture.diagnostics.len(), 1);
-    assert_eq!(
-        fixture.diagnostics[0].code,
-        GoldDiagnosticCode::EofInString
-    );
+    assert_eq!(fixture.diagnostics[0].code, GoldDiagnosticCode::EofInString);
 }
 
 #[test]
@@ -332,7 +333,11 @@ fn deterministic_generated_corpus_has_fixed_revision_count_and_bound() {
     let second = generated_inputs();
     assert_eq!(first, second);
     assert_eq!(first.len(), GENERATED_INPUT_COUNT);
-    assert!(first.iter().all(|source| source.len() <= GENERATED_MAX_BYTES));
+    assert!(
+        first
+            .iter()
+            .all(|source| source.len() <= GENERATED_MAX_BYTES)
+    );
     assert!(first.iter().any(|source| source.contains('\0')));
     assert!(first.iter().any(|source| source.contains('\\')));
     assert!(first.iter().any(|source| source.contains('é')));
@@ -346,10 +351,9 @@ fn generated_replay_harness_compares_canonical_observations_twice() {
         (
             source.len(),
             source.chars().count(),
-            source
-                .as_bytes()
-                .iter()
-                .fold(0u64, |state, byte| state.wrapping_mul(131).wrapping_add(*byte as u64)),
+            source.as_bytes().iter().fold(0u64, |state, byte| {
+                state.wrapping_mul(131).wrapping_add(*byte as u64)
+            }),
         )
     });
 }
