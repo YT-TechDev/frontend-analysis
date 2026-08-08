@@ -250,14 +250,8 @@ fn resource_limit_is_explicit_for_every_first_slice_resource_kind() {
     for (index, kind) in kinds.into_iter().enumerate() {
         let source = source(20 + index as u64, "a");
         let terminal = source.anchor(0, 0).unwrap();
-        let limit = CssTokenizerResourceLimitEvidence::new(
-            &source,
-            kind,
-            0,
-            1,
-            terminal.clone(),
-        )
-        .unwrap();
+        let limit =
+            CssTokenizerResourceLimitEvidence::new(&source, kind, 0, 1, terminal.clone()).unwrap();
         let result = CssTokenizerRunResult::new(
             &source,
             None,
@@ -514,8 +508,14 @@ fn equal_offset_diagnostics_preserve_producer_order() {
     .unwrap();
 
     let result = complete_run(&source, None, vec![item], vec![first, second]).unwrap();
-    assert_eq!(result.diagnostics()[0].code(), CssTokenizerDiagnosticCode::EofInString);
-    assert_eq!(result.diagnostics()[1].code(), CssTokenizerDiagnosticCode::EofInEscape);
+    assert_eq!(
+        result.diagnostics()[0].code(),
+        CssTokenizerDiagnosticCode::EofInString
+    );
+    assert_eq!(
+        result.diagnostics()[1].code(),
+        CssTokenizerDiagnosticCode::EofInEscape
+    );
 }
 
 #[test]
