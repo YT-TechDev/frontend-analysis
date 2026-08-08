@@ -1,5 +1,6 @@
 //! Internal HTML source-parser contracts.
 
+pub(crate) mod analysis;
 pub(crate) mod parser;
 pub(crate) mod token;
 pub(crate) mod tokenizer;

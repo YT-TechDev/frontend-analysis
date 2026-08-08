@@ -2,6 +2,8 @@ mod compare;
 #[rustfmt::skip]
 mod corpus;
 #[cfg(test)]
+mod core_analysis_gate;
+#[cfg(test)]
 mod execute;
 mod expected;
 #[rustfmt::skip]
