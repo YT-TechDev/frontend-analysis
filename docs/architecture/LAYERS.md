@@ -99,22 +99,37 @@ neutral inputs, translates approved application requests into browser-specific
 operations, reports unsupported or lossy normalization honestly, and isolates
 engine differences.
 
+For browser-runtime source evidence, the Browser Adapter also owns precise
+target lifetime, protocol-native identifiers and ephemeral handles, exact
+lossless runtime-source capture, engine- and evidence-channel-specific native
+coordinate spaces, raw engine evidence, and the proof that a normalized source
+position corresponds to an exact runtime-snapshot-local position. Lossless
+runtime source or native coordinates that cannot be represented under an
+approved browser-independent contract remain adapter-owned evidence. Raw
+protocol identifiers, DTOs, live handles, and untranslated native coordinates
+do not cross into Core as domain values. Browser-independent runtime handoff
+values are owned and immutable after transfer and are scoped to one precise
+target lifetime rather than one process- or run-global invalidation epoch.
+
 **Permitted dependencies:** An adapter may depend on approved,
 browser-independent boundary contracts that it must produce, consume, or
 conform to. This may include a future normalized-input contract accepted by
 Core, provided the stable browser-independent side of the boundary owns that
 contract. Such a contract dependency permits neither access to Core
 implementation details or internals nor redefinition of Core semantics, and it
-does not require the adapter to invoke Core directly. Concrete contract
-placement and orchestration remain deferred. After focused approval, an adapter
-may also depend on its browser-specific protocol facilities. Each browser
-protocol remains isolated under its adapter.
+does not require the adapter to invoke Core directly. Concrete contract type
+and module placement, orchestration API, and physical orchestration placement
+remain deferred. After focused approval, an adapter may also depend on its
+browser-specific protocol facilities. Each browser protocol remains isolated
+under its adapter.
 
 **Exclusions and prohibited dependencies:** An adapter does not redefine Core
 analysis semantics, own product UI behavior, perform presentation formatting,
 hide browser-brand policy that changes findings, leak protocol object graphs
-into Core, or promote a protocol type to a stable public domain type. No shared
-generic adapter implementation hierarchy or protocol library is selected here.
+into Core, or promote a protocol type to a stable public domain type. It does
+not own Core `SourceId` semantics or allocate `SourceId` as a consequence of
+protocol-event or task-completion order. No shared generic adapter
+implementation hierarchy or protocol library is selected here.
 
 ## Frontend Analysis Core
 
@@ -124,6 +139,14 @@ produces browser-independent evidence, findings, and diagnostics, enforces
 analysis invariants, preserves determinism where practical, and exposes
 reusable behavior through approved contracts. It remains testable without a
 live browser where the analysis permits.
+
+For browser-runtime evidence, Core receives only approved browser-independent
+normalized values. Before constructing or using `SourceText` / `SourceAnchor`
+evidence, Core validates strict UTF-8 source projections, caller-supplied
+`SourceId` bindings, and source-position invariants. Source binding and source
+location remain separate proofs. Core does not own browser-native runtime-source
+encoding, protocol-native identity, target/session lifecycle, native coordinate
+conversion, or a global `SourceId` allocator.
 
 **Permitted dependencies:** Core may depend only on approved stable,
 browser-independent contracts and genuinely lower-level facilities that obey
@@ -211,16 +234,39 @@ adapter lifecycle, Core invocation, cancellation or refresh, result delivery,
 and product lifecycle. Its concrete owner is deferred and may later be a
 product, application adapter, or another approved boundary.
 
+For a managed browser-runtime Core analysis/import scope, Application
+Orchestration owns the caller-side `SourceId` authority responsibility. It
+deliberately registers source instances for import, supplies caller-owned
+`SourceId` values, and coordinates validated runtime-source-to-Core-source
+bindings. That authority is scoped to the analysis/import scope rather than an
+individual browser target, does not reset on navigation or target destruction,
+and does not recycle claimed `SourceId` values while the scope remains alive.
+The default managed policy is checked scope-local sequential allocation from
+`SourceId(0)` upward, skipping explicit reservations; numeric allocation order
+is operational only and has no analysis meaning. Browser protocol arrival,
+Worker scheduling, task completion, randomness, content, URL, and protocol IDs
+do not directly define `SourceId`.
+
 Wherever it is placed, orchestration must not move browser protocol semantics
 into Core, move Core semantics into presentation, or create circular source
 dependencies. Its contracts require focused approval. UI re-analysis requests
 must cross an explicit boundary; Core must not call concrete UI or Browser
-Adapter implementations. No orchestration API is designed here.
+Adapter implementations. No orchestration API or physical package placement is
+designed here.
 
 ## Boundary Rules
 
 - Raw protocol input terminates at the Browser Adapter boundary.
+- Browser-native runtime source and coordinates remain adapter-owned until they
+  are explicitly normalized under an approved browser-independent contract.
 - Only approved normalized browser-independent input enters Core.
+- Runtime source identity and Core `SourceId` remain distinct identity domains.
+- A valid runtime-source-to-`SourceId` binding does not by itself establish a
+  valid source location.
+- Application Orchestration may coordinate caller-side `SourceId` supply but
+  does not redefine Core source identity semantics.
+- Target destruction does not authorize reuse of `SourceId` claims within a
+  still-live analysis/import scope.
 - Core output crosses through Analysis Result contracts.
 - Presentation-specific state begins at the Presentation Adapter boundary.
 - Product-specific behavior remains outside Core.
@@ -309,15 +355,17 @@ the review needed before a proposal may exceed the current contract.
 - **Verdict:** Allowed when the shared input is an approved
   browser-independent contract.
 - **Owner:** Separate adapters own protocol decoding and normalization; Core
-  owns analysis semantics.
-- **Boundary:** Browser Adapter to Core normalized-input boundary.
+  owns analysis semantics; Application Orchestration owns managed caller-side
+  source registration and `SourceId` supply when runtime source is imported.
+- **Boundary:** Browser Adapter normalized handoff through approved application
+  orchestration into the Core normalized-input boundary.
 - **Rationale:** Adapters may consume or conform to the approved stable
   browser-independent contract without accessing Core implementation details,
   redefining Core semantics, or causing Core to branch on CDP or WebKit types.
-  Loss and unsupported observations remain explicit; direct orchestration is
-  unspecified.
-- **Escalation:** The neutral contract and any protocol dependency require
-  focused approval; no input type is defined here.
+  Loss and unsupported observations remain explicit. Concrete Rust input types,
+  orchestration API, and physical placement remain unspecified.
+- **Escalation:** Concrete neutral input types and any protocol dependency
+  require focused approval; no public input type is defined here.
 
 ### 4. UI requests re-analysis through an application boundary
 
