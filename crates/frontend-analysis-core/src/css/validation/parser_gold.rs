@@ -33,6 +33,7 @@ pub(super) enum ParserGoldGroup {
     InputPreprocessing,
     Lifecycle,
     Historical,
+    Discard,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,6 +120,26 @@ impl ParserGoldUnsupportedRegion {
     }
 }
 
+/// Independent gold representation of parser discard evidence (#158), kept
+/// structurally separate from the production `CssParserDiscardEvidence`
+/// contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ParserGoldDiscard {
+    TopLevelCustomPropertyLikeQualifiedRule {
+        region: GoldRange,
+        property_name: GoldRange,
+        colon: GoldRange,
+    },
+}
+
+impl ParserGoldDiscard {
+    const fn region(self) -> GoldRange {
+        match self {
+            Self::TopLevelCustomPropertyLikeQualifiedRule { region, .. } => region,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ParserGoldExecutionCompletion {
     Complete,
@@ -149,6 +170,7 @@ pub(super) struct ParserGoldFixture {
     pub(super) diagnostics: Vec<ParserGoldDiagnostic>,
     pub(super) recovery: Vec<ParserGoldRecovery>,
     pub(super) unsupported: Vec<ParserGoldUnsupportedRegion>,
+    pub(super) discard: Vec<ParserGoldDiscard>,
     pub(super) terminal: GoldRange,
     pub(super) execution_completion: ParserGoldExecutionCompletion,
     pub(super) coverage: ParserGoldCoverage,
@@ -184,6 +206,7 @@ impl ParserGoldFixture {
             diagnostics,
             recovery,
             unsupported,
+            discard: Vec::new(),
             terminal,
             execution_completion: ParserGoldExecutionCompletion::Complete,
             coverage,
@@ -209,6 +232,7 @@ impl ParserGoldFixture {
             diagnostics: Vec::new(),
             recovery: Vec::new(),
             unsupported: Vec::new(),
+            discard: Vec::new(),
             terminal,
             execution_completion: ParserGoldExecutionCompletion::Incomplete,
             coverage: ParserGoldCoverage::SupportedForSelectedQuestion,
@@ -234,11 +258,20 @@ impl ParserGoldFixture {
             diagnostics: Vec::new(),
             recovery: Vec::new(),
             unsupported: Vec::new(),
+            discard: Vec::new(),
             terminal,
             execution_completion: ParserGoldExecutionCompletion::Incomplete,
             coverage: ParserGoldCoverage::SupportedForSelectedQuestion,
             termination: ParserGoldTerminationLifecycle::ParserResourceLimit,
         }
+    }
+
+    /// Attaches discard evidence to an already-built fixture. Kept as a
+    /// dedicated helper rather than a `complete()` parameter so the 34
+    /// pre-#158 fixture call sites remain unchanged.
+    pub(super) fn with_discard(mut self, discard: Vec<ParserGoldDiscard>) -> Self {
+        self.discard = discard;
+        self
     }
 }
 
@@ -266,6 +299,13 @@ pub(super) enum ParserGoldValidationError {
     CoverageUnsupportedMismatch,
     WrongFixedDelimiter,
     OmittedAtEndOfInputRequiresUpstreamComplete,
+    DiscardOrder,
+    DiscardBeyondTerminal,
+    DiscardPropertyNameMismatch,
+    DiscardColonOrderViolation,
+    DiscardOverlapsDeclaration,
+    DiscardOverlapsRecovery,
+    DiscardOverlapsUnsupportedRegion,
 }
 
 pub(super) fn validate_fixture(
@@ -421,6 +461,74 @@ pub(super) fn validate_fixture(
         return Err(ParserGoldValidationError::CoverageUnsupportedMismatch);
     }
 
+    validate_discard(fixture)?;
+
+    Ok(())
+}
+
+/// Discard evidence is durable parser evidence but never unsupported
+/// coverage, and never assigns a second parser meaning to a construct
+/// already claimed by a declaration, recovery record, or unsupported
+/// region.
+fn validate_discard(fixture: &ParserGoldFixture) -> Result<(), ParserGoldValidationError> {
+    let source = SourceText::new(SourceId::new(fixture.source_id), fixture.source.to_owned());
+
+    let mut previous_end: Option<usize> = None;
+    for discard in &fixture.discard {
+        let region = discard.region();
+        if !anchor_ok(&source, region) || region.is_empty() {
+            return Err(ParserGoldValidationError::InvalidRange);
+        }
+        if region.end > fixture.terminal.start {
+            return Err(ParserGoldValidationError::DiscardBeyondTerminal);
+        }
+        if let Some(previous_end) = previous_end
+            && region.start < previous_end
+        {
+            return Err(ParserGoldValidationError::DiscardOrder);
+        }
+        previous_end = Some(region.end);
+
+        match discard {
+            ParserGoldDiscard::TopLevelCustomPropertyLikeQualifiedRule {
+                region,
+                property_name,
+                colon,
+            } => {
+                if !anchor_ok(&source, *property_name) || property_name.is_empty() {
+                    return Err(ParserGoldValidationError::InvalidRange);
+                }
+                if property_name.start != region.start || !region.contains(*property_name) {
+                    return Err(ParserGoldValidationError::DiscardPropertyNameMismatch);
+                }
+                if !anchor_ok(&source, *colon) || colon.is_empty() {
+                    return Err(ParserGoldValidationError::InvalidRange);
+                }
+                if property_name.end > colon.start || !region.contains(*colon) {
+                    return Err(ParserGoldValidationError::DiscardColonOrderViolation);
+                }
+                if !fragment_is(&source, *colon, ":") {
+                    return Err(ParserGoldValidationError::WrongFixedDelimiter);
+                }
+            }
+        }
+
+        for declaration in &fixture.declarations {
+            if ranges_overlap(region, declaration.complete) {
+                return Err(ParserGoldValidationError::DiscardOverlapsDeclaration);
+            }
+        }
+        for record in &fixture.recovery {
+            if ranges_overlap(region, record.region) {
+                return Err(ParserGoldValidationError::DiscardOverlapsRecovery);
+            }
+        }
+        for unsupported in &fixture.unsupported {
+            if ranges_overlap(region, unsupported.region()) {
+                return Err(ParserGoldValidationError::DiscardOverlapsUnsupportedRegion);
+            }
+        }
+    }
     Ok(())
 }
 

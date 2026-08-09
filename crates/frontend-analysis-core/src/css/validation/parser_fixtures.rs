@@ -9,7 +9,7 @@
 use super::gold::GoldRange;
 use super::parser_gold::{
     ParserGoldContext, ParserGoldDeclaration, ParserGoldDiagnostic, ParserGoldDiagnosticCode,
-    ParserGoldFixture, ParserGoldGroup, ParserGoldPriority, ParserGoldRecovery,
+    ParserGoldDiscard, ParserGoldFixture, ParserGoldGroup, ParserGoldPriority, ParserGoldRecovery,
     ParserGoldRecoveryTermination, ParserGoldTermination, ParserGoldUnsupportedRegion,
 };
 
@@ -131,6 +131,18 @@ fn nested_remainder(region: (usize, usize)) -> ParserGoldUnsupportedRegion {
     }
 }
 
+fn discard_top_level_custom_property_like(
+    region: (usize, usize),
+    property_name: (usize, usize),
+    colon: (usize, usize),
+) -> ParserGoldDiscard {
+    ParserGoldDiscard::TopLevelCustomPropertyLikeQualifiedRule {
+        region: r(region.0, region.1),
+        property_name: r(property_name.0, property_name.1),
+        colon: r(colon.0, colon.1),
+    }
+}
+
 /// The #99 escaped-property provenance regression.
 fn historical_provenance_fixture() -> ParserGoldFixture {
     ParserGoldFixture::complete(
@@ -168,11 +180,36 @@ fn historical_priority_fixture() -> ParserGoldFixture {
     )
 }
 
+/// #158: `consume a qualified rule` with `nested = false`, whose prelude's
+/// first two non-whitespace values are a custom-property-shaped Ident
+/// followed by a Colon. The qualified rule is not returned; its block is
+/// structurally consumed as discard evidence rather than becoming a
+/// supported declaration context, an unsupported region, or recovery.
+fn discard_top_level_custom_property_like_qualified_rule_fixture() -> ParserGoldFixture {
+    ParserGoldFixture::complete(
+        "CSS-PARSER-DISCARD-TOP-LEVEL-CUSTOM-PROPERTY-LIKE-001",
+        ParserGoldGroup::Discard,
+        2033,
+        "--foo:bar{color:red;}",
+        21,
+        vec![],
+        vec![],
+        vec![],
+        vec![],
+    )
+    .with_discard(vec![discard_top_level_custom_property_like(
+        (0, 21),
+        (0, 5),
+        (5, 6),
+    )])
+}
+
 /// The full normative, candidate-independent #138 parser-level gold matrix.
 pub(super) fn normative_parser_fixtures() -> Vec<ParserGoldFixture> {
     vec![
         historical_provenance_fixture(),
         historical_priority_fixture(),
+        discard_top_level_custom_property_like_qualified_rule_fixture(),
         // Basic declaration with an authored semicolon.
         ParserGoldFixture::complete(
             "CSS-PARSER-BASIC-SEMICOLON-001",

@@ -11,10 +11,11 @@ use std::collections::BTreeSet;
 use super::gold::GoldRange;
 use super::parser_fixtures::normative_parser_fixtures;
 use super::parser_gold::{
-    ParserGoldCoverage, ParserGoldDeclaration, ParserGoldDiagnostic, ParserGoldExecutionCompletion,
-    ParserGoldFixture, ParserGoldGroup, ParserGoldPriority, ParserGoldRecovery,
-    ParserGoldRecoveryTermination, ParserGoldTermination, ParserGoldTerminationLifecycle,
-    ParserGoldUnsupportedRegion, ParserGoldValidationError, validate_fixture,
+    ParserGoldCoverage, ParserGoldDeclaration, ParserGoldDiagnostic, ParserGoldDiscard,
+    ParserGoldExecutionCompletion, ParserGoldFixture, ParserGoldGroup, ParserGoldPriority,
+    ParserGoldRecovery, ParserGoldRecoveryTermination, ParserGoldTermination,
+    ParserGoldTerminationLifecycle, ParserGoldUnsupportedRegion, ParserGoldValidationError,
+    validate_fixture,
 };
 
 fn fixture<'a>(fixtures: &'a [ParserGoldFixture], id: &str) -> &'a ParserGoldFixture {
@@ -27,7 +28,7 @@ fn fixture<'a>(fixtures: &'a [ParserGoldFixture], id: &str) -> &'a ParserGoldFix
 #[test]
 fn normative_parser_fixture_count_is_exact() {
     let fixtures = normative_parser_fixtures();
-    assert_eq!(fixtures.len(), 34);
+    assert_eq!(fixtures.len(), 35);
 }
 
 #[test]
@@ -122,6 +123,8 @@ fn every_required_category_has_an_explicit_fixture() {
         "CSS-PARSER-NUL-REPLACEMENT-SENSITIVE-001",
         // Tokenizer-incomplete lifecycle cannot become parser-complete.
         "CSS-PARSER-LIFECYCLE-TOKENIZER-INCOMPLETE-001",
+        // #158: top-level custom-property-like qualified-rule discard.
+        "CSS-PARSER-DISCARD-TOP-LEVEL-CUSTOM-PROPERTY-LIKE-001",
     ];
 
     for id in required {
@@ -152,6 +155,7 @@ fn fixture_groups_cover_the_approved_parser_matrix() {
     assert_eq!(counts[&ParserGoldGroup::UnsupportedAtRule], 4);
     assert_eq!(counts[&ParserGoldGroup::InputPreprocessing], 2);
     assert_eq!(counts[&ParserGoldGroup::Lifecycle], 1);
+    assert_eq!(counts[&ParserGoldGroup::Discard], 1);
 
     let total: usize = counts.values().sum();
     assert_eq!(total, fixtures.len());
@@ -253,6 +257,48 @@ fn nested_content_remainder_fixtures_absorb_declaration_shaped_trailing_text() {
     // remainder, so it cannot become a second included occurrence.
     assert_eq!(region, GoldRange::new(12, 38));
     assert!(region.contains(GoldRange::new(26, 38)));
+}
+
+#[test]
+fn discard_fixture_preserves_exact_region_property_name_and_colon_ranges() {
+    let fixtures = normative_parser_fixtures();
+    let fixture = fixture(
+        &fixtures,
+        "CSS-PARSER-DISCARD-TOP-LEVEL-CUSTOM-PROPERTY-LIKE-001",
+    );
+    assert_eq!(fixture.source.as_bytes(), b"--foo:bar{color:red;}");
+    assert_eq!(fixture.byte_len, 21);
+    assert!(fixture.declarations.is_empty());
+    assert!(fixture.diagnostics.is_empty());
+    assert!(fixture.recovery.is_empty());
+    assert!(fixture.unsupported.is_empty());
+    assert_eq!(fixture.discard.len(), 1);
+
+    match fixture.discard[0] {
+        ParserGoldDiscard::TopLevelCustomPropertyLikeQualifiedRule {
+            region,
+            property_name,
+            colon,
+        } => {
+            assert_eq!(region, GoldRange::new(0, 21));
+            assert_eq!(property_name, GoldRange::new(0, 5));
+            assert_eq!(colon, GoldRange::new(5, 6));
+        }
+    }
+
+    assert_eq!(fixture.terminal, GoldRange::new(21, 21));
+    assert_eq!(
+        fixture.execution_completion,
+        ParserGoldExecutionCompletion::Complete
+    );
+    assert_eq!(
+        fixture.coverage,
+        ParserGoldCoverage::SupportedForSelectedQuestion
+    );
+    assert_eq!(
+        fixture.termination,
+        ParserGoldTerminationLifecycle::EndOfTokenizerInput
+    );
 }
 
 // ---------------------------------------------------------------------
@@ -529,4 +575,174 @@ fn declaration_and_recovery_and_priority_field_shapes_remain_plain_data() {
         termination: ParserGoldRecoveryTermination::EnclosingBlockEnd(GoldRange::new(1, 2)),
     };
     assert_eq!(recovery.region, GoldRange::new(0, 1));
+}
+
+// ---------------------------------------------------------------------
+// #158 discard-evidence gold corruption tests.
+// ---------------------------------------------------------------------
+
+fn discard_base_fixture() -> ParserGoldFixture {
+    let fixtures = normative_parser_fixtures();
+    fixture(
+        &fixtures,
+        "CSS-PARSER-DISCARD-TOP-LEVEL-CUSTOM-PROPERTY-LIKE-001",
+    )
+    .clone()
+}
+
+#[test]
+fn corruption_discard_region_beyond_source_is_rejected() {
+    let mut fixture = discard_base_fixture();
+    fixture.discard[0] = ParserGoldDiscard::TopLevelCustomPropertyLikeQualifiedRule {
+        region: GoldRange::new(0, 9_999),
+        property_name: GoldRange::new(0, 5),
+        colon: GoldRange::new(5, 6),
+    };
+    assert_eq!(
+        validate_fixture(&fixture),
+        Err(ParserGoldValidationError::InvalidRange)
+    );
+}
+
+#[test]
+fn corruption_discard_empty_region_is_rejected() {
+    let mut fixture = discard_base_fixture();
+    fixture.discard[0] = ParserGoldDiscard::TopLevelCustomPropertyLikeQualifiedRule {
+        region: GoldRange::new(0, 0),
+        property_name: GoldRange::new(0, 5),
+        colon: GoldRange::new(5, 6),
+    };
+    assert_eq!(
+        validate_fixture(&fixture),
+        Err(ParserGoldValidationError::InvalidRange)
+    );
+}
+
+#[test]
+fn corruption_discard_property_name_not_at_region_start_is_rejected() {
+    let mut fixture = discard_base_fixture();
+    fixture.discard[0] = ParserGoldDiscard::TopLevelCustomPropertyLikeQualifiedRule {
+        region: GoldRange::new(0, 21),
+        property_name: GoldRange::new(1, 5),
+        colon: GoldRange::new(5, 6),
+    };
+    assert_eq!(
+        validate_fixture(&fixture),
+        Err(ParserGoldValidationError::DiscardPropertyNameMismatch)
+    );
+}
+
+#[test]
+fn corruption_discard_colon_before_property_name_end_is_rejected() {
+    let mut fixture = discard_base_fixture();
+    fixture.discard[0] = ParserGoldDiscard::TopLevelCustomPropertyLikeQualifiedRule {
+        region: GoldRange::new(0, 21),
+        property_name: GoldRange::new(0, 5),
+        colon: GoldRange::new(2, 3),
+    };
+    assert_eq!(
+        validate_fixture(&fixture),
+        Err(ParserGoldValidationError::DiscardColonOrderViolation)
+    );
+}
+
+#[test]
+fn corruption_discard_wrong_colon_delimiter_is_rejected() {
+    let mut fixture = discard_base_fixture();
+    fixture.discard[0] = ParserGoldDiscard::TopLevelCustomPropertyLikeQualifiedRule {
+        region: GoldRange::new(0, 21),
+        property_name: GoldRange::new(0, 5),
+        // [6,7) is "b" from "bar", not ":".
+        colon: GoldRange::new(6, 7),
+    };
+    assert_eq!(
+        validate_fixture(&fixture),
+        Err(ParserGoldValidationError::WrongFixedDelimiter)
+    );
+}
+
+#[test]
+fn corruption_discard_beyond_parser_terminal_is_rejected() {
+    let mut fixture = discard_base_fixture();
+    // A resource-limited lifecycle permits a terminal short of source end
+    // without tripping the unrelated terminal/byte_len consistency check.
+    fixture.execution_completion = ParserGoldExecutionCompletion::Incomplete;
+    fixture.termination = ParserGoldTerminationLifecycle::ParserResourceLimit;
+    fixture.terminal = GoldRange::new(15, 15);
+    assert_eq!(
+        validate_fixture(&fixture),
+        Err(ParserGoldValidationError::DiscardBeyondTerminal)
+    );
+}
+
+#[test]
+fn corruption_discard_records_overlap_is_rejected() {
+    let mut fixture = discard_base_fixture();
+    let duplicate = fixture.discard[0];
+    fixture.discard.push(duplicate);
+    assert_eq!(
+        validate_fixture(&fixture),
+        Err(ParserGoldValidationError::DiscardOrder)
+    );
+}
+
+#[test]
+fn corruption_discard_overlaps_declaration_is_rejected() {
+    // "--foo:bar{color:red;}": a structurally valid "color:red;" declaration
+    // at [10,20) sits fully inside the fixture's [0,21) discard region.
+    let mut fixture = discard_base_fixture();
+    fixture.declarations.push(ParserGoldDeclaration {
+        complete: GoldRange::new(10, 20),
+        property_name: GoldRange::new(10, 15),
+        colon: GoldRange::new(15, 16),
+        value: GoldRange::new(16, 19),
+        priority: None,
+        termination: ParserGoldTermination::AuthoredSemicolon(GoldRange::new(19, 20)),
+        context: super::parser_gold::ParserGoldContext::TopLevelQualifiedRuleLeadingDeclarationZone,
+    });
+    assert_eq!(
+        validate_fixture(&fixture),
+        Err(ParserGoldValidationError::DiscardOverlapsDeclaration)
+    );
+}
+
+#[test]
+fn corruption_discard_overlaps_recovery_is_rejected() {
+    // The recovery region [16,20) (ending at the real ";" at index 19) sits
+    // inside the fixture's [0,21) discard region.
+    let mut fixture = discard_base_fixture();
+    fixture.recovery.push(ParserGoldRecovery {
+        region: GoldRange::new(16, 20),
+        termination: ParserGoldRecoveryTermination::AuthoredSemicolon(GoldRange::new(19, 20)),
+    });
+    assert_eq!(
+        validate_fixture(&fixture),
+        Err(ParserGoldValidationError::DiscardOverlapsRecovery)
+    );
+}
+
+#[test]
+fn corruption_discard_overlaps_unsupported_region_is_rejected() {
+    let mut fixture = discard_base_fixture();
+    fixture
+        .unsupported
+        .push(ParserGoldUnsupportedRegion::NestedContentRemainder {
+            region: GoldRange::new(10, 20),
+        });
+    fixture.coverage = ParserGoldCoverage::ContainsUnsupportedContexts;
+    assert_eq!(
+        validate_fixture(&fixture),
+        Err(ParserGoldValidationError::DiscardOverlapsUnsupportedRegion)
+    );
+}
+
+#[test]
+fn coverage_remains_supported_when_only_discard_evidence_is_present() {
+    let fixture = discard_base_fixture();
+    assert!(fixture.unsupported.is_empty());
+    assert_eq!(
+        fixture.coverage,
+        ParserGoldCoverage::SupportedForSelectedQuestion
+    );
+    assert!(validate_fixture(&fixture).is_ok());
 }

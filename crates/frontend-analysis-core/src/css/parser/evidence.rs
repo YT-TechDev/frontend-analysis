@@ -25,6 +25,9 @@ pub(crate) enum CssParserEvidenceRole {
     UnsupportedAtRuleComplete,
     UnsupportedAtKeyword,
     UnsupportedNestedRemainder,
+    DiscardRegion,
+    DiscardPropertyName,
+    DiscardColon,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,6 +48,9 @@ pub(crate) enum CssParserEvidenceContractError {
         role: CssParserEvidenceRole,
     },
     EvidenceOutOfOrder {
+        role: CssParserEvidenceRole,
+    },
+    DecodedPropertyNameNotCustomPropertyShaped {
         role: CssParserEvidenceRole,
     },
 }
@@ -336,6 +342,142 @@ impl fmt::Debug for CssParserUnsupportedRegion {
     }
 }
 
+/// The first-slice parser discard categories.
+///
+/// Distinct from [`CssParserRecoveryEvidence`] (malformed supported-context
+/// block-item recovery) and [`CssParserUnsupportedRegion`] (capability
+/// coverage evidence): a discard record is structurally understood parser
+/// behavior explicitly required by the pinned CSS Syntax grammar, not a
+/// malformed item or an unsupported context.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssParserDiscardKind {
+    /// `consume a qualified rule` with `nested = false`, whose prelude's
+    /// first two non-whitespace values are a custom-property-shaped Ident
+    /// followed by a Colon: the qualified rule is not returned and its block
+    /// is structurally consumed.
+    TopLevelCustomPropertyLikeQualifiedRule,
+}
+
+/// Source-backed evidence that a top-level qualified-rule candidate was
+/// structurally discarded per CSS Syntax rather than becoming a supported
+/// declaration context.
+#[derive(Clone)]
+pub(crate) struct CssParserDiscardEvidence {
+    region: SourceAnchor,
+    property_name: SourceAnchor,
+    colon: SourceAnchor,
+    kind: CssParserDiscardKind,
+}
+
+impl CssParserDiscardEvidence {
+    /// `decoded_property_name` is the already-decoded tokenizer `Ident`
+    /// value used only to validate `starts_with("--")`; it is not retained
+    /// afterward.
+    pub(crate) fn new(
+        source_text: &SourceText,
+        region: SourceAnchor,
+        property_name: SourceAnchor,
+        colon: SourceAnchor,
+        decoded_property_name: &str,
+        kind: CssParserDiscardKind,
+    ) -> Result<Self, CssParserEvidenceContractError> {
+        let expected = source_text.id();
+        require_source(expected, &region, CssParserEvidenceRole::DiscardRegion)?;
+        require_source(
+            expected,
+            &property_name,
+            CssParserEvidenceRole::DiscardPropertyName,
+        )?;
+        require_source(expected, &colon, CssParserEvidenceRole::DiscardColon)?;
+
+        non_empty(&region, CssParserEvidenceRole::DiscardRegion)?;
+        non_empty(&property_name, CssParserEvidenceRole::DiscardPropertyName)?;
+        non_empty(&colon, CssParserEvidenceRole::DiscardColon)?;
+
+        if region.range().start() != property_name.range().start() {
+            return Err(CssParserEvidenceContractError::EvidenceOutOfOrder {
+                role: CssParserEvidenceRole::DiscardPropertyName,
+            });
+        }
+        if property_name.range().end() > region.range().end() {
+            return Err(CssParserEvidenceContractError::EvidenceOutsideContainer {
+                role: CssParserEvidenceRole::DiscardPropertyName,
+            });
+        }
+
+        if !decoded_property_name.starts_with("--") {
+            return Err(
+                CssParserEvidenceContractError::DecodedPropertyNameNotCustomPropertyShaped {
+                    role: CssParserEvidenceRole::DiscardPropertyName,
+                },
+            );
+        }
+
+        exact(&colon, CssParserEvidenceRole::DiscardColon, ":")?;
+
+        if property_name.range().end() > colon.range().start() {
+            return Err(CssParserEvidenceContractError::EvidenceOutOfOrder {
+                role: CssParserEvidenceRole::DiscardColon,
+            });
+        }
+        if colon.source_id() != region.source_id()
+            || colon.range().start() < region.range().start()
+            || colon.range().end() > region.range().end()
+        {
+            return Err(CssParserEvidenceContractError::EvidenceOutsideContainer {
+                role: CssParserEvidenceRole::DiscardColon,
+            });
+        }
+
+        Ok(Self {
+            region,
+            property_name,
+            colon,
+            kind,
+        })
+    }
+
+    pub(crate) const fn region(&self) -> &SourceAnchor {
+        &self.region
+    }
+
+    pub(crate) const fn property_name(&self) -> &SourceAnchor {
+        &self.property_name
+    }
+
+    pub(crate) const fn colon(&self) -> &SourceAnchor {
+        &self.colon
+    }
+
+    pub(crate) const fn kind(&self) -> CssParserDiscardKind {
+        self.kind
+    }
+}
+
+impl PartialEq for CssParserDiscardEvidence {
+    fn eq(&self, other: &Self) -> bool {
+        same_anchor(&self.region, &other.region)
+            && same_anchor(&self.property_name, &other.property_name)
+            && same_anchor(&self.colon, &other.colon)
+            && self.kind == other.kind
+    }
+}
+
+impl Eq for CssParserDiscardEvidence {}
+
+impl fmt::Debug for CssParserDiscardEvidence {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CssParserDiscardEvidence")
+            .field("source_id", &self.region.source_id())
+            .field("region", &self.region.range())
+            .field("property_name", &self.property_name.range())
+            .field("colon", &self.colon.range())
+            .field("kind", &self.kind)
+            .finish()
+    }
+}
+
 fn require_source(
     expected: SourceId,
     anchor: &SourceAnchor,
@@ -501,6 +643,183 @@ mod tests {
             CssParserRecoveryTermination::EnclosingBlockEnd {
                 right_curly: text.anchor(2 + SECRET.len(), 3 + SECRET.len()).unwrap(),
             },
+        )
+        .unwrap();
+        assert!(!format!("{evidence:?}").contains(SECRET));
+    }
+
+    #[test]
+    fn discard_evidence_constructs_with_exact_boundary_relationships() {
+        let text = source(10, "--foo:bar{color:red;}");
+        let evidence = CssParserDiscardEvidence::new(
+            &text,
+            text.anchor(0, 21).unwrap(),
+            text.anchor(0, 5).unwrap(),
+            text.anchor(5, 6).unwrap(),
+            "--foo",
+            CssParserDiscardKind::TopLevelCustomPropertyLikeQualifiedRule,
+        )
+        .unwrap();
+        assert_eq!(evidence.region().range().start(), 0);
+        assert_eq!(evidence.region().range().end(), 21);
+        assert_eq!(
+            evidence.property_name().range(),
+            text.anchor(0, 5).unwrap().range()
+        );
+        assert_eq!(evidence.colon().range(), text.anchor(5, 6).unwrap().range());
+        assert_eq!(
+            evidence.kind(),
+            CssParserDiscardKind::TopLevelCustomPropertyLikeQualifiedRule
+        );
+    }
+
+    #[test]
+    fn discard_decoded_name_not_custom_property_shaped_is_rejected() {
+        let text = source(11, "foo:bar{color:red;}");
+        let result = CssParserDiscardEvidence::new(
+            &text,
+            text.anchor(0, 19).unwrap(),
+            text.anchor(0, 3).unwrap(),
+            text.anchor(3, 4).unwrap(),
+            "foo",
+            CssParserDiscardKind::TopLevelCustomPropertyLikeQualifiedRule,
+        );
+        assert!(matches!(
+            result,
+            Err(CssParserEvidenceContractError::DecodedPropertyNameNotCustomPropertyShaped { .. })
+        ));
+    }
+
+    #[test]
+    fn discard_colon_must_be_exact_fixed_spelling() {
+        let text = source(12, "--foo;bar{color:red;}");
+        let result = CssParserDiscardEvidence::new(
+            &text,
+            text.anchor(0, 21).unwrap(),
+            text.anchor(0, 5).unwrap(),
+            text.anchor(5, 6).unwrap(),
+            "--foo",
+            CssParserDiscardKind::TopLevelCustomPropertyLikeQualifiedRule,
+        );
+        assert_eq!(
+            result,
+            Err(CssParserEvidenceContractError::FixedSpellingMismatch {
+                role: CssParserEvidenceRole::DiscardColon,
+                expected: ":",
+            })
+        );
+    }
+
+    #[test]
+    fn discard_cross_source_evidence_is_rejected() {
+        let text = source(13, "--foo:bar{color:red;}");
+        let other = source(14, "--foo:bar{color:red;}");
+        let result = CssParserDiscardEvidence::new(
+            &text,
+            other.anchor(0, 21).unwrap(),
+            text.anchor(0, 5).unwrap(),
+            text.anchor(5, 6).unwrap(),
+            "--foo",
+            CssParserDiscardKind::TopLevelCustomPropertyLikeQualifiedRule,
+        );
+        assert!(matches!(
+            result,
+            Err(CssParserEvidenceContractError::SourceIdentityMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn discard_property_name_start_must_equal_region_start() {
+        let text = source(15, " --foo:bar{color:red;}");
+        let result = CssParserDiscardEvidence::new(
+            &text,
+            text.anchor(0, 22).unwrap(),
+            text.anchor(1, 6).unwrap(),
+            text.anchor(6, 7).unwrap(),
+            "--foo",
+            CssParserDiscardKind::TopLevelCustomPropertyLikeQualifiedRule,
+        );
+        assert!(matches!(
+            result,
+            Err(CssParserEvidenceContractError::EvidenceOutOfOrder {
+                role: CssParserEvidenceRole::DiscardPropertyName,
+            })
+        ));
+    }
+
+    #[test]
+    fn discard_colon_must_follow_property_name() {
+        // The supplied colon at [0,1) is a real ":" character, but it sits
+        // before the property name at [1,6) rather than after it.
+        let text = source(16, ":--foo:bar{color:red;}");
+        let result = CssParserDiscardEvidence::new(
+            &text,
+            text.anchor(1, 22).unwrap(),
+            text.anchor(1, 6).unwrap(),
+            text.anchor(0, 1).unwrap(),
+            "--foo",
+            CssParserDiscardKind::TopLevelCustomPropertyLikeQualifiedRule,
+        );
+        assert!(matches!(
+            result,
+            Err(CssParserEvidenceContractError::EvidenceOutOfOrder {
+                role: CssParserEvidenceRole::DiscardColon,
+            })
+        ));
+    }
+
+    #[test]
+    fn discard_colon_must_be_contained_in_region() {
+        // The region only covers "--foo:bar{", but the supplied colon is the
+        // later, unrelated ":" inside "color:red" at [15,16), which lies
+        // outside that region.
+        let text = source(17, "--foo:bar{color:red;}");
+        let result = CssParserDiscardEvidence::new(
+            &text,
+            text.anchor(0, 10).unwrap(),
+            text.anchor(0, 5).unwrap(),
+            text.anchor(15, 16).unwrap(),
+            "--foo",
+            CssParserDiscardKind::TopLevelCustomPropertyLikeQualifiedRule,
+        );
+        assert!(matches!(
+            result,
+            Err(CssParserEvidenceContractError::EvidenceOutsideContainer {
+                role: CssParserEvidenceRole::DiscardColon,
+            })
+        ));
+    }
+
+    #[test]
+    fn discard_empty_region_is_rejected() {
+        let text = source(18, "--foo:bar{}");
+        let result = CssParserDiscardEvidence::new(
+            &text,
+            text.anchor(0, 0).unwrap(),
+            text.anchor(0, 5).unwrap(),
+            text.anchor(5, 6).unwrap(),
+            "--foo",
+            CssParserDiscardKind::TopLevelCustomPropertyLikeQualifiedRule,
+        );
+        assert!(matches!(
+            result,
+            Err(CssParserEvidenceContractError::EmptyEvidence {
+                role: CssParserEvidenceRole::DiscardRegion,
+            })
+        ));
+    }
+
+    #[test]
+    fn discard_debug_output_does_not_disclose_authored_source() {
+        const SECRET: &str = "--secret-bogus-property";
+        let text = source(19, &format!("{SECRET}:bar{{}}"));
+        let evidence = CssParserDiscardEvidence::new(
+            &text,
+            text.anchor(0, SECRET.len() + 4).unwrap(),
+            text.anchor(0, SECRET.len()).unwrap(),
+            text.anchor(SECRET.len(), SECRET.len() + 1).unwrap(),
+            SECRET,
+            CssParserDiscardKind::TopLevelCustomPropertyLikeQualifiedRule,
         )
         .unwrap();
         assert!(!format!("{evidence:?}").contains(SECRET));
