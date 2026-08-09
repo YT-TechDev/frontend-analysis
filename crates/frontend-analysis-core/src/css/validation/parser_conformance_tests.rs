@@ -7,13 +7,17 @@
 //! against that already-fixed gold.
 
 use super::generated::{assert_deterministic_replay, generated_inputs};
+use super::gold::GoldRange;
 use super::parser_candidate::{
     assert_matches_gold, canonical_signature, run_fixture,
     run_fixture_with_synthetic_upstream_incomplete,
 };
 use super::parser_fixtures::normative_parser_fixtures;
+use super::parser_gold::{ParserGoldFixture, ParserGoldGroup};
 
+use crate::css::parser::evidence::CssParserRecoveryTermination;
 use crate::css::parser::producer::run as run_parser;
+use crate::css::parser::result::{CssParserExecutionCompletion, CssParserTermination};
 use crate::css::tokenizer::producer::run as run_tokenizer;
 use crate::{SourceId, SourceText};
 
@@ -22,7 +26,7 @@ use super::parser_candidate::{generous_parser_limits, generous_tokenizer_limits}
 #[test]
 fn production_parser_matches_every_normative_parser_gold_fixture() {
     let fixtures = normative_parser_fixtures();
-    assert_eq!(fixtures.len(), 34);
+    assert_eq!(fixtures.len(), 36);
 
     for fixture in &fixtures {
         let id = fixture.id;
@@ -238,6 +242,83 @@ fn custom_property_brace_value_is_always_a_declaration() {
     let result = parse(60_007, "a{--x:{a:b};}");
     assert_eq!(result.occurrences().len(), 1);
     assert!(result.unsupported_regions().is_empty());
+}
+
+// ---------------------------------------------------------------------
+// #158 discard / #159 EOF-recovery focused production regressions.
+// ---------------------------------------------------------------------
+
+#[test]
+fn top_level_custom_property_like_prelude_produces_exactly_one_discard_record() {
+    let result = parse(60_008, "--foo:bar{color:red;}");
+    assert!(result.occurrences().is_empty());
+    assert!(result.parser_diagnostics().is_empty());
+    assert!(result.recovery_records().is_empty());
+    assert!(result.unsupported_regions().is_empty());
+    assert_eq!(result.discard_records().len(), 1);
+
+    let discard = &result.discard_records()[0];
+    assert_eq!(discard.region().range(), result_range(0, 21));
+    assert_eq!(discard.property_name().range(), result_range(0, 5));
+    assert_eq!(discard.colon().range(), result_range(5, 6));
+    assert_eq!(
+        result.execution_completion(),
+        CssParserExecutionCompletion::Complete
+    );
+}
+
+#[test]
+fn malformed_block_item_at_true_eof_commits_diagnostic_and_eof_recovery() {
+    let result = parse(60_009, "a{color red");
+    assert!(result.occurrences().is_empty());
+    assert!(result.discard_records().is_empty());
+    assert_eq!(result.parser_diagnostics().len(), 1);
+    assert_eq!(result.recovery_records().len(), 1);
+
+    let recovery = &result.recovery_records()[0];
+    assert_eq!(recovery.region().range(), result_range(2, 11));
+    match recovery.termination() {
+        CssParserRecoveryTermination::EndOfInput { terminal } => {
+            assert_eq!(terminal.range(), result_range(11, 11));
+        }
+        other => panic!("expected EndOfInput termination, got {other:?}"),
+    }
+    assert_eq!(result.terminal().range(), result_range(11, 11));
+    assert_eq!(
+        result.execution_completion(),
+        CssParserExecutionCompletion::Complete
+    );
+}
+
+#[test]
+fn upstream_resource_limited_terminal_coinciding_with_source_end_is_not_true_eof_recovery() {
+    // A synthetic upstream tokenizer result whose Incomplete/ResourceLimit
+    // terminal numerically coincides with true source end must never be
+    // treated as genuine EndOfInput: no EOF recovery, no diagnostic, and no
+    // occurrence may be fabricated from it.
+    let fixture = ParserGoldFixture::upstream_incomplete(
+        "CSS-PARSER-REGRESSION-RESOURCE-LIMIT-NOT-TRUE-EOF-001",
+        ParserGoldGroup::Lifecycle,
+        60_010,
+        "a{color red",
+        11,
+        GoldRange::new(11, 11),
+    );
+    let result = run_fixture_with_synthetic_upstream_incomplete(&fixture);
+
+    assert_eq!(
+        result.execution_completion(),
+        CssParserExecutionCompletion::Incomplete
+    );
+    assert!(matches!(
+        result.termination(),
+        CssParserTermination::UpstreamTokenizerIncomplete
+    ));
+    assert!(result.recovery_records().is_empty());
+    assert!(result.parser_diagnostics().is_empty());
+    assert!(result.occurrences().is_empty());
+    assert!(result.discard_records().is_empty());
+    assert_eq!(result.terminal().range(), result_range(11, 11));
 }
 
 // ---------------------------------------------------------------------

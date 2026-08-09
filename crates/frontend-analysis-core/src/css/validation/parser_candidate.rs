@@ -8,7 +8,8 @@
 
 use crate::css::declaration::{CssDeclarationOccurrence, CssDeclarationTermination};
 use crate::css::parser::evidence::{
-    CssParserRecoveryEvidence, CssParserRecoveryTermination, CssParserUnsupportedRegion,
+    CssParserDiscardEvidence, CssParserRecoveryEvidence, CssParserRecoveryTermination,
+    CssParserUnsupportedRegion,
 };
 use crate::css::parser::producer::run;
 use crate::css::parser::resource::CssParserLimits;
@@ -25,9 +26,9 @@ use crate::{SourceId, SourceText};
 
 use super::gold::GoldRange;
 use super::parser_gold::{
-    ParserGoldCoverage, ParserGoldDiagnosticCode, ParserGoldExecutionCompletion, ParserGoldFixture,
-    ParserGoldRecoveryTermination, ParserGoldTermination, ParserGoldTerminationLifecycle,
-    ParserGoldUnsupportedRegion,
+    ParserGoldCoverage, ParserGoldDiagnosticCode, ParserGoldDiscard, ParserGoldExecutionCompletion,
+    ParserGoldFixture, ParserGoldRecoveryTermination, ParserGoldTermination,
+    ParserGoldTerminationLifecycle, ParserGoldUnsupportedRegion,
 };
 
 pub(super) fn generous_tokenizer_limits() -> CssTokenizerLimits {
@@ -35,7 +36,16 @@ pub(super) fn generous_tokenizer_limits() -> CssTokenizerLimits {
 }
 
 pub(super) fn generous_parser_limits() -> CssParserLimits {
-    CssParserLimits::new(1 << 20, 1 << 12, 1 << 16, 1 << 16, 1 << 16, 1 << 16).unwrap()
+    CssParserLimits::new(
+        1 << 20,
+        1 << 12,
+        1 << 16,
+        1 << 16,
+        1 << 16,
+        1 << 16,
+        1 << 16,
+    )
+    .unwrap()
 }
 
 /// Runs the production tokenizer then the production parser over `fixture`'s
@@ -209,6 +219,20 @@ pub(super) fn assert_matches_gold(fixture: &ParserGoldFixture, result: &CssParse
         .enumerate()
     {
         assert_unsupported_matches(id, index, actual, *expected);
+    }
+
+    assert_eq!(
+        result.discard_records().len(),
+        fixture.discard.len(),
+        "{id}: discard count"
+    );
+    for (index, (actual, expected)) in result
+        .discard_records()
+        .iter()
+        .zip(&fixture.discard)
+        .enumerate()
+    {
+        assert_discard_matches(id, index, actual, *expected);
     }
 
     match fixture.execution_completion {
@@ -408,7 +432,38 @@ fn assert_recovery_matches(
                 range,
             );
         }
+        (
+            CssParserRecoveryTermination::EndOfInput { terminal },
+            ParserGoldRecoveryTermination::EndOfInput(range),
+        ) => {
+            assert_range(id, "recovery eof terminal", index, terminal.range(), range);
+        }
         _ => panic!("{id}: recovery {index} termination kind mismatch"),
+    }
+}
+
+fn assert_discard_matches(
+    id: &str,
+    index: usize,
+    actual: &CssParserDiscardEvidence,
+    expected: ParserGoldDiscard,
+) {
+    match expected {
+        ParserGoldDiscard::TopLevelCustomPropertyLikeQualifiedRule {
+            region,
+            property_name,
+            colon,
+        } => {
+            assert_range(id, "discard region", index, actual.region().range(), region);
+            assert_range(
+                id,
+                "discard property_name",
+                index,
+                actual.property_name().range(),
+                property_name,
+            );
+            assert_range(id, "discard colon", index, actual.colon().range(), colon);
+        }
     }
 }
 
@@ -525,11 +580,21 @@ pub(super) fn canonical_signature(result: &CssParserRunResult) -> String {
     }
     for recovery in result.recovery_records() {
         let range = recovery.region().range();
-        let _ = write!(signature, "|Rec@[{},{})", range.start(), range.end());
+        let _ = write!(
+            signature,
+            "|Rec@[{},{}){:?}",
+            range.start(),
+            range.end(),
+            recovery_termination_shape(recovery.termination())
+        );
     }
     for unsupported in result.unsupported_regions() {
         let range = unsupported.region().range();
         let _ = write!(signature, "|Unsup@[{},{})", range.start(), range.end());
+    }
+    for discard in result.discard_records() {
+        let range = discard.region().range();
+        let _ = write!(signature, "|Discard@[{},{})", range.start(), range.end());
     }
     let terminal = result.terminal().range();
     let _ = write!(
@@ -558,6 +623,28 @@ fn termination_shape(termination: &CssDeclarationTermination) -> (&'static str, 
         ),
         CssDeclarationTermination::OmittedAtEndOfInput { terminal } => (
             "OmittedAtEndOfInput",
+            terminal.range().start(),
+            terminal.range().end(),
+        ),
+    }
+}
+
+fn recovery_termination_shape(
+    termination: &CssParserRecoveryTermination,
+) -> (&'static str, usize, usize) {
+    match termination {
+        CssParserRecoveryTermination::AuthoredSemicolon { semicolon } => (
+            "AuthoredSemicolon",
+            semicolon.range().start(),
+            semicolon.range().end(),
+        ),
+        CssParserRecoveryTermination::EnclosingBlockEnd { right_curly } => (
+            "EnclosingBlockEnd",
+            right_curly.range().start(),
+            right_curly.range().end(),
+        ),
+        CssParserRecoveryTermination::EndOfInput { terminal } => (
+            "EndOfInput",
             terminal.range().start(),
             terminal.range().end(),
         ),

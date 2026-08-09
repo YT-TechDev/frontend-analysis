@@ -336,6 +336,22 @@ pub(crate) enum CssParserInvariantViolation {
         current: usize,
         additional: usize,
     },
+    /// A second speculative checkpoint was begun while one was already
+    /// active (#139 `MAX_ACTIVE_SPECULATIVE_CHECKPOINT_DEPTH == 1`).
+    CheckpointAlreadyActive,
+    /// Checkpoint commit was requested with no active checkpoint.
+    CheckpointCommitWithoutActive,
+    /// Checkpoint rollback was requested with no active checkpoint.
+    CheckpointRollbackWithoutActive,
+    /// A component-frame opener conversion was attempted for an
+    /// `ObservedKind` that is not a structural opener.
+    ExpectedComponentOpener,
+    /// The qualified-rule prelude scan reported a block opener, but the next
+    /// lexical item observed was not the expected `LeftCurlyBracket`.
+    ExpectedQualifiedRuleBlockOpener,
+    /// A bounded declaration-value scan summary (first/window/counts) was
+    /// inconsistent with the relationship its caller relied on.
+    InconsistentValueScanSummary,
 }
 
 /// Computes `current + additional` for one [`CssParserResourceKind`] using

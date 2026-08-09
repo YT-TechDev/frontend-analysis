@@ -1,6 +1,6 @@
-//! Executable, source-driven resource-limit tests for all six #139 parser
-//! resource kinds, mirroring the #152 `checked_resource_add` committed-
-//! versus-attempted contract already proven for the tokenizer.
+//! Executable, source-driven resource-limit tests for all seven #139/#158
+//! parser resource kinds, mirroring the #152 `checked_resource_add`
+//! committed-versus-attempted contract already proven for the tokenizer.
 
 use crate::css::parser::producer::run;
 use crate::css::parser::resource::{CssParserLimits, CssParserResourceKind};
@@ -13,6 +13,7 @@ fn generous_tokenizer_limits() -> CssTokenizerLimits {
     CssTokenizerLimits::new(1 << 20, 1 << 20, 1 << 16, 1 << 16, 1 << 20, 1 << 20).unwrap()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn parser_limits(
     max_algorithm_steps: usize,
     max_peak_component_depth: usize,
@@ -20,6 +21,7 @@ fn parser_limits(
     max_parser_diagnostics: usize,
     max_recovery_records: usize,
     max_unsupported_regions: usize,
+    max_discard_records: usize,
 ) -> CssParserLimits {
     CssParserLimits::new(
         max_algorithm_steps,
@@ -28,6 +30,7 @@ fn parser_limits(
         max_parser_diagnostics,
         max_recovery_records,
         max_unsupported_regions,
+        max_discard_records,
     )
     .unwrap()
 }
@@ -40,7 +43,7 @@ fn source(text: &str) -> SourceText {
 fn algorithm_steps_limit_terminates_and_preserves_last_committed_boundary() {
     let text = source("a{color:red;}");
     let tokenizer_result = run_tokenizer(&text, generous_tokenizer_limits()).unwrap();
-    let limits = parser_limits(1, 1000, 1000, 1000, 1000, 1000);
+    let limits = parser_limits(1, 1000, 1000, 1000, 1000, 1000, 1000);
     let result = run(&text, tokenizer_result, limits)
         .expect("resource-limited runs remain a normal Ok result");
 
@@ -71,7 +74,7 @@ fn algorithm_steps_limit_terminates_and_preserves_last_committed_boundary() {
 fn peak_component_depth_limit_preserves_the_highest_successfully_entered_depth() {
     let text = source("a{color:f(g(1));}");
     let tokenizer_result = run_tokenizer(&text, generous_tokenizer_limits()).unwrap();
-    let limits = parser_limits(10_000, 1, 1000, 1000, 1000, 1000);
+    let limits = parser_limits(10_000, 1, 1000, 1000, 1000, 1000, 1000);
     let result = run(&text, tokenizer_result, limits)
         .expect("resource-limited runs remain a normal Ok result");
 
@@ -103,7 +106,7 @@ fn peak_component_depth_limit_preserves_the_highest_successfully_entered_depth()
 fn declaration_occurrences_limit_commits_the_first_and_refuses_the_second() {
     let text = source("a{color:red;background:blue;}");
     let tokenizer_result = run_tokenizer(&text, generous_tokenizer_limits()).unwrap();
-    let limits = parser_limits(10_000, 1000, 1, 1000, 1000, 1000);
+    let limits = parser_limits(10_000, 1000, 1, 1000, 1000, 1000, 1000);
     let result = run(&text, tokenizer_result, limits)
         .expect("resource-limited runs remain a normal Ok result");
 
@@ -138,7 +141,7 @@ fn declaration_occurrences_limit_commits_the_first_and_refuses_the_second() {
 fn parser_diagnostics_limit_refusal_leaves_diagnostics_and_recovery_both_uncommitted() {
     let text = source("a{color red;}");
     let tokenizer_result = run_tokenizer(&text, generous_tokenizer_limits()).unwrap();
-    let limits = parser_limits(10_000, 1000, 1000, 0, 1000, 1000);
+    let limits = parser_limits(10_000, 1000, 1000, 0, 1000, 1000, 1000);
     let result = run(&text, tokenizer_result, limits)
         .expect("resource-limited runs remain a normal Ok result");
 
@@ -159,7 +162,7 @@ fn parser_diagnostics_limit_refusal_leaves_diagnostics_and_recovery_both_uncommi
 fn recovery_records_limit_refusal_leaves_diagnostics_and_recovery_both_uncommitted() {
     let text = source("a{color red;}");
     let tokenizer_result = run_tokenizer(&text, generous_tokenizer_limits()).unwrap();
-    let limits = parser_limits(10_000, 1000, 1000, 1000, 0, 1000);
+    let limits = parser_limits(10_000, 1000, 1000, 1000, 0, 1000, 1000);
     let result = run(&text, tokenizer_result, limits)
         .expect("resource-limited runs remain a normal Ok result");
 
@@ -182,7 +185,7 @@ fn recovery_records_limit_refusal_leaves_diagnostics_and_recovery_both_uncommitt
 fn unsupported_regions_limit_refusal_publishes_no_partial_record() {
     let text = source("@font-face{font-family:x;}");
     let tokenizer_result = run_tokenizer(&text, generous_tokenizer_limits()).unwrap();
-    let limits = parser_limits(10_000, 1000, 1000, 1000, 1000, 0);
+    let limits = parser_limits(10_000, 1000, 1000, 1000, 1000, 0, 1000);
     let result = run(&text, tokenizer_result, limits)
         .expect("resource-limited runs remain a normal Ok result");
 
@@ -205,10 +208,44 @@ fn unsupported_regions_limit_refusal_publishes_no_partial_record() {
 }
 
 #[test]
+fn discard_records_limit_refusal_is_commit_honest() {
+    let text = source("--foo:bar{color:red;}");
+    let tokenizer_result = run_tokenizer(&text, generous_tokenizer_limits()).unwrap();
+    let limits = parser_limits(10_000, 1000, 1000, 1000, 1000, 1000, 0);
+    let result = run(&text, tokenizer_result, limits)
+        .expect("resource-limited runs remain a normal Ok result");
+
+    match result.termination() {
+        CssParserTermination::ParserResourceLimit(evidence) => {
+            assert_eq!(evidence.kind(), CssParserResourceKind::DiscardRecords);
+            assert_eq!(evidence.limit(), 0);
+            assert_eq!(evidence.attempted(), 1);
+        }
+        other => panic!("expected ParserResourceLimit, got {other:?}"),
+    }
+    assert!(result.discard_records().is_empty());
+    assert_eq!(
+        result
+            .resources()
+            .value(CssParserResourceKind::DiscardRecords),
+        0
+    );
+    assert!(result.occurrences().is_empty());
+    assert!(result.parser_diagnostics().is_empty());
+    assert!(result.recovery_records().is_empty());
+    assert!(result.unsupported_regions().is_empty());
+    // The last committed boundary is the structurally accepted qualified-rule
+    // opening (`{`.end), the same commit granularity a normal declaration
+    // block establishes before any block-content resource check.
+    assert_eq!(result.terminal().range().start(), 10);
+    assert_eq!(result.terminal().range().end(), 10);
+}
+
+#[test]
 fn earlier_committed_declarations_survive_a_later_resource_refusal() {
     let text = source("a{color:red;background:blue;color:green;}");
     let tokenizer_result = run_tokenizer(&text, generous_tokenizer_limits()).unwrap();
-    let limits = parser_limits(10_000, 1000, 2, 1000, 1000, 1000);
+    let limits = parser_limits(10_000, 1000, 2, 1000, 1000, 1000, 1000);
     let result = run(&text, tokenizer_result, limits)
         .expect("resource-limited runs remain a normal Ok result");
 

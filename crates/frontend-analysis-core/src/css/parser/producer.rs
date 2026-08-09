@@ -1,4 +1,4 @@
-//! Bounded source-backed CSS declaration parser producer (#139).
+//! Bounded source-backed CSS declaration parser producer (#139, #158, #159).
 //!
 //! Implements the #137/#138-approved first parser capability:
 //! `&SourceText + owned CssTokenizerRunResult + CssParserLimits ->
@@ -8,16 +8,17 @@
 //!
 //! Exactly one `AlgorithmSteps` unit is charged per producer-controlled
 //! lexical-item visit (every comment skipped and every semantic token
-//! observed by [`Producer::next_semantic`]), and one additional unit for
-//! checkpoint creation/commit/rollback. `next_semantic` is the single
-//! chokepoint through which every scanning loop (stylesheet dispatch,
-//! at-rule body, qualified-rule prelude, qualified-rule fallback replay,
-//! nested-remainder consumption, declaration value scan) observes lexical
-//! items, so no loop iteration capable of continuing execution is ever
-//! uncharged, and no state dispatch is charged twice merely because it is
-//! reached through a layered helper. A rolled-back speculative declaration
-//! attempt's steps are never refunded: replay after rollback charges again
-//! from `next_semantic` exactly as a fresh scan would.
+//! observed by [`Producer::next_semantic`]), plus one additional unit for
+//! checkpoint creation/begin. Checkpoint commit and rollback do not charge an
+//! additional step. `next_semantic` is the single chokepoint through which
+//! every scanning loop (stylesheet dispatch, at-rule body, qualified-rule
+//! prelude, qualified-rule fallback replay, nested-remainder/discard-block
+//! consumption, declaration value scan) observes lexical items, so no loop
+//! iteration capable of continuing execution is ever uncharged, and no state
+//! dispatch is charged twice merely because it is reached through a layered
+//! helper. A rolled-back speculative declaration attempt's steps are never
+//! refunded: replay after rollback charges again from `next_semantic` exactly
+//! as a fresh scan would.
 //!
 //! # Cursor and checkpoint
 //!
@@ -25,15 +26,12 @@
 //! sequence through [`CssParserCursor`] (see `cursor.rs`); no second
 //! semantic-token vector is built. At most one speculative checkpoint is
 //! active at a time (`MAX_ACTIVE_SPECULATIVE_CHECKPOINT_DEPTH == 1`),
-//! snapshotting the cursor position and every durable-evidence vector
-//! length; rollback restores all of it but never the monotonic
+//! snapshotting the cursor position and every durable-evidence vector length
+//! (including discard); rollback restores all of it but never the monotonic
 //! `AlgorithmSteps` or achieved `PeakComponentDepth` counters already
 //! charged. Beginning a second checkpoint, or committing/rolling back
-//! without one active, is provably unreachable through this file's own
-//! control flow (every call site pairs `begin_checkpoint` with exactly one
-//! `commit_checkpoint` or `rollback_checkpoint` before any other checkpoint
-//! operation), so misuse is asserted rather than routed through
-//! `CssParserRunError`, which has no dedicated checkpoint-misuse variant.
+//! without one active, is a typed `CssParserInvariantViolation` rather than
+//! a panic.
 //!
 //! # Component scanning
 //!
@@ -43,16 +41,22 @@
 //! `PeakComponentDepth` is preflighted before every push and updated
 //! immediately on success; achieved peak never rolls back.
 //!
-//! # Known scope gap
+//! # Custom-property-like top-level qualified-rule discard (#158)
 //!
-//! The #137/#139 qualification's custom-property-shaped top-level
-//! qualified-rule prelude exclusion (an `Ident` starting `--` followed by
-//! `Colon` at stylesheet top level should not open a supported qualified
-//! rule) is not implemented: no #138 unsupported-region or diagnostic
-//! category can represent its outcome without inventing a new evidence
-//! category, which is out of #139's authorized scope. No normative gold
-//! fixture exercises this shape. This is flagged for maintainer follow-up
-//! rather than silently guessed.
+//! A top-level qualified-rule prelude whose first two non-whitespace values
+//! are a decoded-`--`-prefixed `Ident` then a `Colon` is structurally
+//! discarded per CSS Syntax rather than opening a supported declaration
+//! context: its balanced block is consumed with the same bounded iterative
+//! scanner and exactly one [`CssParserDiscardEvidence`] commits.
+//!
+//! # Malformed block item at true end of input (#159)
+//!
+//! A block item that fails both declaration recognition and qualified-rule
+//! fallback and reaches genuine tokenizer end of input commits an
+//! `InvalidBlockItem` diagnostic and a [`CssParserRecoveryEvidence`] with an
+//! `EndOfInput` termination atomically, using the exact true source-end
+//! boundary as the recovery terminal; no semicolon or right curly is
+//! fabricated.
 
 use super::super::declaration::{
     CssDeclarationContext, CssDeclarationOccurrence, CssDeclarationPriorityEvidence,
@@ -63,8 +67,8 @@ use super::super::tokenizer::result::CssTokenizerRunResult;
 use super::cursor::{CssParserCursor, CssParserRawPosition};
 use super::diagnostic::{CssParserDiagnostic, CssParserDiagnosticCode};
 use super::evidence::{
-    CssParserRecoveryEvidence, CssParserRecoveryKind, CssParserRecoveryTermination,
-    CssParserUnsupportedRegion,
+    CssParserDiscardEvidence, CssParserDiscardKind, CssParserRecoveryEvidence,
+    CssParserRecoveryKind, CssParserRecoveryTermination, CssParserUnsupportedRegion,
 };
 use super::resource::{
     CssParserLimits, CssParserResourceKind, CssParserResourceLimitEvidence, CssParserResourceUsage,
@@ -207,14 +211,20 @@ enum ComponentFrameKind {
     CurlyBracket,
 }
 
-fn opener_frame_kind(kind: &ObservedKind) -> ComponentFrameKind {
+fn opener_frame_kind(kind: &ObservedKind) -> Result<ComponentFrameKind, Flow> {
     match kind {
-        ObservedKind::Function => ComponentFrameKind::Function,
-        ObservedKind::LeftParenthesis => ComponentFrameKind::Parenthesis,
-        ObservedKind::LeftSquareBracket => ComponentFrameKind::SquareBracket,
-        ObservedKind::LeftCurlyBracket => ComponentFrameKind::CurlyBracket,
-        _ => unreachable!("caller guards with is_opener"),
+        ObservedKind::Function => Ok(ComponentFrameKind::Function),
+        ObservedKind::LeftParenthesis => Ok(ComponentFrameKind::Parenthesis),
+        ObservedKind::LeftSquareBracket => Ok(ComponentFrameKind::SquareBracket),
+        ObservedKind::LeftCurlyBracket => Ok(ComponentFrameKind::CurlyBracket),
+        _ => Err(invariant_flow(
+            CssParserInvariantViolation::ExpectedComponentOpener,
+        )),
     }
+}
+
+fn invariant_flow(violation: CssParserInvariantViolation) -> Flow {
+    Flow::Invariant(CssParserRunError::InternalInvariantFailure(violation))
 }
 
 enum BalanceEvent {
@@ -233,8 +243,20 @@ enum AtRuleOutcome {
     Ended { end: usize },
 }
 
+/// Bounded transient evidence for the #158 custom-property-like top-level
+/// qualified-rule prelude exclusion: the leading `Ident` (with its
+/// already-decoded value) and the `Colon` immediately following it among the
+/// prelude's top-level non-whitespace values.
+struct CustomPropertyLikePrelude {
+    property_name: SourceAnchor,
+    decoded_property_name: String,
+    colon: SourceAnchor,
+}
+
 enum PreludeOutcome {
-    FoundBlockOpener,
+    FoundBlockOpener {
+        custom_property_like: Option<CustomPropertyLikePrelude>,
+    },
     TrueEndOfInputWithoutBlock,
 }
 
@@ -309,6 +331,7 @@ struct Checkpoint {
     diagnostics_len: usize,
     recovery_len: usize,
     unsupported_len: usize,
+    discard_len: usize,
     component_frames_len: usize,
 }
 
@@ -322,6 +345,7 @@ struct Producer<'a> {
     diagnostics: Vec<CssParserDiagnostic>,
     recovery: Vec<CssParserRecoveryEvidence>,
     unsupported: Vec<CssParserUnsupportedRegion>,
+    discard: Vec<CssParserDiscardEvidence>,
     algorithm_steps: usize,
     peak_component_depth: usize,
     component_frames: Vec<ComponentFrameKind>,
@@ -344,6 +368,7 @@ impl<'a> Producer<'a> {
             diagnostics: Vec::new(),
             recovery: Vec::new(),
             unsupported: Vec::new(),
+            discard: Vec::new(),
             algorithm_steps: 0,
             peak_component_depth: 0,
             component_frames: Vec::new(),
@@ -440,7 +465,7 @@ impl<'a> Producer<'a> {
     fn consume_and_balance(&mut self, kind: &ObservedKind) -> Result<BalanceEvent, Flow> {
         if is_opener(kind) {
             let depth_before = self.component_frames.len();
-            self.push_frame(opener_frame_kind(kind))?;
+            self.push_frame(opener_frame_kind(kind)?)?;
             self.cursor.advance();
             return Ok(BalanceEvent::Opened { depth_before });
         }
@@ -467,42 +492,45 @@ impl<'a> Producer<'a> {
 
     fn begin_checkpoint(&mut self) -> Result<(), Flow> {
         self.charge_step()?;
-        assert!(
-            self.checkpoint.is_none(),
-            "#139 MAX_ACTIVE_SPECULATIVE_CHECKPOINT_DEPTH == 1: a second checkpoint was begun \
-             while one was active, which this file's control flow never does"
-        );
+        if self.checkpoint.is_some() {
+            return Err(invariant_flow(
+                CssParserInvariantViolation::CheckpointAlreadyActive,
+            ));
+        }
         self.checkpoint = Some(Checkpoint {
             cursor: self.cursor.checkpoint(),
             occurrences_len: self.occurrences.len(),
             diagnostics_len: self.diagnostics.len(),
             recovery_len: self.recovery.len(),
             unsupported_len: self.unsupported.len(),
+            discard_len: self.discard.len(),
             component_frames_len: self.component_frames.len(),
         });
         Ok(())
     }
 
-    fn commit_checkpoint(&mut self) {
-        let taken = self.checkpoint.take();
-        assert!(
-            taken.is_some(),
-            "checkpoint commit without an active checkpoint (#139 depth invariant)"
-        );
+    fn commit_checkpoint(&mut self) -> Result<(), Flow> {
+        if self.checkpoint.take().is_none() {
+            return Err(invariant_flow(
+                CssParserInvariantViolation::CheckpointCommitWithoutActive,
+            ));
+        }
+        Ok(())
     }
 
-    fn rollback_checkpoint(&mut self) {
-        let checkpoint = self
-            .checkpoint
-            .take()
-            .expect("checkpoint rollback without an active checkpoint (#139 depth invariant)");
+    fn rollback_checkpoint(&mut self) -> Result<(), Flow> {
+        let checkpoint = self.checkpoint.take().ok_or_else(|| {
+            invariant_flow(CssParserInvariantViolation::CheckpointRollbackWithoutActive)
+        })?;
         self.cursor.restore(checkpoint.cursor);
         self.occurrences.truncate(checkpoint.occurrences_len);
         self.diagnostics.truncate(checkpoint.diagnostics_len);
         self.recovery.truncate(checkpoint.recovery_len);
         self.unsupported.truncate(checkpoint.unsupported_len);
+        self.discard.truncate(checkpoint.discard_len);
         self.component_frames
             .truncate(checkpoint.component_frames_len);
+        Ok(())
     }
 
     // -- top-level stylesheet flow -----------------------------------------
@@ -595,27 +623,81 @@ impl<'a> Producer<'a> {
 
     fn consume_top_level_qualified_rule(&mut self, item_start: usize) -> Result<(), Flow> {
         match self.scan_qualified_rule_prelude()? {
-            PreludeOutcome::FoundBlockOpener => {
-                match self.next_semantic()? {
-                    ParserPosition::SemanticToken {
-                        anchor,
-                        kind: ObservedKind::LeftCurlyBracket,
-                    } => {
-                        self.cursor.advance();
-                        self.committed_pos = anchor.range().end();
+            PreludeOutcome::FoundBlockOpener {
+                custom_property_like,
+            } => {
+                let left_curly = self.expect_left_curly_bracket()?;
+                self.committed_pos = left_curly.range().end();
+                match custom_property_like {
+                    Some(prelude) => {
+                        self.consume_top_level_custom_property_like_discard(item_start, prelude)
                     }
-                    _ => unreachable!(
-                        "scan_qualified_rule_prelude guarantees a LeftCurlyBracket is next"
-                    ),
+                    None => self.parse_block_declarations(),
                 }
-                self.parse_block_declarations()?;
-                Ok(())
             }
             PreludeOutcome::TrueEndOfInputWithoutBlock => {
                 let len = self.source_text.as_str().len();
                 self.commit_invalid_qualified_rule_diagnostic(item_start, len)
             }
         }
+    }
+
+    /// Consumes the `LeftCurlyBracket` that [`Self::scan_qualified_rule_prelude`]
+    /// guarantees is next when it returns `FoundBlockOpener`.
+    fn expect_left_curly_bracket(&mut self) -> Result<SourceAnchor, Flow> {
+        match self.next_semantic()? {
+            ParserPosition::SemanticToken {
+                anchor,
+                kind: ObservedKind::LeftCurlyBracket,
+            } => {
+                self.cursor.advance();
+                Ok(anchor)
+            }
+            _ => Err(invariant_flow(
+                CssParserInvariantViolation::ExpectedQualifiedRuleBlockOpener,
+            )),
+        }
+    }
+
+    /// #158: structurally consumes a top-level qualified rule's balanced
+    /// block whose prelude matched the custom-property-like exclusion,
+    /// committing exactly one [`CssParserDiscardEvidence`] covering the full
+    /// candidate (prelude through the authored block) instead of entering
+    /// the supported declaration context.
+    fn consume_top_level_custom_property_like_discard(
+        &mut self,
+        item_start: usize,
+        prelude: CustomPropertyLikePrelude,
+    ) -> Result<(), Flow> {
+        let block_end = match self.consume_remainder_until_enclosing_right_curly()? {
+            RemainderOutcome::EnclosingRightCurly { end, .. } => {
+                self.cursor.advance();
+                end
+            }
+            RemainderOutcome::TrueEndOfInput => self.source_text.as_str().len(),
+        };
+
+        let prospective =
+            checked_resource_add(CssParserResourceKind::DiscardRecords, self.discard.len(), 1)?;
+        self.check_limit(CssParserResourceKind::DiscardRecords, prospective)?;
+
+        let region = self
+            .source_text
+            .anchor(item_start, block_end)
+            .map_err(|error| Flow::Invariant(error.into()))?;
+        let evidence = CssParserDiscardEvidence::new(
+            self.source_text,
+            region,
+            prelude.property_name,
+            prelude.colon,
+            &prelude.decoded_property_name,
+            CssParserDiscardKind::TopLevelCustomPropertyLikeQualifiedRule,
+        )
+        .map_err(|error| Flow::Invariant(error.into()))?;
+
+        self.discard.push(evidence);
+        self.committed_pos = block_end;
+        Ok(())
     }
 
     fn commit_invalid_qualified_rule_diagnostic(
@@ -644,14 +726,50 @@ impl<'a> Producer<'a> {
         Ok(())
     }
 
+    /// Scans the qualified-rule prelude, tracking only the minimum O(1)
+    /// summary needed for the #158 custom-property-like exclusion: the first
+    /// two top-level non-whitespace prelude values, retained only while they
+    /// could still be an `Ident` (decoded `--`-prefixed) followed by a
+    /// `Colon`. Values inside nested component structures never contribute.
     fn scan_qualified_rule_prelude(&mut self) -> Result<PreludeOutcome, Flow> {
         self.component_frames.clear();
+        let mut non_ws_seen = 0usize;
+        let mut leading_ident: Option<(SourceAnchor, String)> = None;
+        let mut leading_colon: Option<SourceAnchor> = None;
         loop {
             match self.next_semantic()? {
-                ParserPosition::SemanticToken { kind, .. } => {
+                ParserPosition::SemanticToken { anchor, kind } => {
                     let depth_before = self.component_frames.len();
                     if depth_before == 0 && matches!(kind, ObservedKind::LeftCurlyBracket) {
-                        return Ok(PreludeOutcome::FoundBlockOpener);
+                        let custom_property_like = match (&leading_ident, &leading_colon) {
+                            (Some((name_anchor, decoded)), Some(colon_anchor))
+                                if decoded.starts_with("--") =>
+                            {
+                                Some(CustomPropertyLikePrelude {
+                                    property_name: name_anchor.clone(),
+                                    decoded_property_name: decoded.clone(),
+                                    colon: colon_anchor.clone(),
+                                })
+                            }
+                            _ => None,
+                        };
+                        return Ok(PreludeOutcome::FoundBlockOpener {
+                            custom_property_like,
+                        });
+                    }
+                    if depth_before == 0 && !matches!(kind, ObservedKind::Whitespace) {
+                        non_ws_seen += 1;
+                        match non_ws_seen {
+                            1 => {
+                                if let ObservedKind::Ident(name) = &kind {
+                                    leading_ident = Some((anchor.clone(), name.clone()));
+                                }
+                            }
+                            2 if leading_ident.is_some() && matches!(kind, ObservedKind::Colon) => {
+                                leading_colon = Some(anchor.clone());
+                            }
+                            _ => {}
+                        }
                     }
                     self.consume_and_balance(&kind)?;
                 }
@@ -704,11 +822,11 @@ impl<'a> Producer<'a> {
         match self.try_declaration()? {
             DeclarationOutcome::Recognized(occurrence) => {
                 self.commit_declaration(occurrence)?;
-                self.commit_checkpoint();
+                self.commit_checkpoint()?;
                 Ok(BlockItemOutcome::Continue)
             }
             DeclarationOutcome::NotRecognized => {
-                self.rollback_checkpoint();
+                self.rollback_checkpoint()?;
                 match self.scan_qualified_rule_fallback()? {
                     FallbackOutcome::NestedRuleTrigger => {
                         self.begin_nested_content_remainder(item_start)?;
@@ -733,13 +851,21 @@ impl<'a> Producer<'a> {
                         Ok(BlockItemOutcome::Continue)
                     }
                     FallbackOutcome::MalformedEndedAtTrueEof => {
-                        // No #138 recovery-termination variant represents an
-                        // authored semicolon or a real `}` boundary here
-                        // (there is neither): the trailing malformed bytes
-                        // are structurally consumed without durable
-                        // diagnostic/recovery evidence and the parser
-                        // terminal advances to true end of input.
-                        self.committed_pos = self.source_text.as_str().len();
+                        // #159: the trailing malformed bytes reach genuine
+                        // tokenizer end of input with no authored semicolon
+                        // or right curly. Commit diagnostic + recovery
+                        // atomically with an explicit empty EOF terminal at
+                        // true source end; no delimiter is fabricated.
+                        let len = self.source_text.as_str().len();
+                        let terminal = self
+                            .source_text
+                            .anchor(len, len)
+                            .map_err(|error| Flow::Invariant(error.into()))?;
+                        self.commit_malformed_recovery(
+                            item_start,
+                            len,
+                            CssParserRecoveryTermination::EndOfInput { terminal },
+                        )?;
                         Ok(BlockItemOutcome::Continue)
                     }
                 }
@@ -1019,7 +1145,7 @@ impl<'a> Producer<'a> {
                     }
 
                     if depth_before == 0 && is_opener(&kind) {
-                        pending_open = Some((anchor.clone(), opener_frame_kind(&kind)));
+                        pending_open = Some((anchor.clone(), opener_frame_kind(&kind)?));
                     }
                     let event = self.consume_and_balance(&kind)?;
                     match event {
@@ -1106,12 +1232,12 @@ impl<'a> Producer<'a> {
         if scan.non_ws_count < 2 {
             return Ok(None);
         }
-        let last = scan.window[2]
-            .as_ref()
-            .expect("non_ws_count >= 2 implies window[2] is set");
-        let second_last = scan.window[1]
-            .as_ref()
-            .expect("non_ws_count >= 2 implies window[1] is set");
+        let last = scan.window[2].as_ref().ok_or_else(|| {
+            invariant_flow(CssParserInvariantViolation::InconsistentValueScanSummary)
+        })?;
+        let second_last = scan.window[1].as_ref().ok_or_else(|| {
+            invariant_flow(CssParserInvariantViolation::InconsistentValueScanSummary)
+        })?;
         if !matches!(second_last.simple, SimpleKind::Delim('!')) {
             return Ok(None);
         }
@@ -1155,21 +1281,24 @@ impl<'a> Producer<'a> {
                 .anchor(point, point)
                 .map_err(|error| Flow::Invariant(error.into()));
         }
-        let first = scan
-            .first
-            .as_ref()
-            .expect("non_ws_count > 0 implies first is set");
+        let first = scan.first.as_ref().ok_or_else(|| {
+            invariant_flow(CssParserInvariantViolation::InconsistentValueScanSummary)
+        })?;
         let end = if priority.is_some() {
             scan.window[0]
                 .as_ref()
-                .expect("remaining >= 1 with priority implies a component before the priority pair")
+                .ok_or_else(|| {
+                    invariant_flow(CssParserInvariantViolation::InconsistentValueScanSummary)
+                })?
                 .anchor
                 .range()
                 .end()
         } else {
             scan.window[2]
                 .as_ref()
-                .expect("non_ws_count > 0 implies window[2] is set")
+                .ok_or_else(|| {
+                    invariant_flow(CssParserInvariantViolation::InconsistentValueScanSummary)
+                })?
                 .anchor
                 .range()
                 .end()
@@ -1215,6 +1344,7 @@ impl<'a> Producer<'a> {
             self.diagnostics,
             self.recovery,
             self.unsupported,
+            self.discard,
             terminal,
             CssParserExecutionCompletion::Complete,
             coverage,
@@ -1234,6 +1364,7 @@ impl<'a> Producer<'a> {
             self.diagnostics,
             self.recovery,
             self.unsupported,
+            self.discard,
             terminal,
             CssParserExecutionCompletion::Incomplete,
             coverage,
@@ -1265,6 +1396,7 @@ impl<'a> Producer<'a> {
             self.diagnostics,
             self.recovery,
             self.unsupported,
+            self.discard,
             terminal,
             CssParserExecutionCompletion::Incomplete,
             coverage,
@@ -1281,6 +1413,7 @@ impl<'a> Producer<'a> {
             self.diagnostics.len(),
             self.recovery.len(),
             self.unsupported.len(),
+            self.discard.len(),
         )
     }
 }
