@@ -11,7 +11,7 @@ use std::collections::BTreeSet;
 use super::context_fixtures::independent_context_fixtures;
 use super::context_gold::{
     ContextGoldDeclarationItem, ContextGoldFixture, ContextGoldGroup, ContextGoldKind,
-    ContextGoldParent, ContextGoldRecord, ContextGoldResourceExpectation, ContextGoldResourceKind,
+    ContextGoldRecord, ContextGoldResourceExpectation, ContextGoldResourceKind,
     ContextGoldTermination, ContextGoldValidationError, validate_fixture,
 };
 use super::gold::GoldRange;
@@ -30,7 +30,7 @@ fn fixture<'a>(fixtures: &'a [ContextGoldFixture], id: &str) -> &'a ContextGoldF
 #[test]
 fn independent_context_fixture_count_is_exact() {
     let fixtures = independent_context_fixtures();
-    assert_eq!(fixtures.len(), 13);
+    assert_eq!(fixtures.len(), 16);
 }
 
 #[test]
@@ -66,6 +66,9 @@ fn every_required_category_has_an_explicit_fixture() {
         "CSS-CONTEXT-TRUE-EOF-TERMINATION-001",
         "CSS-CONTEXT-UPSTREAM-INCOMPLETE-TERMINATION-001",
         "CSS-CONTEXT-PARSER-RESOURCE-LIMITED-TERMINATION-001",
+        "CSS-CONTEXT-NESTED-TRUE-EOF-ANCESTRY-001",
+        "CSS-CONTEXT-NESTED-UPSTREAM-INCOMPLETE-ANCESTRY-001",
+        "CSS-CONTEXT-NESTED-PARSER-RESOURCE-LIMITED-ANCESTRY-001",
         "CSS-CONTEXT-DUPLICATE-SPELLING-DISTINCT-IDENTITIES-001",
         "CSS-CONTEXT-CUSTOM-PROPERTY-BRACE-VALUE-NOT-CONTEXT-001",
         "CSS-CONTEXT-MALFORMED-RECOVERY-NO-SYNTHETIC-ITEM-001",
@@ -75,7 +78,7 @@ fn every_required_category_has_an_explicit_fixture() {
     for id in required {
         assert!(ids.contains(id), "missing required context fixture {id}");
     }
-    assert_eq!(required.len(), 13);
+    assert_eq!(required.len(), 16);
 }
 
 #[test]
@@ -110,9 +113,9 @@ fn context_ids_are_contiguous_in_each_fixture() {
 fn parent_ids_refer_backward_in_every_fixture() {
     for fixture in &independent_context_fixtures() {
         for (index, record) in fixture.contexts.iter().enumerate() {
-            if let Some(parent) = record.parent {
+            if let Some(parent_id) = record.parent {
                 assert!(
-                    parent.parent_id < index,
+                    parent_id < index,
                     "{}: context {index} parent must refer to an earlier record",
                     fixture.id
                 );
@@ -121,25 +124,47 @@ fn parent_ids_refer_backward_in_every_fixture() {
     }
 }
 
+/// Every retained context carries exactly one direct-item ordinal, scoped
+/// either to its real parent or to the implicit stylesheet root when
+/// `parent` is `None`. This checks sibling ordinal determinism/uniqueness
+/// uniformly for both scopes.
 #[test]
-fn parent_item_ordinals_are_deterministic_and_non_duplicated() {
+fn sibling_item_ordinals_are_deterministic_and_non_duplicated_in_every_scope() {
     for fixture in &independent_context_fixtures() {
-        let mut last_ordinal: std::collections::BTreeMap<usize, usize> =
+        let mut last_ordinal: std::collections::BTreeMap<Option<usize>, usize> =
             std::collections::BTreeMap::new();
         for record in &fixture.contexts {
-            if let Some(parent) = record.parent {
-                if let Some(&previous) = last_ordinal.get(&parent.parent_id) {
-                    assert!(
-                        parent.item_ordinal > previous,
-                        "{}: sibling item ordinals under parent {} must strictly increase",
-                        fixture.id,
-                        parent.parent_id
-                    );
-                }
-                last_ordinal.insert(parent.parent_id, parent.item_ordinal);
+            let scope = record.parent;
+            if let Some(&previous) = last_ordinal.get(&scope) {
+                assert!(
+                    record.item_ordinal > previous,
+                    "{}: sibling item ordinals in scope {scope:?} must strictly increase",
+                    fixture.id
+                );
             }
+            last_ordinal.insert(scope, record.item_ordinal);
         }
     }
+}
+
+#[test]
+fn root_scoped_top_level_siblings_carry_distinct_increasing_ordinals() {
+    let fixtures = independent_context_fixtures();
+    let duplicate = fixture(
+        &fixtures,
+        "CSS-CONTEXT-DUPLICATE-SPELLING-DISTINCT-IDENTITIES-001",
+    );
+    let root_siblings: Vec<&ContextGoldRecord> = duplicate
+        .contexts
+        .iter()
+        .filter(|record| record.parent.is_none())
+        .collect();
+    assert_eq!(
+        root_siblings.len(),
+        2,
+        "fixture must exercise two implicit-root-scoped top-level contexts"
+    );
+    assert!(root_siblings[0].item_ordinal < root_siblings[1].item_ordinal);
 }
 
 #[test]
@@ -176,8 +201,8 @@ fn source_ranges_are_valid_utf8_boundaries_for_every_fixture() {
 fn child_ranges_are_contained_by_expected_parent_body_ranges() {
     for fixture in &independent_context_fixtures() {
         for record in &fixture.contexts {
-            if let Some(parent) = record.parent {
-                let parent_body = fixture.contexts[parent.parent_id].body;
+            if let Some(parent_id) = record.parent {
+                let parent_body = fixture.contexts[parent_id].body;
                 let extent_end = match record.termination {
                     ContextGoldTermination::AuthoredRightCurly(evidence)
                     | ContextGoldTermination::EndOfInput(evidence)
@@ -260,9 +285,12 @@ fn malformed_recovery_fixture_child_ordinal_skips_the_abandoned_span() {
         "CSS-CONTEXT-MALFORMED-RECOVERY-NO-SYNTHETIC-ITEM-001",
     );
     let child = &malformed.contexts[1];
-    let parent = child.parent.expect("child must have a parent relationship");
+    assert!(
+        child.parent.is_some(),
+        "child must have a parent relationship"
+    );
     assert_eq!(
-        parent.item_ordinal, 0,
+        child.item_ordinal, 0,
         "the malformed span before the child rule must not consume item ordinal 0"
     );
 }
@@ -326,6 +354,118 @@ fn resource_limit_fixtures_are_internally_coherent() {
 }
 
 // -------------------------------------------------------------------
+// Blocker 2 remediation: independent partial-ancestry gold. Each nested
+// fixture proves parent identity/containment retention, a shared honest
+// terminal for both active contexts, no fabricated `}`, and a correct
+// achieved peak depth.
+// -------------------------------------------------------------------
+
+fn assert_nested_ancestry_shares_one_honest_terminal(
+    fixtures: &[ContextGoldFixture],
+    fixture_id: &str,
+    expected_terminal: GoldRange,
+) {
+    let nested = fixture(fixtures, fixture_id);
+    assert_eq!(nested.contexts.len(), 2);
+    let outer = &nested.contexts[0];
+    let inner = &nested.contexts[1];
+
+    assert!(outer.parent.is_none());
+    assert_eq!(inner.parent, Some(outer.id));
+
+    let outer_terminal = outer.termination.evidence_range();
+    let inner_terminal = inner.termination.evidence_range();
+    assert_eq!(outer_terminal, expected_terminal);
+    assert_eq!(inner_terminal, expected_terminal);
+    assert_eq!(
+        outer_terminal, inner_terminal,
+        "both active ancestors must terminate at exactly the same honest point"
+    );
+    assert!(
+        outer_terminal.is_empty(),
+        "a partial terminal must be an empty point, never a fabricated `}}`"
+    );
+
+    // Child extent must be contained in the parent's retained body.
+    assert!(inner.header.start >= outer.body.start);
+    assert!(inner_terminal.end <= outer.body.end);
+
+    assert_eq!(nested.expected_peak_context_depth, 2);
+    assert_eq!(nested.expected_context_record_count, 2);
+    validate_fixture(nested).expect("nested ancestry fixture must self-validate");
+}
+
+#[test]
+fn nested_true_eof_ancestry_shares_the_true_source_end_terminal() {
+    let fixtures = independent_context_fixtures();
+    let nested = fixture(&fixtures, "CSS-CONTEXT-NESTED-TRUE-EOF-ANCESTRY-001");
+    let expected = range(nested.byte_len, nested.byte_len);
+    assert_nested_ancestry_shares_one_honest_terminal(
+        &fixtures,
+        "CSS-CONTEXT-NESTED-TRUE-EOF-ANCESTRY-001",
+        expected,
+    );
+    for record in &nested.contexts {
+        assert!(matches!(
+            record.termination,
+            ContextGoldTermination::EndOfInput(_)
+        ));
+    }
+}
+
+#[test]
+fn nested_upstream_incomplete_ancestry_shares_one_bounded_terminal_short_of_source_end() {
+    let fixtures = independent_context_fixtures();
+    let nested = fixture(
+        &fixtures,
+        "CSS-CONTEXT-NESTED-UPSTREAM-INCOMPLETE-ANCESTRY-001",
+    );
+    let shared_terminal = nested.contexts[0].termination.evidence_range();
+    assert!(
+        shared_terminal.start < nested.byte_len,
+        "an upstream-incomplete terminal, unlike true EOF, need not sit at source end"
+    );
+    assert_nested_ancestry_shares_one_honest_terminal(
+        &fixtures,
+        "CSS-CONTEXT-NESTED-UPSTREAM-INCOMPLETE-ANCESTRY-001",
+        shared_terminal,
+    );
+    for record in &nested.contexts {
+        assert!(matches!(
+            record.termination,
+            ContextGoldTermination::UpstreamTokenizerIncomplete(_)
+        ));
+    }
+}
+
+#[test]
+fn nested_parser_resource_limited_ancestry_is_independent_of_the_depth_refusal_fixture() {
+    let fixtures = independent_context_fixtures();
+    let nested = fixture(
+        &fixtures,
+        "CSS-CONTEXT-NESTED-PARSER-RESOURCE-LIMITED-ANCESTRY-001",
+    );
+    // Distinct contract concern from the `PeakContextDepth` refusal fixture:
+    // this fixture carries no resource-limit expectation of its own.
+    assert!(nested.resource_expectation.is_none());
+    let depth_limit_fixture = fixture(&fixtures, "CSS-CONTEXT-PEAK-CONTEXT-DEPTH-LIMIT-001");
+    assert_ne!(nested.id, depth_limit_fixture.id);
+
+    let shared_terminal = nested.contexts[0].termination.evidence_range();
+    assert_nested_ancestry_shares_one_honest_terminal(
+        &fixtures,
+        "CSS-CONTEXT-NESTED-PARSER-RESOURCE-LIMITED-ANCESTRY-001",
+        shared_terminal,
+    );
+    for record in &nested.contexts {
+        assert!(matches!(
+            record.termination,
+            ContextGoldTermination::ParserResourceLimit(_)
+        ));
+    }
+}
+
+// -------------------------------------------------------------------
 // Gold corruption matrix: the independent model must itself reject
 // invalid id/parent/order/range/lifecycle/depth/count relationships,
 // without any production-type reuse.
@@ -335,6 +475,7 @@ fn minimal_valid_record(id: usize) -> ContextGoldRecord {
     ContextGoldRecord {
         id,
         parent: None,
+        item_ordinal: 0,
         kind: ContextGoldKind::QualifiedRuleBlock,
         header: range(0, 1),
         block_opener: range(1, 2),
@@ -371,10 +512,7 @@ fn corruption_wrong_context_id_for_vector_index_is_rejected() {
 #[test]
 fn corruption_missing_parent_is_rejected() {
     let mut child = minimal_valid_record(0);
-    child.parent = Some(ContextGoldParent {
-        parent_id: 0,
-        item_ordinal: 0,
-    });
+    child.parent = Some(0);
     let fixture = minimal_fixture(vec![child]);
     assert_eq!(
         validate_fixture(&fixture),
@@ -390,10 +528,7 @@ fn corruption_forward_parent_is_rejected() {
     let a = minimal_valid_record(0);
     let b = ContextGoldRecord {
         id: 1,
-        parent: Some(ContextGoldParent {
-            parent_id: 2,
-            item_ordinal: 0,
-        }),
+        parent: Some(2),
         ..minimal_valid_record(1)
     };
     let fixture = minimal_fixture(vec![a, b]);
@@ -409,6 +544,7 @@ fn corruption_child_outside_parent_body_is_rejected() {
     let a = ContextGoldRecord {
         id: 0,
         parent: None,
+        item_ordinal: 0,
         kind: ContextGoldKind::QualifiedRuleBlock,
         header: range(0, 1),
         block_opener: range(1, 2),
@@ -420,10 +556,8 @@ fn corruption_child_outside_parent_body_is_rejected() {
     // outside `a`'s retained body [2, 3).
     let escaping_child = ContextGoldRecord {
         id: 1,
-        parent: Some(ContextGoldParent {
-            parent_id: 0,
-            item_ordinal: 0,
-        }),
+        parent: Some(0),
+        item_ordinal: 0,
         kind: ContextGoldKind::QualifiedRuleBlock,
         header: range(4, 5),
         block_opener: range(5, 6),
@@ -454,6 +588,7 @@ fn corruption_duplicate_sibling_item_ordinal_is_rejected() {
     let a = ContextGoldRecord {
         id: 0,
         parent: None,
+        item_ordinal: 0,
         kind: ContextGoldKind::QualifiedRuleBlock,
         header: range(0, 1),
         block_opener: range(1, 2),
@@ -463,10 +598,8 @@ fn corruption_duplicate_sibling_item_ordinal_is_rejected() {
     };
     let child1 = ContextGoldRecord {
         id: 1,
-        parent: Some(ContextGoldParent {
-            parent_id: 0,
-            item_ordinal: 0,
-        }),
+        parent: Some(0),
+        item_ordinal: 0,
         kind: ContextGoldKind::QualifiedRuleBlock,
         header: range(2, 3),
         block_opener: range(3, 4),
@@ -476,10 +609,8 @@ fn corruption_duplicate_sibling_item_ordinal_is_rejected() {
     };
     let child2 = ContextGoldRecord {
         id: 2,
-        parent: Some(ContextGoldParent {
-            parent_id: 0,
-            item_ordinal: 0,
-        }),
+        parent: Some(0),
+        item_ordinal: 0,
         kind: ContextGoldKind::QualifiedRuleBlock,
         header: range(5, 6),
         block_opener: range(6, 7),
@@ -500,7 +631,7 @@ fn corruption_duplicate_sibling_item_ordinal_is_rejected() {
     };
     assert_eq!(
         validate_fixture(&fixture),
-        Err(ContextGoldValidationError::DuplicateChildItemOrdinal)
+        Err(ContextGoldValidationError::DuplicateSiblingItemOrdinal)
     );
 }
 
@@ -510,6 +641,7 @@ fn corruption_decreasing_sibling_item_ordinal_is_rejected() {
     let a = ContextGoldRecord {
         id: 0,
         parent: None,
+        item_ordinal: 0,
         kind: ContextGoldKind::QualifiedRuleBlock,
         header: range(0, 1),
         block_opener: range(1, 2),
@@ -519,10 +651,8 @@ fn corruption_decreasing_sibling_item_ordinal_is_rejected() {
     };
     let child1 = ContextGoldRecord {
         id: 1,
-        parent: Some(ContextGoldParent {
-            parent_id: 0,
-            item_ordinal: 1,
-        }),
+        parent: Some(0),
+        item_ordinal: 1,
         kind: ContextGoldKind::QualifiedRuleBlock,
         header: range(2, 3),
         block_opener: range(3, 4),
@@ -532,10 +662,8 @@ fn corruption_decreasing_sibling_item_ordinal_is_rejected() {
     };
     let child2 = ContextGoldRecord {
         id: 2,
-        parent: Some(ContextGoldParent {
-            parent_id: 0,
-            item_ordinal: 0,
-        }),
+        parent: Some(0),
+        item_ordinal: 0,
         kind: ContextGoldKind::QualifiedRuleBlock,
         header: range(5, 6),
         block_opener: range(6, 7),
@@ -556,8 +684,133 @@ fn corruption_decreasing_sibling_item_ordinal_is_rejected() {
     };
     assert_eq!(
         validate_fixture(&fixture),
-        Err(ContextGoldValidationError::ChildOrderViolation)
+        Err(ContextGoldValidationError::SiblingOrdinalOrderViolation)
     );
+}
+
+#[test]
+fn corruption_root_scoped_duplicate_sibling_item_ordinal_is_rejected() {
+    let source = "a{}b{}";
+    let first = ContextGoldRecord {
+        id: 0,
+        parent: None,
+        item_ordinal: 0,
+        kind: ContextGoldKind::QualifiedRuleBlock,
+        header: range(0, 1),
+        block_opener: range(1, 2),
+        body: range(2, 2),
+        termination: ContextGoldTermination::AuthoredRightCurly(range(2, 3)),
+        declarations: vec![],
+    };
+    // Same implicit-root scope as `first` (both `parent = None`), claiming
+    // the same ordinal.
+    let second = ContextGoldRecord {
+        id: 1,
+        parent: None,
+        item_ordinal: 0,
+        kind: ContextGoldKind::QualifiedRuleBlock,
+        header: range(3, 4),
+        block_opener: range(4, 5),
+        body: range(5, 5),
+        termination: ContextGoldTermination::AuthoredRightCurly(range(5, 6)),
+        declarations: vec![],
+    };
+    let fixture = ContextGoldFixture {
+        id: "CSS-CONTEXT-CORRUPTION-TEST",
+        group: ContextGoldGroup::TopLevel,
+        source_id: 91_004,
+        source,
+        byte_len: source.len(),
+        contexts: vec![first, second],
+        expected_context_record_count: 2,
+        expected_peak_context_depth: 1,
+        resource_expectation: None,
+    };
+    assert_eq!(
+        validate_fixture(&fixture),
+        Err(ContextGoldValidationError::DuplicateSiblingItemOrdinal)
+    );
+}
+
+#[test]
+fn corruption_root_scoped_sibling_source_order_violation_is_rejected() {
+    // `second`'s ordinal (1) increases relative to `first`'s (0), but its
+    // source extent fully overlaps `first`'s instead of following it:
+    // increasing ordinals must not paper over reversed/overlapping source.
+    let source = "a{}b{}";
+    let first = ContextGoldRecord {
+        id: 0,
+        parent: None,
+        item_ordinal: 0,
+        kind: ContextGoldKind::QualifiedRuleBlock,
+        header: range(0, 1),
+        block_opener: range(1, 2),
+        body: range(2, 2),
+        termination: ContextGoldTermination::AuthoredRightCurly(range(2, 3)),
+        declarations: vec![],
+    };
+    let second = ContextGoldRecord {
+        id: 1,
+        parent: None,
+        item_ordinal: 1,
+        ..first.clone()
+    };
+    let fixture = ContextGoldFixture {
+        id: "CSS-CONTEXT-CORRUPTION-TEST",
+        group: ContextGoldGroup::TopLevel,
+        source_id: 91_005,
+        source,
+        byte_len: source.len(),
+        contexts: vec![first, second],
+        expected_context_record_count: 2,
+        expected_peak_context_depth: 1,
+        resource_expectation: None,
+    };
+    assert_eq!(
+        validate_fixture(&fixture),
+        Err(ContextGoldValidationError::SiblingSourceOrderViolation)
+    );
+}
+
+#[test]
+fn root_scoped_siblings_with_ordinal_gaps_are_accepted() {
+    let source = "a{}b{}";
+    let first = ContextGoldRecord {
+        id: 0,
+        parent: None,
+        item_ordinal: 0,
+        kind: ContextGoldKind::QualifiedRuleBlock,
+        header: range(0, 1),
+        block_opener: range(1, 2),
+        body: range(2, 2),
+        termination: ContextGoldTermination::AuthoredRightCurly(range(2, 3)),
+        declarations: vec![],
+    };
+    let second = ContextGoldRecord {
+        id: 1,
+        parent: None,
+        // Ordinal 1 presumed reserved for a future declaration item; the
+        // gap is valid.
+        item_ordinal: 2,
+        kind: ContextGoldKind::QualifiedRuleBlock,
+        header: range(3, 4),
+        block_opener: range(4, 5),
+        body: range(5, 5),
+        termination: ContextGoldTermination::AuthoredRightCurly(range(5, 6)),
+        declarations: vec![],
+    };
+    let fixture = ContextGoldFixture {
+        id: "CSS-CONTEXT-CORRUPTION-TEST",
+        group: ContextGoldGroup::TopLevel,
+        source_id: 91_006,
+        source,
+        byte_len: source.len(),
+        contexts: vec![first, second],
+        expected_context_record_count: 2,
+        expected_peak_context_depth: 1,
+        resource_expectation: None,
+    };
+    assert_eq!(validate_fixture(&fixture), Ok(()));
 }
 
 #[test]

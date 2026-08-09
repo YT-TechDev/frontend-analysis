@@ -9,7 +9,7 @@
 
 use super::context_gold::{
     ContextGoldDeclarationItem, ContextGoldFixture, ContextGoldGroup, ContextGoldKind,
-    ContextGoldParent, ContextGoldRecord, ContextGoldResourceExpectation, ContextGoldResourceKind,
+    ContextGoldRecord, ContextGoldResourceExpectation, ContextGoldResourceKind,
     ContextGoldTermination,
 };
 use super::gold::GoldRange;
@@ -29,6 +29,7 @@ fn top_level_single_declaration() -> ContextGoldFixture {
         contexts: vec![ContextGoldRecord {
             id: 0,
             parent: None,
+            item_ordinal: 0,
             kind: ContextGoldKind::QualifiedRuleBlock,
             header: range(0, 1),
             block_opener: range(1, 2),
@@ -57,6 +58,7 @@ fn declaration_only_block_multiple_declarations() -> ContextGoldFixture {
         contexts: vec![ContextGoldRecord {
             id: 0,
             parent: None,
+            item_ordinal: 0,
             kind: ContextGoldKind::QualifiedRuleBlock,
             header: range(0, 1),
             block_opener: range(1, 2),
@@ -87,6 +89,7 @@ fn declaration_child_rule_declaration() -> ContextGoldFixture {
     let outer = ContextGoldRecord {
         id: 0,
         parent: None,
+        item_ordinal: 0,
         kind: ContextGoldKind::QualifiedRuleBlock,
         header: range(0, 1),
         block_opener: range(1, 2),
@@ -107,10 +110,8 @@ fn declaration_child_rule_declaration() -> ContextGoldFixture {
     };
     let child_b = ContextGoldRecord {
         id: 1,
-        parent: Some(ContextGoldParent {
-            parent_id: 0,
-            item_ordinal: 1,
-        }),
+        parent: Some(0),
+        item_ordinal: 1,
         kind: ContextGoldKind::QualifiedRuleBlock,
         header: range(12, 13),
         block_opener: range(13, 14),
@@ -140,6 +141,7 @@ fn multiple_child_rules_between_runs() -> ContextGoldFixture {
     let outer = ContextGoldRecord {
         id: 0,
         parent: None,
+        item_ordinal: 0,
         kind: ContextGoldKind::QualifiedRuleBlock,
         header: range(0, 1),
         block_opener: range(1, 2),
@@ -165,10 +167,8 @@ fn multiple_child_rules_between_runs() -> ContextGoldFixture {
     };
     let child_b = ContextGoldRecord {
         id: 1,
-        parent: Some(ContextGoldParent {
-            parent_id: 0,
-            item_ordinal: 1,
-        }),
+        parent: Some(0),
+        item_ordinal: 1,
         kind: ContextGoldKind::QualifiedRuleBlock,
         header: range(8, 9),
         block_opener: range(9, 10),
@@ -182,10 +182,8 @@ fn multiple_child_rules_between_runs() -> ContextGoldFixture {
     };
     let child_c = ContextGoldRecord {
         id: 2,
-        parent: Some(ContextGoldParent {
-            parent_id: 0,
-            item_ordinal: 3,
-        }),
+        parent: Some(0),
+        item_ordinal: 3,
         kind: ContextGoldKind::QualifiedRuleBlock,
         header: range(23, 24),
         block_opener: range(24, 25),
@@ -215,6 +213,7 @@ fn recursive_nesting_depth_three() -> ContextGoldFixture {
     let a = ContextGoldRecord {
         id: 0,
         parent: None,
+        item_ordinal: 0,
         kind: ContextGoldKind::QualifiedRuleBlock,
         header: range(0, 1),
         block_opener: range(1, 2),
@@ -224,10 +223,8 @@ fn recursive_nesting_depth_three() -> ContextGoldFixture {
     };
     let b = ContextGoldRecord {
         id: 1,
-        parent: Some(ContextGoldParent {
-            parent_id: 0,
-            item_ordinal: 0,
-        }),
+        parent: Some(0),
+        item_ordinal: 0,
         kind: ContextGoldKind::QualifiedRuleBlock,
         header: range(2, 3),
         block_opener: range(3, 4),
@@ -237,10 +234,8 @@ fn recursive_nesting_depth_three() -> ContextGoldFixture {
     };
     let c = ContextGoldRecord {
         id: 2,
-        parent: Some(ContextGoldParent {
-            parent_id: 1,
-            item_ordinal: 0,
-        }),
+        parent: Some(1),
+        item_ordinal: 0,
         kind: ContextGoldKind::QualifiedRuleBlock,
         header: range(4, 5),
         block_opener: range(5, 6),
@@ -277,6 +272,7 @@ fn true_eof_termination() -> ContextGoldFixture {
         contexts: vec![ContextGoldRecord {
             id: 0,
             parent: None,
+            item_ordinal: 0,
             kind: ContextGoldKind::QualifiedRuleBlock,
             header: range(0, 1),
             block_opener: range(1, 2),
@@ -301,6 +297,7 @@ fn upstream_incomplete_termination() -> ContextGoldFixture {
         contexts: vec![ContextGoldRecord {
             id: 0,
             parent: None,
+            item_ordinal: 0,
             kind: ContextGoldKind::QualifiedRuleBlock,
             header: range(0, 1),
             block_opener: range(1, 2),
@@ -328,6 +325,7 @@ fn parser_resource_limited_termination() -> ContextGoldFixture {
         contexts: vec![ContextGoldRecord {
             id: 0,
             parent: None,
+            item_ordinal: 0,
             kind: ContextGoldKind::QualifiedRuleBlock,
             header: range(0, 1),
             block_opener: range(1, 2),
@@ -341,12 +339,137 @@ fn parser_resource_limited_termination() -> ContextGoldFixture {
     }
 }
 
+/// Category 8b: nested true-EOF ancestry. Both an outer and an inner context
+/// remain active when the run reaches genuine tokenizer end of input; both
+/// honestly retain `EndOfInput` evidence at the exact same true source-end
+/// terminal, with no fabricated authored closure for either.
+fn nested_true_eof_ancestry() -> ContextGoldFixture {
+    let outer = ContextGoldRecord {
+        id: 0,
+        parent: None,
+        item_ordinal: 0,
+        kind: ContextGoldKind::QualifiedRuleBlock,
+        header: range(0, 1),
+        block_opener: range(1, 2),
+        body: range(2, 13),
+        termination: ContextGoldTermination::EndOfInput(range(13, 13)),
+        declarations: vec![],
+    };
+    let inner = ContextGoldRecord {
+        id: 1,
+        parent: Some(0),
+        item_ordinal: 0,
+        kind: ContextGoldKind::QualifiedRuleBlock,
+        header: range(2, 3),
+        block_opener: range(3, 4),
+        body: range(4, 13),
+        termination: ContextGoldTermination::EndOfInput(range(13, 13)),
+        declarations: vec![],
+    };
+    ContextGoldFixture {
+        id: "CSS-CONTEXT-NESTED-TRUE-EOF-ANCESTRY-001",
+        group: ContextGoldGroup::Termination,
+        source_id: 90_014,
+        source: "a{b{color:red",
+        byte_len: 13,
+        contexts: vec![outer, inner],
+        expected_context_record_count: 2,
+        expected_peak_context_depth: 2,
+        resource_expectation: None,
+    }
+}
+
+/// Category 9b: nested upstream-tokenizer-incomplete ancestry. Both an
+/// outer and an inner context remain active at the same exact *bounded*
+/// terminal, which -- unlike true EOF -- need not sit at the retained
+/// source's end (here `11`, short of the source's own length `13`).
+fn nested_upstream_incomplete_ancestry() -> ContextGoldFixture {
+    let outer = ContextGoldRecord {
+        id: 0,
+        parent: None,
+        item_ordinal: 0,
+        kind: ContextGoldKind::QualifiedRuleBlock,
+        header: range(0, 1),
+        block_opener: range(1, 2),
+        body: range(2, 11),
+        termination: ContextGoldTermination::UpstreamTokenizerIncomplete(range(11, 11)),
+        declarations: vec![],
+    };
+    let inner = ContextGoldRecord {
+        id: 1,
+        parent: Some(0),
+        item_ordinal: 0,
+        kind: ContextGoldKind::QualifiedRuleBlock,
+        header: range(2, 3),
+        block_opener: range(3, 4),
+        body: range(4, 11),
+        termination: ContextGoldTermination::UpstreamTokenizerIncomplete(range(11, 11)),
+        declarations: vec![],
+    };
+    ContextGoldFixture {
+        id: "CSS-CONTEXT-NESTED-UPSTREAM-INCOMPLETE-ANCESTRY-001",
+        group: ContextGoldGroup::Termination,
+        source_id: 90_015,
+        source: "a{b{color:red",
+        byte_len: 13,
+        contexts: vec![outer, inner],
+        expected_context_record_count: 2,
+        expected_peak_context_depth: 2,
+        resource_expectation: None,
+    }
+}
+
+/// Category 10b: nested parser-resource-limited ancestry, independent of
+/// the dedicated `PeakContextDepth`/`ContextRecords` refusal fixtures
+/// (categories 12/13): here the run stops on an unrelated resource kind
+/// while both an outer and an inner context remain honestly active at the
+/// exact same parser terminal.
+fn nested_parser_resource_limited_ancestry() -> ContextGoldFixture {
+    let outer = ContextGoldRecord {
+        id: 0,
+        parent: None,
+        item_ordinal: 0,
+        kind: ContextGoldKind::QualifiedRuleBlock,
+        header: range(0, 1),
+        block_opener: range(1, 2),
+        body: range(2, 9),
+        termination: ContextGoldTermination::ParserResourceLimit(range(9, 9)),
+        declarations: vec![],
+    };
+    let inner = ContextGoldRecord {
+        id: 1,
+        parent: Some(0),
+        item_ordinal: 0,
+        kind: ContextGoldKind::QualifiedRuleBlock,
+        header: range(2, 3),
+        block_opener: range(3, 4),
+        body: range(4, 9),
+        termination: ContextGoldTermination::ParserResourceLimit(range(9, 9)),
+        declarations: vec![],
+    };
+    ContextGoldFixture {
+        id: "CSS-CONTEXT-NESTED-PARSER-RESOURCE-LIMITED-ANCESTRY-001",
+        group: ContextGoldGroup::Termination,
+        source_id: 90_016,
+        source: "a{b{color:red;}}",
+        byte_len: 16,
+        contexts: vec![outer, inner],
+        expected_context_record_count: 2,
+        expected_peak_context_depth: 2,
+        resource_expectation: None,
+    }
+}
+
 /// Category 9: identical raw child spelling nested under two distinct
-/// top-level parents must still receive distinct context identities.
+/// top-level parents must still receive distinct context identities. `a`
+/// and `b` are both implicit-root-scoped siblings, so they carry distinct,
+/// strictly increasing root-scoped ordinals (0 then 1) despite each owning
+/// its own independently-numbered nested child.
 fn duplicate_authored_spelling_distinct_identities() -> ContextGoldFixture {
     let a = ContextGoldRecord {
         id: 0,
         parent: None,
+        item_ordinal: 0,
         kind: ContextGoldKind::QualifiedRuleBlock,
         header: range(0, 1),
         block_opener: range(1, 2),
@@ -356,10 +479,8 @@ fn duplicate_authored_spelling_distinct_identities() -> ContextGoldFixture {
     };
     let x_in_a = ContextGoldRecord {
         id: 1,
-        parent: Some(ContextGoldParent {
-            parent_id: 0,
-            item_ordinal: 0,
-        }),
+        parent: Some(0),
+        item_ordinal: 0,
         kind: ContextGoldKind::QualifiedRuleBlock,
         header: range(2, 3),
         block_opener: range(3, 4),
@@ -374,6 +495,7 @@ fn duplicate_authored_spelling_distinct_identities() -> ContextGoldFixture {
     let b = ContextGoldRecord {
         id: 2,
         parent: None,
+        item_ordinal: 1,
         kind: ContextGoldKind::QualifiedRuleBlock,
         header: range(10, 11),
         block_opener: range(11, 12),
@@ -383,10 +505,8 @@ fn duplicate_authored_spelling_distinct_identities() -> ContextGoldFixture {
     };
     let x_in_b = ContextGoldRecord {
         id: 3,
-        parent: Some(ContextGoldParent {
-            parent_id: 2,
-            item_ordinal: 0,
-        }),
+        parent: Some(2),
+        item_ordinal: 0,
         kind: ContextGoldKind::QualifiedRuleBlock,
         header: range(12, 13),
         block_opener: range(13, 14),
@@ -423,6 +543,7 @@ fn custom_property_brace_value_is_not_a_child_context() -> ContextGoldFixture {
         contexts: vec![ContextGoldRecord {
             id: 0,
             parent: None,
+            item_ordinal: 0,
             kind: ContextGoldKind::QualifiedRuleBlock,
             header: range(0, 1),
             block_opener: range(1, 2),
@@ -449,6 +570,7 @@ fn malformed_recovery_does_not_consume_an_item_ordinal() -> ContextGoldFixture {
     let outer = ContextGoldRecord {
         id: 0,
         parent: None,
+        item_ordinal: 0,
         kind: ContextGoldKind::QualifiedRuleBlock,
         header: range(0, 1),
         block_opener: range(1, 2),
@@ -458,12 +580,10 @@ fn malformed_recovery_does_not_consume_an_item_ordinal() -> ContextGoldFixture {
     };
     let child_b = ContextGoldRecord {
         id: 1,
-        parent: Some(ContextGoldParent {
-            parent_id: 0,
-            // Not 1: the preceding malformed "color red;" span never
-            // materialized a direct item.
-            item_ordinal: 0,
-        }),
+        parent: Some(0),
+        // Not 1: the preceding malformed "color red;" span never
+        // materialized a direct item.
+        item_ordinal: 0,
         kind: ContextGoldKind::QualifiedRuleBlock,
         header: range(12, 13),
         block_opener: range(13, 14),
@@ -496,6 +616,7 @@ fn peak_context_depth_limit_case() -> ContextGoldFixture {
     let a = ContextGoldRecord {
         id: 0,
         parent: None,
+        item_ordinal: 0,
         kind: ContextGoldKind::QualifiedRuleBlock,
         header: range(0, 1),
         block_opener: range(1, 2),
@@ -505,10 +626,8 @@ fn peak_context_depth_limit_case() -> ContextGoldFixture {
     };
     let b = ContextGoldRecord {
         id: 1,
-        parent: Some(ContextGoldParent {
-            parent_id: 0,
-            item_ordinal: 0,
-        }),
+        parent: Some(0),
+        item_ordinal: 0,
         kind: ContextGoldKind::QualifiedRuleBlock,
         header: range(2, 3),
         block_opener: range(3, 4),
@@ -541,6 +660,7 @@ fn context_records_limit_case() -> ContextGoldFixture {
     let a = ContextGoldRecord {
         id: 0,
         parent: None,
+        item_ordinal: 0,
         kind: ContextGoldKind::QualifiedRuleBlock,
         header: range(0, 1),
         block_opener: range(1, 2),
@@ -550,10 +670,8 @@ fn context_records_limit_case() -> ContextGoldFixture {
     };
     let b = ContextGoldRecord {
         id: 1,
-        parent: Some(ContextGoldParent {
-            parent_id: 0,
-            item_ordinal: 0,
-        }),
+        parent: Some(0),
+        item_ordinal: 0,
         kind: ContextGoldKind::QualifiedRuleBlock,
         header: range(2, 3),
         block_opener: range(3, 4),
@@ -592,6 +710,9 @@ pub(super) fn independent_context_fixtures() -> Vec<ContextGoldFixture> {
         true_eof_termination(),
         upstream_incomplete_termination(),
         parser_resource_limited_termination(),
+        nested_true_eof_ancestry(),
+        nested_upstream_incomplete_ancestry(),
+        nested_parser_resource_limited_ancestry(),
         duplicate_authored_spelling_distinct_identities(),
         custom_property_brace_value_is_not_a_child_context(),
         malformed_recovery_does_not_consume_an_item_ordinal(),

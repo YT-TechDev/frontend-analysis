@@ -369,14 +369,21 @@ pub(crate) enum CssParserInvariantViolation {
     ContextChildOutsideParentBody {
         index: usize,
     },
-    /// Two retained child contexts under the same parent claimed the same
-    /// parent-local direct-item ordinal.
-    ContextDuplicateChildItemOrdinal {
+    /// Two retained sibling contexts in the same ordinal scope (a real
+    /// parent, or the implicit stylesheet root when both have no parent)
+    /// claimed the same direct-item ordinal.
+    ContextDuplicateSiblingItemOrdinal {
         index: usize,
     },
-    /// Retained child-context item ordinals under one parent did not
-    /// strictly increase in retained (source) order.
-    ContextChildOrderViolation {
+    /// Retained sibling-context item ordinals in the same scope did not
+    /// strictly increase in retained (vector/id) order.
+    ContextSiblingOrdinalOrderViolation {
+        index: usize,
+    },
+    /// A retained sibling context's numeric ordinal increased relative to
+    /// the previous sibling in its scope, but its source extent did not
+    /// agree (reversed or overlapping raw source position).
+    ContextSiblingSourceOrderViolation {
         index: usize,
     },
     ContextBeyondTerminal {
@@ -547,11 +554,13 @@ fn validate_run(
 
 /// Validates retained context evidence: run-local ID/index contiguity,
 /// parent existence/ordering, source-containment within the parent's `body`,
-/// sibling item-ordinal uniqueness/order, the context-beyond-terminal bound,
-/// and partial-termination/lifecycle coupling against the parser run's own
-/// upstream/termination evidence. Returns the achieved maximum ancestry
-/// depth represented by `context_records` (0 when empty), which the caller
-/// reconciles against the committed `PeakContextDepth` usage.
+/// sibling item-ordinal uniqueness/order/source-agreement (applied both to
+/// real-parent siblings and to the implicit-root sibling set), the
+/// context-beyond-terminal bound, and partial-termination/lifecycle coupling
+/// against the parser run's own upstream/termination evidence. Returns the
+/// achieved maximum ancestry depth represented by `context_records` (0 when
+/// empty), which the caller reconciles against the committed
+/// `PeakContextDepth` usage.
 fn validate_contexts(
     expected_source: SourceId,
     context_records: &[CssParserContextRecord],
@@ -562,7 +571,12 @@ fn validate_contexts(
 ) -> Result<usize, CssParserRunError> {
     let upstream_true_eof = upstream_ended_at_true_eof(upstream);
     let mut depths: Vec<usize> = Vec::with_capacity(context_records.len());
-    let mut last_child_ordinal: std::collections::BTreeMap<usize, usize> =
+    // Keyed by the ordinal scope: `Some(parent_index)` for a real parent,
+    // `None` for the implicit stylesheet root. Every retained context
+    // belongs to exactly one such scope and carries one ordinal within it.
+    let mut last_sibling_ordinal: std::collections::BTreeMap<Option<usize>, usize> =
+        std::collections::BTreeMap::new();
+    let mut last_sibling_extent_end: std::collections::BTreeMap<Option<usize>, usize> =
         std::collections::BTreeMap::new();
 
     for (index, record) in context_records.iter().enumerate() {
@@ -575,6 +589,7 @@ fn validate_contexts(
             CssParserRunEvidenceRole::Context { index },
         )?;
 
+        let extent_start = record.extent_start();
         let extent_end = record.extent_end();
         if extent_end > terminal_offset {
             return invariant(CssParserInvariantViolation::ContextBeyondTerminal {
@@ -584,15 +599,17 @@ fn validate_contexts(
             });
         }
 
-        let depth = if let Some(parent) = record.parent() {
-            let parent_index = parent.context_id().index();
+        let scope_key = record.parent().map(|parent_id| parent_id.index());
+
+        let depth = if let Some(parent_id) = record.parent() {
+            let parent_index = parent_id.index();
             if parent_index >= index {
                 return invariant(CssParserInvariantViolation::ContextParentNotBefore { index });
             }
             let parent_record = &context_records[parent_index];
             let parent_body = parent_record.body().range();
             if record.header().source_id() != parent_record.body().source_id()
-                || record.extent_start() < parent_body.start()
+                || extent_start < parent_body.start()
                 || extent_end > parent_body.end()
             {
                 return invariant(CssParserInvariantViolation::ContextChildOutsideParentBody {
@@ -600,26 +617,34 @@ fn validate_contexts(
                 });
             }
 
-            let ordinal = parent.item_ordinal().value();
-            if let Some(&previous_ordinal) = last_child_ordinal.get(&parent_index) {
-                if ordinal == previous_ordinal {
-                    return invariant(
-                        CssParserInvariantViolation::ContextDuplicateChildItemOrdinal { index },
-                    );
-                }
-                if ordinal < previous_ordinal {
-                    return invariant(CssParserInvariantViolation::ContextChildOrderViolation {
-                        index,
-                    });
-                }
-            }
-            last_child_ordinal.insert(parent_index, ordinal);
-
             depths[parent_index] + 1
         } else {
             1
         };
         depths.push(depth);
+
+        let ordinal = record.item_ordinal().value();
+        if let Some(&previous_ordinal) = last_sibling_ordinal.get(&scope_key) {
+            if ordinal == previous_ordinal {
+                return invariant(
+                    CssParserInvariantViolation::ContextDuplicateSiblingItemOrdinal { index },
+                );
+            }
+            if ordinal < previous_ordinal {
+                return invariant(
+                    CssParserInvariantViolation::ContextSiblingOrdinalOrderViolation { index },
+                );
+            }
+        }
+        if let Some(&previous_extent_end) = last_sibling_extent_end.get(&scope_key)
+            && extent_start < previous_extent_end
+        {
+            return invariant(
+                CssParserInvariantViolation::ContextSiblingSourceOrderViolation { index },
+            );
+        }
+        last_sibling_ordinal.insert(scope_key, ordinal);
+        last_sibling_extent_end.insert(scope_key, extent_end);
 
         match record.termination() {
             CssParserContextTermination::AuthoredRightCurly { .. } => {}
@@ -2094,8 +2119,7 @@ mod tests {
     // -------------------------------------------------------------------
 
     use crate::css::parser::context::{
-        CssParserContextId, CssParserContextKind, CssParserContextParent,
-        CssParserDirectItemOrdinal,
+        CssParserContextId, CssParserContextKind, CssParserDirectItemOrdinal,
     };
 
     fn context_resources(
@@ -2106,12 +2130,18 @@ mod tests {
     }
 
     /// A single valid top-level `QualifiedRuleBlock` context over `"a{x}"`
-    /// (`extent` `[0, 4)`), closed by an authored `}`.
-    fn single_top_level_context(text: &SourceText, id: usize) -> CssParserContextRecord {
+    /// (`extent` `[0, 4)`), closed by an authored `}`, with the caller-
+    /// supplied implicit-root-scoped item ordinal.
+    fn single_top_level_context(
+        text: &SourceText,
+        id: usize,
+        item_ordinal: usize,
+    ) -> CssParserContextRecord {
         CssParserContextRecord::new(
             text,
             CssParserContextId::new(id),
             None,
+            CssParserDirectItemOrdinal::new(item_ordinal),
             CssParserContextKind::QualifiedRuleBlock,
             text.anchor(0, 1).unwrap(),
             text.anchor(1, 2).unwrap(),
@@ -2137,6 +2167,7 @@ mod tests {
             text,
             parent_id,
             None,
+            CssParserDirectItemOrdinal::new(0),
             CssParserContextKind::QualifiedRuleBlock,
             text.anchor(0, 1).unwrap(),
             text.anchor(1, 2).unwrap(),
@@ -2149,10 +2180,8 @@ mod tests {
         let child_b = CssParserContextRecord::new(
             text,
             CssParserContextId::new(1),
-            Some(CssParserContextParent::new(
-                parent_id,
-                CssParserDirectItemOrdinal::new(first_ordinal),
-            )),
+            Some(parent_id),
+            CssParserDirectItemOrdinal::new(first_ordinal),
             CssParserContextKind::QualifiedRuleBlock,
             text.anchor(2, 3).unwrap(),
             text.anchor(3, 4).unwrap(),
@@ -2165,10 +2194,8 @@ mod tests {
         let child_c = CssParserContextRecord::new(
             text,
             CssParserContextId::new(2),
-            Some(CssParserContextParent::new(
-                parent_id,
-                CssParserDirectItemOrdinal::new(second_ordinal),
-            )),
+            Some(parent_id),
+            CssParserDirectItemOrdinal::new(second_ordinal),
             CssParserContextKind::QualifiedRuleBlock,
             text.anchor(6, 7).unwrap(),
             text.anchor(7, 8).unwrap(),
@@ -2187,7 +2214,7 @@ mod tests {
         let upstream = complete_tokenizer_run(&text);
         let len = text.as_str().len();
         // Constructed with a run-local id of 1 at vector index 0.
-        let context = single_top_level_context(&text, 1);
+        let context = single_top_level_context(&text, 1, 0);
 
         let result = CssParserRunResult::new(
             &text,
@@ -2224,10 +2251,8 @@ mod tests {
         let context = CssParserContextRecord::new(
             &text,
             parent_id,
-            Some(CssParserContextParent::new(
-                parent_id,
-                CssParserDirectItemOrdinal::new(0),
-            )),
+            Some(parent_id),
+            CssParserDirectItemOrdinal::new(0),
             CssParserContextKind::QualifiedRuleBlock,
             text.anchor(0, 1).unwrap(),
             text.anchor(1, 2).unwrap(),
@@ -2272,6 +2297,7 @@ mod tests {
             &text,
             parent_id,
             None,
+            CssParserDirectItemOrdinal::new(0),
             CssParserContextKind::QualifiedRuleBlock,
             text.anchor(0, 1).unwrap(),
             text.anchor(1, 2).unwrap(),
@@ -2287,10 +2313,8 @@ mod tests {
         let escaping_child = CssParserContextRecord::new(
             &text,
             CssParserContextId::new(1),
-            Some(CssParserContextParent::new(
-                parent_id,
-                CssParserDirectItemOrdinal::new(0),
-            )),
+            Some(parent_id),
+            CssParserDirectItemOrdinal::new(0),
             CssParserContextKind::QualifiedRuleBlock,
             text.anchor(6, 7).unwrap(),
             text.anchor(7, 8).unwrap(),
@@ -2326,7 +2350,7 @@ mod tests {
     }
 
     #[test]
-    fn contract_only_context_duplicate_child_item_ordinal_is_rejected() {
+    fn contract_only_context_duplicate_sibling_item_ordinal_is_rejected() {
         let text = source(20_004, "a{b{1}c{2}}");
         let upstream = complete_tokenizer_run(&text);
         let len = text.as_str().len();
@@ -2351,13 +2375,13 @@ mod tests {
         assert_eq!(
             result.unwrap_err(),
             CssParserRunError::InternalInvariantFailure(
-                CssParserInvariantViolation::ContextDuplicateChildItemOrdinal { index: 2 }
+                CssParserInvariantViolation::ContextDuplicateSiblingItemOrdinal { index: 2 }
             )
         );
     }
 
     #[test]
-    fn contract_only_context_child_order_violation_is_rejected() {
+    fn contract_only_context_sibling_ordinal_order_violation_is_rejected() {
         let text = source(20_005, "a{b{1}c{2}}");
         let upstream = complete_tokenizer_run(&text);
         let len = text.as_str().len();
@@ -2382,15 +2406,212 @@ mod tests {
         assert_eq!(
             result.unwrap_err(),
             CssParserRunError::InternalInvariantFailure(
-                CssParserInvariantViolation::ContextChildOrderViolation { index: 2 }
+                CssParserInvariantViolation::ContextSiblingOrdinalOrderViolation { index: 2 }
             )
         );
     }
 
     #[test]
+    fn contract_only_root_scoped_sibling_duplicate_item_ordinal_is_rejected() {
+        let text = source(20_012, "a{x}b{y}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let first = CssParserContextRecord::new(
+            &text,
+            CssParserContextId::new(0),
+            None,
+            CssParserDirectItemOrdinal::new(0),
+            CssParserContextKind::QualifiedRuleBlock,
+            text.anchor(0, 1).unwrap(),
+            text.anchor(1, 2).unwrap(),
+            text.anchor(2, 3).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(3, 4).unwrap(),
+            },
+        )
+        .unwrap();
+        // Same implicit-root scope as `first` (both `parent = None`), and
+        // claims the same ordinal.
+        let second = CssParserContextRecord::new(
+            &text,
+            CssParserContextId::new(1),
+            None,
+            CssParserDirectItemOrdinal::new(0),
+            CssParserContextKind::QualifiedRuleBlock,
+            text.anchor(4, 5).unwrap(),
+            text.anchor(5, 6).unwrap(),
+            text.anchor(6, 7).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(7, 8).unwrap(),
+            },
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![first, second],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            context_resources(2, 1),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::ContextDuplicateSiblingItemOrdinal { index: 1 }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_root_scoped_sibling_ordinal_order_violation_is_rejected() {
+        let text = source(20_013, "a{x}b{y}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let first = single_top_level_context(&text, 0, 1);
+        let second = CssParserContextRecord::new(
+            &text,
+            CssParserContextId::new(1),
+            None,
+            CssParserDirectItemOrdinal::new(0),
+            CssParserContextKind::QualifiedRuleBlock,
+            text.anchor(4, 5).unwrap(),
+            text.anchor(5, 6).unwrap(),
+            text.anchor(6, 7).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(7, 8).unwrap(),
+            },
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![first, second],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            context_resources(2, 1),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::ContextSiblingOrdinalOrderViolation { index: 1 }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_root_scoped_sibling_source_order_violation_is_rejected() {
+        // `second`'s ordinal (1) increases relative to `first`'s (0), but
+        // its source extent fully overlaps `first`'s instead of following
+        // it: increasing ordinals must not paper over reversed/overlapping
+        // retained source extents.
+        let text = source(20_014, "a{x}b{y}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let first = single_top_level_context(&text, 0, 0);
+        let second = CssParserContextRecord::new(
+            &text,
+            CssParserContextId::new(1),
+            None,
+            CssParserDirectItemOrdinal::new(1),
+            CssParserContextKind::QualifiedRuleBlock,
+            text.anchor(0, 1).unwrap(),
+            text.anchor(1, 2).unwrap(),
+            text.anchor(2, 3).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(3, 4).unwrap(),
+            },
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![first, second],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            context_resources(2, 1),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::ContextSiblingSourceOrderViolation { index: 1 }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_root_scoped_siblings_with_ordinal_gaps_are_accepted() {
+        let text = source(20_015, "a{x}b{y}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let first = single_top_level_context(&text, 0, 0);
+        let second = CssParserContextRecord::new(
+            &text,
+            CssParserContextId::new(1),
+            None,
+            // Ordinal 1 is presumed reserved for a future declaration item
+            // between the two top-level rules; the gap is valid.
+            CssParserDirectItemOrdinal::new(2),
+            CssParserContextKind::QualifiedRuleBlock,
+            text.anchor(4, 5).unwrap(),
+            text.anchor(5, 6).unwrap(),
+            text.anchor(6, 7).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(7, 8).unwrap(),
+            },
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![first, second],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            context_resources(2, 1),
+        )
+        .unwrap();
+
+        assert_eq!(result.context_records().len(), 2);
+    }
+
+    #[test]
     fn contract_only_context_beyond_terminal_is_rejected() {
         let text = source(20_006, "a{x}");
-        let context = single_top_level_context(&text, 0);
+        let context = single_top_level_context(&text, 0, 0);
         let resource_limit = CssParserResourceLimitEvidence::new(
             &text,
             CssParserResourceKind::AlgorithmSteps,
@@ -2434,7 +2655,7 @@ mod tests {
         let text = source(20_007, "a{x}");
         let upstream = complete_tokenizer_run(&text);
         let len = text.as_str().len();
-        let context = single_top_level_context(&text, 0);
+        let context = single_top_level_context(&text, 0, 0);
 
         let result = CssParserRunResult::new(
             &text,
@@ -2511,6 +2732,7 @@ mod tests {
             &text,
             CssParserContextId::new(0),
             None,
+            CssParserDirectItemOrdinal::new(0),
             CssParserContextKind::QualifiedRuleBlock,
             text.anchor(0, 1).unwrap(),
             text.anchor(1, 2).unwrap(),
@@ -2587,6 +2809,7 @@ mod tests {
             &text,
             CssParserContextId::new(0),
             None,
+            CssParserDirectItemOrdinal::new(0),
             CssParserContextKind::QualifiedRuleBlock,
             text.anchor(0, 1).unwrap(),
             text.anchor(1, 2).unwrap(),
@@ -2599,10 +2822,8 @@ mod tests {
         let inner = CssParserContextRecord::new(
             &text,
             CssParserContextId::new(1),
-            Some(CssParserContextParent::new(
-                CssParserContextId::new(0),
-                CssParserDirectItemOrdinal::new(0),
-            )),
+            Some(CssParserContextId::new(0)),
+            CssParserDirectItemOrdinal::new(0),
             CssParserContextKind::QualifiedRuleBlock,
             text.anchor(2, 3).unwrap(),
             text.anchor(3, 4).unwrap(),

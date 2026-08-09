@@ -47,14 +47,6 @@ pub(super) enum ContextGoldKind {
     QualifiedRuleBlock,
 }
 
-/// A retained context's relationship to its parent: the parent's gold `id`
-/// and this context's parent-local direct-item ordinal within it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct ContextGoldParent {
-    pub(super) parent_id: usize,
-    pub(super) item_ordinal: usize,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ContextGoldTermination {
     AuthoredRightCurly(GoldRange),
@@ -64,7 +56,7 @@ pub(super) enum ContextGoldTermination {
 }
 
 impl ContextGoldTermination {
-    const fn evidence_range(self) -> GoldRange {
+    pub(super) const fn evidence_range(self) -> GoldRange {
         match self {
             Self::AuthoredRightCurly(range)
             | Self::EndOfInput(range)
@@ -88,13 +80,19 @@ pub(super) struct ContextGoldDeclarationItem {
     pub(super) span: GoldRange,
 }
 
-/// One independent context record: identity, parent relationship, kind,
-/// exact header/opener/body ranges, termination, and the future
-/// materialized declaration items it directly owns.
+/// One independent context record: identity, parent id, the direct-item
+/// ordinal scoped to that parent (or to the implicit stylesheet root when
+/// `parent` is `None`), kind, exact header/opener/body ranges, termination,
+/// and the future materialized declaration items it directly owns.
+///
+/// Every record carries exactly one `item_ordinal`, including top-level
+/// records: the implicit root is a genuine ordinal scope, never an
+/// unordered special case.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ContextGoldRecord {
     pub(super) id: usize,
-    pub(super) parent: Option<ContextGoldParent>,
+    pub(super) parent: Option<usize>,
+    pub(super) item_ordinal: usize,
     pub(super) kind: ContextGoldKind,
     pub(super) header: GoldRange,
     pub(super) block_opener: GoldRange,
@@ -152,8 +150,9 @@ pub(super) enum ContextGoldValidationError {
     EndOfInputNotAtSourceEnd,
     ParentNotBefore,
     ChildOutsideParentBody,
-    DuplicateChildItemOrdinal,
-    ChildOrderViolation,
+    DuplicateSiblingItemOrdinal,
+    SiblingOrdinalOrderViolation,
+    SiblingSourceOrderViolation,
     ContextRecordCountMismatch,
     PeakContextDepthMismatch,
     DeclarationOutsideBody,
@@ -176,7 +175,13 @@ pub(super) fn validate_fixture(
     }
 
     let mut depths: Vec<usize> = Vec::with_capacity(fixture.contexts.len());
-    let mut last_child_ordinal: std::collections::BTreeMap<usize, usize> =
+    // Keyed by ordinal scope: `Some(parent_id)` for a real parent, `None`
+    // for the implicit stylesheet root. Applied uniformly to both so a
+    // top-level sibling set is validated exactly like a real parent's
+    // children.
+    let mut last_sibling_ordinal: std::collections::BTreeMap<Option<usize>, usize> =
+        std::collections::BTreeMap::new();
+    let mut last_sibling_extent_end: std::collections::BTreeMap<Option<usize>, usize> =
         std::collections::BTreeMap::new();
 
     for (index, record) in fixture.contexts.iter().enumerate() {
@@ -186,32 +191,39 @@ pub(super) fn validate_fixture(
 
         validate_local_shape(&source, record)?;
 
-        let depth = if let Some(parent) = record.parent {
-            if parent.parent_id >= index {
+        let extent_end = record.extent_end();
+        let depth = if let Some(parent_id) = record.parent {
+            if parent_id >= index {
                 return Err(ContextGoldValidationError::ParentNotBefore);
             }
-            let parent_record = &fixture.contexts[parent.parent_id];
-            if record.header.start < parent_record.body.start
-                || record.extent_end() > parent_record.body.end
+            let parent_record = &fixture.contexts[parent_id];
+            if record.header.start < parent_record.body.start || extent_end > parent_record.body.end
             {
                 return Err(ContextGoldValidationError::ChildOutsideParentBody);
             }
 
-            if let Some(&previous) = last_child_ordinal.get(&parent.parent_id) {
-                if parent.item_ordinal == previous {
-                    return Err(ContextGoldValidationError::DuplicateChildItemOrdinal);
-                }
-                if parent.item_ordinal < previous {
-                    return Err(ContextGoldValidationError::ChildOrderViolation);
-                }
-            }
-            last_child_ordinal.insert(parent.parent_id, parent.item_ordinal);
-
-            depths[parent.parent_id] + 1
+            depths[parent_id] + 1
         } else {
             1
         };
         depths.push(depth);
+
+        let scope_key = record.parent;
+        if let Some(&previous_ordinal) = last_sibling_ordinal.get(&scope_key) {
+            if record.item_ordinal == previous_ordinal {
+                return Err(ContextGoldValidationError::DuplicateSiblingItemOrdinal);
+            }
+            if record.item_ordinal < previous_ordinal {
+                return Err(ContextGoldValidationError::SiblingOrdinalOrderViolation);
+            }
+        }
+        if let Some(&previous_extent_end) = last_sibling_extent_end.get(&scope_key)
+            && record.header.start < previous_extent_end
+        {
+            return Err(ContextGoldValidationError::SiblingSourceOrderViolation);
+        }
+        last_sibling_ordinal.insert(scope_key, record.item_ordinal);
+        last_sibling_extent_end.insert(scope_key, extent_end);
 
         validate_declarations(&source, record)?;
     }

@@ -16,7 +16,11 @@
 //! source anchor; a context with `parent = None` is a direct child of that
 //! implicit root. Parent/child relationships are read by scanning the
 //! retained table (parent ID lookup, source-containment check), never by
-//! re-deriving structure from raw source.
+//! re-deriving structure from raw source. Every record — including a
+//! top-level one with `parent = None` — carries its own
+//! [`CssParserDirectItemOrdinal`], scoped to the real parent when present or
+//! to the implicit root otherwise; the root is a genuine ordinal scope, not
+//! an unordered special case.
 //!
 //! # Run-local identity
 //!
@@ -91,13 +95,17 @@ pub(crate) enum CssParserContextKind {
     QualifiedRuleBlock,
 }
 
-/// The parent-local position of a materialized direct block-content item
-/// within one parent context (or the implicit stylesheet root).
+/// The position of a materialized direct block-content item within its
+/// scope: the explicit parent context when `parent = Some(_)`, or the
+/// implicit stylesheet root when `parent = None`.
 ///
 /// Represents the ordinal among materialized structural block-content items,
 /// never a raw lexical-token index or byte offset. Gaps are permitted:
 /// declarations and other direct items occupy some ordinals without a
-/// retained context record itself needing every intervening value.
+/// retained context record itself needing every intervening value. Every
+/// retained context carries exactly one such ordinal, including top-level
+/// contexts: the implicit stylesheet root is a real ordinal scope, not a
+/// special case that goes unordered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct CssParserDirectItemOrdinal(usize);
 
@@ -108,38 +116,6 @@ impl CssParserDirectItemOrdinal {
 
     pub(crate) const fn value(self) -> usize {
         self.0
-    }
-}
-
-/// A retained context's relationship to its parent context: which parent,
-/// and this context's parent-local direct-item ordinal within it.
-///
-/// A context with no [`CssParserContextParent`] is a direct child of the
-/// implicit stylesheet root, which owns no [`CssParserContextId`] and no
-/// parent-local item ordinal of its own.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct CssParserContextParent {
-    context_id: CssParserContextId,
-    item_ordinal: CssParserDirectItemOrdinal,
-}
-
-impl CssParserContextParent {
-    pub(crate) const fn new(
-        context_id: CssParserContextId,
-        item_ordinal: CssParserDirectItemOrdinal,
-    ) -> Self {
-        Self {
-            context_id,
-            item_ordinal,
-        }
-    }
-
-    pub(crate) const fn context_id(&self) -> CssParserContextId {
-        self.context_id
-    }
-
-    pub(crate) const fn item_ordinal(&self) -> CssParserDirectItemOrdinal {
-        self.item_ordinal
     }
 }
 
@@ -277,19 +253,26 @@ impl fmt::Display for CssParserContextContractError {
 
 impl Error for CssParserContextContractError {}
 
-/// One retained context's source-backed evidence: identity, parent
-/// relationship, kind, header/opener/body anchors, and honest termination.
+/// One retained context's source-backed evidence: identity, parent id,
+/// parent-local (or implicit-root-local) direct-item ordinal, kind,
+/// header/opener/body anchors, and honest termination.
 ///
 /// Evidence, not an AST node: owns no child vector and no decoded
-/// selector/prelude string. The constructor validates only relationships
+/// selector/prelude string. Every record carries exactly one
+/// [`CssParserDirectItemOrdinal`], scoped to `parent` when `Some`, or to the
+/// implicit stylesheet root when `parent` is `None`; the root is never given
+/// a [`CssParserContextId`] or a fabricated source anchor, but it is still a
+/// real ordinal scope. The constructor validates only relationships
 /// available without another record (anchor source identity, exact `{`/`}`
 /// spelling, header/opener/body/termination ordering); parent existence,
-/// parent-ID ordering, and source containment against another record are
-/// [`super::result::CssParserRunResult`]'s responsibility.
+/// parent-ID ordering, sibling-ordinal uniqueness/order (for both real
+/// parents and the implicit root), and source containment against another
+/// record are [`super::result::CssParserRunResult`]'s responsibility.
 #[derive(Clone)]
 pub(crate) struct CssParserContextRecord {
     id: CssParserContextId,
-    parent: Option<CssParserContextParent>,
+    parent: Option<CssParserContextId>,
+    item_ordinal: CssParserDirectItemOrdinal,
     kind: CssParserContextKind,
     header: SourceAnchor,
     block_opener: SourceAnchor,
@@ -307,7 +290,8 @@ impl CssParserContextRecord {
     pub(crate) fn new(
         source_text: &SourceText,
         id: CssParserContextId,
-        parent: Option<CssParserContextParent>,
+        parent: Option<CssParserContextId>,
+        item_ordinal: CssParserDirectItemOrdinal,
         kind: CssParserContextKind,
         header: SourceAnchor,
         block_opener: SourceAnchor,
@@ -342,6 +326,7 @@ impl CssParserContextRecord {
         Ok(Self {
             id,
             parent,
+            item_ordinal,
             kind,
             header,
             block_opener,
@@ -354,8 +339,12 @@ impl CssParserContextRecord {
         self.id
     }
 
-    pub(crate) const fn parent(&self) -> Option<CssParserContextParent> {
+    pub(crate) const fn parent(&self) -> Option<CssParserContextId> {
         self.parent
+    }
+
+    pub(crate) const fn item_ordinal(&self) -> CssParserDirectItemOrdinal {
+        self.item_ordinal
     }
 
     pub(crate) const fn kind(&self) -> CssParserContextKind {
@@ -396,6 +385,7 @@ impl PartialEq for CssParserContextRecord {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
             && self.parent == other.parent
+            && self.item_ordinal == other.item_ordinal
             && self.kind == other.kind
             && same_anchor(&self.header, &other.header)
             && same_anchor(&self.block_opener, &other.block_opener)
@@ -412,6 +402,7 @@ impl fmt::Debug for CssParserContextRecord {
             .debug_struct("CssParserContextRecord")
             .field("id", &self.id)
             .field("parent", &self.parent)
+            .field("item_ordinal", &self.item_ordinal)
             .field("kind", &self.kind)
             .field("source_id", &self.header.source_id())
             .field("header", &self.header.range())
@@ -564,6 +555,7 @@ mod tests {
             source_text,
             CssParserContextId::new(0),
             None,
+            CssParserDirectItemOrdinal::new(0),
             CssParserContextKind::QualifiedRuleBlock,
             source_text.anchor(header.0, header.1).unwrap(),
             source_text.anchor(block_opener.0, block_opener.1).unwrap(),
@@ -649,6 +641,7 @@ mod tests {
             &text,
             CssParserContextId::new(0),
             None,
+            CssParserDirectItemOrdinal::new(0),
             CssParserContextKind::QualifiedRuleBlock,
             other.anchor(0, 1).unwrap(),
             text.anchor(1, 2).unwrap(),
@@ -800,16 +793,15 @@ mod tests {
     }
 
     #[test]
-    fn parent_relationship_is_retained_verbatim() {
+    fn parent_id_and_item_ordinal_are_retained_verbatim() {
         let text = source(14, "a{b{color:red;}}");
-        let parent = CssParserContextParent::new(
-            CssParserContextId::new(0),
-            CssParserDirectItemOrdinal::new(0),
-        );
+        let parent_id = CssParserContextId::new(0);
+        let item_ordinal = CssParserDirectItemOrdinal::new(0);
         let record = CssParserContextRecord::new(
             &text,
             CssParserContextId::new(1),
-            Some(parent),
+            Some(parent_id),
+            item_ordinal,
             CssParserContextKind::QualifiedRuleBlock,
             text.anchor(2, 3).unwrap(),
             text.anchor(3, 4).unwrap(),
@@ -819,9 +811,29 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(record.parent(), Some(parent));
-        assert_eq!(parent.context_id(), CssParserContextId::new(0));
-        assert_eq!(parent.item_ordinal(), CssParserDirectItemOrdinal::new(0));
+        assert_eq!(record.parent(), Some(parent_id));
+        assert_eq!(record.item_ordinal(), item_ordinal);
+    }
+
+    #[test]
+    fn top_level_context_carries_its_own_root_scoped_item_ordinal() {
+        let text = source(140, "a{x}");
+        let record = CssParserContextRecord::new(
+            &text,
+            CssParserContextId::new(0),
+            None,
+            CssParserDirectItemOrdinal::new(3),
+            CssParserContextKind::QualifiedRuleBlock,
+            text.anchor(0, 1).unwrap(),
+            text.anchor(1, 2).unwrap(),
+            text.anchor(2, 3).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(3, 4).unwrap(),
+            },
+        )
+        .unwrap();
+        assert!(record.parent().is_none());
+        assert_eq!(record.item_ordinal(), CssParserDirectItemOrdinal::new(3));
     }
 
     #[test]

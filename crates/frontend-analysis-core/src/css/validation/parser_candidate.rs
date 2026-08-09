@@ -576,10 +576,11 @@ fn assert_range(
 /// evidence range; for unsupported regions, the variant with its complete
 /// range and, for `TopLevelAtRule`, its exact `at_keyword` range; for
 /// discard records, kind, region, property_name, and colon; for context
-/// records (#166; always empty for this producer), id, parent, kind,
-/// header/block_opener/body ranges, and termination kind with evidence
-/// range; and for the run itself, execution completion, coverage,
-/// termination, terminal, and all nine `CssParserResourceUsage` dimensions.
+/// records (#166; always empty for this producer), id, parent,
+/// implicit-root-or-parent-scoped item ordinal, kind, header/block_opener/
+/// body ranges, and termination kind with evidence range; and for the run
+/// itself, execution completion, coverage, termination, terminal, and all
+/// nine `CssParserResourceUsage` dimensions.
 pub(super) fn canonical_signature(result: &CssParserRunResult) -> String {
     use std::fmt::Write;
 
@@ -677,12 +678,11 @@ pub(super) fn canonical_signature(result: &CssParserRunResult) -> String {
         let body = context.body().range();
         let _ = write!(
             signature,
-            "|Ctx{:?}Id{}Parent{:?}Header[{},{})Opener[{},{})Body[{},{}){:?}",
+            "|Ctx{:?}Id{}Parent{:?}Ordinal{}Header[{},{})Opener[{},{})Body[{},{}){:?}",
             context.kind(),
             context.id().index(),
-            context
-                .parent()
-                .map(|parent| (parent.context_id().index(), parent.item_ordinal().value())),
+            context.parent().map(|parent_id| parent_id.index()),
+            context.item_ordinal().value(),
             header.start(),
             header.end(),
             block_opener.start(),
