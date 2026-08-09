@@ -170,7 +170,8 @@ fn production_parser_terminates_deterministically_over_generated_corpus() {
 #[test]
 fn production_parser_is_deterministic_across_distinct_source_ids() {
     let inputs = generated_inputs();
-    for source in inputs.iter().take(256) {
+    assert_eq!(inputs.len(), 4_096);
+    for source in &inputs {
         let first_text = SourceText::new(SourceId::new(11), source.clone());
         let first_tokenizer = run_tokenizer(&first_text, generous_tokenizer_limits()).unwrap();
         let first = run_parser(&first_text, first_tokenizer, generous_parser_limits()).unwrap();

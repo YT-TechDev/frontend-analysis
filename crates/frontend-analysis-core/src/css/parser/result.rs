@@ -441,7 +441,13 @@ fn validate_run(
     Ok(())
 }
 
-fn validate_upstream_boundary(
+/// The single upstream/source-boundary invariant check: exact source
+/// identity, `processed_prefix`/`unprocessed_remainder` boundary agreement
+/// with the upstream terminal, and exact retained-fragment reconciliation
+/// against `source_text`. Shared by [`super::producer::run`] (fail-fast,
+/// before any parser semantics execute) and [`CssParserRunResult::new`]
+/// (defense in depth at result construction) so the two never drift.
+pub(super) fn validate_upstream_boundary(
     source_text: &SourceText,
     upstream: &CssTokenizerRunResult,
 ) -> Result<(), CssParserRunError> {

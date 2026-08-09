@@ -87,7 +87,7 @@ pub(crate) fn run(
     upstream_tokenizer_result: CssTokenizerRunResult,
     limits: CssParserLimits,
 ) -> Result<CssParserRunResult, CssParserRunError> {
-    validate_upstream_source_identity(source_text, &upstream_tokenizer_result)?;
+    super::result::validate_upstream_boundary(source_text, &upstream_tokenizer_result)?;
 
     let mut producer = Producer::new(source_text, upstream_tokenizer_result, limits);
     match producer.execute() {
@@ -96,25 +96,6 @@ pub(crate) fn run(
         Err(Flow::UpstreamIncomplete) => producer.finish_upstream_incomplete(),
         Err(Flow::Invariant(error)) => Err(error),
     }
-}
-
-/// A minimal fail-fast check ahead of the main parse loop. The final
-/// `CssParserRunResult::new` call remains the authoritative, complete
-/// upstream-boundary validation (prefix/remainder fragment reconciliation
-/// included); this only avoids doing a full parse over evidence that could
-/// never construct a valid result.
-fn validate_upstream_source_identity(
-    source_text: &SourceText,
-    upstream: &CssTokenizerRunResult,
-) -> Result<(), CssParserRunError> {
-    let expected = source_text.id();
-    let actual = upstream.source_id();
-    if actual != expected {
-        return Err(CssParserRunError::InternalInvariantFailure(
-            CssParserInvariantViolation::UpstreamSourceIdentityMismatch { expected, actual },
-        ));
-    }
-    Ok(())
 }
 
 struct ResourceLimitSignal {
@@ -533,6 +514,19 @@ impl<'a> Producer<'a> {
         Ok(())
     }
 
+    /// Rolls back the active checkpoint before propagating a `Flow` that
+    /// aborted a declaration attempt (#139 transactional stop rollback):
+    /// `ResourceLimit`, `UpstreamIncomplete`, and `Invariant` must never
+    /// leave a checkpoint active when they reach `run()`'s finalization.
+    /// The original `flow` is preserved unless rollback itself surfaces a
+    /// typed invariant failure, in which case that takes precedence.
+    fn rollback_checkpoint_preserving_flow(&mut self, flow: Flow) -> Flow {
+        match self.rollback_checkpoint() {
+            Ok(()) => flow,
+            Err(rollback_flow) => rollback_flow,
+        }
+    }
+
     // -- top-level stylesheet flow -----------------------------------------
 
     fn execute(&mut self) -> Result<(), Flow> {
@@ -819,9 +813,15 @@ impl<'a> Producer<'a> {
 
     fn handle_block_item(&mut self, item_start: usize) -> Result<BlockItemOutcome, Flow> {
         self.begin_checkpoint()?;
-        match self.try_declaration()? {
+        let outcome = match self.try_declaration() {
+            Ok(outcome) => outcome,
+            Err(flow) => return Err(self.rollback_checkpoint_preserving_flow(flow)),
+        };
+        match outcome {
             DeclarationOutcome::Recognized(occurrence) => {
-                self.commit_declaration(occurrence)?;
+                if let Err(flow) = self.commit_declaration(occurrence) {
+                    return Err(self.rollback_checkpoint_preserving_flow(flow));
+                }
                 self.commit_checkpoint()?;
                 Ok(BlockItemOutcome::Continue)
             }
@@ -1444,5 +1444,116 @@ fn termination_complete_end(
                 colon.range().end()
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::css::tokenizer::producer::run as run_tokenizer;
+    use crate::css::tokenizer::resource::CssTokenizerLimits;
+    use crate::css::tokenizer::result::CssTokenizerCompletion;
+    use crate::{SourceId, SourceText};
+
+    fn source(text: &str) -> SourceText {
+        SourceText::new(SourceId::new(1), text.to_owned())
+    }
+
+    fn generous_tokenizer_limits() -> CssTokenizerLimits {
+        CssTokenizerLimits::new(1 << 20, 1 << 20, 1 << 16, 1 << 16, 1 << 20, 1 << 20).unwrap()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn parser_limits(
+        max_algorithm_steps: usize,
+        max_peak_component_depth: usize,
+    ) -> CssParserLimits {
+        CssParserLimits::new(
+            max_algorithm_steps,
+            max_peak_component_depth,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+        )
+        .unwrap()
+    }
+
+    /// #139 transaction-stop rollback: a `PeakComponentDepth` refusal
+    /// surfacing from inside `scan_declaration_value` (itself reached only
+    /// through `try_declaration`, called after `handle_block_item` has
+    /// already begun a speculative checkpoint) must roll that checkpoint
+    /// back before `Flow::ResourceLimit` propagates out of
+    /// `handle_block_item`, so no active checkpoint ever reaches result
+    /// finalization.
+    #[test]
+    fn resource_refusal_during_active_declaration_speculation_rolls_back_the_checkpoint() {
+        let text = source("a{color:f(g(1));}");
+        let tokenizer_result = run_tokenizer(&text, generous_tokenizer_limits()).unwrap();
+        let limits = parser_limits(10_000, 1);
+        let mut producer = Producer::new(&text, tokenizer_result, limits);
+
+        let outcome = producer.execute();
+
+        assert!(matches!(outcome, Err(Flow::ResourceLimit(_))));
+        assert!(
+            producer.checkpoint.is_none(),
+            "a resource-limit refusal during active declaration speculation must not leave a checkpoint active"
+        );
+    }
+
+    /// #139 transaction-stop rollback: an upstream tokenizer terminal
+    /// reached from inside `scan_declaration_value` while a declaration
+    /// checkpoint is active must roll that checkpoint back before
+    /// `Flow::UpstreamIncomplete` propagates out of `handle_block_item`.
+    #[test]
+    fn upstream_incomplete_during_active_declaration_speculation_rolls_back_the_checkpoint() {
+        let text = source("a{color:red;}");
+        let tight_lexical_items_limit =
+            CssTokenizerLimits::new(1 << 20, 1 << 20, 4, 1 << 16, 1 << 20, 1 << 20).unwrap();
+        let tokenizer_result = run_tokenizer(&text, tight_lexical_items_limit).unwrap();
+        assert_eq!(
+            tokenizer_result.completion(),
+            CssTokenizerCompletion::Incomplete
+        );
+        let limits = parser_limits(10_000, 1000);
+        let mut producer = Producer::new(&text, tokenizer_result, limits);
+
+        let outcome = producer.execute();
+
+        assert!(matches!(outcome, Err(Flow::UpstreamIncomplete)));
+        assert!(
+            producer.checkpoint.is_none(),
+            "upstream-tokenizer-incomplete during active declaration speculation must not leave a checkpoint active"
+        );
+    }
+
+    /// #139 full tokenizer/source validation before parser execution: the
+    /// same `SourceId` reused across genuinely different `SourceText`
+    /// content must be rejected by the shared upstream-boundary validator
+    /// (reused from [`super::super::result::validate_upstream_boundary`])
+    /// before `Producer::execute` ever runs, even though the upstream
+    /// tokenizer result is itself fully valid for the source it was
+    /// actually produced from.
+    #[test]
+    fn run_rejects_reused_source_id_with_different_source_text_before_producer_executes() {
+        let original_text = source("a{color:red;}");
+        let tokenizer_result = run_tokenizer(&original_text, generous_tokenizer_limits()).unwrap();
+
+        let different_text_same_id = SourceText::new(SourceId::new(1), "a".to_owned());
+
+        let result = run(
+            &different_text_same_id,
+            tokenizer_result,
+            parser_limits(10_000, 1000),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::UpstreamUnprocessedRemainderMismatch
+            )
+        );
     }
 }

@@ -6,13 +6,15 @@
 //! production results to compare them against fixtures authored in
 //! `parser_fixtures.rs`. Production code must never import parser gold.
 
-use crate::css::declaration::{CssDeclarationOccurrence, CssDeclarationTermination};
+use crate::css::declaration::{
+    CssDeclarationContext, CssDeclarationOccurrence, CssDeclarationTermination,
+};
 use crate::css::parser::evidence::{
-    CssParserDiscardEvidence, CssParserRecoveryEvidence, CssParserRecoveryTermination,
-    CssParserUnsupportedRegion,
+    CssParserDiscardEvidence, CssParserDiscardKind, CssParserRecoveryEvidence,
+    CssParserRecoveryTermination, CssParserUnsupportedRegion,
 };
 use crate::css::parser::producer::run;
-use crate::css::parser::resource::CssParserLimits;
+use crate::css::parser::resource::{CssParserLimits, CssParserResourceKind};
 use crate::css::parser::result::{
     CssParserCoverage, CssParserExecutionCompletion, CssParserRunResult, CssParserTermination,
 };
@@ -26,9 +28,9 @@ use crate::{SourceId, SourceText};
 
 use super::gold::GoldRange;
 use super::parser_gold::{
-    ParserGoldCoverage, ParserGoldDiagnosticCode, ParserGoldDiscard, ParserGoldExecutionCompletion,
-    ParserGoldFixture, ParserGoldRecoveryTermination, ParserGoldTermination,
-    ParserGoldTerminationLifecycle, ParserGoldUnsupportedRegion,
+    ParserGoldContext, ParserGoldCoverage, ParserGoldDiagnosticCode, ParserGoldDiscard,
+    ParserGoldExecutionCompletion, ParserGoldFixture, ParserGoldRecoveryTermination,
+    ParserGoldTermination, ParserGoldTerminationLifecycle, ParserGoldUnsupportedRegion,
 };
 
 pub(super) fn generous_tokenizer_limits() -> CssTokenizerLimits {
@@ -336,6 +338,11 @@ fn assert_occurrence_matches(
         actual.value().range(),
         expected.value,
     );
+    assert_eq!(
+        map_context(actual.context()),
+        expected.context,
+        "{id}: declaration {index} context"
+    );
 
     match (actual.priority(), expected.priority) {
         (None, None) => {}
@@ -454,6 +461,11 @@ fn assert_discard_matches(
             property_name,
             colon,
         } => {
+            assert_eq!(
+                actual.kind(),
+                CssParserDiscardKind::TopLevelCustomPropertyLikeQualifiedRule,
+                "{id}: discard {index} kind"
+            );
             assert_range(id, "discard region", index, actual.region().range(), region);
             assert_range(
                 id,
@@ -517,6 +529,14 @@ fn assert_unsupported_matches(
     }
 }
 
+fn map_context(context: CssDeclarationContext) -> ParserGoldContext {
+    match context {
+        CssDeclarationContext::TopLevelQualifiedRuleLeadingDeclarationZone => {
+            ParserGoldContext::TopLevelQualifiedRuleLeadingDeclarationZone
+        }
+    }
+}
+
 fn map_diagnostic_code(
     code: crate::css::parser::diagnostic::CssParserDiagnosticCode,
 ) -> ParserGoldDiagnosticCode {
@@ -545,22 +565,58 @@ fn assert_range(
 
 /// A canonical, order-preserving textual signature of a parser run result,
 /// used only to compare two independent production runs for determinism.
-/// Deliberately excludes `SourceId` and never formats authored source.
+/// Deliberately excludes `SourceId` and never formats authored or decoded
+/// source strings, but otherwise covers every parser-owned deterministic
+/// field: for declarations, the complete/property_name/colon/value ranges,
+/// context, priority presence with its complete/bang/important_ident
+/// ranges, and termination kind with evidence range; for diagnostics, code
+/// and location; for recovery, kind, region, and termination kind with
+/// evidence range; for unsupported regions, the variant with its complete
+/// range and, for `TopLevelAtRule`, its exact `at_keyword` range; for
+/// discard records, kind, region, property_name, and colon; and for the
+/// run itself, execution completion, coverage, termination, terminal, and
+/// all seven `CssParserResourceUsage` dimensions.
 pub(super) fn canonical_signature(result: &CssParserRunResult) -> String {
     use std::fmt::Write;
 
     let mut signature = String::new();
     for occurrence in result.occurrences() {
         let range = occurrence.complete().range();
-        let _ = write!(signature, "D[{},{})", range.start(), range.end());
-        if let Some(priority) = occurrence.priority() {
-            let priority_range = priority.complete().range();
-            let _ = write!(
-                signature,
-                "!P[{},{})",
-                priority_range.start(),
-                priority_range.end()
-            );
+        let property_name = occurrence.property_name().range();
+        let colon = occurrence.colon().range();
+        let value = occurrence.value().range();
+        let _ = write!(
+            signature,
+            "D[{},{})Name[{},{})Colon[{},{})Value[{},{}){:?}",
+            range.start(),
+            range.end(),
+            property_name.start(),
+            property_name.end(),
+            colon.start(),
+            colon.end(),
+            value.start(),
+            value.end(),
+            map_context(occurrence.context())
+        );
+        match occurrence.priority() {
+            Some(priority) => {
+                let complete = priority.complete().range();
+                let bang = priority.bang().range();
+                let important_ident = priority.important_ident().range();
+                let _ = write!(
+                    signature,
+                    "!P[{},{})Bang[{},{})Important[{},{})",
+                    complete.start(),
+                    complete.end(),
+                    bang.start(),
+                    bang.end(),
+                    important_ident.start(),
+                    important_ident.end()
+                );
+            }
+            None => {
+                let _ = write!(signature, "!NoPriority");
+            }
         }
         let _ = write!(
             signature,
@@ -582,19 +638,31 @@ pub(super) fn canonical_signature(result: &CssParserRunResult) -> String {
         let range = recovery.region().range();
         let _ = write!(
             signature,
-            "|Rec@[{},{}){:?}",
+            "|Rec{:?}@[{},{}){:?}",
+            recovery.kind(),
             range.start(),
             range.end(),
             recovery_termination_shape(recovery.termination())
         );
     }
     for unsupported in result.unsupported_regions() {
-        let range = unsupported.region().range();
-        let _ = write!(signature, "|Unsup@[{},{})", range.start(), range.end());
+        let _ = write!(signature, "|Unsup{}", unsupported_shape(unsupported));
     }
     for discard in result.discard_records() {
-        let range = discard.region().range();
-        let _ = write!(signature, "|Discard@[{},{})", range.start(), range.end());
+        let region = discard.region().range();
+        let property_name = discard.property_name().range();
+        let colon = discard.colon().range();
+        let _ = write!(
+            signature,
+            "|Discard{:?}@[{},{})Name[{},{})Colon[{},{})",
+            discard.kind(),
+            region.start(),
+            region.end(),
+            property_name.start(),
+            property_name.end(),
+            colon.start(),
+            colon.end()
+        );
     }
     let terminal = result.terminal().range();
     let _ = write!(
@@ -606,7 +674,46 @@ pub(super) fn canonical_signature(result: &CssParserRunResult) -> String {
         terminal.start(),
         terminal.end()
     );
+    let resources = result.resources();
+    let _ = write!(
+        signature,
+        "|Res(AlgorithmSteps={},PeakComponentDepth={},DeclarationOccurrences={},ParserDiagnostics={},RecoveryRecords={},UnsupportedRegions={},DiscardRecords={})",
+        resources.value(CssParserResourceKind::AlgorithmSteps),
+        resources.value(CssParserResourceKind::PeakComponentDepth),
+        resources.value(CssParserResourceKind::DeclarationOccurrences),
+        resources.value(CssParserResourceKind::ParserDiagnostics),
+        resources.value(CssParserResourceKind::RecoveryRecords),
+        resources.value(CssParserResourceKind::UnsupportedRegions),
+        resources.value(CssParserResourceKind::DiscardRecords),
+    );
     signature
+}
+
+fn unsupported_shape(unsupported: &CssParserUnsupportedRegion) -> String {
+    match unsupported {
+        CssParserUnsupportedRegion::TopLevelAtRule {
+            complete,
+            at_keyword,
+        } => {
+            let complete = complete.range();
+            let at_keyword = at_keyword.range();
+            format!(
+                "TopLevelAtRule@[{},{})At[{},{})",
+                complete.start(),
+                complete.end(),
+                at_keyword.start(),
+                at_keyword.end()
+            )
+        }
+        CssParserUnsupportedRegion::NestedContentRemainder { region } => {
+            let region = region.range();
+            format!(
+                "NestedContentRemainder@[{},{})",
+                region.start(),
+                region.end()
+            )
+        }
+    }
 }
 
 fn termination_shape(termination: &CssDeclarationTermination) -> (&'static str, usize, usize) {
