@@ -319,11 +319,15 @@ fn discard_propagates_through_core() {
     assert_eq!(result.discard_records().len(), 1);
 }
 
+/// #167 supersedes the old whole-remainder outcome for a nested *qualified
+/// rule*: this source now produces zero unsupported regions, so this test
+/// uses a nested at-rule instead (still deferred to #168) to keep
+/// exercising unsupported-region propagation through Core.
 #[test]
 fn unsupported_propagates_through_core() {
     let source = SourceText::new(
         SourceId::new(70_005),
-        "a{color:red;b{color:blue;}color:green;}".to_owned(),
+        "a{color:red;@media screen{color:blue;}}".to_owned(),
     );
     let result = analyze_css_declarations(
         &source,

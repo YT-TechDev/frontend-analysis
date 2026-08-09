@@ -37,11 +37,6 @@ pub(super) enum ParserGoldGroup {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum ParserGoldContext {
-    TopLevelQualifiedRuleLeadingDeclarationZone,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ParserGoldTermination {
     AuthoredSemicolon(GoldRange),
     OmittedBeforeRightCurly(GoldRange),
@@ -73,7 +68,6 @@ pub(super) struct ParserGoldDeclaration {
     pub(super) value: GoldRange,
     pub(super) priority: Option<ParserGoldPriority>,
     pub(super) termination: ParserGoldTermination,
-    pub(super) context: ParserGoldContext,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

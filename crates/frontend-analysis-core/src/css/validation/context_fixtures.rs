@@ -343,6 +343,15 @@ fn parser_resource_limited_termination() -> ContextGoldFixture {
 /// remain active when the run reaches genuine tokenizer end of input; both
 /// honestly retain `EndOfInput` evidence at the exact same true source-end
 /// terminal, with no fabricated authored closure for either.
+///
+/// The inner context's own direct content, "color:red", is an
+/// unterminated-but-recognized declaration under the already-approved #139
+/// `OmittedAtEndOfInput` termination rule (declaration recognition does not
+/// require an authored `;` or enclosing `}`); #166 did not populate this
+/// case's declaration list before #167 had a producer to exercise it, but
+/// the already-approved rule applies identically regardless of nesting
+/// depth, so #167 completes it here rather than leaving a known gap
+/// unvalidated.
 fn nested_true_eof_ancestry() -> ContextGoldFixture {
     let outer = ContextGoldRecord {
         id: 0,
@@ -364,7 +373,11 @@ fn nested_true_eof_ancestry() -> ContextGoldFixture {
         block_opener: range(3, 4),
         body: range(4, 13),
         termination: ContextGoldTermination::EndOfInput(range(13, 13)),
-        declarations: vec![],
+        declarations: vec![ContextGoldDeclarationItem {
+            item_ordinal: 0,
+            run_ordinal: 0,
+            span: range(4, 13),
+        }],
     };
     ContextGoldFixture {
         id: "CSS-CONTEXT-NESTED-TRUE-EOF-ANCESTRY-001",

@@ -8,8 +8,8 @@
 
 use super::gold::GoldRange;
 use super::parser_gold::{
-    ParserGoldContext, ParserGoldDeclaration, ParserGoldDiagnostic, ParserGoldDiagnosticCode,
-    ParserGoldDiscard, ParserGoldFixture, ParserGoldGroup, ParserGoldPriority, ParserGoldRecovery,
+    ParserGoldDeclaration, ParserGoldDiagnostic, ParserGoldDiagnosticCode, ParserGoldDiscard,
+    ParserGoldFixture, ParserGoldGroup, ParserGoldPriority, ParserGoldRecovery,
     ParserGoldRecoveryTermination, ParserGoldTermination, ParserGoldUnsupportedRegion,
 };
 
@@ -32,7 +32,6 @@ fn decl_semi(
         value: r(value.0, value.1),
         priority: None,
         termination: ParserGoldTermination::AuthoredSemicolon(r(semicolon.0, semicolon.1)),
-        context: ParserGoldContext::TopLevelQualifiedRuleLeadingDeclarationZone,
     }
 }
 
@@ -54,7 +53,6 @@ fn decl_omit_curly(
             right_curly.0,
             right_curly.1,
         )),
-        context: ParserGoldContext::TopLevelQualifiedRuleLeadingDeclarationZone,
     }
 }
 
@@ -72,7 +70,6 @@ fn decl_omit_eof(
         value: r(value.0, value.1),
         priority: None,
         termination: ParserGoldTermination::OmittedAtEndOfInput(r(eof_point, eof_point)),
-        context: ParserGoldContext::TopLevelQualifiedRuleLeadingDeclarationZone,
     }
 }
 
@@ -97,7 +94,6 @@ fn decl_with_priority(
             important_ident: r(ident_start, ident_end),
         }),
         termination: ParserGoldTermination::AuthoredSemicolon(r(semicolon.0, semicolon.1)),
-        context: ParserGoldContext::TopLevelQualifiedRuleLeadingDeclarationZone,
     }
 }
 
@@ -412,19 +408,22 @@ pub(super) fn normative_parser_fixtures() -> Vec<ParserGoldFixture> {
         ),
         // A non-custom `{}` block combined with another top-level value
         // component is not a declaration; declaration interpretation fails
-        // and qualified-rule fallback commits, ending the leading
-        // declaration zone with no declaration-failure evidence (rollback
-        // no-leak).
+        // and qualified-rule fallback commits with no declaration-failure
+        // evidence (rollback no-leak). #167 supersedes the old whole-
+        // remainder outcome: the fallback now structurally recognizes
+        // "color:green" as a nested qualified-rule prelude and retains a
+        // real child context, so the inner "color:blue" declaration is a
+        // supported occurrence rather than swallowed unsupported content.
         ParserGoldFixture::complete(
             "CSS-PARSER-NONCUSTOM-BRACE-PLUS-OTHER-001",
             ParserGoldGroup::Rollback,
             2016,
             "a{color:green{color:blue;}}",
             27,
+            vec![decl_semi((14, 25), (14, 19), (19, 20), (20, 24), (24, 25))],
             vec![],
             vec![],
             vec![],
-            vec![nested_remainder((2, 26))],
         ),
         // A simple valid `!important` with ordinary boundary whitespace.
         ParserGoldFixture::complete(
@@ -531,20 +530,26 @@ pub(super) fn normative_parser_fixtures() -> Vec<ParserGoldFixture> {
             vec![recovery_eof((2, 11), 11)],
             vec![],
         ),
-        // Leading supported declarations followed by a nested qualified
-        // rule: the remainder of the block -- including later
-        // declaration-shaped text -- becomes unsupported with no included
-        // occurrence.
+        // Leading supported declaration, a nested qualified rule with its
+        // own declaration, then a trailing declaration back in the outer
+        // context. #167 supersedes the old whole-remainder outcome: the
+        // nested rule is now a real child context, so all three
+        // declarations are supported occurrences in source order (outer
+        // run 0, child run 0, outer run 1).
         ParserGoldFixture::complete(
             "CSS-PARSER-NESTING-DECL-THEN-QUALIFIED-RULE-001",
             ParserGoldGroup::Nesting,
             2022,
             "a{color:red;b{color:blue;}color:green;}",
             39,
-            vec![decl_semi((2, 12), (2, 7), (7, 8), (8, 11), (11, 12))],
+            vec![
+                decl_semi((2, 12), (2, 7), (7, 8), (8, 11), (11, 12)),
+                decl_semi((14, 25), (14, 19), (19, 20), (20, 24), (24, 25)),
+                decl_semi((26, 38), (26, 31), (31, 32), (32, 37), (37, 38)),
+            ],
             vec![],
             vec![],
-            vec![nested_remainder((12, 38))],
+            vec![],
         ),
         // Leading supported declarations followed by a nested at-rule: same
         // remainder treatment as a nested qualified rule.

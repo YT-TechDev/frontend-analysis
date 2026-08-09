@@ -192,20 +192,30 @@ fn production_parser_is_deterministic_across_distinct_source_ids() {
 // Focused rollback / provenance regressions beyond gold comparison.
 // ---------------------------------------------------------------------
 
+/// #167 supersedes the old whole-remainder outcome: `color:green{...}`
+/// structurally rolls back declaration recognition, then the qualified-rule
+/// fallback recognizes "color:green" as a nested rule prelude and retains a
+/// real child context, so the inner "color:blue" declaration is a supported
+/// occurrence with zero leaked declaration diagnostic/recovery evidence.
 #[test]
 fn declaration_shaped_start_that_becomes_a_nested_rule_leaves_zero_speculative_evidence() {
     let result = parse(60_001, "a{color:green{color:blue;}}");
-    assert!(result.occurrences().is_empty());
+    assert_eq!(result.occurrences().len(), 1);
     assert!(result.parser_diagnostics().is_empty());
     assert!(result.recovery_records().is_empty());
-    assert_eq!(result.unsupported_regions().len(), 1);
+    assert!(result.unsupported_regions().is_empty());
+    assert_eq!(result.context_records().len(), 2);
 }
 
+/// #167 supersedes the old whole-remainder outcome: the nested qualified
+/// rule is now a real child context, so all three declarations (outer,
+/// child, outer) are supported occurrences.
 #[test]
 fn declaration_then_nested_rule_then_declaration_produces_exactly_one_supported_occurrence() {
     let result = parse(60_002, "a{color:red;b{color:blue;}color:green;}");
-    assert_eq!(result.occurrences().len(), 1);
-    assert_eq!(result.unsupported_regions().len(), 1);
+    assert_eq!(result.occurrences().len(), 3);
+    assert!(result.unsupported_regions().is_empty());
+    assert_eq!(result.context_records().len(), 2);
 }
 
 #[test]

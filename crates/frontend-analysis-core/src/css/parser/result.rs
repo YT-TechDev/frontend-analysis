@@ -444,6 +444,50 @@ pub(crate) enum CssParserInvariantViolation {
     /// A bounded declaration-value scan summary (first/window/counts) was
     /// inconsistent with the relationship its caller relied on.
     InconsistentValueScanSummary,
+    /// `commit_declaration` or `begin_checkpoint` ran with no active
+    /// context on the stack; declarations only ever occur inside a
+    /// qualified-rule context (#167).
+    DeclarationOutsideActiveContext,
+    /// An authored `}` or unsupported-remainder closure was reached with no
+    /// active context to close (#167).
+    NoActiveContextToClose,
+    /// A reserved context slot was never finalized before result
+    /// construction (#167): every reservation must be closed by an
+    /// authored `}` or by run-stop cleanup.
+    UnfinalizedContextRecord {
+        index: usize,
+    },
+    /// `scan_qualified_rule_fallback` reached a custom-property-shaped
+    /// candidate's block opener (#167 defensive guard): unreachable for any
+    /// accepted #167 input, since `try_declaration` always recognizes an
+    /// `is_custom` property regardless of value complexity.
+    UnreachableNestedCustomPropertyFallback,
+    /// A declaration's placement referenced a `CssParserContextId` with no
+    /// corresponding retained context record.
+    DeclarationPlacementUnknownContext {
+        index: usize,
+    },
+    /// A declaration's complete source range is not contained in its
+    /// placement context's retained `body`.
+    DeclarationOutsidePlacementContextBody {
+        index: usize,
+    },
+    /// A declaration and a child qualified-rule context retained by the
+    /// same owning context claimed the same direct-item ordinal.
+    DirectItemDuplicateOrdinal {
+        context_id: usize,
+    },
+    /// Direct-item ordinals (declarations and child contexts combined) in
+    /// one owning context did not strictly increase with source order.
+    DirectItemOrderViolation {
+        context_id: usize,
+    },
+    /// A declaration-run ordinal did not follow the approved run semantics
+    /// (zero-based per context, non-decreasing, and never reused after a
+    /// materialized child context has closed the previous run).
+    DeclarationRunOrdinalViolation {
+        index: usize,
+    },
 }
 
 /// Computes `current + additional` for one [`CssParserResourceKind`] using
@@ -530,6 +574,8 @@ fn validate_run(
         upstream,
         termination,
     )?;
+
+    validate_declaration_placement(occurrences, context_records)?;
 
     validate_resource_counts(
         resources,
@@ -702,6 +748,141 @@ fn validate_contexts(
     }
 
     Ok(depths.into_iter().max().unwrap_or(0))
+}
+
+/// One materialized direct block-content item's ordering data, keyed by its
+/// owning context for [`validate_declaration_placement`]: either a
+/// declaration (carrying its `occurrences` index and run ordinal) or a
+/// retained child qualified-rule context.
+enum DirectItem {
+    Declaration { index: usize, run_ordinal: usize },
+    ChildContext,
+}
+
+/// Reconciles declaration placement against retained context evidence
+/// (#167): every declaration's [`CssParserContextId`] refers to an existing
+/// retained context, its complete range lies within that context's `body`,
+/// and -- per owning context -- the combined direct-item sequence
+/// (declarations interleaved with child qualified-rule contexts, sharing
+/// one ordinal space) has gapless strictly-increasing ordinals consistent
+/// with source order, and declaration-run ordinals are zero-based,
+/// non-decreasing, shared by consecutive declarations, and reset to the
+/// next value by an intervening materialized child context.
+fn validate_declaration_placement(
+    occurrences: &[CssDeclarationOccurrence],
+    context_records: &[CssParserContextRecord],
+) -> Result<(), CssParserRunError> {
+    let mut items_by_context: std::collections::BTreeMap<
+        usize,
+        Vec<(usize, usize, usize, DirectItem)>,
+    > = std::collections::BTreeMap::new();
+
+    for (index, occurrence) in occurrences.iter().enumerate() {
+        let placement = occurrence.placement();
+        let context_index = placement.context_id().index();
+        let context = context_records.get(context_index).ok_or(
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::DeclarationPlacementUnknownContext { index },
+            ),
+        )?;
+        let complete = occurrence.complete().range();
+        let body = context.body().range();
+        if occurrence.complete().source_id() != context.body().source_id()
+            || complete.start() < body.start()
+            || complete.end() > body.end()
+        {
+            return invariant(
+                CssParserInvariantViolation::DeclarationOutsidePlacementContextBody { index },
+            );
+        }
+
+        items_by_context.entry(context_index).or_default().push((
+            placement.item_ordinal().value(),
+            complete.start(),
+            complete.end(),
+            DirectItem::Declaration {
+                index,
+                run_ordinal: placement.run_ordinal().value(),
+            },
+        ));
+    }
+
+    for record in context_records {
+        if let Some(parent_id) = record.parent() {
+            items_by_context
+                .entry(parent_id.index())
+                .or_default()
+                .push((
+                    record.item_ordinal().value(),
+                    record.extent_start(),
+                    record.extent_end(),
+                    DirectItem::ChildContext,
+                ));
+        }
+    }
+
+    for (context_id, mut items) in items_by_context {
+        items.sort_by_key(|(ordinal, ..)| *ordinal);
+
+        let mut expected_next_ordinal = 0usize;
+        let mut previous_ordinal: Option<usize> = None;
+        let mut previous_end: Option<usize> = None;
+        let mut current_run: Option<usize> = None;
+        let mut expected_next_run = 0usize;
+
+        for (ordinal, start, end, kind) in items {
+            if ordinal != expected_next_ordinal {
+                if previous_ordinal == Some(ordinal) {
+                    return invariant(CssParserInvariantViolation::DirectItemDuplicateOrdinal {
+                        context_id,
+                    });
+                }
+                return invariant(CssParserInvariantViolation::DirectItemOrderViolation {
+                    context_id,
+                });
+            }
+            if let Some(previous_end) = previous_end
+                && start < previous_end
+            {
+                return invariant(CssParserInvariantViolation::DirectItemOrderViolation {
+                    context_id,
+                });
+            }
+            previous_ordinal = Some(ordinal);
+            previous_end = Some(end);
+            expected_next_ordinal = ordinal + 1;
+
+            match kind {
+                DirectItem::Declaration { index, run_ordinal } => match current_run {
+                    None => {
+                        if run_ordinal != expected_next_run {
+                            return invariant(
+                                CssParserInvariantViolation::DeclarationRunOrdinalViolation {
+                                    index,
+                                },
+                            );
+                        }
+                        current_run = Some(run_ordinal);
+                        expected_next_run = run_ordinal + 1;
+                    }
+                    Some(open_run) => {
+                        if run_ordinal != open_run {
+                            return invariant(
+                                CssParserInvariantViolation::DeclarationRunOrdinalViolation {
+                                    index,
+                                },
+                            );
+                        }
+                    }
+                },
+                DirectItem::ChildContext => {
+                    current_run = None;
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// The single upstream/source-boundary invariant check: exact source
@@ -1169,7 +1350,10 @@ fn same_anchor(left: &SourceAnchor, right: &SourceAnchor) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::css::declaration::{CssDeclarationContext, CssDeclarationTermination};
+    use crate::css::declaration::{
+        CssDeclarationPlacement, CssDeclarationRunOrdinal, CssDeclarationTermination,
+    };
+    use crate::css::parser::context::{CssParserContextId, CssParserDirectItemOrdinal};
     use crate::css::parser::evidence::{
         CssParserDiscardKind, CssParserRecoveryKind, CssParserRecoveryTermination,
     };
@@ -1219,6 +1403,14 @@ mod tests {
 
     fn empty_resources() -> CssParserResourceUsage {
         CssParserResourceUsage::new(1, 0, 0, 0, 0, 0, 0, 0, 0)
+    }
+
+    fn test_placement() -> CssDeclarationPlacement {
+        CssDeclarationPlacement::new(
+            CssParserContextId::new(0),
+            CssParserDirectItemOrdinal::new(0),
+            CssDeclarationRunOrdinal::new(0),
+        )
     }
 
     // contract-only: synthetic lifecycle construction to exercise
@@ -1393,7 +1585,7 @@ mod tests {
             CssDeclarationTermination::AuthoredSemicolon {
                 semicolon: text.anchor(11, 12).unwrap(),
             },
-            CssDeclarationContext::TopLevelQualifiedRuleLeadingDeclarationZone,
+            test_placement(),
         )
         .unwrap();
         let unsupported = CssParserUnsupportedRegion::new_nested_content_remainder(
@@ -1449,7 +1641,7 @@ mod tests {
             CssDeclarationTermination::AuthoredSemicolon {
                 semicolon: text.anchor(20, 21).unwrap(),
             },
-            CssDeclarationContext::TopLevelQualifiedRuleLeadingDeclarationZone,
+            test_placement(),
         )
         .unwrap();
         let unsupported = CssParserUnsupportedRegion::new_top_level_at_rule(
@@ -1538,7 +1730,7 @@ mod tests {
             CssDeclarationTermination::OmittedAtEndOfInput {
                 terminal: text.anchor(11, 11).unwrap(),
             },
-            CssDeclarationContext::TopLevelQualifiedRuleLeadingDeclarationZone,
+            test_placement(),
         )
         .unwrap();
 
@@ -1885,7 +2077,7 @@ mod tests {
             CssDeclarationTermination::AuthoredSemicolon {
                 semicolon: text.anchor(11, 12).unwrap(),
             },
-            CssDeclarationContext::TopLevelQualifiedRuleLeadingDeclarationZone,
+            test_placement(),
         )
         .unwrap();
         // Synthetic: a real producer never emits an occurrence and a discard
@@ -2118,9 +2310,7 @@ mod tests {
     // #166 result-level context corruption matrix.
     // -------------------------------------------------------------------
 
-    use crate::css::parser::context::{
-        CssParserContextId, CssParserContextKind, CssParserDirectItemOrdinal,
-    };
+    use crate::css::parser::context::CssParserContextKind;
 
     fn context_resources(
         context_records: usize,

@@ -6,9 +6,7 @@
 //! production results to compare them against fixtures authored in
 //! `parser_fixtures.rs`. Production code must never import parser gold.
 
-use crate::css::declaration::{
-    CssDeclarationContext, CssDeclarationOccurrence, CssDeclarationTermination,
-};
+use crate::css::declaration::{CssDeclarationOccurrence, CssDeclarationTermination};
 use crate::css::parser::evidence::{
     CssParserDiscardEvidence, CssParserDiscardKind, CssParserRecoveryEvidence,
     CssParserRecoveryTermination, CssParserUnsupportedRegion,
@@ -28,9 +26,9 @@ use crate::{SourceId, SourceText};
 
 use super::gold::GoldRange;
 use super::parser_gold::{
-    ParserGoldContext, ParserGoldCoverage, ParserGoldDiagnosticCode, ParserGoldDiscard,
-    ParserGoldExecutionCompletion, ParserGoldFixture, ParserGoldRecoveryTermination,
-    ParserGoldTermination, ParserGoldTerminationLifecycle, ParserGoldUnsupportedRegion,
+    ParserGoldCoverage, ParserGoldDiagnosticCode, ParserGoldDiscard, ParserGoldExecutionCompletion,
+    ParserGoldFixture, ParserGoldRecoveryTermination, ParserGoldTermination,
+    ParserGoldTerminationLifecycle, ParserGoldUnsupportedRegion,
 };
 
 pub(super) fn generous_tokenizer_limits() -> CssTokenizerLimits {
@@ -340,11 +338,6 @@ fn assert_occurrence_matches(
         actual.value().range(),
         expected.value,
     );
-    assert_eq!(
-        map_context(actual.context()),
-        expected.context,
-        "{id}: declaration {index} context"
-    );
 
     match (actual.priority(), expected.priority) {
         (None, None) => {}
@@ -531,14 +524,6 @@ fn assert_unsupported_matches(
     }
 }
 
-fn map_context(context: CssDeclarationContext) -> ParserGoldContext {
-    match context {
-        CssDeclarationContext::TopLevelQualifiedRuleLeadingDeclarationZone => {
-            ParserGoldContext::TopLevelQualifiedRuleLeadingDeclarationZone
-        }
-    }
-}
-
 fn map_diagnostic_code(
     code: crate::css::parser::diagnostic::CssParserDiagnosticCode,
 ) -> ParserGoldDiagnosticCode {
@@ -570,17 +555,17 @@ fn assert_range(
 /// Deliberately excludes `SourceId` and never formats authored or decoded
 /// source strings, but otherwise covers every parser-owned deterministic
 /// field: for declarations, the complete/property_name/colon/value ranges,
-/// context, priority presence with its complete/bang/important_ident
-/// ranges, and termination kind with evidence range; for diagnostics, code
-/// and location; for recovery, kind, region, and termination kind with
-/// evidence range; for unsupported regions, the variant with its complete
-/// range and, for `TopLevelAtRule`, its exact `at_keyword` range; for
-/// discard records, kind, region, property_name, and colon; for context
-/// records (#166; always empty for this producer), id, parent,
-/// implicit-root-or-parent-scoped item ordinal, kind, header/block_opener/
-/// body ranges, and termination kind with evidence range; and for the run
-/// itself, execution completion, coverage, termination, terminal, and all
-/// nine `CssParserResourceUsage` dimensions.
+/// placement (owning context id, item ordinal, run ordinal; #167), priority
+/// presence with its complete/bang/important_ident ranges, and termination
+/// kind with evidence range; for diagnostics, code and location; for
+/// recovery, kind, region, and termination kind with evidence range; for
+/// unsupported regions, the variant with its complete range and, for
+/// `TopLevelAtRule`, its exact `at_keyword` range; for discard records,
+/// kind, region, property_name, and colon; for context records (#167), id,
+/// parent, implicit-root-or-parent-scoped item ordinal, kind,
+/// header/block_opener/body ranges, and termination kind with evidence
+/// range; and for the run itself, execution completion, coverage,
+/// termination, terminal, and all nine `CssParserResourceUsage` dimensions.
 pub(super) fn canonical_signature(result: &CssParserRunResult) -> String {
     use std::fmt::Write;
 
@@ -590,9 +575,10 @@ pub(super) fn canonical_signature(result: &CssParserRunResult) -> String {
         let property_name = occurrence.property_name().range();
         let colon = occurrence.colon().range();
         let value = occurrence.value().range();
+        let placement = occurrence.placement();
         let _ = write!(
             signature,
-            "D[{},{})Name[{},{})Colon[{},{})Value[{},{}){:?}",
+            "D[{},{})Name[{},{})Colon[{},{})Value[{},{})Ctx{}Item{}Run{}",
             range.start(),
             range.end(),
             property_name.start(),
@@ -601,7 +587,9 @@ pub(super) fn canonical_signature(result: &CssParserRunResult) -> String {
             colon.end(),
             value.start(),
             value.end(),
-            map_context(occurrence.context())
+            placement.context_id().index(),
+            placement.item_ordinal().value(),
+            placement.run_ordinal().value(),
         );
         match occurrence.priority() {
             Some(priority) => {
