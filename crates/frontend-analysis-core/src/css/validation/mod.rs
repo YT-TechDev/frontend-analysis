@@ -9,6 +9,8 @@ mod parser_gold;
 #[cfg(test)]
 mod conformance_tests;
 #[cfg(test)]
+mod core_analysis_gate;
+#[cfg(test)]
 mod parser_conformance_tests;
 #[cfg(test)]
 mod parser_contract_tests;
