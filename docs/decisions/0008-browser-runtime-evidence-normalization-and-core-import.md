@@ -2,14 +2,14 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Proposed |
+| Status | Accepted |
 | Date | 2026-08-09 |
-| Decision owner / approver | YT-TechDev — approval pending while Proposed |
+| Decision owner / approver | YT-TechDev — approved 2026-08-09 |
 | Linked Issue | #155 |
-| Related Pull Request | #157 |
+| Related Pull Request | #157; #160 |
 | Supersedes | None |
 | Superseded by | None |
-| Affected normative contracts | `docs/architecture/LAYERS.md` on acceptance; ADR 0004 and existing source-anchor/raw-coordinate contracts remain unchanged |
+| Affected normative contracts | `docs/architecture/LAYERS.md` updated on acceptance; ADR 0004 and existing source-anchor/raw-coordinate contracts remain unchanged |
 
 ## Context
 
@@ -265,18 +265,18 @@ Persistence, serialization, async, concurrency, and cross-process identity remai
 
 ## Approval
 
-Pending.
+Approved by `YT-TechDev` on 2026-08-09.
 
-While this ADR is `Proposed`, it does not authorize implementation.
+Durable approval: https://github.com/YT-TechDev/frontend-analysis/issues/155#issuecomment-5229886378
 
-Acceptance requires one explicit, attributable, decision-specific durable approval by `YT-TechDev` on Issue #155, including confirmation that approval authorizes the architecture and normative documentation update but not production runtime implementation.
-
-After approval, ADR status, approval evidence, ADR index, and `docs/architecture/LAYERS.md` are updated through a focused acceptance Pull Request.
+The approval authorizes this ADR acceptance record, the ADR index update, and the focused `docs/architecture/LAYERS.md` normative update. It does **not** authorize production Browser Adapter code, runtime-evidence implementation, a new crate, a public Runtime Evidence API, serialization, persistence, async, concurrency, browser automation, or release work. Those require separately approved focused Issues.
 
 ## References
 
 - Issue #155
-- Pull Request #157
+- Owner approval: https://github.com/YT-TechDev/frontend-analysis/issues/155#issuecomment-5229886378
+- Proposed ADR Pull Request #157
+- Acceptance Pull Request #160
 - ADR process: `docs/decisions/README.md`
 - ADR 0004: `docs/decisions/0004-validated-source-anchor-semantics.md`
 - Architecture Layers: `docs/architecture/LAYERS.md`
