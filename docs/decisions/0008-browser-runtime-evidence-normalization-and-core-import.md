@@ -6,7 +6,7 @@
 | Date | 2026-08-09 |
 | Decision owner / approver | YT-TechDev — approval pending while Proposed |
 | Linked Issue | #155 |
-| Related Pull Request | Pending |
+| Related Pull Request | #157 |
 | Supersedes | None |
 | Superseded by | None |
 | Affected normative contracts | `docs/architecture/LAYERS.md` on acceptance; ADR 0004 and existing source-anchor/raw-coordinate contracts remain unchanged |
@@ -276,6 +276,7 @@ After approval, ADR status, approval evidence, ADR index, and `docs/architecture
 ## References
 
 - Issue #155
+- Pull Request #157
 - ADR process: `docs/decisions/README.md`
 - ADR 0004: `docs/decisions/0004-validated-source-anchor-semantics.md`
 - Architecture Layers: `docs/architecture/LAYERS.md`
