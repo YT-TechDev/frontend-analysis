@@ -336,6 +336,22 @@ pub(crate) enum CssParserInvariantViolation {
         current: usize,
         additional: usize,
     },
+    /// A second speculative checkpoint was begun while one was already
+    /// active (#139 `MAX_ACTIVE_SPECULATIVE_CHECKPOINT_DEPTH == 1`).
+    CheckpointAlreadyActive,
+    /// Checkpoint commit was requested with no active checkpoint.
+    CheckpointCommitWithoutActive,
+    /// Checkpoint rollback was requested with no active checkpoint.
+    CheckpointRollbackWithoutActive,
+    /// A component-frame opener conversion was attempted for an
+    /// `ObservedKind` that is not a structural opener.
+    ExpectedComponentOpener,
+    /// The qualified-rule prelude scan reported a block opener, but the next
+    /// lexical item observed was not the expected `LeftCurlyBracket`.
+    ExpectedQualifiedRuleBlockOpener,
+    /// A bounded declaration-value scan summary (first/window/counts) was
+    /// inconsistent with the relationship its caller relied on.
+    InconsistentValueScanSummary,
 }
 
 /// Computes `current + additional` for one [`CssParserResourceKind`] using
@@ -425,7 +441,13 @@ fn validate_run(
     Ok(())
 }
 
-fn validate_upstream_boundary(
+/// The single upstream/source-boundary invariant check: exact source
+/// identity, `processed_prefix`/`unprocessed_remainder` boundary agreement
+/// with the upstream terminal, and exact retained-fragment reconciliation
+/// against `source_text`. Shared by [`super::producer::run`] (fail-fast,
+/// before any parser semantics execute) and [`CssParserRunResult::new`]
+/// (defense in depth at result construction) so the two never drift.
+pub(super) fn validate_upstream_boundary(
     source_text: &SourceText,
     upstream: &CssTokenizerRunResult,
 ) -> Result<(), CssParserRunError> {
