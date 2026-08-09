@@ -92,6 +92,11 @@ pub(super) struct ParserGoldDiagnostic {
 pub(super) enum ParserGoldRecoveryTermination {
     AuthoredSemicolon(GoldRange),
     EnclosingBlockEnd(GoldRange),
+    /// Recovery reached genuine tokenizer end of input without an authored
+    /// semicolon or authored enclosing right curly. The carried `GoldRange`
+    /// is an empty point anchor at retained source end, never authored
+    /// content (#159).
+    EndOfInput(GoldRange),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -299,6 +304,7 @@ pub(super) enum ParserGoldValidationError {
     CoverageUnsupportedMismatch,
     WrongFixedDelimiter,
     OmittedAtEndOfInputRequiresUpstreamComplete,
+    RecoveryEndOfInputRequiresUpstreamComplete,
     DiscardOrder,
     DiscardBeyondTerminal,
     DiscardPropertyNameMismatch,
@@ -410,6 +416,22 @@ pub(super) fn validate_fixture(
                 }
                 if !fragment_is(&source, right_curly, "}") {
                     return Err(ParserGoldValidationError::WrongFixedDelimiter);
+                }
+            }
+            ParserGoldRecoveryTermination::EndOfInput(terminal) => {
+                if !anchor_ok(&source, terminal) || !terminal.is_empty() {
+                    return Err(ParserGoldValidationError::InvalidRange);
+                }
+                if terminal.start != source.as_str().len() {
+                    return Err(ParserGoldValidationError::InvalidRange);
+                }
+                if terminal.start != record.region.end {
+                    return Err(ParserGoldValidationError::InvalidRange);
+                }
+                if !upstream_ended_at_true_eof {
+                    return Err(
+                        ParserGoldValidationError::RecoveryEndOfInputRequiresUpstreamComplete,
+                    );
                 }
             }
         }

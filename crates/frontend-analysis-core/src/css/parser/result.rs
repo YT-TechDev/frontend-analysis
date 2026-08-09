@@ -12,7 +12,7 @@ use super::super::tokenizer::result::{
 use super::diagnostic::{CssParserDiagnostic, CssParserDiagnosticContractError};
 use super::evidence::{
     CssParserDiscardEvidence, CssParserEvidenceContractError, CssParserRecoveryEvidence,
-    CssParserUnsupportedRegion,
+    CssParserRecoveryTermination, CssParserUnsupportedRegion,
 };
 use super::resource::{
     CssParserInvalidConfiguration, CssParserResourceContractError, CssParserResourceKind,
@@ -279,6 +279,9 @@ pub(crate) enum CssParserInvariantViolation {
     OmittedAtEndOfInputRequiresUpstreamComplete {
         index: usize,
     },
+    RecoveryEndOfInputRequiresUpstreamComplete {
+        index: usize,
+    },
     DiagnosticBeyondTerminal {
         index: usize,
         end: usize,
@@ -399,6 +402,7 @@ fn validate_run(
     validate_occurrence_lifecycle(upstream, occurrences)?;
     validate_diagnostics(expected_source, parser_diagnostics, terminal_offset)?;
     validate_recovery(expected_source, recovery_records, terminal_offset)?;
+    validate_recovery_lifecycle(upstream, recovery_records)?;
     validate_unsupported(expected_source, unsupported_regions, terminal_offset)?;
     validate_discard(
         expected_source,
@@ -671,6 +675,31 @@ fn validate_recovery(
             return invariant(CssParserInvariantViolation::RecoveryOrderViolation { index });
         }
         previous_key = Some(key);
+    }
+    Ok(())
+}
+
+/// `EndOfInput` recovery termination is valid internal evidence only when
+/// the upstream tokenizer itself completed at true `EndOfInput`. The
+/// standalone recovery constructor cannot prove tokenizer lifecycle, so this
+/// is enforced here at the parser-run integration boundary, mirroring
+/// [`validate_occurrence_lifecycle`]'s use of the same true-EOF predicate.
+fn validate_recovery_lifecycle(
+    upstream: &CssTokenizerRunResult,
+    recovery_records: &[CssParserRecoveryEvidence],
+) -> Result<(), CssParserRunError> {
+    if upstream_ended_at_true_eof(upstream) {
+        return Ok(());
+    }
+    for (index, record) in recovery_records.iter().enumerate() {
+        if matches!(
+            record.termination(),
+            CssParserRecoveryTermination::EndOfInput { .. }
+        ) {
+            return invariant(
+                CssParserInvariantViolation::RecoveryEndOfInputRequiresUpstreamComplete { index },
+            );
+        }
     }
     Ok(())
 }
@@ -1235,6 +1264,117 @@ mod tests {
             result.unwrap_err(),
             CssParserRunError::InternalInvariantFailure(
                 CssParserInvariantViolation::OmittedAtEndOfInputRequiresUpstreamComplete {
+                    index: 0,
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_recovery_end_of_input_accepted_with_upstream_complete_end_of_input() {
+        let text = source(9010, "a{color red");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+
+        let recovery = CssParserRecoveryEvidence::new(
+            &text,
+            text.anchor(2, 11).unwrap(),
+            CssParserRecoveryKind::MalformedBlockItem,
+            CssParserRecoveryTermination::EndOfInput {
+                terminal: text.anchor(11, 11).unwrap(),
+            },
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            vec![recovery],
+            Vec::new(),
+            Vec::new(),
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            CssParserResourceUsage::new(1, 0, 0, 0, 1, 0, 0),
+        )
+        .unwrap();
+
+        assert_eq!(result.recovery_records().len(), 1);
+    }
+
+    #[test]
+    fn contract_only_recovery_end_of_input_rejected_with_upstream_resource_limited() {
+        let text = source(9011, "a{color red");
+        let len = text.as_str().len();
+
+        // Upstream never confirms true `EndOfInput`: it is resource-limited
+        // exactly at the source's end, which is a structurally valid but
+        // lifecycle-incomplete tokenizer result. This also demonstrates that
+        // a resource-limited upstream terminal coinciding with true source
+        // end cannot masquerade as true-EOF recovery: the coupling checks
+        // upstream completion/termination, not merely terminal offset.
+        let resource_limit =
+            crate::css::tokenizer::resource::CssTokenizerResourceLimitEvidence::new(
+                &text,
+                crate::css::tokenizer::resource::CssTokenizerResourceKind::AlgorithmSteps,
+                1,
+                2,
+                text.anchor(len, len).unwrap(),
+            )
+            .unwrap();
+        let upstream = CssTokenizerRunResult::new(
+            &text,
+            None,
+            vec![CssLexicalItem::SemanticToken(
+                CssToken::new(
+                    &text,
+                    text.anchor(0, len).unwrap(),
+                    CssTokenKind::Ident("x".to_owned()),
+                )
+                .unwrap(),
+            )],
+            Vec::<CssTokenizerDiagnostic>::new(),
+            text.anchor(0, len).unwrap(),
+            text.anchor(len, len).unwrap(),
+            text.anchor(len, len).unwrap(),
+            CssTokenizerCompletion::Incomplete,
+            CssTokenizerTermination::ResourceLimit(resource_limit),
+            CssTokenizerResourceUsage::new(0, 1, 1, 0, 0, 0),
+        )
+        .unwrap();
+
+        let recovery = CssParserRecoveryEvidence::new(
+            &text,
+            text.anchor(2, 11).unwrap(),
+            CssParserRecoveryKind::MalformedBlockItem,
+            CssParserRecoveryTermination::EndOfInput {
+                terminal: text.anchor(11, 11).unwrap(),
+            },
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            vec![recovery],
+            Vec::new(),
+            Vec::new(),
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Incomplete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::UpstreamTokenizerIncomplete,
+            CssParserResourceUsage::new(1, 0, 0, 0, 1, 0, 0),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::RecoveryEndOfInputRequiresUpstreamComplete {
                     index: 0,
                 }
             )
