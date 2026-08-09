@@ -41,6 +41,8 @@ pub(super) fn generous_parser_limits() -> CssParserLimits {
     CssParserLimits::new(
         1 << 20,
         1 << 12,
+        1 << 12,
+        1 << 16,
         1 << 16,
         1 << 16,
         1 << 16,
@@ -573,9 +575,12 @@ fn assert_range(
 /// and location; for recovery, kind, region, and termination kind with
 /// evidence range; for unsupported regions, the variant with its complete
 /// range and, for `TopLevelAtRule`, its exact `at_keyword` range; for
-/// discard records, kind, region, property_name, and colon; and for the
-/// run itself, execution completion, coverage, termination, terminal, and
-/// all seven `CssParserResourceUsage` dimensions.
+/// discard records, kind, region, property_name, and colon; for context
+/// records (#166; always empty for this producer), id, parent,
+/// implicit-root-or-parent-scoped item ordinal, kind, header/block_opener/
+/// body ranges, and termination kind with evidence range; and for the run
+/// itself, execution completion, coverage, termination, terminal, and all
+/// nine `CssParserResourceUsage` dimensions.
 pub(super) fn canonical_signature(result: &CssParserRunResult) -> String {
     use std::fmt::Write;
 
@@ -664,6 +669,29 @@ pub(super) fn canonical_signature(result: &CssParserRunResult) -> String {
             colon.end()
         );
     }
+    // #166: always empty for this producer, but included so the signature
+    // stays honest about every result-owned field, not merely the ones
+    // currently populated.
+    for context in result.context_records() {
+        let header = context.header().range();
+        let block_opener = context.block_opener().range();
+        let body = context.body().range();
+        let _ = write!(
+            signature,
+            "|Ctx{:?}Id{}Parent{:?}Ordinal{}Header[{},{})Opener[{},{})Body[{},{}){:?}",
+            context.kind(),
+            context.id().index(),
+            context.parent().map(|parent_id| parent_id.index()),
+            context.item_ordinal().value(),
+            header.start(),
+            header.end(),
+            block_opener.start(),
+            block_opener.end(),
+            body.start(),
+            body.end(),
+            context_termination_shape(context.termination()),
+        );
+    }
     let terminal = result.terminal().range();
     let _ = write!(
         signature,
@@ -677,16 +705,46 @@ pub(super) fn canonical_signature(result: &CssParserRunResult) -> String {
     let resources = result.resources();
     let _ = write!(
         signature,
-        "|Res(AlgorithmSteps={},PeakComponentDepth={},DeclarationOccurrences={},ParserDiagnostics={},RecoveryRecords={},UnsupportedRegions={},DiscardRecords={})",
+        "|Res(AlgorithmSteps={},PeakComponentDepth={},PeakContextDepth={},DeclarationOccurrences={},ParserDiagnostics={},RecoveryRecords={},UnsupportedRegions={},DiscardRecords={},ContextRecords={})",
         resources.value(CssParserResourceKind::AlgorithmSteps),
         resources.value(CssParserResourceKind::PeakComponentDepth),
+        resources.value(CssParserResourceKind::PeakContextDepth),
         resources.value(CssParserResourceKind::DeclarationOccurrences),
         resources.value(CssParserResourceKind::ParserDiagnostics),
         resources.value(CssParserResourceKind::RecoveryRecords),
         resources.value(CssParserResourceKind::UnsupportedRegions),
         resources.value(CssParserResourceKind::DiscardRecords),
+        resources.value(CssParserResourceKind::ContextRecords),
     );
     signature
+}
+
+fn context_termination_shape(
+    termination: &crate::css::parser::context::CssParserContextTermination,
+) -> (&'static str, usize, usize) {
+    use crate::css::parser::context::CssParserContextTermination;
+    match termination {
+        CssParserContextTermination::AuthoredRightCurly { right_curly } => (
+            "AuthoredRightCurly",
+            right_curly.range().start(),
+            right_curly.range().end(),
+        ),
+        CssParserContextTermination::EndOfInput { terminal } => (
+            "EndOfInput",
+            terminal.range().start(),
+            terminal.range().end(),
+        ),
+        CssParserContextTermination::UpstreamTokenizerIncomplete { terminal } => (
+            "UpstreamTokenizerIncomplete",
+            terminal.range().start(),
+            terminal.range().end(),
+        ),
+        CssParserContextTermination::ParserResourceLimit { terminal } => (
+            "ParserResourceLimit",
+            terminal.range().start(),
+            terminal.range().end(),
+        ),
+    }
 }
 
 fn unsupported_shape(unsupported: &CssParserUnsupportedRegion) -> String {

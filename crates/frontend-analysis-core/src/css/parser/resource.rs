@@ -21,22 +21,34 @@ pub(crate) const MAX_ACTIVE_SPECULATIVE_CHECKPOINT_DEPTH: usize = 1;
 pub(crate) enum CssParserResourceKind {
     AlgorithmSteps,
     PeakComponentDepth,
+    /// Achieved maximum number of simultaneously active authored parser
+    /// contexts. The implicit stylesheet root is depth 0 and uncounted; the
+    /// first top-level retained context is depth 1. Distinct from
+    /// [`Self::PeakComponentDepth`], which tracks component-value nesting,
+    /// not parser-context nesting (#166).
+    PeakContextDepth,
     DeclarationOccurrences,
     ParserDiagnostics,
     RecoveryRecords,
     UnsupportedRegions,
     DiscardRecords,
+    /// Committed/reserved durable context identities retained by the run,
+    /// including partial contexts that must survive result construction
+    /// (#166).
+    ContextRecords,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct CssParserLimits {
     max_algorithm_steps: usize,
     max_peak_component_depth: usize,
+    max_peak_context_depth: usize,
     max_declaration_occurrences: usize,
     max_parser_diagnostics: usize,
     max_recovery_records: usize,
     max_unsupported_regions: usize,
     max_discard_records: usize,
+    max_context_records: usize,
 }
 
 impl CssParserLimits {
@@ -44,11 +56,13 @@ impl CssParserLimits {
     pub(crate) fn new(
         max_algorithm_steps: usize,
         max_peak_component_depth: usize,
+        max_peak_context_depth: usize,
         max_declaration_occurrences: usize,
         max_parser_diagnostics: usize,
         max_recovery_records: usize,
         max_unsupported_regions: usize,
         max_discard_records: usize,
+        max_context_records: usize,
     ) -> Result<Self, CssParserInvalidConfiguration> {
         if max_algorithm_steps == 0 {
             return Err(CssParserInvalidConfiguration::ZeroAlgorithmSteps);
@@ -57,11 +71,13 @@ impl CssParserLimits {
         Ok(Self {
             max_algorithm_steps,
             max_peak_component_depth,
+            max_peak_context_depth,
             max_declaration_occurrences,
             max_parser_diagnostics,
             max_recovery_records,
             max_unsupported_regions,
             max_discard_records,
+            max_context_records,
         })
     }
 
@@ -69,11 +85,13 @@ impl CssParserLimits {
         match kind {
             CssParserResourceKind::AlgorithmSteps => self.max_algorithm_steps,
             CssParserResourceKind::PeakComponentDepth => self.max_peak_component_depth,
+            CssParserResourceKind::PeakContextDepth => self.max_peak_context_depth,
             CssParserResourceKind::DeclarationOccurrences => self.max_declaration_occurrences,
             CssParserResourceKind::ParserDiagnostics => self.max_parser_diagnostics,
             CssParserResourceKind::RecoveryRecords => self.max_recovery_records,
             CssParserResourceKind::UnsupportedRegions => self.max_unsupported_regions,
             CssParserResourceKind::DiscardRecords => self.max_discard_records,
+            CssParserResourceKind::ContextRecords => self.max_context_records,
         }
     }
 }
@@ -95,11 +113,13 @@ impl Error for CssParserInvalidConfiguration {}
 pub(crate) struct CssParserResourceUsage {
     algorithm_steps: usize,
     peak_component_depth: usize,
+    peak_context_depth: usize,
     declaration_occurrences: usize,
     parser_diagnostics: usize,
     recovery_records: usize,
     unsupported_regions: usize,
     discard_records: usize,
+    context_records: usize,
 }
 
 impl CssParserResourceUsage {
@@ -107,20 +127,24 @@ impl CssParserResourceUsage {
     pub(crate) const fn new(
         algorithm_steps: usize,
         peak_component_depth: usize,
+        peak_context_depth: usize,
         declaration_occurrences: usize,
         parser_diagnostics: usize,
         recovery_records: usize,
         unsupported_regions: usize,
         discard_records: usize,
+        context_records: usize,
     ) -> Self {
         Self {
             algorithm_steps,
             peak_component_depth,
+            peak_context_depth,
             declaration_occurrences,
             parser_diagnostics,
             recovery_records,
             unsupported_regions,
             discard_records,
+            context_records,
         }
     }
 
@@ -128,11 +152,13 @@ impl CssParserResourceUsage {
         match kind {
             CssParserResourceKind::AlgorithmSteps => self.algorithm_steps,
             CssParserResourceKind::PeakComponentDepth => self.peak_component_depth,
+            CssParserResourceKind::PeakContextDepth => self.peak_context_depth,
             CssParserResourceKind::DeclarationOccurrences => self.declaration_occurrences,
             CssParserResourceKind::ParserDiagnostics => self.parser_diagnostics,
             CssParserResourceKind::RecoveryRecords => self.recovery_records,
             CssParserResourceKind::UnsupportedRegions => self.unsupported_regions,
             CssParserResourceKind::DiscardRecords => self.discard_records,
+            CssParserResourceKind::ContextRecords => self.context_records,
         }
     }
 }
@@ -264,7 +290,7 @@ mod tests {
 
     #[test]
     fn zero_algorithm_steps_is_invalid_configuration() {
-        let result = CssParserLimits::new(0, 10, 10, 10, 10, 10, 10);
+        let result = CssParserLimits::new(0, 10, 10, 10, 10, 10, 10, 10, 10);
         assert_eq!(
             result,
             Err(CssParserInvalidConfiguration::ZeroAlgorithmSteps)
@@ -273,26 +299,68 @@ mod tests {
 
     #[test]
     fn zero_capacity_limits_remain_valid_for_non_algorithm_kinds() {
-        let limits = CssParserLimits::new(1, 0, 0, 0, 0, 0, 0).unwrap();
+        let limits = CssParserLimits::new(1, 0, 0, 0, 0, 0, 0, 0, 0).unwrap();
         assert_eq!(limits.limit(CssParserResourceKind::AlgorithmSteps), 1);
         assert_eq!(limits.limit(CssParserResourceKind::PeakComponentDepth), 0);
+        assert_eq!(limits.limit(CssParserResourceKind::PeakContextDepth), 0);
         assert_eq!(
             limits.limit(CssParserResourceKind::DeclarationOccurrences),
             0
         );
         assert_eq!(limits.limit(CssParserResourceKind::DiscardRecords), 0);
+        assert_eq!(limits.limit(CssParserResourceKind::ContextRecords), 0);
     }
 
     #[test]
     fn discard_records_limit_and_usage_are_independently_addressable() {
-        let limits = CssParserLimits::new(1, 0, 0, 0, 0, 0, 3).unwrap();
+        let limits = CssParserLimits::new(1, 0, 0, 0, 0, 0, 0, 3, 0).unwrap();
         assert_eq!(limits.limit(CssParserResourceKind::DiscardRecords), 3);
 
-        let usage = CssParserResourceUsage::new(1, 0, 0, 0, 0, 0, 2);
+        let usage = CssParserResourceUsage::new(1, 0, 0, 0, 0, 0, 0, 2, 0);
         assert_eq!(usage.value(CssParserResourceKind::DiscardRecords), 2);
         // Unrelated dimensions are unaffected by a non-zero discard count.
         assert_eq!(usage.value(CssParserResourceKind::RecoveryRecords), 0);
         assert_eq!(usage.value(CssParserResourceKind::UnsupportedRegions), 0);
+        assert_eq!(usage.value(CssParserResourceKind::PeakContextDepth), 0);
+        assert_eq!(usage.value(CssParserResourceKind::ContextRecords), 0);
+    }
+
+    /// #166: `PeakContextDepth` and `ContextRecords` are addressable exactly
+    /// like every other resource dimension, independent of unrelated
+    /// dimensions, before any production producer allocates either.
+    #[test]
+    fn peak_context_depth_limit_and_usage_are_independently_addressable() {
+        let limits = CssParserLimits::new(1, 0, 4, 0, 0, 0, 0, 0, 0).unwrap();
+        assert_eq!(limits.limit(CssParserResourceKind::PeakContextDepth), 4);
+
+        let usage = CssParserResourceUsage::new(1, 0, 3, 0, 0, 0, 0, 0, 0);
+        assert_eq!(usage.value(CssParserResourceKind::PeakContextDepth), 3);
+        assert_eq!(usage.value(CssParserResourceKind::ContextRecords), 0);
+        assert_eq!(usage.value(CssParserResourceKind::PeakComponentDepth), 0);
+    }
+
+    #[test]
+    fn context_records_limit_and_usage_are_independently_addressable() {
+        let limits = CssParserLimits::new(1, 0, 0, 0, 0, 0, 0, 0, 5).unwrap();
+        assert_eq!(limits.limit(CssParserResourceKind::ContextRecords), 5);
+
+        let usage = CssParserResourceUsage::new(1, 0, 0, 0, 0, 0, 0, 0, 4);
+        assert_eq!(usage.value(CssParserResourceKind::ContextRecords), 4);
+        assert_eq!(usage.value(CssParserResourceKind::PeakContextDepth), 0);
+        assert_eq!(usage.value(CssParserResourceKind::DiscardRecords), 0);
+    }
+
+    /// #166: zero is a valid limit/usage for both new dimensions when no
+    /// context capability is executing (the current #166 producer state).
+    #[test]
+    fn zero_is_valid_for_both_new_context_resource_dimensions() {
+        let limits = CssParserLimits::new(1, 0, 0, 0, 0, 0, 0, 0, 0).unwrap();
+        assert_eq!(limits.limit(CssParserResourceKind::PeakContextDepth), 0);
+        assert_eq!(limits.limit(CssParserResourceKind::ContextRecords), 0);
+
+        let usage = CssParserResourceUsage::new(1, 0, 0, 0, 0, 0, 0, 0, 0);
+        assert_eq!(usage.value(CssParserResourceKind::PeakContextDepth), 0);
+        assert_eq!(usage.value(CssParserResourceKind::ContextRecords), 0);
     }
 
     #[test]
