@@ -25,6 +25,7 @@ pub(crate) enum CssParserResourceKind {
     ParserDiagnostics,
     RecoveryRecords,
     UnsupportedRegions,
+    DiscardRecords,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,9 +36,11 @@ pub(crate) struct CssParserLimits {
     max_parser_diagnostics: usize,
     max_recovery_records: usize,
     max_unsupported_regions: usize,
+    max_discard_records: usize,
 }
 
 impl CssParserLimits {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         max_algorithm_steps: usize,
         max_peak_component_depth: usize,
@@ -45,6 +48,7 @@ impl CssParserLimits {
         max_parser_diagnostics: usize,
         max_recovery_records: usize,
         max_unsupported_regions: usize,
+        max_discard_records: usize,
     ) -> Result<Self, CssParserInvalidConfiguration> {
         if max_algorithm_steps == 0 {
             return Err(CssParserInvalidConfiguration::ZeroAlgorithmSteps);
@@ -57,6 +61,7 @@ impl CssParserLimits {
             max_parser_diagnostics,
             max_recovery_records,
             max_unsupported_regions,
+            max_discard_records,
         })
     }
 
@@ -68,6 +73,7 @@ impl CssParserLimits {
             CssParserResourceKind::ParserDiagnostics => self.max_parser_diagnostics,
             CssParserResourceKind::RecoveryRecords => self.max_recovery_records,
             CssParserResourceKind::UnsupportedRegions => self.max_unsupported_regions,
+            CssParserResourceKind::DiscardRecords => self.max_discard_records,
         }
     }
 }
@@ -93,9 +99,11 @@ pub(crate) struct CssParserResourceUsage {
     parser_diagnostics: usize,
     recovery_records: usize,
     unsupported_regions: usize,
+    discard_records: usize,
 }
 
 impl CssParserResourceUsage {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) const fn new(
         algorithm_steps: usize,
         peak_component_depth: usize,
@@ -103,6 +111,7 @@ impl CssParserResourceUsage {
         parser_diagnostics: usize,
         recovery_records: usize,
         unsupported_regions: usize,
+        discard_records: usize,
     ) -> Self {
         Self {
             algorithm_steps,
@@ -111,6 +120,7 @@ impl CssParserResourceUsage {
             parser_diagnostics,
             recovery_records,
             unsupported_regions,
+            discard_records,
         }
     }
 
@@ -122,6 +132,7 @@ impl CssParserResourceUsage {
             CssParserResourceKind::ParserDiagnostics => self.parser_diagnostics,
             CssParserResourceKind::RecoveryRecords => self.recovery_records,
             CssParserResourceKind::UnsupportedRegions => self.unsupported_regions,
+            CssParserResourceKind::DiscardRecords => self.discard_records,
         }
     }
 }
@@ -253,7 +264,7 @@ mod tests {
 
     #[test]
     fn zero_algorithm_steps_is_invalid_configuration() {
-        let result = CssParserLimits::new(0, 10, 10, 10, 10, 10);
+        let result = CssParserLimits::new(0, 10, 10, 10, 10, 10, 10);
         assert_eq!(
             result,
             Err(CssParserInvalidConfiguration::ZeroAlgorithmSteps)
@@ -262,13 +273,26 @@ mod tests {
 
     #[test]
     fn zero_capacity_limits_remain_valid_for_non_algorithm_kinds() {
-        let limits = CssParserLimits::new(1, 0, 0, 0, 0, 0).unwrap();
+        let limits = CssParserLimits::new(1, 0, 0, 0, 0, 0, 0).unwrap();
         assert_eq!(limits.limit(CssParserResourceKind::AlgorithmSteps), 1);
         assert_eq!(limits.limit(CssParserResourceKind::PeakComponentDepth), 0);
         assert_eq!(
             limits.limit(CssParserResourceKind::DeclarationOccurrences),
             0
         );
+        assert_eq!(limits.limit(CssParserResourceKind::DiscardRecords), 0);
+    }
+
+    #[test]
+    fn discard_records_limit_and_usage_are_independently_addressable() {
+        let limits = CssParserLimits::new(1, 0, 0, 0, 0, 0, 3).unwrap();
+        assert_eq!(limits.limit(CssParserResourceKind::DiscardRecords), 3);
+
+        let usage = CssParserResourceUsage::new(1, 0, 0, 0, 0, 0, 2);
+        assert_eq!(usage.value(CssParserResourceKind::DiscardRecords), 2);
+        // Unrelated dimensions are unaffected by a non-zero discard count.
+        assert_eq!(usage.value(CssParserResourceKind::RecoveryRecords), 0);
+        assert_eq!(usage.value(CssParserResourceKind::UnsupportedRegions), 0);
     }
 
     #[test]
