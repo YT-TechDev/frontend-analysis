@@ -20,6 +20,8 @@ fn generous_parser_limits() -> CssParserLimits {
     CssParserLimits::new(
         1 << 20,
         1 << 12,
+        1 << 12,
+        1 << 16,
         1 << 16,
         1 << 16,
         1 << 16,
@@ -254,8 +256,18 @@ fn real_tokenizer_resource_limit_propagates_incomplete_through_core() {
 #[test]
 fn parser_resource_limit_propagates_incomplete_through_core_without_becoming_err() {
     let source = SourceText::new(SourceId::new(70_002), "a{color:red;}".to_owned());
-    let parser_limits =
-        CssParserLimits::new(1 << 10, 1 << 10, 0, 1 << 10, 1 << 10, 1 << 10, 1 << 10).unwrap();
+    let parser_limits = CssParserLimits::new(
+        1 << 10,
+        1 << 10,
+        1 << 10,
+        0,
+        1 << 10,
+        1 << 10,
+        1 << 10,
+        1 << 10,
+        1 << 10,
+    )
+    .unwrap();
 
     let result = analyze_css_declarations(&source, generous_tokenizer_limits(), parser_limits)
         .expect("a parser resource limit is a valid CssParserRunResult, not a Core Err");

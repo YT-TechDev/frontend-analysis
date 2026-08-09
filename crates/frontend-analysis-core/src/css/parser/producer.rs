@@ -1345,6 +1345,7 @@ impl<'a> Producer<'a> {
             self.recovery,
             self.unsupported,
             self.discard,
+            Vec::new(),
             terminal,
             CssParserExecutionCompletion::Complete,
             coverage,
@@ -1365,6 +1366,7 @@ impl<'a> Producer<'a> {
             self.recovery,
             self.unsupported,
             self.discard,
+            Vec::new(),
             terminal,
             CssParserExecutionCompletion::Incomplete,
             coverage,
@@ -1397,6 +1399,7 @@ impl<'a> Producer<'a> {
             self.recovery,
             self.unsupported,
             self.discard,
+            Vec::new(),
             terminal,
             CssParserExecutionCompletion::Incomplete,
             coverage,
@@ -1405,15 +1408,20 @@ impl<'a> Producer<'a> {
         )
     }
 
+    /// `PeakContextDepth` and `ContextRecords` are always zero: this #166
+    /// producer never allocates a context identity or enters a parser
+    /// context. Real context-resource accounting begins in #167.
     fn resource_usage(&self) -> CssParserResourceUsage {
         CssParserResourceUsage::new(
             self.algorithm_steps,
             self.peak_component_depth,
+            0,
             self.occurrences.len(),
             self.diagnostics.len(),
             self.recovery.len(),
             self.unsupported.len(),
             self.discard.len(),
+            0,
         )
     }
 }
@@ -1471,6 +1479,8 @@ mod tests {
         CssParserLimits::new(
             max_algorithm_steps,
             max_peak_component_depth,
+            1000,
+            1000,
             1000,
             1000,
             1000,

@@ -1,6 +1,9 @@
-//! Executable, source-driven resource-limit tests for all seven #139/#158
-//! parser resource kinds, mirroring the #152 `checked_resource_add`
-//! committed-versus-attempted contract already proven for the tokenizer.
+//! Executable, source-driven resource-limit tests for the #139/#158 parser
+//! resource kinds, mirroring the #152 `checked_resource_add` committed-
+//! versus-attempted contract already proven for the tokenizer. The #166
+//! `PeakContextDepth`/`ContextRecords` dimensions are exercised only through
+//! synthetic contract-valid construction (`parser/resource.rs`,
+//! `parser/result.rs`) because this #166 producer never allocates either.
 
 use crate::css::parser::producer::run;
 use crate::css::parser::resource::{CssParserLimits, CssParserResourceKind};
@@ -26,11 +29,14 @@ fn parser_limits(
     CssParserLimits::new(
         max_algorithm_steps,
         max_peak_component_depth,
+        // #166: generous, since this producer never allocates a context.
+        1000,
         max_declaration_occurrences,
         max_parser_diagnostics,
         max_recovery_records,
         max_unsupported_regions,
         max_discard_records,
+        1000,
     )
     .unwrap()
 }

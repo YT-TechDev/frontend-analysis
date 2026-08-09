@@ -9,6 +9,9 @@ use super::super::declaration::{
 use super::super::tokenizer::result::{
     CssTokenizerCompletion, CssTokenizerRunResult, CssTokenizerTermination,
 };
+use super::context::{
+    CssParserContextContractError, CssParserContextRecord, CssParserContextTermination,
+};
 use super::diagnostic::{CssParserDiagnostic, CssParserDiagnosticContractError};
 use super::evidence::{
     CssParserDiscardEvidence, CssParserEvidenceContractError, CssParserRecoveryEvidence,
@@ -51,6 +54,10 @@ pub(crate) struct CssParserRunResult {
     recovery_records: Vec<CssParserRecoveryEvidence>,
     unsupported_regions: Vec<CssParserUnsupportedRegion>,
     discard_records: Vec<CssParserDiscardEvidence>,
+    /// Structurally committed/retained parser-context evidence (#166).
+    /// Always empty for every #166 producer execution; real context
+    /// production begins in #167.
+    context_records: Vec<CssParserContextRecord>,
     terminal: SourceAnchor,
     execution_completion: CssParserExecutionCompletion,
     coverage: CssParserCoverage,
@@ -68,6 +75,7 @@ impl CssParserRunResult {
         recovery_records: Vec<CssParserRecoveryEvidence>,
         unsupported_regions: Vec<CssParserUnsupportedRegion>,
         discard_records: Vec<CssParserDiscardEvidence>,
+        context_records: Vec<CssParserContextRecord>,
         terminal: SourceAnchor,
         execution_completion: CssParserExecutionCompletion,
         coverage: CssParserCoverage,
@@ -82,6 +90,7 @@ impl CssParserRunResult {
             &recovery_records,
             &unsupported_regions,
             &discard_records,
+            &context_records,
             &terminal,
             execution_completion,
             coverage,
@@ -96,6 +105,7 @@ impl CssParserRunResult {
             recovery_records,
             unsupported_regions,
             discard_records,
+            context_records,
             terminal,
             execution_completion,
             coverage,
@@ -126,6 +136,12 @@ impl CssParserRunResult {
 
     pub(crate) fn discard_records(&self) -> &[CssParserDiscardEvidence] {
         &self.discard_records
+    }
+
+    /// Retained parser-context evidence, in deterministic source-allocation
+    /// order (#166). Always empty for every #166 producer execution.
+    pub(crate) fn context_records(&self) -> &[CssParserContextRecord] {
+        &self.context_records
     }
 
     pub(crate) const fn terminal(&self) -> &SourceAnchor {
@@ -201,6 +217,14 @@ impl From<CssParserEvidenceContractError> for CssParserRunError {
     }
 }
 
+impl From<CssParserContextContractError> for CssParserRunError {
+    fn from(error: CssParserContextContractError) -> Self {
+        Self::InternalInvariantFailure(CssParserInvariantViolation::ContextContractViolation {
+            error,
+        })
+    }
+}
+
 impl fmt::Display for CssParserRunError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "CSS parser run failure: {self:?}")
@@ -217,6 +241,7 @@ pub(crate) enum CssParserRunEvidenceRole {
     Recovery { index: usize },
     Unsupported { index: usize },
     Discard { index: usize },
+    Context { index: usize },
     ResourceLimit,
 }
 
@@ -326,6 +351,66 @@ pub(crate) enum CssParserInvariantViolation {
         index: usize,
         unsupported_index: usize,
     },
+    ContextContractViolation {
+        error: CssParserContextContractError,
+    },
+    /// A context record's `id()` did not equal its vector index (#166
+    /// contiguous run-local identity).
+    ContextIdIndexMismatch {
+        index: usize,
+    },
+    /// A context record's parent `ContextId` does not refer to an
+    /// earlier-retained record (forward parent or self-parent).
+    ContextParentNotBefore {
+        index: usize,
+    },
+    /// A child context's authored/partial extent is not contained in its
+    /// parent's retained `body`.
+    ContextChildOutsideParentBody {
+        index: usize,
+    },
+    /// Two retained child contexts under the same parent claimed the same
+    /// parent-local direct-item ordinal.
+    ContextDuplicateChildItemOrdinal {
+        index: usize,
+    },
+    /// Retained child-context item ordinals under one parent did not
+    /// strictly increase in retained (source) order.
+    ContextChildOrderViolation {
+        index: usize,
+    },
+    ContextBeyondTerminal {
+        index: usize,
+        end: usize,
+        terminal: usize,
+    },
+    /// An `EndOfInput` context termination requires the upstream tokenizer
+    /// to have completed at true `EndOfInput` and the parser run itself to
+    /// terminate at `EndOfTokenizerInput`.
+    ContextEndOfInputRequiresUpstreamTrueEof {
+        index: usize,
+    },
+    /// An `UpstreamTokenizerIncomplete` context termination requires the
+    /// parser run's own termination to be `UpstreamTokenizerIncomplete`.
+    ContextUpstreamIncompleteRequiresMatchingRunTermination {
+        index: usize,
+    },
+    /// A `ParserResourceLimit` context termination requires the parser run's
+    /// own termination to be `ParserResourceLimit`.
+    ContextResourceLimitRequiresMatchingRunTermination {
+        index: usize,
+    },
+    /// A partial context's terminal evidence does not agree with the parser
+    /// run's own terminal, though both claim the same lifecycle boundary.
+    ContextTerminalMismatchWithRunTerminal {
+        index: usize,
+    },
+    /// Achieved `PeakContextDepth` usage did not equal the maximum ancestry
+    /// depth represented by retained context records.
+    ContextPeakDepthUsageMismatch {
+        expected: usize,
+        actual: usize,
+    },
     ResourceUsageCountMismatch {
         kind: CssParserResourceKind,
         expected: usize,
@@ -382,6 +467,7 @@ fn validate_run(
     recovery_records: &[CssParserRecoveryEvidence],
     unsupported_regions: &[CssParserUnsupportedRegion],
     discard_records: &[CssParserDiscardEvidence],
+    context_records: &[CssParserContextRecord],
     terminal: &SourceAnchor,
     execution_completion: CssParserExecutionCompletion,
     coverage: CssParserCoverage,
@@ -429,6 +515,15 @@ fn validate_run(
         terminal_offset,
     )?;
 
+    let achieved_peak_context_depth = validate_contexts(
+        expected_source,
+        context_records,
+        terminal_offset,
+        terminal,
+        upstream,
+        termination,
+    )?;
+
     validate_resource_counts(
         resources,
         occurrences.len(),
@@ -436,9 +531,152 @@ fn validate_run(
         recovery_records.len(),
         unsupported_regions.len(),
         discard_records.len(),
+        context_records.len(),
     )?;
 
+    let actual_peak_context_depth = resources.value(CssParserResourceKind::PeakContextDepth);
+    if actual_peak_context_depth != achieved_peak_context_depth {
+        return invariant(CssParserInvariantViolation::ContextPeakDepthUsageMismatch {
+            expected: achieved_peak_context_depth,
+            actual: actual_peak_context_depth,
+        });
+    }
+
     Ok(())
+}
+
+/// Validates retained context evidence: run-local ID/index contiguity,
+/// parent existence/ordering, source-containment within the parent's `body`,
+/// sibling item-ordinal uniqueness/order, the context-beyond-terminal bound,
+/// and partial-termination/lifecycle coupling against the parser run's own
+/// upstream/termination evidence. Returns the achieved maximum ancestry
+/// depth represented by `context_records` (0 when empty), which the caller
+/// reconciles against the committed `PeakContextDepth` usage.
+fn validate_contexts(
+    expected_source: SourceId,
+    context_records: &[CssParserContextRecord],
+    terminal_offset: usize,
+    terminal: &SourceAnchor,
+    upstream: &CssTokenizerRunResult,
+    termination: &CssParserTermination,
+) -> Result<usize, CssParserRunError> {
+    let upstream_true_eof = upstream_ended_at_true_eof(upstream);
+    let mut depths: Vec<usize> = Vec::with_capacity(context_records.len());
+    let mut last_child_ordinal: std::collections::BTreeMap<usize, usize> =
+        std::collections::BTreeMap::new();
+
+    for (index, record) in context_records.iter().enumerate() {
+        if record.id().index() != index {
+            return invariant(CssParserInvariantViolation::ContextIdIndexMismatch { index });
+        }
+        require_source(
+            expected_source,
+            record.header(),
+            CssParserRunEvidenceRole::Context { index },
+        )?;
+
+        let extent_end = record.extent_end();
+        if extent_end > terminal_offset {
+            return invariant(CssParserInvariantViolation::ContextBeyondTerminal {
+                index,
+                end: extent_end,
+                terminal: terminal_offset,
+            });
+        }
+
+        let depth = if let Some(parent) = record.parent() {
+            let parent_index = parent.context_id().index();
+            if parent_index >= index {
+                return invariant(CssParserInvariantViolation::ContextParentNotBefore { index });
+            }
+            let parent_record = &context_records[parent_index];
+            let parent_body = parent_record.body().range();
+            if record.header().source_id() != parent_record.body().source_id()
+                || record.extent_start() < parent_body.start()
+                || extent_end > parent_body.end()
+            {
+                return invariant(CssParserInvariantViolation::ContextChildOutsideParentBody {
+                    index,
+                });
+            }
+
+            let ordinal = parent.item_ordinal().value();
+            if let Some(&previous_ordinal) = last_child_ordinal.get(&parent_index) {
+                if ordinal == previous_ordinal {
+                    return invariant(
+                        CssParserInvariantViolation::ContextDuplicateChildItemOrdinal { index },
+                    );
+                }
+                if ordinal < previous_ordinal {
+                    return invariant(CssParserInvariantViolation::ContextChildOrderViolation {
+                        index,
+                    });
+                }
+            }
+            last_child_ordinal.insert(parent_index, ordinal);
+
+            depths[parent_index] + 1
+        } else {
+            1
+        };
+        depths.push(depth);
+
+        match record.termination() {
+            CssParserContextTermination::AuthoredRightCurly { .. } => {}
+            CssParserContextTermination::EndOfInput { .. } => {
+                if !upstream_true_eof
+                    || !matches!(termination, CssParserTermination::EndOfTokenizerInput)
+                {
+                    return invariant(
+                        CssParserInvariantViolation::ContextEndOfInputRequiresUpstreamTrueEof {
+                            index,
+                        },
+                    );
+                }
+            }
+            CssParserContextTermination::UpstreamTokenizerIncomplete {
+                terminal: context_terminal,
+            } => {
+                if !matches!(
+                    termination,
+                    CssParserTermination::UpstreamTokenizerIncomplete
+                ) {
+                    return invariant(
+                        CssParserInvariantViolation::ContextUpstreamIncompleteRequiresMatchingRunTermination {
+                            index,
+                        },
+                    );
+                }
+                if !same_anchor(context_terminal, terminal) {
+                    return invariant(
+                        CssParserInvariantViolation::ContextTerminalMismatchWithRunTerminal {
+                            index,
+                        },
+                    );
+                }
+            }
+            CssParserContextTermination::ParserResourceLimit {
+                terminal: context_terminal,
+            } => {
+                if !matches!(termination, CssParserTermination::ParserResourceLimit(_)) {
+                    return invariant(
+                        CssParserInvariantViolation::ContextResourceLimitRequiresMatchingRunTermination {
+                            index,
+                        },
+                    );
+                }
+                if !same_anchor(context_terminal, terminal) {
+                    return invariant(
+                        CssParserInvariantViolation::ContextTerminalMismatchWithRunTerminal {
+                            index,
+                        },
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(depths.into_iter().max().unwrap_or(0))
 }
 
 /// The single upstream/source-boundary invariant check: exact source
@@ -824,6 +1062,7 @@ fn validate_resource_counts(
     recovery_count: usize,
     unsupported_count: usize,
     discard_count: usize,
+    context_count: usize,
 ) -> Result<(), CssParserRunError> {
     check_count(
         resources,
@@ -849,6 +1088,11 @@ fn validate_resource_counts(
         resources,
         CssParserResourceKind::DiscardRecords,
         discard_count,
+    )?;
+    check_count(
+        resources,
+        CssParserResourceKind::ContextRecords,
+        context_count,
     )?;
     Ok(())
 }
@@ -949,7 +1193,7 @@ mod tests {
     }
 
     fn empty_resources() -> CssParserResourceUsage {
-        CssParserResourceUsage::new(1, 0, 0, 0, 0, 0, 0)
+        CssParserResourceUsage::new(1, 0, 0, 0, 0, 0, 0, 0, 0)
     }
 
     // contract-only: synthetic lifecycle construction to exercise
@@ -964,6 +1208,7 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -998,6 +1243,7 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -1052,6 +1298,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             text.anchor(0, 0).unwrap(),
             CssParserExecutionCompletion::Complete,
             CssParserCoverage::SupportedForSelectedQuestion,
@@ -1089,11 +1336,12 @@ mod tests {
             Vec::new(),
             unsupported,
             Vec::new(),
+            Vec::new(),
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
             CssParserCoverage::SupportedForSelectedQuestion,
             CssParserTermination::EndOfTokenizerInput,
-            CssParserResourceUsage::new(1, 0, 0, 0, 0, 1, 0),
+            CssParserResourceUsage::new(1, 0, 0, 0, 0, 0, 1, 0, 0),
         );
 
         assert_eq!(
@@ -1137,11 +1385,12 @@ mod tests {
             Vec::new(),
             vec![unsupported],
             Vec::new(),
+            Vec::new(),
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
             CssParserCoverage::ContainsUnsupportedContexts,
             CssParserTermination::EndOfTokenizerInput,
-            CssParserResourceUsage::new(1, 0, 1, 0, 0, 1, 0),
+            CssParserResourceUsage::new(1, 0, 0, 1, 0, 0, 1, 0, 0),
         );
 
         assert_eq!(
@@ -1193,11 +1442,12 @@ mod tests {
             Vec::new(),
             vec![unsupported],
             Vec::new(),
+            Vec::new(),
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
             CssParserCoverage::ContainsUnsupportedContexts,
             CssParserTermination::EndOfTokenizerInput,
-            CssParserResourceUsage::new(1, 0, 1, 0, 0, 1, 0),
+            CssParserResourceUsage::new(1, 0, 0, 1, 0, 0, 1, 0, 0),
         );
 
         assert_eq!(
@@ -1275,11 +1525,12 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Incomplete,
             CssParserCoverage::SupportedForSelectedQuestion,
             CssParserTermination::UpstreamTokenizerIncomplete,
-            CssParserResourceUsage::new(1, 0, 1, 0, 0, 0, 0),
+            CssParserResourceUsage::new(1, 0, 0, 1, 0, 0, 0, 0, 0),
         );
 
         assert_eq!(
@@ -1316,11 +1567,12 @@ mod tests {
             vec![recovery],
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
             CssParserCoverage::SupportedForSelectedQuestion,
             CssParserTermination::EndOfTokenizerInput,
-            CssParserResourceUsage::new(1, 0, 0, 0, 1, 0, 0),
+            CssParserResourceUsage::new(1, 0, 0, 0, 0, 1, 0, 0, 0),
         )
         .unwrap();
 
@@ -1386,11 +1638,12 @@ mod tests {
             vec![recovery],
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Incomplete,
             CssParserCoverage::SupportedForSelectedQuestion,
             CssParserTermination::UpstreamTokenizerIncomplete,
-            CssParserResourceUsage::new(1, 0, 0, 0, 1, 0, 0),
+            CssParserResourceUsage::new(1, 0, 0, 0, 0, 1, 0, 0, 0),
         );
 
         assert_eq!(
@@ -1412,6 +1665,7 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -1448,6 +1702,7 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -1493,11 +1748,12 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
             CssParserCoverage::SupportedForSelectedQuestion,
             CssParserTermination::EndOfTokenizerInput,
-            CssParserResourceUsage::new(1, 0, 3, 0, 0, 0, 0),
+            CssParserResourceUsage::new(1, 0, 0, 3, 0, 0, 0, 0, 0),
         );
 
         assert_eq!(
@@ -1522,6 +1778,7 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -1571,11 +1828,12 @@ mod tests {
             Vec::new(),
             Vec::new(),
             vec![discard],
+            Vec::new(),
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
             CssParserCoverage::SupportedForSelectedQuestion,
             CssParserTermination::EndOfTokenizerInput,
-            CssParserResourceUsage::new(1, 0, 0, 0, 0, 0, 1),
+            CssParserResourceUsage::new(1, 0, 0, 0, 0, 0, 0, 1, 0),
         )
         .unwrap();
 
@@ -1619,11 +1877,12 @@ mod tests {
             Vec::new(),
             Vec::new(),
             vec![discard],
+            Vec::new(),
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
             CssParserCoverage::SupportedForSelectedQuestion,
             CssParserTermination::EndOfTokenizerInput,
-            CssParserResourceUsage::new(1, 0, 1, 0, 0, 0, 1),
+            CssParserResourceUsage::new(1, 0, 0, 1, 0, 0, 0, 1, 0),
         );
 
         assert_eq!(
@@ -1662,11 +1921,12 @@ mod tests {
             vec![recovery],
             Vec::new(),
             vec![discard],
+            Vec::new(),
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
             CssParserCoverage::SupportedForSelectedQuestion,
             CssParserTermination::EndOfTokenizerInput,
-            CssParserResourceUsage::new(1, 0, 0, 0, 1, 0, 1),
+            CssParserResourceUsage::new(1, 0, 0, 0, 0, 1, 0, 1, 0),
         );
 
         assert_eq!(
@@ -1701,11 +1961,12 @@ mod tests {
             Vec::new(),
             vec![unsupported],
             vec![discard],
+            Vec::new(),
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
             CssParserCoverage::ContainsUnsupportedContexts,
             CssParserTermination::EndOfTokenizerInput,
-            CssParserResourceUsage::new(1, 0, 0, 0, 0, 1, 1),
+            CssParserResourceUsage::new(1, 0, 0, 0, 0, 0, 1, 1, 0),
         );
 
         assert_eq!(
@@ -1741,11 +2002,12 @@ mod tests {
             Vec::new(),
             Vec::new(),
             vec![discard],
+            Vec::new(),
             text.anchor(4, 4).unwrap(),
             CssParserExecutionCompletion::Incomplete,
             CssParserCoverage::SupportedForSelectedQuestion,
             CssParserTermination::ParserResourceLimit(evidence),
-            CssParserResourceUsage::new(1, 0, 0, 0, 0, 0, 1),
+            CssParserResourceUsage::new(1, 0, 0, 0, 0, 0, 0, 1, 0),
         );
 
         assert_eq!(
@@ -1776,11 +2038,12 @@ mod tests {
             Vec::new(),
             Vec::new(),
             vec![discard_b, discard_a],
+            Vec::new(),
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
             CssParserCoverage::SupportedForSelectedQuestion,
             CssParserTermination::EndOfTokenizerInput,
-            CssParserResourceUsage::new(1, 0, 0, 0, 0, 0, 2),
+            CssParserResourceUsage::new(1, 0, 0, 0, 0, 0, 0, 2, 0),
         );
 
         assert_eq!(
@@ -1806,11 +2069,12 @@ mod tests {
             Vec::new(),
             Vec::new(),
             vec![discard],
+            Vec::new(),
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
             CssParserCoverage::SupportedForSelectedQuestion,
             CssParserTermination::EndOfTokenizerInput,
-            CssParserResourceUsage::new(1, 0, 0, 0, 0, 0, 2),
+            CssParserResourceUsage::new(1, 0, 0, 0, 0, 0, 0, 2, 0),
         );
 
         assert_eq!(
@@ -1822,6 +2086,618 @@ mod tests {
                     actual: 2,
                 }
             )
+        );
+    }
+
+    // -------------------------------------------------------------------
+    // #166 result-level context corruption matrix.
+    // -------------------------------------------------------------------
+
+    use crate::css::parser::context::{
+        CssParserContextId, CssParserContextKind, CssParserContextParent,
+        CssParserDirectItemOrdinal,
+    };
+
+    fn context_resources(
+        context_records: usize,
+        peak_context_depth: usize,
+    ) -> CssParserResourceUsage {
+        CssParserResourceUsage::new(1, 0, peak_context_depth, 0, 0, 0, 0, 0, context_records)
+    }
+
+    /// A single valid top-level `QualifiedRuleBlock` context over `"a{x}"`
+    /// (`extent` `[0, 4)`), closed by an authored `}`.
+    fn single_top_level_context(text: &SourceText, id: usize) -> CssParserContextRecord {
+        CssParserContextRecord::new(
+            text,
+            CssParserContextId::new(id),
+            None,
+            CssParserContextKind::QualifiedRuleBlock,
+            text.anchor(0, 1).unwrap(),
+            text.anchor(1, 2).unwrap(),
+            text.anchor(2, 3).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(3, 4).unwrap(),
+            },
+        )
+        .unwrap()
+    }
+
+    /// A valid two-level `"a{b{1}c{2}}"` fixture (outer `a{...}` containing
+    /// two child block contexts `b{1}` and `c{2}`), with the children's
+    /// parent-local item ordinals supplied by the caller so tests can exceed
+    /// the well-formed `[0, 1]` ordering.
+    fn two_children_under_one_parent(
+        text: &SourceText,
+        first_ordinal: usize,
+        second_ordinal: usize,
+    ) -> Vec<CssParserContextRecord> {
+        let parent_id = CssParserContextId::new(0);
+        let outer = CssParserContextRecord::new(
+            text,
+            parent_id,
+            None,
+            CssParserContextKind::QualifiedRuleBlock,
+            text.anchor(0, 1).unwrap(),
+            text.anchor(1, 2).unwrap(),
+            text.anchor(2, 10).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(10, 11).unwrap(),
+            },
+        )
+        .unwrap();
+        let child_b = CssParserContextRecord::new(
+            text,
+            CssParserContextId::new(1),
+            Some(CssParserContextParent::new(
+                parent_id,
+                CssParserDirectItemOrdinal::new(first_ordinal),
+            )),
+            CssParserContextKind::QualifiedRuleBlock,
+            text.anchor(2, 3).unwrap(),
+            text.anchor(3, 4).unwrap(),
+            text.anchor(4, 5).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(5, 6).unwrap(),
+            },
+        )
+        .unwrap();
+        let child_c = CssParserContextRecord::new(
+            text,
+            CssParserContextId::new(2),
+            Some(CssParserContextParent::new(
+                parent_id,
+                CssParserDirectItemOrdinal::new(second_ordinal),
+            )),
+            CssParserContextKind::QualifiedRuleBlock,
+            text.anchor(6, 7).unwrap(),
+            text.anchor(7, 8).unwrap(),
+            text.anchor(8, 9).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(9, 10).unwrap(),
+            },
+        )
+        .unwrap();
+        vec![outer, child_b, child_c]
+    }
+
+    #[test]
+    fn contract_only_context_id_index_mismatch_is_rejected() {
+        let text = source(20_001, "a{x}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        // Constructed with a run-local id of 1 at vector index 0.
+        let context = single_top_level_context(&text, 1);
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![context],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            context_resources(1, 1),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::ContextIdIndexMismatch { index: 0 }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_context_forward_parent_is_rejected() {
+        let text = source(20_002, "a{b{1}c{2}}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let parent_id = CssParserContextId::new(0);
+        // A first record (index 0) that already claims a parent cannot
+        // refer to any earlier-retained record.
+        let context = CssParserContextRecord::new(
+            &text,
+            parent_id,
+            Some(CssParserContextParent::new(
+                parent_id,
+                CssParserDirectItemOrdinal::new(0),
+            )),
+            CssParserContextKind::QualifiedRuleBlock,
+            text.anchor(0, 1).unwrap(),
+            text.anchor(1, 2).unwrap(),
+            text.anchor(2, 10).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(10, 11).unwrap(),
+            },
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![context],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            context_resources(1, 1),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::ContextParentNotBefore { index: 0 }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_context_child_outside_parent_body_is_rejected() {
+        let text = source(20_003, "a{b{1}c{2}}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let parent_id = CssParserContextId::new(0);
+        let outer = CssParserContextRecord::new(
+            &text,
+            parent_id,
+            None,
+            CssParserContextKind::QualifiedRuleBlock,
+            text.anchor(0, 1).unwrap(),
+            text.anchor(1, 2).unwrap(),
+            text.anchor(2, 10).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(10, 11).unwrap(),
+            },
+        )
+        .unwrap();
+        // This child's own local evidence is self-consistent, but its
+        // authored close reuses the outer context's own closing `}` byte,
+        // extending past the outer's retained `body` (which ends at 10).
+        let escaping_child = CssParserContextRecord::new(
+            &text,
+            CssParserContextId::new(1),
+            Some(CssParserContextParent::new(
+                parent_id,
+                CssParserDirectItemOrdinal::new(0),
+            )),
+            CssParserContextKind::QualifiedRuleBlock,
+            text.anchor(6, 7).unwrap(),
+            text.anchor(7, 8).unwrap(),
+            text.anchor(8, 10).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(10, 11).unwrap(),
+            },
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![outer, escaping_child],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            context_resources(2, 2),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::ContextChildOutsideParentBody { index: 1 }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_context_duplicate_child_item_ordinal_is_rejected() {
+        let text = source(20_004, "a{b{1}c{2}}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let records = two_children_under_one_parent(&text, 0, 0);
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            records,
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            context_resources(3, 2),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::ContextDuplicateChildItemOrdinal { index: 2 }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_context_child_order_violation_is_rejected() {
+        let text = source(20_005, "a{b{1}c{2}}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let records = two_children_under_one_parent(&text, 1, 0);
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            records,
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            context_resources(3, 2),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::ContextChildOrderViolation { index: 2 }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_context_beyond_terminal_is_rejected() {
+        let text = source(20_006, "a{x}");
+        let context = single_top_level_context(&text, 0);
+        let resource_limit = CssParserResourceLimitEvidence::new(
+            &text,
+            CssParserResourceKind::AlgorithmSteps,
+            1,
+            2,
+            text.anchor(3, 3).unwrap(),
+        )
+        .unwrap();
+        let upstream = complete_tokenizer_run(&text);
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![context],
+            text.anchor(3, 3).unwrap(),
+            CssParserExecutionCompletion::Incomplete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::ParserResourceLimit(resource_limit),
+            context_resources(1, 1),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::ContextBeyondTerminal {
+                    index: 0,
+                    end: 4,
+                    terminal: 3,
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_context_records_usage_count_mismatch_is_rejected() {
+        let text = source(20_007, "a{x}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let context = single_top_level_context(&text, 0);
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![context],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            context_resources(2, 1),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::ResourceUsageCountMismatch {
+                    kind: CssParserResourceKind::ContextRecords,
+                    expected: 1,
+                    actual: 2,
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_peak_context_depth_usage_mismatch_is_rejected() {
+        let text = source(20_008, "a{b{1}c{2}}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let records = two_children_under_one_parent(&text, 0, 1);
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            records,
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            // Achieved depth is really 2 (outer=1, each child=2); this
+            // claims 1.
+            context_resources(3, 1),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::ContextPeakDepthUsageMismatch {
+                    expected: 2,
+                    actual: 1,
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_context_end_of_input_requires_upstream_true_eof() {
+        let text = source(20_009, "a{color red");
+        let len = text.as_str().len();
+        // Locally valid `EndOfInput` context evidence (terminal sits at the
+        // true retained source end), but the upstream tokenizer itself never
+        // confirmed true `EndOfInput`.
+        let context = CssParserContextRecord::new(
+            &text,
+            CssParserContextId::new(0),
+            None,
+            CssParserContextKind::QualifiedRuleBlock,
+            text.anchor(0, 1).unwrap(),
+            text.anchor(1, 2).unwrap(),
+            text.anchor(2, len).unwrap(),
+            CssParserContextTermination::EndOfInput {
+                terminal: text.anchor(len, len).unwrap(),
+            },
+        )
+        .unwrap();
+
+        let resource_limit =
+            crate::css::tokenizer::resource::CssTokenizerResourceLimitEvidence::new(
+                &text,
+                crate::css::tokenizer::resource::CssTokenizerResourceKind::AlgorithmSteps,
+                1,
+                2,
+                text.anchor(len, len).unwrap(),
+            )
+            .unwrap();
+        let upstream = CssTokenizerRunResult::new(
+            &text,
+            None,
+            vec![CssLexicalItem::SemanticToken(
+                CssToken::new(
+                    &text,
+                    text.anchor(0, len).unwrap(),
+                    CssTokenKind::Ident("x".to_owned()),
+                )
+                .unwrap(),
+            )],
+            Vec::<CssTokenizerDiagnostic>::new(),
+            text.anchor(0, len).unwrap(),
+            text.anchor(len, len).unwrap(),
+            text.anchor(len, len).unwrap(),
+            CssTokenizerCompletion::Incomplete,
+            CssTokenizerTermination::ResourceLimit(resource_limit),
+            CssTokenizerResourceUsage::new(0, 1, 1, 0, 0, 0),
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![context],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Incomplete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::UpstreamTokenizerIncomplete,
+            context_resources(1, 1),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::ContextEndOfInputRequiresUpstreamTrueEof { index: 0 }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_nested_partial_ancestors_at_one_stop_boundary_are_accepted() {
+        // Both an outer and an inner context remain active when the run
+        // stops on upstream-tokenizer incompleteness; both honestly retain
+        // `UpstreamTokenizerIncomplete` evidence at the exact same terminal,
+        // with no fabricated authored closure for either.
+        let text = source(20_010, "a{b{color:red");
+        let len = text.as_str().len();
+        let outer = CssParserContextRecord::new(
+            &text,
+            CssParserContextId::new(0),
+            None,
+            CssParserContextKind::QualifiedRuleBlock,
+            text.anchor(0, 1).unwrap(),
+            text.anchor(1, 2).unwrap(),
+            text.anchor(2, len).unwrap(),
+            CssParserContextTermination::UpstreamTokenizerIncomplete {
+                terminal: text.anchor(len, len).unwrap(),
+            },
+        )
+        .unwrap();
+        let inner = CssParserContextRecord::new(
+            &text,
+            CssParserContextId::new(1),
+            Some(CssParserContextParent::new(
+                CssParserContextId::new(0),
+                CssParserDirectItemOrdinal::new(0),
+            )),
+            CssParserContextKind::QualifiedRuleBlock,
+            text.anchor(2, 3).unwrap(),
+            text.anchor(3, 4).unwrap(),
+            text.anchor(4, len).unwrap(),
+            CssParserContextTermination::UpstreamTokenizerIncomplete {
+                terminal: text.anchor(len, len).unwrap(),
+            },
+        )
+        .unwrap();
+
+        let resource_limit =
+            crate::css::tokenizer::resource::CssTokenizerResourceLimitEvidence::new(
+                &text,
+                crate::css::tokenizer::resource::CssTokenizerResourceKind::AlgorithmSteps,
+                1,
+                2,
+                text.anchor(len, len).unwrap(),
+            )
+            .unwrap();
+        let upstream = CssTokenizerRunResult::new(
+            &text,
+            None,
+            vec![CssLexicalItem::SemanticToken(
+                CssToken::new(
+                    &text,
+                    text.anchor(0, len).unwrap(),
+                    CssTokenKind::Ident("x".to_owned()),
+                )
+                .unwrap(),
+            )],
+            Vec::<CssTokenizerDiagnostic>::new(),
+            text.anchor(0, len).unwrap(),
+            text.anchor(len, len).unwrap(),
+            text.anchor(len, len).unwrap(),
+            CssTokenizerCompletion::Incomplete,
+            CssTokenizerTermination::ResourceLimit(resource_limit),
+            CssTokenizerResourceUsage::new(0, 1, 1, 0, 0, 0),
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![outer, inner],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Incomplete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::UpstreamTokenizerIncomplete,
+            context_resources(2, 2),
+        )
+        .unwrap();
+
+        assert_eq!(result.context_records().len(), 2);
+    }
+
+    #[test]
+    fn contract_only_empty_context_table_with_zero_new_usage_is_accepted() {
+        let text = source(20_011, "a{color:red;}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            context_resources(0, 0),
+        )
+        .unwrap();
+
+        assert!(result.context_records().is_empty());
+        assert_eq!(
+            result
+                .resources()
+                .value(CssParserResourceKind::ContextRecords),
+            0
+        );
+        assert_eq!(
+            result
+                .resources()
+                .value(CssParserResourceKind::PeakContextDepth),
+            0
         );
     }
 }
