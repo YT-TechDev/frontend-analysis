@@ -11,7 +11,8 @@ use super::super::tokenizer::result::{
 };
 use super::diagnostic::{CssParserDiagnostic, CssParserDiagnosticContractError};
 use super::evidence::{
-    CssParserEvidenceContractError, CssParserRecoveryEvidence, CssParserUnsupportedRegion,
+    CssParserDiscardEvidence, CssParserEvidenceContractError, CssParserRecoveryEvidence,
+    CssParserUnsupportedRegion,
 };
 use super::resource::{
     CssParserInvalidConfiguration, CssParserResourceContractError, CssParserResourceKind,
@@ -49,6 +50,7 @@ pub(crate) struct CssParserRunResult {
     parser_diagnostics: Vec<CssParserDiagnostic>,
     recovery_records: Vec<CssParserRecoveryEvidence>,
     unsupported_regions: Vec<CssParserUnsupportedRegion>,
+    discard_records: Vec<CssParserDiscardEvidence>,
     terminal: SourceAnchor,
     execution_completion: CssParserExecutionCompletion,
     coverage: CssParserCoverage,
@@ -65,6 +67,7 @@ impl CssParserRunResult {
         parser_diagnostics: Vec<CssParserDiagnostic>,
         recovery_records: Vec<CssParserRecoveryEvidence>,
         unsupported_regions: Vec<CssParserUnsupportedRegion>,
+        discard_records: Vec<CssParserDiscardEvidence>,
         terminal: SourceAnchor,
         execution_completion: CssParserExecutionCompletion,
         coverage: CssParserCoverage,
@@ -78,6 +81,7 @@ impl CssParserRunResult {
             &parser_diagnostics,
             &recovery_records,
             &unsupported_regions,
+            &discard_records,
             &terminal,
             execution_completion,
             coverage,
@@ -91,6 +95,7 @@ impl CssParserRunResult {
             parser_diagnostics,
             recovery_records,
             unsupported_regions,
+            discard_records,
             terminal,
             execution_completion,
             coverage,
@@ -117,6 +122,10 @@ impl CssParserRunResult {
 
     pub(crate) fn unsupported_regions(&self) -> &[CssParserUnsupportedRegion] {
         &self.unsupported_regions
+    }
+
+    pub(crate) fn discard_records(&self) -> &[CssParserDiscardEvidence] {
+        &self.discard_records
     }
 
     pub(crate) const fn terminal(&self) -> &SourceAnchor {
@@ -207,6 +216,7 @@ pub(crate) enum CssParserRunEvidenceRole {
     Diagnostic { index: usize },
     Recovery { index: usize },
     Unsupported { index: usize },
+    Discard { index: usize },
     ResourceLimit,
 }
 
@@ -293,6 +303,26 @@ pub(crate) enum CssParserInvariantViolation {
     UnsupportedOrderViolation {
         index: usize,
     },
+    DiscardBeyondTerminal {
+        index: usize,
+        end: usize,
+        terminal: usize,
+    },
+    DiscardOrderViolation {
+        index: usize,
+    },
+    DiscardOverlapsOccurrence {
+        index: usize,
+        occurrence_index: usize,
+    },
+    DiscardOverlapsRecoveryRegion {
+        index: usize,
+        recovery_index: usize,
+    },
+    DiscardOverlapsUnsupportedRegion {
+        index: usize,
+        unsupported_index: usize,
+    },
     ResourceUsageCountMismatch {
         kind: CssParserResourceKind,
         expected: usize,
@@ -332,6 +362,7 @@ fn validate_run(
     parser_diagnostics: &[CssParserDiagnostic],
     recovery_records: &[CssParserRecoveryEvidence],
     unsupported_regions: &[CssParserUnsupportedRegion],
+    discard_records: &[CssParserDiscardEvidence],
     terminal: &SourceAnchor,
     execution_completion: CssParserExecutionCompletion,
     coverage: CssParserCoverage,
@@ -369,6 +400,14 @@ fn validate_run(
     validate_diagnostics(expected_source, parser_diagnostics, terminal_offset)?;
     validate_recovery(expected_source, recovery_records, terminal_offset)?;
     validate_unsupported(expected_source, unsupported_regions, terminal_offset)?;
+    validate_discard(
+        expected_source,
+        discard_records,
+        occurrences,
+        recovery_records,
+        unsupported_regions,
+        terminal_offset,
+    )?;
 
     validate_resource_counts(
         resources,
@@ -376,6 +415,7 @@ fn validate_run(
         parser_diagnostics.len(),
         recovery_records.len(),
         unsupported_regions.len(),
+        discard_records.len(),
     )?;
 
     Ok(())
@@ -663,12 +703,76 @@ fn validate_unsupported(
     Ok(())
 }
 
+/// Discard evidence is durable parser-owned evidence, but it is not
+/// unsupported coverage and never assigns a second parser meaning to a
+/// construct already claimed by an included occurrence, recovery record, or
+/// unsupported region.
+fn validate_discard(
+    expected_source: SourceId,
+    discard_records: &[CssParserDiscardEvidence],
+    occurrences: &[CssDeclarationOccurrence],
+    recovery_records: &[CssParserRecoveryEvidence],
+    unsupported_regions: &[CssParserUnsupportedRegion],
+    terminal_offset: usize,
+) -> Result<(), CssParserRunError> {
+    let mut previous_end: Option<usize> = None;
+    for (index, record) in discard_records.iter().enumerate() {
+        require_source(
+            expected_source,
+            record.region(),
+            CssParserRunEvidenceRole::Discard { index },
+        )?;
+        if record.region().range().end() > terminal_offset {
+            return invariant(CssParserInvariantViolation::DiscardBeyondTerminal {
+                index,
+                end: record.region().range().end(),
+                terminal: terminal_offset,
+            });
+        }
+        if let Some(previous_end) = previous_end
+            && record.region().range().start() < previous_end
+        {
+            return invariant(CssParserInvariantViolation::DiscardOrderViolation { index });
+        }
+        previous_end = Some(record.region().range().end());
+
+        for (occurrence_index, occurrence) in occurrences.iter().enumerate() {
+            if ranges_overlap(record.region().range(), occurrence.complete().range()) {
+                return invariant(CssParserInvariantViolation::DiscardOverlapsOccurrence {
+                    index,
+                    occurrence_index,
+                });
+            }
+        }
+        for (recovery_index, recovery) in recovery_records.iter().enumerate() {
+            if ranges_overlap(record.region().range(), recovery.region().range()) {
+                return invariant(CssParserInvariantViolation::DiscardOverlapsRecoveryRegion {
+                    index,
+                    recovery_index,
+                });
+            }
+        }
+        for (unsupported_index, region) in unsupported_regions.iter().enumerate() {
+            if ranges_overlap(record.region().range(), region.region().range()) {
+                return invariant(
+                    CssParserInvariantViolation::DiscardOverlapsUnsupportedRegion {
+                        index,
+                        unsupported_index,
+                    },
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 fn validate_resource_counts(
     resources: CssParserResourceUsage,
     occurrence_count: usize,
     diagnostic_count: usize,
     recovery_count: usize,
     unsupported_count: usize,
+    discard_count: usize,
 ) -> Result<(), CssParserRunError> {
     check_count(
         resources,
@@ -689,6 +793,11 @@ fn validate_resource_counts(
         resources,
         CssParserResourceKind::UnsupportedRegions,
         unsupported_count,
+    )?;
+    check_count(
+        resources,
+        CssParserResourceKind::DiscardRecords,
+        discard_count,
     )?;
     Ok(())
 }
@@ -741,6 +850,9 @@ fn same_anchor(left: &SourceAnchor, right: &SourceAnchor) -> bool {
 mod tests {
     use super::*;
     use crate::css::declaration::{CssDeclarationContext, CssDeclarationTermination};
+    use crate::css::parser::evidence::{
+        CssParserDiscardKind, CssParserRecoveryKind, CssParserRecoveryTermination,
+    };
     use crate::css::token::{CssLexicalItem, CssToken, CssTokenKind};
     use crate::css::tokenizer::diagnostic::CssTokenizerDiagnostic;
     use crate::css::tokenizer::resource::CssTokenizerResourceUsage;
@@ -786,7 +898,7 @@ mod tests {
     }
 
     fn empty_resources() -> CssParserResourceUsage {
-        CssParserResourceUsage::new(1, 0, 0, 0, 0, 0)
+        CssParserResourceUsage::new(1, 0, 0, 0, 0, 0, 0)
     }
 
     // contract-only: synthetic lifecycle construction to exercise
@@ -801,6 +913,7 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -834,6 +947,7 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -886,6 +1000,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             text.anchor(0, 0).unwrap(),
             CssParserExecutionCompletion::Complete,
             CssParserCoverage::SupportedForSelectedQuestion,
@@ -922,11 +1037,12 @@ mod tests {
             Vec::new(),
             Vec::new(),
             unsupported,
+            Vec::new(),
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
             CssParserCoverage::SupportedForSelectedQuestion,
             CssParserTermination::EndOfTokenizerInput,
-            CssParserResourceUsage::new(1, 0, 0, 0, 0, 1),
+            CssParserResourceUsage::new(1, 0, 0, 0, 0, 1, 0),
         );
 
         assert_eq!(
@@ -969,11 +1085,12 @@ mod tests {
             Vec::new(),
             Vec::new(),
             vec![unsupported],
+            Vec::new(),
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
             CssParserCoverage::ContainsUnsupportedContexts,
             CssParserTermination::EndOfTokenizerInput,
-            CssParserResourceUsage::new(1, 0, 1, 0, 0, 1),
+            CssParserResourceUsage::new(1, 0, 1, 0, 0, 1, 0),
         );
 
         assert_eq!(
@@ -1024,11 +1141,12 @@ mod tests {
             Vec::new(),
             Vec::new(),
             vec![unsupported],
+            Vec::new(),
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
             CssParserCoverage::ContainsUnsupportedContexts,
             CssParserTermination::EndOfTokenizerInput,
-            CssParserResourceUsage::new(1, 0, 1, 0, 0, 1),
+            CssParserResourceUsage::new(1, 0, 1, 0, 0, 1, 0),
         );
 
         assert_eq!(
@@ -1105,11 +1223,12 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Incomplete,
             CssParserCoverage::SupportedForSelectedQuestion,
             CssParserTermination::UpstreamTokenizerIncomplete,
-            CssParserResourceUsage::new(1, 0, 1, 0, 0, 0),
+            CssParserResourceUsage::new(1, 0, 1, 0, 0, 0, 0),
         );
 
         assert_eq!(
@@ -1131,6 +1250,7 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -1166,6 +1286,7 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -1209,11 +1330,12 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
             CssParserCoverage::SupportedForSelectedQuestion,
             CssParserTermination::EndOfTokenizerInput,
-            CssParserResourceUsage::new(1, 0, 3, 0, 0, 0),
+            CssParserResourceUsage::new(1, 0, 3, 0, 0, 0, 0),
         );
 
         assert_eq!(
@@ -1242,6 +1364,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
             CssParserCoverage::SupportedForSelectedQuestion,
@@ -1251,5 +1374,292 @@ mod tests {
         .unwrap();
 
         assert!(!format!("{result:?}").contains(SECRET));
+    }
+
+    fn discard_evidence(
+        text: &SourceText,
+        region: (usize, usize),
+        property_name: (usize, usize),
+        colon: (usize, usize),
+        decoded_property_name: &str,
+    ) -> CssParserDiscardEvidence {
+        CssParserDiscardEvidence::new(
+            text,
+            text.anchor(region.0, region.1).unwrap(),
+            text.anchor(property_name.0, property_name.1).unwrap(),
+            text.anchor(colon.0, colon.1).unwrap(),
+            decoded_property_name,
+            CssParserDiscardKind::TopLevelCustomPropertyLikeQualifiedRule,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn contract_only_discard_record_coexists_with_supported_coverage() {
+        let text = source(9003, "--foo:bar{color:red;}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let discard = discard_evidence(&text, (0, 21), (0, 5), (5, 6), "--foo");
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![discard],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            CssParserResourceUsage::new(1, 0, 0, 0, 0, 0, 1),
+        )
+        .unwrap();
+
+        assert_eq!(result.discard_records().len(), 1);
+        assert_eq!(
+            result.coverage(),
+            CssParserCoverage::SupportedForSelectedQuestion
+        );
+    }
+
+    #[test]
+    fn contract_only_discard_overlapping_occurrence_is_rejected() {
+        let text = source(9004, "a{color:red;}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+
+        let occurrence = CssDeclarationOccurrence::new(
+            &text,
+            text.anchor(2, 12).unwrap(),
+            text.anchor(2, 7).unwrap(),
+            text.anchor(7, 8).unwrap(),
+            text.anchor(8, 11).unwrap(),
+            None,
+            CssDeclarationTermination::AuthoredSemicolon {
+                semicolon: text.anchor(11, 12).unwrap(),
+            },
+            CssDeclarationContext::TopLevelQualifiedRuleLeadingDeclarationZone,
+        )
+        .unwrap();
+        // Synthetic: a real producer never emits an occurrence and a discard
+        // record for the same construct; this proves the run-result
+        // contract rejects it regardless. The discard's colon reuses the
+        // real ":" already present in "color:red" at the same offsets.
+        let discard = discard_evidence(&text, (2, 12), (2, 7), (7, 8), "--fake");
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            vec![occurrence],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![discard],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            CssParserResourceUsage::new(1, 0, 1, 0, 0, 0, 1),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::DiscardOverlapsOccurrence {
+                    index: 0,
+                    occurrence_index: 0,
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_discard_overlapping_recovery_is_rejected() {
+        let text = source(9005, "--p:q;rest");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+
+        let recovery = CssParserRecoveryEvidence::new(
+            &text,
+            text.anchor(0, 6).unwrap(),
+            CssParserRecoveryKind::MalformedBlockItem,
+            CssParserRecoveryTermination::AuthoredSemicolon {
+                semicolon: text.anchor(5, 6).unwrap(),
+            },
+        )
+        .unwrap();
+        let discard = discard_evidence(&text, (0, 4), (0, 2), (3, 4), "--p");
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            vec![recovery],
+            Vec::new(),
+            vec![discard],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            CssParserResourceUsage::new(1, 0, 0, 0, 1, 0, 1),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::DiscardOverlapsRecoveryRegion {
+                    index: 0,
+                    recovery_index: 0,
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_discard_overlapping_unsupported_is_rejected() {
+        let text = source(9006, "--p:q;rest");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+
+        let unsupported = CssParserUnsupportedRegion::new_nested_content_remainder(
+            &text,
+            text.anchor(0, 4).unwrap(),
+        )
+        .unwrap();
+        let discard = discard_evidence(&text, (0, 4), (0, 2), (3, 4), "--p");
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![unsupported],
+            vec![discard],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::ContainsUnsupportedContexts,
+            CssParserTermination::EndOfTokenizerInput,
+            CssParserResourceUsage::new(1, 0, 0, 0, 0, 1, 1),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::DiscardOverlapsUnsupportedRegion {
+                    index: 0,
+                    unsupported_index: 0,
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_discard_beyond_terminal_is_rejected() {
+        let text = source(9007, "--p:q;rest");
+        let upstream = complete_tokenizer_run(&text);
+        let discard = discard_evidence(&text, (0, 6), (0, 2), (3, 4), "--p");
+        let evidence = CssParserResourceLimitEvidence::new(
+            &text,
+            CssParserResourceKind::AlgorithmSteps,
+            1,
+            2,
+            text.anchor(4, 4).unwrap(),
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![discard],
+            text.anchor(4, 4).unwrap(),
+            CssParserExecutionCompletion::Incomplete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::ParserResourceLimit(evidence),
+            CssParserResourceUsage::new(1, 0, 0, 0, 0, 0, 1),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::DiscardBeyondTerminal {
+                    index: 0,
+                    end: 6,
+                    terminal: 4,
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_discard_order_violation_is_rejected() {
+        let text = source(9008, "--aa:1;--bb:2;");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let discard_a = discard_evidence(&text, (0, 7), (0, 4), (4, 5), "--aa");
+        let discard_b = discard_evidence(&text, (7, 14), (7, 11), (11, 12), "--bb");
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![discard_b, discard_a],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            CssParserResourceUsage::new(1, 0, 0, 0, 0, 0, 2),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::DiscardOrderViolation { index: 1 }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_discard_resource_count_mismatch_is_rejected() {
+        let text = source(9009, "--foo:bar{color:red;}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let discard = discard_evidence(&text, (0, 21), (0, 5), (5, 6), "--foo");
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![discard],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            CssParserResourceUsage::new(1, 0, 0, 0, 0, 0, 2),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::ResourceUsageCountMismatch {
+                    kind: CssParserResourceKind::DiscardRecords,
+                    expected: 1,
+                    actual: 2,
+                }
+            )
+        );
     }
 }
