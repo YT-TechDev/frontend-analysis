@@ -3,7 +3,9 @@ use std::fmt;
 
 use crate::{SourceAnchor, SourceId, SourceRange, SourceRangeError, SourceText};
 
-use super::super::declaration::{CssDeclarationContractError, CssDeclarationOccurrence};
+use super::super::declaration::{
+    CssDeclarationContractError, CssDeclarationOccurrence, CssDeclarationTermination,
+};
 use super::super::tokenizer::result::{
     CssTokenizerCompletion, CssTokenizerRunResult, CssTokenizerTermination,
 };
@@ -264,6 +266,9 @@ pub(crate) enum CssParserInvariantViolation {
         index: usize,
         unsupported_index: usize,
     },
+    OmittedAtEndOfInputRequiresUpstreamComplete {
+        index: usize,
+    },
     DiagnosticBeyondTerminal {
         index: usize,
         end: usize,
@@ -360,6 +365,7 @@ fn validate_run(
         unsupported_regions,
         terminal_offset,
     )?;
+    validate_occurrence_lifecycle(upstream, occurrences)?;
     validate_diagnostics(expected_source, parser_diagnostics, terminal_offset)?;
     validate_recovery(expected_source, recovery_records, terminal_offset)?;
     validate_unsupported(expected_source, unsupported_regions, terminal_offset)?;
@@ -438,10 +444,7 @@ fn validate_lifecycle(
 
     match termination {
         CssParserTermination::EndOfTokenizerInput => {
-            let upstream_ended_at_input_end = upstream.completion()
-                == CssTokenizerCompletion::Complete
-                && matches!(upstream.termination(), CssTokenizerTermination::EndOfInput);
-            if !upstream_ended_at_input_end {
+            if !upstream_ended_at_true_eof(upstream) {
                 return invariant(
                     CssParserInvariantViolation::EndOfTokenizerInputRequiresUpstreamComplete,
                 );
@@ -485,6 +488,13 @@ fn validate_lifecycle(
     }
 
     Ok(())
+}
+
+/// Whether the upstream tokenizer completed at true `EndOfInput` (as
+/// opposed to a resource-limited or otherwise incomplete terminal).
+fn upstream_ended_at_true_eof(upstream: &CssTokenizerRunResult) -> bool {
+    upstream.completion() == CssTokenizerCompletion::Complete
+        && matches!(upstream.termination(), CssTokenizerTermination::EndOfInput)
 }
 
 fn validate_coverage(
@@ -532,9 +542,7 @@ fn validate_occurrences(
         previous_end = Some(complete.range().end());
 
         for (unsupported_index, region) in unsupported_regions.iter().enumerate() {
-            if let CssParserUnsupportedRegion::NestedContentRemainder { region } = region
-                && ranges_overlap(complete.range(), region.range())
-            {
+            if ranges_overlap(complete.range(), region.region().range()) {
                 return invariant(
                     CssParserInvariantViolation::OccurrenceOverlapsUnsupportedRegion {
                         index,
@@ -542,6 +550,30 @@ fn validate_occurrences(
                     },
                 );
             }
+        }
+    }
+    Ok(())
+}
+
+/// `OmittedAtEndOfInput` is valid declaration-termination evidence only when
+/// the upstream tokenizer itself completed at true `EndOfInput`. An upstream
+/// resource-limited or otherwise incomplete terminal must never be
+/// relabeled as ordinary omitted-at-EOF declaration termination.
+fn validate_occurrence_lifecycle(
+    upstream: &CssTokenizerRunResult,
+    occurrences: &[CssDeclarationOccurrence],
+) -> Result<(), CssParserRunError> {
+    if upstream_ended_at_true_eof(upstream) {
+        return Ok(());
+    }
+    for (index, occurrence) in occurrences.iter().enumerate() {
+        if matches!(
+            occurrence.termination(),
+            CssDeclarationTermination::OmittedAtEndOfInput { .. }
+        ) {
+            return invariant(
+                CssParserInvariantViolation::OmittedAtEndOfInputRequiresUpstreamComplete { index },
+            );
         }
     }
     Ok(())
@@ -950,6 +982,141 @@ mod tests {
                 CssParserInvariantViolation::OccurrenceOverlapsUnsupportedRegion {
                     index: 0,
                     unsupported_index: 0,
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_occurrence_overlapping_top_level_at_rule_is_rejected() {
+        let text = source(9001, "@font-face{color:red;}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+
+        // Synthetic: a would-be declaration occurrence whose `complete`
+        // range sits inside a `TopLevelAtRule` unsupported region. A real
+        // producer never emits both for the same source region; this
+        // proves the run-result contract rejects it regardless.
+        let occurrence = CssDeclarationOccurrence::new(
+            &text,
+            text.anchor(11, 21).unwrap(),
+            text.anchor(11, 16).unwrap(),
+            text.anchor(16, 17).unwrap(),
+            text.anchor(17, 20).unwrap(),
+            None,
+            CssDeclarationTermination::AuthoredSemicolon {
+                semicolon: text.anchor(20, 21).unwrap(),
+            },
+            CssDeclarationContext::TopLevelQualifiedRuleLeadingDeclarationZone,
+        )
+        .unwrap();
+        let unsupported = CssParserUnsupportedRegion::new_top_level_at_rule(
+            &text,
+            text.anchor(0, 22).unwrap(),
+            text.anchor(0, 10).unwrap(),
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            vec![occurrence],
+            Vec::new(),
+            Vec::new(),
+            vec![unsupported],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::ContainsUnsupportedContexts,
+            CssParserTermination::EndOfTokenizerInput,
+            CssParserResourceUsage::new(1, 0, 1, 0, 0, 1),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::OccurrenceOverlapsUnsupportedRegion {
+                    index: 0,
+                    unsupported_index: 0,
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_omitted_at_end_of_input_occurrence_requires_upstream_true_eof() {
+        let text = source(9002, "a{color:red");
+        let len = text.as_str().len();
+
+        // Upstream never confirms true `EndOfInput`: it is resource-limited
+        // exactly at the source's end, which is a structurally valid but
+        // lifecycle-incomplete tokenizer result.
+        let resource_limit =
+            crate::css::tokenizer::resource::CssTokenizerResourceLimitEvidence::new(
+                &text,
+                crate::css::tokenizer::resource::CssTokenizerResourceKind::AlgorithmSteps,
+                1,
+                2,
+                text.anchor(len, len).unwrap(),
+            )
+            .unwrap();
+        let upstream = CssTokenizerRunResult::new(
+            &text,
+            None,
+            vec![CssLexicalItem::SemanticToken(
+                CssToken::new(
+                    &text,
+                    text.anchor(0, len).unwrap(),
+                    CssTokenKind::Ident("x".to_owned()),
+                )
+                .unwrap(),
+            )],
+            Vec::<CssTokenizerDiagnostic>::new(),
+            text.anchor(0, len).unwrap(),
+            text.anchor(len, len).unwrap(),
+            text.anchor(len, len).unwrap(),
+            CssTokenizerCompletion::Incomplete,
+            CssTokenizerTermination::ResourceLimit(resource_limit),
+            CssTokenizerResourceUsage::new(0, 1, 1, 0, 0, 0),
+        )
+        .unwrap();
+
+        // The occurrence itself is internally self-consistent (its EOF
+        // terminal really is an empty anchor at the true end of the raw
+        // source), which is all `CssDeclarationOccurrence::new` can check
+        // without tokenizer lifecycle input.
+        let occurrence = CssDeclarationOccurrence::new(
+            &text,
+            text.anchor(2, 11).unwrap(),
+            text.anchor(2, 7).unwrap(),
+            text.anchor(7, 8).unwrap(),
+            text.anchor(8, 11).unwrap(),
+            None,
+            CssDeclarationTermination::OmittedAtEndOfInput {
+                terminal: text.anchor(11, 11).unwrap(),
+            },
+            CssDeclarationContext::TopLevelQualifiedRuleLeadingDeclarationZone,
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            vec![occurrence],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Incomplete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::UpstreamTokenizerIncomplete,
+            CssParserResourceUsage::new(1, 0, 1, 0, 0, 0),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::OmittedAtEndOfInputRequiresUpstreamComplete {
+                    index: 0,
                 }
             )
         );

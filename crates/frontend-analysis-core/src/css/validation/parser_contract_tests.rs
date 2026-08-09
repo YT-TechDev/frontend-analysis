@@ -388,7 +388,46 @@ fn corruption_unsupported_region_overlap_with_declaration_is_rejected() {
     fixture.coverage = ParserGoldCoverage::ContainsUnsupportedContexts;
     assert_eq!(
         validate_fixture(&fixture),
-        Err(ParserGoldValidationError::DeclarationOverlapsNestedRemainder)
+        Err(ParserGoldValidationError::DeclarationOverlapsUnsupportedRegion)
+    );
+}
+
+#[test]
+fn corruption_declaration_overlap_with_top_level_at_rule_is_rejected() {
+    // A declaration occurrence must not be able to sit inside a
+    // `TopLevelAtRule` unsupported region either, not only inside a
+    // `NestedContentRemainder`.
+    let mut fixture = base_fixture();
+    fixture
+        .unsupported
+        .push(ParserGoldUnsupportedRegion::TopLevelAtRule {
+            complete: GoldRange::new(0, 20),
+            at_keyword: GoldRange::new(0, 1),
+        });
+    fixture.coverage = ParserGoldCoverage::ContainsUnsupportedContexts;
+    assert_eq!(
+        validate_fixture(&fixture),
+        Err(ParserGoldValidationError::DeclarationOverlapsUnsupportedRegion)
+    );
+}
+
+#[test]
+fn corruption_omitted_at_end_of_input_with_upstream_incomplete_is_rejected() {
+    // `OmittedAtEndOfInput` declaration termination must never coexist with
+    // an upstream lifecycle that is not true `EndOfTokenizerInput`.
+    let fixtures = normative_parser_fixtures();
+    let mut fixture = fixture(&fixtures, "CSS-PARSER-TERM-OMITTED-AT-EOF-001").clone();
+    assert!(matches!(
+        fixture.declarations[0].termination,
+        ParserGoldTermination::OmittedAtEndOfInput(_)
+    ));
+
+    fixture.execution_completion = ParserGoldExecutionCompletion::Incomplete;
+    fixture.termination = ParserGoldTerminationLifecycle::UpstreamTokenizerIncomplete;
+
+    assert_eq!(
+        validate_fixture(&fixture),
+        Err(ParserGoldValidationError::OmittedAtEndOfInputRequiresUpstreamComplete)
     );
 }
 

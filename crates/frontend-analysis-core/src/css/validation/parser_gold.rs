@@ -262,9 +262,10 @@ pub(super) enum ParserGoldValidationError {
     DiagnosticOrder,
     RecoveryOrder,
     UnsupportedOrder,
-    DeclarationOverlapsNestedRemainder,
+    DeclarationOverlapsUnsupportedRegion,
     CoverageUnsupportedMismatch,
     WrongFixedDelimiter,
+    OmittedAtEndOfInputRequiresUpstreamComplete,
 }
 
 pub(super) fn validate_fixture(
@@ -296,6 +297,10 @@ pub(super) fn validate_fixture(
         _ => return Err(ParserGoldValidationError::CompletionTerminationMismatch),
     }
 
+    let upstream_ended_at_true_eof = fixture.execution_completion
+        == ParserGoldExecutionCompletion::Complete
+        && fixture.termination == ParserGoldTerminationLifecycle::EndOfTokenizerInput;
+
     let mut previous_end: Option<usize> = None;
     for declaration in &fixture.declarations {
         validate_declaration(&source, declaration, fixture.terminal.start)?;
@@ -310,11 +315,21 @@ pub(super) fn validate_fixture(
         previous_end = Some(declaration.complete.end);
 
         for unsupported in &fixture.unsupported {
-            if let ParserGoldUnsupportedRegion::NestedContentRemainder { region } = unsupported
-                && ranges_overlap(declaration.complete, *region)
-            {
-                return Err(ParserGoldValidationError::DeclarationOverlapsNestedRemainder);
+            if ranges_overlap(declaration.complete, unsupported.region()) {
+                return Err(ParserGoldValidationError::DeclarationOverlapsUnsupportedRegion);
             }
+        }
+
+        // `OmittedAtEndOfInput` is valid declaration-termination evidence
+        // only when the upstream tokenizer completed at true `EndOfInput`;
+        // it must never stand in for a resource-limited or otherwise
+        // incomplete upstream terminal.
+        if matches!(
+            declaration.termination,
+            ParserGoldTermination::OmittedAtEndOfInput(_)
+        ) && !upstream_ended_at_true_eof
+        {
+            return Err(ParserGoldValidationError::OmittedAtEndOfInputRequiresUpstreamComplete);
         }
     }
 
