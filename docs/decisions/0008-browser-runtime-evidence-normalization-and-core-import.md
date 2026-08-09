@@ -6,7 +6,7 @@
 | Date | 2026-08-09 |
 | Decision owner / approver | YT-TechDev — approved 2026-08-09 |
 | Linked Issue | #155 |
-| Related Pull Request | #157; acceptance PR pending |
+| Related Pull Request | #157; #160 |
 | Supersedes | None |
 | Superseded by | None |
 | Affected normative contracts | `docs/architecture/LAYERS.md` updated on acceptance; ADR 0004 and existing source-anchor/raw-coordinate contracts remain unchanged |
@@ -275,7 +275,8 @@ The approval authorizes this ADR acceptance record, the ADR index update, and th
 
 - Issue #155
 - Owner approval: https://github.com/YT-TechDev/frontend-analysis/issues/155#issuecomment-5229886378
-- Pull Request #157
+- Proposed ADR Pull Request #157
+- Acceptance Pull Request #160
 - ADR process: `docs/decisions/README.md`
 - ADR 0004: `docs/decisions/0004-validated-source-anchor-semantics.md`
 - Architecture Layers: `docs/architecture/LAYERS.md`
