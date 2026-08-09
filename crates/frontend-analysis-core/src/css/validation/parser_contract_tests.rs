@@ -28,7 +28,7 @@ fn fixture<'a>(fixtures: &'a [ParserGoldFixture], id: &str) -> &'a ParserGoldFix
 #[test]
 fn normative_parser_fixture_count_is_exact() {
     let fixtures = normative_parser_fixtures();
-    assert_eq!(fixtures.len(), 35);
+    assert_eq!(fixtures.len(), 36);
 }
 
 #[test]
@@ -99,6 +99,8 @@ fn every_required_category_has_an_explicit_fixture() {
         "CSS-PARSER-MALFORMED-MISSING-COLON-THEN-VALID-001",
         // Malformed declaration start followed by a valid declaration.
         "CSS-PARSER-MALFORMED-START-THEN-VALID-001",
+        // Malformed block item reaching true tokenizer end of input (#159).
+        "CSS-PARSER-MALFORMED-AT-TRUE-EOF-001",
         // Supported declarations followed by a nested qualified rule; also
         // covers declaration-shaped text after the nesting boundary
         // producing no included occurrence.
@@ -149,7 +151,7 @@ fn fixture_groups_cover_the_approved_parser_matrix() {
     assert_eq!(counts[&ParserGoldGroup::Values], 7);
     assert_eq!(counts[&ParserGoldGroup::PropertyNames], 5);
     assert_eq!(counts[&ParserGoldGroup::Priority], 3);
-    assert_eq!(counts[&ParserGoldGroup::Malformed], 2);
+    assert_eq!(counts[&ParserGoldGroup::Malformed], 3);
     assert_eq!(counts[&ParserGoldGroup::Rollback], 1);
     assert_eq!(counts[&ParserGoldGroup::Nesting], 2);
     assert_eq!(counts[&ParserGoldGroup::UnsupportedAtRule], 4);
@@ -298,6 +300,152 @@ fn discard_fixture_preserves_exact_region_property_name_and_colon_ranges() {
     assert_eq!(
         fixture.termination,
         ParserGoldTerminationLifecycle::EndOfTokenizerInput
+    );
+}
+
+#[test]
+fn malformed_at_true_eof_fixture_preserves_exact_boundary() {
+    let fixtures = normative_parser_fixtures();
+    let fixture = fixture(&fixtures, "CSS-PARSER-MALFORMED-AT-TRUE-EOF-001");
+    assert_eq!(fixture.source.as_bytes(), b"a{color red");
+    assert_eq!(fixture.byte_len, 11);
+    assert!(fixture.declarations.is_empty());
+
+    assert_eq!(fixture.diagnostics.len(), 1);
+    assert_eq!(
+        fixture.diagnostics[0].code,
+        super::parser_gold::ParserGoldDiagnosticCode::InvalidBlockItem
+    );
+    assert_eq!(fixture.diagnostics[0].location, GoldRange::new(2, 11));
+
+    assert_eq!(fixture.recovery.len(), 1);
+    assert_eq!(fixture.recovery[0].region, GoldRange::new(2, 11));
+    assert_eq!(
+        fixture.recovery[0].termination,
+        ParserGoldRecoveryTermination::EndOfInput(GoldRange::new(11, 11))
+    );
+
+    assert!(fixture.unsupported.is_empty());
+    assert!(fixture.discard.is_empty());
+    assert_eq!(fixture.terminal, GoldRange::new(11, 11));
+    assert_eq!(
+        fixture.execution_completion,
+        ParserGoldExecutionCompletion::Complete
+    );
+    assert_eq!(
+        fixture.coverage,
+        ParserGoldCoverage::SupportedForSelectedQuestion
+    );
+    assert_eq!(
+        fixture.termination,
+        ParserGoldTerminationLifecycle::EndOfTokenizerInput
+    );
+}
+
+// ---------------------------------------------------------------------
+// #159 recovery-EndOfInput gold corruption tests.
+// ---------------------------------------------------------------------
+
+fn malformed_eof_base_fixture() -> ParserGoldFixture {
+    let fixtures = normative_parser_fixtures();
+    fixture(&fixtures, "CSS-PARSER-MALFORMED-AT-TRUE-EOF-001").clone()
+}
+
+#[test]
+fn corruption_recovery_end_of_input_non_empty_terminal_is_rejected() {
+    let mut fixture = malformed_eof_base_fixture();
+    // In-bounds but non-empty: exercises the emptiness check rather than
+    // the separate out-of-source-bounds anchor check.
+    fixture.recovery[0] = ParserGoldRecovery {
+        region: GoldRange::new(2, 10),
+        termination: ParserGoldRecoveryTermination::EndOfInput(GoldRange::new(10, 11)),
+    };
+    assert_eq!(
+        validate_fixture(&fixture),
+        Err(ParserGoldValidationError::InvalidRange)
+    );
+}
+
+#[test]
+fn corruption_recovery_end_of_input_terminal_before_source_end_is_rejected() {
+    let mut fixture = malformed_eof_base_fixture();
+    fixture.recovery[0] = ParserGoldRecovery {
+        region: GoldRange::new(2, 10),
+        termination: ParserGoldRecoveryTermination::EndOfInput(GoldRange::new(10, 10)),
+    };
+    assert_eq!(
+        validate_fixture(&fixture),
+        Err(ParserGoldValidationError::InvalidRange)
+    );
+}
+
+#[test]
+fn corruption_recovery_end_of_input_region_not_adjacent_to_terminal_is_rejected() {
+    let mut fixture = malformed_eof_base_fixture();
+    fixture.recovery[0] = ParserGoldRecovery {
+        region: GoldRange::new(2, 10),
+        termination: ParserGoldRecoveryTermination::EndOfInput(GoldRange::new(11, 11)),
+    };
+    assert_eq!(
+        validate_fixture(&fixture),
+        Err(ParserGoldValidationError::InvalidRange)
+    );
+}
+
+#[test]
+fn corruption_recovery_end_of_input_terminal_out_of_source_bounds_is_rejected() {
+    let mut fixture = malformed_eof_base_fixture();
+    fixture.recovery[0] = ParserGoldRecovery {
+        region: GoldRange::new(2, 11),
+        termination: ParserGoldRecoveryTermination::EndOfInput(GoldRange::new(50, 50)),
+    };
+    assert_eq!(
+        validate_fixture(&fixture),
+        Err(ParserGoldValidationError::InvalidRange)
+    );
+}
+
+#[test]
+fn corruption_recovery_end_of_input_with_upstream_incomplete_is_rejected() {
+    let mut fixture = malformed_eof_base_fixture();
+    fixture.execution_completion = ParserGoldExecutionCompletion::Incomplete;
+    fixture.termination = ParserGoldTerminationLifecycle::UpstreamTokenizerIncomplete;
+    assert_eq!(
+        validate_fixture(&fixture),
+        Err(ParserGoldValidationError::RecoveryEndOfInputRequiresUpstreamComplete)
+    );
+}
+
+#[test]
+fn corruption_recovery_end_of_input_with_upstream_resource_limited_is_rejected() {
+    let mut fixture = malformed_eof_base_fixture();
+    fixture.execution_completion = ParserGoldExecutionCompletion::Incomplete;
+    fixture.termination = ParserGoldTerminationLifecycle::ParserResourceLimit;
+    assert_eq!(
+        validate_fixture(&fixture),
+        Err(ParserGoldValidationError::RecoveryEndOfInputRequiresUpstreamComplete)
+    );
+}
+
+#[test]
+fn corruption_discard_overlaps_recovery_end_of_input_is_rejected() {
+    // Synthetic: a real producer never emits a discard record and an
+    // EndOfInput recovery record over the same construct. This proves the
+    // existing discard/recovery overlap check also rejects it for the new
+    // recovery-termination variant.
+    let fixtures = normative_parser_fixtures();
+    let mut fixture = fixture(
+        &fixtures,
+        "CSS-PARSER-DISCARD-TOP-LEVEL-CUSTOM-PROPERTY-LIKE-001",
+    )
+    .clone();
+    fixture.recovery.push(ParserGoldRecovery {
+        region: GoldRange::new(0, 21),
+        termination: ParserGoldRecoveryTermination::EndOfInput(GoldRange::new(21, 21)),
+    });
+    assert_eq!(
+        validate_fixture(&fixture),
+        Err(ParserGoldValidationError::DiscardOverlapsRecovery)
     );
 }
 

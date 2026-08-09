@@ -22,6 +22,7 @@ pub(crate) enum CssParserEvidenceRole {
     RecoveryRegion,
     RecoverySemicolon,
     RecoveryRightCurly,
+    RecoveryEndOfInputTerminal,
     UnsupportedAtRuleComplete,
     UnsupportedAtKeyword,
     UnsupportedNestedRemainder,
@@ -53,6 +54,16 @@ pub(crate) enum CssParserEvidenceContractError {
     DecodedPropertyNameNotCustomPropertyShaped {
         role: CssParserEvidenceRole,
     },
+    /// The evidence anchor must be an exact empty point, not authored
+    /// content; true end-of-input is a boundary, never a fabricated
+    /// delimiter.
+    EvidenceMustBeEmpty {
+        role: CssParserEvidenceRole,
+    },
+    /// The evidence anchor must sit at the retained source's true end.
+    TerminalNotAtSourceEnd {
+        role: CssParserEvidenceRole,
+    },
 }
 
 impl fmt::Display for CssParserEvidenceContractError {
@@ -68,10 +79,16 @@ impl Error for CssParserEvidenceContractError {}
 
 /// Explicit recovery termination for a malformed supported-context block
 /// item.
+///
+/// `EndOfInput` represents recovery that reached genuine tokenizer end of
+/// input without an authored semicolon or authored enclosing right curly.
+/// `terminal` is a point boundary at retained source end, never authored
+/// content.
 #[derive(Clone)]
 pub(crate) enum CssParserRecoveryTermination {
     AuthoredSemicolon { semicolon: SourceAnchor },
     EnclosingBlockEnd { right_curly: SourceAnchor },
+    EndOfInput { terminal: SourceAnchor },
 }
 
 impl PartialEq for CssParserRecoveryTermination {
@@ -85,6 +102,9 @@ impl PartialEq for CssParserRecoveryTermination {
                 Self::EnclosingBlockEnd { right_curly: left },
                 Self::EnclosingBlockEnd { right_curly: right },
             ) => same_anchor(left, right),
+            (Self::EndOfInput { terminal: left }, Self::EndOfInput { terminal: right }) => {
+                same_anchor(left, right)
+            }
             _ => false,
         }
     }
@@ -104,6 +124,11 @@ impl fmt::Debug for CssParserRecoveryTermination {
                 .debug_struct("EnclosingBlockEnd")
                 .field("source_id", &right_curly.source_id())
                 .field("right_curly", &right_curly.range())
+                .finish(),
+            Self::EndOfInput { terminal } => formatter
+                .debug_struct("EndOfInput")
+                .field("source_id", &terminal.source_id())
+                .field("terminal", &terminal.range())
                 .finish(),
         }
     }
@@ -157,6 +182,28 @@ impl CssParserRecoveryEvidence {
                 if right_curly.range().start() != region.range().end() {
                     return Err(CssParserEvidenceContractError::EvidenceOutOfOrder {
                         role: CssParserEvidenceRole::RecoveryRightCurly,
+                    });
+                }
+            }
+            CssParserRecoveryTermination::EndOfInput { terminal } => {
+                require_source(
+                    expected,
+                    terminal,
+                    CssParserEvidenceRole::RecoveryEndOfInputTerminal,
+                )?;
+                if !terminal.range().is_empty() {
+                    return Err(CssParserEvidenceContractError::EvidenceMustBeEmpty {
+                        role: CssParserEvidenceRole::RecoveryEndOfInputTerminal,
+                    });
+                }
+                if terminal.range().start() != source_text.as_str().len() {
+                    return Err(CssParserEvidenceContractError::TerminalNotAtSourceEnd {
+                        role: CssParserEvidenceRole::RecoveryEndOfInputTerminal,
+                    });
+                }
+                if terminal.range().start() != region.range().end() {
+                    return Err(CssParserEvidenceContractError::EvidenceOutOfOrder {
+                        role: CssParserEvidenceRole::RecoveryEndOfInputTerminal,
                     });
                 }
             }
@@ -573,6 +620,118 @@ mod tests {
             result,
             Err(CssParserEvidenceContractError::EvidenceOutOfOrder { .. })
         ));
+    }
+
+    #[test]
+    fn recovery_end_of_input_accepts_true_eof_terminal_adjacent_to_region() {
+        let text = source(20, "a{color red");
+        let evidence = CssParserRecoveryEvidence::new(
+            &text,
+            text.anchor(2, 11).unwrap(),
+            CssParserRecoveryKind::MalformedBlockItem,
+            CssParserRecoveryTermination::EndOfInput {
+                terminal: text.anchor(11, 11).unwrap(),
+            },
+        )
+        .unwrap();
+        assert_eq!(evidence.region().range().end(), 11);
+        assert_eq!(
+            evidence.termination(),
+            &CssParserRecoveryTermination::EndOfInput {
+                terminal: text.anchor(11, 11).unwrap(),
+            }
+        );
+    }
+
+    #[test]
+    fn recovery_end_of_input_terminal_must_be_empty() {
+        let text = source(21, "a{color redx");
+        let result = CssParserRecoveryEvidence::new(
+            &text,
+            text.anchor(2, 11).unwrap(),
+            CssParserRecoveryKind::MalformedBlockItem,
+            CssParserRecoveryTermination::EndOfInput {
+                terminal: text.anchor(11, 12).unwrap(),
+            },
+        );
+        assert_eq!(
+            result,
+            Err(CssParserEvidenceContractError::EvidenceMustBeEmpty {
+                role: CssParserEvidenceRole::RecoveryEndOfInputTerminal,
+            })
+        );
+    }
+
+    #[test]
+    fn recovery_end_of_input_terminal_must_be_at_source_end() {
+        let text = source(22, "a{color red};");
+        let result = CssParserRecoveryEvidence::new(
+            &text,
+            text.anchor(2, 11).unwrap(),
+            CssParserRecoveryKind::MalformedBlockItem,
+            CssParserRecoveryTermination::EndOfInput {
+                terminal: text.anchor(11, 11).unwrap(),
+            },
+        );
+        assert_eq!(
+            result,
+            Err(CssParserEvidenceContractError::TerminalNotAtSourceEnd {
+                role: CssParserEvidenceRole::RecoveryEndOfInputTerminal,
+            })
+        );
+    }
+
+    #[test]
+    fn recovery_end_of_input_terminal_must_be_adjacent_to_region_end() {
+        let text = source(23, "a{color red ");
+        let result = CssParserRecoveryEvidence::new(
+            &text,
+            text.anchor(2, 11).unwrap(),
+            CssParserRecoveryKind::MalformedBlockItem,
+            CssParserRecoveryTermination::EndOfInput {
+                terminal: text.anchor(12, 12).unwrap(),
+            },
+        );
+        assert_eq!(
+            result,
+            Err(CssParserEvidenceContractError::EvidenceOutOfOrder {
+                role: CssParserEvidenceRole::RecoveryEndOfInputTerminal,
+            })
+        );
+    }
+
+    #[test]
+    fn recovery_end_of_input_cross_source_terminal_is_rejected() {
+        let text = source(24, "a{color red");
+        let other = source(25, "a{color red");
+        let result = CssParserRecoveryEvidence::new(
+            &text,
+            text.anchor(2, 11).unwrap(),
+            CssParserRecoveryKind::MalformedBlockItem,
+            CssParserRecoveryTermination::EndOfInput {
+                terminal: other.anchor(11, 11).unwrap(),
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(CssParserEvidenceContractError::SourceIdentityMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn recovery_end_of_input_debug_output_does_not_disclose_authored_source() {
+        const SECRET: &str = "secret-eof-malformed-region";
+        let text = source(26, &format!("a{{{SECRET}"));
+        let evidence = CssParserRecoveryEvidence::new(
+            &text,
+            text.anchor(2, 2 + SECRET.len()).unwrap(),
+            CssParserRecoveryKind::MalformedBlockItem,
+            CssParserRecoveryTermination::EndOfInput {
+                terminal: text.anchor(2 + SECRET.len(), 2 + SECRET.len()).unwrap(),
+            },
+        )
+        .unwrap();
+        assert!(!format!("{evidence:?}").contains(SECRET));
     }
 
     #[test]

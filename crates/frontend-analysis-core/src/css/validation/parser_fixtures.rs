@@ -108,6 +108,14 @@ fn recovery_semi(region: (usize, usize), semicolon: (usize, usize)) -> ParserGol
     }
 }
 
+/// `terminal_point` is the exact empty-point offset at retained source end.
+fn recovery_eof(region: (usize, usize), terminal_point: usize) -> ParserGoldRecovery {
+    ParserGoldRecovery {
+        region: r(region.0, region.1),
+        termination: ParserGoldRecoveryTermination::EndOfInput(r(terminal_point, terminal_point)),
+    }
+}
+
 fn diagnostic(code: ParserGoldDiagnosticCode, location: (usize, usize)) -> ParserGoldDiagnostic {
     ParserGoldDiagnostic {
         code,
@@ -502,6 +510,25 @@ pub(super) fn normative_parser_fixtures() -> Vec<ParserGoldFixture> {
                 (2, 7),
             )],
             vec![recovery_semi((2, 7), (6, 7))],
+            vec![],
+        ),
+        // A malformed block item that reaches true tokenizer end of input
+        // without an authored semicolon or authored enclosing right curly
+        // (#159). Recovery preserves the malformed authored bytes through
+        // an explicit empty EOF terminal at retained source end; no
+        // semicolon or right curly is fabricated.
+        ParserGoldFixture::complete(
+            "CSS-PARSER-MALFORMED-AT-TRUE-EOF-001",
+            ParserGoldGroup::Malformed,
+            2034,
+            "a{color red",
+            11,
+            vec![],
+            vec![diagnostic(
+                ParserGoldDiagnosticCode::InvalidBlockItem,
+                (2, 11),
+            )],
+            vec![recovery_eof((2, 11), 11)],
             vec![],
         ),
         // Leading supported declarations followed by a nested qualified
