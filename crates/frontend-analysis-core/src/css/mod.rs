@@ -1,5 +1,7 @@
 //! Internal CSS source-parser contracts.
 
+pub(crate) mod declaration;
+pub(crate) mod parser;
 pub(crate) mod token;
 pub(crate) mod tokenizer;
 
