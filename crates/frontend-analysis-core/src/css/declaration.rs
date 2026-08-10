@@ -10,13 +10,67 @@ use std::fmt;
 
 use crate::{SourceAnchor, SourceId, SourceText};
 
-/// The #137-approved first-slice supported declaration context.
+use super::parser::context::{CssParserContextId, CssParserDirectItemOrdinal};
+
+/// A declaration's run-local ordinal among the consecutive declarations in
+/// one owning context uninterrupted by a materialized child qualified-rule
+/// context (#167).
 ///
-/// Deliberately a single variant: descriptor, keyframe, and group-rule
-/// contexts are excluded before occurrence construction, not filtered here.
+/// Zero-based per owning context. Owns no authored [`SourceAnchor`]: run
+/// identity is parser analysis metadata only, never a source range.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct CssDeclarationRunOrdinal(usize);
+
+impl CssDeclarationRunOrdinal {
+    pub(crate) const fn new(ordinal: usize) -> Self {
+        Self(ordinal)
+    }
+
+    pub(crate) const fn value(self) -> usize {
+        self.0
+    }
+}
+
+/// A declaration's structural placement within the context-aware #167
+/// producer: the owning context, its direct-item ordinal within that
+/// context (shared with sibling child qualified-rule contexts), and the
+/// declaration-run ordinal.
+///
+/// Replaces the #137/#166 single-variant `CssDeclarationContext` zone
+/// association. Placement is parser analysis metadata only: it owns no
+/// authored source range and does not replace any existing declaration
+/// evidence anchor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CssDeclarationContext {
-    TopLevelQualifiedRuleLeadingDeclarationZone,
+pub(crate) struct CssDeclarationPlacement {
+    context_id: CssParserContextId,
+    item_ordinal: CssParserDirectItemOrdinal,
+    run_ordinal: CssDeclarationRunOrdinal,
+}
+
+impl CssDeclarationPlacement {
+    pub(crate) const fn new(
+        context_id: CssParserContextId,
+        item_ordinal: CssParserDirectItemOrdinal,
+        run_ordinal: CssDeclarationRunOrdinal,
+    ) -> Self {
+        Self {
+            context_id,
+            item_ordinal,
+            run_ordinal,
+        }
+    }
+
+    pub(crate) const fn context_id(&self) -> CssParserContextId {
+        self.context_id
+    }
+
+    pub(crate) const fn item_ordinal(&self) -> CssParserDirectItemOrdinal {
+        self.item_ordinal
+    }
+
+    pub(crate) const fn run_ordinal(&self) -> CssDeclarationRunOrdinal {
+        self.run_ordinal
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -258,7 +312,7 @@ pub(crate) struct CssDeclarationOccurrence {
     value: SourceAnchor,
     priority: Option<CssDeclarationPriorityEvidence>,
     termination: CssDeclarationTermination,
-    context: CssDeclarationContext,
+    placement: CssDeclarationPlacement,
 }
 
 impl CssDeclarationOccurrence {
@@ -271,7 +325,7 @@ impl CssDeclarationOccurrence {
         value: SourceAnchor,
         priority: Option<CssDeclarationPriorityEvidence>,
         termination: CssDeclarationTermination,
-        context: CssDeclarationContext,
+        placement: CssDeclarationPlacement,
     ) -> Result<Self, CssDeclarationContractError> {
         let expected = source_text.id();
 
@@ -364,7 +418,7 @@ impl CssDeclarationOccurrence {
             value,
             priority,
             termination,
-            context,
+            placement,
         })
     }
 
@@ -392,8 +446,8 @@ impl CssDeclarationOccurrence {
         &self.termination
     }
 
-    pub(crate) const fn context(&self) -> CssDeclarationContext {
-        self.context
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
     }
 
     pub(crate) fn source_order_key(&self) -> (usize, usize) {
@@ -409,7 +463,7 @@ impl PartialEq for CssDeclarationOccurrence {
             && same_anchor(&self.value, &other.value)
             && self.priority == other.priority
             && self.termination == other.termination
-            && self.context == other.context
+            && self.placement == other.placement
     }
 }
 
@@ -426,7 +480,7 @@ impl fmt::Debug for CssDeclarationOccurrence {
             .field("value", &self.value.range())
             .field("priority", &self.priority)
             .field("termination", &self.termination)
-            .field("context", &self.context)
+            .field("placement", &self.placement)
             .finish()
     }
 }
@@ -628,6 +682,14 @@ mod tests {
         source.anchor(start, end).unwrap()
     }
 
+    fn test_placement() -> CssDeclarationPlacement {
+        CssDeclarationPlacement::new(
+            CssParserContextId::new(0),
+            CssParserDirectItemOrdinal::new(0),
+            CssDeclarationRunOrdinal::new(0),
+        )
+    }
+
     #[test]
     fn basic_semicolon_declaration_constructs_with_exact_evidence() {
         let text = source(1, "color:red;");
@@ -641,17 +703,14 @@ mod tests {
             CssDeclarationTermination::AuthoredSemicolon {
                 semicolon: anchor(&text, 9, 10),
             },
-            CssDeclarationContext::TopLevelQualifiedRuleLeadingDeclarationZone,
+            test_placement(),
         )
         .unwrap();
 
         assert_eq!(occurrence.complete().range().start(), 0);
         assert_eq!(occurrence.complete().range().end(), 10);
         assert!(occurrence.priority().is_none());
-        assert_eq!(
-            occurrence.context(),
-            CssDeclarationContext::TopLevelQualifiedRuleLeadingDeclarationZone
-        );
+        assert_eq!(occurrence.placement(), test_placement());
     }
 
     #[test]
@@ -667,7 +726,7 @@ mod tests {
             CssDeclarationTermination::OmittedBeforeRightCurly {
                 right_curly: anchor(&text, 9, 10),
             },
-            CssDeclarationContext::TopLevelQualifiedRuleLeadingDeclarationZone,
+            test_placement(),
         )
         .unwrap();
         assert_eq!(occurrence.complete().range().end(), 9);
@@ -682,7 +741,7 @@ mod tests {
             CssDeclarationTermination::OmittedBeforeRightCurly {
                 right_curly: anchor(&text, 9, 10),
             },
-            CssDeclarationContext::TopLevelQualifiedRuleLeadingDeclarationZone,
+            test_placement(),
         );
         assert!(matches!(
             wrong,
@@ -703,7 +762,7 @@ mod tests {
             CssDeclarationTermination::OmittedAtEndOfInput {
                 terminal: anchor(&text, 9, 9),
             },
-            CssDeclarationContext::TopLevelQualifiedRuleLeadingDeclarationZone,
+            test_placement(),
         )
         .unwrap();
         assert_eq!(occurrence.complete().range().end(), 9);
@@ -722,7 +781,7 @@ mod tests {
             CssDeclarationTermination::OmittedAtEndOfInput {
                 terminal: anchor(&text, 9, 9),
             },
-            CssDeclarationContext::TopLevelQualifiedRuleLeadingDeclarationZone,
+            test_placement(),
         );
         assert_eq!(
             result,
@@ -743,7 +802,7 @@ mod tests {
             CssDeclarationTermination::AuthoredSemicolon {
                 semicolon: anchor(&text, 6, 7),
             },
-            CssDeclarationContext::TopLevelQualifiedRuleLeadingDeclarationZone,
+            test_placement(),
         )
         .unwrap();
         assert!(occurrence.value().range().is_empty());
@@ -758,7 +817,7 @@ mod tests {
             CssDeclarationTermination::AuthoredSemicolon {
                 semicolon: anchor(&text, 6, 7),
             },
-            CssDeclarationContext::TopLevelQualifiedRuleLeadingDeclarationZone,
+            test_placement(),
         );
         assert_eq!(
             wrong,
@@ -779,7 +838,7 @@ mod tests {
             CssDeclarationTermination::AuthoredSemicolon {
                 semicolon: anchor(&text, 16, 17),
             },
-            CssDeclarationContext::TopLevelQualifiedRuleLeadingDeclarationZone,
+            test_placement(),
         )
         .unwrap();
         assert_eq!(occurrence.property_name().fragment(), r"c\6F lor");
@@ -856,7 +915,7 @@ mod tests {
             CssDeclarationTermination::AuthoredSemicolon {
                 semicolon: anchor(&text, 20, 21),
             },
-            CssDeclarationContext::TopLevelQualifiedRuleLeadingDeclarationZone,
+            test_placement(),
         )
         .unwrap();
         assert!(occurrence.priority().is_some());
@@ -883,7 +942,7 @@ mod tests {
             CssDeclarationTermination::AuthoredSemicolon {
                 semicolon: anchor(&text, 19, 20),
             },
-            CssDeclarationContext::TopLevelQualifiedRuleLeadingDeclarationZone,
+            test_placement(),
         );
         assert_eq!(
             result,
@@ -905,7 +964,7 @@ mod tests {
             CssDeclarationTermination::AuthoredSemicolon {
                 semicolon: anchor(&text, 9, 10),
             },
-            CssDeclarationContext::TopLevelQualifiedRuleLeadingDeclarationZone,
+            test_placement(),
         );
         assert!(matches!(
             result,
@@ -929,7 +988,7 @@ mod tests {
             CssDeclarationTermination::AuthoredSemicolon {
                 semicolon: anchor(&text, 10, 11),
             },
-            CssDeclarationContext::TopLevelQualifiedRuleLeadingDeclarationZone,
+            test_placement(),
         );
         assert!(matches!(
             result,
@@ -950,7 +1009,7 @@ mod tests {
             CssDeclarationTermination::AuthoredSemicolon {
                 semicolon: anchor(&text, 9, 10),
             },
-            CssDeclarationContext::TopLevelQualifiedRuleLeadingDeclarationZone,
+            test_placement(),
         );
         assert_eq!(
             result,
@@ -974,7 +1033,7 @@ mod tests {
             CssDeclarationTermination::AuthoredSemicolon {
                 semicolon: anchor(&text, 9, 10),
             },
-            CssDeclarationContext::TopLevelQualifiedRuleLeadingDeclarationZone,
+            test_placement(),
         );
         assert_eq!(
             result,
@@ -998,7 +1057,7 @@ mod tests {
             CssDeclarationTermination::OmittedBeforeRightCurly {
                 right_curly: anchor(&text, 9, 10),
             },
-            CssDeclarationContext::TopLevelQualifiedRuleLeadingDeclarationZone,
+            test_placement(),
         );
         assert_eq!(
             result,
@@ -1022,7 +1081,7 @@ mod tests {
             CssDeclarationTermination::AuthoredSemicolon {
                 semicolon: anchor(&text, 4, 5),
             },
-            CssDeclarationContext::TopLevelQualifiedRuleLeadingDeclarationZone,
+            test_placement(),
         );
         assert_eq!(
             result,
@@ -1050,7 +1109,7 @@ mod tests {
             CssDeclarationTermination::AuthoredSemicolon {
                 semicolon: anchor(&text, SECRET_PROPERTY.len() + 4, SECRET_PROPERTY.len() + 5),
             },
-            CssDeclarationContext::TopLevelQualifiedRuleLeadingDeclarationZone,
+            test_placement(),
         )
         .unwrap();
 
@@ -1068,7 +1127,7 @@ mod tests {
             CssDeclarationTermination::AuthoredSemicolon {
                 semicolon: anchor(&text, SECRET_PROPERTY.len() + 4, SECRET_PROPERTY.len() + 5),
             },
-            CssDeclarationContext::TopLevelQualifiedRuleLeadingDeclarationZone,
+            test_placement(),
         )
         .unwrap_err();
         assert!(!format!("{error:?}").contains(SECRET_PROPERTY));

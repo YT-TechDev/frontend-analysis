@@ -218,13 +218,18 @@ fn historical_priority_fixture_preserves_exact_boundary_and_no_byte_loss() {
 fn rollback_fixture_leaves_no_declaration_diagnostic_or_recovery_evidence() {
     let fixtures = normative_parser_fixtures();
     let fixture = fixture(&fixtures, "CSS-PARSER-NONCUSTOM-BRACE-PLUS-OTHER-001");
-    assert!(fixture.declarations.is_empty());
+    // #167: the fallback now structurally recognizes "color:green" as a
+    // nested qualified-rule prelude and retains a real child context, so
+    // the inner "color:blue" declaration is a supported occurrence rather
+    // than swallowed unsupported content. The rollback itself still leaks
+    // no declaration diagnostic or recovery evidence.
+    assert_eq!(fixture.declarations.len(), 1);
     assert!(fixture.diagnostics.is_empty());
     assert!(fixture.recovery.is_empty());
-    assert_eq!(fixture.unsupported.len(), 1);
+    assert!(fixture.unsupported.is_empty());
     assert_eq!(
         fixture.coverage,
-        ParserGoldCoverage::ContainsUnsupportedContexts
+        ParserGoldCoverage::SupportedForSelectedQuestion
     );
 }
 
@@ -243,10 +248,13 @@ fn tokenizer_incomplete_fixture_cannot_be_parser_complete_or_ordinary_eof() {
     assert!(fixture.declarations.is_empty());
 }
 
+/// Nested at-rule descent remains out of #167's scope (deferred to #168):
+/// this fixture's remainder still absorbs the trailing declaration-shaped
+/// text exactly as before.
 #[test]
 fn nested_content_remainder_fixtures_absorb_declaration_shaped_trailing_text() {
     let fixtures = normative_parser_fixtures();
-    let fixture = fixture(&fixtures, "CSS-PARSER-NESTING-DECL-THEN-QUALIFIED-RULE-001");
+    let fixture = fixture(&fixtures, "CSS-PARSER-NESTING-DECL-THEN-AT-RULE-001");
     assert_eq!(fixture.declarations.len(), 1);
     assert_eq!(fixture.unsupported.len(), 1);
     let region = match fixture.unsupported[0] {
@@ -255,10 +263,25 @@ fn nested_content_remainder_fixtures_absorb_declaration_shaped_trailing_text() {
             panic!("expected NestedContentRemainder")
         }
     };
-    // The trailing declaration-shaped "color:green;" lies fully inside the
+    // The trailing declaration-shaped content lies fully inside the
     // remainder, so it cannot become a second included occurrence.
     assert_eq!(region, GoldRange::new(12, 38));
-    assert!(region.contains(GoldRange::new(26, 38)));
+}
+
+/// #167 supersedes the old whole-remainder outcome for nested *qualified
+/// rule* descent (unlike the nested at-rule case above, still deferred to
+/// #168): all three declarations -- outer, child, and outer again -- are
+/// now supported occurrences with no unsupported region.
+#[test]
+fn nested_qualified_rule_fixture_now_retains_all_three_declarations_as_supported() {
+    let fixtures = normative_parser_fixtures();
+    let fixture = fixture(&fixtures, "CSS-PARSER-NESTING-DECL-THEN-QUALIFIED-RULE-001");
+    assert_eq!(fixture.declarations.len(), 3);
+    assert!(fixture.unsupported.is_empty());
+    assert_eq!(
+        fixture.coverage,
+        ParserGoldCoverage::SupportedForSelectedQuestion
+    );
 }
 
 #[test]
@@ -707,7 +730,6 @@ fn declaration_and_recovery_and_priority_field_shapes_remain_plain_data() {
         value: GoldRange::new(2, 4),
         priority: None,
         termination: ParserGoldTermination::AuthoredSemicolon(GoldRange::new(4, 5)),
-        context: super::parser_gold::ParserGoldContext::TopLevelQualifiedRuleLeadingDeclarationZone,
     };
     assert_eq!(declaration.complete, GoldRange::new(0, 5));
 
@@ -846,7 +868,6 @@ fn corruption_discard_overlaps_declaration_is_rejected() {
         value: GoldRange::new(16, 19),
         priority: None,
         termination: ParserGoldTermination::AuthoredSemicolon(GoldRange::new(19, 20)),
-        context: super::parser_gold::ParserGoldContext::TopLevelQualifiedRuleLeadingDeclarationZone,
     });
     assert_eq!(
         validate_fixture(&fixture),

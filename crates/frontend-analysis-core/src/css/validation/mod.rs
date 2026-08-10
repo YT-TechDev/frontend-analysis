@@ -1,4 +1,5 @@
 mod candidate;
+mod context_candidate;
 mod context_fixtures;
 mod context_gold;
 mod fixtures;
@@ -10,6 +11,8 @@ mod parser_gold;
 
 #[cfg(test)]
 mod conformance_tests;
+#[cfg(test)]
+mod context_conformance_tests;
 #[cfg(test)]
 mod context_contract_tests;
 #[cfg(test)]

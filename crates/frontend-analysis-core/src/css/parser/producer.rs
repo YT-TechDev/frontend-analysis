@@ -59,11 +59,15 @@
 //! fabricated.
 
 use super::super::declaration::{
-    CssDeclarationContext, CssDeclarationOccurrence, CssDeclarationPriorityEvidence,
-    CssDeclarationTermination,
+    CssDeclarationOccurrence, CssDeclarationPlacement, CssDeclarationPriorityEvidence,
+    CssDeclarationRunOrdinal, CssDeclarationTermination,
 };
 use super::super::token::CssTokenKind;
 use super::super::tokenizer::result::CssTokenizerRunResult;
+use super::context::{
+    CssParserContextId, CssParserContextKind, CssParserContextRecord, CssParserContextTermination,
+    CssParserDirectItemOrdinal,
+};
 use super::cursor::{CssParserCursor, CssParserRawPosition};
 use super::diagnostic::{CssParserDiagnostic, CssParserDiagnosticCode};
 use super::evidence::{
@@ -214,9 +218,22 @@ enum BalanceEvent {
     Ordinary,
 }
 
+/// The raw source-backed parts of a recognized declaration, still lacking
+/// its [`CssDeclarationPlacement`]: placement is only known once
+/// [`Producer::commit_declaration`] has determined the owning active
+/// context and its current item/run counters (#167).
+struct DeclarationParts {
+    complete: SourceAnchor,
+    property_name: SourceAnchor,
+    colon: SourceAnchor,
+    value: SourceAnchor,
+    priority: Option<CssDeclarationPriorityEvidence>,
+    termination: CssDeclarationTermination,
+}
+
 /// One resolved outcome of the declaration-vs-qualified-rule transaction.
 enum DeclarationOutcome {
-    Recognized(CssDeclarationOccurrence),
+    Recognized(DeclarationParts),
     NotRecognized,
 }
 
@@ -253,9 +270,35 @@ enum RemainderOutcome {
     TrueEndOfInput,
 }
 
-enum BlockItemOutcome {
-    Continue,
-    ZoneEnded,
+/// One entry in the bounded iterative active-context stack (#167): parser
+/// execution metadata required to continue a structurally recognized
+/// qualified-rule block's direct content and to resume its parent once it
+/// closes. Distinct from the component-value balancing stack
+/// (`component_frames`): this stack tracks authored parser contexts, never
+/// function/`()`/`[]`/`{}` balancing.
+///
+/// Retains no decoded selector/prelude text: `header`/`block_opener` are
+/// exact source-backed anchors, and `body_start` plus the eventual
+/// termination boundary derive `body` without ever rescanning source.
+struct ActiveContextFrame {
+    id: CssParserContextId,
+    parent: Option<CssParserContextId>,
+    item_ordinal: CssParserDirectItemOrdinal,
+    header: SourceAnchor,
+    block_opener: SourceAnchor,
+    body_start: usize,
+    /// The next direct-item ordinal this context will assign to a
+    /// materialized declaration or child qualified-rule context.
+    next_item_ordinal: usize,
+    /// The next declaration-run ordinal this context will open.
+    next_run_ordinal: usize,
+    /// Whether a declaration run is currently open (the most recently
+    /// materialized direct item, if any, was a declaration rather than a
+    /// child context).
+    run_open: bool,
+    /// The run ordinal of the currently open run, meaningful only while
+    /// `run_open` is `true`.
+    current_run_ordinal: usize,
 }
 
 #[derive(Clone)]
@@ -306,6 +349,15 @@ fn push_component(
 }
 
 /// One active speculative checkpoint's transactional snapshot.
+///
+/// Includes the innermost active context's mutable placement counters
+/// (#167): declaration speculation never allocates a context, but
+/// `commit_declaration` mutates those counters before the checkpoint
+/// commits, so a rollback after a later failure must restore them exactly
+/// as it restores every other durable-evidence vector length. A checkpoint
+/// is only ever active while at least one context is active (declarations
+/// only occur inside a block), so the innermost frame is always present at
+/// `begin_checkpoint` time.
 struct Checkpoint {
     cursor: CssParserCursor,
     occurrences_len: usize,
@@ -314,6 +366,10 @@ struct Checkpoint {
     unsupported_len: usize,
     discard_len: usize,
     component_frames_len: usize,
+    frame_next_item_ordinal: usize,
+    frame_next_run_ordinal: usize,
+    frame_run_open: bool,
+    frame_current_run_ordinal: usize,
 }
 
 struct Producer<'a> {
@@ -331,6 +387,23 @@ struct Producer<'a> {
     peak_component_depth: usize,
     component_frames: Vec<ComponentFrameKind>,
     checkpoint: Option<Checkpoint>,
+    /// Iterative active-context stack (#167): the last entry is the
+    /// innermost currently-open qualified-rule context. Empty at the
+    /// implicit stylesheet root. Distinct from `component_frames`.
+    active_contexts: Vec<ActiveContextFrame>,
+    /// Parent-first reserved context slots, indexed by `CssParserContextId`.
+    /// A slot is reserved (pushed as `None`) at context entry, before the
+    /// active frame is pushed, and finalized (`Some`) when that context
+    /// closes -- by an authored `}` or by run-stop cleanup -- regardless of
+    /// how that finalization order relates to reservation order.
+    pending_context_records: Vec<Option<CssParserContextRecord>>,
+    /// Achieved maximum simultaneous active-context depth. The implicit
+    /// stylesheet root is depth 0 and uncounted; never rolls back.
+    peak_context_depth: usize,
+    /// The next direct-item ordinal to assign at the implicit stylesheet
+    /// root's own ordinal scope (distinct from any real context's
+    /// `next_item_ordinal`).
+    root_next_item_ordinal: usize,
 }
 
 impl<'a> Producer<'a> {
@@ -354,6 +427,10 @@ impl<'a> Producer<'a> {
             peak_component_depth: 0,
             component_frames: Vec::new(),
             checkpoint: None,
+            active_contexts: Vec::new(),
+            pending_context_records: Vec::new(),
+            peak_context_depth: 0,
+            root_next_item_ordinal: 0,
         }
     }
 
@@ -478,6 +555,9 @@ impl<'a> Producer<'a> {
                 CssParserInvariantViolation::CheckpointAlreadyActive,
             ));
         }
+        let frame = self.active_contexts.last().ok_or_else(|| {
+            invariant_flow(CssParserInvariantViolation::DeclarationOutsideActiveContext)
+        })?;
         self.checkpoint = Some(Checkpoint {
             cursor: self.cursor.checkpoint(),
             occurrences_len: self.occurrences.len(),
@@ -486,6 +566,10 @@ impl<'a> Producer<'a> {
             unsupported_len: self.unsupported.len(),
             discard_len: self.discard.len(),
             component_frames_len: self.component_frames.len(),
+            frame_next_item_ordinal: frame.next_item_ordinal,
+            frame_next_run_ordinal: frame.next_run_ordinal,
+            frame_run_open: frame.run_open,
+            frame_current_run_ordinal: frame.current_run_ordinal,
         });
         Ok(())
     }
@@ -511,6 +595,12 @@ impl<'a> Producer<'a> {
         self.discard.truncate(checkpoint.discard_len);
         self.component_frames
             .truncate(checkpoint.component_frames_len);
+        if let Some(frame) = self.active_contexts.last_mut() {
+            frame.next_item_ordinal = checkpoint.frame_next_item_ordinal;
+            frame.next_run_ordinal = checkpoint.frame_next_run_ordinal;
+            frame.run_open = checkpoint.frame_run_open;
+            frame.current_run_ordinal = checkpoint.frame_current_run_ordinal;
+        }
         Ok(())
     }
 
@@ -527,31 +617,215 @@ impl<'a> Producer<'a> {
         }
     }
 
-    // -- top-level stylesheet flow -----------------------------------------
+    // -- top-level stylesheet flow / block-content flow ---------------------
 
+    /// Single iterative dispatch loop covering both the implicit stylesheet
+    /// root (`active_contexts` empty) and every active qualified-rule
+    /// context's direct block content (#167). Never recurses in Rust:
+    /// entering a child context only pushes an [`ActiveContextFrame`] and
+    /// lets this same loop continue servicing the new innermost scope; the
+    /// root/block dispatch branch is re-decided every iteration from
+    /// `active_contexts`'s current state.
     fn execute(&mut self) -> Result<(), Flow> {
         loop {
-            match self.next_semantic()? {
-                ParserPosition::SemanticToken { anchor, kind } => match kind {
-                    ObservedKind::Whitespace | ObservedKind::Cdo | ObservedKind::Cdc => {
-                        let end = anchor.range().end();
-                        self.cursor.advance();
-                        self.committed_pos = end;
+            if self.active_contexts.is_empty() {
+                match self.next_semantic()? {
+                    ParserPosition::SemanticToken { anchor, kind } => match kind {
+                        ObservedKind::Whitespace | ObservedKind::Cdo | ObservedKind::Cdc => {
+                            let end = anchor.range().end();
+                            self.cursor.advance();
+                            self.committed_pos = end;
+                        }
+                        ObservedKind::AtKeyword => {
+                            self.cursor.advance();
+                            self.consume_top_level_at_rule(anchor)?;
+                        }
+                        _ => {
+                            self.consume_top_level_qualified_rule(anchor.range().start())?;
+                        }
+                    },
+                    ParserPosition::TrueEndOfInput => return Ok(()),
+                    ParserPosition::UpstreamTokenizerTerminal => {
+                        return Err(Flow::UpstreamIncomplete);
                     }
-                    ObservedKind::AtKeyword => {
-                        self.cursor.advance();
-                        self.consume_top_level_at_rule(anchor)?;
+                }
+            } else {
+                match self.next_semantic()? {
+                    ParserPosition::SemanticToken { anchor, kind } => match kind {
+                        ObservedKind::Whitespace | ObservedKind::Semicolon => {
+                            let end = anchor.range().end();
+                            self.cursor.advance();
+                            self.committed_pos = end;
+                        }
+                        ObservedKind::RightCurlyBracket => {
+                            let end = anchor.range().end();
+                            self.cursor.advance();
+                            self.committed_pos = end;
+                            self.close_innermost_context_authored(anchor)?;
+                        }
+                        ObservedKind::AtKeyword => {
+                            let start = anchor.range().start();
+                            self.begin_nested_content_remainder(start)?;
+                        }
+                        _ => {
+                            let item_start = anchor.range().start();
+                            self.handle_block_item(item_start)?;
+                        }
+                    },
+                    ParserPosition::TrueEndOfInput => return Ok(()),
+                    ParserPosition::UpstreamTokenizerTerminal => {
+                        return Err(Flow::UpstreamIncomplete);
                     }
-                    _ => {
-                        self.consume_top_level_qualified_rule(anchor.range().start())?;
-                    }
-                },
-                ParserPosition::TrueEndOfInput => return Ok(()),
-                ParserPosition::UpstreamTokenizerTerminal => return Err(Flow::UpstreamIncomplete),
+                }
             }
         }
     }
 
+    // -- context stack -------------------------------------------------------
+
+    /// Preflights both context resources, in the fixed
+    /// `PeakContextDepth`-then-`ContextRecords` precedence order, without
+    /// mutating any context state. Returns the prospective achieved depth on
+    /// success. Only when both preflights pass may the caller reserve a
+    /// context ID, retain an active frame, or mutate the context stack
+    /// (#167).
+    fn preflight_context_entry(&mut self) -> Result<usize, Flow> {
+        let prospective_depth = checked_resource_add(
+            CssParserResourceKind::PeakContextDepth,
+            self.active_contexts.len(),
+            1,
+        )?;
+        self.check_limit(CssParserResourceKind::PeakContextDepth, prospective_depth)?;
+        let prospective_records = checked_resource_add(
+            CssParserResourceKind::ContextRecords,
+            self.pending_context_records.len(),
+            1,
+        )?;
+        self.check_limit(CssParserResourceKind::ContextRecords, prospective_records)?;
+        Ok(prospective_depth)
+    }
+
+    /// Commits a structurally recognized qualified-rule block as a new
+    /// active context: `block_opener` must already be consumed (cursor
+    /// advanced, `committed_pos` updated) by the caller. Resource preflight
+    /// happens first and gates every subsequent mutation: a refused entry
+    /// allocates no ID, consumes no parent/root item ordinal, and leaves the
+    /// context stack untouched (#167 commit-honest refusal).
+    fn enter_context(
+        &mut self,
+        header_start: usize,
+        block_opener: SourceAnchor,
+    ) -> Result<(), Flow> {
+        let prospective_depth = self.preflight_context_entry()?;
+
+        let (parent, item_ordinal) = match self.active_contexts.last_mut() {
+            Some(frame) => {
+                frame.run_open = false;
+                let ordinal = frame.next_item_ordinal;
+                frame.next_item_ordinal += 1;
+                (Some(frame.id), ordinal)
+            }
+            None => {
+                let ordinal = self.root_next_item_ordinal;
+                self.root_next_item_ordinal += 1;
+                (None, ordinal)
+            }
+        };
+
+        let id = CssParserContextId::new(self.pending_context_records.len());
+        self.pending_context_records.push(None);
+        if prospective_depth > self.peak_context_depth {
+            self.peak_context_depth = prospective_depth;
+        }
+
+        let header = self
+            .source_text
+            .anchor(header_start, block_opener.range().start())
+            .map_err(|error| Flow::Invariant(error.into()))?;
+        let body_start = block_opener.range().end();
+
+        self.active_contexts.push(ActiveContextFrame {
+            id,
+            parent,
+            item_ordinal: CssParserDirectItemOrdinal::new(item_ordinal),
+            header,
+            block_opener,
+            body_start,
+            next_item_ordinal: 0,
+            next_run_ordinal: 0,
+            run_open: false,
+            current_run_ordinal: 0,
+        });
+        Ok(())
+    }
+
+    /// Closes the innermost active context at an authored `}`: pops the
+    /// active frame, finalizes its retained record with
+    /// `AuthoredRightCurly` termination, and stores it into its reserved
+    /// slot. The caller has already consumed `right_curly` and updated
+    /// `committed_pos`.
+    fn close_innermost_context_authored(&mut self, right_curly: SourceAnchor) -> Result<(), Flow> {
+        let frame = self
+            .active_contexts
+            .pop()
+            .ok_or_else(|| invariant_flow(CssParserInvariantViolation::NoActiveContextToClose))?;
+        let body = self
+            .source_text
+            .anchor(frame.body_start, right_curly.range().start())
+            .map_err(|error| Flow::Invariant(error.into()))?;
+        let record = CssParserContextRecord::new(
+            self.source_text,
+            frame.id,
+            frame.parent,
+            frame.item_ordinal,
+            CssParserContextKind::QualifiedRuleBlock,
+            frame.header,
+            frame.block_opener,
+            body,
+            CssParserContextTermination::AuthoredRightCurly { right_curly },
+        )
+        .map_err(|error| Flow::Invariant(error.into()))?;
+        self.pending_context_records[frame.id.index()] = Some(record);
+        Ok(())
+    }
+
+    /// Finalizes every still-active context, innermost first, at the exact
+    /// same partial terminal, using `make_termination` to build the honest
+    /// per-context termination evidence. Called only once execution has
+    /// already stopped (true EOF, upstream-incomplete, or parser-resource
+    /// refusal); never fabricates a closing `}`.
+    fn finalize_active_contexts(
+        &mut self,
+        terminal: &SourceAnchor,
+        make_termination: impl Fn(SourceAnchor) -> CssParserContextTermination,
+    ) -> Result<(), CssParserRunError> {
+        while let Some(frame) = self.active_contexts.pop() {
+            let body = self
+                .source_text
+                .anchor(frame.body_start, terminal.range().start())?;
+            let termination = make_termination(terminal.clone());
+            let record = CssParserContextRecord::new(
+                self.source_text,
+                frame.id,
+                frame.parent,
+                frame.item_ordinal,
+                CssParserContextKind::QualifiedRuleBlock,
+                frame.header,
+                frame.block_opener,
+                body,
+                termination,
+            )?;
+            self.pending_context_records[frame.id.index()] = Some(record);
+        }
+        Ok(())
+    }
+
+    /// Commits a structurally recognized top-level at-rule as an unsupported
+    /// region. `root_next_item_ordinal` only advances after that evidence is
+    /// committed (#167 commit-honest refusal): a resource refusal or
+    /// evidence-construction failure before the push leaves the root ordinal
+    /// untouched, keeping retained top-level qualified-rule ordinals
+    /// source-relative across intervening at-rules.
     fn consume_top_level_at_rule(&mut self, at_keyword: SourceAnchor) -> Result<(), Flow> {
         let AtRuleOutcome::Ended { end } = self.consume_top_level_at_rule_body()?;
         let start = at_keyword.range().start();
@@ -572,6 +846,7 @@ impl<'a> Producer<'a> {
         )
         .map_err(|error| Flow::Invariant(error.into()))?;
         self.unsupported.push(region);
+        self.root_next_item_ordinal += 1;
         self.committed_pos = end;
         Ok(())
     }
@@ -626,7 +901,7 @@ impl<'a> Producer<'a> {
                     Some(prelude) => {
                         self.consume_top_level_custom_property_like_discard(item_start, prelude)
                     }
-                    None => self.parse_block_declarations(),
+                    None => self.enter_context(item_start, left_curly),
                 }
             }
             PreludeOutcome::TrueEndOfInputWithoutBlock => {
@@ -777,60 +1052,34 @@ impl<'a> Producer<'a> {
 
     // -- supported block loop -----------------------------------------------
 
-    fn parse_block_declarations(&mut self) -> Result<(), Flow> {
-        loop {
-            match self.next_semantic()? {
-                ParserPosition::SemanticToken { anchor, kind } => match kind {
-                    ObservedKind::Whitespace | ObservedKind::Semicolon => {
-                        let end = anchor.range().end();
-                        self.cursor.advance();
-                        self.committed_pos = end;
-                    }
-                    ObservedKind::RightCurlyBracket => {
-                        let end = anchor.range().end();
-                        self.cursor.advance();
-                        self.committed_pos = end;
-                        return Ok(());
-                    }
-                    ObservedKind::AtKeyword => {
-                        let start = anchor.range().start();
-                        self.begin_nested_content_remainder(start)?;
-                        return Ok(());
-                    }
-                    _ => {
-                        let item_start = anchor.range().start();
-                        match self.handle_block_item(item_start)? {
-                            BlockItemOutcome::Continue => {}
-                            BlockItemOutcome::ZoneEnded => return Ok(()),
-                        }
-                    }
-                },
-                ParserPosition::TrueEndOfInput => return Ok(()),
-                ParserPosition::UpstreamTokenizerTerminal => return Err(Flow::UpstreamIncomplete),
-            }
-        }
-    }
-
-    fn handle_block_item(&mut self, item_start: usize) -> Result<BlockItemOutcome, Flow> {
+    /// Resolves one block-content item: the declaration-vs-qualified-rule
+    /// transaction (#139), now extended so a structurally recognized nested
+    /// qualified rule enters a real child context instead of falling back
+    /// to `NestedContentRemainder` (#167). Never reserves a context or
+    /// mutates the context stack while the declaration checkpoint is
+    /// active: the checkpoint has already committed or rolled back before
+    /// `enter_context` runs.
+    fn handle_block_item(&mut self, item_start: usize) -> Result<(), Flow> {
         self.begin_checkpoint()?;
         let outcome = match self.try_declaration() {
             Ok(outcome) => outcome,
             Err(flow) => return Err(self.rollback_checkpoint_preserving_flow(flow)),
         };
         match outcome {
-            DeclarationOutcome::Recognized(occurrence) => {
-                if let Err(flow) = self.commit_declaration(occurrence) {
+            DeclarationOutcome::Recognized(parts) => {
+                if let Err(flow) = self.commit_declaration(parts) {
                     return Err(self.rollback_checkpoint_preserving_flow(flow));
                 }
                 self.commit_checkpoint()?;
-                Ok(BlockItemOutcome::Continue)
+                Ok(())
             }
             DeclarationOutcome::NotRecognized => {
                 self.rollback_checkpoint()?;
                 match self.scan_qualified_rule_fallback()? {
                     FallbackOutcome::NestedRuleTrigger => {
-                        self.begin_nested_content_remainder(item_start)?;
-                        Ok(BlockItemOutcome::ZoneEnded)
+                        let left_curly = self.expect_left_curly_bracket()?;
+                        self.committed_pos = left_curly.range().end();
+                        self.enter_context(item_start, left_curly)
                     }
                     FallbackOutcome::MalformedEndedAtSemicolon { semicolon } => {
                         let region_end = semicolon.range().end();
@@ -838,8 +1087,7 @@ impl<'a> Producer<'a> {
                             item_start,
                             region_end,
                             CssParserRecoveryTermination::AuthoredSemicolon { semicolon },
-                        )?;
-                        Ok(BlockItemOutcome::Continue)
+                        )
                     }
                     FallbackOutcome::MalformedEndedAtEnclosingBlock { right_curly } => {
                         let region_end = right_curly.range().start();
@@ -847,8 +1095,7 @@ impl<'a> Producer<'a> {
                             item_start,
                             region_end,
                             CssParserRecoveryTermination::EnclosingBlockEnd { right_curly },
-                        )?;
-                        Ok(BlockItemOutcome::Continue)
+                        )
                     }
                     FallbackOutcome::MalformedEndedAtTrueEof => {
                         // #159: the trailing malformed bytes reach genuine
@@ -865,8 +1112,7 @@ impl<'a> Producer<'a> {
                             item_start,
                             len,
                             CssParserRecoveryTermination::EndOfInput { terminal },
-                        )?;
-                        Ok(BlockItemOutcome::Continue)
+                        )
                     }
                 }
             }
@@ -919,15 +1165,36 @@ impl<'a> Producer<'a> {
         Ok(())
     }
 
+    /// Scans a candidate nested qualified-rule prelude after declaration
+    /// recognition has failed and rolled back (#139/#158/#167).
+    ///
+    /// Carries a defensive nested custom-property-lookalike guard mirroring
+    /// [`Self::scan_qualified_rule_prelude`]'s top-level exclusion, per CSS
+    /// Syntax `consume a qualified rule (nested=true)`'s own custom-property
+    /// safety boundary. For #167's declaration-recognition rules an
+    /// `is_custom` (`--`-prefixed) property is always recognized by
+    /// [`Self::try_declaration`] regardless of value complexity, so this
+    /// branch is not reachable by any accepted #167 input; it exists only as
+    /// defense in depth and surfaces a typed internal invariant rather than
+    /// silently promoting an unreachable custom-property-shaped candidate
+    /// into a child context.
     fn scan_qualified_rule_fallback(&mut self) -> Result<FallbackOutcome, Flow> {
         self.component_frames.clear();
+        let mut non_ws_seen = 0usize;
+        let mut leading_ident_is_custom = false;
+        let mut leading_colon_seen = false;
         loop {
             match self.next_semantic()? {
                 ParserPosition::SemanticToken { anchor, kind } => {
                     let depth_before = self.component_frames.len();
                     if depth_before == 0 {
-                        match kind {
+                        match &kind {
                             ObservedKind::LeftCurlyBracket => {
+                                if leading_ident_is_custom && leading_colon_seen {
+                                    return Err(invariant_flow(
+                                        CssParserInvariantViolation::UnreachableNestedCustomPropertyFallback,
+                                    ));
+                                }
                                 return Ok(FallbackOutcome::NestedRuleTrigger);
                             }
                             ObservedKind::Semicolon => {
@@ -943,6 +1210,21 @@ impl<'a> Producer<'a> {
                             }
                             _ => {}
                         }
+                        if !matches!(kind, ObservedKind::Whitespace) {
+                            non_ws_seen += 1;
+                            match non_ws_seen {
+                                1 => {
+                                    if let ObservedKind::Ident(name) = &kind {
+                                        leading_ident_is_custom = name.starts_with("--");
+                                    }
+                                }
+                                2 => {
+                                    leading_colon_seen = leading_ident_is_custom
+                                        && matches!(kind, ObservedKind::Colon);
+                                }
+                                _ => {}
+                            }
+                        }
                     }
                     self.consume_and_balance(&kind)?;
                 }
@@ -954,13 +1236,25 @@ impl<'a> Producer<'a> {
         }
     }
 
+    /// Unsupported nested at-rule remainder, scoped to the currently
+    /// innermost active context (#167). Nested at-rule descent remains out
+    /// of scope for #167 (deferred to #168): the enclosing `}` this
+    /// remainder consumes structurally closes the current context, which is
+    /// therefore finalized honestly as `AuthoredRightCurly` right here
+    /// before resuming its parent (or the implicit root) on the next
+    /// `execute()` iteration. The remainder itself never consumes a
+    /// direct-item ordinal or a declaration-run boundary.
     fn begin_nested_content_remainder(&mut self, remainder_start: usize) -> Result<(), Flow> {
         match self.consume_remainder_until_enclosing_right_curly()? {
             RemainderOutcome::EnclosingRightCurly { start, end } => {
                 self.commit_unsupported_nested_remainder(remainder_start, start)?;
+                let right_curly = self
+                    .source_text
+                    .anchor(start, end)
+                    .map_err(|error| Flow::Invariant(error.into()))?;
                 self.cursor.advance();
                 self.committed_pos = end;
-                Ok(())
+                self.close_innermost_context_authored(right_curly)
             }
             RemainderOutcome::TrueEndOfInput => {
                 let len = self.source_text.as_str().len();
@@ -1075,28 +1369,60 @@ impl<'a> Producer<'a> {
             .anchor(name_anchor.range().start(), complete_end)
             .map_err(|error| Flow::Invariant(error.into()))?;
 
-        let occurrence = CssDeclarationOccurrence::new(
-            self.source_text,
-            complete_anchor,
-            name_anchor,
-            colon_anchor,
-            value_anchor,
+        Ok(DeclarationOutcome::Recognized(DeclarationParts {
+            complete: complete_anchor,
+            property_name: name_anchor,
+            colon: colon_anchor,
+            value: value_anchor,
             priority,
             termination,
-            CssDeclarationContext::TopLevelQualifiedRuleLeadingDeclarationZone,
-        )
-        .map_err(|error| Flow::Invariant(error.into()))?;
-
-        Ok(DeclarationOutcome::Recognized(occurrence))
+        }))
     }
 
-    fn commit_declaration(&mut self, occurrence: CssDeclarationOccurrence) -> Result<(), Flow> {
+    /// Commits a recognized declaration into the innermost active context,
+    /// computing its [`CssDeclarationPlacement`] from that context's current
+    /// item/run counters (#167). The `DeclarationOccurrences` preflight
+    /// happens before any counter mutation, so a refusal here never
+    /// advances the owning context's item or run ordinal.
+    fn commit_declaration(&mut self, parts: DeclarationParts) -> Result<(), Flow> {
         let prospective = checked_resource_add(
             CssParserResourceKind::DeclarationOccurrences,
             self.occurrences.len(),
             1,
         )?;
         self.check_limit(CssParserResourceKind::DeclarationOccurrences, prospective)?;
+
+        let frame = self.active_contexts.last_mut().ok_or_else(|| {
+            invariant_flow(CssParserInvariantViolation::DeclarationOutsideActiveContext)
+        })?;
+        let item_ordinal = frame.next_item_ordinal;
+        frame.next_item_ordinal += 1;
+        if !frame.run_open {
+            frame.current_run_ordinal = frame.next_run_ordinal;
+            frame.next_run_ordinal += 1;
+            frame.run_open = true;
+        }
+        let run_ordinal = frame.current_run_ordinal;
+        let context_id = frame.id;
+
+        let placement = CssDeclarationPlacement::new(
+            context_id,
+            CssParserDirectItemOrdinal::new(item_ordinal),
+            CssDeclarationRunOrdinal::new(run_ordinal),
+        );
+
+        let occurrence = CssDeclarationOccurrence::new(
+            self.source_text,
+            parts.complete,
+            parts.property_name,
+            parts.colon,
+            parts.value,
+            parts.priority,
+            parts.termination,
+            placement,
+        )
+        .map_err(|error| Flow::Invariant(error.into()))?;
+
         let end = occurrence.complete().range().end();
         self.occurrences.push(occurrence);
         self.committed_pos = end;
@@ -1333,10 +1659,15 @@ impl<'a> Producer<'a> {
 
     // -- result finalization -------------------------------------------------
 
-    fn finish_complete(self) -> Result<CssParserRunResult, CssParserRunError> {
+    fn finish_complete(mut self) -> Result<CssParserRunResult, CssParserRunError> {
         let terminal = self.upstream.terminal().clone();
+        self.finalize_active_contexts(&terminal, |terminal| {
+            CssParserContextTermination::EndOfInput { terminal }
+        })?;
+        let context_records =
+            finalize_context_records(std::mem::take(&mut self.pending_context_records))?;
         let coverage = coverage_for(&self.unsupported);
-        let resources = self.resource_usage();
+        let resources = self.resource_usage(context_records.len());
         CssParserRunResult::new(
             self.source_text,
             self.upstream,
@@ -1345,7 +1676,7 @@ impl<'a> Producer<'a> {
             self.recovery,
             self.unsupported,
             self.discard,
-            Vec::new(),
+            context_records,
             terminal,
             CssParserExecutionCompletion::Complete,
             coverage,
@@ -1354,10 +1685,15 @@ impl<'a> Producer<'a> {
         )
     }
 
-    fn finish_upstream_incomplete(self) -> Result<CssParserRunResult, CssParserRunError> {
+    fn finish_upstream_incomplete(mut self) -> Result<CssParserRunResult, CssParserRunError> {
         let terminal = self.upstream.terminal().clone();
+        self.finalize_active_contexts(&terminal, |terminal| {
+            CssParserContextTermination::UpstreamTokenizerIncomplete { terminal }
+        })?;
+        let context_records =
+            finalize_context_records(std::mem::take(&mut self.pending_context_records))?;
         let coverage = coverage_for(&self.unsupported);
-        let resources = self.resource_usage();
+        let resources = self.resource_usage(context_records.len());
         CssParserRunResult::new(
             self.source_text,
             self.upstream,
@@ -1366,7 +1702,7 @@ impl<'a> Producer<'a> {
             self.recovery,
             self.unsupported,
             self.discard,
-            Vec::new(),
+            context_records,
             terminal,
             CssParserExecutionCompletion::Incomplete,
             coverage,
@@ -1376,12 +1712,17 @@ impl<'a> Producer<'a> {
     }
 
     fn finish_resource_limited(
-        self,
+        mut self,
         signal: ResourceLimitSignal,
     ) -> Result<CssParserRunResult, CssParserRunError> {
         let terminal = self
             .source_text
             .anchor(self.committed_pos, self.committed_pos)?;
+        self.finalize_active_contexts(&terminal, |terminal| {
+            CssParserContextTermination::ParserResourceLimit { terminal }
+        })?;
+        let context_records =
+            finalize_context_records(std::mem::take(&mut self.pending_context_records))?;
         let evidence = CssParserResourceLimitEvidence::new(
             self.source_text,
             signal.kind,
@@ -1390,7 +1731,7 @@ impl<'a> Producer<'a> {
             terminal.clone(),
         )?;
         let coverage = coverage_for(&self.unsupported);
-        let resources = self.resource_usage();
+        let resources = self.resource_usage(context_records.len());
         CssParserRunResult::new(
             self.source_text,
             self.upstream,
@@ -1399,7 +1740,7 @@ impl<'a> Producer<'a> {
             self.recovery,
             self.unsupported,
             self.discard,
-            Vec::new(),
+            context_records,
             terminal,
             CssParserExecutionCompletion::Incomplete,
             coverage,
@@ -1408,22 +1749,38 @@ impl<'a> Producer<'a> {
         )
     }
 
-    /// `PeakContextDepth` and `ContextRecords` are always zero: this #166
-    /// producer never allocates a context identity or enters a parser
-    /// context. Real context-resource accounting begins in #167.
-    fn resource_usage(&self) -> CssParserResourceUsage {
+    fn resource_usage(&self, context_records_len: usize) -> CssParserResourceUsage {
         CssParserResourceUsage::new(
             self.algorithm_steps,
             self.peak_component_depth,
-            0,
+            self.peak_context_depth,
             self.occurrences.len(),
             self.diagnostics.len(),
             self.recovery.len(),
             self.unsupported.len(),
             self.discard.len(),
-            0,
+            context_records_len,
         )
     }
+}
+
+/// Converts every reserved context slot into its finalized record, in
+/// `CssParserContextId` allocation order (#167). Every reserved slot must be
+/// finalized (by an authored `}` or by run-stop cleanup) before result
+/// construction; a still-`None` slot here is a typed internal invariant
+/// failure, never a panic.
+fn finalize_context_records(
+    pending: Vec<Option<CssParserContextRecord>>,
+) -> Result<Vec<CssParserContextRecord>, CssParserRunError> {
+    pending
+        .into_iter()
+        .enumerate()
+        .map(|(index, slot)| {
+            slot.ok_or(CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::UnfinalizedContextRecord { index },
+            ))
+        })
+        .collect()
 }
 
 fn coverage_for(unsupported: &[CssParserUnsupportedRegion]) -> CssParserCoverage {
@@ -1565,5 +1922,121 @@ mod tests {
                 CssParserInvariantViolation::UpstreamUnprocessedRemainderMismatch
             )
         );
+    }
+
+    // -- #167 context-aware producer focused regressions ---------------------
+
+    #[allow(clippy::too_many_arguments)]
+    fn context_parser_limits(
+        max_peak_context_depth: usize,
+        max_context_records: usize,
+    ) -> CssParserLimits {
+        CssParserLimits::new(
+            10_000,
+            1000,
+            max_peak_context_depth,
+            1000,
+            1000,
+            1000,
+            1000,
+            1000,
+            max_context_records,
+        )
+        .unwrap()
+    }
+
+    /// A structurally recognized nested qualified rule commits its checkpoint
+    /// rollback (declaration recognition fails, falls back, no context is
+    /// entered while a checkpoint is active) before `enter_context` ever
+    /// mutates the context stack: at most one checkpoint is ever active, and
+    /// entering the child leaves no checkpoint behind.
+    #[test]
+    fn entering_a_nested_qualified_rule_context_never_leaves_a_checkpoint_active() {
+        let text = source("a{color:green{color:blue;}}");
+        let tokenizer_result = run_tokenizer(&text, generous_tokenizer_limits()).unwrap();
+        let mut producer =
+            Producer::new(&text, tokenizer_result, context_parser_limits(1000, 1000));
+
+        assert!(producer.execute().is_ok());
+
+        assert!(producer.checkpoint.is_none());
+        assert_eq!(producer.pending_context_records.len(), 2);
+        assert!(producer.active_contexts.is_empty());
+    }
+
+    /// `PeakContextDepth` refusal is commit-honest (#167): the refused third
+    /// context allocates no ID, the two already-entered ancestors remain
+    /// retained, and no checkpoint is left active.
+    #[test]
+    fn peak_context_depth_refusal_allocates_no_id_and_retains_ancestors() {
+        let text = source("a{b{c{p:v;}}}");
+        let tokenizer_result = run_tokenizer(&text, generous_tokenizer_limits()).unwrap();
+        let mut producer = Producer::new(&text, tokenizer_result, context_parser_limits(2, 1000));
+
+        let outcome = producer.execute();
+
+        assert!(matches!(
+            outcome,
+            Err(Flow::ResourceLimit(ResourceLimitSignal {
+                kind: CssParserResourceKind::PeakContextDepth,
+                limit: 2,
+                attempted: 3,
+            }))
+        ));
+        assert!(producer.checkpoint.is_none());
+        assert_eq!(producer.pending_context_records.len(), 2);
+        assert_eq!(producer.active_contexts.len(), 2);
+        assert_eq!(producer.peak_context_depth, 2);
+    }
+
+    /// `ContextRecords` refusal is commit-honest (#167): a third context
+    /// beyond the retained-record cap allocates no ID, and the two already-
+    /// reserved slots remain (one closed, one still active).
+    #[test]
+    fn context_records_refusal_allocates_no_id_and_retains_reserved_slots() {
+        let text = source("a{b{p:v;}c{q:w;}}");
+        let tokenizer_result = run_tokenizer(&text, generous_tokenizer_limits()).unwrap();
+        let mut producer = Producer::new(&text, tokenizer_result, context_parser_limits(1000, 2));
+
+        let outcome = producer.execute();
+
+        assert!(matches!(
+            outcome,
+            Err(Flow::ResourceLimit(ResourceLimitSignal {
+                kind: CssParserResourceKind::ContextRecords,
+                limit: 2,
+                attempted: 3,
+            }))
+        ));
+        assert!(producer.checkpoint.is_none());
+        assert_eq!(producer.pending_context_records.len(), 2);
+        assert_eq!(producer.active_contexts.len(), 1);
+    }
+
+    /// Root-scoped and nested direct-item ordinals are independent counters
+    /// (#167): two top-level qualified rules are root-item 0 and 1, while
+    /// each owns its own zero-based nested item ordinal space.
+    #[test]
+    fn root_and_nested_direct_item_ordinals_are_independent_counters() {
+        let text = source("a{x{p:v;}}b{y:z;}");
+        let tokenizer_result = run_tokenizer(&text, generous_tokenizer_limits()).unwrap();
+        let mut producer =
+            Producer::new(&text, tokenizer_result, context_parser_limits(1000, 1000));
+
+        assert!(producer.execute().is_ok());
+
+        assert_eq!(producer.pending_context_records.len(), 3);
+        let records: Vec<_> = producer
+            .pending_context_records
+            .iter()
+            .map(|slot| slot.as_ref().unwrap())
+            .collect();
+        // `a` (root item 0), `x` (child of `a`, item 0), `b` (root item 1).
+        assert!(records[0].parent().is_none());
+        assert_eq!(records[0].item_ordinal().value(), 0);
+        assert_eq!(records[1].parent(), Some(records[0].id()));
+        assert_eq!(records[1].item_ordinal().value(), 0);
+        assert!(records[2].parent().is_none());
+        assert_eq!(records[2].item_ordinal().value(), 1);
     }
 }

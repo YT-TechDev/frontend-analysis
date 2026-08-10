@@ -1,9 +1,11 @@
 //! Executable, source-driven resource-limit tests for the #139/#158 parser
 //! resource kinds, mirroring the #152 `checked_resource_add` committed-
-//! versus-attempted contract already proven for the tokenizer. The #166
-//! `PeakContextDepth`/`ContextRecords` dimensions are exercised only through
+//! versus-attempted contract already proven for the tokenizer. This file's
+//! `parser_limits` helper holds `PeakContextDepth`/`ContextRecords` generous
+//! and fixed, so their own refusal behavior is exercised elsewhere instead:
 //! synthetic contract-valid construction (`parser/resource.rs`,
-//! `parser/result.rs`) because this #166 producer never allocates either.
+//! `parser/result.rs`) and real #167 producer refusal tests
+//! (`parser/producer.rs`).
 
 use crate::css::parser::producer::run;
 use crate::css::parser::resource::{CssParserLimits, CssParserResourceKind};
@@ -29,7 +31,8 @@ fn parser_limits(
     CssParserLimits::new(
         max_algorithm_steps,
         max_peak_component_depth,
-        // #166: generous, since this producer never allocates a context.
+        // Held generous and fixed here; PeakContextDepth refusal is covered
+        // by dedicated tests elsewhere (see module docs above).
         1000,
         max_declaration_occurrences,
         max_parser_diagnostics,
@@ -211,6 +214,31 @@ fn unsupported_regions_limit_refusal_publishes_no_partial_record() {
             .value(CssParserResourceKind::UnsupportedRegions),
         0
     );
+}
+
+/// A refused unsupported-region commit must not advance the implicit-root
+/// item ordinal (#167 commit-honest root ordering): `a`'s already-retained
+/// context keeps ordinal 0, and the refused `@font-face` after it leaves no
+/// trace in `context_records`.
+#[test]
+fn unsupported_region_refusal_does_not_advance_the_root_item_ordinal() {
+    let text = source("a{}@font-face{font-family:x;}");
+    let tokenizer_result = run_tokenizer(&text, generous_tokenizer_limits()).unwrap();
+    let limits = parser_limits(10_000, 1000, 1000, 1000, 1000, 0, 1000);
+    let result = run(&text, tokenizer_result, limits)
+        .expect("resource-limited runs remain a normal Ok result");
+
+    match result.termination() {
+        CssParserTermination::ParserResourceLimit(evidence) => {
+            assert_eq!(evidence.kind(), CssParserResourceKind::UnsupportedRegions);
+            assert_eq!(evidence.limit(), 0);
+            assert_eq!(evidence.attempted(), 1);
+        }
+        other => panic!("expected ParserResourceLimit, got {other:?}"),
+    }
+    assert!(result.unsupported_regions().is_empty());
+    assert_eq!(result.context_records().len(), 1);
+    assert_eq!(result.context_records()[0].item_ordinal().value(), 0);
 }
 
 #[test]
