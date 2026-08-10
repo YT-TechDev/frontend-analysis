@@ -37,12 +37,14 @@ jobs:
               raise SystemExit('result keyframes parent start marker not unique')
           start = text.index(start_marker)
           end = text.index(end_marker, start)
-          replacement = '''            if record.parent().is_some() {
-                return invariant(
-                    CssParserInvariantViolation::KeyframesContextHasInvalidParent { index },
-                );
-            }
-'''
+          replacement = '\n'.join([
+              '            if record.parent().is_some() {',
+              '                return invariant(',
+              '                    CssParserInvariantViolation::KeyframesContextHasInvalidParent { index },',
+              '                );',
+              '            }',
+              '',
+          ])
           text = text[:start] + replacement + text[end:]
           text = text.replace(
               'KeyframesContextRequiresRootOrGroupOnlyAncestry',
@@ -58,34 +60,19 @@ jobs:
               raise SystemExit('producer keyframes nested-entry start marker not unique')
           start = text.index(start_marker)
           end = text.index(end_marker, start)
-          replacement = '''                if matches!(identity, NewContextIdentity::KeyframesRuleBlock { .. }) {
-                    return Err(invariant_flow(
-                        CssParserInvariantViolation::KeyframesContextCannotBeNested,
-                    ));
-                }
-'''
+          replacement = '\n'.join([
+              '                if matches!(identity, NewContextIdentity::KeyframesRuleBlock { .. }) {',
+              '                    return Err(invariant_flow(',
+              '                        CssParserInvariantViolation::KeyframesContextCannotBeNested,',
+              '                    ));',
+              '                }',
+          ]) + '\n'
           text = text[:start] + replacement + text[end:]
           text = text.replace(
               '/// The #169/#170 `DeclarationOccurrences` aggregate cap: ordinary',
               '/// The #169/#170/#171 `DeclarationOccurrences` aggregate cap: ordinary'
           )
-          text = text.replace(
-              '/// shared by structurally identical declaration-list bodies.',
-              '/// shared by structurally identical declaration-list bodies, including\n    /// `KeyframeBlock` (#171).'
-          )
           producer.write_text(text)
-
-          context = Path('crates/frontend-analysis-core/src/css/parser/context.rs')
-          text = context.read_text()
-          text = text.replace(
-              '//! only `@font-face`/`@property` registry approved for #169; page (#170) and\n//! keyframe (#171) context meanings remain deliberately absent rather than\n//! pre-populated speculatively.',
-              '//! only `@font-face`/`@property` registry approved for #169, plus the\n//! explicit Page/PageMargin (#170) and Keyframes/KeyframeBlock (#171)\n//! context families added by their focused Leaves.'
-          )
-          text = text.replace(
-              '/// descriptor-block flag/plugin vocabulary. Later approved Leaves extend this\n/// enum explicitly (#170 page/page-margin contexts, #171 keyframe contexts);\n/// this Leaf does not pre-populate them.',
-              '/// descriptor-block flag/plugin vocabulary. #170 and #171 extend this enum\n/// explicitly with Page/PageMargin and Keyframes/KeyframeBlock contexts; no\n/// generic special-rule registry is introduced.'
-          )
-          context.write_text(text)
 
           fixtures = Path('crates/frontend-analysis-core/src/css/validation/keyframe_fixtures.rs')
           text = fixtures.read_text().replace(
