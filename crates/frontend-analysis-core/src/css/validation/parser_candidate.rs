@@ -672,6 +672,144 @@ pub(super) fn canonical_signature(result: &CssParserRunResult) -> String {
             termination_shape(occurrence.termination())
         );
     }
+    for occurrence in result.page_occurrences() {
+        let complete = occurrence.complete().range();
+        let name = occurrence.name().range();
+        let colon = occurrence.colon().range();
+        let value = occurrence.value().range();
+        let placement = occurrence.placement();
+        let _ = write!(
+            signature,
+            "|Page[{},{})Name[{},{})Colon[{},{})Value[{},{})Ctx{}Item{}",
+            complete.start(),
+            complete.end(),
+            name.start(),
+            name.end(),
+            colon.start(),
+            colon.end(),
+            value.start(),
+            value.end(),
+            placement.context_id().index(),
+            placement.item_ordinal().value(),
+        );
+        match occurrence.priority() {
+            Some(priority) => {
+                let complete = priority.complete().range();
+                let bang = priority.bang().range();
+                let important = priority.important_ident().range();
+                let _ = write!(
+                    signature,
+                    "!P[{},{})Bang[{},{})Important[{},{})",
+                    complete.start(),
+                    complete.end(),
+                    bang.start(),
+                    bang.end(),
+                    important.start(),
+                    important.end()
+                );
+            }
+            None => {
+                let _ = write!(signature, "!NoPriority");
+            }
+        }
+        let _ = write!(
+            signature,
+            "T{:?}",
+            termination_shape(occurrence.termination())
+        );
+    }
+    for occurrence in result.page_margin_occurrences() {
+        let complete = occurrence.complete().range();
+        let name = occurrence.name().range();
+        let colon = occurrence.colon().range();
+        let value = occurrence.value().range();
+        let placement = occurrence.placement();
+        let _ = write!(
+            signature,
+            "|PageMargin[{},{})Name[{},{})Colon[{},{})Value[{},{})Ctx{}Item{}",
+            complete.start(),
+            complete.end(),
+            name.start(),
+            name.end(),
+            colon.start(),
+            colon.end(),
+            value.start(),
+            value.end(),
+            placement.context_id().index(),
+            placement.item_ordinal().value(),
+        );
+        match occurrence.priority() {
+            Some(priority) => {
+                let complete = priority.complete().range();
+                let bang = priority.bang().range();
+                let important = priority.important_ident().range();
+                let _ = write!(
+                    signature,
+                    "!P[{},{})Bang[{},{})Important[{},{})",
+                    complete.start(),
+                    complete.end(),
+                    bang.start(),
+                    bang.end(),
+                    important.start(),
+                    important.end()
+                );
+            }
+            None => {
+                let _ = write!(signature, "!NoPriority");
+            }
+        }
+        let _ = write!(
+            signature,
+            "T{:?}",
+            termination_shape(occurrence.termination())
+        );
+    }
+    for occurrence in result.keyframe_occurrences() {
+        let complete = occurrence.complete().range();
+        let name = occurrence.name().range();
+        let colon = occurrence.colon().range();
+        let value = occurrence.value().range();
+        let placement = occurrence.placement();
+        let _ = write!(
+            signature,
+            "|Keyframe[{},{})Name[{},{})Colon[{},{})Value[{},{})Ctx{}Item{}",
+            complete.start(),
+            complete.end(),
+            name.start(),
+            name.end(),
+            colon.start(),
+            colon.end(),
+            value.start(),
+            value.end(),
+            placement.context_id().index(),
+            placement.item_ordinal().value(),
+        );
+        match occurrence.priority() {
+            Some(priority) => {
+                let complete = priority.complete().range();
+                let bang = priority.bang().range();
+                let important = priority.important_ident().range();
+                let _ = write!(
+                    signature,
+                    "!P[{},{})Bang[{},{})Important[{},{})",
+                    complete.start(),
+                    complete.end(),
+                    bang.start(),
+                    bang.end(),
+                    important.start(),
+                    important.end()
+                );
+            }
+            None => {
+                let _ = write!(signature, "!NoPriority");
+            }
+        }
+        let _ = write!(
+            signature,
+            "T{:?}",
+            termination_shape(occurrence.termination())
+        );
+    }
     for diagnostic in result.parser_diagnostics() {
         let range = diagnostic.location().range();
         let _ = write!(
@@ -725,15 +863,23 @@ pub(super) fn canonical_signature(result: &CssParserRunResult) -> String {
         let descriptor_property_name = context
             .descriptor_property_name()
             .map(|anchor| anchor.range());
+        let page_selector_list = context.page_selector_list().map(|anchor| anchor.range());
+        let keyframes_name = context.keyframes_name().map(|anchor| anchor.range());
+        let keyframe_selector_list = context
+            .keyframe_selector_list()
+            .map(|anchor| anchor.range());
         let _ = write!(
             signature,
-            "|Ctx{:?}Id{}Parent{:?}Ordinal{}AtKeyword{:?}PropertyName{:?}Nearest{:?}Header[{},{})Opener[{},{})Body[{},{}){:?}",
+            "|Ctx{:?}Id{}Parent{:?}Ordinal{}AtKeyword{:?}PropertyName{:?}PageSelector{:?}KeyframesName{:?}KeyframeSelector{:?}Nearest{:?}Header[{},{})Opener[{},{})Body[{},{}){:?}",
             context.kind(),
             context.id().index(),
             context.parent().map(|parent_id| parent_id.index()),
             context.item_ordinal().value(),
             at_keyword.map(|range| (range.start(), range.end())),
             descriptor_property_name.map(|range| (range.start(), range.end())),
+            page_selector_list.map(|range| (range.start(), range.end())),
+            keyframes_name.map(|range| (range.start(), range.end())),
+            keyframe_selector_list.map(|range| (range.start(), range.end())),
             context
                 .nearest_qualified_ancestor()
                 .map(|ancestor_id| ancestor_id.index()),

@@ -43,7 +43,7 @@ fn span(anchor: &SourceAnchor) -> (usize, usize) {
 fn native_demonstration_multibyte_declaration_survives_source_handle_drop() {
     let result = {
         let source = SourceText::new(SourceId::new(101), "a{--é:中;}".to_owned());
-        analyze_css_declarations(
+        analyze_css_source(
             &source,
             generous_tokenizer_limits(),
             generous_parser_limits(),
@@ -69,7 +69,7 @@ fn native_demonstration_multibyte_declaration_survives_source_handle_drop() {
 #[test]
 fn historical_escaped_property_provenance_regression_matches_exactly_through_core() {
     let source = SourceText::new(SourceId::new(50_101), r"a{c\6F lor/**/:red;}".to_owned());
-    let result = analyze_css_declarations(
+    let result = analyze_css_source(
         &source,
         generous_tokenizer_limits(),
         generous_parser_limits(),
@@ -91,7 +91,7 @@ fn historical_silent_priority_loss_regression_matches_exactly_through_core() {
         SourceId::new(50_102),
         r"a{color:red !/**/Im\70 ortant;}".to_owned(),
     );
-    let result = analyze_css_declarations(
+    let result = analyze_css_source(
         &source,
         generous_tokenizer_limits(),
         generous_parser_limits(),
@@ -117,7 +117,7 @@ fn historical_silent_priority_loss_regression_matches_exactly_through_core() {
 #[test]
 fn preprocessing_bom_before_first_rule_preserves_exact_post_bom_offsets_through_core() {
     let source = SourceText::new(SourceId::new(61_101), "\u{feff}a{color:red;}".to_owned());
-    let result = analyze_css_declarations(
+    let result = analyze_css_source(
         &source,
         generous_tokenizer_limits(),
         generous_parser_limits(),
@@ -136,7 +136,7 @@ fn preprocessing_cr_lf_crlf_ff_do_not_shift_neighboring_declaration_endpoints_th
         SourceId::new(61_102),
         "a{a1:1;\ra2:2;\na3:3;\r\na4:4;\x0ca5:5;}".to_owned(),
     );
-    let result = analyze_css_declarations(
+    let result = analyze_css_source(
         &source,
         generous_tokenizer_limits(),
         generous_parser_limits(),
@@ -153,7 +153,7 @@ fn preprocessing_cr_lf_crlf_ff_do_not_shift_neighboring_declaration_endpoints_th
 #[test]
 fn preprocessing_nul_byte_in_value_yields_ordinary_byte_exact_evidence_through_core() {
     let source = SourceText::new(SourceId::new(61_103), "a{color:\0;}".to_owned());
-    let result = analyze_css_declarations(
+    let result = analyze_css_source(
         &source,
         generous_tokenizer_limits(),
         generous_parser_limits(),
@@ -167,7 +167,7 @@ fn preprocessing_nul_byte_in_value_yields_ordinary_byte_exact_evidence_through_c
 #[test]
 fn preprocessing_multibyte_utf8_property_and_value_preserve_exact_byte_ranges_through_core() {
     let source = SourceText::new(SourceId::new(61_104), "a{--é:中;}".to_owned());
-    let result = analyze_css_declarations(
+    let result = analyze_css_source(
         &source,
         generous_tokenizer_limits(),
         generous_parser_limits(),
@@ -183,7 +183,7 @@ fn preprocessing_multibyte_utf8_property_and_value_preserve_exact_byte_ranges_th
 #[test]
 fn preprocessing_comment_between_property_name_and_colon_stays_inside_complete_only_through_core() {
     let source = SourceText::new(SourceId::new(61_105), "a{color/*gap*/:red;}".to_owned());
-    let result = analyze_css_declarations(
+    let result = analyze_css_source(
         &source,
         generous_tokenizer_limits(),
         generous_parser_limits(),
@@ -202,7 +202,7 @@ fn preprocessing_comment_inside_priority_stays_inside_priority_complete_through_
         SourceId::new(61_106),
         "a{color:red !/*gap*/important;}".to_owned(),
     );
-    let result = analyze_css_declarations(
+    let result = analyze_css_source(
         &source,
         generous_tokenizer_limits(),
         generous_parser_limits(),
@@ -230,7 +230,7 @@ fn real_tokenizer_resource_limit_propagates_incomplete_through_core() {
     let tokenizer_limits =
         CssTokenizerLimits::new(0, 1 << 10, 1 << 10, 1 << 10, 1 << 10, 1 << 10).unwrap();
 
-    let result = analyze_css_declarations(&source, tokenizer_limits, generous_parser_limits())
+    let result = analyze_css_source(&source, tokenizer_limits, generous_parser_limits())
         .expect("a real upstream-incomplete run remains an Ok CssParserRunResult");
 
     let upstream = result.upstream_tokenizer_result();
@@ -269,7 +269,7 @@ fn parser_resource_limit_propagates_incomplete_through_core_without_becoming_err
     )
     .unwrap();
 
-    let result = analyze_css_declarations(&source, generous_tokenizer_limits(), parser_limits)
+    let result = analyze_css_source(&source, generous_tokenizer_limits(), parser_limits)
         .expect("a parser resource limit is a valid CssParserRunResult, not a Core Err");
 
     assert_eq!(
@@ -293,7 +293,7 @@ fn recovery_propagates_through_core() {
         SourceId::new(70_003),
         "a{color red;background:blue;}".to_owned(),
     );
-    let result = analyze_css_declarations(
+    let result = analyze_css_source(
         &source,
         generous_tokenizer_limits(),
         generous_parser_limits(),
@@ -308,7 +308,7 @@ fn recovery_propagates_through_core() {
 #[test]
 fn discard_propagates_through_core() {
     let source = SourceText::new(SourceId::new(70_004), "--foo:bar{color:red;}".to_owned());
-    let result = analyze_css_declarations(
+    let result = analyze_css_source(
         &source,
         generous_tokenizer_limits(),
         generous_parser_limits(),
@@ -332,7 +332,7 @@ fn unsupported_propagates_through_core() {
         SourceId::new(70_005),
         "a{color:red;@unknown-rule{color:blue;}}".to_owned(),
     );
-    let result = analyze_css_declarations(
+    let result = analyze_css_source(
         &source,
         generous_tokenizer_limits(),
         generous_parser_limits(),
@@ -346,7 +346,7 @@ fn unsupported_propagates_through_core() {
 #[test]
 fn true_eof_malformed_recovery_propagates_through_core() {
     let source = SourceText::new(SourceId::new(70_006), "a{color red".to_owned());
-    let result = analyze_css_declarations(
+    let result = analyze_css_source(
         &source,
         generous_tokenizer_limits(),
         generous_parser_limits(),
@@ -398,12 +398,10 @@ fn corruption_cross_source_property_name_is_source_identity_mismatch() {
     );
     assert!(matches!(
         result,
-        Err(
-            CssDeclarationAnalysisError::OccurrenceSourceIdentityMismatch {
-                role: CssDeclarationEvidenceRole::PropertyName,
-                ..
-            }
-        )
+        Err(CssAnalysisError::OccurrenceSourceIdentityMismatch {
+            role: CssDeclarationEvidenceRole::PropertyName,
+            ..
+        })
     ));
 }
 
@@ -432,7 +430,7 @@ fn corruption_same_source_id_but_range_invalid_for_supplied_source() {
     );
     assert!(matches!(
         result,
-        Err(CssDeclarationAnalysisError::OccurrenceSourceRangeInvalid {
+        Err(CssAnalysisError::OccurrenceSourceRangeInvalid {
             role: CssDeclarationEvidenceRole::Complete,
             ..
         })
@@ -464,12 +462,10 @@ fn corruption_same_source_id_and_valid_range_but_different_retained_content() {
     );
     assert!(matches!(
         result,
-        Err(
-            CssDeclarationAnalysisError::OccurrenceSourceContentMismatch {
-                role: CssDeclarationEvidenceRole::Complete,
-                ..
-            }
-        )
+        Err(CssAnalysisError::OccurrenceSourceContentMismatch {
+            role: CssDeclarationEvidenceRole::Complete,
+            ..
+        })
     ));
 }
 
@@ -496,12 +492,10 @@ fn corruption_property_name_extends_beyond_complete_is_relationship_violation() 
     );
     assert!(matches!(
         result,
-        Err(
-            CssDeclarationAnalysisError::OccurrenceRelationshipViolation {
-                relationship: CssOccurrenceRelationship::PropertyNameContained,
-                ..
-            }
-        )
+        Err(CssAnalysisError::OccurrenceRelationshipViolation {
+            relationship: CssOccurrenceRelationship::PropertyNameContained,
+            ..
+        })
     ));
 }
 
@@ -528,12 +522,10 @@ fn corruption_colon_precedes_property_name_end_is_relationship_violation() {
     );
     assert!(matches!(
         result,
-        Err(
-            CssDeclarationAnalysisError::OccurrenceRelationshipViolation {
-                relationship: CssOccurrenceRelationship::PropertyNameEndsAtOrBeforeColonStart,
-                ..
-            }
-        )
+        Err(CssAnalysisError::OccurrenceRelationshipViolation {
+            relationship: CssOccurrenceRelationship::PropertyNameEndsAtOrBeforeColonStart,
+            ..
+        })
     ));
 }
 
@@ -560,12 +552,10 @@ fn corruption_value_begins_before_colon_end_is_relationship_violation() {
     );
     assert!(matches!(
         result,
-        Err(
-            CssDeclarationAnalysisError::OccurrenceRelationshipViolation {
-                relationship: CssOccurrenceRelationship::ColonEndsAtOrBeforeValueStart,
-                ..
-            }
-        )
+        Err(CssAnalysisError::OccurrenceRelationshipViolation {
+            relationship: CssOccurrenceRelationship::ColonEndsAtOrBeforeValueStart,
+            ..
+        })
     ));
 }
 
@@ -595,12 +585,10 @@ fn corruption_priority_extends_beyond_declaration_complete_is_relationship_viola
     );
     assert!(matches!(
         result,
-        Err(
-            CssDeclarationAnalysisError::OccurrenceRelationshipViolation {
-                relationship: CssOccurrenceRelationship::PriorityContained,
-                ..
-            }
-        )
+        Err(CssAnalysisError::OccurrenceRelationshipViolation {
+            relationship: CssOccurrenceRelationship::PriorityContained,
+            ..
+        })
     ));
 }
 
@@ -630,12 +618,10 @@ fn corruption_priority_bang_overlaps_important_ident_is_relationship_violation()
     );
     assert!(matches!(
         result,
-        Err(
-            CssDeclarationAnalysisError::OccurrenceRelationshipViolation {
-                relationship: CssOccurrenceRelationship::BangEndsAtOrBeforeImportantIdentStart,
-                ..
-            }
-        )
+        Err(CssAnalysisError::OccurrenceRelationshipViolation {
+            relationship: CssOccurrenceRelationship::BangEndsAtOrBeforeImportantIdentStart,
+            ..
+        })
     ));
 }
 
@@ -662,12 +648,10 @@ fn corruption_right_curly_precedes_complete_end_is_relationship_violation() {
     );
     assert!(matches!(
         result,
-        Err(
-            CssDeclarationAnalysisError::OccurrenceRelationshipViolation {
-                relationship: CssOccurrenceRelationship::RightCurlyAtOrAfterCompleteEnd,
-                ..
-            }
-        )
+        Err(CssAnalysisError::OccurrenceRelationshipViolation {
+            relationship: CssOccurrenceRelationship::RightCurlyAtOrAfterCompleteEnd,
+            ..
+        })
     ));
 }
 
@@ -694,12 +678,10 @@ fn corruption_eof_terminal_not_at_source_end_is_relationship_violation() {
     );
     assert!(matches!(
         result,
-        Err(
-            CssDeclarationAnalysisError::OccurrenceRelationshipViolation {
-                relationship: CssOccurrenceRelationship::EofTerminalAtSourceEnd,
-                ..
-            }
-        )
+        Err(CssAnalysisError::OccurrenceRelationshipViolation {
+            relationship: CssOccurrenceRelationship::EofTerminalAtSourceEnd,
+            ..
+        })
     ));
 }
 
@@ -726,12 +708,10 @@ fn corruption_eof_terminal_non_empty_is_relationship_violation() {
     );
     assert!(matches!(
         result,
-        Err(
-            CssDeclarationAnalysisError::OccurrenceRelationshipViolation {
-                relationship: CssOccurrenceRelationship::EofTerminalEmpty,
-                ..
-            }
-        )
+        Err(CssAnalysisError::OccurrenceRelationshipViolation {
+            relationship: CssOccurrenceRelationship::EofTerminalEmpty,
+            ..
+        })
     ));
 }
 

@@ -28,6 +28,8 @@ mod context_contract_tests;
 #[cfg(test)]
 mod core_analysis_gate;
 #[cfg(test)]
+mod core_context_analysis_gate;
+#[cfg(test)]
 mod descriptor_conformance_tests;
 #[cfg(test)]
 mod descriptor_lifecycle_validation_tests;
