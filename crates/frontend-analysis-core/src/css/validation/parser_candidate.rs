@@ -843,6 +843,20 @@ fn unsupported_shape(unsupported: &CssParserUnsupportedRegion) -> String {
                 item_ordinal.value(),
             )
         }
+        CssParserUnsupportedRegion::UnqualifiedKeyframeBlock {
+            complete,
+            context_id,
+            item_ordinal,
+        } => {
+            let complete = complete.range();
+            format!(
+                "UnqualifiedKeyframeBlock@[{},{})Ctx{}Item{}",
+                complete.start(),
+                complete.end(),
+                context_id.index(),
+                item_ordinal.value(),
+            )
+        }
     }
 }
 

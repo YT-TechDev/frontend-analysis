@@ -110,7 +110,7 @@ fn every_required_category_has_an_explicit_fixture() {
         // Top-level @font-face unsupported.
         "CSS-PARSER-UNSUPPORTED-FONT-FACE-001",
         // Top-level @keyframes unsupported.
-        "CSS-PARSER-UNSUPPORTED-KEYFRAMES-001",
+        "CSS-PARSER-UNSUPPORTED-UNKNOWN-AT-RULE-001",
         // Top-level @media containing style rules unsupported.
         "CSS-PARSER-UNSUPPORTED-MEDIA-WITH-STYLE-RULES-001",
         // Top-level at-rule followed by a later supported top-level rule.

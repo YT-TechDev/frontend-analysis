@@ -9,6 +9,9 @@ mod fixtures;
 mod generated;
 mod gold;
 mod group_context_fixtures;
+mod keyframe_candidate;
+mod keyframe_fixtures;
+mod keyframe_gold;
 mod page_candidate;
 mod page_fixtures;
 mod page_gold;
@@ -32,6 +35,10 @@ mod descriptor_lifecycle_validation_tests;
 mod group_context_contract_tests;
 #[cfg(test)]
 mod group_lifecycle_validation_tests;
+#[cfg(test)]
+mod keyframe_conformance_tests;
+#[cfg(test)]
+mod keyframe_lifecycle_validation_tests;
 #[cfg(test)]
 mod page_conformance_tests;
 #[cfg(test)]
