@@ -79,6 +79,11 @@ jobs:
               'at_keyword: r(0.max(body.0.saturating_sub(body.0)), 10),',
               'at_keyword: r(0, 10),'
           )
+          old = 'keyframe_occurrences: vec![occurrence(\n            1,\n            1,\n            (25, 35),'
+          new = 'keyframe_occurrences: vec![occurrence(\n            1,\n            0,\n            (25, 35),'
+          if text.count(old) != 1:
+              raise SystemExit('malformed keyframe fixture ordinal marker not unique')
+          text = text.replace(old, new)
           fixtures.write_text(text)
           PY
           git diff --check
