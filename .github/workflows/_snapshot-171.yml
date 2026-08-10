@@ -22,7 +22,7 @@ jobs:
         shell: bash
         run: tar -czf /tmp/frontend-analysis-171.tar.gz .
       - name: Upload snapshot
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: frontend-analysis-171
           path: /tmp/frontend-analysis-171.tar.gz
