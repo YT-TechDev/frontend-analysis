@@ -1,0 +1,142 @@
+name: Temporary #171 Bootstrap
+
+on:
+  push:
+    branches:
+      - feat/css-keyframes-contexts-171-clean
+
+permissions:
+  contents: write
+
+jobs:
+  validate-and-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Restore previously validated candidate patch
+        shell: bash
+        run: |
+          git show 78782bb73dfdff936dca3d2931277863dcd63eee:.github/patches/171-00.b64 > /tmp/171-00.b64
+          git show 78782bb73dfdff936dca3d2931277863dcd63eee:.github/patches/171-01.b64 > /tmp/171-01.b64
+          cat /tmp/171-00.b64 /tmp/171-01.b64 | base64 -d | gzip -d > /tmp/171.patch
+          git apply --check /tmp/171.patch
+          git apply /tmp/171.patch
+          git diff --check
+
+      - name: Migrate legacy keyframes-is-unsupported validation
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          fixtures = Path('crates/frontend-analysis-core/src/css/validation/parser_fixtures.rs')
+          text = fixtures.read_text()
+          old = '''        // A top-level `@keyframes` is structurally consumed but unsupported;
+        // no keyframe declaration is extracted.
+        ParserGoldFixture::complete(
+            "CSS-PARSER-UNSUPPORTED-KEYFRAMES-001",
+            ParserGoldGroup::UnsupportedAtRule,
+            2025,
+            "@keyframes spin{from{opacity:0;}to{opacity:1;}}",
+            47,
+            vec![],
+            vec![],
+            vec![],
+            vec![top_level_at_rule((0, 47), (0, 10))],
+        ),'''
+          new = '''        // An unknown top-level at-rule remains structurally consumed as
+        // explicit unsupported evidence after the #171 keyframes capability.
+        ParserGoldFixture::complete(
+            "CSS-PARSER-UNSUPPORTED-UNKNOWN-AT-RULE-001",
+            ParserGoldGroup::UnsupportedAtRule,
+            2025,
+            "@futureabc spin{from{opacity:0;}to{opacity:1;}}",
+            47,
+            vec![],
+            vec![],
+            vec![],
+            vec![top_level_at_rule((0, 47), (0, 10))],
+        ),'''
+          if text.count(old) != 1:
+              raise SystemExit('legacy keyframes unsupported fixture did not match exactly once')
+          fixtures.write_text(text.replace(old, new))
+
+          resources = Path('crates/frontend-analysis-core/src/css/validation/parser_resource_tests.rs')
+          text = resources.read_text()
+          if text.count('@keyframes spin{from{opacity:0;}}') != 2:
+              raise SystemExit('legacy keyframes resource inputs did not match exactly twice')
+          text = text.replace('@keyframes spin{from{opacity:0;}}', '@futureabc spin{from{opacity:0;}}')
+          text = text.replace('the refused `@font-face` after it leaves no', 'the refused unknown at-rule after it leaves no')
+          resources.write_text(text)
+          PY
+          git diff --check
+
+      - name: Install accepted Rust toolchain
+        shell: bash
+        run: |
+          rustup toolchain install 1.97.1 \
+            --profile minimal \
+            --component rustfmt \
+            --component clippy
+
+      - name: Format candidate
+        run: cargo fmt --all
+
+      - name: Validate Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Run full tests
+        run: cargo test --workspace --all-targets --all-features
+
+      - name: Validate locked metadata
+        run: cargo metadata --offline --format-version 1 --locked
+
+      - name: Audit changed-path scope
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import subprocess
+          allowed = {
+              '.github/workflows/_bootstrap-171.yml',
+              'crates/frontend-analysis-core/src/css/declaration.rs',
+              'crates/frontend-analysis-core/src/css/parser/context.rs',
+              'crates/frontend-analysis-core/src/css/parser/evidence.rs',
+              'crates/frontend-analysis-core/src/css/parser/producer.rs',
+              'crates/frontend-analysis-core/src/css/parser/result.rs',
+              'crates/frontend-analysis-core/src/css/validation/parser_candidate.rs',
+              'crates/frontend-analysis-core/src/css/validation/parser_fixtures.rs',
+              'crates/frontend-analysis-core/src/css/validation/parser_resource_tests.rs',
+          }
+          changed = set(subprocess.check_output(['git','diff','--name-only'], text=True).splitlines())
+          unexpected = changed - allowed
+          if unexpected:
+              raise SystemExit(f'unexpected changed paths: {sorted(unexpected)}')
+          print('\n'.join(sorted(changed)))
+          PY
+          git diff --check
+          git diff --stat
+
+      - name: Commit validated implementation tree
+        shell: bash
+        run: |
+          git rm .github/workflows/_bootstrap-171.yml
+          git add -- \
+            crates/frontend-analysis-core/src/css/declaration.rs \
+            crates/frontend-analysis-core/src/css/parser/context.rs \
+            crates/frontend-analysis-core/src/css/parser/evidence.rs \
+            crates/frontend-analysis-core/src/css/parser/producer.rs \
+            crates/frontend-analysis-core/src/css/parser/result.rs \
+            crates/frontend-analysis-core/src/css/validation/parser_candidate.rs \
+            crates/frontend-analysis-core/src/css/validation/parser_fixtures.rs \
+            crates/frontend-analysis-core/src/css/validation/parser_resource_tests.rs
+          git diff --cached --check
+          git config user.name "YT-TechDev"
+          git config user.email "271404462+YT-TechDev@users.noreply.github.com"
+          git commit -m "feat(core): model CSS keyframes contexts (#171)"
+          git push origin HEAD:feat/css-keyframes-contexts-171-clean
