@@ -1637,98 +1637,93 @@ impl<'a> Producer<'a> {
     ) -> Result<(), Flow> {
         let prospective_depth = self.preflight_context_entry()?;
 
-        let (parent, item_ordinal, nearest_qualified_ancestor) = match self
-            .active_contexts
-            .last_mut()
-        {
-            Some(frame) => {
-                if matches!(identity, NewContextIdentity::DescriptorRuleBlock { .. }) {
-                    return Err(invariant_flow(
-                        CssParserInvariantViolation::DescriptorContextCannotBeNested,
-                    ));
-                }
-                if matches!(identity, NewContextIdentity::PageRuleBlock { .. }) {
-                    return Err(invariant_flow(
-                        CssParserInvariantViolation::PageContextCannotBeNested,
-                    ));
-                }
-                if matches!(identity, NewContextIdentity::PageMarginRuleBlock { .. })
-                    && !matches!(frame.kind, CssParserContextKind::PageRuleBlock)
-                {
-                    return Err(invariant_flow(
-                        CssParserInvariantViolation::PageMarginContextRequiresPageParent,
-                    ));
-                }
-                if matches!(identity, NewContextIdentity::KeyframeBlock { .. })
-                    && !matches!(frame.kind, CssParserContextKind::KeyframesRuleBlock)
-                {
-                    return Err(invariant_flow(
-                        CssParserInvariantViolation::KeyframeContextRequiresKeyframesParent,
-                    ));
-                }
-                if matches!(identity, NewContextIdentity::KeyframesRuleBlock { .. })
-                    && (!matches!(frame.kind, CssParserContextKind::GroupRuleBlock(_))
-                        || frame.nearest_qualified_ancestor.is_some())
-                {
-                    return Err(invariant_flow(
-                            CssParserInvariantViolation::KeyframesContextRequiresRootOrGroupOnlyAncestry,
-                        ));
-                }
-                frame.run_open = false;
-                let ordinal = frame.next_item_ordinal;
-                frame.next_item_ordinal += 1;
-                let nearest = match frame.kind {
-                    CssParserContextKind::QualifiedRuleBlock => Some(frame.id),
-                    CssParserContextKind::GroupRuleBlock(_) => frame.nearest_qualified_ancestor,
-                    CssParserContextKind::DescriptorRuleBlock(_) => {
+        let (parent, item_ordinal, nearest_qualified_ancestor) =
+            match self.active_contexts.last_mut() {
+                Some(frame) => {
+                    if matches!(identity, NewContextIdentity::DescriptorRuleBlock { .. }) {
                         return Err(invariant_flow(
-                            CssParserInvariantViolation::DescriptorContextCannotHaveChildren,
+                            CssParserInvariantViolation::DescriptorContextCannotBeNested,
                         ));
                     }
-                    // A `PageMarginRuleBlock` child's nearest qualified
-                    // ancestor is always `None`: #170 never infers Page
-                    // semantic qualification from group-rule ancestry.
-                    CssParserContextKind::PageRuleBlock => None,
-                    CssParserContextKind::PageMarginRuleBlock(_) => {
+                    if matches!(identity, NewContextIdentity::PageRuleBlock { .. }) {
                         return Err(invariant_flow(
-                            CssParserInvariantViolation::PageMarginContextCannotHaveChildren,
+                            CssParserInvariantViolation::PageContextCannotBeNested,
                         ));
                     }
-                    CssParserContextKind::KeyframesRuleBlock => None,
-                    CssParserContextKind::KeyframeBlock => {
+                    if matches!(identity, NewContextIdentity::PageMarginRuleBlock { .. })
+                        && !matches!(frame.kind, CssParserContextKind::PageRuleBlock)
+                    {
                         return Err(invariant_flow(
-                            CssParserInvariantViolation::KeyframeContextCannotHaveChildren,
+                            CssParserInvariantViolation::PageMarginContextRequiresPageParent,
                         ));
                     }
-                };
-                (Some(frame.id), ordinal, nearest)
-            }
-            None => match identity {
-                NewContextIdentity::QualifiedRuleBlock
-                | NewContextIdentity::DescriptorRuleBlock { .. }
-                | NewContextIdentity::PageRuleBlock { .. }
-                | NewContextIdentity::KeyframesRuleBlock { .. } => {
-                    let ordinal = self.root_next_item_ordinal;
-                    self.root_next_item_ordinal += 1;
-                    (None, ordinal, None)
+                    if matches!(identity, NewContextIdentity::KeyframeBlock { .. })
+                        && !matches!(frame.kind, CssParserContextKind::KeyframesRuleBlock)
+                    {
+                        return Err(invariant_flow(
+                            CssParserInvariantViolation::KeyframeContextRequiresKeyframesParent,
+                        ));
+                    }
+                    if matches!(identity, NewContextIdentity::KeyframesRuleBlock { .. }) {
+                        return Err(invariant_flow(
+                            CssParserInvariantViolation::KeyframesContextCannotBeNested,
+                        ));
+                    }
+                    frame.run_open = false;
+                    let ordinal = frame.next_item_ordinal;
+                    frame.next_item_ordinal += 1;
+                    let nearest = match frame.kind {
+                        CssParserContextKind::QualifiedRuleBlock => Some(frame.id),
+                        CssParserContextKind::GroupRuleBlock(_) => frame.nearest_qualified_ancestor,
+                        CssParserContextKind::DescriptorRuleBlock(_) => {
+                            return Err(invariant_flow(
+                                CssParserInvariantViolation::DescriptorContextCannotHaveChildren,
+                            ));
+                        }
+                        // A `PageMarginRuleBlock` child's nearest qualified
+                        // ancestor is always `None`: #170 never infers Page
+                        // semantic qualification from group-rule ancestry.
+                        CssParserContextKind::PageRuleBlock => None,
+                        CssParserContextKind::PageMarginRuleBlock(_) => {
+                            return Err(invariant_flow(
+                                CssParserInvariantViolation::PageMarginContextCannotHaveChildren,
+                            ));
+                        }
+                        CssParserContextKind::KeyframesRuleBlock => None,
+                        CssParserContextKind::KeyframeBlock => {
+                            return Err(invariant_flow(
+                                CssParserInvariantViolation::KeyframeContextCannotHaveChildren,
+                            ));
+                        }
+                    };
+                    (Some(frame.id), ordinal, nearest)
                 }
-                NewContextIdentity::GroupRuleBlock { .. } => {
-                    return Err(invariant_flow(
-                        CssParserInvariantViolation::GroupContextCannotBeTopLevel,
-                    ));
-                }
-                NewContextIdentity::PageMarginRuleBlock { .. } => {
-                    return Err(invariant_flow(
-                        CssParserInvariantViolation::PageMarginContextCannotBeTopLevel,
-                    ));
-                }
-                NewContextIdentity::KeyframeBlock { .. } => {
-                    return Err(invariant_flow(
-                        CssParserInvariantViolation::KeyframeContextRequiresKeyframesParent,
-                    ));
-                }
-            },
-        };
+                None => match identity {
+                    NewContextIdentity::QualifiedRuleBlock
+                    | NewContextIdentity::DescriptorRuleBlock { .. }
+                    | NewContextIdentity::PageRuleBlock { .. }
+                    | NewContextIdentity::KeyframesRuleBlock { .. } => {
+                        let ordinal = self.root_next_item_ordinal;
+                        self.root_next_item_ordinal += 1;
+                        (None, ordinal, None)
+                    }
+                    NewContextIdentity::GroupRuleBlock { .. } => {
+                        return Err(invariant_flow(
+                            CssParserInvariantViolation::GroupContextCannotBeTopLevel,
+                        ));
+                    }
+                    NewContextIdentity::PageMarginRuleBlock { .. } => {
+                        return Err(invariant_flow(
+                            CssParserInvariantViolation::PageMarginContextCannotBeTopLevel,
+                        ));
+                    }
+                    NewContextIdentity::KeyframeBlock { .. } => {
+                        return Err(invariant_flow(
+                            CssParserInvariantViolation::KeyframeContextRequiresKeyframesParent,
+                        ));
+                    }
+                },
+            };
 
         let id = CssParserContextId::new(self.pending_context_records.len());
         self.pending_context_records.push(None);
@@ -3652,7 +3647,7 @@ impl<'a> Producer<'a> {
         }))
     }
 
-    /// The #169/#170 `DeclarationOccurrences` aggregate cap: ordinary
+    /// The #169/#170/#171 `DeclarationOccurrences` aggregate cap: ordinary
     /// declarations, descriptor occurrences, page declarations, and
     /// page-margin declarations all share this one resource dimension
     /// (section 6/13: exactly nine parser resource dimensions total, no

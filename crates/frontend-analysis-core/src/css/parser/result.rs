@@ -860,7 +860,7 @@ pub(crate) enum CssParserInvariantViolation {
     MissingKeyframeContextEvidence,
     KeyframeContextRequiresKeyframesParent,
     KeyframeContextCannotHaveChildren,
-    KeyframesContextRequiresRootOrGroupOnlyAncestry,
+    KeyframesContextCannotBeNested,
     KeyframesContextHasInvalidParent {
         index: usize,
     },
@@ -1323,9 +1323,9 @@ fn validate_page_margin_parent(
 }
 
 /// Validates #171 context-family parent and evidence shape independently
-/// from producer construction. `KeyframesRuleBlock` is root-owned or may be
-/// parented only by a group-rule lineage with no qualified-rule ancestry;
-/// `KeyframeBlock` must be a direct child of `KeyframesRuleBlock`.
+/// from producer construction. `KeyframesRuleBlock` is root-owned in the
+/// current #171 capability; `KeyframeBlock` must be a direct child of
+/// `KeyframesRuleBlock`.
 fn validate_keyframes_context_shape(
     context_records: &[CssParserContextRecord],
     index: usize,
@@ -1344,15 +1344,10 @@ fn validate_keyframes_context_shape(
                     CssParserInvariantViolation::KeyframesContextEvidenceMismatch { index },
                 );
             }
-            if let Some(parent_id) = record.parent() {
-                let parent = &context_records[parent_id.index()];
-                if !matches!(parent.kind(), CssParserContextKind::GroupRuleBlock(_))
-                    || parent.nearest_qualified_ancestor().is_some()
-                {
-                    return invariant(
-                        CssParserInvariantViolation::KeyframesContextHasInvalidParent { index },
-                    );
-                }
+            if record.parent().is_some() {
+                return invariant(
+                    CssParserInvariantViolation::KeyframesContextHasInvalidParent { index },
+                );
             }
         }
         CssParserContextKind::KeyframeBlock => {

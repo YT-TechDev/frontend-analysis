@@ -94,15 +94,17 @@ impl KeyframeGoldContext {
 
     const fn opener(&self) -> GoldRange {
         match self {
-            Self::Keyframes { block_opener, .. }
-            | Self::KeyframeBlock { block_opener, .. } => *block_opener,
+            Self::Keyframes { block_opener, .. } | Self::KeyframeBlock { block_opener, .. } => {
+                *block_opener
+            }
         }
     }
 
     const fn termination(&self) -> KeyframeGoldContextTermination {
         match self {
-            Self::Keyframes { termination, .. }
-            | Self::KeyframeBlock { termination, .. } => *termination,
+            Self::Keyframes { termination, .. } | Self::KeyframeBlock { termination, .. } => {
+                *termination
+            }
         }
     }
 }
@@ -255,7 +257,10 @@ pub(super) fn validate_fixture(fixture: &KeyframeGoldFixture) -> Result<(), &'st
                 {
                     return Err("keyframes header evidence is inconsistent");
                 }
-                if source.anchor(at_keyword.start, at_keyword.end).unwrap().fragment()
+                if source
+                    .anchor(at_keyword.start, at_keyword.end)
+                    .unwrap()
+                    .fragment()
                     != "@keyframes"
                 {
                     return Err("gold keyframes at-keyword spelling is not exact");
@@ -283,7 +288,8 @@ pub(super) fn validate_fixture(fixture: &KeyframeGoldFixture) -> Result<(), &'st
                     .find(|candidate| candidate.id() == *parent_id)
                     .unwrap()
                     .body();
-                let child_extent = GoldRange::new(header.start, context.termination().evidence().end);
+                let child_extent =
+                    GoldRange::new(header.start, context.termination().evidence().end);
                 if !contained(child_extent, parent_body) {
                     return Err("keyframe block is outside parent body");
                 }
@@ -296,12 +302,19 @@ pub(super) fn validate_fixture(fixture: &KeyframeGoldFixture) -> Result<(), &'st
         .iter()
         .chain(&fixture.ordinary_occurrences)
     {
-        for range in [occurrence.complete, occurrence.name, occurrence.colon, occurrence.value] {
+        for range in [
+            occurrence.complete,
+            occurrence.name,
+            occurrence.colon,
+            occurrence.value,
+        ] {
             if !range_ok(&source, range) || !contained(range, occurrence.complete) {
                 return Err("occurrence source evidence is inconsistent");
             }
         }
-        if occurrence.name.end > occurrence.colon.start || occurrence.colon.end > occurrence.value.start {
+        if occurrence.name.end > occurrence.colon.start
+            || occurrence.colon.end > occurrence.value.start
+        {
             return Err("occurrence component order is inconsistent");
         }
     }
@@ -323,7 +336,10 @@ pub(super) fn validate_fixture(fixture: &KeyframeGoldFixture) -> Result<(), &'st
 
     for unsupported in &fixture.unsupported {
         match unsupported {
-            KeyframeGoldUnsupported::TopLevelAtRule { complete, at_keyword } => {
+            KeyframeGoldUnsupported::TopLevelAtRule {
+                complete,
+                at_keyword,
+            } => {
                 if !range_ok(&source, *complete)
                     || !range_ok(&source, *at_keyword)
                     || !contained(*at_keyword, *complete)
@@ -348,7 +364,10 @@ pub(super) fn validate_fixture(fixture: &KeyframeGoldFixture) -> Result<(), &'st
                 context_id,
                 ..
             } => {
-                let Some(owner) = fixture.contexts.iter().find(|context| context.id() == *context_id)
+                let Some(owner) = fixture
+                    .contexts
+                    .iter()
+                    .find(|context| context.id() == *context_id)
                 else {
                     return Err("unqualified keyframe-block owner is missing");
                 };

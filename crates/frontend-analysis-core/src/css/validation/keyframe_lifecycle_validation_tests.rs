@@ -83,7 +83,9 @@ fn real_prefix_as_upstream_incomplete(
         lexical_items,
         diagnostics,
         source.anchor(0, terminal_offset).unwrap(),
-        source.anchor(terminal_offset, source.as_str().len()).unwrap(),
+        source
+            .anchor(terminal_offset, source.as_str().len())
+            .unwrap(),
         source.anchor(terminal_offset, terminal_offset).unwrap(),
         CssTokenizerCompletion::Incomplete,
         CssTokenizerTermination::ResourceLimit(resource_limit),
@@ -113,7 +115,10 @@ fn upstream_incomplete_retains_entered_keyframes_context() {
         result.termination(),
         &CssParserTermination::UpstreamTokenizerIncomplete
     );
-    assert_eq!(result.execution_completion(), CssParserExecutionCompletion::Incomplete);
+    assert_eq!(
+        result.execution_completion(),
+        CssParserExecutionCompletion::Incomplete
+    );
     assert_eq!(result.context_records().len(), 1);
     let outer = &result.context_records()[0];
     assert_eq!(outer.kind(), CssParserContextKind::KeyframesRuleBlock);
@@ -163,11 +168,19 @@ fn declaration_occurrence_cap_is_shared_with_keyframe_occurrences() {
         "a{x:y;}@keyframes k{from{x:z;}}".to_owned(),
     );
     let tokenizer = run_tokenizer(&source, generous_tokenizer_limits()).unwrap();
-    let result = run(&source, tokenizer, parser_limits(1 << 12, 1, 1 << 16, 1 << 16)).unwrap();
+    let result = run(
+        &source,
+        tokenizer,
+        parser_limits(1 << 12, 1, 1 << 16, 1 << 16),
+    )
+    .unwrap();
 
     match result.termination() {
         CssParserTermination::ParserResourceLimit(evidence) => {
-            assert_eq!(evidence.kind(), CssParserResourceKind::DeclarationOccurrences);
+            assert_eq!(
+                evidence.kind(),
+                CssParserResourceKind::DeclarationOccurrences
+            );
             assert_eq!(evidence.limit(), 1);
             assert_eq!(evidence.attempted(), 2);
         }
@@ -175,14 +188,18 @@ fn declaration_occurrence_cap_is_shared_with_keyframe_occurrences() {
     }
     assert_eq!(result.occurrences().len(), 1);
     assert!(result.keyframe_occurrences().is_empty());
-    assert!(result
-        .context_records()
-        .iter()
-        .any(|context| matches!(context.kind(), CssParserContextKind::KeyframesRuleBlock)));
-    assert!(result
-        .context_records()
-        .iter()
-        .any(|context| matches!(context.kind(), CssParserContextKind::KeyframeBlock)));
+    assert!(
+        result
+            .context_records()
+            .iter()
+            .any(|context| matches!(context.kind(), CssParserContextKind::KeyframesRuleBlock))
+    );
+    assert!(
+        result
+            .context_records()
+            .iter()
+            .any(|context| matches!(context.kind(), CssParserContextKind::KeyframeBlock))
+    );
 }
 
 #[test]
@@ -192,7 +209,12 @@ fn context_record_refusal_after_outer_entry_keeps_outer_partial() {
         "@keyframes spin{from{opacity:0;}}".to_owned(),
     );
     let tokenizer = run_tokenizer(&source, generous_tokenizer_limits()).unwrap();
-    let result = run(&source, tokenizer, parser_limits(1 << 12, 1 << 16, 1 << 16, 1)).unwrap();
+    let result = run(
+        &source,
+        tokenizer,
+        parser_limits(1 << 12, 1 << 16, 1 << 16, 1),
+    )
+    .unwrap();
 
     match result.termination() {
         CssParserTermination::ParserResourceLimit(evidence) => {
@@ -220,7 +242,12 @@ fn unsupported_region_refusal_for_unqualified_child_is_commit_honest() {
         "@keyframes x{bogus{x:y;}from{a:b;}}".to_owned(),
     );
     let tokenizer = run_tokenizer(&source, generous_tokenizer_limits()).unwrap();
-    let result = run(&source, tokenizer, parser_limits(1 << 12, 1 << 16, 0, 1 << 16)).unwrap();
+    let result = run(
+        &source,
+        tokenizer,
+        parser_limits(1 << 12, 1 << 16, 0, 1 << 16),
+    )
+    .unwrap();
 
     match result.termination() {
         CssParserTermination::ParserResourceLimit(evidence) => {
@@ -231,7 +258,10 @@ fn unsupported_region_refusal_for_unqualified_child_is_commit_honest() {
         other => panic!("expected UnsupportedRegions stop, got {other:?}"),
     }
     assert_eq!(result.context_records().len(), 1);
-    assert_eq!(result.context_records()[0].kind(), CssParserContextKind::KeyframesRuleBlock);
+    assert_eq!(
+        result.context_records()[0].kind(),
+        CssParserContextKind::KeyframesRuleBlock
+    );
     assert!(result.unsupported_regions().is_empty());
     assert!(result.keyframe_occurrences().is_empty());
 }

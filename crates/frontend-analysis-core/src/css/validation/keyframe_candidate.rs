@@ -60,7 +60,11 @@ pub(super) fn run_fixture(fixture: &KeyframeGoldFixture) -> CssParserRunResult {
 }
 
 fn assert_range(id: &str, label: &str, actual: &SourceAnchor, expected: GoldRange) {
-    assert_eq!(actual.range().start(), expected.start, "{id}: {label} start");
+    assert_eq!(
+        actual.range().start(),
+        expected.start,
+        "{id}: {label} start"
+    );
     assert_eq!(actual.range().end(), expected.end, "{id}: {label} end");
 }
 
@@ -90,7 +94,12 @@ fn assert_priority(
     match (actual, expected) {
         (None, None) => {}
         (Some(actual), Some(expected)) => {
-            assert_range(id, "priority complete", actual.complete(), expected.complete);
+            assert_range(
+                id,
+                "priority complete",
+                actual.complete(),
+                expected.complete,
+            );
             assert_range(id, "priority bang", actual.bang(), expected.bang);
             assert_range(
                 id,
@@ -140,10 +149,25 @@ fn assert_keyframe_occurrence(
         expected.item_ordinal,
         "{id}: keyframe occurrence item ordinal"
     );
-    assert_range(id, "keyframe occurrence complete", actual.complete(), expected.complete);
+    assert_range(
+        id,
+        "keyframe occurrence complete",
+        actual.complete(),
+        expected.complete,
+    );
     assert_range(id, "keyframe occurrence name", actual.name(), expected.name);
-    assert_range(id, "keyframe occurrence colon", actual.colon(), expected.colon);
-    assert_range(id, "keyframe occurrence value", actual.value(), expected.value);
+    assert_range(
+        id,
+        "keyframe occurrence colon",
+        actual.colon(),
+        expected.colon,
+    );
+    assert_range(
+        id,
+        "keyframe occurrence value",
+        actual.value(),
+        expected.value,
+    );
     assert_priority(id, actual.priority(), expected.priority);
     assert_occurrence_termination(id, actual.termination(), expected.termination);
 }
@@ -163,10 +187,30 @@ fn assert_ordinary_occurrence(
         expected.item_ordinal,
         "{id}: ordinary occurrence item ordinal"
     );
-    assert_range(id, "ordinary occurrence complete", actual.complete(), expected.complete);
-    assert_range(id, "ordinary occurrence name", actual.property_name(), expected.name);
-    assert_range(id, "ordinary occurrence colon", actual.colon(), expected.colon);
-    assert_range(id, "ordinary occurrence value", actual.value(), expected.value);
+    assert_range(
+        id,
+        "ordinary occurrence complete",
+        actual.complete(),
+        expected.complete,
+    );
+    assert_range(
+        id,
+        "ordinary occurrence name",
+        actual.property_name(),
+        expected.name,
+    );
+    assert_range(
+        id,
+        "ordinary occurrence colon",
+        actual.colon(),
+        expected.colon,
+    );
+    assert_range(
+        id,
+        "ordinary occurrence value",
+        actual.value(),
+        expected.value,
+    );
     assert_priority(id, actual.priority(), expected.priority);
     assert_occurrence_termination(id, actual.termination(), expected.termination);
 }
@@ -184,14 +228,22 @@ fn assert_context(id: &str, actual: &CssParserContextRecord, expected: &Keyframe
             termination,
         } => {
             assert_eq!(actual.id().index(), *expected_id, "{id}: keyframes id");
-            assert!(actual.parent().is_none(), "{id}: keyframes must be root-owned");
+            assert!(
+                actual.parent().is_none(),
+                "{id}: keyframes must be root-owned"
+            );
             assert_eq!(
                 actual.item_ordinal().value(),
                 *root_item_ordinal,
                 "{id}: keyframes root item ordinal"
             );
             assert_eq!(actual.kind(), CssParserContextKind::KeyframesRuleBlock);
-            assert_range(id, "keyframes at-keyword", actual.at_keyword().unwrap(), *at_keyword);
+            assert_range(
+                id,
+                "keyframes at-keyword",
+                actual.at_keyword().unwrap(),
+                *at_keyword,
+            );
             assert_range(
                 id,
                 "keyframes name",
@@ -237,7 +289,12 @@ fn assert_context(id: &str, actual: &CssParserContextRecord, expected: &Keyframe
             );
             assert!(actual.nearest_qualified_ancestor().is_none());
             assert_range(id, "keyframe block header", actual.header(), *header);
-            assert_range(id, "keyframe block opener", actual.block_opener(), *block_opener);
+            assert_range(
+                id,
+                "keyframe block opener",
+                actual.block_opener(),
+                *block_opener,
+            );
             assert_range(id, "keyframe block body", actual.body(), *body);
             assert_context_termination(id, actual.termination(), *termination);
         }
@@ -310,7 +367,11 @@ pub(super) fn assert_matches_keyframe_gold(
         fixture.unsupported.len(),
         "{id}: unsupported count"
     );
-    for (actual, expected) in result.unsupported_regions().iter().zip(&fixture.unsupported) {
+    for (actual, expected) in result
+        .unsupported_regions()
+        .iter()
+        .zip(&fixture.unsupported)
+    {
         match (actual, expected) {
             (
                 CssParserUnsupportedRegion::TopLevelAtRule {
@@ -322,8 +383,18 @@ pub(super) fn assert_matches_keyframe_gold(
                     at_keyword: expected_at_keyword,
                 },
             ) => {
-                assert_range(id, "top-level unsupported complete", complete, *expected_complete);
-                assert_range(id, "top-level unsupported at-keyword", at_keyword, *expected_at_keyword);
+                assert_range(
+                    id,
+                    "top-level unsupported complete",
+                    complete,
+                    *expected_complete,
+                );
+                assert_range(
+                    id,
+                    "top-level unsupported at-keyword",
+                    at_keyword,
+                    *expected_at_keyword,
+                );
             }
             (
                 CssParserUnsupportedRegion::NestedAtRule {
@@ -339,9 +410,23 @@ pub(super) fn assert_matches_keyframe_gold(
                     item_ordinal: expected_ordinal,
                 },
             ) => {
-                assert_range(id, "nested unsupported complete", complete, *expected_complete);
-                assert_range(id, "nested unsupported at-keyword", at_keyword, *expected_at_keyword);
-                assert_eq!(context_id.index(), *expected_context, "{id}: nested unsupported owner");
+                assert_range(
+                    id,
+                    "nested unsupported complete",
+                    complete,
+                    *expected_complete,
+                );
+                assert_range(
+                    id,
+                    "nested unsupported at-keyword",
+                    at_keyword,
+                    *expected_at_keyword,
+                );
+                assert_eq!(
+                    context_id.index(),
+                    *expected_context,
+                    "{id}: nested unsupported owner"
+                );
                 assert_eq!(
                     item_ordinal.value(),
                     *expected_ordinal,
@@ -360,8 +445,17 @@ pub(super) fn assert_matches_keyframe_gold(
                     item_ordinal: expected_ordinal,
                 },
             ) => {
-                assert_range(id, "unqualified keyframe block", complete, *expected_complete);
-                assert_eq!(context_id.index(), *expected_context, "{id}: unqualified block owner");
+                assert_range(
+                    id,
+                    "unqualified keyframe block",
+                    complete,
+                    *expected_complete,
+                );
+                assert_eq!(
+                    context_id.index(),
+                    *expected_context,
+                    "{id}: unqualified block owner"
+                );
                 assert_eq!(
                     item_ordinal.value(),
                     *expected_ordinal,

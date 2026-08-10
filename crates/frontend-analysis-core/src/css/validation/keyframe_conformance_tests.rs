@@ -20,7 +20,11 @@ fn every_keyframe_fixture_is_internally_self_consistent() {
 fn keyframe_fixture_ids_are_unique_and_disjoint() {
     let fixtures = independent_keyframe_fixtures();
     let ids: std::collections::BTreeSet<&str> = fixtures.iter().map(|fixture| fixture.id).collect();
-    assert_eq!(ids.len(), fixtures.len(), "keyframe fixture ids must be unique");
+    assert_eq!(
+        ids.len(),
+        fixtures.len(),
+        "keyframe fixture ids must be unique"
+    );
 
     let context_ids: std::collections::BTreeSet<&str> =
         super::context_fixtures::independent_context_fixtures()

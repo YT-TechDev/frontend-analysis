@@ -6,11 +6,10 @@
 
 use super::gold::GoldRange;
 use super::keyframe_gold::{
-    KeyframeGoldCategory as C, KeyframeGoldContext as K,
-    KeyframeGoldContextTermination as CT, KeyframeGoldFixture as F,
-    KeyframeGoldOccurrence as O, KeyframeGoldOccurrenceTermination as OT,
-    KeyframeGoldPriority as P, KeyframeGoldRecovery as R,
-    KeyframeGoldRecoveryTermination as RT, KeyframeGoldUnsupported as U,
+    KeyframeGoldCategory as C, KeyframeGoldContext as K, KeyframeGoldContextTermination as CT,
+    KeyframeGoldFixture as F, KeyframeGoldOccurrence as O, KeyframeGoldOccurrenceTermination as OT,
+    KeyframeGoldPriority as P, KeyframeGoldRecovery as R, KeyframeGoldRecoveryTermination as RT,
+    KeyframeGoldUnsupported as U,
 };
 
 const fn r(start: usize, end: usize) -> GoldRange {
@@ -49,7 +48,7 @@ fn outer(
     K::Keyframes {
         id,
         root_item_ordinal,
-        at_keyword: r(0.max(body.0.saturating_sub(body.0)), 10),
+        at_keyword: r(0, 10),
         keyframes_name: r(name.0, name.1),
         header: r(0, header_end),
         block_opener: r(header_end, header_end + 1),
@@ -208,7 +207,7 @@ fn malformed_declaration_recovery() -> F {
         ],
         keyframe_occurrences: vec![occurrence(
             1,
-            1,
+            0,
             (25, 35),
             (25, 32),
             (32, 33),
@@ -298,15 +297,7 @@ fn distinct_ordinary_and_keyframe_meaning() -> F {
             (27, 28),
             (28, 29),
         )],
-        ordinary_occurrences: vec![occurrence(
-            0,
-            0,
-            (2, 6),
-            (2, 3),
-            (3, 4),
-            (4, 5),
-            (5, 6),
-        )],
+        ordinary_occurrences: vec![occurrence(0, 0, (2, 6), (2, 3), (3, 4), (4, 5), (5, 6))],
         unsupported: vec![],
         recoveries: vec![],
         diagnostics: vec![],
