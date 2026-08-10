@@ -124,6 +124,11 @@ pub(crate) enum CssParserContextKind {
     /// A page-margin-at-rule context nested only inside a retained
     /// `PageRuleBlock` (#170).
     PageMarginRuleBlock(CssParserPageMarginRuleKind),
+    /// A qualified `@keyframes` rule context (#171).
+    KeyframesRuleBlock,
+    /// A bounded keyframe-selector block nested only inside a retained
+    /// `KeyframesRuleBlock` (#171).
+    KeyframeBlock,
 }
 
 /// The finite #168 nested group-rule registry approved by #141.
@@ -459,6 +464,14 @@ pub(crate) enum CssParserContextContractError {
     /// A `PageRuleBlock`'s `page_selector_list` anchor is not contained
     /// within `header` (#170).
     PageSelectorListOutsideHeader,
+    /// The decoded at-keyword for a `KeyframesRuleBlock` was not `keyframes`.
+    KeyframesAtKeywordDecodedMismatch,
+    /// The retained keyframes-name must follow the at-keyword.
+    KeyframesNameOutOfOrder,
+    /// The retained keyframes-name is not contained in the header.
+    KeyframesNameOutsideHeader,
+    /// A `KeyframeBlock` selector-list is not contained in its header.
+    KeyframeSelectorListOutsideHeader,
 }
 
 impl fmt::Display for CssParserContextContractError {
@@ -511,6 +524,12 @@ pub(crate) struct CssParserContextRecord {
     /// `PageMarginRuleBlock` (#170). Owns no selector-component vector or
     /// selector AST -- only the exact authored source range.
     page_selector_list: Option<SourceAnchor>,
+    /// Exact authored `<keyframes-name>` token evidence for a
+    /// `KeyframesRuleBlock`; `None` for every other context kind.
+    keyframes_name: Option<SourceAnchor>,
+    /// Exact authored `<keyframe-selector>#` envelope for a `KeyframeBlock`;
+    /// no selector AST or normalized selector list is retained.
+    keyframe_selector_list: Option<SourceAnchor>,
     /// The nearest ancestor `QualifiedRuleBlock` context, or `None` at the
     /// implicit stylesheet root's direct children (#141/#168). Structural
     /// qualified-rule ancestry only: never a selector-validity or
@@ -551,6 +570,8 @@ impl CssParserContextRecord {
             at_keyword: None,
             descriptor_property_name: None,
             page_selector_list: None,
+            keyframes_name: None,
+            keyframe_selector_list: None,
             nearest_qualified_ancestor,
             header,
             block_opener,
@@ -606,6 +627,8 @@ impl CssParserContextRecord {
             at_keyword: Some(at_keyword),
             descriptor_property_name: None,
             page_selector_list: None,
+            keyframes_name: None,
+            keyframe_selector_list: None,
             nearest_qualified_ancestor,
             header,
             block_opener,
@@ -699,6 +722,8 @@ impl CssParserContextRecord {
             at_keyword: Some(at_keyword),
             descriptor_property_name: property_name,
             page_selector_list: None,
+            keyframes_name: None,
+            keyframe_selector_list: None,
             nearest_qualified_ancestor: None,
             header,
             block_opener,
@@ -774,6 +799,8 @@ impl CssParserContextRecord {
             at_keyword: Some(at_keyword),
             descriptor_property_name: None,
             page_selector_list,
+            keyframes_name: None,
+            keyframe_selector_list: None,
             nearest_qualified_ancestor: None,
             header,
             block_opener,
@@ -833,6 +860,122 @@ impl CssParserContextRecord {
             at_keyword: Some(at_keyword),
             descriptor_property_name: None,
             page_selector_list: None,
+            keyframes_name: None,
+            keyframe_selector_list: None,
+            nearest_qualified_ancestor: None,
+            header,
+            block_opener,
+            body,
+            termination,
+        })
+    }
+
+    /// Constructs a qualified `@keyframes` context (#171). The caller has
+    /// already established the bounded `<keyframes-name>` grammar; this
+    /// constructor independently protects exact source ownership and the
+    /// at-keyword/name/header relationship. Parent qualification is validated
+    /// at result level from the retained context graph.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_keyframes_rule_block(
+        source_text: &SourceText,
+        id: CssParserContextId,
+        parent: Option<CssParserContextId>,
+        item_ordinal: CssParserDirectItemOrdinal,
+        at_keyword: SourceAnchor,
+        decoded_at_keyword: &str,
+        keyframes_name: SourceAnchor,
+        header: SourceAnchor,
+        block_opener: SourceAnchor,
+        body: SourceAnchor,
+        termination: CssParserContextTermination,
+    ) -> Result<Self, CssParserContextContractError> {
+        validate_shared_shape(source_text, &header, &block_opener, &body, &termination)?;
+        let expected = source_text.id();
+        require_source(expected, &at_keyword, CssParserContextEvidenceRole::Header)?;
+        require_source(
+            expected,
+            &keyframes_name,
+            CssParserContextEvidenceRole::Header,
+        )?;
+        non_empty(&at_keyword, CssParserContextEvidenceRole::Header)?;
+        non_empty(&keyframes_name, CssParserContextEvidenceRole::Header)?;
+        if !at_keyword.fragment().starts_with('@') {
+            return Err(CssParserContextContractError::AtKeywordMissingSigil);
+        }
+        if at_keyword.range().start() != header.range().start() {
+            return Err(CssParserContextContractError::AtKeywordHeaderStartMismatch);
+        }
+        if at_keyword.range().end() > header.range().end() {
+            return Err(CssParserContextContractError::AtKeywordOutsideHeader);
+        }
+        if !decoded_at_keyword.eq_ignore_ascii_case("keyframes") {
+            return Err(CssParserContextContractError::KeyframesAtKeywordDecodedMismatch);
+        }
+        if keyframes_name.range().start() < at_keyword.range().end() {
+            return Err(CssParserContextContractError::KeyframesNameOutOfOrder);
+        }
+        if keyframes_name.range().end() > header.range().end() {
+            return Err(CssParserContextContractError::KeyframesNameOutsideHeader);
+        }
+        Ok(Self {
+            id,
+            parent,
+            item_ordinal,
+            kind: CssParserContextKind::KeyframesRuleBlock,
+            at_keyword: Some(at_keyword),
+            descriptor_property_name: None,
+            page_selector_list: None,
+            keyframes_name: Some(keyframes_name),
+            keyframe_selector_list: None,
+            nearest_qualified_ancestor: None,
+            header,
+            block_opener,
+            body,
+            termination,
+        })
+    }
+
+    /// Constructs a bounded keyframe-selector child block (#171). The
+    /// selector-list anchor is the exact authored qualifying envelope; no
+    /// selector components are retained or normalized.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_keyframe_block(
+        source_text: &SourceText,
+        id: CssParserContextId,
+        parent: CssParserContextId,
+        item_ordinal: CssParserDirectItemOrdinal,
+        keyframe_selector_list: SourceAnchor,
+        header: SourceAnchor,
+        block_opener: SourceAnchor,
+        body: SourceAnchor,
+        termination: CssParserContextTermination,
+    ) -> Result<Self, CssParserContextContractError> {
+        validate_shared_shape(source_text, &header, &block_opener, &body, &termination)?;
+        let expected = source_text.id();
+        require_source(
+            expected,
+            &keyframe_selector_list,
+            CssParserContextEvidenceRole::Header,
+        )?;
+        non_empty(
+            &keyframe_selector_list,
+            CssParserContextEvidenceRole::Header,
+        )?;
+        if keyframe_selector_list.range().start() < header.range().start()
+            || keyframe_selector_list.range().end() > header.range().end()
+        {
+            return Err(CssParserContextContractError::KeyframeSelectorListOutsideHeader);
+        }
+        Ok(Self {
+            id,
+            parent: Some(parent),
+            item_ordinal,
+            kind: CssParserContextKind::KeyframeBlock,
+            at_keyword: None,
+            descriptor_property_name: None,
+            page_selector_list: None,
+            keyframes_name: None,
+            keyframe_selector_list: Some(keyframe_selector_list),
             nearest_qualified_ancestor: None,
             header,
             block_opener,
@@ -873,6 +1016,17 @@ impl CssParserContextRecord {
     /// `PageRuleBlock` and every other context kind (#170).
     pub(crate) const fn page_selector_list(&self) -> Option<&SourceAnchor> {
         self.page_selector_list.as_ref()
+    }
+
+    /// Exact authored `<keyframes-name>` evidence for a qualified outer
+    /// keyframes rule, never a normalized animation name.
+    pub(crate) const fn keyframes_name(&self) -> Option<&SourceAnchor> {
+        self.keyframes_name.as_ref()
+    }
+
+    /// Exact authored selector-list envelope for a qualified keyframe block.
+    pub(crate) const fn keyframe_selector_list(&self) -> Option<&SourceAnchor> {
+        self.keyframe_selector_list.as_ref()
     }
 
     pub(crate) const fn nearest_qualified_ancestor(&self) -> Option<CssParserContextId> {
@@ -955,6 +1109,16 @@ impl PartialEq for CssParserContextRecord {
                 (None, None) => true,
                 _ => false,
             }
+            && match (&self.keyframes_name, &other.keyframes_name) {
+                (Some(left), Some(right)) => same_anchor(left, right),
+                (None, None) => true,
+                _ => false,
+            }
+            && match (&self.keyframe_selector_list, &other.keyframe_selector_list) {
+                (Some(left), Some(right)) => same_anchor(left, right),
+                (None, None) => true,
+                _ => false,
+            }
             && self.nearest_qualified_ancestor == other.nearest_qualified_ancestor
             && same_anchor(&self.header, &other.header)
             && same_anchor(&self.block_opener, &other.block_opener)
@@ -988,6 +1152,17 @@ impl fmt::Debug for CssParserContextRecord {
             .field(
                 "page_selector_list",
                 &self.page_selector_list.as_ref().map(SourceAnchor::range),
+            )
+            .field(
+                "keyframes_name",
+                &self.keyframes_name.as_ref().map(SourceAnchor::range),
+            )
+            .field(
+                "keyframe_selector_list",
+                &self
+                    .keyframe_selector_list
+                    .as_ref()
+                    .map(SourceAnchor::range),
             )
             .field(
                 "nearest_qualified_ancestor",

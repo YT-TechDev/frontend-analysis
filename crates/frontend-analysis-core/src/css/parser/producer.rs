@@ -73,10 +73,11 @@
 use super::super::declaration::{
     CssDeclarationOccurrence, CssDeclarationPlacement, CssDeclarationPriorityEvidence,
     CssDeclarationRunOrdinal, CssDeclarationTermination, CssDescriptorOccurrence,
-    CssDescriptorPlacement, CssPageDeclarationOccurrence, CssPageDeclarationPlacement,
-    CssPageMarginDeclarationOccurrence, CssPageMarginDeclarationPlacement,
+    CssDescriptorPlacement, CssKeyframeDeclarationOccurrence, CssKeyframeDeclarationPlacement,
+    CssPageDeclarationOccurrence, CssPageDeclarationPlacement, CssPageMarginDeclarationOccurrence,
+    CssPageMarginDeclarationPlacement,
 };
-use super::super::token::CssTokenKind;
+use super::super::token::{CssExponentSign, CssNumberSign, CssNumericValue, CssTokenKind};
 use super::super::tokenizer::result::CssTokenizerRunResult;
 use super::context::{
     CssParserContextId, CssParserContextKind, CssParserContextRecord, CssParserContextTermination,
@@ -158,6 +159,8 @@ enum ObservedKind {
     /// The tokenizer-decoded at-keyword value, without the leading `@`
     /// (#168 parser observation only; not a tokenizer semantic change).
     AtKeyword(String),
+    String(String),
+    Percentage(CssNumericValue),
     Colon,
     Semicolon,
     Comma,
@@ -179,6 +182,8 @@ fn observe_kind(kind: &CssTokenKind) -> ObservedKind {
     match kind {
         CssTokenKind::Ident(value) => ObservedKind::Ident(value.clone()),
         CssTokenKind::AtKeyword(value) => ObservedKind::AtKeyword(value.clone()),
+        CssTokenKind::String(value) => ObservedKind::String(value.clone()),
+        CssTokenKind::Percentage { value } => ObservedKind::Percentage(value.clone()),
         CssTokenKind::Colon => ObservedKind::Colon,
         CssTokenKind::Semicolon => ObservedKind::Semicolon,
         CssTokenKind::Comma => ObservedKind::Comma,
@@ -295,6 +300,14 @@ enum NewContextIdentity {
         kind: CssParserPageMarginRuleKind,
         at_keyword: SourceAnchor,
         decoded_at_keyword: String,
+    },
+    KeyframesRuleBlock {
+        at_keyword: SourceAnchor,
+        decoded_at_keyword: String,
+        keyframes_name: SourceAnchor,
+    },
+    KeyframeBlock {
+        keyframe_selector_list: SourceAnchor,
     },
 }
 
@@ -872,6 +885,227 @@ impl PageSelectorListQualifier {
     }
 }
 
+enum KeyframesQualification {
+    Qualified { name: SourceAnchor },
+    Unqualified,
+}
+
+enum KeyframesCandidateTerminator {
+    Block {
+        block_opener: SourceAnchor,
+        qualification: KeyframesQualification,
+    },
+    Semicolon {
+        semicolon: SourceAnchor,
+    },
+    TrueEndOfInputWithoutBlock,
+}
+
+struct KeyframesNameQualifier {
+    candidate: Option<(SourceAnchor, bool)>,
+    extra_seen: bool,
+}
+
+impl KeyframesNameQualifier {
+    fn new() -> Self {
+        Self {
+            candidate: None,
+            extra_seen: false,
+        }
+    }
+
+    fn observe(&mut self, depth_before: usize, anchor: &SourceAnchor, kind: &ObservedKind) {
+        if depth_before != 0 {
+            return;
+        }
+        if matches!(kind, ObservedKind::Whitespace) {
+            return;
+        }
+        if self.candidate.is_some() {
+            self.extra_seen = true;
+            return;
+        }
+        let valid = match kind {
+            ObservedKind::Ident(name) => is_valid_keyframes_custom_ident(name),
+            ObservedKind::String(value) => !value.is_empty(),
+            _ => false,
+        };
+        self.candidate = Some((anchor.clone(), valid));
+    }
+
+    fn finish(&self) -> KeyframesQualification {
+        match (&self.candidate, self.extra_seen) {
+            (Some((name, true)), false) => KeyframesQualification::Qualified { name: name.clone() },
+            _ => KeyframesQualification::Unqualified,
+        }
+    }
+}
+
+fn is_valid_keyframes_custom_ident(name: &str) -> bool {
+    !is_css_wide_reserved(name)
+        && !name.eq_ignore_ascii_case("default")
+        && !name.eq_ignore_ascii_case("none")
+}
+
+enum KeyframeBlockQualification {
+    Qualified {
+        selector_start: usize,
+        selector_end: usize,
+    },
+    Unqualified,
+}
+
+enum KeyframeBlockCandidateTerminator {
+    Block {
+        block_opener: SourceAnchor,
+        qualification: KeyframeBlockQualification,
+    },
+    Semicolon {
+        semicolon: SourceAnchor,
+    },
+    EnclosingBlockEnd {
+        right_curly: SourceAnchor,
+    },
+    TrueEndOfInputWithoutBlock,
+}
+
+struct KeyframeSelectorListQualifier {
+    ok: bool,
+    expecting_selector: bool,
+    any_selector: bool,
+    first_start: Option<usize>,
+    last_end: Option<usize>,
+}
+
+impl KeyframeSelectorListQualifier {
+    fn new() -> Self {
+        Self {
+            ok: true,
+            expecting_selector: true,
+            any_selector: false,
+            first_start: None,
+            last_end: None,
+        }
+    }
+
+    fn observe(&mut self, depth_before: usize, anchor: &SourceAnchor, kind: &ObservedKind) {
+        if depth_before != 0 {
+            self.ok = false;
+            return;
+        }
+        if matches!(kind, ObservedKind::Whitespace) {
+            return;
+        }
+        match kind {
+            ObservedKind::Comma => {
+                if self.expecting_selector || !self.any_selector {
+                    self.ok = false;
+                }
+                self.expecting_selector = true;
+            }
+            ObservedKind::Ident(name)
+                if self.expecting_selector
+                    && (name.eq_ignore_ascii_case("from") || name.eq_ignore_ascii_case("to")) =>
+            {
+                self.record_selector(anchor);
+            }
+            ObservedKind::Percentage(value)
+                if self.expecting_selector && keyframe_percentage_in_range(value) =>
+            {
+                self.record_selector(anchor);
+            }
+            _ => self.ok = false,
+        }
+    }
+
+    fn record_selector(&mut self, anchor: &SourceAnchor) {
+        if self.first_start.is_none() {
+            self.first_start = Some(anchor.range().start());
+        }
+        self.last_end = Some(anchor.range().end());
+        self.expecting_selector = false;
+        self.any_selector = true;
+    }
+
+    fn finish(&self) -> KeyframeBlockQualification {
+        if !self.ok || self.expecting_selector || !self.any_selector {
+            return KeyframeBlockQualification::Unqualified;
+        }
+        match (self.first_start, self.last_end) {
+            (Some(selector_start), Some(selector_end)) => KeyframeBlockQualification::Qualified {
+                selector_start,
+                selector_end,
+            },
+            _ => KeyframeBlockQualification::Unqualified,
+        }
+    }
+}
+
+enum ParsedExponent {
+    Finite(i128),
+    PositiveOverflow,
+    NegativeOverflow,
+}
+
+fn parsed_exponent(value: &CssNumericValue) -> ParsedExponent {
+    let Some(exponent) = value.decimal().exponent() else {
+        return ParsedExponent::Finite(0);
+    };
+    let negative = matches!(exponent.sign(), Some(CssExponentSign::Minus));
+    let mut magnitude = 0i128;
+    for digit in exponent.digits().bytes() {
+        let digit = i128::from(digit - b'0');
+        let Some(next) = magnitude.checked_mul(10).and_then(|v| v.checked_add(digit)) else {
+            return if negative {
+                ParsedExponent::NegativeOverflow
+            } else {
+                ParsedExponent::PositiveOverflow
+            };
+        };
+        magnitude = next;
+    }
+    ParsedExponent::Finite(if negative { -magnitude } else { magnitude })
+}
+
+/// Exact `[0,100]` comparison over tokenizer-owned decimal structure. This
+/// performs no source rescan, float conversion, or temporary digit buffer.
+fn keyframe_percentage_in_range(value: &CssNumericValue) -> bool {
+    let decimal = value.decimal();
+    let digits = decimal
+        .integer_digits()
+        .bytes()
+        .chain(decimal.fraction_digits().bytes());
+    let total_len = decimal.integer_digits().len() + decimal.fraction_digits().len();
+    let leading_zeros = digits.clone().take_while(|digit| *digit == b'0').count();
+    if leading_zeros == total_len {
+        return true;
+    }
+    if matches!(value.sign(), Some(CssNumberSign::Minus)) {
+        return false;
+    }
+
+    let exponent = match parsed_exponent(value) {
+        ParsedExponent::PositiveOverflow => return false,
+        ParsedExponent::NegativeOverflow => return true,
+        ParsedExponent::Finite(exponent) => exponent,
+    };
+    let significant_len = total_len - leading_zeros;
+    let integer_positions =
+        significant_len as i128 + exponent - decimal.fraction_digits().len() as i128;
+    if integer_positions < 3 {
+        return true;
+    }
+    if integer_positions > 3 {
+        return false;
+    }
+
+    let mut significant = digits.skip(leading_zeros);
+    let first = significant.next().unwrap_or(b'0');
+    let second = significant.next().unwrap_or(b'0');
+    let third = significant.next().unwrap_or(b'0');
+    first == b'1' && second == b'0' && third == b'0' && significant.all(|digit| digit == b'0')
+}
+
 /// One entry in the bounded iterative active-context stack (#167): parser
 /// execution metadata required to continue a structurally recognized
 /// qualified-rule block's direct content and to resume its parent once it
@@ -909,6 +1143,8 @@ struct ActiveContextFrame {
     /// The exact authored `<page-selector-list>` envelope, present only for
     /// a `PageRuleBlock` frame with a non-empty prelude (#170).
     page_selector_list: Option<SourceAnchor>,
+    keyframes_name: Option<SourceAnchor>,
+    keyframe_selector_list: Option<SourceAnchor>,
     /// This frame's own nearest qualified-rule ancestor (#141/#168): `None`
     /// at the implicit stylesheet root's direct children, `Some(parent_id)`
     /// when the direct parent is a `QualifiedRuleBlock`, and inherited from
@@ -995,6 +1231,7 @@ struct Checkpoint {
     descriptor_occurrences_len: usize,
     page_occurrences_len: usize,
     page_margin_occurrences_len: usize,
+    keyframe_occurrences_len: usize,
     diagnostics_len: usize,
     recovery_len: usize,
     unsupported_len: usize,
@@ -1025,6 +1262,10 @@ struct Producer<'a> {
     /// Retained #170 page-margin-declaration occurrences, counted against
     /// the same shared aggregate cap.
     page_margin_occurrences: Vec<CssPageMarginDeclarationOccurrence>,
+    /// Retained #171 keyframe declarations, semantically distinct from all
+    /// other declaration-shaped occurrence vectors but sharing the aggregate
+    /// `DeclarationOccurrences` cap.
+    keyframe_occurrences: Vec<CssKeyframeDeclarationOccurrence>,
     diagnostics: Vec<CssParserDiagnostic>,
     recovery: Vec<CssParserRecoveryEvidence>,
     unsupported: Vec<CssParserUnsupportedRegion>,
@@ -1068,6 +1309,7 @@ impl<'a> Producer<'a> {
             descriptor_occurrences: Vec::new(),
             page_occurrences: Vec::new(),
             page_margin_occurrences: Vec::new(),
+            keyframe_occurrences: Vec::new(),
             diagnostics: Vec::new(),
             recovery: Vec::new(),
             unsupported: Vec::new(),
@@ -1213,6 +1455,7 @@ impl<'a> Producer<'a> {
             descriptor_occurrences_len: self.descriptor_occurrences.len(),
             page_occurrences_len: self.page_occurrences.len(),
             page_margin_occurrences_len: self.page_margin_occurrences.len(),
+            keyframe_occurrences_len: self.keyframe_occurrences.len(),
             diagnostics_len: self.diagnostics.len(),
             recovery_len: self.recovery.len(),
             unsupported_len: self.unsupported.len(),
@@ -1247,6 +1490,8 @@ impl<'a> Producer<'a> {
             .truncate(checkpoint.page_occurrences_len);
         self.page_margin_occurrences
             .truncate(checkpoint.page_margin_occurrences_len);
+        self.keyframe_occurrences
+            .truncate(checkpoint.keyframe_occurrences_len);
         self.diagnostics.truncate(checkpoint.diagnostics_len);
         self.recovery.truncate(checkpoint.recovery_len);
         self.unsupported.truncate(checkpoint.unsupported_len);
@@ -1327,7 +1572,11 @@ impl<'a> Producer<'a> {
                         }
                         _ => {
                             let item_start = anchor.range().start();
-                            if self.innermost_is_descriptor_context() {
+                            if self.innermost_is_keyframes_context() {
+                                self.handle_keyframes_block_item(item_start)?;
+                            } else if self.innermost_is_keyframe_block_context() {
+                                self.handle_keyframe_declaration_item(item_start)?;
+                            } else if self.innermost_is_descriptor_context() {
                                 self.handle_descriptor_block_item(item_start)?;
                             } else if self.innermost_is_page_context() {
                                 self.handle_page_block_item(item_start)?;
@@ -1388,69 +1637,98 @@ impl<'a> Producer<'a> {
     ) -> Result<(), Flow> {
         let prospective_depth = self.preflight_context_entry()?;
 
-        let (parent, item_ordinal, nearest_qualified_ancestor) =
-            match self.active_contexts.last_mut() {
-                Some(frame) => {
-                    if matches!(identity, NewContextIdentity::DescriptorRuleBlock { .. }) {
-                        return Err(invariant_flow(
-                            CssParserInvariantViolation::DescriptorContextCannotBeNested,
-                        ));
-                    }
-                    if matches!(identity, NewContextIdentity::PageRuleBlock { .. }) {
-                        return Err(invariant_flow(
-                            CssParserInvariantViolation::PageContextCannotBeNested,
-                        ));
-                    }
-                    if matches!(identity, NewContextIdentity::PageMarginRuleBlock { .. })
-                        && !matches!(frame.kind, CssParserContextKind::PageRuleBlock)
-                    {
-                        return Err(invariant_flow(
-                            CssParserInvariantViolation::PageMarginContextRequiresPageParent,
-                        ));
-                    }
-                    frame.run_open = false;
-                    let ordinal = frame.next_item_ordinal;
-                    frame.next_item_ordinal += 1;
-                    let nearest = match frame.kind {
-                        CssParserContextKind::QualifiedRuleBlock => Some(frame.id),
-                        CssParserContextKind::GroupRuleBlock(_) => frame.nearest_qualified_ancestor,
-                        CssParserContextKind::DescriptorRuleBlock(_) => {
-                            return Err(invariant_flow(
-                                CssParserInvariantViolation::DescriptorContextCannotHaveChildren,
-                            ));
-                        }
-                        // A `PageMarginRuleBlock` child's nearest qualified
-                        // ancestor is always `None`: #170 never infers Page
-                        // semantic qualification from group-rule ancestry.
-                        CssParserContextKind::PageRuleBlock => None,
-                        CssParserContextKind::PageMarginRuleBlock(_) => {
-                            return Err(invariant_flow(
-                                CssParserInvariantViolation::PageMarginContextCannotHaveChildren,
-                            ));
-                        }
-                    };
-                    (Some(frame.id), ordinal, nearest)
+        let (parent, item_ordinal, nearest_qualified_ancestor) = match self
+            .active_contexts
+            .last_mut()
+        {
+            Some(frame) => {
+                if matches!(identity, NewContextIdentity::DescriptorRuleBlock { .. }) {
+                    return Err(invariant_flow(
+                        CssParserInvariantViolation::DescriptorContextCannotBeNested,
+                    ));
                 }
-                None => match identity {
-                    NewContextIdentity::QualifiedRuleBlock
-                    | NewContextIdentity::DescriptorRuleBlock { .. }
-                    | NewContextIdentity::PageRuleBlock { .. } => {
-                        let ordinal = self.root_next_item_ordinal;
-                        self.root_next_item_ordinal += 1;
-                        (None, ordinal, None)
-                    }
-                    NewContextIdentity::GroupRuleBlock { .. } => {
+                if matches!(identity, NewContextIdentity::PageRuleBlock { .. }) {
+                    return Err(invariant_flow(
+                        CssParserInvariantViolation::PageContextCannotBeNested,
+                    ));
+                }
+                if matches!(identity, NewContextIdentity::PageMarginRuleBlock { .. })
+                    && !matches!(frame.kind, CssParserContextKind::PageRuleBlock)
+                {
+                    return Err(invariant_flow(
+                        CssParserInvariantViolation::PageMarginContextRequiresPageParent,
+                    ));
+                }
+                if matches!(identity, NewContextIdentity::KeyframeBlock { .. })
+                    && !matches!(frame.kind, CssParserContextKind::KeyframesRuleBlock)
+                {
+                    return Err(invariant_flow(
+                        CssParserInvariantViolation::KeyframeContextRequiresKeyframesParent,
+                    ));
+                }
+                if matches!(identity, NewContextIdentity::KeyframesRuleBlock { .. })
+                    && (!matches!(frame.kind, CssParserContextKind::GroupRuleBlock(_))
+                        || frame.nearest_qualified_ancestor.is_some())
+                {
+                    return Err(invariant_flow(
+                            CssParserInvariantViolation::KeyframesContextRequiresRootOrGroupOnlyAncestry,
+                        ));
+                }
+                frame.run_open = false;
+                let ordinal = frame.next_item_ordinal;
+                frame.next_item_ordinal += 1;
+                let nearest = match frame.kind {
+                    CssParserContextKind::QualifiedRuleBlock => Some(frame.id),
+                    CssParserContextKind::GroupRuleBlock(_) => frame.nearest_qualified_ancestor,
+                    CssParserContextKind::DescriptorRuleBlock(_) => {
                         return Err(invariant_flow(
-                            CssParserInvariantViolation::GroupContextCannotBeTopLevel,
+                            CssParserInvariantViolation::DescriptorContextCannotHaveChildren,
                         ));
                     }
-                    NewContextIdentity::PageMarginRuleBlock { .. } => {
+                    // A `PageMarginRuleBlock` child's nearest qualified
+                    // ancestor is always `None`: #170 never infers Page
+                    // semantic qualification from group-rule ancestry.
+                    CssParserContextKind::PageRuleBlock => None,
+                    CssParserContextKind::PageMarginRuleBlock(_) => {
                         return Err(invariant_flow(
-                            CssParserInvariantViolation::PageMarginContextCannotBeTopLevel,
+                            CssParserInvariantViolation::PageMarginContextCannotHaveChildren,
                         ));
                     }
-                },
-            };
+                    CssParserContextKind::KeyframesRuleBlock => None,
+                    CssParserContextKind::KeyframeBlock => {
+                        return Err(invariant_flow(
+                            CssParserInvariantViolation::KeyframeContextCannotHaveChildren,
+                        ));
+                    }
+                };
+                (Some(frame.id), ordinal, nearest)
+            }
+            None => match identity {
+                NewContextIdentity::QualifiedRuleBlock
+                | NewContextIdentity::DescriptorRuleBlock { .. }
+                | NewContextIdentity::PageRuleBlock { .. }
+                | NewContextIdentity::KeyframesRuleBlock { .. } => {
+                    let ordinal = self.root_next_item_ordinal;
+                    self.root_next_item_ordinal += 1;
+                    (None, ordinal, None)
+                }
+                NewContextIdentity::GroupRuleBlock { .. } => {
+                    return Err(invariant_flow(
+                        CssParserInvariantViolation::GroupContextCannotBeTopLevel,
+                    ));
+                }
+                NewContextIdentity::PageMarginRuleBlock { .. } => {
+                    return Err(invariant_flow(
+                        CssParserInvariantViolation::PageMarginContextCannotBeTopLevel,
+                    ));
+                }
+                NewContextIdentity::KeyframeBlock { .. } => {
+                    return Err(invariant_flow(
+                        CssParserInvariantViolation::KeyframeContextRequiresKeyframesParent,
+                    ));
+                }
+            },
+        };
 
         let id = CssParserContextId::new(self.pending_context_records.len());
         self.pending_context_records.push(None);
@@ -1471,9 +1749,13 @@ impl<'a> Producer<'a> {
             descriptor_property_name,
             descriptor_decoded_property_name,
             page_selector_list,
+            keyframes_name,
+            keyframe_selector_list,
         ) = match identity {
             NewContextIdentity::QualifiedRuleBlock => (
                 CssParserContextKind::QualifiedRuleBlock,
+                None,
+                None,
                 None,
                 None,
                 None,
@@ -1491,6 +1773,8 @@ impl<'a> Producer<'a> {
                 None,
                 None,
                 None,
+                None,
+                None,
             ),
             NewContextIdentity::DescriptorRuleBlock {
                 kind,
@@ -1505,6 +1789,8 @@ impl<'a> Producer<'a> {
                 property_name,
                 decoded_property_name,
                 None,
+                None,
+                None,
             ),
             NewContextIdentity::PageRuleBlock {
                 at_keyword,
@@ -1517,6 +1803,8 @@ impl<'a> Producer<'a> {
                 None,
                 None,
                 page_selector_list,
+                None,
+                None,
             ),
             NewContextIdentity::PageMarginRuleBlock {
                 kind,
@@ -1529,6 +1817,34 @@ impl<'a> Producer<'a> {
                 None,
                 None,
                 None,
+                None,
+                None,
+            ),
+            NewContextIdentity::KeyframesRuleBlock {
+                at_keyword,
+                decoded_at_keyword,
+                keyframes_name,
+            } => (
+                CssParserContextKind::KeyframesRuleBlock,
+                Some(at_keyword),
+                Some(decoded_at_keyword),
+                None,
+                None,
+                None,
+                Some(keyframes_name),
+                None,
+            ),
+            NewContextIdentity::KeyframeBlock {
+                keyframe_selector_list,
+            } => (
+                CssParserContextKind::KeyframeBlock,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(keyframe_selector_list),
             ),
         };
 
@@ -1542,6 +1858,8 @@ impl<'a> Producer<'a> {
             descriptor_property_name,
             descriptor_decoded_property_name,
             page_selector_list,
+            keyframes_name,
+            keyframe_selector_list,
             nearest_qualified_ancestor,
             header,
             block_opener,
@@ -1705,6 +2023,64 @@ impl<'a> Producer<'a> {
                 )
                 .map_err(Into::into)
             }
+            CssParserContextKind::KeyframesRuleBlock => {
+                let at_keyword =
+                    frame
+                        .at_keyword
+                        .ok_or(CssParserRunError::InternalInvariantFailure(
+                            CssParserInvariantViolation::MissingKeyframesContextEvidence,
+                        ))?;
+                let decoded =
+                    frame
+                        .decoded_at_keyword
+                        .ok_or(CssParserRunError::InternalInvariantFailure(
+                            CssParserInvariantViolation::MissingKeyframesContextEvidence,
+                        ))?;
+                let keyframes_name =
+                    frame
+                        .keyframes_name
+                        .ok_or(CssParserRunError::InternalInvariantFailure(
+                            CssParserInvariantViolation::MissingKeyframesContextEvidence,
+                        ))?;
+                CssParserContextRecord::new_keyframes_rule_block(
+                    self.source_text,
+                    frame.id,
+                    frame.parent,
+                    frame.item_ordinal,
+                    at_keyword,
+                    &decoded,
+                    keyframes_name,
+                    frame.header,
+                    frame.block_opener,
+                    body,
+                    termination,
+                )
+                .map_err(Into::into)
+            }
+            CssParserContextKind::KeyframeBlock => {
+                let parent = frame
+                    .parent
+                    .ok_or(CssParserRunError::InternalInvariantFailure(
+                        CssParserInvariantViolation::MissingKeyframeContextEvidence,
+                    ))?;
+                let selector_list = frame.keyframe_selector_list.ok_or(
+                    CssParserRunError::InternalInvariantFailure(
+                        CssParserInvariantViolation::MissingKeyframeContextEvidence,
+                    ),
+                )?;
+                CssParserContextRecord::new_keyframe_block(
+                    self.source_text,
+                    frame.id,
+                    parent,
+                    frame.item_ordinal,
+                    selector_list,
+                    frame.header,
+                    frame.block_opener,
+                    body,
+                    termination,
+                )
+                .map_err(Into::into)
+            }
         }
     }
 
@@ -1782,6 +2158,9 @@ impl<'a> Producer<'a> {
                 candidate_kind,
             );
         }
+        if decoded_at_keyword.eq_ignore_ascii_case("keyframes") {
+            return self.handle_top_level_keyframes_candidate(at_keyword, decoded_at_keyword);
+        }
         if decoded_at_keyword.eq_ignore_ascii_case("page") {
             return self.handle_top_level_page_candidate(at_keyword, decoded_at_keyword);
         }
@@ -1839,6 +2218,87 @@ impl<'a> Producer<'a> {
             DescriptorCandidateTerminator::TrueEndOfInputWithoutBlock => {
                 let len = self.source_text.as_str().len();
                 self.commit_top_level_at_rule_unsupported(at_keyword, len)
+            }
+        }
+    }
+
+    /// Qualification-aware root `@keyframes` dispatch (#171). A candidate
+    /// becomes a retained keyframes context only when its bounded
+    /// `<keyframes-name>` qualification succeeds and a real block opener is
+    /// observed. Every other shape remains ordinary top-level unsupported
+    /// evidence; no separate validity taxonomy is invented.
+    fn handle_top_level_keyframes_candidate(
+        &mut self,
+        at_keyword: SourceAnchor,
+        decoded_at_keyword: String,
+    ) -> Result<(), Flow> {
+        match self.scan_keyframes_candidate_terminator()? {
+            KeyframesCandidateTerminator::Block {
+                block_opener,
+                qualification: KeyframesQualification::Qualified { name },
+            } => {
+                self.committed_pos = block_opener.range().end();
+                self.enter_context(
+                    at_keyword.range().start(),
+                    block_opener,
+                    NewContextIdentity::KeyframesRuleBlock {
+                        at_keyword,
+                        decoded_at_keyword,
+                        keyframes_name: name,
+                    },
+                )
+            }
+            KeyframesCandidateTerminator::Block {
+                qualification: KeyframesQualification::Unqualified,
+                ..
+            } => match self.consume_remainder_until_enclosing_right_curly()? {
+                RemainderOutcome::EnclosingRightCurly { end, .. } => {
+                    self.cursor.advance();
+                    self.commit_top_level_at_rule_unsupported(at_keyword, end)
+                }
+                RemainderOutcome::TrueEndOfInput => {
+                    let len = self.source_text.as_str().len();
+                    self.commit_top_level_at_rule_unsupported(at_keyword, len)
+                }
+            },
+            KeyframesCandidateTerminator::Semicolon { semicolon } => {
+                self.commit_top_level_at_rule_unsupported(at_keyword, semicolon.range().end())
+            }
+            KeyframesCandidateTerminator::TrueEndOfInputWithoutBlock => {
+                let len = self.source_text.as_str().len();
+                self.commit_top_level_at_rule_unsupported(at_keyword, len)
+            }
+        }
+    }
+
+    fn scan_keyframes_candidate_terminator(
+        &mut self,
+    ) -> Result<KeyframesCandidateTerminator, Flow> {
+        self.component_frames.clear();
+        let mut qualifier = KeyframesNameQualifier::new();
+        loop {
+            match self.next_semantic()? {
+                ParserPosition::SemanticToken { anchor, kind } => {
+                    let depth_before = self.component_frames.len();
+                    if depth_before == 0 && matches!(kind, ObservedKind::Semicolon) {
+                        self.cursor.advance();
+                        return Ok(KeyframesCandidateTerminator::Semicolon { semicolon: anchor });
+                    }
+                    if depth_before == 0 && matches!(kind, ObservedKind::LeftCurlyBracket) {
+                        let qualification = qualifier.finish();
+                        self.cursor.advance();
+                        return Ok(KeyframesCandidateTerminator::Block {
+                            block_opener: anchor,
+                            qualification,
+                        });
+                    }
+                    qualifier.observe(depth_before, &anchor, &kind);
+                    self.consume_and_balance(&kind)?;
+                }
+                ParserPosition::TrueEndOfInput => {
+                    return Ok(KeyframesCandidateTerminator::TrueEndOfInputWithoutBlock);
+                }
+                ParserPosition::UpstreamTokenizerTerminal => return Err(Flow::UpstreamIncomplete),
             }
         }
     }
@@ -2232,6 +2692,20 @@ impl<'a> Producer<'a> {
 
     // -- supported block loop -----------------------------------------------
 
+    fn innermost_is_keyframes_context(&self) -> bool {
+        matches!(
+            self.active_contexts.last().map(|frame| frame.kind),
+            Some(CssParserContextKind::KeyframesRuleBlock)
+        )
+    }
+
+    fn innermost_is_keyframe_block_context(&self) -> bool {
+        matches!(
+            self.active_contexts.last().map(|frame| frame.kind),
+            Some(CssParserContextKind::KeyframeBlock)
+        )
+    }
+
     /// Whether the innermost active context is a #169 `DescriptorRuleBlock`:
     /// its body uses declaration-list dispatch
     /// ([`Self::handle_descriptor_block_item`]), never the ordinary
@@ -2449,6 +2923,207 @@ impl<'a> Producer<'a> {
                     return Ok(FallbackOutcome::MalformedEndedAtTrueEof);
                 }
                 ParserPosition::UpstreamTokenizerTerminal => return Err(Flow::UpstreamIncomplete),
+            }
+        }
+    }
+
+    /// Resolves one direct child candidate inside a retained
+    /// `KeyframesRuleBlock`. Only the bounded #171 keyframe-selector grammar
+    /// may establish a `KeyframeBlock`; a block with an unqualified prelude is
+    /// retained as explicit context-aware unsupported evidence. Non-block
+    /// malformed items use the existing recovery taxonomy.
+    fn handle_keyframes_block_item(&mut self, item_start: usize) -> Result<(), Flow> {
+        match self.scan_keyframe_block_candidate_terminator()? {
+            KeyframeBlockCandidateTerminator::Block {
+                block_opener,
+                qualification:
+                    KeyframeBlockQualification::Qualified {
+                        selector_start,
+                        selector_end,
+                    },
+            } => {
+                self.committed_pos = block_opener.range().end();
+                let selector_list = self
+                    .source_text
+                    .anchor(selector_start, selector_end)
+                    .map_err(|error| Flow::Invariant(error.into()))?;
+                self.enter_context(
+                    item_start,
+                    block_opener,
+                    NewContextIdentity::KeyframeBlock {
+                        keyframe_selector_list: selector_list,
+                    },
+                )
+            }
+            KeyframeBlockCandidateTerminator::Block {
+                qualification: KeyframeBlockQualification::Unqualified,
+                ..
+            } => match self.consume_remainder_until_enclosing_right_curly()? {
+                RemainderOutcome::EnclosingRightCurly { end, .. } => {
+                    self.cursor.advance();
+                    self.commit_unqualified_keyframe_block(item_start, end)
+                }
+                RemainderOutcome::TrueEndOfInput => {
+                    let len = self.source_text.as_str().len();
+                    self.commit_unqualified_keyframe_block(item_start, len)
+                }
+            },
+            KeyframeBlockCandidateTerminator::Semicolon { semicolon } => {
+                let region_end = semicolon.range().end();
+                self.commit_malformed_recovery(
+                    item_start,
+                    region_end,
+                    CssParserRecoveryTermination::AuthoredSemicolon { semicolon },
+                )
+            }
+            KeyframeBlockCandidateTerminator::EnclosingBlockEnd { right_curly } => self
+                .commit_malformed_recovery(
+                    item_start,
+                    right_curly.range().start(),
+                    CssParserRecoveryTermination::EnclosingBlockEnd { right_curly },
+                ),
+            KeyframeBlockCandidateTerminator::TrueEndOfInputWithoutBlock => {
+                let len = self.source_text.as_str().len();
+                let terminal = self
+                    .source_text
+                    .anchor(len, len)
+                    .map_err(|error| Flow::Invariant(error.into()))?;
+                self.commit_malformed_recovery(
+                    item_start,
+                    len,
+                    CssParserRecoveryTermination::EndOfInput { terminal },
+                )
+            }
+        }
+    }
+
+    fn scan_keyframe_block_candidate_terminator(
+        &mut self,
+    ) -> Result<KeyframeBlockCandidateTerminator, Flow> {
+        self.component_frames.clear();
+        let mut qualifier = KeyframeSelectorListQualifier::new();
+        loop {
+            match self.next_semantic()? {
+                ParserPosition::SemanticToken { anchor, kind } => {
+                    let depth_before = self.component_frames.len();
+                    if depth_before == 0 && matches!(kind, ObservedKind::Semicolon) {
+                        self.cursor.advance();
+                        return Ok(KeyframeBlockCandidateTerminator::Semicolon {
+                            semicolon: anchor,
+                        });
+                    }
+                    if depth_before == 0 && matches!(kind, ObservedKind::LeftCurlyBracket) {
+                        let qualification = qualifier.finish();
+                        self.cursor.advance();
+                        return Ok(KeyframeBlockCandidateTerminator::Block {
+                            block_opener: anchor,
+                            qualification,
+                        });
+                    }
+                    if depth_before == 0 && matches!(kind, ObservedKind::RightCurlyBracket) {
+                        return Ok(KeyframeBlockCandidateTerminator::EnclosingBlockEnd {
+                            right_curly: anchor,
+                        });
+                    }
+                    qualifier.observe(depth_before, &anchor, &kind);
+                    self.consume_and_balance(&kind)?;
+                }
+                ParserPosition::TrueEndOfInput => {
+                    return Ok(KeyframeBlockCandidateTerminator::TrueEndOfInputWithoutBlock);
+                }
+                ParserPosition::UpstreamTokenizerTerminal => return Err(Flow::UpstreamIncomplete),
+            }
+        }
+    }
+
+    fn commit_unqualified_keyframe_block(&mut self, start: usize, end: usize) -> Result<(), Flow> {
+        let prospective = checked_resource_add(
+            CssParserResourceKind::UnsupportedRegions,
+            self.unsupported.len(),
+            1,
+        )?;
+        self.check_limit(CssParserResourceKind::UnsupportedRegions, prospective)?;
+        let frame = self.active_contexts.last().ok_or_else(|| {
+            invariant_flow(CssParserInvariantViolation::DeclarationOutsideActiveContext)
+        })?;
+        if !matches!(frame.kind, CssParserContextKind::KeyframesRuleBlock) {
+            return Err(invariant_flow(
+                CssParserInvariantViolation::UnqualifiedKeyframeBlockOutsideKeyframes,
+            ));
+        }
+        let complete = self
+            .source_text
+            .anchor(start, end)
+            .map_err(|error| Flow::Invariant(error.into()))?;
+        let evidence = CssParserUnsupportedRegion::new_unqualified_keyframe_block(
+            self.source_text,
+            complete,
+            frame.id,
+            CssParserDirectItemOrdinal::new(frame.next_item_ordinal),
+        )
+        .map_err(|error| Flow::Invariant(error.into()))?;
+        self.unsupported.push(evidence);
+        let frame = self
+            .active_contexts
+            .last_mut()
+            .ok_or_else(|| invariant_flow(CssParserInvariantViolation::NoActiveContextToClose))?;
+        frame.next_item_ordinal += 1;
+        frame.run_open = false;
+        self.committed_pos = end;
+        Ok(())
+    }
+
+    /// Resolves one declaration-list item inside a qualified keyframe block.
+    /// Recognition failure cannot fall back to a nested qualified rule.
+    fn handle_keyframe_declaration_item(&mut self, item_start: usize) -> Result<(), Flow> {
+        self.begin_checkpoint()?;
+        let outcome = match self.try_declaration() {
+            Ok(outcome) => outcome,
+            Err(flow) => return Err(self.rollback_checkpoint_preserving_flow(flow)),
+        };
+        match outcome {
+            DeclarationOutcome::Recognized(parts) => {
+                if let Err(flow) = self.commit_keyframe_declaration(parts) {
+                    return Err(self.rollback_checkpoint_preserving_flow(flow));
+                }
+                self.commit_checkpoint()?;
+                Ok(())
+            }
+            DeclarationOutcome::NotRecognized => {
+                self.rollback_checkpoint()?;
+                match self.scan_declaration_list_malformed_item()? {
+                    FallbackOutcome::NestedRuleTrigger => Err(invariant_flow(
+                        CssParserInvariantViolation::UnreachableKeyframeNestedRuleTrigger,
+                    )),
+                    FallbackOutcome::MalformedEndedAtSemicolon { semicolon } => {
+                        let region_end = semicolon.range().end();
+                        self.commit_malformed_recovery(
+                            item_start,
+                            region_end,
+                            CssParserRecoveryTermination::AuthoredSemicolon { semicolon },
+                        )
+                    }
+                    FallbackOutcome::MalformedEndedAtEnclosingBlock { right_curly } => {
+                        let region_end = right_curly.range().start();
+                        self.commit_malformed_recovery(
+                            item_start,
+                            region_end,
+                            CssParserRecoveryTermination::EnclosingBlockEnd { right_curly },
+                        )
+                    }
+                    FallbackOutcome::MalformedEndedAtTrueEof => {
+                        let len = self.source_text.as_str().len();
+                        let terminal = self
+                            .source_text
+                            .anchor(len, len)
+                            .map_err(|error| Flow::Invariant(error.into()))?;
+                        self.commit_malformed_recovery(
+                            item_start,
+                            len,
+                            CssParserRecoveryTermination::EndOfInput { terminal },
+                        )
+                    }
+                }
             }
         }
     }
@@ -2703,22 +3378,25 @@ impl<'a> Producer<'a> {
         // regardless of its own prelude shape. It always becomes one
         // explicit unsupported direct item. #170: the same holds for a
         // `PageMarginRuleBlock` body (also declaration-list-shaped).
-        let candidate_kind =
-            if self.innermost_is_descriptor_context() || self.innermost_is_page_margin_context() {
-                None
-            } else if self.innermost_is_page_context() {
-                // #170: inside a `PageRuleBlock`, only a qualifying finite
-                // page-margin rule may become a child context; `@media` and
-                // every other name -- including the registry #168 group-rule
-                // names -- remain one explicit unsupported direct item. Page
-                // semantic qualification is never inferred from group-rule
-                // ancestry.
-                CssParserPageMarginRuleKind::from_decoded_at_keyword(&decoded_at_keyword)
-                    .map(NestedCandidateKind::PageMargin)
-            } else {
-                CssParserGroupRuleKind::from_decoded_at_keyword(&decoded_at_keyword)
-                    .map(NestedCandidateKind::Group)
-            };
+        let candidate_kind = if self.innermost_is_descriptor_context()
+            || self.innermost_is_page_margin_context()
+            || self.innermost_is_keyframes_context()
+            || self.innermost_is_keyframe_block_context()
+        {
+            None
+        } else if self.innermost_is_page_context() {
+            // #170: inside a `PageRuleBlock`, only a qualifying finite
+            // page-margin rule may become a child context; `@media` and
+            // every other name -- including the registry #168 group-rule
+            // names -- remain one explicit unsupported direct item. Page
+            // semantic qualification is never inferred from group-rule
+            // ancestry.
+            CssParserPageMarginRuleKind::from_decoded_at_keyword(&decoded_at_keyword)
+                .map(NestedCandidateKind::PageMargin)
+        } else {
+            CssParserGroupRuleKind::from_decoded_at_keyword(&decoded_at_keyword)
+                .map(NestedCandidateKind::Group)
+        };
         match self.scan_nested_at_rule_terminator(candidate_kind)? {
             NestedAtRuleTerminator::Block {
                 block_opener,
@@ -2984,6 +3662,7 @@ impl<'a> Producer<'a> {
             + self.descriptor_occurrences.len()
             + self.page_occurrences.len()
             + self.page_margin_occurrences.len()
+            + self.keyframe_occurrences.len()
     }
 
     /// Commits a recognized declaration into the innermost active context,
@@ -3079,6 +3758,51 @@ impl<'a> Producer<'a> {
         let end = occurrence.complete().range().end();
         self.descriptor_occurrences.push(occurrence);
 
+        let frame = self
+            .active_contexts
+            .last_mut()
+            .ok_or_else(|| invariant_flow(CssParserInvariantViolation::NoActiveContextToClose))?;
+        frame.next_item_ordinal += 1;
+        self.committed_pos = end;
+        Ok(())
+    }
+
+    /// Commits one recognized declaration-shaped occurrence into a
+    /// qualified `KeyframeBlock` (#171), using the shared aggregate
+    /// `DeclarationOccurrences` cap and a keyframe-specific narrow placement.
+    fn commit_keyframe_declaration(&mut self, parts: DeclarationParts) -> Result<(), Flow> {
+        let prospective = checked_resource_add(
+            CssParserResourceKind::DeclarationOccurrences,
+            self.declaration_occurrences_aggregate_len(),
+            1,
+        )?;
+        self.check_limit(CssParserResourceKind::DeclarationOccurrences, prospective)?;
+
+        let frame = self.active_contexts.last().ok_or_else(|| {
+            invariant_flow(CssParserInvariantViolation::DeclarationOutsideActiveContext)
+        })?;
+        if !matches!(frame.kind, CssParserContextKind::KeyframeBlock) {
+            return Err(invariant_flow(
+                CssParserInvariantViolation::KeyframeDeclarationOutsideKeyframeContext,
+            ));
+        }
+        let placement = CssKeyframeDeclarationPlacement::new(
+            frame.id,
+            CssParserDirectItemOrdinal::new(frame.next_item_ordinal),
+        );
+        let occurrence = CssKeyframeDeclarationOccurrence::new(
+            self.source_text,
+            parts.complete,
+            parts.property_name,
+            parts.colon,
+            parts.value,
+            parts.priority,
+            parts.termination,
+            placement,
+        )
+        .map_err(|error| Flow::Invariant(error.into()))?;
+        let end = occurrence.complete().range().end();
+        self.keyframe_occurrences.push(occurrence);
         let frame = self
             .active_contexts
             .last_mut()
@@ -3423,13 +4147,14 @@ impl<'a> Producer<'a> {
             finalize_context_records(std::mem::take(&mut self.pending_context_records))?;
         let coverage = coverage_for(&self.unsupported);
         let resources = self.resource_usage(context_records.len());
-        CssParserRunResult::new(
+        CssParserRunResult::new_with_keyframes(
             self.source_text,
             self.upstream,
             self.occurrences,
             self.descriptor_occurrences,
             self.page_occurrences,
             self.page_margin_occurrences,
+            self.keyframe_occurrences,
             self.diagnostics,
             self.recovery,
             self.unsupported,
@@ -3452,13 +4177,14 @@ impl<'a> Producer<'a> {
             finalize_context_records(std::mem::take(&mut self.pending_context_records))?;
         let coverage = coverage_for(&self.unsupported);
         let resources = self.resource_usage(context_records.len());
-        CssParserRunResult::new(
+        CssParserRunResult::new_with_keyframes(
             self.source_text,
             self.upstream,
             self.occurrences,
             self.descriptor_occurrences,
             self.page_occurrences,
             self.page_margin_occurrences,
+            self.keyframe_occurrences,
             self.diagnostics,
             self.recovery,
             self.unsupported,
@@ -3493,13 +4219,14 @@ impl<'a> Producer<'a> {
         )?;
         let coverage = coverage_for(&self.unsupported);
         let resources = self.resource_usage(context_records.len());
-        CssParserRunResult::new(
+        CssParserRunResult::new_with_keyframes(
             self.source_text,
             self.upstream,
             self.occurrences,
             self.descriptor_occurrences,
             self.page_occurrences,
             self.page_margin_occurrences,
+            self.keyframe_occurrences,
             self.diagnostics,
             self.recovery,
             self.unsupported,
@@ -3615,6 +4342,156 @@ mod tests {
         let source_text = source(text);
         let tokenizer_result = run_tokenizer(&source_text, generous_tokenizer_limits()).unwrap();
         run(&source_text, tokenizer_result, smoke_parser_limits()).unwrap()
+    }
+
+    #[test]
+    fn smoke_keyframes_contexts_and_distinct_occurrences() {
+        let result =
+            smoke_run("@keyframes fade{from{opacity:0;}50%, 75%{opacity:.5;}to{opacity:1;}}");
+        assert_eq!(result.context_records().len(), 4);
+        let outer = &result.context_records()[0];
+        assert_eq!(outer.kind(), CssParserContextKind::KeyframesRuleBlock);
+        assert!(outer.parent().is_none());
+        assert_eq!(outer.keyframes_name().unwrap().fragment(), "fade");
+        for (index, selector) in [(1, "from"), (2, "50%, 75%"), (3, "to")] {
+            let block = &result.context_records()[index];
+            assert_eq!(block.kind(), CssParserContextKind::KeyframeBlock);
+            assert_eq!(block.parent(), Some(outer.id()));
+            assert_eq!(block.keyframe_selector_list().unwrap().fragment(), selector);
+        }
+        assert_eq!(result.keyframe_occurrences().len(), 3);
+        assert!(result.occurrences().is_empty());
+        assert!(result.descriptor_occurrences().is_empty());
+        assert!(result.page_occurrences().is_empty());
+        assert!(result.page_margin_occurrences().is_empty());
+        assert_eq!(
+            result.keyframe_occurrences()[0].name().fragment(),
+            "opacity"
+        );
+    }
+
+    #[test]
+    fn smoke_keyframes_name_qualification_is_bounded() {
+        for text in [
+            "@keyframes fade{from{x:y;}}",
+            "@keyframes \"none\"{from{x:y;}}",
+        ] {
+            let result = smoke_run(text);
+            assert_eq!(
+                result.context_records()[0].kind(),
+                CssParserContextKind::KeyframesRuleBlock
+            );
+        }
+        for text in [
+            "@keyframes none{from{x:y;}}",
+            "@keyframes default{from{x:y;}}",
+            "@keyframes initial{from{x:y;}}",
+            "@keyframes \"\"{from{x:y;}}",
+        ] {
+            let result = smoke_run(text);
+            assert!(result.context_records().is_empty(), "{text}");
+            assert_eq!(result.unsupported_regions().len(), 1, "{text}");
+            assert!(result.keyframe_occurrences().is_empty(), "{text}");
+        }
+    }
+
+    #[test]
+    fn smoke_keyframe_percentage_boundaries_use_exact_numeric_evidence() {
+        for selector in ["0%", "-0%", "100%", "100.00%", "1e2%", "0.1e3%"] {
+            let text = format!("@keyframes x{{{selector}{{x:y;}}}}");
+            let result = smoke_run(&text);
+            assert_eq!(result.context_records().len(), 2, "{selector}");
+            assert_eq!(result.keyframe_occurrences().len(), 1, "{selector}");
+        }
+        for selector in ["-0.1%", "100.01%", "1e3%", "0"] {
+            let text = format!("@keyframes x{{{selector}{{x:y;}}}}");
+            let result = smoke_run(&text);
+            assert_eq!(result.context_records().len(), 1, "{selector}");
+            assert_eq!(result.unsupported_regions().len(), 1, "{selector}");
+            assert!(result.keyframe_occurrences().is_empty(), "{selector}");
+        }
+    }
+
+    #[test]
+    fn smoke_duplicate_keyframe_selectors_keep_distinct_context_identity() {
+        let result = smoke_run("@keyframes x{0%{a:b;}0%{a:c;}}");
+        assert_eq!(result.context_records().len(), 3);
+        assert_ne!(
+            result.context_records()[1].id(),
+            result.context_records()[2].id()
+        );
+        assert_eq!(
+            result.context_records()[1]
+                .keyframe_selector_list()
+                .unwrap()
+                .fragment(),
+            "0%"
+        );
+        assert_eq!(
+            result.context_records()[2]
+                .keyframe_selector_list()
+                .unwrap()
+                .fragment(),
+            "0%"
+        );
+        assert_eq!(result.keyframe_occurrences().len(), 2);
+    }
+
+    #[test]
+    fn smoke_unqualified_keyframe_child_is_explicit_unsupported() {
+        let result = smoke_run("@keyframes x{bogus{x:y;}from{a:b;}}");
+        assert_eq!(result.context_records().len(), 2);
+        assert_eq!(result.unsupported_regions().len(), 1);
+        assert!(matches!(
+            result.unsupported_regions()[0],
+            CssParserUnsupportedRegion::UnqualifiedKeyframeBlock { .. }
+        ));
+        assert_eq!(result.keyframe_occurrences().len(), 1);
+        assert_eq!(result.keyframe_occurrences()[0].name().fragment(), "a");
+    }
+
+    #[test]
+    fn smoke_style_nested_keyframes_is_not_promoted() {
+        let result = smoke_run("a{@keyframes x{from{x:y;}}}");
+        assert_eq!(result.context_records().len(), 1);
+        assert_eq!(
+            result.context_records()[0].kind(),
+            CssParserContextKind::QualifiedRuleBlock
+        );
+        assert_eq!(result.unsupported_regions().len(), 1);
+        assert!(result.keyframe_occurrences().is_empty());
+        assert!(
+            !result
+                .context_records()
+                .iter()
+                .any(|record| record.kind() == CssParserContextKind::KeyframesRuleBlock)
+        );
+    }
+
+    #[test]
+    fn smoke_keyframe_true_eof_keeps_partial_contexts_honest() {
+        let result = smoke_run("@keyframes x{from{opacity:0");
+        assert_eq!(result.context_records().len(), 2);
+        assert_eq!(result.keyframe_occurrences().len(), 1);
+        assert!(matches!(
+            result.context_records()[0].termination(),
+            CssParserContextTermination::EndOfInput { .. }
+        ));
+        assert!(matches!(
+            result.context_records()[1].termination(),
+            CssParserContextTermination::EndOfInput { .. }
+        ));
+        assert!(matches!(
+            result.keyframe_occurrences()[0].termination(),
+            CssDeclarationTermination::OmittedAtEndOfInput { .. }
+        ));
+    }
+
+    #[test]
+    fn smoke_keyframe_important_is_syntax_evidence_not_semantic_filtering() {
+        let result = smoke_run("@keyframes x{from{opacity:0!important;}}");
+        assert_eq!(result.keyframe_occurrences().len(), 1);
+        assert!(result.keyframe_occurrences()[0].priority().is_some());
     }
 
     #[test]

@@ -695,6 +695,126 @@ impl fmt::Debug for CssDescriptorOccurrence {
     }
 }
 
+/// A keyframe declaration's structural placement (#171): the owning
+/// [`CssParserContextKind::KeyframeBlock`](super::parser::context::CssParserContextKind::KeyframeBlock)
+/// context and its direct-item ordinal within that declaration-list body.
+///
+/// Deliberately carries no declaration-run ordinal: a keyframe block contains
+/// a `<declaration-list>`, so no child-rule interleaving needs the ordinary
+/// style-rule declaration-run model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssKeyframeDeclarationPlacement {
+    context_id: CssParserContextId,
+    item_ordinal: CssParserDirectItemOrdinal,
+}
+
+impl CssKeyframeDeclarationPlacement {
+    pub(crate) const fn new(
+        context_id: CssParserContextId,
+        item_ordinal: CssParserDirectItemOrdinal,
+    ) -> Self {
+        Self {
+            context_id,
+            item_ordinal,
+        }
+    }
+
+    pub(crate) const fn context_id(&self) -> CssParserContextId {
+        self.context_id
+    }
+
+    pub(crate) const fn item_ordinal(&self) -> CssParserDirectItemOrdinal {
+        self.item_ordinal
+    }
+}
+
+/// One recognized authored declaration-shaped syntax occurrence retained
+/// inside an explicitly qualified `KeyframeBlock` context (#171).
+///
+/// This is parser-owned source evidence only. It does not claim property
+/// grammar validity, animation interpolation/runtime meaning, CSSOM
+/// membership, or the animation-specific legality of `!important`.
+/// Never interchangeable with ordinary, descriptor, page, or page-margin
+/// occurrences despite sharing [`CssDeclarationSyntaxEvidence`].
+#[derive(Clone)]
+pub(crate) struct CssKeyframeDeclarationOccurrence {
+    syntax: CssDeclarationSyntaxEvidence,
+    placement: CssKeyframeDeclarationPlacement,
+}
+
+impl CssKeyframeDeclarationOccurrence {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        source_text: &SourceText,
+        complete: SourceAnchor,
+        name: SourceAnchor,
+        colon: SourceAnchor,
+        value: SourceAnchor,
+        priority: Option<CssDeclarationPriorityEvidence>,
+        termination: CssDeclarationTermination,
+        placement: CssKeyframeDeclarationPlacement,
+    ) -> Result<Self, CssDeclarationContractError> {
+        let syntax = CssDeclarationSyntaxEvidence::new(
+            source_text,
+            complete,
+            name,
+            colon,
+            value,
+            priority,
+            termination,
+        )?;
+        Ok(Self { syntax, placement })
+    }
+
+    pub(crate) const fn complete(&self) -> &SourceAnchor {
+        self.syntax.complete()
+    }
+    pub(crate) const fn name(&self) -> &SourceAnchor {
+        self.syntax.name()
+    }
+    pub(crate) const fn colon(&self) -> &SourceAnchor {
+        self.syntax.colon()
+    }
+    pub(crate) const fn value(&self) -> &SourceAnchor {
+        self.syntax.value()
+    }
+    pub(crate) const fn priority(&self) -> Option<&CssDeclarationPriorityEvidence> {
+        self.syntax.priority()
+    }
+    pub(crate) const fn termination(&self) -> &CssDeclarationTermination {
+        self.syntax.termination()
+    }
+    pub(crate) const fn placement(&self) -> CssKeyframeDeclarationPlacement {
+        self.placement
+    }
+    pub(crate) fn source_order_key(&self) -> (usize, usize) {
+        self.syntax.source_order_key()
+    }
+}
+
+impl PartialEq for CssKeyframeDeclarationOccurrence {
+    fn eq(&self, other: &Self) -> bool {
+        self.syntax == other.syntax && self.placement == other.placement
+    }
+}
+impl Eq for CssKeyframeDeclarationOccurrence {}
+
+impl fmt::Debug for CssKeyframeDeclarationOccurrence {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CssKeyframeDeclarationOccurrence")
+            .field("source_id", &self.complete().source_id())
+            .field("complete", &self.complete().range())
+            .field("name", &self.name().range())
+            .field("colon", &self.colon().range())
+            .field("value", &self.value().range())
+            .field("priority", &self.priority())
+            .field("termination", &self.termination())
+            .field("placement", &self.placement)
+            .finish()
+    }
+}
+
 /// A page declaration's structural placement (#170): the owning
 /// [`CssParserContextKind::PageRuleBlock`](super::parser::context::CssParserContextKind::PageRuleBlock)
 /// context and its direct-item ordinal within that context, shared with

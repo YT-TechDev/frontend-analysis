@@ -5,7 +5,8 @@ use crate::{SourceAnchor, SourceId, SourceRange, SourceRangeError, SourceText};
 
 use super::super::declaration::{
     CssDeclarationContractError, CssDeclarationOccurrence, CssDeclarationTermination,
-    CssDescriptorOccurrence, CssPageDeclarationOccurrence, CssPageMarginDeclarationOccurrence,
+    CssDescriptorOccurrence, CssKeyframeDeclarationOccurrence, CssPageDeclarationOccurrence,
+    CssPageMarginDeclarationOccurrence,
 };
 use super::super::tokenizer::result::{
     CssTokenizerCompletion, CssTokenizerRunResult, CssTokenizerTermination,
@@ -64,6 +65,10 @@ pub(crate) struct CssParserRunResult {
     /// Retained #170 page-margin-declaration occurrences, counted against
     /// the same shared aggregate cap.
     page_margin_occurrences: Vec<CssPageMarginDeclarationOccurrence>,
+    /// Retained #171 keyframe declarations; semantically distinct from all
+    /// other declaration-shaped occurrence vectors while sharing the same
+    /// aggregate `DeclarationOccurrences` resource cap.
+    keyframe_occurrences: Vec<CssKeyframeDeclarationOccurrence>,
     parser_diagnostics: Vec<CssParserDiagnostic>,
     recovery_records: Vec<CssParserRecoveryEvidence>,
     unsupported_regions: Vec<CssParserUnsupportedRegion>,
@@ -81,6 +86,8 @@ pub(crate) struct CssParserRunResult {
 }
 
 impl CssParserRunResult {
+    /// Compatibility constructor for pre-#171 call sites whose result carries
+    /// no keyframe occurrences.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         source_text: &SourceText,
@@ -100,6 +107,47 @@ impl CssParserRunResult {
         termination: CssParserTermination,
         resources: CssParserResourceUsage,
     ) -> Result<Self, CssParserRunError> {
+        Self::new_with_keyframes(
+            source_text,
+            upstream_tokenizer_result,
+            occurrences,
+            descriptor_occurrences,
+            page_occurrences,
+            page_margin_occurrences,
+            Vec::new(),
+            parser_diagnostics,
+            recovery_records,
+            unsupported_regions,
+            discard_records,
+            context_records,
+            terminal,
+            execution_completion,
+            coverage,
+            termination,
+            resources,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_with_keyframes(
+        source_text: &SourceText,
+        upstream_tokenizer_result: CssTokenizerRunResult,
+        occurrences: Vec<CssDeclarationOccurrence>,
+        descriptor_occurrences: Vec<CssDescriptorOccurrence>,
+        page_occurrences: Vec<CssPageDeclarationOccurrence>,
+        page_margin_occurrences: Vec<CssPageMarginDeclarationOccurrence>,
+        keyframe_occurrences: Vec<CssKeyframeDeclarationOccurrence>,
+        parser_diagnostics: Vec<CssParserDiagnostic>,
+        recovery_records: Vec<CssParserRecoveryEvidence>,
+        unsupported_regions: Vec<CssParserUnsupportedRegion>,
+        discard_records: Vec<CssParserDiscardEvidence>,
+        context_records: Vec<CssParserContextRecord>,
+        terminal: SourceAnchor,
+        execution_completion: CssParserExecutionCompletion,
+        coverage: CssParserCoverage,
+        termination: CssParserTermination,
+        resources: CssParserResourceUsage,
+    ) -> Result<Self, CssParserRunError> {
         validate_run(
             source_text,
             &upstream_tokenizer_result,
@@ -107,6 +155,7 @@ impl CssParserRunResult {
             &descriptor_occurrences,
             &page_occurrences,
             &page_margin_occurrences,
+            &keyframe_occurrences,
             &parser_diagnostics,
             &recovery_records,
             &unsupported_regions,
@@ -125,6 +174,7 @@ impl CssParserRunResult {
             descriptor_occurrences,
             page_occurrences,
             page_margin_occurrences,
+            keyframe_occurrences,
             parser_diagnostics,
             recovery_records,
             unsupported_regions,
@@ -161,6 +211,11 @@ impl CssParserRunResult {
     /// source order.
     pub(crate) fn page_margin_occurrences(&self) -> &[CssPageMarginDeclarationOccurrence] {
         &self.page_margin_occurrences
+    }
+
+    /// Retained #171 keyframe declarations, in deterministic source order.
+    pub(crate) fn keyframe_occurrences(&self) -> &[CssKeyframeDeclarationOccurrence] {
+        &self.keyframe_occurrences
     }
 
     pub(crate) fn parser_diagnostics(&self) -> &[CssParserDiagnostic] {
@@ -281,6 +336,7 @@ pub(crate) enum CssParserRunEvidenceRole {
     DescriptorOccurrence { index: usize },
     PageOccurrence { index: usize },
     PageMarginOccurrence { index: usize },
+    KeyframeOccurrence { index: usize },
     Diagnostic { index: usize },
     Recovery { index: usize },
     Unsupported { index: usize },
@@ -763,6 +819,79 @@ pub(crate) enum CssParserInvariantViolation {
     PageMarginContextCarriesSelectorList {
         index: usize,
     },
+    /// A #171 keyframe declaration occurrence extends beyond the parser
+    /// terminal.
+    KeyframeOccurrenceBeyondTerminal {
+        index: usize,
+        end: usize,
+        terminal: usize,
+    },
+    /// Retained keyframe occurrences are not in strict non-overlapping source
+    /// order.
+    KeyframeOccurrenceOrderViolation {
+        index: usize,
+    },
+    /// A keyframe occurrence overlaps explicit unsupported evidence.
+    KeyframeOccurrenceOverlapsUnsupportedRegion {
+        index: usize,
+        unsupported_index: usize,
+    },
+    /// `OmittedAtEndOfInput` on a keyframe declaration requires upstream true
+    /// EOF.
+    KeyframeOmittedAtEndOfInputRequiresUpstreamComplete {
+        index: usize,
+    },
+    KeyframePlacementUnknownContext {
+        index: usize,
+    },
+    KeyframeOutsidePlacementContextBody {
+        index: usize,
+    },
+    KeyframeOwnerMustBeKeyframeContext {
+        index: usize,
+    },
+    DeclarationOwnerMustNotBeKeyframesContext {
+        index: usize,
+    },
+    DeclarationOwnerMustNotBeKeyframeContext {
+        index: usize,
+    },
+    MissingKeyframesContextEvidence,
+    MissingKeyframeContextEvidence,
+    KeyframeContextRequiresKeyframesParent,
+    KeyframeContextCannotHaveChildren,
+    KeyframesContextRequiresRootOrGroupOnlyAncestry,
+    KeyframesContextHasInvalidParent {
+        index: usize,
+    },
+    KeyframesContextHasInvalidChild {
+        index: usize,
+    },
+    KeyframeParentMustBeKeyframesContext {
+        index: usize,
+    },
+    KeyframeContextHasChild {
+        index: usize,
+    },
+    KeyframesContextEvidenceMismatch {
+        index: usize,
+    },
+    KeyframeContextEvidenceMismatch {
+        index: usize,
+    },
+    UnqualifiedKeyframeBlockUnknownOwnerContext {
+        index: usize,
+    },
+    UnqualifiedKeyframeBlockOutsideOwnerBody {
+        index: usize,
+    },
+    UnqualifiedKeyframeBlockOwnerMustBeKeyframesContext {
+        index: usize,
+    },
+    UnqualifiedKeyframeBlockOutsideKeyframes,
+    KeyframeDeclarationOutsideKeyframeContext,
+    UnreachableKeyframeNestedRuleTrigger,
+
     /// #170's page/page-margin-block malformed-item scan structurally
     /// cannot produce a nested-rule trigger, mirroring
     /// [`Self::UnreachableDescriptorNestedRuleTrigger`].
@@ -799,6 +928,7 @@ fn validate_run(
     descriptor_occurrences: &[CssDescriptorOccurrence],
     page_occurrences: &[CssPageDeclarationOccurrence],
     page_margin_occurrences: &[CssPageMarginDeclarationOccurrence],
+    keyframe_occurrences: &[CssKeyframeDeclarationOccurrence],
     parser_diagnostics: &[CssParserDiagnostic],
     recovery_records: &[CssParserRecoveryEvidence],
     unsupported_regions: &[CssParserUnsupportedRegion],
@@ -859,6 +989,13 @@ fn validate_run(
         terminal_offset,
     )?;
     validate_page_margin_occurrence_lifecycle(upstream, page_margin_occurrences)?;
+    validate_keyframe_occurrences(
+        expected_source,
+        keyframe_occurrences,
+        unsupported_regions,
+        terminal_offset,
+    )?;
+    validate_keyframe_occurrence_lifecycle(upstream, keyframe_occurrences)?;
     validate_diagnostics(expected_source, parser_diagnostics, terminal_offset)?;
     validate_recovery(expected_source, recovery_records, terminal_offset)?;
     validate_recovery_lifecycle(upstream, recovery_records)?;
@@ -886,6 +1023,7 @@ fn validate_run(
         descriptor_occurrences,
         page_occurrences,
         page_margin_occurrences,
+        keyframe_occurrences,
         unsupported_regions,
         context_records,
     )?;
@@ -895,7 +1033,8 @@ fn validate_run(
         occurrences.len()
             + descriptor_occurrences.len()
             + page_occurrences.len()
-            + page_margin_occurrences.len(),
+            + page_margin_occurrences.len()
+            + keyframe_occurrences.len(),
         parser_diagnostics.len(),
         recovery_records.len(),
         unsupported_regions.len(),
@@ -987,6 +1126,7 @@ fn validate_contexts(
 
         validate_nearest_qualified_ancestor(context_records, index, record)?;
         validate_page_margin_parent(context_records, index, record)?;
+        validate_keyframes_context_shape(context_records, index, record)?;
 
         let ordinal = record.item_ordinal().value();
         if let Some(&previous_ordinal) = last_sibling_ordinal.get(&scope_key) {
@@ -1126,6 +1266,19 @@ fn validate_nearest_qualified_ancestor(
                         index,
                     });
                 }
+                CssParserContextKind::KeyframesRuleBlock => {
+                    if !matches!(record.kind(), CssParserContextKind::KeyframeBlock) {
+                        return invariant(
+                            CssParserInvariantViolation::KeyframesContextHasInvalidChild { index },
+                        );
+                    }
+                    None
+                }
+                CssParserContextKind::KeyframeBlock => {
+                    return invariant(CssParserInvariantViolation::KeyframeContextHasChild {
+                        index,
+                    });
+                }
             }
         }
     };
@@ -1169,6 +1322,74 @@ fn validate_page_margin_parent(
     Ok(())
 }
 
+/// Validates #171 context-family parent and evidence shape independently
+/// from producer construction. `KeyframesRuleBlock` is root-owned or may be
+/// parented only by a group-rule lineage with no qualified-rule ancestry;
+/// `KeyframeBlock` must be a direct child of `KeyframesRuleBlock`.
+fn validate_keyframes_context_shape(
+    context_records: &[CssParserContextRecord],
+    index: usize,
+    record: &CssParserContextRecord,
+) -> Result<(), CssParserRunError> {
+    match record.kind() {
+        CssParserContextKind::KeyframesRuleBlock => {
+            if record.at_keyword().is_none()
+                || record.keyframes_name().is_none()
+                || record.keyframe_selector_list().is_some()
+                || record.descriptor_property_name().is_some()
+                || record.page_selector_list().is_some()
+                || record.nearest_qualified_ancestor().is_some()
+            {
+                return invariant(
+                    CssParserInvariantViolation::KeyframesContextEvidenceMismatch { index },
+                );
+            }
+            if let Some(parent_id) = record.parent() {
+                let parent = &context_records[parent_id.index()];
+                if !matches!(parent.kind(), CssParserContextKind::GroupRuleBlock(_))
+                    || parent.nearest_qualified_ancestor().is_some()
+                {
+                    return invariant(
+                        CssParserInvariantViolation::KeyframesContextHasInvalidParent { index },
+                    );
+                }
+            }
+        }
+        CssParserContextKind::KeyframeBlock => {
+            if record.at_keyword().is_some()
+                || record.keyframes_name().is_some()
+                || record.keyframe_selector_list().is_none()
+                || record.descriptor_property_name().is_some()
+                || record.page_selector_list().is_some()
+                || record.nearest_qualified_ancestor().is_some()
+            {
+                return invariant(
+                    CssParserInvariantViolation::KeyframeContextEvidenceMismatch { index },
+                );
+            }
+            let valid_parent = record.parent().is_some_and(|parent_id| {
+                matches!(
+                    context_records[parent_id.index()].kind(),
+                    CssParserContextKind::KeyframesRuleBlock
+                )
+            });
+            if !valid_parent {
+                return invariant(
+                    CssParserInvariantViolation::KeyframeParentMustBeKeyframesContext { index },
+                );
+            }
+        }
+        _ => {
+            if record.keyframes_name().is_some() || record.keyframe_selector_list().is_some() {
+                return invariant(
+                    CssParserInvariantViolation::KeyframesContextEvidenceMismatch { index },
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 /// One materialized direct block-content item's ordering data, keyed by its
 /// owning context for [`validate_declaration_placement`]: a declaration
 /// (carrying its `occurrences` index and run ordinal), a retained child
@@ -1198,6 +1419,10 @@ enum DirectItem {
     PageMarginDeclaration {
         index: usize,
     },
+    KeyframeDeclaration {
+        index: usize,
+    },
+    UnqualifiedKeyframeBlock,
 }
 
 /// Reconciles declaration, descriptor-occurrence, and nested-unsupported-
@@ -1220,6 +1445,7 @@ fn validate_declaration_placement(
     descriptor_occurrences: &[CssDescriptorOccurrence],
     page_occurrences: &[CssPageDeclarationOccurrence],
     page_margin_occurrences: &[CssPageMarginDeclarationOccurrence],
+    keyframe_occurrences: &[CssKeyframeDeclarationOccurrence],
     unsupported_regions: &[CssParserUnsupportedRegion],
     context_records: &[CssParserContextRecord],
 ) -> Result<(), CssParserRunError> {
@@ -1249,6 +1475,16 @@ fn validate_declaration_placement(
         if matches!(context.kind(), CssParserContextKind::PageMarginRuleBlock(_)) {
             return invariant(
                 CssParserInvariantViolation::DeclarationOwnerMustNotBePageMarginContext { index },
+            );
+        }
+        if matches!(context.kind(), CssParserContextKind::KeyframesRuleBlock) {
+            return invariant(
+                CssParserInvariantViolation::DeclarationOwnerMustNotBeKeyframesContext { index },
+            );
+        }
+        if matches!(context.kind(), CssParserContextKind::KeyframeBlock) {
+            return invariant(
+                CssParserInvariantViolation::DeclarationOwnerMustNotBeKeyframeContext { index },
             );
         }
         let complete = occurrence.complete().range();
@@ -1367,6 +1603,37 @@ fn validate_declaration_placement(
         ));
     }
 
+    for (index, occurrence) in keyframe_occurrences.iter().enumerate() {
+        let placement = occurrence.placement();
+        let context_index = placement.context_id().index();
+        let context = context_records.get(context_index).ok_or(
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::KeyframePlacementUnknownContext { index },
+            ),
+        )?;
+        if !matches!(context.kind(), CssParserContextKind::KeyframeBlock) {
+            return invariant(
+                CssParserInvariantViolation::KeyframeOwnerMustBeKeyframeContext { index },
+            );
+        }
+        let complete = occurrence.complete().range();
+        let body = context.body().range();
+        if occurrence.complete().source_id() != context.body().source_id()
+            || complete.start() < body.start()
+            || complete.end() > body.end()
+        {
+            return invariant(
+                CssParserInvariantViolation::KeyframeOutsidePlacementContextBody { index },
+            );
+        }
+        items_by_context.entry(context_index).or_default().push((
+            placement.item_ordinal().value(),
+            complete.start(),
+            complete.end(),
+            DirectItem::KeyframeDeclaration { index },
+        ));
+    }
+
     for record in context_records {
         if let Some(parent_id) = record.parent() {
             items_by_context
@@ -1410,6 +1677,44 @@ fn validate_declaration_placement(
                 range.start(),
                 range.end(),
                 DirectItem::NestedUnsupportedAtRule,
+            ));
+        }
+        if let CssParserUnsupportedRegion::UnqualifiedKeyframeBlock {
+            complete,
+            context_id,
+            item_ordinal,
+        } = region
+        {
+            let context_index = context_id.index();
+            let context = context_records.get(context_index).ok_or(
+                CssParserRunError::InternalInvariantFailure(
+                    CssParserInvariantViolation::UnqualifiedKeyframeBlockUnknownOwnerContext {
+                        index,
+                    },
+                ),
+            )?;
+            if !matches!(context.kind(), CssParserContextKind::KeyframesRuleBlock) {
+                return invariant(
+                    CssParserInvariantViolation::UnqualifiedKeyframeBlockOwnerMustBeKeyframesContext {
+                        index,
+                    },
+                );
+            }
+            let range = complete.range();
+            let body = context.body().range();
+            if complete.source_id() != context.body().source_id()
+                || range.start() < body.start()
+                || range.end() > body.end()
+            {
+                return invariant(
+                    CssParserInvariantViolation::UnqualifiedKeyframeBlockOutsideOwnerBody { index },
+                );
+            }
+            items_by_context.entry(context_index).or_default().push((
+                item_ordinal.value(),
+                range.start(),
+                range.end(),
+                DirectItem::UnqualifiedKeyframeBlock,
             ));
         }
     }
@@ -1472,7 +1777,9 @@ fn validate_declaration_placement(
                 | DirectItem::NestedUnsupportedAtRule
                 | DirectItem::Descriptor { .. }
                 | DirectItem::PageDeclaration { .. }
-                | DirectItem::PageMarginDeclaration { .. } => {
+                | DirectItem::PageMarginDeclaration { .. }
+                | DirectItem::KeyframeDeclaration { .. }
+                | DirectItem::UnqualifiedKeyframeBlock => {
                     current_run = None;
                 }
             }
@@ -1897,6 +2204,73 @@ fn validate_page_margin_occurrence_lifecycle(
         ) {
             return invariant(
                 CssParserInvariantViolation::PageMarginOmittedAtEndOfInputRequiresUpstreamComplete {
+                    index,
+                },
+            );
+        }
+    }
+    Ok(())
+}
+
+fn validate_keyframe_occurrences(
+    expected_source: SourceId,
+    keyframe_occurrences: &[CssKeyframeDeclarationOccurrence],
+    unsupported_regions: &[CssParserUnsupportedRegion],
+    terminal_offset: usize,
+) -> Result<(), CssParserRunError> {
+    let mut previous_end: Option<usize> = None;
+    for (index, occurrence) in keyframe_occurrences.iter().enumerate() {
+        let complete = occurrence.complete();
+        require_source(
+            expected_source,
+            complete,
+            CssParserRunEvidenceRole::KeyframeOccurrence { index },
+        )?;
+        if complete.range().end() > terminal_offset {
+            return invariant(
+                CssParserInvariantViolation::KeyframeOccurrenceBeyondTerminal {
+                    index,
+                    end: complete.range().end(),
+                    terminal: terminal_offset,
+                },
+            );
+        }
+        if let Some(previous_end) = previous_end
+            && complete.range().start() < previous_end
+        {
+            return invariant(
+                CssParserInvariantViolation::KeyframeOccurrenceOrderViolation { index },
+            );
+        }
+        previous_end = Some(complete.range().end());
+        for (unsupported_index, region) in unsupported_regions.iter().enumerate() {
+            if ranges_overlap(complete.range(), region.region().range()) {
+                return invariant(
+                    CssParserInvariantViolation::KeyframeOccurrenceOverlapsUnsupportedRegion {
+                        index,
+                        unsupported_index,
+                    },
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_keyframe_occurrence_lifecycle(
+    upstream: &CssTokenizerRunResult,
+    keyframe_occurrences: &[CssKeyframeDeclarationOccurrence],
+) -> Result<(), CssParserRunError> {
+    if upstream_ended_at_true_eof(upstream) {
+        return Ok(());
+    }
+    for (index, occurrence) in keyframe_occurrences.iter().enumerate() {
+        if matches!(
+            occurrence.termination(),
+            CssDeclarationTermination::OmittedAtEndOfInput { .. }
+        ) {
+            return invariant(
+                CssParserInvariantViolation::KeyframeOmittedAtEndOfInputRequiresUpstreamComplete {
                     index,
                 },
             );
