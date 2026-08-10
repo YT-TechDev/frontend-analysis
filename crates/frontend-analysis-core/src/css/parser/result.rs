@@ -5,7 +5,7 @@ use crate::{SourceAnchor, SourceId, SourceRange, SourceRangeError, SourceText};
 
 use super::super::declaration::{
     CssDeclarationContractError, CssDeclarationOccurrence, CssDeclarationTermination,
-    CssDescriptorOccurrence,
+    CssDescriptorOccurrence, CssPageDeclarationOccurrence, CssPageMarginDeclarationOccurrence,
 };
 use super::super::tokenizer::result::{
     CssTokenizerCompletion, CssTokenizerRunResult, CssTokenizerTermination,
@@ -56,6 +56,14 @@ pub(crate) struct CssParserRunResult {
     /// `occurrences`, counted against the shared `DeclarationOccurrences`
     /// aggregate resource cap, never merged into that vector.
     descriptor_occurrences: Vec<CssDescriptorOccurrence>,
+    /// Retained #170 page-declaration occurrences: semantically distinct
+    /// from `occurrences`/`descriptor_occurrences`, counted against the same
+    /// shared `DeclarationOccurrences` aggregate resource cap, never merged
+    /// into either vector.
+    page_occurrences: Vec<CssPageDeclarationOccurrence>,
+    /// Retained #170 page-margin-declaration occurrences, counted against
+    /// the same shared aggregate cap.
+    page_margin_occurrences: Vec<CssPageMarginDeclarationOccurrence>,
     parser_diagnostics: Vec<CssParserDiagnostic>,
     recovery_records: Vec<CssParserRecoveryEvidence>,
     unsupported_regions: Vec<CssParserUnsupportedRegion>,
@@ -79,6 +87,8 @@ impl CssParserRunResult {
         upstream_tokenizer_result: CssTokenizerRunResult,
         occurrences: Vec<CssDeclarationOccurrence>,
         descriptor_occurrences: Vec<CssDescriptorOccurrence>,
+        page_occurrences: Vec<CssPageDeclarationOccurrence>,
+        page_margin_occurrences: Vec<CssPageMarginDeclarationOccurrence>,
         parser_diagnostics: Vec<CssParserDiagnostic>,
         recovery_records: Vec<CssParserRecoveryEvidence>,
         unsupported_regions: Vec<CssParserUnsupportedRegion>,
@@ -95,6 +105,8 @@ impl CssParserRunResult {
             &upstream_tokenizer_result,
             &occurrences,
             &descriptor_occurrences,
+            &page_occurrences,
+            &page_margin_occurrences,
             &parser_diagnostics,
             &recovery_records,
             &unsupported_regions,
@@ -111,6 +123,8 @@ impl CssParserRunResult {
             upstream_tokenizer_result,
             occurrences,
             descriptor_occurrences,
+            page_occurrences,
+            page_margin_occurrences,
             parser_diagnostics,
             recovery_records,
             unsupported_regions,
@@ -135,6 +149,18 @@ impl CssParserRunResult {
     /// Retained #169 descriptor occurrences, in deterministic source order.
     pub(crate) fn descriptor_occurrences(&self) -> &[CssDescriptorOccurrence] {
         &self.descriptor_occurrences
+    }
+
+    /// Retained #170 page-declaration occurrences, in deterministic source
+    /// order.
+    pub(crate) fn page_occurrences(&self) -> &[CssPageDeclarationOccurrence] {
+        &self.page_occurrences
+    }
+
+    /// Retained #170 page-margin-declaration occurrences, in deterministic
+    /// source order.
+    pub(crate) fn page_margin_occurrences(&self) -> &[CssPageMarginDeclarationOccurrence] {
+        &self.page_margin_occurrences
     }
 
     pub(crate) fn parser_diagnostics(&self) -> &[CssParserDiagnostic] {
@@ -253,6 +279,8 @@ pub(crate) enum CssParserRunEvidenceRole {
     Terminal,
     Occurrence { index: usize },
     DescriptorOccurrence { index: usize },
+    PageOccurrence { index: usize },
+    PageMarginOccurrence { index: usize },
     Diagnostic { index: usize },
     Recovery { index: usize },
     Unsupported { index: usize },
@@ -599,6 +627,149 @@ pub(crate) enum CssParserInvariantViolation {
     /// ordinary malformed content, never a context boundary); reaching this
     /// branch is an internal invariant failure, not a panic.
     UnreachableDescriptorNestedRuleTrigger,
+    /// A #170 page-declaration occurrence's complete range extends beyond
+    /// the parser run's own terminal.
+    PageOccurrenceBeyondTerminal {
+        index: usize,
+        end: usize,
+        terminal: usize,
+    },
+    /// Retained #170 page-declaration occurrences are not in strict,
+    /// non-overlapping source order.
+    PageOccurrenceOrderViolation {
+        index: usize,
+    },
+    /// A #170 page-declaration occurrence's complete range overlaps a
+    /// retained unsupported region.
+    PageOccurrenceOverlapsUnsupportedRegion {
+        index: usize,
+        unsupported_index: usize,
+    },
+    /// A #170 page-declaration occurrence's `OmittedAtEndOfInput`
+    /// termination requires the upstream tokenizer to have completed at
+    /// true `EndOfInput`.
+    PageOmittedAtEndOfInputRequiresUpstreamComplete {
+        index: usize,
+    },
+    /// A #170 page-declaration occurrence's placement referenced a
+    /// `CssParserContextId` with no corresponding retained context record.
+    PagePlacementUnknownContext {
+        index: usize,
+    },
+    /// A #170 page-declaration occurrence's complete source range is not
+    /// contained in its placement context's retained `body`.
+    PageOutsidePlacementContextBody {
+        index: usize,
+    },
+    /// A #170 page-declaration occurrence's owning context is not a
+    /// `PageRuleBlock`.
+    PageOwnerMustBePageContext {
+        index: usize,
+    },
+    /// A #170 page-margin-declaration occurrence's complete range extends
+    /// beyond the parser run's own terminal.
+    PageMarginOccurrenceBeyondTerminal {
+        index: usize,
+        end: usize,
+        terminal: usize,
+    },
+    /// Retained #170 page-margin-declaration occurrences are not in strict,
+    /// non-overlapping source order.
+    PageMarginOccurrenceOrderViolation {
+        index: usize,
+    },
+    /// A #170 page-margin-declaration occurrence's complete range overlaps
+    /// a retained unsupported region.
+    PageMarginOccurrenceOverlapsUnsupportedRegion {
+        index: usize,
+        unsupported_index: usize,
+    },
+    /// A #170 page-margin-declaration occurrence's `OmittedAtEndOfInput`
+    /// termination requires the upstream tokenizer to have completed at
+    /// true `EndOfInput`.
+    PageMarginOmittedAtEndOfInputRequiresUpstreamComplete {
+        index: usize,
+    },
+    /// A #170 page-margin-declaration occurrence's placement referenced a
+    /// `CssParserContextId` with no corresponding retained context record.
+    PageMarginPlacementUnknownContext {
+        index: usize,
+    },
+    /// A #170 page-margin-declaration occurrence's complete source range is
+    /// not contained in its placement context's retained `body`.
+    PageMarginOutsidePlacementContextBody {
+        index: usize,
+    },
+    /// A #170 page-margin-declaration occurrence's owning context is not a
+    /// `PageMarginRuleBlock`.
+    PageMarginOwnerMustBePageMarginContext {
+        index: usize,
+    },
+    /// An ordinary declaration's owning context is a `PageRuleBlock`:
+    /// `@page` never produces ordinary `CssDeclarationOccurrence` evidence
+    /// (#170, mirroring #169's `DeclarationOwnerMustNotBeDescriptorContext`).
+    DeclarationOwnerMustNotBePageContext {
+        index: usize,
+    },
+    /// An ordinary declaration's owning context is a `PageMarginRuleBlock`.
+    DeclarationOwnerMustNotBePageMarginContext {
+        index: usize,
+    },
+    /// A `PageRuleBlock` active-context frame reached record finalization
+    /// without its at-keyword/decoded evidence retained alongside it
+    /// (#170).
+    MissingPageContextEvidence,
+    /// A `PageMarginRuleBlock` active-context frame reached record
+    /// finalization without its parent/at-keyword/decoded evidence retained
+    /// alongside it (#170).
+    MissingPageMarginContextEvidence,
+    /// A `PageRuleBlock` identity was attempted while nested inside another
+    /// active context, or a finalized `PageRuleBlock` record retained a
+    /// non-`None` parent: `PageRuleBlock` is root-owned in #170.
+    PageContextCannotBeNested,
+    /// A `PageMarginRuleBlock` identity was attempted with no active parent
+    /// context: page-margin contexts are never top-level in #170.
+    PageMarginContextCannotBeTopLevel,
+    /// A `PageMarginRuleBlock` identity was attempted with an active parent
+    /// whose own kind is not `PageRuleBlock` (#170).
+    PageMarginContextRequiresPageParent,
+    /// A new child context was attempted while the innermost active context
+    /// was a `PageMarginRuleBlock`: `PageMarginRuleBlock` never has children
+    /// in #170.
+    PageMarginContextCannotHaveChildren,
+    /// A retained context's parent is a `PageRuleBlock` context, but the
+    /// child's own kind is not `PageMarginRuleBlock` (#170): the only
+    /// context family #170 ever enters from a `PageRuleBlock` is
+    /// `PageMarginRuleBlock`.
+    PageContextHasNonPageMarginChild {
+        index: usize,
+    },
+    /// A retained context's parent is a `PageMarginRuleBlock` context
+    /// (#170): `PageMarginRuleBlock` never has children.
+    PageMarginContextHasChild {
+        index: usize,
+    },
+    /// A retained `PageMarginRuleBlock` record's parent either does not
+    /// exist or is not itself a `PageRuleBlock` (#170): proved
+    /// independently from the retained parent table, mirroring
+    /// [`Self::NearestQualifiedAncestorInvalidReference`]'s refusal to trust
+    /// producer-provided ancestry without checking it here.
+    PageMarginParentMustBePageContext {
+        index: usize,
+    },
+    /// A retained `PageMarginRuleBlock` record carries non-`None`
+    /// `page_selector_list` evidence (#170): only a `PageRuleBlock` may ever
+    /// carry a selector-list envelope.
+    PageMarginContextCarriesSelectorList {
+        index: usize,
+    },
+    /// #170's page/page-margin-block malformed-item scan structurally
+    /// cannot produce a nested-rule trigger, mirroring
+    /// [`Self::UnreachableDescriptorNestedRuleTrigger`].
+    UnreachablePageNestedRuleTrigger,
+    /// Mirrors [`Self::UnreachablePageNestedRuleTrigger`] for a
+    /// `PageMarginRuleBlock` body.
+    UnreachablePageMarginNestedRuleTrigger,
 }
 
 /// Computes `current + additional` for one [`CssParserResourceKind`] using
@@ -626,6 +797,8 @@ fn validate_run(
     upstream: &CssTokenizerRunResult,
     occurrences: &[CssDeclarationOccurrence],
     descriptor_occurrences: &[CssDescriptorOccurrence],
+    page_occurrences: &[CssPageDeclarationOccurrence],
+    page_margin_occurrences: &[CssPageMarginDeclarationOccurrence],
     parser_diagnostics: &[CssParserDiagnostic],
     recovery_records: &[CssParserRecoveryEvidence],
     unsupported_regions: &[CssParserUnsupportedRegion],
@@ -672,6 +845,20 @@ fn validate_run(
         terminal_offset,
     )?;
     validate_descriptor_occurrence_lifecycle(upstream, descriptor_occurrences)?;
+    validate_page_occurrences(
+        expected_source,
+        page_occurrences,
+        unsupported_regions,
+        terminal_offset,
+    )?;
+    validate_page_occurrence_lifecycle(upstream, page_occurrences)?;
+    validate_page_margin_occurrences(
+        expected_source,
+        page_margin_occurrences,
+        unsupported_regions,
+        terminal_offset,
+    )?;
+    validate_page_margin_occurrence_lifecycle(upstream, page_margin_occurrences)?;
     validate_diagnostics(expected_source, parser_diagnostics, terminal_offset)?;
     validate_recovery(expected_source, recovery_records, terminal_offset)?;
     validate_recovery_lifecycle(upstream, recovery_records)?;
@@ -697,13 +884,18 @@ fn validate_run(
     validate_declaration_placement(
         occurrences,
         descriptor_occurrences,
+        page_occurrences,
+        page_margin_occurrences,
         unsupported_regions,
         context_records,
     )?;
 
     validate_resource_counts(
         resources,
-        occurrences.len() + descriptor_occurrences.len(),
+        occurrences.len()
+            + descriptor_occurrences.len()
+            + page_occurrences.len()
+            + page_margin_occurrences.len(),
         parser_diagnostics.len(),
         recovery_records.len(),
         unsupported_regions.len(),
@@ -794,6 +986,7 @@ fn validate_contexts(
         depths.push(depth);
 
         validate_nearest_qualified_ancestor(context_records, index, record)?;
+        validate_page_margin_parent(context_records, index, record)?;
 
         let ordinal = record.item_ordinal().value();
         if let Some(&previous_ordinal) = last_sibling_ordinal.get(&scope_key) {
@@ -915,6 +1108,24 @@ fn validate_nearest_qualified_ancestor(
                         index,
                     });
                 }
+                CssParserContextKind::PageRuleBlock => {
+                    // #170: the only context family ever entered from a
+                    // `PageRuleBlock` is `PageMarginRuleBlock`, and Page
+                    // semantic qualification is never inferred from
+                    // group-rule ancestry, so the expected value is always
+                    // `None` here regardless of the child's own kind.
+                    if !matches!(record.kind(), CssParserContextKind::PageMarginRuleBlock(_)) {
+                        return invariant(
+                            CssParserInvariantViolation::PageContextHasNonPageMarginChild { index },
+                        );
+                    }
+                    None
+                }
+                CssParserContextKind::PageMarginRuleBlock(_) => {
+                    return invariant(CssParserInvariantViolation::PageMarginContextHasChild {
+                        index,
+                    });
+                }
             }
         }
     };
@@ -922,6 +1133,39 @@ fn validate_nearest_qualified_ancestor(
         return invariant(CssParserInvariantViolation::NearestQualifiedAncestorMismatch { index });
     }
 
+    Ok(())
+}
+
+/// Validates one context record's Page-family parent shape (#170),
+/// independent of [`validate_nearest_qualified_ancestor`]'s own concern: a
+/// `PageMarginRuleBlock` record's parent must exist and must itself be a
+/// `PageRuleBlock`, proved directly from the retained parent table rather
+/// than inferred transitively through nearest-qualified-ancestor agreement
+/// (which alone cannot distinguish a missing/wrong-kind parent whenever both
+/// sides happen to already carry `None`). Also proves a `PageMarginRuleBlock`
+/// record never carries `page_selector_list` evidence.
+fn validate_page_margin_parent(
+    context_records: &[CssParserContextRecord],
+    index: usize,
+    record: &CssParserContextRecord,
+) -> Result<(), CssParserRunError> {
+    if !matches!(record.kind(), CssParserContextKind::PageMarginRuleBlock(_)) {
+        return Ok(());
+    }
+    if record.page_selector_list().is_some() {
+        return invariant(
+            CssParserInvariantViolation::PageMarginContextCarriesSelectorList { index },
+        );
+    }
+    let valid_parent = record.parent().is_some_and(|parent_id| {
+        matches!(
+            context_records[parent_id.index()].kind(),
+            CssParserContextKind::PageRuleBlock
+        )
+    });
+    if !valid_parent {
+        return invariant(CssParserInvariantViolation::PageMarginParentMustBePageContext { index });
+    }
     Ok(())
 }
 
@@ -934,10 +1178,26 @@ fn validate_nearest_qualified_ancestor(
 /// `<declaration-list>` admits no child rule whose interleaving requires the
 /// style-rule declaration-run model).
 enum DirectItem {
-    Declaration { index: usize, run_ordinal: usize },
+    Declaration {
+        index: usize,
+        run_ordinal: usize,
+    },
     ChildContext,
     NestedUnsupportedAtRule,
-    Descriptor { index: usize },
+    Descriptor {
+        index: usize,
+    },
+    /// A #170 page-declaration occurrence, owned by a `PageRuleBlock`. Never
+    /// participates in run validation (Amendment A): carries no run
+    /// ordinal, mirroring [`Self::Descriptor`].
+    PageDeclaration {
+        index: usize,
+    },
+    /// A #170 page-margin-declaration occurrence, owned by a
+    /// `PageMarginRuleBlock`. Never participates in run validation.
+    PageMarginDeclaration {
+        index: usize,
+    },
 }
 
 /// Reconciles declaration, descriptor-occurrence, and nested-unsupported-
@@ -958,6 +1218,8 @@ enum DirectItem {
 fn validate_declaration_placement(
     occurrences: &[CssDeclarationOccurrence],
     descriptor_occurrences: &[CssDescriptorOccurrence],
+    page_occurrences: &[CssPageDeclarationOccurrence],
+    page_margin_occurrences: &[CssPageMarginDeclarationOccurrence],
     unsupported_regions: &[CssParserUnsupportedRegion],
     context_records: &[CssParserContextRecord],
 ) -> Result<(), CssParserRunError> {
@@ -977,6 +1239,16 @@ fn validate_declaration_placement(
         if matches!(context.kind(), CssParserContextKind::DescriptorRuleBlock(_)) {
             return invariant(
                 CssParserInvariantViolation::DeclarationOwnerMustNotBeDescriptorContext { index },
+            );
+        }
+        if matches!(context.kind(), CssParserContextKind::PageRuleBlock) {
+            return invariant(
+                CssParserInvariantViolation::DeclarationOwnerMustNotBePageContext { index },
+            );
+        }
+        if matches!(context.kind(), CssParserContextKind::PageMarginRuleBlock(_)) {
+            return invariant(
+                CssParserInvariantViolation::DeclarationOwnerMustNotBePageMarginContext { index },
             );
         }
         let complete = occurrence.complete().range();
@@ -1030,6 +1302,68 @@ fn validate_declaration_placement(
             complete.start(),
             complete.end(),
             DirectItem::Descriptor { index },
+        ));
+    }
+
+    for (index, occurrence) in page_occurrences.iter().enumerate() {
+        let placement = occurrence.placement();
+        let context_index = placement.context_id().index();
+        let context = context_records.get(context_index).ok_or(
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::PagePlacementUnknownContext { index },
+            ),
+        )?;
+        if !matches!(context.kind(), CssParserContextKind::PageRuleBlock) {
+            return invariant(CssParserInvariantViolation::PageOwnerMustBePageContext { index });
+        }
+        let complete = occurrence.complete().range();
+        let body = context.body().range();
+        if occurrence.complete().source_id() != context.body().source_id()
+            || complete.start() < body.start()
+            || complete.end() > body.end()
+        {
+            return invariant(
+                CssParserInvariantViolation::PageOutsidePlacementContextBody { index },
+            );
+        }
+
+        items_by_context.entry(context_index).or_default().push((
+            placement.item_ordinal().value(),
+            complete.start(),
+            complete.end(),
+            DirectItem::PageDeclaration { index },
+        ));
+    }
+
+    for (index, occurrence) in page_margin_occurrences.iter().enumerate() {
+        let placement = occurrence.placement();
+        let context_index = placement.context_id().index();
+        let context = context_records.get(context_index).ok_or(
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::PageMarginPlacementUnknownContext { index },
+            ),
+        )?;
+        if !matches!(context.kind(), CssParserContextKind::PageMarginRuleBlock(_)) {
+            return invariant(
+                CssParserInvariantViolation::PageMarginOwnerMustBePageMarginContext { index },
+            );
+        }
+        let complete = occurrence.complete().range();
+        let body = context.body().range();
+        if occurrence.complete().source_id() != context.body().source_id()
+            || complete.start() < body.start()
+            || complete.end() > body.end()
+        {
+            return invariant(
+                CssParserInvariantViolation::PageMarginOutsidePlacementContextBody { index },
+            );
+        }
+
+        items_by_context.entry(context_index).or_default().push((
+            placement.item_ordinal().value(),
+            complete.start(),
+            complete.end(),
+            DirectItem::PageMarginDeclaration { index },
         ));
     }
 
@@ -1136,7 +1470,9 @@ fn validate_declaration_placement(
                 },
                 DirectItem::ChildContext
                 | DirectItem::NestedUnsupportedAtRule
-                | DirectItem::Descriptor { .. } => {
+                | DirectItem::Descriptor { .. }
+                | DirectItem::PageDeclaration { .. }
+                | DirectItem::PageMarginDeclaration { .. } => {
                     current_run = None;
                 }
             }
@@ -1429,6 +1765,146 @@ fn validate_descriptor_occurrence_lifecycle(
     Ok(())
 }
 
+/// Mirrors [`validate_descriptor_occurrences`] for #170 page-declaration
+/// occurrences.
+fn validate_page_occurrences(
+    expected_source: SourceId,
+    page_occurrences: &[CssPageDeclarationOccurrence],
+    unsupported_regions: &[CssParserUnsupportedRegion],
+    terminal_offset: usize,
+) -> Result<(), CssParserRunError> {
+    let mut previous_end: Option<usize> = None;
+    for (index, occurrence) in page_occurrences.iter().enumerate() {
+        let complete = occurrence.complete();
+        require_source(
+            expected_source,
+            complete,
+            CssParserRunEvidenceRole::PageOccurrence { index },
+        )?;
+        if complete.range().end() > terminal_offset {
+            return invariant(CssParserInvariantViolation::PageOccurrenceBeyondTerminal {
+                index,
+                end: complete.range().end(),
+                terminal: terminal_offset,
+            });
+        }
+        if let Some(previous_end) = previous_end
+            && complete.range().start() < previous_end
+        {
+            return invariant(CssParserInvariantViolation::PageOccurrenceOrderViolation { index });
+        }
+        previous_end = Some(complete.range().end());
+
+        for (unsupported_index, region) in unsupported_regions.iter().enumerate() {
+            if ranges_overlap(complete.range(), region.region().range()) {
+                return invariant(
+                    CssParserInvariantViolation::PageOccurrenceOverlapsUnsupportedRegion {
+                        index,
+                        unsupported_index,
+                    },
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Mirrors [`validate_descriptor_occurrence_lifecycle`] for #170
+/// page-declaration occurrences.
+fn validate_page_occurrence_lifecycle(
+    upstream: &CssTokenizerRunResult,
+    page_occurrences: &[CssPageDeclarationOccurrence],
+) -> Result<(), CssParserRunError> {
+    if upstream_ended_at_true_eof(upstream) {
+        return Ok(());
+    }
+    for (index, occurrence) in page_occurrences.iter().enumerate() {
+        if matches!(
+            occurrence.termination(),
+            CssDeclarationTermination::OmittedAtEndOfInput { .. }
+        ) {
+            return invariant(
+                CssParserInvariantViolation::PageOmittedAtEndOfInputRequiresUpstreamComplete {
+                    index,
+                },
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Mirrors [`validate_descriptor_occurrences`] for #170
+/// page-margin-declaration occurrences.
+fn validate_page_margin_occurrences(
+    expected_source: SourceId,
+    page_margin_occurrences: &[CssPageMarginDeclarationOccurrence],
+    unsupported_regions: &[CssParserUnsupportedRegion],
+    terminal_offset: usize,
+) -> Result<(), CssParserRunError> {
+    let mut previous_end: Option<usize> = None;
+    for (index, occurrence) in page_margin_occurrences.iter().enumerate() {
+        let complete = occurrence.complete();
+        require_source(
+            expected_source,
+            complete,
+            CssParserRunEvidenceRole::PageMarginOccurrence { index },
+        )?;
+        if complete.range().end() > terminal_offset {
+            return invariant(
+                CssParserInvariantViolation::PageMarginOccurrenceBeyondTerminal {
+                    index,
+                    end: complete.range().end(),
+                    terminal: terminal_offset,
+                },
+            );
+        }
+        if let Some(previous_end) = previous_end
+            && complete.range().start() < previous_end
+        {
+            return invariant(
+                CssParserInvariantViolation::PageMarginOccurrenceOrderViolation { index },
+            );
+        }
+        previous_end = Some(complete.range().end());
+
+        for (unsupported_index, region) in unsupported_regions.iter().enumerate() {
+            if ranges_overlap(complete.range(), region.region().range()) {
+                return invariant(
+                    CssParserInvariantViolation::PageMarginOccurrenceOverlapsUnsupportedRegion {
+                        index,
+                        unsupported_index,
+                    },
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Mirrors [`validate_descriptor_occurrence_lifecycle`] for #170
+/// page-margin-declaration occurrences.
+fn validate_page_margin_occurrence_lifecycle(
+    upstream: &CssTokenizerRunResult,
+    page_margin_occurrences: &[CssPageMarginDeclarationOccurrence],
+) -> Result<(), CssParserRunError> {
+    if upstream_ended_at_true_eof(upstream) {
+        return Ok(());
+    }
+    for (index, occurrence) in page_margin_occurrences.iter().enumerate() {
+        if matches!(
+            occurrence.termination(),
+            CssDeclarationTermination::OmittedAtEndOfInput { .. }
+        ) {
+            return invariant(
+                CssParserInvariantViolation::PageMarginOmittedAtEndOfInputRequiresUpstreamComplete {
+                    index,
+                },
+            );
+        }
+    }
+    Ok(())
+}
+
 fn validate_diagnostics(
     expected_source: SourceId,
     diagnostics: &[CssParserDiagnostic],
@@ -1692,10 +2168,11 @@ mod tests {
     use super::*;
     use crate::css::declaration::{
         CssDeclarationPlacement, CssDeclarationRunOrdinal, CssDeclarationTermination,
-        CssDescriptorPlacement,
+        CssDescriptorPlacement, CssPageDeclarationPlacement, CssPageMarginDeclarationPlacement,
     };
     use crate::css::parser::context::{
         CssParserContextId, CssParserDescriptorRuleKind, CssParserDirectItemOrdinal,
+        CssParserPageMarginRuleKind,
     };
     use crate::css::parser::evidence::{
         CssParserDiscardKind, CssParserRecoveryKind, CssParserRecoveryTermination,
@@ -1775,6 +2252,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            Vec::new(),
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
             CssParserCoverage::SupportedForSelectedQuestion,
@@ -1804,6 +2283,8 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -1862,6 +2343,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            Vec::new(),
             text.anchor(0, 0).unwrap(),
             CssParserExecutionCompletion::Complete,
             CssParserCoverage::SupportedForSelectedQuestion,
@@ -1894,6 +2377,8 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -1945,6 +2430,8 @@ mod tests {
             &text,
             upstream,
             vec![occurrence],
+            Vec::new(),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -2003,6 +2490,8 @@ mod tests {
             &text,
             upstream,
             vec![occurrence],
+            Vec::new(),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -2093,6 +2582,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            Vec::new(),
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Incomplete,
             CssParserCoverage::SupportedForSelectedQuestion,
@@ -2129,6 +2620,8 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -2204,6 +2697,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            Vec::new(),
             vec![recovery],
             Vec::new(),
             Vec::new(),
@@ -2234,6 +2729,8 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -2272,6 +2769,8 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -2321,6 +2820,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            Vec::new(),
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
             CssParserCoverage::SupportedForSelectedQuestion,
@@ -2350,6 +2851,8 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -2396,6 +2899,8 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -2451,6 +2956,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            Vec::new(),
             vec![discard],
             Vec::new(),
             text.anchor(len, len).unwrap(),
@@ -2494,6 +3001,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            Vec::new(),
             vec![recovery],
             Vec::new(),
             vec![discard],
@@ -2532,6 +3041,8 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -2579,6 +3090,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            Vec::new(),
             vec![discard],
             Vec::new(),
             text.anchor(4, 4).unwrap(),
@@ -2616,6 +3129,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            Vec::new(),
             vec![discard_b, discard_a],
             Vec::new(),
             text.anchor(len, len).unwrap(),
@@ -2643,6 +3158,8 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -2776,6 +3293,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            Vec::new(),
             vec![context],
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
@@ -2818,6 +3337,8 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -2887,6 +3408,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            Vec::new(),
             vec![outer, escaping_child],
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
@@ -2919,6 +3442,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            Vec::new(),
             records,
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
@@ -2945,6 +3470,8 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -3012,6 +3539,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            Vec::new(),
             vec![first, second],
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
@@ -3052,6 +3581,8 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -3108,6 +3639,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            Vec::new(),
             vec![first, second],
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
@@ -3156,6 +3689,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            Vec::new(),
             vec![first, second],
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
@@ -3185,6 +3720,8 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -3227,6 +3764,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            Vec::new(),
             vec![context],
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
@@ -3257,6 +3796,8 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -3339,6 +3880,8 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -3437,6 +3980,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            Vec::new(),
             vec![outer, inner],
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Incomplete,
@@ -3458,6 +4003,8 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -3593,6 +4140,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            Vec::new(),
             vec![outer, media],
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
@@ -3653,6 +4202,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            Vec::new(),
             vec![outer, outer_media, inner_media],
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
@@ -3681,6 +4232,8 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -3735,6 +4288,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            Vec::new(),
             vec![outer, media],
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
@@ -3768,6 +4323,8 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -3823,6 +4380,8 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -3898,6 +4457,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            Vec::new(),
             vec![unsupported],
             Vec::new(),
             vec![outer],
@@ -3966,6 +4527,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            Vec::new(),
             vec![unsupported],
             Vec::new(),
             vec![outer, child],
@@ -4025,6 +4588,8 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -4095,6 +4660,8 @@ mod tests {
             upstream,
             Vec::new(),
             vec![descriptor],
+            Vec::new(),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -4174,6 +4741,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            Vec::new(),
             vec![outer, media],
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
@@ -4239,6 +4808,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            Vec::new(),
             vec![descriptor_context],
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
@@ -4281,6 +4852,8 @@ mod tests {
             upstream,
             Vec::new(),
             vec![descriptor],
+            Vec::new(),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -4346,6 +4919,8 @@ mod tests {
             upstream,
             Vec::new(),
             vec![descriptor],
+            Vec::new(),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -4425,6 +5000,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            Vec::new(),
             vec![descriptor_context],
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
@@ -4493,6 +5070,8 @@ mod tests {
             upstream,
             Vec::new(),
             vec![descriptor],
+            Vec::new(),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             vec![nested_unsupported],
@@ -4579,6 +5158,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            Vec::new(),
             vec![descriptor_context],
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
@@ -4625,6 +5206,8 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
+            Vec::new(),
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
             CssParserCoverage::SupportedForSelectedQuestion,
@@ -4641,6 +5224,1315 @@ mod tests {
                 }
             )
         ));
+    }
+
+    // -- #170 page/page-margin corruption tests (Final Diff Audit finding) --
+
+    fn page_placement(context_index: usize, item_ordinal: usize) -> CssPageDeclarationPlacement {
+        CssPageDeclarationPlacement::new(
+            CssParserContextId::new(context_index),
+            CssParserDirectItemOrdinal::new(item_ordinal),
+        )
+    }
+
+    fn page_margin_placement(
+        context_index: usize,
+        item_ordinal: usize,
+    ) -> CssPageMarginDeclarationPlacement {
+        CssPageMarginDeclarationPlacement::new(
+            CssParserContextId::new(context_index),
+            CssParserDirectItemOrdinal::new(item_ordinal),
+        )
+    }
+
+    /// A genuinely `Incomplete` upstream tokenizer result whose terminal
+    /// sits at `text`'s true end, mirroring
+    /// `contract_only_omitted_at_end_of_input_occurrence_requires_upstream_true_eof`'s
+    /// own helper: `upstream_ended_at_true_eof` requires both `Complete`
+    /// completion and `EndOfInput` termination, so this deliberately
+    /// satisfies neither.
+    fn incomplete_upstream_at_end(text: &SourceText) -> CssTokenizerRunResult {
+        let len = text.as_str().len();
+        let resource_limit =
+            crate::css::tokenizer::resource::CssTokenizerResourceLimitEvidence::new(
+                text,
+                crate::css::tokenizer::resource::CssTokenizerResourceKind::AlgorithmSteps,
+                1,
+                2,
+                text.anchor(len, len).unwrap(),
+            )
+            .unwrap();
+        CssTokenizerRunResult::new(
+            text,
+            None,
+            vec![CssLexicalItem::SemanticToken(
+                CssToken::new(
+                    text,
+                    text.anchor(0, len).unwrap(),
+                    CssTokenKind::Ident("x".to_owned()),
+                )
+                .unwrap(),
+            )],
+            Vec::<CssTokenizerDiagnostic>::new(),
+            text.anchor(0, len).unwrap(),
+            text.anchor(len, len).unwrap(),
+            text.anchor(len, len).unwrap(),
+            CssTokenizerCompletion::Incomplete,
+            CssTokenizerTermination::ResourceLimit(resource_limit),
+            CssTokenizerResourceUsage::new(0, 1, 1, 0, 0, 0),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn contract_only_page_occurrence_beyond_terminal_is_rejected() {
+        let text = source(40_001, "@page{p:v;}");
+        let upstream = complete_tokenizer_run(&text);
+        let occurrence = CssPageDeclarationOccurrence::new(
+            &text,
+            text.anchor(6, 10).unwrap(),
+            text.anchor(6, 7).unwrap(),
+            text.anchor(7, 8).unwrap(),
+            text.anchor(8, 9).unwrap(),
+            None,
+            CssDeclarationTermination::AuthoredSemicolon {
+                semicolon: text.anchor(9, 10).unwrap(),
+            },
+            page_placement(0, 0),
+        )
+        .unwrap();
+        // The parser's own terminal (9) sits before the occurrence's end
+        // (10): a resource-limited stop reached mid-occurrence.
+        let evidence = CssParserResourceLimitEvidence::new(
+            &text,
+            CssParserResourceKind::AlgorithmSteps,
+            1,
+            2,
+            text.anchor(9, 9).unwrap(),
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            vec![occurrence],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            text.anchor(9, 9).unwrap(),
+            CssParserExecutionCompletion::Incomplete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::ParserResourceLimit(evidence),
+            CssParserResourceUsage::new(1, 0, 0, 1, 0, 0, 0, 0, 0),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::PageOccurrenceBeyondTerminal {
+                    index: 0,
+                    end: 10,
+                    terminal: 9,
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_page_occurrence_order_violation_is_rejected() {
+        let text = source(40_002, "@page{p:v;q:w;}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let first = CssPageDeclarationOccurrence::new(
+            &text,
+            text.anchor(6, 10).unwrap(),
+            text.anchor(6, 7).unwrap(),
+            text.anchor(7, 8).unwrap(),
+            text.anchor(8, 9).unwrap(),
+            None,
+            CssDeclarationTermination::AuthoredSemicolon {
+                semicolon: text.anchor(9, 10).unwrap(),
+            },
+            page_placement(0, 0),
+        )
+        .unwrap();
+        let second = CssPageDeclarationOccurrence::new(
+            &text,
+            text.anchor(10, 14).unwrap(),
+            text.anchor(10, 11).unwrap(),
+            text.anchor(11, 12).unwrap(),
+            text.anchor(12, 13).unwrap(),
+            None,
+            CssDeclarationTermination::AuthoredSemicolon {
+                semicolon: text.anchor(13, 14).unwrap(),
+            },
+            page_placement(0, 1),
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            // Retained out of source order: `second` (start 10) precedes
+            // `first` (start 6) in the vector.
+            vec![second, first],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            CssParserResourceUsage::new(1, 0, 0, 2, 0, 0, 0, 0, 0),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::PageOccurrenceOrderViolation { index: 1 }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_page_occurrence_overlaps_unsupported_region_is_rejected() {
+        let text = source(40_003, "@page{@x:v;}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        // Structurally valid declaration-shaped evidence, but its span
+        // fully overlaps a retained unsupported region below -- an
+        // evidence-placement corruption, not a recognizable production
+        // output shape (production never commits both for the same span).
+        let occurrence = CssPageDeclarationOccurrence::new(
+            &text,
+            text.anchor(6, 11).unwrap(),
+            text.anchor(6, 8).unwrap(),
+            text.anchor(8, 9).unwrap(),
+            text.anchor(9, 10).unwrap(),
+            None,
+            CssDeclarationTermination::AuthoredSemicolon {
+                semicolon: text.anchor(10, 11).unwrap(),
+            },
+            page_placement(0, 0),
+        )
+        .unwrap();
+        let unsupported = CssParserUnsupportedRegion::new_top_level_at_rule(
+            &text,
+            text.anchor(6, 11).unwrap(),
+            text.anchor(6, 8).unwrap(),
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            vec![occurrence],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![unsupported],
+            Vec::new(),
+            Vec::new(),
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::ContainsUnsupportedContexts,
+            CssParserTermination::EndOfTokenizerInput,
+            CssParserResourceUsage::new(1, 0, 0, 1, 0, 0, 1, 0, 0),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::PageOccurrenceOverlapsUnsupportedRegion {
+                    index: 0,
+                    unsupported_index: 0,
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_page_omitted_at_end_of_input_requires_upstream_complete_is_rejected() {
+        let text = source(40_004, "@page{p:v");
+        let len = text.as_str().len();
+        let upstream = incomplete_upstream_at_end(&text);
+        // Internally self-consistent (its EOF terminal really is an empty
+        // anchor at the true end of the raw source), which is all
+        // `CssPageDeclarationOccurrence::new` can check without tokenizer
+        // lifecycle input.
+        let occurrence = CssPageDeclarationOccurrence::new(
+            &text,
+            text.anchor(6, 9).unwrap(),
+            text.anchor(6, 7).unwrap(),
+            text.anchor(7, 8).unwrap(),
+            text.anchor(8, 9).unwrap(),
+            None,
+            CssDeclarationTermination::OmittedAtEndOfInput {
+                terminal: text.anchor(9, 9).unwrap(),
+            },
+            page_placement(0, 0),
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            vec![occurrence],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Incomplete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::UpstreamTokenizerIncomplete,
+            CssParserResourceUsage::new(1, 0, 0, 1, 0, 0, 0, 0, 0),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::PageOmittedAtEndOfInputRequiresUpstreamComplete {
+                    index: 0,
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_page_margin_occurrence_beyond_terminal_is_rejected() {
+        let text = source(40_005, "@page{p:v;}");
+        let upstream = complete_tokenizer_run(&text);
+        let occurrence = CssPageMarginDeclarationOccurrence::new(
+            &text,
+            text.anchor(6, 10).unwrap(),
+            text.anchor(6, 7).unwrap(),
+            text.anchor(7, 8).unwrap(),
+            text.anchor(8, 9).unwrap(),
+            None,
+            CssDeclarationTermination::AuthoredSemicolon {
+                semicolon: text.anchor(9, 10).unwrap(),
+            },
+            page_margin_placement(0, 0),
+        )
+        .unwrap();
+        let evidence = CssParserResourceLimitEvidence::new(
+            &text,
+            CssParserResourceKind::AlgorithmSteps,
+            1,
+            2,
+            text.anchor(9, 9).unwrap(),
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![occurrence],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            text.anchor(9, 9).unwrap(),
+            CssParserExecutionCompletion::Incomplete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::ParserResourceLimit(evidence),
+            CssParserResourceUsage::new(1, 0, 0, 1, 0, 0, 0, 0, 0),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::PageMarginOccurrenceBeyondTerminal {
+                    index: 0,
+                    end: 10,
+                    terminal: 9,
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_page_margin_occurrence_order_violation_is_rejected() {
+        let text = source(40_006, "@page{p:v;q:w;}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let first = CssPageMarginDeclarationOccurrence::new(
+            &text,
+            text.anchor(6, 10).unwrap(),
+            text.anchor(6, 7).unwrap(),
+            text.anchor(7, 8).unwrap(),
+            text.anchor(8, 9).unwrap(),
+            None,
+            CssDeclarationTermination::AuthoredSemicolon {
+                semicolon: text.anchor(9, 10).unwrap(),
+            },
+            page_margin_placement(0, 0),
+        )
+        .unwrap();
+        let second = CssPageMarginDeclarationOccurrence::new(
+            &text,
+            text.anchor(10, 14).unwrap(),
+            text.anchor(10, 11).unwrap(),
+            text.anchor(11, 12).unwrap(),
+            text.anchor(12, 13).unwrap(),
+            None,
+            CssDeclarationTermination::AuthoredSemicolon {
+                semicolon: text.anchor(13, 14).unwrap(),
+            },
+            page_margin_placement(0, 1),
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![second, first],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            CssParserResourceUsage::new(1, 0, 0, 2, 0, 0, 0, 0, 0),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::PageMarginOccurrenceOrderViolation { index: 1 }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_page_margin_occurrence_overlaps_unsupported_region_is_rejected() {
+        let text = source(40_007, "@page{@x:v;}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let occurrence = CssPageMarginDeclarationOccurrence::new(
+            &text,
+            text.anchor(6, 11).unwrap(),
+            text.anchor(6, 8).unwrap(),
+            text.anchor(8, 9).unwrap(),
+            text.anchor(9, 10).unwrap(),
+            None,
+            CssDeclarationTermination::AuthoredSemicolon {
+                semicolon: text.anchor(10, 11).unwrap(),
+            },
+            page_margin_placement(0, 0),
+        )
+        .unwrap();
+        let unsupported = CssParserUnsupportedRegion::new_top_level_at_rule(
+            &text,
+            text.anchor(6, 11).unwrap(),
+            text.anchor(6, 8).unwrap(),
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![occurrence],
+            Vec::new(),
+            Vec::new(),
+            vec![unsupported],
+            Vec::new(),
+            Vec::new(),
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::ContainsUnsupportedContexts,
+            CssParserTermination::EndOfTokenizerInput,
+            CssParserResourceUsage::new(1, 0, 0, 1, 0, 0, 1, 0, 0),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::PageMarginOccurrenceOverlapsUnsupportedRegion {
+                    index: 0,
+                    unsupported_index: 0,
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_page_margin_omitted_at_end_of_input_requires_upstream_complete_is_rejected() {
+        let text = source(40_008, "@page{p:v");
+        let len = text.as_str().len();
+        let upstream = incomplete_upstream_at_end(&text);
+        let occurrence = CssPageMarginDeclarationOccurrence::new(
+            &text,
+            text.anchor(6, 9).unwrap(),
+            text.anchor(6, 7).unwrap(),
+            text.anchor(7, 8).unwrap(),
+            text.anchor(8, 9).unwrap(),
+            None,
+            CssDeclarationTermination::OmittedAtEndOfInput {
+                terminal: text.anchor(9, 9).unwrap(),
+            },
+            page_margin_placement(0, 0),
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![occurrence],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Incomplete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::UpstreamTokenizerIncomplete,
+            CssParserResourceUsage::new(1, 0, 0, 1, 0, 0, 0, 0, 0),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::PageMarginOmittedAtEndOfInputRequiresUpstreamComplete {
+                    index: 0,
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_page_placement_unknown_context_is_rejected() {
+        let text = source(40_009, "@page{p:v;}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let occurrence = CssPageDeclarationOccurrence::new(
+            &text,
+            text.anchor(6, 10).unwrap(),
+            text.anchor(6, 7).unwrap(),
+            text.anchor(7, 8).unwrap(),
+            text.anchor(8, 9).unwrap(),
+            None,
+            CssDeclarationTermination::AuthoredSemicolon {
+                semicolon: text.anchor(9, 10).unwrap(),
+            },
+            // References a `ContextId` that has no retained record at all.
+            page_placement(5, 0),
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            vec![occurrence],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            CssParserResourceUsage::new(1, 0, 0, 1, 0, 0, 0, 0, 0),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::PagePlacementUnknownContext { index: 0 }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_page_outside_placement_context_body_is_rejected() {
+        let text = source(40_010, "a:b;@page{p:v;}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let page_context = CssParserContextRecord::new_page_rule_block(
+            &text,
+            CssParserContextId::new(0),
+            CssParserDirectItemOrdinal::new(0),
+            text.anchor(4, 9).unwrap(),
+            "page",
+            None,
+            text.anchor(4, 9).unwrap(),
+            text.anchor(9, 10).unwrap(),
+            text.anchor(10, 14).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(14, 15).unwrap(),
+            },
+        )
+        .unwrap();
+        // Structurally valid declaration-shaped evidence, but its source
+        // span (0, 4) lies entirely outside the page context's own body
+        // (10, 14).
+        let occurrence = CssPageDeclarationOccurrence::new(
+            &text,
+            text.anchor(0, 4).unwrap(),
+            text.anchor(0, 1).unwrap(),
+            text.anchor(1, 2).unwrap(),
+            text.anchor(2, 3).unwrap(),
+            None,
+            CssDeclarationTermination::AuthoredSemicolon {
+                semicolon: text.anchor(3, 4).unwrap(),
+            },
+            page_placement(0, 0),
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            vec![occurrence],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![page_context],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            CssParserResourceUsage::new(1, 0, 1, 1, 0, 0, 0, 0, 1),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::PageOutsidePlacementContextBody { index: 0 }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_page_owner_must_be_page_context_is_rejected() {
+        let text = source(40_011, "a{p:v;}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let outer = CssParserContextRecord::new_qualified_rule_block(
+            &text,
+            CssParserContextId::new(0),
+            None,
+            CssParserDirectItemOrdinal::new(0),
+            None,
+            text.anchor(0, 1).unwrap(),
+            text.anchor(1, 2).unwrap(),
+            text.anchor(2, 6).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(6, 7).unwrap(),
+            },
+        )
+        .unwrap();
+        // Page-typed occurrence, but its owning context is an ordinary
+        // `QualifiedRuleBlock`, never a `PageRuleBlock`.
+        let occurrence = CssPageDeclarationOccurrence::new(
+            &text,
+            text.anchor(2, 6).unwrap(),
+            text.anchor(2, 3).unwrap(),
+            text.anchor(3, 4).unwrap(),
+            text.anchor(4, 5).unwrap(),
+            None,
+            CssDeclarationTermination::AuthoredSemicolon {
+                semicolon: text.anchor(5, 6).unwrap(),
+            },
+            page_placement(0, 0),
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            vec![occurrence],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![outer],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            CssParserResourceUsage::new(1, 0, 1, 1, 0, 0, 0, 0, 1),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::PageOwnerMustBePageContext { index: 0 }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_page_margin_placement_unknown_context_is_rejected() {
+        let text = source(40_012, "@top-center{p:v;}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let occurrence = CssPageMarginDeclarationOccurrence::new(
+            &text,
+            text.anchor(12, 16).unwrap(),
+            text.anchor(12, 13).unwrap(),
+            text.anchor(13, 14).unwrap(),
+            text.anchor(14, 15).unwrap(),
+            None,
+            CssDeclarationTermination::AuthoredSemicolon {
+                semicolon: text.anchor(15, 16).unwrap(),
+            },
+            // References a `ContextId` that has no retained record at all.
+            page_margin_placement(5, 0),
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![occurrence],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            CssParserResourceUsage::new(1, 0, 0, 1, 0, 0, 0, 0, 0),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::PageMarginPlacementUnknownContext { index: 0 }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_page_margin_outside_placement_context_body_is_rejected() {
+        let text = source(40_013, "a:b;@page{@top-center{}}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let page_context = CssParserContextRecord::new_page_rule_block(
+            &text,
+            CssParserContextId::new(0),
+            CssParserDirectItemOrdinal::new(0),
+            text.anchor(4, 9).unwrap(),
+            "page",
+            None,
+            text.anchor(4, 9).unwrap(),
+            text.anchor(9, 10).unwrap(),
+            text.anchor(10, 23).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(23, 24).unwrap(),
+            },
+        )
+        .unwrap();
+        let margin_context = CssParserContextRecord::new_page_margin_rule_block(
+            &text,
+            CssParserContextId::new(1),
+            CssParserContextId::new(0),
+            CssParserDirectItemOrdinal::new(0),
+            CssParserPageMarginRuleKind::TopCenter,
+            text.anchor(10, 21).unwrap(),
+            "top-center",
+            text.anchor(10, 21).unwrap(),
+            text.anchor(21, 22).unwrap(),
+            text.anchor(22, 22).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(22, 23).unwrap(),
+            },
+        )
+        .unwrap();
+        // Structurally valid declaration-shaped evidence, but its source
+        // span (0, 4) lies entirely outside the margin context's own empty
+        // body (22, 22).
+        let occurrence = CssPageMarginDeclarationOccurrence::new(
+            &text,
+            text.anchor(0, 4).unwrap(),
+            text.anchor(0, 1).unwrap(),
+            text.anchor(1, 2).unwrap(),
+            text.anchor(2, 3).unwrap(),
+            None,
+            CssDeclarationTermination::AuthoredSemicolon {
+                semicolon: text.anchor(3, 4).unwrap(),
+            },
+            page_margin_placement(1, 0),
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![occurrence],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![page_context, margin_context],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            CssParserResourceUsage::new(1, 0, 2, 1, 0, 0, 0, 0, 2),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::PageMarginOutsidePlacementContextBody { index: 0 }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_page_margin_owner_must_be_page_margin_context_is_rejected() {
+        let text = source(40_014, "@page{p:v;}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let page_context = CssParserContextRecord::new_page_rule_block(
+            &text,
+            CssParserContextId::new(0),
+            CssParserDirectItemOrdinal::new(0),
+            text.anchor(0, 5).unwrap(),
+            "page",
+            None,
+            text.anchor(0, 5).unwrap(),
+            text.anchor(5, 6).unwrap(),
+            text.anchor(6, 10).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(10, 11).unwrap(),
+            },
+        )
+        .unwrap();
+        // Page-margin-typed occurrence, but its owning context is the
+        // `PageRuleBlock` itself, never a `PageMarginRuleBlock`.
+        let occurrence = CssPageMarginDeclarationOccurrence::new(
+            &text,
+            text.anchor(6, 10).unwrap(),
+            text.anchor(6, 7).unwrap(),
+            text.anchor(7, 8).unwrap(),
+            text.anchor(8, 9).unwrap(),
+            None,
+            CssDeclarationTermination::AuthoredSemicolon {
+                semicolon: text.anchor(9, 10).unwrap(),
+            },
+            page_margin_placement(0, 0),
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![occurrence],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![page_context],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            CssParserResourceUsage::new(1, 0, 1, 1, 0, 0, 0, 0, 1),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::PageMarginOwnerMustBePageMarginContext { index: 0 }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_declaration_owner_must_not_be_page_context_is_rejected() {
+        let text = source(40_015, "@page{p:v;}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let page_context = CssParserContextRecord::new_page_rule_block(
+            &text,
+            CssParserContextId::new(0),
+            CssParserDirectItemOrdinal::new(0),
+            text.anchor(0, 5).unwrap(),
+            "page",
+            None,
+            text.anchor(0, 5).unwrap(),
+            text.anchor(5, 6).unwrap(),
+            text.anchor(6, 10).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(10, 11).unwrap(),
+            },
+        )
+        .unwrap();
+        let ordinary = CssDeclarationOccurrence::new(
+            &text,
+            text.anchor(6, 10).unwrap(),
+            text.anchor(6, 7).unwrap(),
+            text.anchor(7, 8).unwrap(),
+            text.anchor(8, 9).unwrap(),
+            None,
+            CssDeclarationTermination::AuthoredSemicolon {
+                semicolon: text.anchor(9, 10).unwrap(),
+            },
+            CssDeclarationPlacement::new(
+                CssParserContextId::new(0),
+                CssParserDirectItemOrdinal::new(0),
+                CssDeclarationRunOrdinal::new(0),
+            ),
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            vec![ordinary],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![page_context],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            CssParserResourceUsage::new(1, 0, 1, 1, 0, 0, 0, 0, 1),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::DeclarationOwnerMustNotBePageContext { index: 0 }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_declaration_owner_must_not_be_page_margin_context_is_rejected() {
+        let text = source(40_016, "@page{@top-center{p:v;}}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let page_context = CssParserContextRecord::new_page_rule_block(
+            &text,
+            CssParserContextId::new(0),
+            CssParserDirectItemOrdinal::new(0),
+            text.anchor(0, 5).unwrap(),
+            "page",
+            None,
+            text.anchor(0, 5).unwrap(),
+            text.anchor(5, 6).unwrap(),
+            text.anchor(6, 23).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(23, 24).unwrap(),
+            },
+        )
+        .unwrap();
+        let margin_context = CssParserContextRecord::new_page_margin_rule_block(
+            &text,
+            CssParserContextId::new(1),
+            CssParserContextId::new(0),
+            CssParserDirectItemOrdinal::new(0),
+            CssParserPageMarginRuleKind::TopCenter,
+            text.anchor(6, 17).unwrap(),
+            "top-center",
+            text.anchor(6, 17).unwrap(),
+            text.anchor(17, 18).unwrap(),
+            text.anchor(18, 22).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(22, 23).unwrap(),
+            },
+        )
+        .unwrap();
+        let ordinary = CssDeclarationOccurrence::new(
+            &text,
+            text.anchor(18, 22).unwrap(),
+            text.anchor(18, 19).unwrap(),
+            text.anchor(19, 20).unwrap(),
+            text.anchor(20, 21).unwrap(),
+            None,
+            CssDeclarationTermination::AuthoredSemicolon {
+                semicolon: text.anchor(21, 22).unwrap(),
+            },
+            CssDeclarationPlacement::new(
+                CssParserContextId::new(1),
+                CssParserDirectItemOrdinal::new(0),
+                CssDeclarationRunOrdinal::new(0),
+            ),
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            vec![ordinary],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![page_context, margin_context],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            CssParserResourceUsage::new(1, 0, 2, 1, 0, 0, 0, 0, 2),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::DeclarationOwnerMustNotBePageMarginContext {
+                    index: 0
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_page_context_has_non_page_margin_child_is_rejected() {
+        let text = source(40_017, "@page{a{p:v;}}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let page_context = CssParserContextRecord::new_page_rule_block(
+            &text,
+            CssParserContextId::new(0),
+            CssParserDirectItemOrdinal::new(0),
+            text.anchor(0, 5).unwrap(),
+            "page",
+            None,
+            text.anchor(0, 5).unwrap(),
+            text.anchor(5, 6).unwrap(),
+            text.anchor(6, 13).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(13, 14).unwrap(),
+            },
+        )
+        .unwrap();
+        // Wrong: an ordinary `QualifiedRuleBlock` retained as a direct
+        // child of a `PageRuleBlock`. The only context family #170 ever
+        // enters from a `PageRuleBlock` is `PageMarginRuleBlock`.
+        let child = CssParserContextRecord::new_qualified_rule_block(
+            &text,
+            CssParserContextId::new(1),
+            Some(CssParserContextId::new(0)),
+            CssParserDirectItemOrdinal::new(0),
+            None,
+            text.anchor(6, 7).unwrap(),
+            text.anchor(7, 8).unwrap(),
+            text.anchor(8, 12).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(12, 13).unwrap(),
+            },
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![page_context, child],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            CssParserResourceUsage::new(1, 0, 2, 0, 0, 0, 0, 0, 2),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::PageContextHasNonPageMarginChild { index: 1 }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_page_margin_context_has_child_is_rejected() {
+        let text = source(40_018, "@page{@top-center{a{p:v;}}}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let page_context = CssParserContextRecord::new_page_rule_block(
+            &text,
+            CssParserContextId::new(0),
+            CssParserDirectItemOrdinal::new(0),
+            text.anchor(0, 5).unwrap(),
+            "page",
+            None,
+            text.anchor(0, 5).unwrap(),
+            text.anchor(5, 6).unwrap(),
+            text.anchor(6, 26).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(26, 27).unwrap(),
+            },
+        )
+        .unwrap();
+        let margin_context = CssParserContextRecord::new_page_margin_rule_block(
+            &text,
+            CssParserContextId::new(1),
+            CssParserContextId::new(0),
+            CssParserDirectItemOrdinal::new(0),
+            CssParserPageMarginRuleKind::TopCenter,
+            text.anchor(6, 17).unwrap(),
+            "top-center",
+            text.anchor(6, 17).unwrap(),
+            text.anchor(17, 18).unwrap(),
+            text.anchor(18, 25).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(25, 26).unwrap(),
+            },
+        )
+        .unwrap();
+        // Wrong: `PageMarginRuleBlock` never has children in #170.
+        let child = CssParserContextRecord::new_qualified_rule_block(
+            &text,
+            CssParserContextId::new(2),
+            Some(CssParserContextId::new(1)),
+            CssParserDirectItemOrdinal::new(0),
+            None,
+            text.anchor(18, 19).unwrap(),
+            text.anchor(19, 20).unwrap(),
+            text.anchor(20, 24).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(24, 25).unwrap(),
+            },
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![page_context, margin_context, child],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            CssParserResourceUsage::new(1, 0, 3, 0, 0, 0, 0, 0, 3),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::PageMarginContextHasChild { index: 2 }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_page_margin_parent_must_be_page_context_is_rejected() {
+        let text = source(40_019, "@media{@top-center{}}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        // A root `GroupRuleBlock` is itself producer-unreachable (#168
+        // requires a real qualified-rule parent), but is directly
+        // constructible here to model an otherwise-plausible corrupted
+        // parent whose own `nearest_qualified_ancestor` happens to be
+        // `None` too -- proving `validate_page_margin_parent` catches what
+        // `validate_nearest_qualified_ancestor` alone cannot distinguish
+        // from a genuinely root-owned margin.
+        let fake_parent = CssParserContextRecord::new_group_rule_block(
+            &text,
+            CssParserContextId::new(0),
+            None,
+            CssParserDirectItemOrdinal::new(0),
+            None,
+            CssParserGroupRuleKind::Media,
+            text.anchor(0, 6).unwrap(),
+            "media",
+            text.anchor(0, 6).unwrap(),
+            text.anchor(6, 7).unwrap(),
+            text.anchor(7, 20).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(20, 21).unwrap(),
+            },
+        )
+        .unwrap();
+        let margin_context = CssParserContextRecord::new_page_margin_rule_block(
+            &text,
+            CssParserContextId::new(1),
+            CssParserContextId::new(0),
+            CssParserDirectItemOrdinal::new(0),
+            CssParserPageMarginRuleKind::TopCenter,
+            text.anchor(7, 18).unwrap(),
+            "top-center",
+            text.anchor(7, 18).unwrap(),
+            text.anchor(18, 19).unwrap(),
+            text.anchor(19, 19).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(19, 20).unwrap(),
+            },
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![fake_parent, margin_context],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            CssParserResourceUsage::new(1, 0, 2, 0, 0, 0, 0, 0, 2),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::PageMarginParentMustBePageContext { index: 1 }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_page_margin_context_carries_selector_list_is_rejected() {
+        let text = source(40_020, "@page{@top-center{}}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let page_context = CssParserContextRecord::new_page_rule_block(
+            &text,
+            CssParserContextId::new(0),
+            CssParserDirectItemOrdinal::new(0),
+            text.anchor(0, 5).unwrap(),
+            "page",
+            None,
+            text.anchor(0, 5).unwrap(),
+            text.anchor(5, 6).unwrap(),
+            text.anchor(6, 19).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(19, 20).unwrap(),
+            },
+        )
+        .unwrap();
+        let valid_margin_context = CssParserContextRecord::new_page_margin_rule_block(
+            &text,
+            CssParserContextId::new(1),
+            CssParserContextId::new(0),
+            CssParserDirectItemOrdinal::new(0),
+            CssParserPageMarginRuleKind::TopCenter,
+            text.anchor(6, 17).unwrap(),
+            "top-center",
+            text.anchor(6, 17).unwrap(),
+            text.anchor(17, 18).unwrap(),
+            text.anchor(18, 18).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(18, 19).unwrap(),
+            },
+        )
+        .unwrap();
+        // No production constructor can build this combination directly
+        // (see `CssParserContextRecord::new_test_only_page_margin_rule_block_with_selector_list`'s
+        // own doc comment); it is corrupted here from an otherwise-valid
+        // margin record.
+        let margin_context =
+            CssParserContextRecord::new_test_only_page_margin_rule_block_with_selector_list(
+                valid_margin_context,
+                text.anchor(0, 5).unwrap(),
+            );
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![page_context, margin_context],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            CssParserResourceUsage::new(1, 0, 2, 0, 0, 0, 0, 0, 2),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::PageMarginContextCarriesSelectorList { index: 1 }
+            )
+        );
     }
 
     #[test]
@@ -4717,6 +6609,8 @@ mod tests {
             upstream,
             vec![ordinary],
             vec![descriptor],
+            Vec::new(),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -4809,6 +6703,8 @@ mod tests {
             &text,
             upstream,
             vec![first, second],
+            Vec::new(),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),

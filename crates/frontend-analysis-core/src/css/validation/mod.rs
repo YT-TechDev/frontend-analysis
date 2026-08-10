@@ -9,6 +9,9 @@ mod fixtures;
 mod generated;
 mod gold;
 mod group_context_fixtures;
+mod page_candidate;
+mod page_fixtures;
+mod page_gold;
 mod parser_candidate;
 mod parser_fixtures;
 mod parser_gold;
@@ -29,6 +32,10 @@ mod descriptor_lifecycle_validation_tests;
 mod group_context_contract_tests;
 #[cfg(test)]
 mod group_lifecycle_validation_tests;
+#[cfg(test)]
+mod page_conformance_tests;
+#[cfg(test)]
+mod page_lifecycle_validation_tests;
 #[cfg(test)]
 mod parser_conformance_tests;
 #[cfg(test)]

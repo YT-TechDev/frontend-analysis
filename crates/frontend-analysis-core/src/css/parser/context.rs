@@ -117,6 +117,13 @@ pub(crate) enum CssParserContextKind {
     QualifiedRuleBlock,
     GroupRuleBlock(CssParserGroupRuleKind),
     DescriptorRuleBlock(CssParserDescriptorRuleKind),
+    /// The root-owned `@page` context (#170). CSSWG #11271 means Page must
+    /// not introduce a new stable declaration-run semantic contract; see
+    /// [`super::declaration::CssPageDeclarationPlacement`].
+    PageRuleBlock,
+    /// A page-margin-at-rule context nested only inside a retained
+    /// `PageRuleBlock` (#170).
+    PageMarginRuleBlock(CssParserPageMarginRuleKind),
 }
 
 /// The finite #168 nested group-rule registry approved by #141.
@@ -184,6 +191,77 @@ impl CssParserDescriptorRuleKind {
             Some(Self::FontFace)
         } else if decoded.eq_ignore_ascii_case("property") {
             Some(Self::Property)
+        } else {
+            None
+        }
+    }
+}
+
+/// The finite #170 page-margin-rule registry: exactly the sixteen CSS Paged
+/// Media margin-box names, never a generic at-rule/plugin vocabulary.
+/// Registry membership alone is necessary but never sufficient to establish
+/// a [`CssParserContextKind::PageMarginRuleBlock`]: the producer additionally
+/// requires a semantically empty prelude and a real `PageRuleBlock` parent
+/// before a context of this kind is ever entered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssParserPageMarginRuleKind {
+    TopLeftCorner,
+    TopLeft,
+    TopCenter,
+    TopRight,
+    TopRightCorner,
+    BottomLeftCorner,
+    BottomLeft,
+    BottomCenter,
+    BottomRight,
+    BottomRightCorner,
+    LeftTop,
+    LeftMiddle,
+    LeftBottom,
+    RightTop,
+    RightMiddle,
+    RightBottom,
+}
+
+impl CssParserPageMarginRuleKind {
+    /// Matches a tokenizer-decoded `AtKeyword` value (without the leading
+    /// `@`) against the finite sixteen-member registry, ASCII-case-
+    /// insensitively. Returns `None` for any name outside that set, which
+    /// remains explicit unsupported evidence rather than a speculative
+    /// registry member.
+    pub(crate) fn from_decoded_at_keyword(decoded: &str) -> Option<Self> {
+        if decoded.eq_ignore_ascii_case("top-left-corner") {
+            Some(Self::TopLeftCorner)
+        } else if decoded.eq_ignore_ascii_case("top-left") {
+            Some(Self::TopLeft)
+        } else if decoded.eq_ignore_ascii_case("top-center") {
+            Some(Self::TopCenter)
+        } else if decoded.eq_ignore_ascii_case("top-right") {
+            Some(Self::TopRight)
+        } else if decoded.eq_ignore_ascii_case("top-right-corner") {
+            Some(Self::TopRightCorner)
+        } else if decoded.eq_ignore_ascii_case("bottom-left-corner") {
+            Some(Self::BottomLeftCorner)
+        } else if decoded.eq_ignore_ascii_case("bottom-left") {
+            Some(Self::BottomLeft)
+        } else if decoded.eq_ignore_ascii_case("bottom-center") {
+            Some(Self::BottomCenter)
+        } else if decoded.eq_ignore_ascii_case("bottom-right") {
+            Some(Self::BottomRight)
+        } else if decoded.eq_ignore_ascii_case("bottom-right-corner") {
+            Some(Self::BottomRightCorner)
+        } else if decoded.eq_ignore_ascii_case("left-top") {
+            Some(Self::LeftTop)
+        } else if decoded.eq_ignore_ascii_case("left-middle") {
+            Some(Self::LeftMiddle)
+        } else if decoded.eq_ignore_ascii_case("left-bottom") {
+            Some(Self::LeftBottom)
+        } else if decoded.eq_ignore_ascii_case("right-top") {
+            Some(Self::RightTop)
+        } else if decoded.eq_ignore_ascii_case("right-middle") {
+            Some(Self::RightMiddle)
+        } else if decoded.eq_ignore_ascii_case("right-bottom") {
+            Some(Self::RightBottom)
         } else {
             None
         }
@@ -369,6 +447,18 @@ pub(crate) enum CssParserContextContractError {
     /// A `Property` descriptor context's custom-property-name anchor is not
     /// contained within `header` (#169).
     PropertyNameOutsideHeader,
+    /// The decoded tokenizer `AtKeyword` value supplied at construction does
+    /// not decode to `page` (#170).
+    PageAtKeywordDecodedMismatch,
+    /// The decoded tokenizer `AtKeyword` value supplied at construction does
+    /// not correspond to the declared [`CssParserPageMarginRuleKind`] (#170).
+    PageMarginKindDecodedMismatch,
+    /// A `PageRuleBlock`'s `page_selector_list` anchor does not start after
+    /// the at-keyword ends (#170).
+    PageSelectorListOutOfOrder,
+    /// A `PageRuleBlock`'s `page_selector_list` anchor is not contained
+    /// within `header` (#170).
+    PageSelectorListOutsideHeader,
 }
 
 impl fmt::Display for CssParserContextContractError {
@@ -415,6 +505,12 @@ pub(crate) struct CssParserContextRecord {
     /// for `DescriptorRuleBlock(FontFace)` (whose semantic prelude is empty)
     /// (#169).
     descriptor_property_name: Option<SourceAnchor>,
+    /// The exact authored `<page-selector-list>` envelope for a
+    /// `PageRuleBlock` with a non-empty prelude; `None` for a selector-less
+    /// `PageRuleBlock` and always `None` for every other kind, including
+    /// `PageMarginRuleBlock` (#170). Owns no selector-component vector or
+    /// selector AST -- only the exact authored source range.
+    page_selector_list: Option<SourceAnchor>,
     /// The nearest ancestor `QualifiedRuleBlock` context, or `None` at the
     /// implicit stylesheet root's direct children (#141/#168). Structural
     /// qualified-rule ancestry only: never a selector-validity or
@@ -454,6 +550,7 @@ impl CssParserContextRecord {
             kind: CssParserContextKind::QualifiedRuleBlock,
             at_keyword: None,
             descriptor_property_name: None,
+            page_selector_list: None,
             nearest_qualified_ancestor,
             header,
             block_opener,
@@ -508,6 +605,7 @@ impl CssParserContextRecord {
             kind: CssParserContextKind::GroupRuleBlock(kind),
             at_keyword: Some(at_keyword),
             descriptor_property_name: None,
+            page_selector_list: None,
             nearest_qualified_ancestor,
             header,
             block_opener,
@@ -600,6 +698,141 @@ impl CssParserContextRecord {
             kind: CssParserContextKind::DescriptorRuleBlock(kind),
             at_keyword: Some(at_keyword),
             descriptor_property_name: property_name,
+            page_selector_list: None,
+            nearest_qualified_ancestor: None,
+            header,
+            block_opener,
+            body,
+            termination,
+        })
+    }
+
+    /// Constructs a `PageRuleBlock` record (#170): the root-owned `@page`
+    /// context. `at_keyword` must be the exact authored at-keyword anchor
+    /// starting `header`. `decoded_at_keyword` is the already-decoded
+    /// tokenizer value (without the leading `@`) used only to prove
+    /// `at_keyword` decodes to `page`; it is not retained.
+    ///
+    /// `page_selector_list` is `None` for a selector-less `@page` and
+    /// `Some` with the exact authored `<page-selector-list>` envelope
+    /// otherwise; it owns no selector-component vector or selector AST.
+    ///
+    /// `PageRuleBlock` is root-owned in #170: `parent` and
+    /// `nearest_qualified_ancestor` are always `None` and are not accepted
+    /// as parameters, mirroring [`Self::new_descriptor_rule_block`].
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_page_rule_block(
+        source_text: &SourceText,
+        id: CssParserContextId,
+        item_ordinal: CssParserDirectItemOrdinal,
+        at_keyword: SourceAnchor,
+        decoded_at_keyword: &str,
+        page_selector_list: Option<SourceAnchor>,
+        header: SourceAnchor,
+        block_opener: SourceAnchor,
+        body: SourceAnchor,
+        termination: CssParserContextTermination,
+    ) -> Result<Self, CssParserContextContractError> {
+        validate_shared_shape(source_text, &header, &block_opener, &body, &termination)?;
+
+        let expected = source_text.id();
+        require_source(expected, &at_keyword, CssParserContextEvidenceRole::Header)?;
+        non_empty(&at_keyword, CssParserContextEvidenceRole::Header)?;
+        if !at_keyword.fragment().starts_with('@') {
+            return Err(CssParserContextContractError::AtKeywordMissingSigil);
+        }
+        if at_keyword.range().start() != header.range().start() {
+            return Err(CssParserContextContractError::AtKeywordHeaderStartMismatch);
+        }
+        if at_keyword.range().end() > header.range().end() {
+            return Err(CssParserContextContractError::AtKeywordOutsideHeader);
+        }
+        if !decoded_at_keyword.eq_ignore_ascii_case("page") {
+            return Err(CssParserContextContractError::PageAtKeywordDecodedMismatch);
+        }
+
+        if let Some(selector_list) = &page_selector_list {
+            require_source(
+                expected,
+                selector_list,
+                CssParserContextEvidenceRole::Header,
+            )?;
+            non_empty(selector_list, CssParserContextEvidenceRole::Header)?;
+            if selector_list.range().start() < at_keyword.range().end() {
+                return Err(CssParserContextContractError::PageSelectorListOutOfOrder);
+            }
+            if selector_list.range().end() > header.range().end() {
+                return Err(CssParserContextContractError::PageSelectorListOutsideHeader);
+            }
+        }
+
+        Ok(Self {
+            id,
+            parent: None,
+            item_ordinal,
+            kind: CssParserContextKind::PageRuleBlock,
+            at_keyword: Some(at_keyword),
+            descriptor_property_name: None,
+            page_selector_list,
+            nearest_qualified_ancestor: None,
+            header,
+            block_opener,
+            body,
+            termination,
+        })
+    }
+
+    /// Constructs a `PageMarginRuleBlock` record (#170): a supported
+    /// page-margin-rule context nested only inside a retained `PageRuleBlock`
+    /// `parent`. `at_keyword` must be the exact authored at-keyword anchor
+    /// starting `header`. `decoded_at_keyword` is the already-decoded
+    /// tokenizer value (without the leading `@`) used only to prove
+    /// `at_keyword` genuinely corresponds to `kind`; it is not retained.
+    ///
+    /// `nearest_qualified_ancestor` is always `None`, never inferred from
+    /// `parent`'s own ancestry: a `PageRuleBlock` parent is never itself a
+    /// `QualifiedRuleBlock`, and #170 does not infer Page semantic
+    /// qualification from group-rule ancestry.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_page_margin_rule_block(
+        source_text: &SourceText,
+        id: CssParserContextId,
+        parent: CssParserContextId,
+        item_ordinal: CssParserDirectItemOrdinal,
+        kind: CssParserPageMarginRuleKind,
+        at_keyword: SourceAnchor,
+        decoded_at_keyword: &str,
+        header: SourceAnchor,
+        block_opener: SourceAnchor,
+        body: SourceAnchor,
+        termination: CssParserContextTermination,
+    ) -> Result<Self, CssParserContextContractError> {
+        validate_shared_shape(source_text, &header, &block_opener, &body, &termination)?;
+
+        let expected = source_text.id();
+        require_source(expected, &at_keyword, CssParserContextEvidenceRole::Header)?;
+        non_empty(&at_keyword, CssParserContextEvidenceRole::Header)?;
+        if !at_keyword.fragment().starts_with('@') {
+            return Err(CssParserContextContractError::AtKeywordMissingSigil);
+        }
+        if at_keyword.range().start() != header.range().start() {
+            return Err(CssParserContextContractError::AtKeywordHeaderStartMismatch);
+        }
+        if at_keyword.range().end() > header.range().end() {
+            return Err(CssParserContextContractError::AtKeywordOutsideHeader);
+        }
+        if CssParserPageMarginRuleKind::from_decoded_at_keyword(decoded_at_keyword) != Some(kind) {
+            return Err(CssParserContextContractError::PageMarginKindDecodedMismatch);
+        }
+
+        Ok(Self {
+            id,
+            parent: Some(parent),
+            item_ordinal,
+            kind: CssParserContextKind::PageMarginRuleBlock(kind),
+            at_keyword: Some(at_keyword),
+            descriptor_property_name: None,
+            page_selector_list: None,
             nearest_qualified_ancestor: None,
             header,
             block_opener,
@@ -633,6 +866,13 @@ impl CssParserContextRecord {
     /// including `DescriptorRuleBlock(FontFace)` (#169).
     pub(crate) const fn descriptor_property_name(&self) -> Option<&SourceAnchor> {
         self.descriptor_property_name.as_ref()
+    }
+
+    /// The exact authored `<page-selector-list>` envelope for a
+    /// `PageRuleBlock` with a non-empty prelude; `None` for a selector-less
+    /// `PageRuleBlock` and every other context kind (#170).
+    pub(crate) const fn page_selector_list(&self) -> Option<&SourceAnchor> {
+        self.page_selector_list.as_ref()
     }
 
     pub(crate) const fn nearest_qualified_ancestor(&self) -> Option<CssParserContextId> {
@@ -669,6 +909,28 @@ impl CssParserContextRecord {
     }
 }
 
+/// Test-only corruption-constructor support (#170 audit finding). No
+/// production constructor can ever produce a `PageMarginRuleBlock` record
+/// carrying `page_selector_list` evidence: only [`Self::new_page_rule_block`]
+/// accepts a `page_selector_list` parameter, and it always sets
+/// `kind = PageRuleBlock`. `result.rs`'s independent
+/// `PageMarginContextCarriesSelectorList` result-level check exists as
+/// defense-in-depth for exactly this otherwise-unreachable combination, so
+/// proving it fires requires this narrow, `#[cfg(test)]`-gated escape hatch
+/// rather than any production-visible constructor change.
+#[cfg(test)]
+impl CssParserContextRecord {
+    pub(crate) fn new_test_only_page_margin_rule_block_with_selector_list(
+        valid_page_margin_rule_block: Self,
+        page_selector_list: SourceAnchor,
+    ) -> Self {
+        Self {
+            page_selector_list: Some(page_selector_list),
+            ..valid_page_margin_rule_block
+        }
+    }
+}
+
 impl PartialEq for CssParserContextRecord {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
@@ -684,6 +946,11 @@ impl PartialEq for CssParserContextRecord {
                 &self.descriptor_property_name,
                 &other.descriptor_property_name,
             ) {
+                (Some(left), Some(right)) => same_anchor(left, right),
+                (None, None) => true,
+                _ => false,
+            }
+            && match (&self.page_selector_list, &other.page_selector_list) {
                 (Some(left), Some(right)) => same_anchor(left, right),
                 (None, None) => true,
                 _ => false,
@@ -717,6 +984,10 @@ impl fmt::Debug for CssParserContextRecord {
                     .descriptor_property_name
                     .as_ref()
                     .map(SourceAnchor::range),
+            )
+            .field(
+                "page_selector_list",
+                &self.page_selector_list.as_ref().map(SourceAnchor::range),
             )
             .field(
                 "nearest_qualified_ancestor",
@@ -958,6 +1229,58 @@ mod tests {
             None,
             CssParserDirectItemOrdinal::new(0),
             None,
+            kind,
+            source_text.anchor(at_keyword.0, at_keyword.1).unwrap(),
+            decoded_at_keyword,
+            source_text.anchor(header.0, header.1).unwrap(),
+            source_text.anchor(block_opener.0, block_opener.1).unwrap(),
+            source_text.anchor(body.0, body.1).unwrap(),
+            termination,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn page_rule_block(
+        source_text: &SourceText,
+        at_keyword: (usize, usize),
+        decoded_at_keyword: &str,
+        page_selector_list: Option<(usize, usize)>,
+        header: (usize, usize),
+        block_opener: (usize, usize),
+        body: (usize, usize),
+        termination: CssParserContextTermination,
+    ) -> Result<CssParserContextRecord, CssParserContextContractError> {
+        CssParserContextRecord::new_page_rule_block(
+            source_text,
+            CssParserContextId::new(0),
+            CssParserDirectItemOrdinal::new(0),
+            source_text.anchor(at_keyword.0, at_keyword.1).unwrap(),
+            decoded_at_keyword,
+            page_selector_list.map(|(start, end)| source_text.anchor(start, end).unwrap()),
+            source_text.anchor(header.0, header.1).unwrap(),
+            source_text.anchor(block_opener.0, block_opener.1).unwrap(),
+            source_text.anchor(body.0, body.1).unwrap(),
+            termination,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn page_margin_rule_block(
+        source_text: &SourceText,
+        parent: CssParserContextId,
+        kind: CssParserPageMarginRuleKind,
+        at_keyword: (usize, usize),
+        decoded_at_keyword: &str,
+        header: (usize, usize),
+        block_opener: (usize, usize),
+        body: (usize, usize),
+        termination: CssParserContextTermination,
+    ) -> Result<CssParserContextRecord, CssParserContextContractError> {
+        CssParserContextRecord::new_page_margin_rule_block(
+            source_text,
+            CssParserContextId::new(1),
+            parent,
+            CssParserDirectItemOrdinal::new(0),
             kind,
             source_text.anchor(at_keyword.0, at_keyword.1).unwrap(),
             decoded_at_keyword,
@@ -1632,6 +1955,96 @@ mod tests {
             result,
             Err(CssParserContextContractError::SourceIdentityMismatch { .. })
         ));
+    }
+
+    // -- #170 page-context construction corruption tests --------------------
+
+    #[test]
+    fn page_at_keyword_decoded_mismatch_is_rejected() {
+        let text = source(400, "@page{p:v;}");
+        let result = page_rule_block(
+            &text,
+            (0, 5),
+            "notpage",
+            None,
+            (0, 5),
+            (5, 6),
+            (6, 10),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(10, 11).unwrap(),
+            },
+        );
+        assert_eq!(
+            result,
+            Err(CssParserContextContractError::PageAtKeywordDecodedMismatch)
+        );
+    }
+
+    #[test]
+    fn page_margin_kind_decoded_mismatch_is_rejected() {
+        let text = source(401, "@top-center{p:v;}");
+        let result = page_margin_rule_block(
+            &text,
+            CssParserContextId::new(0),
+            CssParserPageMarginRuleKind::TopCenter,
+            (0, 11),
+            "top-left",
+            (0, 11),
+            (11, 12),
+            (12, 16),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(16, 17).unwrap(),
+            },
+        );
+        assert_eq!(
+            result,
+            Err(CssParserContextContractError::PageMarginKindDecodedMismatch)
+        );
+    }
+
+    #[test]
+    fn page_selector_list_out_of_order_is_rejected() {
+        let text = source(402, "@page foo{p:v;}");
+        let result = page_rule_block(
+            &text,
+            (0, 5),
+            "page",
+            // Starts before at_keyword.end() (5): overlaps the at-keyword.
+            Some((3, 9)),
+            (0, 9),
+            (9, 10),
+            (10, 14),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(14, 15).unwrap(),
+            },
+        );
+        assert_eq!(
+            result,
+            Err(CssParserContextContractError::PageSelectorListOutOfOrder)
+        );
+    }
+
+    #[test]
+    fn page_selector_list_outside_header_is_rejected() {
+        let text = source(403, "@page foo{p:v;}");
+        let result = page_rule_block(
+            &text,
+            (0, 5),
+            "page",
+            // Starts after at_keyword.end() (5) but extends past header.end()
+            // (9) into the block opener.
+            Some((6, 10)),
+            (0, 9),
+            (9, 10),
+            (10, 14),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(14, 15).unwrap(),
+            },
+        );
+        assert_eq!(
+            result,
+            Err(CssParserContextContractError::PageSelectorListOutsideHeader)
+        );
     }
 
     #[test]
