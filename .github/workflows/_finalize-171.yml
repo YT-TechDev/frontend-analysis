@@ -31,24 +31,19 @@ jobs:
               'from producer construction. `KeyframesRuleBlock` is root-owned or may be\n/// parented only by a group-rule lineage with no qualified-rule ancestry;\n/// `KeyframeBlock` must be a direct child of `KeyframesRuleBlock`.',
               'from producer construction. `KeyframesRuleBlock` is root-owned in the\n/// current #171 capability; `KeyframeBlock` must be a direct child of\n/// `KeyframesRuleBlock`.'
           )
-          old = '''            if let Some(parent_id) = record.parent() {
-                let parent = &context_records[parent_id.index()];
-                if !matches!(parent.kind(), CssParserContextKind::GroupRuleBlock(_))
-                    || parent.nearest_qualified_ancestor().is_some()
-                {
-                    return invariant(
-                        CssParserInvariantViolation::KeyframesContextHasInvalidParent { index },
-                    );
-                }
-            }'''
-          new = '''            if record.parent().is_some() {
+          start_marker = '            if let Some(parent_id) = record.parent() {'
+          end_marker = '        }\n        CssParserContextKind::KeyframeBlock => {'
+          if text.count(start_marker) != 1:
+              raise SystemExit('result keyframes parent start marker not unique')
+          start = text.index(start_marker)
+          end = text.index(end_marker, start)
+          replacement = '''            if record.parent().is_some() {
                 return invariant(
                     CssParserInvariantViolation::KeyframesContextHasInvalidParent { index },
                 );
-            }'''
-          if text.count(old) != 1:
-              raise SystemExit('result keyframes parent contract did not match exactly once')
-          text = text.replace(old, new)
+            }
+'''
+          text = text[:start] + replacement + text[end:]
           text = text.replace(
               'KeyframesContextRequiresRootOrGroupOnlyAncestry',
               'KeyframesContextCannotBeNested'
@@ -57,22 +52,19 @@ jobs:
 
           producer = Path('crates/frontend-analysis-core/src/css/parser/producer.rs')
           text = producer.read_text()
-          old = '''                if matches!(identity, NewContextIdentity::KeyframesRuleBlock { .. })
-                    && (!matches!(frame.kind, CssParserContextKind::GroupRuleBlock(_))
-                        || frame.nearest_qualified_ancestor.is_some())
-                {
-                    return Err(invariant_flow(
-                            CssParserInvariantViolation::KeyframesContextRequiresRootOrGroupOnlyAncestry,
-                        ));
-                }'''
-          new = '''                if matches!(identity, NewContextIdentity::KeyframesRuleBlock { .. }) {
+          start_marker = '                if matches!(identity, NewContextIdentity::KeyframesRuleBlock { .. })'
+          end_marker = '                frame.run_open = false;'
+          if text.count(start_marker) != 1:
+              raise SystemExit('producer keyframes nested-entry start marker not unique')
+          start = text.index(start_marker)
+          end = text.index(end_marker, start)
+          replacement = '''                if matches!(identity, NewContextIdentity::KeyframesRuleBlock { .. }) {
                     return Err(invariant_flow(
                         CssParserInvariantViolation::KeyframesContextCannotBeNested,
                     ));
-                }'''
-          if text.count(old) != 1:
-              raise SystemExit('producer keyframes nested-entry guard did not match exactly once')
-          text = text.replace(old, new)
+                }
+'''
+          text = text[:start] + replacement + text[end:]
           text = text.replace(
               '/// The #169/#170 `DeclarationOccurrences` aggregate cap: ordinary',
               '/// The #169/#170/#171 `DeclarationOccurrences` aggregate cap: ordinary'
@@ -96,8 +88,7 @@ jobs:
           context.write_text(text)
 
           fixtures = Path('crates/frontend-analysis-core/src/css/validation/keyframe_fixtures.rs')
-          text = fixtures.read_text()
-          text = text.replace(
+          text = fixtures.read_text().replace(
               'at_keyword: r(0.max(body.0.saturating_sub(body.0)), 10),',
               'at_keyword: r(0, 10),'
           )
