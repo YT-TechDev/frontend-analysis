@@ -2,6 +2,9 @@ mod candidate;
 mod context_candidate;
 mod context_fixtures;
 mod context_gold;
+mod descriptor_candidate;
+mod descriptor_fixtures;
+mod descriptor_gold;
 mod fixtures;
 mod generated;
 mod gold;
@@ -18,6 +21,10 @@ mod context_conformance_tests;
 mod context_contract_tests;
 #[cfg(test)]
 mod core_analysis_gate;
+#[cfg(test)]
+mod descriptor_conformance_tests;
+#[cfg(test)]
+mod descriptor_lifecycle_validation_tests;
 #[cfg(test)]
 mod group_context_contract_tests;
 #[cfg(test)]

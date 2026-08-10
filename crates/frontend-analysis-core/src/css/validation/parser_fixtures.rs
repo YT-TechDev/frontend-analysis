@@ -573,8 +573,15 @@ pub(super) fn normative_parser_fixtures() -> Vec<ParserGoldFixture> {
             vec![],
             vec![],
         ),
-        // A top-level `@font-face` is structurally consumed but unsupported;
-        // no descriptor declaration is extracted from its block.
+        // #169 supersedes the old whole-remainder outcome: an empty-prelude
+        // top-level `@font-face` now qualifies as a supported descriptor
+        // context, so it is no longer top-level-unsupported evidence. The
+        // declaration-shaped `font-family:x;` inside it becomes a
+        // `CssDescriptorOccurrence`, not an ordinary `CssDeclarationOccurrence`
+        // -- this flat parser-level gold has no descriptor-occurrence
+        // concept (see the companion `CSS-CONTEXT-*`/descriptor-focused
+        // producer tests for that structural evidence), so both remain
+        // empty here.
         ParserGoldFixture::complete(
             "CSS-PARSER-UNSUPPORTED-FONT-FACE-001",
             ParserGoldGroup::UnsupportedAtRule,
@@ -584,7 +591,7 @@ pub(super) fn normative_parser_fixtures() -> Vec<ParserGoldFixture> {
             vec![],
             vec![],
             vec![],
-            vec![top_level_at_rule((0, 26), (0, 10))],
+            vec![],
         ),
         // A top-level `@keyframes` is structurally consumed but unsupported;
         // no keyframe declaration is extracted.
@@ -613,9 +620,12 @@ pub(super) fn normative_parser_fixtures() -> Vec<ParserGoldFixture> {
             vec![],
             vec![top_level_at_rule((0, 28), (0, 6))],
         ),
-        // A top-level at-rule followed by a later top-level qualified rule:
-        // the at-rule is an unsupported region and the later rule's
-        // declaration is still a normal supported occurrence.
+        // #169 supersedes the old whole-remainder outcome: the leading
+        // empty-prelude top-level `@font-face` now qualifies as a supported
+        // descriptor context rather than an unsupported region (see the
+        // `CSS-PARSER-UNSUPPORTED-FONT-FACE-001` supersession comment
+        // above). The later top-level qualified rule's declaration remains
+        // a normal supported occurrence at its unchanged source offsets.
         ParserGoldFixture::complete(
             "CSS-PARSER-UNSUPPORTED-AT-RULE-THEN-SUPPORTED-RULE-001",
             ParserGoldGroup::UnsupportedAtRule,
@@ -625,7 +635,7 @@ pub(super) fn normative_parser_fixtures() -> Vec<ParserGoldFixture> {
             vec![decl_semi((28, 38), (28, 33), (33, 34), (34, 37), (37, 38))],
             vec![],
             vec![],
-            vec![top_level_at_rule((0, 26), (0, 10))],
+            vec![],
         ),
         // Duplicate identical declaration spellings at distinct offsets
         // remain distinct occurrences.

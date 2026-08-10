@@ -53,9 +53,10 @@
 //!
 //! [`CssParserContextKind`] now also carries `GroupRuleBlock`, the finite
 //! nested `@media`/`@supports`/`@container`/`@layer`/`@scope` registry
-//! approved for #168; descriptor (#169), page (#170), and keyframe (#171)
-//! context meanings remain deliberately absent rather than pre-populated
-//! speculatively. Context nesting depth
+//! approved for #168, and `DescriptorRuleBlock`, the finite stylesheet-root-
+//! only `@font-face`/`@property` registry approved for #169; page (#170) and
+//! keyframe (#171) context meanings remain deliberately absent rather than
+//! pre-populated speculatively. Context nesting depth
 //! ([`super::resource::CssParserResourceKind::PeakContextDepth`]) is tracked
 //! independently of component-value nesting
 //! ([`super::resource::CssParserResourceKind::PeakComponentDepth`]), and
@@ -100,13 +101,22 @@ impl CssParserContextId {
 /// #166/#167 needed only `QualifiedRuleBlock`. #168 adds the finite nested
 /// group-rule registry approved by #141: exactly `@media`, `@supports`,
 /// `@container`, `@layer`, and `@scope`, never a generic at-rule/plugin
-/// vocabulary. Later approved Leaves extend this enum explicitly (#169
-/// descriptor contexts, #170 page/page-margin contexts, #171 keyframe
-/// contexts); this Leaf does not pre-populate them.
+/// vocabulary. #169 adds the finite stylesheet-root-only descriptor-rule
+/// registry: exactly `@font-face` and `@property`, never a generic
+/// descriptor-block flag/plugin vocabulary. Later approved Leaves extend this
+/// enum explicitly (#170 page/page-margin contexts, #171 keyframe contexts);
+/// this Leaf does not pre-populate them.
+///
+/// The shared `RuleBlock` suffix is deliberate, load-bearing naming (every
+/// variant is a kind of retained rule-block context); stripping it per
+/// `clippy::enum_variant_names` would fight the architecture's own
+/// vocabulary rather than clarify it, so the lint is suppressed here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)]
 pub(crate) enum CssParserContextKind {
     QualifiedRuleBlock,
     GroupRuleBlock(CssParserGroupRuleKind),
+    DescriptorRuleBlock(CssParserDescriptorRuleKind),
 }
 
 /// The finite #168 nested group-rule registry approved by #141.
@@ -143,6 +153,37 @@ impl CssParserGroupRuleKind {
             Some(Self::Layer)
         } else if decoded.eq_ignore_ascii_case("scope") {
             Some(Self::Scope)
+        } else {
+            None
+        }
+    }
+}
+
+/// The finite #169 stylesheet-root-only descriptor-rule registry approved by
+/// #141: exactly `@font-face` and `@property`, never a generic
+/// descriptor-block flag/plugin/framework. Registry membership alone is
+/// necessary but never sufficient to establish a
+/// [`CssParserContextKind::DescriptorRuleBlock`]: the producer additionally
+/// requires the bounded per-kind parent-qualification subset (an empty
+/// `@font-face` prelude, or a single `<custom-property-name>` `@property`
+/// prelude) before a context of this kind is ever entered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssParserDescriptorRuleKind {
+    FontFace,
+    Property,
+}
+
+impl CssParserDescriptorRuleKind {
+    /// Matches a tokenizer-decoded `AtKeyword` value (without the leading
+    /// `@`) against the finite registry, ASCII-case-insensitively. Returns
+    /// `None` for any name outside the two approved kinds, which remains
+    /// explicit unsupported evidence rather than a speculative registry
+    /// member.
+    pub(crate) fn from_decoded_at_keyword(decoded: &str) -> Option<Self> {
+        if decoded.eq_ignore_ascii_case("font-face") {
+            Some(Self::FontFace)
+        } else if decoded.eq_ignore_ascii_case("property") {
+            Some(Self::Property)
         } else {
             None
         }
@@ -297,15 +338,37 @@ pub(crate) enum CssParserContextContractError {
     TerminalBoundaryMismatch,
     /// An `EndOfInput` terminal must sit at the retained source's true end.
     TerminalNotAtSourceEnd,
-    /// A `GroupRuleBlock` group `at_keyword` must start with `@`.
-    GroupAtKeywordMissingSigil,
-    /// A group `at_keyword.start()` must equal `header.start()`.
-    GroupAtKeywordHeaderStartMismatch,
-    /// A group `at_keyword` must be contained within `header`.
-    GroupAtKeywordOutsideHeader,
+    /// A `GroupRuleBlock`/`DescriptorRuleBlock` `at_keyword` must start with
+    /// `@` (#168/#169: shared at-rule identity evidence, no longer
+    /// group-specific).
+    AtKeywordMissingSigil,
+    /// An `at_keyword.start()` must equal `header.start()`.
+    AtKeywordHeaderStartMismatch,
+    /// An `at_keyword` must be contained within `header`.
+    AtKeywordOutsideHeader,
     /// The decoded tokenizer `AtKeyword` value supplied at construction does
     /// not correspond to the declared [`CssParserGroupRuleKind`].
     GroupKindDecodedMismatch,
+    /// The decoded tokenizer `AtKeyword` value supplied at construction does
+    /// not correspond to the declared [`CssParserDescriptorRuleKind`] (#169).
+    DescriptorKindDecodedMismatch,
+    /// A `FontFace` descriptor context was constructed with custom-property-
+    /// name evidence; `@font-face` has an empty semantic prelude and carries
+    /// no such evidence (#169).
+    FontFaceCarriesPropertyNameEvidence,
+    /// A `Property` descriptor context was constructed without the required
+    /// custom-property-name evidence (#169).
+    PropertyMissingCustomPropertyNameEvidence,
+    /// A `Property` descriptor context's decoded custom-property-name
+    /// evidence does not satisfy the bounded `<custom-property-name>`
+    /// subset: `starts_with("--")` and not exactly `"--"` (#169).
+    PropertyNameNotCustomPropertyShaped,
+    /// A `Property` descriptor context's custom-property-name anchor does
+    /// not start after the at-keyword ends (#169).
+    PropertyNameOutOfOrder,
+    /// A `Property` descriptor context's custom-property-name anchor is not
+    /// contained within `header` (#169).
+    PropertyNameOutsideHeader,
 }
 
 impl fmt::Display for CssParserContextContractError {
@@ -337,12 +400,21 @@ pub(crate) struct CssParserContextRecord {
     parent: Option<CssParserContextId>,
     item_ordinal: CssParserDirectItemOrdinal,
     kind: CssParserContextKind,
-    /// The exact authored `AtKeyword` anchor for a `GroupRuleBlock`; always
-    /// `None` for a `QualifiedRuleBlock` (#168). Structurally unrepresentable
-    /// as a mismatch: the two dedicated constructors are the only way to
-    /// build a record, and only [`Self::new_group_rule_block`] can attach
-    /// this evidence.
-    group_at_keyword: Option<SourceAnchor>,
+    /// Shared source-backed at-rule identity evidence (#169 generalization
+    /// of the #168 group-specific field): the exact authored `AtKeyword`
+    /// anchor for a `GroupRuleBlock` or `DescriptorRuleBlock`; always `None`
+    /// for a `QualifiedRuleBlock`. Not a generic at-rule semantic object --
+    /// only source identity evidence. Structurally unrepresentable as a
+    /// mismatch: the three dedicated constructors are the only way to build
+    /// a record, and only
+    /// [`Self::new_group_rule_block`]/[`Self::new_descriptor_rule_block`]
+    /// can attach this evidence.
+    at_keyword: Option<SourceAnchor>,
+    /// The exact authored custom-property-name anchor for a
+    /// `DescriptorRuleBlock(Property)`; always `None` otherwise, including
+    /// for `DescriptorRuleBlock(FontFace)` (whose semantic prelude is empty)
+    /// (#169).
+    descriptor_property_name: Option<SourceAnchor>,
     /// The nearest ancestor `QualifiedRuleBlock` context, or `None` at the
     /// implicit stylesheet root's direct children (#141/#168). Structural
     /// qualified-rule ancestry only: never a selector-validity or
@@ -380,7 +452,8 @@ impl CssParserContextRecord {
             parent,
             item_ordinal,
             kind: CssParserContextKind::QualifiedRuleBlock,
-            group_at_keyword: None,
+            at_keyword: None,
+            descriptor_property_name: None,
             nearest_qualified_ancestor,
             header,
             block_opener,
@@ -416,13 +489,13 @@ impl CssParserContextRecord {
         require_source(expected, &at_keyword, CssParserContextEvidenceRole::Header)?;
         non_empty(&at_keyword, CssParserContextEvidenceRole::Header)?;
         if !at_keyword.fragment().starts_with('@') {
-            return Err(CssParserContextContractError::GroupAtKeywordMissingSigil);
+            return Err(CssParserContextContractError::AtKeywordMissingSigil);
         }
         if at_keyword.range().start() != header.range().start() {
-            return Err(CssParserContextContractError::GroupAtKeywordHeaderStartMismatch);
+            return Err(CssParserContextContractError::AtKeywordHeaderStartMismatch);
         }
         if at_keyword.range().end() > header.range().end() {
-            return Err(CssParserContextContractError::GroupAtKeywordOutsideHeader);
+            return Err(CssParserContextContractError::AtKeywordOutsideHeader);
         }
         if CssParserGroupRuleKind::from_decoded_at_keyword(decoded_at_keyword) != Some(kind) {
             return Err(CssParserContextContractError::GroupKindDecodedMismatch);
@@ -433,8 +506,101 @@ impl CssParserContextRecord {
             parent,
             item_ordinal,
             kind: CssParserContextKind::GroupRuleBlock(kind),
-            group_at_keyword: Some(at_keyword),
+            at_keyword: Some(at_keyword),
+            descriptor_property_name: None,
             nearest_qualified_ancestor,
+            header,
+            block_opener,
+            body,
+            termination,
+        })
+    }
+
+    /// Constructs a `DescriptorRuleBlock` record (#169): a supported
+    /// stylesheet-root-only `@font-face`/`@property` descriptor context.
+    /// `at_keyword` must be the exact authored at-keyword anchor starting
+    /// `header`. `decoded_at_keyword` is the already-decoded tokenizer value
+    /// (without the leading `@`) used only to prove `at_keyword` genuinely
+    /// corresponds to `kind`; it is not retained.
+    ///
+    /// `property_name`/`decoded_property_name` must both be `Some` for
+    /// `Property` (the exact authored custom-property-name anchor and its
+    /// tokenizer-decoded value, used only to prove the bounded
+    /// `<custom-property-name>` subset) and both `None` for `FontFace`,
+    /// whose semantic prelude is empty; any other combination is rejected.
+    ///
+    /// Descriptor contexts are stylesheet-root-only in #169: `parent` and
+    /// `nearest_qualified_ancestor` are always `None` and are not accepted as
+    /// parameters, so this constructor cannot itself construct a nested
+    /// descriptor context.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_descriptor_rule_block(
+        source_text: &SourceText,
+        id: CssParserContextId,
+        item_ordinal: CssParserDirectItemOrdinal,
+        kind: CssParserDescriptorRuleKind,
+        at_keyword: SourceAnchor,
+        decoded_at_keyword: &str,
+        property_name: Option<SourceAnchor>,
+        decoded_property_name: Option<&str>,
+        header: SourceAnchor,
+        block_opener: SourceAnchor,
+        body: SourceAnchor,
+        termination: CssParserContextTermination,
+    ) -> Result<Self, CssParserContextContractError> {
+        validate_shared_shape(source_text, &header, &block_opener, &body, &termination)?;
+
+        let expected = source_text.id();
+        require_source(expected, &at_keyword, CssParserContextEvidenceRole::Header)?;
+        non_empty(&at_keyword, CssParserContextEvidenceRole::Header)?;
+        if !at_keyword.fragment().starts_with('@') {
+            return Err(CssParserContextContractError::AtKeywordMissingSigil);
+        }
+        if at_keyword.range().start() != header.range().start() {
+            return Err(CssParserContextContractError::AtKeywordHeaderStartMismatch);
+        }
+        if at_keyword.range().end() > header.range().end() {
+            return Err(CssParserContextContractError::AtKeywordOutsideHeader);
+        }
+        if CssParserDescriptorRuleKind::from_decoded_at_keyword(decoded_at_keyword) != Some(kind) {
+            return Err(CssParserContextContractError::DescriptorKindDecodedMismatch);
+        }
+
+        match kind {
+            CssParserDescriptorRuleKind::FontFace => {
+                if property_name.is_some() || decoded_property_name.is_some() {
+                    return Err(CssParserContextContractError::FontFaceCarriesPropertyNameEvidence);
+                }
+            }
+            CssParserDescriptorRuleKind::Property => {
+                let name_anchor = property_name.as_ref().ok_or(
+                    CssParserContextContractError::PropertyMissingCustomPropertyNameEvidence,
+                )?;
+                let decoded_name = decoded_property_name.ok_or(
+                    CssParserContextContractError::PropertyMissingCustomPropertyNameEvidence,
+                )?;
+                require_source(expected, name_anchor, CssParserContextEvidenceRole::Header)?;
+                non_empty(name_anchor, CssParserContextEvidenceRole::Header)?;
+                if name_anchor.range().start() < at_keyword.range().end() {
+                    return Err(CssParserContextContractError::PropertyNameOutOfOrder);
+                }
+                if name_anchor.range().end() > header.range().end() {
+                    return Err(CssParserContextContractError::PropertyNameOutsideHeader);
+                }
+                if !decoded_name.starts_with("--") || decoded_name == "--" {
+                    return Err(CssParserContextContractError::PropertyNameNotCustomPropertyShaped);
+                }
+            }
+        }
+
+        Ok(Self {
+            id,
+            parent: None,
+            item_ordinal,
+            kind: CssParserContextKind::DescriptorRuleBlock(kind),
+            at_keyword: Some(at_keyword),
+            descriptor_property_name: property_name,
+            nearest_qualified_ancestor: None,
             header,
             block_opener,
             body,
@@ -458,8 +624,15 @@ impl CssParserContextRecord {
         self.kind
     }
 
-    pub(crate) const fn group_at_keyword(&self) -> Option<&SourceAnchor> {
-        self.group_at_keyword.as_ref()
+    pub(crate) const fn at_keyword(&self) -> Option<&SourceAnchor> {
+        self.at_keyword.as_ref()
+    }
+
+    /// The exact authored custom-property-name anchor for a
+    /// `DescriptorRuleBlock(Property)` context; `None` for every other kind,
+    /// including `DescriptorRuleBlock(FontFace)` (#169).
+    pub(crate) const fn descriptor_property_name(&self) -> Option<&SourceAnchor> {
+        self.descriptor_property_name.as_ref()
     }
 
     pub(crate) const fn nearest_qualified_ancestor(&self) -> Option<CssParserContextId> {
@@ -502,7 +675,15 @@ impl PartialEq for CssParserContextRecord {
             && self.parent == other.parent
             && self.item_ordinal == other.item_ordinal
             && self.kind == other.kind
-            && match (&self.group_at_keyword, &other.group_at_keyword) {
+            && match (&self.at_keyword, &other.at_keyword) {
+                (Some(left), Some(right)) => same_anchor(left, right),
+                (None, None) => true,
+                _ => false,
+            }
+            && match (
+                &self.descriptor_property_name,
+                &other.descriptor_property_name,
+            ) {
                 (Some(left), Some(right)) => same_anchor(left, right),
                 (None, None) => true,
                 _ => false,
@@ -527,8 +708,15 @@ impl fmt::Debug for CssParserContextRecord {
             .field("kind", &self.kind)
             .field("source_id", &self.header.source_id())
             .field(
-                "group_at_keyword",
-                &self.group_at_keyword.as_ref().map(SourceAnchor::range),
+                "at_keyword",
+                &self.at_keyword.as_ref().map(SourceAnchor::range),
+            )
+            .field(
+                "descriptor_property_name",
+                &self
+                    .descriptor_property_name
+                    .as_ref()
+                    .map(SourceAnchor::range),
             )
             .field(
                 "nearest_qualified_ancestor",
@@ -542,8 +730,8 @@ impl fmt::Debug for CssParserContextRecord {
     }
 }
 
-/// The shape/boundary validation shared by both constructors, independent of
-/// group-specific `at_keyword`/kind correspondence.
+/// The shape/boundary validation shared by all three constructors,
+/// independent of `at_keyword`/kind correspondence.
 fn validate_shared_shape(
     source_text: &SourceText,
     header: &SourceAnchor,
@@ -717,6 +905,35 @@ mod tests {
             None,
             CssParserDirectItemOrdinal::new(0),
             None,
+            source_text.anchor(header.0, header.1).unwrap(),
+            source_text.anchor(block_opener.0, block_opener.1).unwrap(),
+            source_text.anchor(body.0, body.1).unwrap(),
+            termination,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn descriptor_rule_block(
+        source_text: &SourceText,
+        kind: CssParserDescriptorRuleKind,
+        at_keyword: (usize, usize),
+        decoded_at_keyword: &str,
+        property_name: Option<(usize, usize)>,
+        decoded_property_name: Option<&str>,
+        header: (usize, usize),
+        block_opener: (usize, usize),
+        body: (usize, usize),
+        termination: CssParserContextTermination,
+    ) -> Result<CssParserContextRecord, CssParserContextContractError> {
+        CssParserContextRecord::new_descriptor_rule_block(
+            source_text,
+            CssParserContextId::new(0),
+            CssParserDirectItemOrdinal::new(0),
+            kind,
+            source_text.anchor(at_keyword.0, at_keyword.1).unwrap(),
+            decoded_at_keyword,
+            property_name.map(|(start, end)| source_text.anchor(start, end).unwrap()),
+            decoded_property_name,
             source_text.anchor(header.0, header.1).unwrap(),
             source_text.anchor(block_opener.0, block_opener.1).unwrap(),
             source_text.anchor(body.0, body.1).unwrap(),
@@ -1044,14 +1261,14 @@ mod tests {
             CssParserContextKind::GroupRuleBlock(CssParserGroupRuleKind::Media)
         );
         assert_eq!(
-            record.group_at_keyword().map(SourceAnchor::range),
+            record.at_keyword().map(SourceAnchor::range),
             Some(text.anchor(2, 8).unwrap().range())
         );
         assert!(record.nearest_qualified_ancestor().is_none());
     }
 
     #[test]
-    fn qualified_rule_block_never_carries_group_at_keyword() {
+    fn qualified_rule_block_never_carries_at_keyword() {
         let text = source(201, "a{p:v;}");
         let record = qualified_rule_block(
             &text,
@@ -1063,11 +1280,11 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(record.group_at_keyword().is_none());
+        assert!(record.at_keyword().is_none());
     }
 
     #[test]
-    fn group_at_keyword_missing_sigil_is_rejected() {
+    fn at_keyword_missing_sigil_is_rejected() {
         let text = source(202, "a{media screen{p:v;}}");
         let result = group_rule_block(
             &text,
@@ -1083,12 +1300,12 @@ mod tests {
         );
         assert_eq!(
             result,
-            Err(CssParserContextContractError::GroupAtKeywordMissingSigil)
+            Err(CssParserContextContractError::AtKeywordMissingSigil)
         );
     }
 
     #[test]
-    fn group_at_keyword_header_start_mismatch_is_rejected() {
+    fn at_keyword_header_start_mismatch_is_rejected() {
         let text = source(203, "a{ @media screen{p:v;}}");
         let result = group_rule_block(
             &text,
@@ -1104,12 +1321,12 @@ mod tests {
         );
         assert_eq!(
             result,
-            Err(CssParserContextContractError::GroupAtKeywordHeaderStartMismatch)
+            Err(CssParserContextContractError::AtKeywordHeaderStartMismatch)
         );
     }
 
     #[test]
-    fn group_at_keyword_outside_header_is_rejected() {
+    fn at_keyword_outside_header_is_rejected() {
         let text = source(204, "a{@media screen{p:v;}}");
         let result = group_rule_block(
             &text,
@@ -1125,12 +1342,12 @@ mod tests {
         );
         assert_eq!(
             result,
-            Err(CssParserContextContractError::GroupAtKeywordOutsideHeader)
+            Err(CssParserContextContractError::AtKeywordOutsideHeader)
         );
     }
 
     #[test]
-    fn group_at_keyword_foreign_source_id_is_rejected() {
+    fn at_keyword_foreign_source_id_is_rejected() {
         let text = source(206, "a{@media screen{p:v;}}");
         let other = source(207, "a{@media screen{p:v;}}");
         let result = CssParserContextRecord::new_group_rule_block(
@@ -1174,6 +1391,247 @@ mod tests {
             result,
             Err(CssParserContextContractError::GroupKindDecodedMismatch)
         );
+    }
+
+    // -- #169 descriptor-context construction corruption tests --------------
+
+    #[test]
+    fn descriptor_kind_decoded_mismatch_is_rejected() {
+        let text = source(300, "@font-face{p:v;}");
+        let result = descriptor_rule_block(
+            &text,
+            CssParserDescriptorRuleKind::FontFace,
+            (0, 10),
+            "property",
+            None,
+            None,
+            (0, 10),
+            (10, 11),
+            (11, 15),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(15, 16).unwrap(),
+            },
+        );
+        assert_eq!(
+            result,
+            Err(CssParserContextContractError::DescriptorKindDecodedMismatch)
+        );
+    }
+
+    #[test]
+    fn font_face_carries_property_name_evidence_is_rejected() {
+        let text = source(301, "@font-face{p:v;}");
+        let result = descriptor_rule_block(
+            &text,
+            CssParserDescriptorRuleKind::FontFace,
+            (0, 10),
+            "font-face",
+            Some((11, 12)),
+            Some("--x"),
+            (0, 10),
+            (10, 11),
+            (11, 15),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(15, 16).unwrap(),
+            },
+        );
+        assert_eq!(
+            result,
+            Err(CssParserContextContractError::FontFaceCarriesPropertyNameEvidence)
+        );
+    }
+
+    #[test]
+    fn property_missing_custom_property_name_evidence_is_rejected() {
+        let text = source(302, "@property{p:v;}");
+        let result = descriptor_rule_block(
+            &text,
+            CssParserDescriptorRuleKind::Property,
+            (0, 9),
+            "property",
+            None,
+            None,
+            (0, 9),
+            (9, 10),
+            (10, 14),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(14, 15).unwrap(),
+            },
+        );
+        assert_eq!(
+            result,
+            Err(CssParserContextContractError::PropertyMissingCustomPropertyNameEvidence)
+        );
+    }
+
+    #[test]
+    fn property_name_not_custom_property_shaped_is_rejected() {
+        let text = source(303, "@property color{p:v;}");
+        let result = descriptor_rule_block(
+            &text,
+            CssParserDescriptorRuleKind::Property,
+            (0, 9),
+            "property",
+            Some((10, 15)),
+            Some("color"),
+            (0, 15),
+            (15, 16),
+            (16, 20),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(20, 21).unwrap(),
+            },
+        );
+        assert_eq!(
+            result,
+            Err(CssParserContextContractError::PropertyNameNotCustomPropertyShaped)
+        );
+    }
+
+    #[test]
+    fn property_name_reserved_double_hyphen_is_rejected() {
+        let text = source(304, "@property --{p:v;}");
+        let result = descriptor_rule_block(
+            &text,
+            CssParserDescriptorRuleKind::Property,
+            (0, 9),
+            "property",
+            Some((10, 12)),
+            Some("--"),
+            (0, 12),
+            (12, 13),
+            (13, 17),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(17, 18).unwrap(),
+            },
+        );
+        assert_eq!(
+            result,
+            Err(CssParserContextContractError::PropertyNameNotCustomPropertyShaped)
+        );
+    }
+
+    #[test]
+    fn property_name_out_of_order_is_rejected() {
+        let text = source(305, "@property --x{p:v;}");
+        let result = descriptor_rule_block(
+            &text,
+            CssParserDescriptorRuleKind::Property,
+            (0, 9),
+            "property",
+            // Starts before at_keyword.end() (9): overlaps the at-keyword.
+            Some((5, 8)),
+            Some("--x"),
+            (0, 13),
+            (13, 14),
+            (14, 18),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(18, 19).unwrap(),
+            },
+        );
+        assert_eq!(
+            result,
+            Err(CssParserContextContractError::PropertyNameOutOfOrder)
+        );
+    }
+
+    #[test]
+    fn property_name_outside_header_is_rejected() {
+        let text = source(306, "@property --x{p:v;}");
+        let result = descriptor_rule_block(
+            &text,
+            CssParserDescriptorRuleKind::Property,
+            (0, 9),
+            "property",
+            // Extends past header.end() (13) into the block opener/body.
+            Some((10, 15)),
+            Some("--x"),
+            (0, 13),
+            (13, 14),
+            (14, 18),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(18, 19).unwrap(),
+            },
+        );
+        assert_eq!(
+            result,
+            Err(CssParserContextContractError::PropertyNameOutsideHeader)
+        );
+    }
+
+    #[test]
+    fn descriptor_at_keyword_missing_sigil_is_rejected() {
+        let text = source(307, "@font-face{p:v;}");
+        let result = descriptor_rule_block(
+            &text,
+            CssParserDescriptorRuleKind::FontFace,
+            // "font-face" without the leading '@'.
+            (1, 10),
+            "font-face",
+            None,
+            None,
+            (1, 10),
+            (10, 11),
+            (11, 15),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(15, 16).unwrap(),
+            },
+        );
+        assert_eq!(
+            result,
+            Err(CssParserContextContractError::AtKeywordMissingSigil)
+        );
+    }
+
+    #[test]
+    fn descriptor_at_keyword_foreign_source_id_is_rejected() {
+        let text = source(308, "@font-face{p:v;}");
+        let other = source(309, "@font-face{p:v;}");
+        let result = CssParserContextRecord::new_descriptor_rule_block(
+            &text,
+            CssParserContextId::new(0),
+            CssParserDirectItemOrdinal::new(0),
+            CssParserDescriptorRuleKind::FontFace,
+            other.anchor(0, 10).unwrap(),
+            "font-face",
+            None,
+            None,
+            text.anchor(0, 10).unwrap(),
+            text.anchor(10, 11).unwrap(),
+            text.anchor(11, 15).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(15, 16).unwrap(),
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(CssParserContextContractError::SourceIdentityMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn property_name_foreign_source_id_is_rejected() {
+        let text = source(310, "@property --x{p:v;}");
+        let other = source(311, "@property --x{p:v;}");
+        let result = CssParserContextRecord::new_descriptor_rule_block(
+            &text,
+            CssParserContextId::new(0),
+            CssParserDirectItemOrdinal::new(0),
+            CssParserDescriptorRuleKind::Property,
+            text.anchor(0, 9).unwrap(),
+            "property",
+            Some(other.anchor(10, 13).unwrap()),
+            Some("--x"),
+            text.anchor(0, 13).unwrap(),
+            text.anchor(13, 14).unwrap(),
+            text.anchor(14, 18).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(18, 19).unwrap(),
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(CssParserContextContractError::SourceIdentityMismatch { .. })
+        ));
     }
 
     #[test]

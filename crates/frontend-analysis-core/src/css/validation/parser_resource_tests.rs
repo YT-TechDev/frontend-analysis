@@ -192,7 +192,7 @@ fn recovery_records_limit_refusal_leaves_diagnostics_and_recovery_both_uncommitt
 
 #[test]
 fn unsupported_regions_limit_refusal_publishes_no_partial_record() {
-    let text = source("@font-face{font-family:x;}");
+    let text = source("@keyframes spin{from{opacity:0;}}");
     let tokenizer_result = run_tokenizer(&text, generous_tokenizer_limits()).unwrap();
     let limits = parser_limits(10_000, 1000, 1000, 1000, 1000, 0, 1000);
     let result = run(&text, tokenizer_result, limits)
@@ -222,7 +222,7 @@ fn unsupported_regions_limit_refusal_publishes_no_partial_record() {
 /// trace in `context_records`.
 #[test]
 fn unsupported_region_refusal_does_not_advance_the_root_item_ordinal() {
-    let text = source("a{}@font-face{font-family:x;}");
+    let text = source("a{}@keyframes spin{from{opacity:0;}}");
     let tokenizer_result = run_tokenizer(&text, generous_tokenizer_limits()).unwrap();
     let limits = parser_limits(10_000, 1000, 1000, 1000, 1000, 0, 1000);
     let result = run(&text, tokenizer_result, limits)

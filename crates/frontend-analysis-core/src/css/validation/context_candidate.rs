@@ -266,7 +266,7 @@ pub(super) fn assert_matches_context_gold(
             "{id}: context {index} item_ordinal"
         );
         assert_kind_matches(id, index, actual.kind(), expected.kind);
-        match (actual.group_at_keyword(), expected.at_keyword) {
+        match (actual.at_keyword(), expected.at_keyword) {
             (None, None) => {}
             (Some(actual_at_keyword), Some(expected_at_keyword)) => {
                 assert_range(

@@ -297,27 +297,30 @@ impl fmt::Debug for CssDeclarationTermination {
     }
 }
 
-/// One recognized authored CSS declaration syntax occurrence within the
-/// #137-approved parser context.
+/// One recognized authored `Ident : value` syntax occurrence's source-backed
+/// evidence, shared between ordinary style-rule declarations
+/// ([`CssDeclarationOccurrence`]) and #169 descriptor occurrences
+/// ([`CssDescriptorOccurrence`]).
 ///
 /// This is a syntax-occurrence claim only. It does not establish known
-/// property identity, property/value grammar validity, selector validity,
-/// browser support, CSSOM membership, cascade participation, or
-/// computed/used value.
+/// property/descriptor identity, property/value grammar validity, selector
+/// validity, browser support, CSSOM membership, cascade participation, or
+/// computed/used value. Owning a shared syntax shape does not make the two
+/// occurrence meanings interchangeable: each wrapper retains its own
+/// [`CssDeclarationPlacement`]/[`CssDescriptorPlacement`], and result-level
+/// validation enforces the semantic owner boundary between them.
 #[derive(Clone)]
-pub(crate) struct CssDeclarationOccurrence {
+pub(crate) struct CssDeclarationSyntaxEvidence {
     complete: SourceAnchor,
     property_name: SourceAnchor,
     colon: SourceAnchor,
     value: SourceAnchor,
     priority: Option<CssDeclarationPriorityEvidence>,
     termination: CssDeclarationTermination,
-    placement: CssDeclarationPlacement,
 }
 
-impl CssDeclarationOccurrence {
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new(
+impl CssDeclarationSyntaxEvidence {
+    fn new(
         source_text: &SourceText,
         complete: SourceAnchor,
         property_name: SourceAnchor,
@@ -325,7 +328,6 @@ impl CssDeclarationOccurrence {
         value: SourceAnchor,
         priority: Option<CssDeclarationPriorityEvidence>,
         termination: CssDeclarationTermination,
-        placement: CssDeclarationPlacement,
     ) -> Result<Self, CssDeclarationContractError> {
         let expected = source_text.id();
 
@@ -418,7 +420,6 @@ impl CssDeclarationOccurrence {
             value,
             priority,
             termination,
-            placement,
         })
     }
 
@@ -426,7 +427,7 @@ impl CssDeclarationOccurrence {
         &self.complete
     }
 
-    pub(crate) const fn property_name(&self) -> &SourceAnchor {
+    pub(crate) const fn name(&self) -> &SourceAnchor {
         &self.property_name
     }
 
@@ -446,16 +447,12 @@ impl CssDeclarationOccurrence {
         &self.termination
     }
 
-    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
-        self.placement
-    }
-
     pub(crate) fn source_order_key(&self) -> (usize, usize) {
         (self.complete.range().start(), self.complete.range().end())
     }
 }
 
-impl PartialEq for CssDeclarationOccurrence {
+impl PartialEq for CssDeclarationSyntaxEvidence {
     fn eq(&self, other: &Self) -> bool {
         same_anchor(&self.complete, &other.complete)
             && same_anchor(&self.property_name, &other.property_name)
@@ -463,7 +460,84 @@ impl PartialEq for CssDeclarationOccurrence {
             && same_anchor(&self.value, &other.value)
             && self.priority == other.priority
             && self.termination == other.termination
-            && self.placement == other.placement
+    }
+}
+
+impl Eq for CssDeclarationSyntaxEvidence {}
+
+/// One recognized authored CSS declaration syntax occurrence within the
+/// #137-approved parser context.
+///
+/// This is a syntax-occurrence claim only. It does not establish known
+/// property identity, property/value grammar validity, selector validity,
+/// browser support, CSSOM membership, cascade participation, or
+/// computed/used value.
+#[derive(Clone)]
+pub(crate) struct CssDeclarationOccurrence {
+    syntax: CssDeclarationSyntaxEvidence,
+    placement: CssDeclarationPlacement,
+}
+
+impl CssDeclarationOccurrence {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        source_text: &SourceText,
+        complete: SourceAnchor,
+        property_name: SourceAnchor,
+        colon: SourceAnchor,
+        value: SourceAnchor,
+        priority: Option<CssDeclarationPriorityEvidence>,
+        termination: CssDeclarationTermination,
+        placement: CssDeclarationPlacement,
+    ) -> Result<Self, CssDeclarationContractError> {
+        let syntax = CssDeclarationSyntaxEvidence::new(
+            source_text,
+            complete,
+            property_name,
+            colon,
+            value,
+            priority,
+            termination,
+        )?;
+        Ok(Self { syntax, placement })
+    }
+
+    pub(crate) const fn complete(&self) -> &SourceAnchor {
+        self.syntax.complete()
+    }
+
+    pub(crate) const fn property_name(&self) -> &SourceAnchor {
+        self.syntax.name()
+    }
+
+    pub(crate) const fn colon(&self) -> &SourceAnchor {
+        self.syntax.colon()
+    }
+
+    pub(crate) const fn value(&self) -> &SourceAnchor {
+        self.syntax.value()
+    }
+
+    pub(crate) const fn priority(&self) -> Option<&CssDeclarationPriorityEvidence> {
+        self.syntax.priority()
+    }
+
+    pub(crate) const fn termination(&self) -> &CssDeclarationTermination {
+        self.syntax.termination()
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) fn source_order_key(&self) -> (usize, usize) {
+        self.syntax.source_order_key()
+    }
+}
+
+impl PartialEq for CssDeclarationOccurrence {
+    fn eq(&self, other: &Self) -> bool {
+        self.syntax == other.syntax && self.placement == other.placement
     }
 }
 
@@ -473,13 +547,149 @@ impl fmt::Debug for CssDeclarationOccurrence {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("CssDeclarationOccurrence")
-            .field("source_id", &self.complete.source_id())
-            .field("complete", &self.complete.range())
-            .field("property_name", &self.property_name.range())
-            .field("colon", &self.colon.range())
-            .field("value", &self.value.range())
-            .field("priority", &self.priority)
-            .field("termination", &self.termination)
+            .field("source_id", &self.complete().source_id())
+            .field("complete", &self.complete().range())
+            .field("property_name", &self.property_name().range())
+            .field("colon", &self.colon().range())
+            .field("value", &self.value().range())
+            .field("priority", &self.priority())
+            .field("termination", &self.termination())
+            .field("placement", &self.placement)
+            .finish()
+    }
+}
+
+/// A descriptor occurrence's structural placement (#169): the owning
+/// [`CssParserContextKind::DescriptorRuleBlock`](super::parser::context::CssParserContextKind::DescriptorRuleBlock)
+/// context and its direct-item ordinal within that context, shared with
+/// sibling explicit unsupported nested at-rule items.
+///
+/// Deliberately carries no declaration-run ordinal: `<declaration-list>`
+/// admits no child rule whose interleaving requires the style-rule
+/// declaration-run model, so descriptor placement is not
+/// [`CssDeclarationPlacement`] with a field omitted -- it is a distinct,
+/// narrower shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssDescriptorPlacement {
+    context_id: CssParserContextId,
+    item_ordinal: CssParserDirectItemOrdinal,
+}
+
+impl CssDescriptorPlacement {
+    pub(crate) const fn new(
+        context_id: CssParserContextId,
+        item_ordinal: CssParserDirectItemOrdinal,
+    ) -> Self {
+        Self {
+            context_id,
+            item_ordinal,
+        }
+    }
+
+    pub(crate) const fn context_id(&self) -> CssParserContextId {
+        self.context_id
+    }
+
+    pub(crate) const fn item_ordinal(&self) -> CssParserDirectItemOrdinal {
+        self.item_ordinal
+    }
+}
+
+/// One recognized authored descriptor-shaped syntax occurrence retained
+/// inside an explicitly-qualified supported descriptor-rule context (#169).
+///
+/// Means only: a declaration-shaped authored syntax occurrence retained
+/// inside a supported `DescriptorRuleBlock` context. It does not mean the
+/// descriptor name is recognized by the owning rule, that its value matches
+/// its grammar, that it has CSSOM/runtime effect, that `@font-face` is
+/// usable for font matching, or that `@property` is a valid registration.
+/// Never interchangeable with [`CssDeclarationOccurrence`], despite sharing
+/// [`CssDeclarationSyntaxEvidence`]: the two remain semantically distinct
+/// types, and result-level validation enforces that a descriptor occurrence
+/// can only be owned by a `DescriptorRuleBlock` context and an ordinary
+/// declaration can never be owned by one.
+#[derive(Clone)]
+pub(crate) struct CssDescriptorOccurrence {
+    syntax: CssDeclarationSyntaxEvidence,
+    placement: CssDescriptorPlacement,
+}
+
+impl CssDescriptorOccurrence {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        source_text: &SourceText,
+        complete: SourceAnchor,
+        name: SourceAnchor,
+        colon: SourceAnchor,
+        value: SourceAnchor,
+        priority: Option<CssDeclarationPriorityEvidence>,
+        termination: CssDeclarationTermination,
+        placement: CssDescriptorPlacement,
+    ) -> Result<Self, CssDeclarationContractError> {
+        let syntax = CssDeclarationSyntaxEvidence::new(
+            source_text,
+            complete,
+            name,
+            colon,
+            value,
+            priority,
+            termination,
+        )?;
+        Ok(Self { syntax, placement })
+    }
+
+    pub(crate) const fn complete(&self) -> &SourceAnchor {
+        self.syntax.complete()
+    }
+
+    pub(crate) const fn name(&self) -> &SourceAnchor {
+        self.syntax.name()
+    }
+
+    pub(crate) const fn colon(&self) -> &SourceAnchor {
+        self.syntax.colon()
+    }
+
+    pub(crate) const fn value(&self) -> &SourceAnchor {
+        self.syntax.value()
+    }
+
+    pub(crate) const fn priority(&self) -> Option<&CssDeclarationPriorityEvidence> {
+        self.syntax.priority()
+    }
+
+    pub(crate) const fn termination(&self) -> &CssDeclarationTermination {
+        self.syntax.termination()
+    }
+
+    pub(crate) const fn placement(&self) -> CssDescriptorPlacement {
+        self.placement
+    }
+
+    pub(crate) fn source_order_key(&self) -> (usize, usize) {
+        self.syntax.source_order_key()
+    }
+}
+
+impl PartialEq for CssDescriptorOccurrence {
+    fn eq(&self, other: &Self) -> bool {
+        self.syntax == other.syntax && self.placement == other.placement
+    }
+}
+
+impl Eq for CssDescriptorOccurrence {}
+
+impl fmt::Debug for CssDescriptorOccurrence {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CssDescriptorOccurrence")
+            .field("source_id", &self.complete().source_id())
+            .field("complete", &self.complete().range())
+            .field("name", &self.name().range())
+            .field("colon", &self.colon().range())
+            .field("value", &self.value().range())
+            .field("priority", &self.priority())
+            .field("termination", &self.termination())
             .field("placement", &self.placement)
             .finish()
     }

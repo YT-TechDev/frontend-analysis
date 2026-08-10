@@ -161,7 +161,7 @@ fn upstream_incomplete_retains_already_entered_group_context() {
     assert_eq!(media.nearest_qualified_ancestor(), Some(outer.id()));
 
     let at_keyword = media
-        .group_at_keyword()
+        .at_keyword()
         .expect("retained @media group context must keep its exact at-keyword evidence");
     assert_eq!(at_keyword.range().start(), 2);
     assert_eq!(at_keyword.range().end(), 8);
@@ -241,7 +241,7 @@ fn declaration_occurrences_limit_stops_after_group_entry() {
     assert_eq!(media.nearest_qualified_ancestor(), Some(outer.id()));
 
     let at_keyword = media
-        .group_at_keyword()
+        .at_keyword()
         .expect("retained @media group context must keep its exact at-keyword evidence");
     assert_eq!(at_keyword.range().start(), 2);
     assert_eq!(at_keyword.range().end(), 8);
