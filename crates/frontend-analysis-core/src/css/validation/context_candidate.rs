@@ -42,7 +42,10 @@ use crate::css::tokenizer::result::{
 };
 use crate::{SourceId, SourceText};
 
-use super::context_gold::{ContextGoldFixture, ContextGoldResourceKind, ContextGoldTermination};
+use super::context_gold::{
+    ContextGoldFixture, ContextGoldGroupRuleKind, ContextGoldKind, ContextGoldResourceKind,
+    ContextGoldTermination,
+};
 
 /// Fixture IDs intentionally excluded from production execution: generic
 /// parser-resource partial-ancestry gold that does not prescribe a specific
@@ -124,10 +127,14 @@ fn run_with_tight_resource_limit(
     let tokenizer_result = run_tokenizer(&source, generous_tokenizer_limits())
         .unwrap_or_else(|error| panic!("{}: production tokenizer error: {error:?}", fixture.id));
 
-    let (max_peak_context_depth, max_context_records) = match kind {
-        ContextGoldResourceKind::PeakContextDepth => (limit, 1 << 16),
-        ContextGoldResourceKind::ContextRecords => (1 << 12, limit),
-    };
+    let mut max_peak_context_depth = 1 << 12;
+    let mut max_context_records = 1 << 16;
+    let mut max_unsupported_regions = 1 << 16;
+    match kind {
+        ContextGoldResourceKind::PeakContextDepth => max_peak_context_depth = limit,
+        ContextGoldResourceKind::ContextRecords => max_context_records = limit,
+        ContextGoldResourceKind::UnsupportedRegions => max_unsupported_regions = limit,
+    }
     let limits = CssParserLimits::new(
         1 << 20,
         1 << 12,
@@ -135,7 +142,7 @@ fn run_with_tight_resource_limit(
         1 << 16,
         1 << 16,
         1 << 16,
-        1 << 16,
+        max_unsupported_regions,
         1 << 16,
         max_context_records,
     )
@@ -258,6 +265,27 @@ pub(super) fn assert_matches_context_gold(
             expected.item_ordinal,
             "{id}: context {index} item_ordinal"
         );
+        assert_kind_matches(id, index, actual.kind(), expected.kind);
+        match (actual.group_at_keyword(), expected.at_keyword) {
+            (None, None) => {}
+            (Some(actual_at_keyword), Some(expected_at_keyword)) => {
+                assert_range(
+                    id,
+                    "context group at_keyword",
+                    index,
+                    actual_at_keyword,
+                    expected_at_keyword,
+                );
+            }
+            _ => panic!("{id}: context {index} group at_keyword presence mismatch"),
+        }
+        assert_eq!(
+            actual
+                .nearest_qualified_ancestor()
+                .map(|ancestor| ancestor.index()),
+            expected.nearest_qualified_ancestor,
+            "{id}: context {index} nearest_qualified_ancestor"
+        );
         assert_range(
             id,
             "context header",
@@ -331,6 +359,59 @@ pub(super) fn assert_matches_context_gold(
         "{id}: production emitted declarations in unexpected contexts: {by_context:?}",
     );
 
+    let actual_nested_at_rules: Vec<_> = result
+        .unsupported_regions()
+        .iter()
+        .filter_map(|region| match region {
+            crate::css::parser::evidence::CssParserUnsupportedRegion::NestedAtRule {
+                complete,
+                at_keyword,
+                context_id,
+                item_ordinal,
+            } => Some((
+                complete,
+                at_keyword,
+                context_id.index(),
+                item_ordinal.value(),
+            )),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        actual_nested_at_rules.len(),
+        fixture.unsupported.len(),
+        "{id}: nested unsupported at-rule count"
+    );
+    for (index, (actual, expected)) in actual_nested_at_rules
+        .iter()
+        .zip(&fixture.unsupported)
+        .enumerate()
+    {
+        let (complete, at_keyword, owner_context, item_ordinal) = *actual;
+        assert_range(
+            id,
+            "unsupported complete",
+            index,
+            complete,
+            expected.complete,
+        );
+        assert_range(
+            id,
+            "unsupported at_keyword",
+            index,
+            at_keyword,
+            expected.at_keyword,
+        );
+        assert_eq!(
+            owner_context, expected.owner_context,
+            "{id}: unsupported {index} owner_context"
+        );
+        assert_eq!(
+            item_ordinal, expected.item_ordinal,
+            "{id}: unsupported {index} item_ordinal"
+        );
+    }
+
     let resources = result.resources();
     assert_eq!(
         resources.value(CssParserResourceKind::PeakContextDepth),
@@ -341,6 +422,11 @@ pub(super) fn assert_matches_context_gold(
         resources.value(CssParserResourceKind::ContextRecords),
         fixture.expected_context_record_count,
         "{id}: ContextRecords usage"
+    );
+    assert_eq!(
+        resources.value(CssParserResourceKind::UnsupportedRegions),
+        fixture.unsupported.len(),
+        "{id}: UnsupportedRegions usage"
     );
 
     match fixture.resource_expectation {
@@ -353,6 +439,9 @@ pub(super) fn assert_matches_context_gold(
                     CssParserResourceKind::PeakContextDepth
                 }
                 ContextGoldResourceKind::ContextRecords => CssParserResourceKind::ContextRecords,
+                ContextGoldResourceKind::UnsupportedRegions => {
+                    CssParserResourceKind::UnsupportedRegions
+                }
             };
             assert_eq!(evidence.kind(), expected_kind, "{id}: resource limit kind");
             assert_eq!(evidence.limit(), expectation.limit, "{id}: resource limit");
@@ -403,6 +492,44 @@ pub(super) fn assert_matches_context_gold(
             }
         }
     }
+}
+
+fn assert_kind_matches(
+    id: &str,
+    index: usize,
+    actual: crate::css::parser::context::CssParserContextKind,
+    expected: ContextGoldKind,
+) {
+    use crate::css::parser::context::{CssParserContextKind, CssParserGroupRuleKind};
+    let matches = match (actual, expected) {
+        (CssParserContextKind::QualifiedRuleBlock, ContextGoldKind::QualifiedRuleBlock) => true,
+        (
+            CssParserContextKind::GroupRuleBlock(actual_kind),
+            ContextGoldKind::GroupRuleBlock(expected_kind),
+        ) => {
+            matches!(
+                (actual_kind, expected_kind),
+                (
+                    CssParserGroupRuleKind::Media,
+                    ContextGoldGroupRuleKind::Media
+                ) | (
+                    CssParserGroupRuleKind::Supports,
+                    ContextGoldGroupRuleKind::Supports
+                ) | (
+                    CssParserGroupRuleKind::Container,
+                    ContextGoldGroupRuleKind::Container
+                ) | (
+                    CssParserGroupRuleKind::Layer,
+                    ContextGoldGroupRuleKind::Layer
+                ) | (
+                    CssParserGroupRuleKind::Scope,
+                    ContextGoldGroupRuleKind::Scope
+                )
+            )
+        }
+        _ => false,
+    };
+    assert!(matches, "{id}: context {index} kind mismatch");
 }
 
 fn assert_range(

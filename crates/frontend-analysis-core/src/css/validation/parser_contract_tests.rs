@@ -253,19 +253,18 @@ fn tokenizer_incomplete_fixture_cannot_be_parser_complete_or_ordinary_eof() {
 /// text exactly as before.
 #[test]
 fn nested_content_remainder_fixtures_absorb_declaration_shaped_trailing_text() {
+    // #168 supersedes the old whole-remainder outcome: `@media screen`
+    // enters the bounded #168 subset, so the nested at-rule is now a
+    // supported group context and both declarations are supported
+    // occurrences with no unsupported region.
     let fixtures = normative_parser_fixtures();
     let fixture = fixture(&fixtures, "CSS-PARSER-NESTING-DECL-THEN-AT-RULE-001");
-    assert_eq!(fixture.declarations.len(), 1);
-    assert_eq!(fixture.unsupported.len(), 1);
-    let region = match fixture.unsupported[0] {
-        ParserGoldUnsupportedRegion::NestedContentRemainder { region } => region,
-        ParserGoldUnsupportedRegion::TopLevelAtRule { .. } => {
-            panic!("expected NestedContentRemainder")
-        }
-    };
-    // The trailing declaration-shaped content lies fully inside the
-    // remainder, so it cannot become a second included occurrence.
-    assert_eq!(region, GoldRange::new(12, 38));
+    assert_eq!(fixture.declarations.len(), 2);
+    assert!(fixture.unsupported.is_empty());
+    assert_eq!(
+        fixture.coverage,
+        ParserGoldCoverage::SupportedForSelectedQuestion
+    );
 }
 
 /// #167 supersedes the old whole-remainder outcome for nested *qualified

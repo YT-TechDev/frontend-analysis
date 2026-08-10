@@ -475,8 +475,10 @@ fn minimal_valid_record(id: usize) -> ContextGoldRecord {
     ContextGoldRecord {
         id,
         parent: None,
+        nearest_qualified_ancestor: None,
         item_ordinal: 0,
         kind: ContextGoldKind::QualifiedRuleBlock,
+        at_keyword: None,
         header: range(0, 1),
         block_opener: range(1, 2),
         body: range(2, 3),
@@ -497,6 +499,7 @@ fn minimal_fixture(contexts: Vec<ContextGoldRecord>) -> ContextGoldFixture {
         expected_context_record_count: count,
         expected_peak_context_depth: 1,
         resource_expectation: None,
+        unsupported: vec![],
     }
 }
 
@@ -529,6 +532,7 @@ fn corruption_forward_parent_is_rejected() {
     let b = ContextGoldRecord {
         id: 1,
         parent: Some(2),
+        nearest_qualified_ancestor: Some(2),
         ..minimal_valid_record(1)
     };
     let fixture = minimal_fixture(vec![a, b]);
@@ -544,8 +548,10 @@ fn corruption_child_outside_parent_body_is_rejected() {
     let a = ContextGoldRecord {
         id: 0,
         parent: None,
+        nearest_qualified_ancestor: None,
         item_ordinal: 0,
         kind: ContextGoldKind::QualifiedRuleBlock,
+        at_keyword: None,
         header: range(0, 1),
         block_opener: range(1, 2),
         body: range(2, 3),
@@ -557,8 +563,10 @@ fn corruption_child_outside_parent_body_is_rejected() {
     let escaping_child = ContextGoldRecord {
         id: 1,
         parent: Some(0),
+        nearest_qualified_ancestor: Some(0),
         item_ordinal: 0,
         kind: ContextGoldKind::QualifiedRuleBlock,
+        at_keyword: None,
         header: range(4, 5),
         block_opener: range(5, 6),
         body: range(6, 6),
@@ -575,6 +583,7 @@ fn corruption_child_outside_parent_body_is_rejected() {
         expected_context_record_count: 2,
         expected_peak_context_depth: 2,
         resource_expectation: None,
+        unsupported: vec![],
     };
     assert_eq!(
         validate_fixture(&fixture),
@@ -588,8 +597,10 @@ fn corruption_duplicate_sibling_item_ordinal_is_rejected() {
     let a = ContextGoldRecord {
         id: 0,
         parent: None,
+        nearest_qualified_ancestor: None,
         item_ordinal: 0,
         kind: ContextGoldKind::QualifiedRuleBlock,
+        at_keyword: None,
         header: range(0, 1),
         block_opener: range(1, 2),
         body: range(2, 8),
@@ -599,8 +610,10 @@ fn corruption_duplicate_sibling_item_ordinal_is_rejected() {
     let child1 = ContextGoldRecord {
         id: 1,
         parent: Some(0),
+        nearest_qualified_ancestor: Some(0),
         item_ordinal: 0,
         kind: ContextGoldKind::QualifiedRuleBlock,
+        at_keyword: None,
         header: range(2, 3),
         block_opener: range(3, 4),
         body: range(4, 4),
@@ -610,8 +623,10 @@ fn corruption_duplicate_sibling_item_ordinal_is_rejected() {
     let child2 = ContextGoldRecord {
         id: 2,
         parent: Some(0),
+        nearest_qualified_ancestor: Some(0),
         item_ordinal: 0,
         kind: ContextGoldKind::QualifiedRuleBlock,
+        at_keyword: None,
         header: range(5, 6),
         block_opener: range(6, 7),
         body: range(7, 7),
@@ -628,6 +643,7 @@ fn corruption_duplicate_sibling_item_ordinal_is_rejected() {
         expected_context_record_count: 3,
         expected_peak_context_depth: 2,
         resource_expectation: None,
+        unsupported: vec![],
     };
     assert_eq!(
         validate_fixture(&fixture),
@@ -641,8 +657,10 @@ fn corruption_decreasing_sibling_item_ordinal_is_rejected() {
     let a = ContextGoldRecord {
         id: 0,
         parent: None,
+        nearest_qualified_ancestor: None,
         item_ordinal: 0,
         kind: ContextGoldKind::QualifiedRuleBlock,
+        at_keyword: None,
         header: range(0, 1),
         block_opener: range(1, 2),
         body: range(2, 8),
@@ -652,8 +670,10 @@ fn corruption_decreasing_sibling_item_ordinal_is_rejected() {
     let child1 = ContextGoldRecord {
         id: 1,
         parent: Some(0),
+        nearest_qualified_ancestor: Some(0),
         item_ordinal: 1,
         kind: ContextGoldKind::QualifiedRuleBlock,
+        at_keyword: None,
         header: range(2, 3),
         block_opener: range(3, 4),
         body: range(4, 4),
@@ -663,8 +683,10 @@ fn corruption_decreasing_sibling_item_ordinal_is_rejected() {
     let child2 = ContextGoldRecord {
         id: 2,
         parent: Some(0),
+        nearest_qualified_ancestor: Some(0),
         item_ordinal: 0,
         kind: ContextGoldKind::QualifiedRuleBlock,
+        at_keyword: None,
         header: range(5, 6),
         block_opener: range(6, 7),
         body: range(7, 7),
@@ -681,6 +703,7 @@ fn corruption_decreasing_sibling_item_ordinal_is_rejected() {
         expected_context_record_count: 3,
         expected_peak_context_depth: 2,
         resource_expectation: None,
+        unsupported: vec![],
     };
     assert_eq!(
         validate_fixture(&fixture),
@@ -694,8 +717,10 @@ fn corruption_root_scoped_duplicate_sibling_item_ordinal_is_rejected() {
     let first = ContextGoldRecord {
         id: 0,
         parent: None,
+        nearest_qualified_ancestor: None,
         item_ordinal: 0,
         kind: ContextGoldKind::QualifiedRuleBlock,
+        at_keyword: None,
         header: range(0, 1),
         block_opener: range(1, 2),
         body: range(2, 2),
@@ -707,8 +732,10 @@ fn corruption_root_scoped_duplicate_sibling_item_ordinal_is_rejected() {
     let second = ContextGoldRecord {
         id: 1,
         parent: None,
+        nearest_qualified_ancestor: None,
         item_ordinal: 0,
         kind: ContextGoldKind::QualifiedRuleBlock,
+        at_keyword: None,
         header: range(3, 4),
         block_opener: range(4, 5),
         body: range(5, 5),
@@ -725,6 +752,7 @@ fn corruption_root_scoped_duplicate_sibling_item_ordinal_is_rejected() {
         expected_context_record_count: 2,
         expected_peak_context_depth: 1,
         resource_expectation: None,
+        unsupported: vec![],
     };
     assert_eq!(
         validate_fixture(&fixture),
@@ -741,8 +769,10 @@ fn corruption_root_scoped_sibling_source_order_violation_is_rejected() {
     let first = ContextGoldRecord {
         id: 0,
         parent: None,
+        nearest_qualified_ancestor: None,
         item_ordinal: 0,
         kind: ContextGoldKind::QualifiedRuleBlock,
+        at_keyword: None,
         header: range(0, 1),
         block_opener: range(1, 2),
         body: range(2, 2),
@@ -752,6 +782,7 @@ fn corruption_root_scoped_sibling_source_order_violation_is_rejected() {
     let second = ContextGoldRecord {
         id: 1,
         parent: None,
+        nearest_qualified_ancestor: None,
         item_ordinal: 1,
         ..first.clone()
     };
@@ -765,6 +796,7 @@ fn corruption_root_scoped_sibling_source_order_violation_is_rejected() {
         expected_context_record_count: 2,
         expected_peak_context_depth: 1,
         resource_expectation: None,
+        unsupported: vec![],
     };
     assert_eq!(
         validate_fixture(&fixture),
@@ -778,8 +810,10 @@ fn root_scoped_siblings_with_ordinal_gaps_are_accepted() {
     let first = ContextGoldRecord {
         id: 0,
         parent: None,
+        nearest_qualified_ancestor: None,
         item_ordinal: 0,
         kind: ContextGoldKind::QualifiedRuleBlock,
+        at_keyword: None,
         header: range(0, 1),
         block_opener: range(1, 2),
         body: range(2, 2),
@@ -789,10 +823,12 @@ fn root_scoped_siblings_with_ordinal_gaps_are_accepted() {
     let second = ContextGoldRecord {
         id: 1,
         parent: None,
+        nearest_qualified_ancestor: None,
         // Ordinal 1 presumed reserved for a future declaration item; the
         // gap is valid.
         item_ordinal: 2,
         kind: ContextGoldKind::QualifiedRuleBlock,
+        at_keyword: None,
         header: range(3, 4),
         block_opener: range(4, 5),
         body: range(5, 5),
@@ -809,6 +845,7 @@ fn root_scoped_siblings_with_ordinal_gaps_are_accepted() {
         expected_context_record_count: 2,
         expected_peak_context_depth: 1,
         resource_expectation: None,
+        unsupported: vec![],
     };
     assert_eq!(validate_fixture(&fixture), Ok(()));
 }
