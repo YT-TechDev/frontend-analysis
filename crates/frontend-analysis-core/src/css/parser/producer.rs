@@ -820,6 +820,12 @@ impl<'a> Producer<'a> {
         Ok(())
     }
 
+    /// Commits a structurally recognized top-level at-rule as an unsupported
+    /// region. `root_next_item_ordinal` only advances after that evidence is
+    /// committed (#167 commit-honest refusal): a resource refusal or
+    /// evidence-construction failure before the push leaves the root ordinal
+    /// untouched, keeping retained top-level qualified-rule ordinals
+    /// source-relative across intervening at-rules.
     fn consume_top_level_at_rule(&mut self, at_keyword: SourceAnchor) -> Result<(), Flow> {
         let AtRuleOutcome::Ended { end } = self.consume_top_level_at_rule_body()?;
         let start = at_keyword.range().start();
@@ -840,6 +846,7 @@ impl<'a> Producer<'a> {
         )
         .map_err(|error| Flow::Invariant(error.into()))?;
         self.unsupported.push(region);
+        self.root_next_item_ordinal += 1;
         self.committed_pos = end;
         Ok(())
     }

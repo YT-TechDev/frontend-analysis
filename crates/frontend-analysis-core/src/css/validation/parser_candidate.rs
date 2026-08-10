@@ -657,9 +657,10 @@ pub(super) fn canonical_signature(result: &CssParserRunResult) -> String {
             colon.end()
         );
     }
-    // #166: always empty for this producer, but included so the signature
-    // stays honest about every result-owned field, not merely the ones
-    // currently populated.
+    // #166 contract, #167 production: empty for a #166-only run, populated
+    // with real QualifiedRuleBlock records for #167 runs. Included so the
+    // signature stays honest about every result-owned field, not merely
+    // whichever ones a given run happens to populate.
     for context in result.context_records() {
         let header = context.header().range();
         let block_opener = context.block_opener().range();

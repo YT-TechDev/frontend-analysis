@@ -2,11 +2,13 @@
 //!
 //! Establishes the parser-domain vocabulary required before any nested
 //! qualified-rule producer execution (#167): context identity, parent
-//! relationships, direct-item ordering, and honest termination. This module
-//! defines contracts only; the current producer never allocates a
-//! [`CssParserContextId`] or constructs a [`CssParserContextRecord`], and
-//! [`super::result::CssParserRunResult::context_records`] is always empty for
-//! every existing execution.
+//! relationships, direct-item ordering, and honest termination. #166
+//! established these contracts while the producer still allocated zero
+//! [`CssParserContextId`]s and constructed zero [`CssParserContextRecord`]s;
+//! #167 now produces real `QualifiedRuleBlock` context records for structurally
+//! recognized nested qualified rules, so
+//! [`super::result::CssParserRunResult::context_records`] is non-empty
+//! whenever a run retains at least one such context.
 //!
 //! # Evidence table, not an AST
 //!

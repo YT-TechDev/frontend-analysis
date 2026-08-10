@@ -54,9 +54,10 @@ pub(crate) struct CssParserRunResult {
     recovery_records: Vec<CssParserRecoveryEvidence>,
     unsupported_regions: Vec<CssParserUnsupportedRegion>,
     discard_records: Vec<CssParserDiscardEvidence>,
-    /// Structurally committed/retained parser-context evidence (#166).
-    /// Always empty for every #166 producer execution; real context
-    /// production begins in #167.
+    /// Structurally committed/retained parser-context evidence (#166
+    /// contract, #167 production): empty for every #166-only execution, and
+    /// populated with real `QualifiedRuleBlock` records wherever #167
+    /// retains at least one nested qualified-rule context.
     context_records: Vec<CssParserContextRecord>,
     terminal: SourceAnchor,
     execution_completion: CssParserExecutionCompletion,
@@ -139,7 +140,7 @@ impl CssParserRunResult {
     }
 
     /// Retained parser-context evidence, in deterministic source-allocation
-    /// order (#166). Always empty for every #166 producer execution.
+    /// order (#166 contract, #167 production).
     pub(crate) fn context_records(&self) -> &[CssParserContextRecord] {
         &self.context_records
     }
