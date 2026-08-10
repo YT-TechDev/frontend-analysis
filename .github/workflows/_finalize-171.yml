@@ -1,0 +1,147 @@
+name: Temporary #171 Finalize
+
+on:
+  push:
+    branches:
+      - feat/css-keyframes-contexts-171-clean
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Apply corrected root-owned keyframes contract
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          result = Path('crates/frontend-analysis-core/src/css/parser/result.rs')
+          text = result.read_text()
+          text = text.replace(
+              'from producer construction. `KeyframesRuleBlock` is root-owned or may be\n/// parented only by a group-rule lineage with no qualified-rule ancestry;\n/// `KeyframeBlock` must be a direct child of `KeyframesRuleBlock`.',
+              'from producer construction. `KeyframesRuleBlock` is root-owned in the\n/// current #171 capability; `KeyframeBlock` must be a direct child of\n/// `KeyframesRuleBlock`.'
+          )
+          old = '''            if let Some(parent_id) = record.parent() {
+                let parent = &context_records[parent_id.index()];
+                if !matches!(parent.kind(), CssParserContextKind::GroupRuleBlock(_))
+                    || parent.nearest_qualified_ancestor().is_some()
+                {
+                    return invariant(
+                        CssParserInvariantViolation::KeyframesContextHasInvalidParent { index },
+                    );
+                }
+            }'''
+          new = '''            if record.parent().is_some() {
+                return invariant(
+                    CssParserInvariantViolation::KeyframesContextHasInvalidParent { index },
+                );
+            }'''
+          if text.count(old) != 1:
+              raise SystemExit('result keyframes parent contract did not match exactly once')
+          text = text.replace(old, new)
+          text = text.replace(
+              'KeyframesContextRequiresRootOrGroupOnlyAncestry',
+              'KeyframesContextCannotBeNested'
+          )
+          result.write_text(text)
+
+          producer = Path('crates/frontend-analysis-core/src/css/parser/producer.rs')
+          text = producer.read_text()
+          old = '''                if matches!(identity, NewContextIdentity::KeyframesRuleBlock { .. })
+                    && (!matches!(frame.kind, CssParserContextKind::GroupRuleBlock(_))
+                        || frame.nearest_qualified_ancestor.is_some())
+                {
+                    return Err(invariant_flow(
+                            CssParserInvariantViolation::KeyframesContextRequiresRootOrGroupOnlyAncestry,
+                        ));
+                }'''
+          new = '''                if matches!(identity, NewContextIdentity::KeyframesRuleBlock { .. }) {
+                    return Err(invariant_flow(
+                        CssParserInvariantViolation::KeyframesContextCannotBeNested,
+                    ));
+                }'''
+          if text.count(old) != 1:
+              raise SystemExit('producer keyframes nested-entry guard did not match exactly once')
+          text = text.replace(old, new)
+          text = text.replace(
+              '/// The #169/#170 `DeclarationOccurrences` aggregate cap: ordinary',
+              '/// The #169/#170/#171 `DeclarationOccurrences` aggregate cap: ordinary'
+          )
+          text = text.replace(
+              '/// shared by structurally identical declaration-list bodies.',
+              '/// shared by structurally identical declaration-list bodies, including\n    /// `KeyframeBlock` (#171).'
+          )
+          producer.write_text(text)
+
+          context = Path('crates/frontend-analysis-core/src/css/parser/context.rs')
+          text = context.read_text()
+          text = text.replace(
+              '//! only `@font-face`/`@property` registry approved for #169; page (#170) and\n//! keyframe (#171) context meanings remain deliberately absent rather than\n//! pre-populated speculatively.',
+              '//! only `@font-face`/`@property` registry approved for #169, plus the\n//! explicit Page/PageMargin (#170) and Keyframes/KeyframeBlock (#171)\n//! context families added by their focused Leaves.'
+          )
+          text = text.replace(
+              '/// descriptor-block flag/plugin vocabulary. Later approved Leaves extend this\n/// enum explicitly (#170 page/page-margin contexts, #171 keyframe contexts);\n/// this Leaf does not pre-populate them.',
+              '/// descriptor-block flag/plugin vocabulary. #170 and #171 extend this enum\n/// explicitly with Page/PageMargin and Keyframes/KeyframeBlock contexts; no\n/// generic special-rule registry is introduced.'
+          )
+          context.write_text(text)
+
+          fixtures = Path('crates/frontend-analysis-core/src/css/validation/keyframe_fixtures.rs')
+          text = fixtures.read_text()
+          text = text.replace(
+              'at_keyword: r(0.max(body.0.saturating_sub(body.0)), 10),',
+              'at_keyword: r(0, 10),'
+          )
+          fixtures.write_text(text)
+          PY
+          git diff --check
+
+      - name: Install accepted Rust toolchain
+        shell: bash
+        run: |
+          rustup toolchain install 1.97.1 \
+            --profile minimal \
+            --component rustfmt \
+            --component clippy
+
+      - name: Format
+        run: cargo fmt --all
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Full tests
+        run: cargo test --workspace --all-targets --all-features
+
+      - name: Locked metadata
+        run: cargo metadata --offline --format-version 1 --locked
+
+      - name: Diff audit
+        shell: bash
+        run: |
+          git diff --check
+          git diff --stat
+          if git diff --name-only | grep -E '(^Cargo\.lock$|Cargo\.toml$)' ; then
+            echo 'unexpected dependency/manifest change' >&2
+            exit 1
+          fi
+
+      - name: Commit validated finalization
+        shell: bash
+        run: |
+          git rm .github/workflows/_finalize-171.yml
+          git add crates/frontend-analysis-core/src/css
+          git diff --cached --check
+          git config user.name "YT-TechDev"
+          git config user.email "271404462+YT-TechDev@users.noreply.github.com"
+          git commit -m "test(core): finalize CSS keyframes contract validation (#171)"
+          git push origin HEAD:feat/css-keyframes-contexts-171-clean
