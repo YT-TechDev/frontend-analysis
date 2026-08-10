@@ -107,7 +107,7 @@ jobs:
       - name: Commit validated implementation tree
         shell: bash
         run: |
-          git rm .github/workflows/_bootstrap-171.yml
+          git rm .github/workflows/_bootstrap-171.yml .github/bootstrap-171-trigger
           git add -- \
             crates/frontend-analysis-core/src/css/declaration.rs \
             crates/frontend-analysis-core/src/css/parser/context.rs \
