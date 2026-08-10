@@ -551,18 +551,27 @@ pub(super) fn normative_parser_fixtures() -> Vec<ParserGoldFixture> {
             vec![],
             vec![],
         ),
-        // Leading supported declarations followed by a nested at-rule: same
-        // remainder treatment as a nested qualified rule.
+        // #168 supersedes the old whole-remainder outcome: `@media screen`
+        // enters the bounded #168 subset (an empty-or-`all`/`screen`/`print`
+        // media-type prelude), so the nested at-rule becomes a supported
+        // group context rather than unsupported evidence, and its own
+        // declaration is a normal supported occurrence in source order.
+        // Parser-level gold is flat across contexts (see the companion
+        // `CSS-CONTEXT-*` group-rule gold for structural context evidence),
+        // so both declarations appear here with no unsupported region.
         ParserGoldFixture::complete(
             "CSS-PARSER-NESTING-DECL-THEN-AT-RULE-001",
             ParserGoldGroup::Nesting,
             2023,
             "a{color:red;@media screen{color:blue;}}",
             39,
-            vec![decl_semi((2, 12), (2, 7), (7, 8), (8, 11), (11, 12))],
+            vec![
+                decl_semi((2, 12), (2, 7), (7, 8), (8, 11), (11, 12)),
+                decl_semi((26, 37), (26, 31), (31, 32), (32, 36), (36, 37)),
+            ],
             vec![],
             vec![],
-            vec![nested_remainder((12, 38))],
+            vec![],
         ),
         // A top-level `@font-face` is structurally consumed but unsupported;
         // no descriptor declaration is extracted from its block.

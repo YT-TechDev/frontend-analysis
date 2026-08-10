@@ -57,6 +57,18 @@
 //! `EndOfInput` termination atomically, using the exact true source-end
 //! boundary as the recovery terminal; no semicolon or right curly is
 //! fabricated.
+//!
+//! # Nested group-rule dispatch (#168)
+//!
+//! [`Producer::handle_nested_at_rule`] replaces #167's whole-remainder
+//! outcome as the normal nested-`AtKeyword` production path: it structurally
+//! scans exactly one at-rule via [`Producer::scan_nested_at_rule_terminator`]
+//! and either enters a supported `GroupRuleBlock` context (only for the
+//! finite `@media`/`@supports`/`@container`/`@layer`/`@scope` registry, and
+//! only when the bounded per-kind prelude subset qualifies) or commits
+//! exactly one context-aware `NestedAtRule` unsupported direct item, then
+//! resumes the same parent. `NestedContentRemainder` remains historical/
+//! contract vocabulary only; it is no longer produced by this path.
 
 use super::super::declaration::{
     CssDeclarationOccurrence, CssDeclarationPlacement, CssDeclarationPriorityEvidence,
@@ -66,7 +78,7 @@ use super::super::token::CssTokenKind;
 use super::super::tokenizer::result::CssTokenizerRunResult;
 use super::context::{
     CssParserContextId, CssParserContextKind, CssParserContextRecord, CssParserContextTermination,
-    CssParserDirectItemOrdinal,
+    CssParserDirectItemOrdinal, CssParserGroupRuleKind,
 };
 use super::cursor::{CssParserCursor, CssParserRawPosition};
 use super::diagnostic::{CssParserDiagnostic, CssParserDiagnosticCode};
@@ -140,7 +152,9 @@ enum ParserPosition {
 #[derive(Clone)]
 enum ObservedKind {
     Ident(String),
-    AtKeyword,
+    /// The tokenizer-decoded at-keyword value, without the leading `@`
+    /// (#168 parser observation only; not a tokenizer semantic change).
+    AtKeyword(String),
     Colon,
     Semicolon,
     Whitespace,
@@ -160,7 +174,7 @@ enum ObservedKind {
 fn observe_kind(kind: &CssTokenKind) -> ObservedKind {
     match kind {
         CssTokenKind::Ident(value) => ObservedKind::Ident(value.clone()),
-        CssTokenKind::AtKeyword(_) => ObservedKind::AtKeyword,
+        CssTokenKind::AtKeyword(value) => ObservedKind::AtKeyword(value.clone()),
         CssTokenKind::Colon => ObservedKind::Colon,
         CssTokenKind::Semicolon => ObservedKind::Semicolon,
         CssTokenKind::Whitespace => ObservedKind::Whitespace,
@@ -241,6 +255,19 @@ enum AtRuleOutcome {
     Ended { end: usize },
 }
 
+/// The identity a newly entered context receives (#168): either an ordinary
+/// nested qualified-rule block, or a supported group-rule block carrying its
+/// exact authored at-keyword evidence and the tokenizer-decoded value needed
+/// (ephemerally) to prove kind correspondence when the record is finalized.
+enum NewContextIdentity {
+    QualifiedRuleBlock,
+    GroupRuleBlock {
+        kind: CssParserGroupRuleKind,
+        at_keyword: SourceAnchor,
+        decoded_at_keyword: String,
+    },
+}
+
 /// Bounded transient evidence for the #158 custom-property-like top-level
 /// qualified-rule prelude exclusion: the leading `Ident` (with its
 /// already-decoded value) and the `Colon` immediately following it among the
@@ -270,6 +297,249 @@ enum RemainderOutcome {
     TrueEndOfInput,
 }
 
+/// How a nested at-rule's own scan ends (#168).
+enum NestedAtRuleTerminator {
+    /// A top-level `{` was reached (cursor already advanced past it).
+    /// `qualifies` is `true` only when a candidate registry kind was known
+    /// and its bounded prelude subset was satisfied.
+    Block {
+        block_opener: SourceAnchor,
+        qualifies: bool,
+    },
+    /// A top-level authored `;` was reached (cursor already advanced past
+    /// it): the `@layer foo;` statement form, or any other registry/unknown
+    /// at-rule's semicolon form.
+    Semicolon {
+        semicolon: SourceAnchor,
+    },
+    /// The enclosing context's own `}` was reached before this at-rule ever
+    /// got a block or semicolon of its own (not consumed; the caller treats
+    /// the at-rule as ending exactly here).
+    EnclosingBlockEnd {
+        right_curly: SourceAnchor,
+    },
+    TrueEndOfInputWithoutBlock,
+}
+
+/// Bounded, streaming per-kind #168 prelude qualification. Never retains a
+/// decoded prelude string or a component-value AST: each variant tracks only
+/// the small constant state needed to prove its own bounded grammar subset,
+/// fed one semantic token at a time by
+/// [`Producer::scan_nested_at_rule_terminator`].
+enum PreludeQualifier {
+    Media {
+        top_level_count: usize,
+        ok: bool,
+    },
+    Container {
+        top_level_count: usize,
+        ok: bool,
+    },
+    Layer {
+        expect_ident: bool,
+        ok: bool,
+        segments: usize,
+        any_seen: bool,
+    },
+    Scope {
+        position: u8,
+        ok: bool,
+    },
+    Supports {
+        top_level_count: usize,
+        top_level_ok: bool,
+        inner_position: u8,
+        inner_ok: bool,
+    },
+}
+
+fn is_css_wide_reserved(name: &str) -> bool {
+    name.eq_ignore_ascii_case("initial")
+        || name.eq_ignore_ascii_case("inherit")
+        || name.eq_ignore_ascii_case("unset")
+        || name.eq_ignore_ascii_case("revert")
+        || name.eq_ignore_ascii_case("revert-layer")
+}
+
+fn is_container_reserved(name: &str) -> bool {
+    is_css_wide_reserved(name)
+        || name.eq_ignore_ascii_case("default")
+        || name.eq_ignore_ascii_case("none")
+        || name.eq_ignore_ascii_case("and")
+        || name.eq_ignore_ascii_case("not")
+        || name.eq_ignore_ascii_case("or")
+}
+
+impl PreludeQualifier {
+    fn new_for(kind: CssParserGroupRuleKind) -> Self {
+        match kind {
+            CssParserGroupRuleKind::Media => Self::Media {
+                top_level_count: 0,
+                ok: true,
+            },
+            CssParserGroupRuleKind::Container => Self::Container {
+                top_level_count: 0,
+                ok: true,
+            },
+            CssParserGroupRuleKind::Layer => Self::Layer {
+                expect_ident: true,
+                ok: true,
+                segments: 0,
+                any_seen: false,
+            },
+            CssParserGroupRuleKind::Scope => Self::Scope {
+                position: 0,
+                ok: true,
+            },
+            CssParserGroupRuleKind::Supports => Self::Supports {
+                top_level_count: 0,
+                top_level_ok: true,
+                inner_position: 0,
+                inner_ok: false,
+            },
+        }
+    }
+
+    /// Feeds one non-whitespace semantic token, observed at `depth_before`
+    /// (the component-nesting depth immediately before this token is
+    /// balanced): `0` is a token directly in the prelude, `1` is a token
+    /// immediately inside the prelude's first (and, for a qualifying
+    /// candidate, only) nested component group.
+    fn observe(&mut self, depth_before: usize, kind: &ObservedKind) {
+        match self {
+            Self::Media {
+                top_level_count,
+                ok,
+            } => {
+                if depth_before != 0 {
+                    return;
+                }
+                *top_level_count += 1;
+                if *top_level_count != 1 {
+                    *ok = false;
+                    return;
+                }
+                *ok = matches!(
+                    kind,
+                    ObservedKind::Ident(name)
+                        if name.eq_ignore_ascii_case("all")
+                            || name.eq_ignore_ascii_case("screen")
+                            || name.eq_ignore_ascii_case("print")
+                );
+            }
+            Self::Container {
+                top_level_count,
+                ok,
+            } => {
+                if depth_before != 0 {
+                    return;
+                }
+                *top_level_count += 1;
+                if *top_level_count != 1 {
+                    *ok = false;
+                    return;
+                }
+                *ok = matches!(kind, ObservedKind::Ident(name) if !is_container_reserved(name));
+            }
+            Self::Layer {
+                expect_ident,
+                ok,
+                segments,
+                any_seen,
+            } => {
+                if depth_before != 0 {
+                    *ok = false;
+                    return;
+                }
+                *any_seen = true;
+                if *expect_ident {
+                    if let ObservedKind::Ident(name) = kind {
+                        *ok = *ok && !is_css_wide_reserved(name);
+                        *segments += 1;
+                        *expect_ident = false;
+                    } else {
+                        *ok = false;
+                    }
+                } else if matches!(kind, ObservedKind::Delim('.')) {
+                    *expect_ident = true;
+                } else {
+                    *ok = false;
+                }
+            }
+            Self::Scope { position, ok } => match (*position, depth_before, kind) {
+                (0, 0, ObservedKind::LeftParenthesis) => *position = 1,
+                (1, 1, ObservedKind::Delim('&')) => *position = 2,
+                (2, 1, ObservedKind::RightParenthesis) => *position = 3,
+                _ => *ok = false,
+            },
+            Self::Supports {
+                top_level_count,
+                top_level_ok,
+                inner_position,
+                inner_ok,
+            } => {
+                if depth_before == 0 {
+                    *top_level_count += 1;
+                    if *top_level_count != 1 || !matches!(kind, ObservedKind::LeftParenthesis) {
+                        *top_level_ok = false;
+                    }
+                    return;
+                }
+                if depth_before != 1 || *top_level_count != 1 {
+                    return;
+                }
+                match *inner_position {
+                    0 => {
+                        if matches!(kind, ObservedKind::Ident(_)) {
+                            *inner_position = 1;
+                        } else {
+                            *inner_position = 2;
+                        }
+                    }
+                    1 => {
+                        if matches!(kind, ObservedKind::Colon) {
+                            *inner_ok = true;
+                        }
+                        *inner_position = 2;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    /// Resolves the final qualification verdict once the top-level block
+    /// opener has been reached. `any_top_level_seen` distinguishes a
+    /// genuinely empty prelude (permitted for `@media`/`@layer`/`@scope`,
+    /// never for `@container`/`@supports`) from a prelude whose single
+    /// top-level item failed its own shape check.
+    fn finish(&self, any_top_level_seen: bool) -> bool {
+        match self {
+            Self::Media {
+                top_level_count,
+                ok,
+            } => !any_top_level_seen || (*top_level_count == 1 && *ok),
+            Self::Container {
+                top_level_count,
+                ok,
+            } => *top_level_count == 1 && *ok,
+            Self::Layer {
+                expect_ident,
+                ok,
+                segments,
+                any_seen,
+            } => !any_seen || (*ok && !*expect_ident && *segments >= 1),
+            Self::Scope { position, ok } => *position == 0 || (*ok && *position == 3),
+            Self::Supports {
+                top_level_count,
+                top_level_ok,
+                inner_ok,
+                ..
+            } => *top_level_count == 1 && *top_level_ok && *inner_ok,
+        }
+    }
+}
+
 /// One entry in the bounded iterative active-context stack (#167): parser
 /// execution metadata required to continue a structurally recognized
 /// qualified-rule block's direct content and to resume its parent once it
@@ -284,17 +554,35 @@ struct ActiveContextFrame {
     id: CssParserContextId,
     parent: Option<CssParserContextId>,
     item_ordinal: CssParserDirectItemOrdinal,
+    /// This frame's own context kind (#168): either `QualifiedRuleBlock` or
+    /// a supported `GroupRuleBlock`. Drives both the eventual record
+    /// constructor choice and this frame's contribution to a new child's
+    /// `nearest_qualified_ancestor`.
+    kind: CssParserContextKind,
+    /// The exact authored at-keyword anchor, present only for a
+    /// `GroupRuleBlock` frame.
+    group_at_keyword: Option<SourceAnchor>,
+    /// The tokenizer-decoded at-keyword value (without `@`), retained only
+    /// long enough to prove kind correspondence at record-construction time
+    /// (#168); never part of the finalized [`CssParserContextRecord`].
+    group_decoded_at_keyword: Option<String>,
+    /// This frame's own nearest qualified-rule ancestor (#141/#168): `None`
+    /// at the implicit stylesheet root's direct children, `Some(parent_id)`
+    /// when the direct parent is a `QualifiedRuleBlock`, and inherited from
+    /// the parent frame when the direct parent is a `GroupRuleBlock`.
+    nearest_qualified_ancestor: Option<CssParserContextId>,
     header: SourceAnchor,
     block_opener: SourceAnchor,
     body_start: usize,
     /// The next direct-item ordinal this context will assign to a
-    /// materialized declaration or child qualified-rule context.
+    /// materialized declaration, child context, or nested unsupported
+    /// at-rule (#168).
     next_item_ordinal: usize,
     /// The next declaration-run ordinal this context will open.
     next_run_ordinal: usize,
     /// Whether a declaration run is currently open (the most recently
     /// materialized direct item, if any, was a declaration rather than a
-    /// child context).
+    /// child context or nested unsupported at-rule).
     run_open: bool,
     /// The run ordinal of the currently open run, meaningful only while
     /// `run_open` is `true`.
@@ -636,7 +924,7 @@ impl<'a> Producer<'a> {
                             self.cursor.advance();
                             self.committed_pos = end;
                         }
-                        ObservedKind::AtKeyword => {
+                        ObservedKind::AtKeyword(_) => {
                             self.cursor.advance();
                             self.consume_top_level_at_rule(anchor)?;
                         }
@@ -663,9 +951,9 @@ impl<'a> Producer<'a> {
                             self.committed_pos = end;
                             self.close_innermost_context_authored(anchor)?;
                         }
-                        ObservedKind::AtKeyword => {
-                            let start = anchor.range().start();
-                            self.begin_nested_content_remainder(start)?;
+                        ObservedKind::AtKeyword(decoded) => {
+                            self.cursor.advance();
+                            self.handle_nested_at_rule(anchor, decoded)?;
                         }
                         _ => {
                             let item_start = anchor.range().start();
@@ -705,32 +993,48 @@ impl<'a> Producer<'a> {
         Ok(prospective_depth)
     }
 
-    /// Commits a structurally recognized qualified-rule block as a new
-    /// active context: `block_opener` must already be consumed (cursor
-    /// advanced, `committed_pos` updated) by the caller. Resource preflight
-    /// happens first and gates every subsequent mutation: a refused entry
-    /// allocates no ID, consumes no parent/root item ordinal, and leaves the
-    /// context stack untouched (#167 commit-honest refusal).
+    /// Commits a structurally recognized qualified-rule block or supported
+    /// group-rule block as a new active context: `block_opener` must already
+    /// be consumed (cursor advanced, `committed_pos` updated) by the caller.
+    /// Resource preflight happens first and gates every subsequent
+    /// mutation: a refused entry allocates no ID, consumes no parent/root
+    /// item ordinal, and leaves the context stack untouched (#167/#168
+    /// commit-honest refusal). A `GroupRuleBlock` identity is only ever
+    /// accepted with a real active parent: group contexts are never
+    /// top-level in this Leaf (#168).
     fn enter_context(
         &mut self,
         header_start: usize,
         block_opener: SourceAnchor,
+        identity: NewContextIdentity,
     ) -> Result<(), Flow> {
         let prospective_depth = self.preflight_context_entry()?;
 
-        let (parent, item_ordinal) = match self.active_contexts.last_mut() {
-            Some(frame) => {
-                frame.run_open = false;
-                let ordinal = frame.next_item_ordinal;
-                frame.next_item_ordinal += 1;
-                (Some(frame.id), ordinal)
-            }
-            None => {
-                let ordinal = self.root_next_item_ordinal;
-                self.root_next_item_ordinal += 1;
-                (None, ordinal)
-            }
-        };
+        let (parent, item_ordinal, nearest_qualified_ancestor) =
+            match self.active_contexts.last_mut() {
+                Some(frame) => {
+                    frame.run_open = false;
+                    let ordinal = frame.next_item_ordinal;
+                    frame.next_item_ordinal += 1;
+                    let nearest = match frame.kind {
+                        CssParserContextKind::QualifiedRuleBlock => Some(frame.id),
+                        CssParserContextKind::GroupRuleBlock(_) => frame.nearest_qualified_ancestor,
+                    };
+                    (Some(frame.id), ordinal, nearest)
+                }
+                None => match identity {
+                    NewContextIdentity::QualifiedRuleBlock => {
+                        let ordinal = self.root_next_item_ordinal;
+                        self.root_next_item_ordinal += 1;
+                        (None, ordinal, None)
+                    }
+                    NewContextIdentity::GroupRuleBlock { .. } => {
+                        return Err(invariant_flow(
+                            CssParserInvariantViolation::GroupContextCannotBeTopLevel,
+                        ));
+                    }
+                },
+            };
 
         let id = CssParserContextId::new(self.pending_context_records.len());
         self.pending_context_records.push(None);
@@ -744,10 +1048,29 @@ impl<'a> Producer<'a> {
             .map_err(|error| Flow::Invariant(error.into()))?;
         let body_start = block_opener.range().end();
 
+        let (kind, group_at_keyword, group_decoded_at_keyword) = match identity {
+            NewContextIdentity::QualifiedRuleBlock => {
+                (CssParserContextKind::QualifiedRuleBlock, None, None)
+            }
+            NewContextIdentity::GroupRuleBlock {
+                kind,
+                at_keyword,
+                decoded_at_keyword,
+            } => (
+                CssParserContextKind::GroupRuleBlock(kind),
+                Some(at_keyword),
+                Some(decoded_at_keyword),
+            ),
+        };
+
         self.active_contexts.push(ActiveContextFrame {
             id,
             parent,
             item_ordinal: CssParserDirectItemOrdinal::new(item_ordinal),
+            kind,
+            group_at_keyword,
+            group_decoded_at_keyword,
+            nearest_qualified_ancestor,
             header,
             block_opener,
             body_start,
@@ -757,6 +1080,60 @@ impl<'a> Producer<'a> {
             current_run_ordinal: 0,
         });
         Ok(())
+    }
+
+    /// Builds the finalized [`CssParserContextRecord`] for a popped frame,
+    /// dispatching to the constructor matching its retained kind (#168).
+    fn build_context_record(
+        &self,
+        frame: ActiveContextFrame,
+        body: SourceAnchor,
+        termination: CssParserContextTermination,
+    ) -> Result<CssParserContextRecord, CssParserRunError> {
+        match frame.kind {
+            CssParserContextKind::QualifiedRuleBlock => {
+                CssParserContextRecord::new_qualified_rule_block(
+                    self.source_text,
+                    frame.id,
+                    frame.parent,
+                    frame.item_ordinal,
+                    frame.nearest_qualified_ancestor,
+                    frame.header,
+                    frame.block_opener,
+                    body,
+                    termination,
+                )
+                .map_err(Into::into)
+            }
+            CssParserContextKind::GroupRuleBlock(group_kind) => {
+                let at_keyword =
+                    frame
+                        .group_at_keyword
+                        .ok_or(CssParserRunError::InternalInvariantFailure(
+                            CssParserInvariantViolation::MissingGroupContextEvidence,
+                        ))?;
+                let decoded = frame.group_decoded_at_keyword.ok_or(
+                    CssParserRunError::InternalInvariantFailure(
+                        CssParserInvariantViolation::MissingGroupContextEvidence,
+                    ),
+                )?;
+                CssParserContextRecord::new_group_rule_block(
+                    self.source_text,
+                    frame.id,
+                    frame.parent,
+                    frame.item_ordinal,
+                    frame.nearest_qualified_ancestor,
+                    group_kind,
+                    at_keyword,
+                    &decoded,
+                    frame.header,
+                    frame.block_opener,
+                    body,
+                    termination,
+                )
+                .map_err(Into::into)
+            }
+        }
     }
 
     /// Closes the innermost active context at an authored `}`: pops the
@@ -773,19 +1150,15 @@ impl<'a> Producer<'a> {
             .source_text
             .anchor(frame.body_start, right_curly.range().start())
             .map_err(|error| Flow::Invariant(error.into()))?;
-        let record = CssParserContextRecord::new(
-            self.source_text,
-            frame.id,
-            frame.parent,
-            frame.item_ordinal,
-            CssParserContextKind::QualifiedRuleBlock,
-            frame.header,
-            frame.block_opener,
-            body,
-            CssParserContextTermination::AuthoredRightCurly { right_curly },
-        )
-        .map_err(|error| Flow::Invariant(error.into()))?;
-        self.pending_context_records[frame.id.index()] = Some(record);
+        let id_index = frame.id.index();
+        let record = self
+            .build_context_record(
+                frame,
+                body,
+                CssParserContextTermination::AuthoredRightCurly { right_curly },
+            )
+            .map_err(Flow::Invariant)?;
+        self.pending_context_records[id_index] = Some(record);
         Ok(())
     }
 
@@ -804,18 +1177,9 @@ impl<'a> Producer<'a> {
                 .source_text
                 .anchor(frame.body_start, terminal.range().start())?;
             let termination = make_termination(terminal.clone());
-            let record = CssParserContextRecord::new(
-                self.source_text,
-                frame.id,
-                frame.parent,
-                frame.item_ordinal,
-                CssParserContextKind::QualifiedRuleBlock,
-                frame.header,
-                frame.block_opener,
-                body,
-                termination,
-            )?;
-            self.pending_context_records[frame.id.index()] = Some(record);
+            let id_index = frame.id.index();
+            let record = self.build_context_record(frame, body, termination)?;
+            self.pending_context_records[id_index] = Some(record);
         }
         Ok(())
     }
@@ -901,7 +1265,11 @@ impl<'a> Producer<'a> {
                     Some(prelude) => {
                         self.consume_top_level_custom_property_like_discard(item_start, prelude)
                     }
-                    None => self.enter_context(item_start, left_curly),
+                    None => self.enter_context(
+                        item_start,
+                        left_curly,
+                        NewContextIdentity::QualifiedRuleBlock,
+                    ),
                 }
             }
             PreludeOutcome::TrueEndOfInputWithoutBlock => {
@@ -1079,7 +1447,11 @@ impl<'a> Producer<'a> {
                     FallbackOutcome::NestedRuleTrigger => {
                         let left_curly = self.expect_left_curly_bracket()?;
                         self.committed_pos = left_curly.range().end();
-                        self.enter_context(item_start, left_curly)
+                        self.enter_context(
+                            item_start,
+                            left_curly,
+                            NewContextIdentity::QualifiedRuleBlock,
+                        )
                     }
                     FallbackOutcome::MalformedEndedAtSemicolon { semicolon } => {
                         let region_end = semicolon.range().end();
@@ -1236,52 +1608,165 @@ impl<'a> Producer<'a> {
         }
     }
 
-    /// Unsupported nested at-rule remainder, scoped to the currently
-    /// innermost active context (#167). Nested at-rule descent remains out
-    /// of scope for #167 (deferred to #168): the enclosing `}` this
-    /// remainder consumes structurally closes the current context, which is
-    /// therefore finalized honestly as `AuthoredRightCurly` right here
-    /// before resuming its parent (or the implicit root) on the next
-    /// `execute()` iteration. The remainder itself never consumes a
-    /// direct-item ordinal or a declaration-run boundary.
-    fn begin_nested_content_remainder(&mut self, remainder_start: usize) -> Result<(), Flow> {
-        match self.consume_remainder_until_enclosing_right_curly()? {
-            RemainderOutcome::EnclosingRightCurly { start, end } => {
-                self.commit_unsupported_nested_remainder(remainder_start, start)?;
-                let right_curly = self
-                    .source_text
-                    .anchor(start, end)
-                    .map_err(|error| Flow::Invariant(error.into()))?;
-                self.cursor.advance();
-                self.committed_pos = end;
-                self.close_innermost_context_authored(right_curly)
+    /// Nested at-keyword dispatch (#168): structurally scans exactly one
+    /// at-rule, then either enters a supported `GroupRuleBlock` context or
+    /// commits exactly one context-aware `NestedAtRule` unsupported direct
+    /// item, resuming the same parent afterward. Supersedes #167's
+    /// whole-remainder outcome for ordinary nested-at-rule production; never
+    /// consumes more than one at-rule regardless of qualification.
+    fn handle_nested_at_rule(
+        &mut self,
+        at_keyword: SourceAnchor,
+        decoded_at_keyword: String,
+    ) -> Result<(), Flow> {
+        let candidate_kind = CssParserGroupRuleKind::from_decoded_at_keyword(&decoded_at_keyword);
+        match self.scan_nested_at_rule_terminator(candidate_kind)? {
+            NestedAtRuleTerminator::Block {
+                block_opener,
+                qualifies,
+            } => {
+                if let (Some(kind), true) = (candidate_kind, qualifies) {
+                    self.committed_pos = block_opener.range().end();
+                    self.enter_context(
+                        at_keyword.range().start(),
+                        block_opener,
+                        NewContextIdentity::GroupRuleBlock {
+                            kind,
+                            at_keyword,
+                            decoded_at_keyword,
+                        },
+                    )
+                } else {
+                    match self.consume_remainder_until_enclosing_right_curly()? {
+                        RemainderOutcome::EnclosingRightCurly { end, .. } => {
+                            self.cursor.advance();
+                            self.commit_nested_at_rule_unsupported(at_keyword, end)
+                        }
+                        RemainderOutcome::TrueEndOfInput => {
+                            let len = self.source_text.as_str().len();
+                            self.commit_nested_at_rule_unsupported(at_keyword, len)
+                        }
+                    }
+                }
             }
-            RemainderOutcome::TrueEndOfInput => {
+            NestedAtRuleTerminator::Semicolon { semicolon } => {
+                let end = semicolon.range().end();
+                self.commit_nested_at_rule_unsupported(at_keyword, end)
+            }
+            NestedAtRuleTerminator::EnclosingBlockEnd { right_curly } => {
+                let end = right_curly.range().start();
+                self.commit_nested_at_rule_unsupported(at_keyword, end)
+            }
+            NestedAtRuleTerminator::TrueEndOfInputWithoutBlock => {
                 let len = self.source_text.as_str().len();
-                self.commit_unsupported_nested_remainder(remainder_start, len)
+                self.commit_nested_at_rule_unsupported(at_keyword, len)
             }
         }
     }
 
-    fn commit_unsupported_nested_remainder(
+    /// Structurally scans exactly one nested at-rule's prelude, using the
+    /// existing bounded component-balancing machinery, and reports how it
+    /// ends: a top-level block opener (with whether the observed prelude
+    /// satisfies `candidate_kind`'s bounded #168 subset, always `false` when
+    /// `candidate_kind` is `None`), an authored top-level semicolon, the
+    /// enclosing context's own `}` reached before this at-rule ever got a
+    /// block/semicolon of its own, or true end of input. Never parses a
+    /// source substring: qualification is decided purely from the already
+    /// observed lexical-item stream via `PreludeQualifier`.
+    fn scan_nested_at_rule_terminator(
         &mut self,
-        start: usize,
+        candidate_kind: Option<CssParserGroupRuleKind>,
+    ) -> Result<NestedAtRuleTerminator, Flow> {
+        self.component_frames.clear();
+        let mut qualifier = candidate_kind.map(PreludeQualifier::new_for);
+        let mut any_top_level_seen = false;
+        loop {
+            match self.next_semantic()? {
+                ParserPosition::SemanticToken { anchor, kind } => {
+                    let depth_before = self.component_frames.len();
+                    if depth_before == 0 && matches!(kind, ObservedKind::Semicolon) {
+                        self.cursor.advance();
+                        return Ok(NestedAtRuleTerminator::Semicolon { semicolon: anchor });
+                    }
+                    if depth_before == 0 && matches!(kind, ObservedKind::LeftCurlyBracket) {
+                        let qualifies = qualifier
+                            .as_ref()
+                            .is_some_and(|qualifier| qualifier.finish(any_top_level_seen));
+                        self.cursor.advance();
+                        return Ok(NestedAtRuleTerminator::Block {
+                            block_opener: anchor,
+                            qualifies,
+                        });
+                    }
+                    if depth_before == 0 && matches!(kind, ObservedKind::RightCurlyBracket) {
+                        return Ok(NestedAtRuleTerminator::EnclosingBlockEnd {
+                            right_curly: anchor,
+                        });
+                    }
+                    if !matches!(kind, ObservedKind::Whitespace) {
+                        if depth_before == 0 {
+                            any_top_level_seen = true;
+                        }
+                        if let Some(qualifier) = qualifier.as_mut() {
+                            qualifier.observe(depth_before, &kind);
+                        }
+                    }
+                    self.consume_and_balance(&kind)?;
+                }
+                ParserPosition::TrueEndOfInput => {
+                    return Ok(NestedAtRuleTerminator::TrueEndOfInputWithoutBlock);
+                }
+                ParserPosition::UpstreamTokenizerTerminal => return Err(Flow::UpstreamIncomplete),
+            }
+        }
+    }
+
+    /// Commits one context-aware `NestedAtRule` unsupported direct item
+    /// atomically with owning-context ordering mutation (#168 commit-honest
+    /// order): the `UnsupportedRegions` preflight and evidence construction
+    /// happen first; only after a successful push does the owning context's
+    /// direct-item ordinal advance and its currently open declaration run
+    /// (if any) close.
+    fn commit_nested_at_rule_unsupported(
+        &mut self,
+        at_keyword: SourceAnchor,
         end: usize,
     ) -> Result<(), Flow> {
+        let start = at_keyword.range().start();
         let prospective = checked_resource_add(
             CssParserResourceKind::UnsupportedRegions,
             self.unsupported.len(),
             1,
         )?;
         self.check_limit(CssParserResourceKind::UnsupportedRegions, prospective)?;
-        let region = self
+
+        let frame = self.active_contexts.last().ok_or_else(|| {
+            invariant_flow(CssParserInvariantViolation::DeclarationOutsideActiveContext)
+        })?;
+        let context_id = frame.id;
+        let item_ordinal = frame.next_item_ordinal;
+
+        let complete = self
             .source_text
             .anchor(start, end)
             .map_err(|error| Flow::Invariant(error.into()))?;
-        let evidence =
-            CssParserUnsupportedRegion::new_nested_content_remainder(self.source_text, region)
-                .map_err(|error| Flow::Invariant(error.into()))?;
+        let evidence = CssParserUnsupportedRegion::new_nested_at_rule(
+            self.source_text,
+            complete,
+            at_keyword,
+            context_id,
+            CssParserDirectItemOrdinal::new(item_ordinal),
+        )
+        .map_err(|error| Flow::Invariant(error.into()))?;
+
         self.unsupported.push(evidence);
+
+        let frame = self
+            .active_contexts
+            .last_mut()
+            .ok_or_else(|| invariant_flow(CssParserInvariantViolation::NoActiveContextToClose))?;
+        frame.next_item_ordinal += 1;
+        frame.run_open = false;
         self.committed_pos = end;
         Ok(())
     }

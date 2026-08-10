@@ -657,21 +657,27 @@ pub(super) fn canonical_signature(result: &CssParserRunResult) -> String {
             colon.end()
         );
     }
-    // #166 contract, #167 production: empty for a #166-only run, populated
-    // with real QualifiedRuleBlock records for #167 runs. Included so the
-    // signature stays honest about every result-owned field, not merely
-    // whichever ones a given run happens to populate.
+    // #166 contract, #167/#168 production: empty for a #166-only run,
+    // populated with real QualifiedRuleBlock/GroupRuleBlock records for
+    // #167/#168 runs. Included so the signature stays honest about every
+    // result-owned field, not merely whichever ones a given run happens to
+    // populate.
     for context in result.context_records() {
         let header = context.header().range();
         let block_opener = context.block_opener().range();
         let body = context.body().range();
+        let at_keyword = context.group_at_keyword().map(|anchor| anchor.range());
         let _ = write!(
             signature,
-            "|Ctx{:?}Id{}Parent{:?}Ordinal{}Header[{},{})Opener[{},{})Body[{},{}){:?}",
+            "|Ctx{:?}Id{}Parent{:?}Ordinal{}AtKeyword{:?}Nearest{:?}Header[{},{})Opener[{},{})Body[{},{}){:?}",
             context.kind(),
             context.id().index(),
             context.parent().map(|parent_id| parent_id.index()),
             context.item_ordinal().value(),
+            at_keyword.map(|range| (range.start(), range.end())),
+            context
+                .nearest_qualified_ancestor()
+                .map(|ancestor_id| ancestor_id.index()),
             header.start(),
             header.end(),
             block_opener.start(),
@@ -758,6 +764,24 @@ fn unsupported_shape(unsupported: &CssParserUnsupportedRegion) -> String {
                 "NestedContentRemainder@[{},{})",
                 region.start(),
                 region.end()
+            )
+        }
+        CssParserUnsupportedRegion::NestedAtRule {
+            complete,
+            at_keyword,
+            context_id,
+            item_ordinal,
+        } => {
+            let complete = complete.range();
+            let at_keyword = at_keyword.range();
+            format!(
+                "NestedAtRule@[{},{})At[{},{})Ctx{}Item{}",
+                complete.start(),
+                complete.end(),
+                at_keyword.start(),
+                at_keyword.end(),
+                context_id.index(),
+                item_ordinal.value(),
             )
         }
     }

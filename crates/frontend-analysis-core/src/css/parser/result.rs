@@ -10,7 +10,8 @@ use super::super::tokenizer::result::{
     CssTokenizerCompletion, CssTokenizerRunResult, CssTokenizerTermination,
 };
 use super::context::{
-    CssParserContextContractError, CssParserContextRecord, CssParserContextTermination,
+    CssParserContextContractError, CssParserContextKind, CssParserContextRecord,
+    CssParserContextTermination,
 };
 use super::diagnostic::{CssParserDiagnostic, CssParserDiagnosticContractError};
 use super::evidence::{
@@ -489,6 +490,32 @@ pub(crate) enum CssParserInvariantViolation {
     DeclarationRunOrdinalViolation {
         index: usize,
     },
+    /// A `GroupRuleBlock` identity was attempted with no active parent
+    /// context (#168): group contexts are never top-level in this Leaf.
+    GroupContextCannotBeTopLevel,
+    /// A `GroupRuleBlock` active-context frame reached record finalization
+    /// without its at-keyword/decoded evidence retained alongside it.
+    MissingGroupContextEvidence,
+    /// A retained context's `nearest_qualified_ancestor` does not equal the
+    /// value structurally derivable from the retained parent table (#168).
+    NearestQualifiedAncestorMismatch {
+        index: usize,
+    },
+    /// A retained context's `nearest_qualified_ancestor` refers to a context
+    /// that either does not exist yet (not strictly earlier) or is not
+    /// itself a `QualifiedRuleBlock`.
+    NearestQualifiedAncestorInvalidReference {
+        index: usize,
+    },
+    /// A nested unsupported at-rule's owning context does not exist.
+    NestedAtRuleUnknownOwnerContext {
+        index: usize,
+    },
+    /// A nested unsupported at-rule's complete range is not contained in its
+    /// owning context's retained `body`.
+    NestedAtRuleOutsideOwnerBody {
+        index: usize,
+    },
 }
 
 /// Computes `current + additional` for one [`CssParserResourceKind`] using
@@ -576,7 +603,7 @@ fn validate_run(
         termination,
     )?;
 
-    validate_declaration_placement(occurrences, context_records)?;
+    validate_declaration_placement(occurrences, unsupported_regions, context_records)?;
 
     validate_resource_counts(
         resources,
@@ -670,6 +697,8 @@ fn validate_contexts(
         };
         depths.push(depth);
 
+        validate_nearest_qualified_ancestor(context_records, index, record)?;
+
         let ordinal = record.item_ordinal().value();
         if let Some(&previous_ordinal) = last_sibling_ordinal.get(&scope_key) {
             if ordinal == previous_ordinal {
@@ -751,26 +780,74 @@ fn validate_contexts(
     Ok(depths.into_iter().max().unwrap_or(0))
 }
 
+/// Validates one context record's `nearest_qualified_ancestor` (#141/#168)
+/// against the retained parent table: first that a `Some` reference is
+/// well-formed (strictly earlier, and itself a `QualifiedRuleBlock`), then
+/// that the value equals the one structurally derivable from the parent's
+/// own kind and nearest-ancestor evidence. Never trusts producer-provided
+/// ancestry without proving it here.
+fn validate_nearest_qualified_ancestor(
+    context_records: &[CssParserContextRecord],
+    index: usize,
+    record: &CssParserContextRecord,
+) -> Result<(), CssParserRunError> {
+    if let Some(ancestor_id) = record.nearest_qualified_ancestor() {
+        let ancestor_index = ancestor_id.index();
+        let valid_reference = ancestor_index < index
+            && matches!(
+                context_records[ancestor_index].kind(),
+                CssParserContextKind::QualifiedRuleBlock
+            );
+        if !valid_reference {
+            return invariant(
+                CssParserInvariantViolation::NearestQualifiedAncestorInvalidReference { index },
+            );
+        }
+    }
+
+    let expected = match record.parent() {
+        None => None,
+        Some(parent_id) => {
+            let parent_record = &context_records[parent_id.index()];
+            match parent_record.kind() {
+                CssParserContextKind::QualifiedRuleBlock => Some(parent_id),
+                CssParserContextKind::GroupRuleBlock(_) => {
+                    parent_record.nearest_qualified_ancestor()
+                }
+            }
+        }
+    };
+    if record.nearest_qualified_ancestor() != expected {
+        return invariant(CssParserInvariantViolation::NearestQualifiedAncestorMismatch { index });
+    }
+
+    Ok(())
+}
+
 /// One materialized direct block-content item's ordering data, keyed by its
-/// owning context for [`validate_declaration_placement`]: either a
-/// declaration (carrying its `occurrences` index and run ordinal) or a
-/// retained child qualified-rule context.
+/// owning context for [`validate_declaration_placement`]: a declaration
+/// (carrying its `occurrences` index and run ordinal), a retained child
+/// context (qualified-rule or supported group-rule, #168), or a
+/// context-aware nested unsupported at-rule (#168).
 enum DirectItem {
     Declaration { index: usize, run_ordinal: usize },
     ChildContext,
+    NestedUnsupportedAtRule,
 }
 
-/// Reconciles declaration placement against retained context evidence
-/// (#167): every declaration's [`CssParserContextId`] refers to an existing
-/// retained context, its complete range lies within that context's `body`,
-/// and -- per owning context -- the combined direct-item sequence
-/// (declarations interleaved with child qualified-rule contexts, sharing
-/// one ordinal space) has gapless strictly-increasing ordinals consistent
-/// with source order, and declaration-run ordinals are zero-based,
-/// non-decreasing, shared by consecutive declarations, and reset to the
-/// next value by an intervening materialized child context.
+/// Reconciles declaration and nested-unsupported-at-rule placement against
+/// retained context evidence (#167/#168): every declaration's
+/// [`CssParserContextId`] refers to an existing retained context, its
+/// complete range lies within that context's `body`, and -- per owning
+/// context -- the combined direct-item sequence (declarations, retained
+/// child contexts, and nested unsupported at-rules, sharing one ordinal
+/// space) has gapless strictly-increasing ordinals consistent with source
+/// order, and declaration-run ordinals are zero-based, non-decreasing,
+/// shared by consecutive declarations, and reset to the next value by an
+/// intervening materialized child context or nested unsupported at-rule.
 fn validate_declaration_placement(
     occurrences: &[CssDeclarationOccurrence],
+    unsupported_regions: &[CssParserUnsupportedRegion],
     context_records: &[CssParserContextRecord],
 ) -> Result<(), CssParserRunError> {
     let mut items_by_context: std::collections::BTreeMap<
@@ -819,6 +896,39 @@ fn validate_declaration_placement(
                     record.extent_end(),
                     DirectItem::ChildContext,
                 ));
+        }
+    }
+
+    for (index, region) in unsupported_regions.iter().enumerate() {
+        if let CssParserUnsupportedRegion::NestedAtRule {
+            complete,
+            context_id,
+            item_ordinal,
+            ..
+        } = region
+        {
+            let context_index = context_id.index();
+            let context = context_records.get(context_index).ok_or(
+                CssParserRunError::InternalInvariantFailure(
+                    CssParserInvariantViolation::NestedAtRuleUnknownOwnerContext { index },
+                ),
+            )?;
+            let range = complete.range();
+            let body = context.body().range();
+            if complete.source_id() != context.body().source_id()
+                || range.start() < body.start()
+                || range.end() > body.end()
+            {
+                return invariant(CssParserInvariantViolation::NestedAtRuleOutsideOwnerBody {
+                    index,
+                });
+            }
+            items_by_context.entry(context_index).or_default().push((
+                item_ordinal.value(),
+                range.start(),
+                range.end(),
+                DirectItem::NestedUnsupportedAtRule,
+            ));
         }
     }
 
@@ -876,7 +986,7 @@ fn validate_declaration_placement(
                         }
                     }
                 },
-                DirectItem::ChildContext => {
+                DirectItem::ChildContext | DirectItem::NestedUnsupportedAtRule => {
                     current_run = None;
                 }
             }
@@ -2311,8 +2421,6 @@ mod tests {
     // #166 result-level context corruption matrix.
     // -------------------------------------------------------------------
 
-    use crate::css::parser::context::CssParserContextKind;
-
     fn context_resources(
         context_records: usize,
         peak_context_depth: usize,
@@ -2328,12 +2436,12 @@ mod tests {
         id: usize,
         item_ordinal: usize,
     ) -> CssParserContextRecord {
-        CssParserContextRecord::new(
+        CssParserContextRecord::new_qualified_rule_block(
             text,
             CssParserContextId::new(id),
             None,
             CssParserDirectItemOrdinal::new(item_ordinal),
-            CssParserContextKind::QualifiedRuleBlock,
+            None,
             text.anchor(0, 1).unwrap(),
             text.anchor(1, 2).unwrap(),
             text.anchor(2, 3).unwrap(),
@@ -2354,12 +2462,12 @@ mod tests {
         second_ordinal: usize,
     ) -> Vec<CssParserContextRecord> {
         let parent_id = CssParserContextId::new(0);
-        let outer = CssParserContextRecord::new(
+        let outer = CssParserContextRecord::new_qualified_rule_block(
             text,
             parent_id,
             None,
             CssParserDirectItemOrdinal::new(0),
-            CssParserContextKind::QualifiedRuleBlock,
+            None,
             text.anchor(0, 1).unwrap(),
             text.anchor(1, 2).unwrap(),
             text.anchor(2, 10).unwrap(),
@@ -2368,12 +2476,12 @@ mod tests {
             },
         )
         .unwrap();
-        let child_b = CssParserContextRecord::new(
+        let child_b = CssParserContextRecord::new_qualified_rule_block(
             text,
             CssParserContextId::new(1),
             Some(parent_id),
             CssParserDirectItemOrdinal::new(first_ordinal),
-            CssParserContextKind::QualifiedRuleBlock,
+            Some(parent_id),
             text.anchor(2, 3).unwrap(),
             text.anchor(3, 4).unwrap(),
             text.anchor(4, 5).unwrap(),
@@ -2382,12 +2490,12 @@ mod tests {
             },
         )
         .unwrap();
-        let child_c = CssParserContextRecord::new(
+        let child_c = CssParserContextRecord::new_qualified_rule_block(
             text,
             CssParserContextId::new(2),
             Some(parent_id),
             CssParserDirectItemOrdinal::new(second_ordinal),
-            CssParserContextKind::QualifiedRuleBlock,
+            Some(parent_id),
             text.anchor(6, 7).unwrap(),
             text.anchor(7, 8).unwrap(),
             text.anchor(8, 9).unwrap(),
@@ -2439,12 +2547,12 @@ mod tests {
         let parent_id = CssParserContextId::new(0);
         // A first record (index 0) that already claims a parent cannot
         // refer to any earlier-retained record.
-        let context = CssParserContextRecord::new(
+        let context = CssParserContextRecord::new_qualified_rule_block(
             &text,
             parent_id,
             Some(parent_id),
             CssParserDirectItemOrdinal::new(0),
-            CssParserContextKind::QualifiedRuleBlock,
+            None,
             text.anchor(0, 1).unwrap(),
             text.anchor(1, 2).unwrap(),
             text.anchor(2, 10).unwrap(),
@@ -2484,12 +2592,12 @@ mod tests {
         let upstream = complete_tokenizer_run(&text);
         let len = text.as_str().len();
         let parent_id = CssParserContextId::new(0);
-        let outer = CssParserContextRecord::new(
+        let outer = CssParserContextRecord::new_qualified_rule_block(
             &text,
             parent_id,
             None,
             CssParserDirectItemOrdinal::new(0),
-            CssParserContextKind::QualifiedRuleBlock,
+            None,
             text.anchor(0, 1).unwrap(),
             text.anchor(1, 2).unwrap(),
             text.anchor(2, 10).unwrap(),
@@ -2501,12 +2609,12 @@ mod tests {
         // This child's own local evidence is self-consistent, but its
         // authored close reuses the outer context's own closing `}` byte,
         // extending past the outer's retained `body` (which ends at 10).
-        let escaping_child = CssParserContextRecord::new(
+        let escaping_child = CssParserContextRecord::new_qualified_rule_block(
             &text,
             CssParserContextId::new(1),
             Some(parent_id),
             CssParserDirectItemOrdinal::new(0),
-            CssParserContextKind::QualifiedRuleBlock,
+            Some(parent_id),
             text.anchor(6, 7).unwrap(),
             text.anchor(7, 8).unwrap(),
             text.anchor(8, 10).unwrap(),
@@ -2607,12 +2715,12 @@ mod tests {
         let text = source(20_012, "a{x}b{y}");
         let upstream = complete_tokenizer_run(&text);
         let len = text.as_str().len();
-        let first = CssParserContextRecord::new(
+        let first = CssParserContextRecord::new_qualified_rule_block(
             &text,
             CssParserContextId::new(0),
             None,
             CssParserDirectItemOrdinal::new(0),
-            CssParserContextKind::QualifiedRuleBlock,
+            None,
             text.anchor(0, 1).unwrap(),
             text.anchor(1, 2).unwrap(),
             text.anchor(2, 3).unwrap(),
@@ -2623,12 +2731,12 @@ mod tests {
         .unwrap();
         // Same implicit-root scope as `first` (both `parent = None`), and
         // claims the same ordinal.
-        let second = CssParserContextRecord::new(
+        let second = CssParserContextRecord::new_qualified_rule_block(
             &text,
             CssParserContextId::new(1),
             None,
             CssParserDirectItemOrdinal::new(0),
-            CssParserContextKind::QualifiedRuleBlock,
+            None,
             text.anchor(4, 5).unwrap(),
             text.anchor(5, 6).unwrap(),
             text.anchor(6, 7).unwrap(),
@@ -2668,12 +2776,12 @@ mod tests {
         let upstream = complete_tokenizer_run(&text);
         let len = text.as_str().len();
         let first = single_top_level_context(&text, 0, 1);
-        let second = CssParserContextRecord::new(
+        let second = CssParserContextRecord::new_qualified_rule_block(
             &text,
             CssParserContextId::new(1),
             None,
             CssParserDirectItemOrdinal::new(0),
-            CssParserContextKind::QualifiedRuleBlock,
+            None,
             text.anchor(4, 5).unwrap(),
             text.anchor(5, 6).unwrap(),
             text.anchor(6, 7).unwrap(),
@@ -2717,12 +2825,12 @@ mod tests {
         let upstream = complete_tokenizer_run(&text);
         let len = text.as_str().len();
         let first = single_top_level_context(&text, 0, 0);
-        let second = CssParserContextRecord::new(
+        let second = CssParserContextRecord::new_qualified_rule_block(
             &text,
             CssParserContextId::new(1),
             None,
             CssParserDirectItemOrdinal::new(1),
-            CssParserContextKind::QualifiedRuleBlock,
+            None,
             text.anchor(0, 1).unwrap(),
             text.anchor(1, 2).unwrap(),
             text.anchor(2, 3).unwrap(),
@@ -2762,14 +2870,14 @@ mod tests {
         let upstream = complete_tokenizer_run(&text);
         let len = text.as_str().len();
         let first = single_top_level_context(&text, 0, 0);
-        let second = CssParserContextRecord::new(
+        let second = CssParserContextRecord::new_qualified_rule_block(
             &text,
             CssParserContextId::new(1),
             None,
             // Ordinal 1 is presumed reserved for a future declaration item
             // between the two top-level rules; the gap is valid.
             CssParserDirectItemOrdinal::new(2),
-            CssParserContextKind::QualifiedRuleBlock,
+            None,
             text.anchor(4, 5).unwrap(),
             text.anchor(5, 6).unwrap(),
             text.anchor(6, 7).unwrap(),
@@ -2919,12 +3027,12 @@ mod tests {
         // Locally valid `EndOfInput` context evidence (terminal sits at the
         // true retained source end), but the upstream tokenizer itself never
         // confirmed true `EndOfInput`.
-        let context = CssParserContextRecord::new(
+        let context = CssParserContextRecord::new_qualified_rule_block(
             &text,
             CssParserContextId::new(0),
             None,
             CssParserDirectItemOrdinal::new(0),
-            CssParserContextKind::QualifiedRuleBlock,
+            None,
             text.anchor(0, 1).unwrap(),
             text.anchor(1, 2).unwrap(),
             text.anchor(2, len).unwrap(),
@@ -2996,12 +3104,12 @@ mod tests {
         // with no fabricated authored closure for either.
         let text = source(20_010, "a{b{color:red");
         let len = text.as_str().len();
-        let outer = CssParserContextRecord::new(
+        let outer = CssParserContextRecord::new_qualified_rule_block(
             &text,
             CssParserContextId::new(0),
             None,
             CssParserDirectItemOrdinal::new(0),
-            CssParserContextKind::QualifiedRuleBlock,
+            None,
             text.anchor(0, 1).unwrap(),
             text.anchor(1, 2).unwrap(),
             text.anchor(2, len).unwrap(),
@@ -3010,12 +3118,12 @@ mod tests {
             },
         )
         .unwrap();
-        let inner = CssParserContextRecord::new(
+        let inner = CssParserContextRecord::new_qualified_rule_block(
             &text,
             CssParserContextId::new(1),
             Some(CssParserContextId::new(0)),
             CssParserDirectItemOrdinal::new(0),
-            CssParserContextKind::QualifiedRuleBlock,
+            Some(CssParserContextId::new(0)),
             text.anchor(2, 3).unwrap(),
             text.anchor(3, 4).unwrap(),
             text.anchor(4, len).unwrap(),
@@ -3110,6 +3218,644 @@ mod tests {
                 .resources()
                 .value(CssParserResourceKind::PeakContextDepth),
             0
+        );
+    }
+
+    // -------------------------------------------------------------------
+    // #168 group-rule ancestry / nested-unsupported-at-rule corruption
+    // matrix.
+    // -------------------------------------------------------------------
+
+    use crate::css::parser::context::CssParserGroupRuleKind;
+    use crate::css::parser::evidence::CssParserUnsupportedRegion;
+
+    fn group_resources(
+        context_records: usize,
+        peak_context_depth: usize,
+    ) -> CssParserResourceUsage {
+        CssParserResourceUsage::new(1, 0, peak_context_depth, 0, 0, 0, 0, 0, context_records)
+    }
+
+    fn unsupported_resources(
+        context_records: usize,
+        peak_context_depth: usize,
+        unsupported: usize,
+    ) -> CssParserResourceUsage {
+        CssParserResourceUsage::new(
+            1,
+            0,
+            peak_context_depth,
+            0,
+            0,
+            0,
+            unsupported,
+            0,
+            context_records,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn media_group_child(
+        text: &SourceText,
+        id: usize,
+        parent: usize,
+        item_ordinal: usize,
+        nearest_qualified_ancestor: Option<usize>,
+        at_keyword: (usize, usize),
+        block_opener: (usize, usize),
+        body: (usize, usize),
+        right_curly: (usize, usize),
+    ) -> CssParserContextRecord {
+        CssParserContextRecord::new_group_rule_block(
+            text,
+            CssParserContextId::new(id),
+            Some(CssParserContextId::new(parent)),
+            CssParserDirectItemOrdinal::new(item_ordinal),
+            nearest_qualified_ancestor.map(CssParserContextId::new),
+            CssParserGroupRuleKind::Media,
+            text.anchor(at_keyword.0, at_keyword.1).unwrap(),
+            "media",
+            text.anchor(at_keyword.0, at_keyword.1).unwrap(),
+            text.anchor(block_opener.0, block_opener.1).unwrap(),
+            text.anchor(body.0, body.1).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(right_curly.0, right_curly.1).unwrap(),
+            },
+        )
+        .unwrap()
+    }
+
+    /// `outer` for `"a{@media{}}"`: header `[0,1)`, opener `[1,2)`, body
+    /// `[2,10)`, authored close `[10,11)`.
+    fn outer_for_single_media_fixture(
+        text: &SourceText,
+        nearest_qualified_ancestor: Option<usize>,
+    ) -> CssParserContextRecord {
+        CssParserContextRecord::new_qualified_rule_block(
+            text,
+            CssParserContextId::new(0),
+            None,
+            CssParserDirectItemOrdinal::new(0),
+            nearest_qualified_ancestor.map(CssParserContextId::new),
+            text.anchor(0, 1).unwrap(),
+            text.anchor(1, 2).unwrap(),
+            text.anchor(2, 10).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(10, 11).unwrap(),
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn contract_only_nearest_qualified_ancestor_wrong_value_is_rejected() {
+        let text = source(30_001, "a{@media{}}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let outer = outer_for_single_media_fixture(&text, None);
+        // Wrong: the media group's real parent (`outer`, a `QualifiedRuleBlock`)
+        // means the correct nearest qualified ancestor is `Some(0)`, not `None`.
+        let media = media_group_child(&text, 1, 0, 0, None, (2, 8), (8, 9), (9, 9), (9, 10));
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![outer, media],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            group_resources(2, 2),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::NearestQualifiedAncestorMismatch { index: 1 }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_nearest_qualified_ancestor_pointing_to_group_is_rejected() {
+        let text = source(30_002, "a{@media{@media{}}}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let outer = CssParserContextRecord::new_qualified_rule_block(
+            &text,
+            CssParserContextId::new(0),
+            None,
+            CssParserDirectItemOrdinal::new(0),
+            None,
+            text.anchor(0, 1).unwrap(),
+            text.anchor(1, 2).unwrap(),
+            text.anchor(2, 18).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(18, 19).unwrap(),
+            },
+        )
+        .unwrap();
+        let outer_media =
+            media_group_child(&text, 1, 0, 0, Some(0), (2, 8), (8, 9), (9, 17), (17, 18));
+        // Wrong: claims its nearest qualified ancestor is context 1, which is
+        // itself a `GroupRuleBlock`, never a `QualifiedRuleBlock`.
+        let inner_media = media_group_child(
+            &text,
+            2,
+            1,
+            0,
+            Some(1),
+            (9, 15),
+            (15, 16),
+            (16, 16),
+            (16, 17),
+        );
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![outer, outer_media, inner_media],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            group_resources(3, 3),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::NearestQualifiedAncestorInvalidReference { index: 2 }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_nearest_qualified_ancestor_nonexistent_id_is_rejected() {
+        let text = source(30_003, "a{@media{}}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let outer = outer_for_single_media_fixture(&text, None);
+        // References a `ContextId` beyond the retained table entirely.
+        let media = media_group_child(&text, 1, 0, 0, Some(5), (2, 8), (8, 9), (9, 9), (9, 10));
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![outer, media],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            group_resources(2, 2),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::NearestQualifiedAncestorInvalidReference { index: 1 }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_nearest_qualified_ancestor_forward_id_is_rejected() {
+        let text = source(30_004, "a{@media{}}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        // References its own later sibling rather than any earlier-retained
+        // record.
+        let outer = CssParserContextRecord::new_qualified_rule_block(
+            &text,
+            CssParserContextId::new(0),
+            None,
+            CssParserDirectItemOrdinal::new(0),
+            Some(CssParserContextId::new(1)),
+            text.anchor(0, 1).unwrap(),
+            text.anchor(1, 2).unwrap(),
+            text.anchor(2, 10).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(10, 11).unwrap(),
+            },
+        )
+        .unwrap();
+        let media = media_group_child(&text, 1, 0, 0, Some(0), (2, 8), (8, 9), (9, 9), (9, 10));
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![outer, media],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            group_resources(2, 2),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::NearestQualifiedAncestorInvalidReference { index: 0 }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_nested_at_rule_unknown_owner_context_is_rejected() {
+        let text = source(30_005, "a{@x{}}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let unsupported = CssParserUnsupportedRegion::new_nested_at_rule(
+            &text,
+            text.anchor(2, 6).unwrap(),
+            text.anchor(2, 4).unwrap(),
+            CssParserContextId::new(5),
+            CssParserDirectItemOrdinal::new(0),
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![unsupported],
+            Vec::new(),
+            Vec::new(),
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::ContainsUnsupportedContexts,
+            CssParserTermination::EndOfTokenizerInput,
+            unsupported_resources(0, 0, 1),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::NestedAtRuleUnknownOwnerContext { index: 0 }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_nested_at_rule_outside_owner_body_is_rejected() {
+        let text = source(30_006, "a{}@x{}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let outer = CssParserContextRecord::new_qualified_rule_block(
+            &text,
+            CssParserContextId::new(0),
+            None,
+            CssParserDirectItemOrdinal::new(0),
+            None,
+            text.anchor(0, 1).unwrap(),
+            text.anchor(1, 2).unwrap(),
+            text.anchor(2, 2).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(2, 3).unwrap(),
+            },
+        )
+        .unwrap();
+        // `outer`'s body is `[2, 2)`; this unsupported region sits entirely
+        // outside it.
+        let unsupported = CssParserUnsupportedRegion::new_nested_at_rule(
+            &text,
+            text.anchor(3, 7).unwrap(),
+            text.anchor(3, 5).unwrap(),
+            CssParserContextId::new(0),
+            CssParserDirectItemOrdinal::new(0),
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![unsupported],
+            Vec::new(),
+            vec![outer],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::ContainsUnsupportedContexts,
+            CssParserTermination::EndOfTokenizerInput,
+            unsupported_resources(1, 1, 1),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::NestedAtRuleOutsideOwnerBody { index: 0 }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_nested_at_rule_duplicate_ordinal_with_declaration_is_rejected() {
+        let text = source(30_007, "a{p:v;@x{}}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let outer = CssParserContextRecord::new_qualified_rule_block(
+            &text,
+            CssParserContextId::new(0),
+            None,
+            CssParserDirectItemOrdinal::new(0),
+            None,
+            text.anchor(0, 1).unwrap(),
+            text.anchor(1, 2).unwrap(),
+            text.anchor(2, 10).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(10, 11).unwrap(),
+            },
+        )
+        .unwrap();
+        let occurrence = CssDeclarationOccurrence::new(
+            &text,
+            text.anchor(2, 6).unwrap(),
+            text.anchor(2, 3).unwrap(),
+            text.anchor(3, 4).unwrap(),
+            text.anchor(4, 5).unwrap(),
+            None,
+            CssDeclarationTermination::AuthoredSemicolon {
+                semicolon: text.anchor(5, 6).unwrap(),
+            },
+            CssDeclarationPlacement::new(
+                CssParserContextId::new(0),
+                CssParserDirectItemOrdinal::new(0),
+                CssDeclarationRunOrdinal::new(0),
+            ),
+        )
+        .unwrap();
+        // Duplicate: claims the same item ordinal (0) as the declaration.
+        let unsupported = CssParserUnsupportedRegion::new_nested_at_rule(
+            &text,
+            text.anchor(6, 10).unwrap(),
+            text.anchor(6, 8).unwrap(),
+            CssParserContextId::new(0),
+            CssParserDirectItemOrdinal::new(0),
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            vec![occurrence],
+            Vec::new(),
+            Vec::new(),
+            vec![unsupported],
+            Vec::new(),
+            vec![outer],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::ContainsUnsupportedContexts,
+            CssParserTermination::EndOfTokenizerInput,
+            CssParserResourceUsage::new(1, 0, 1, 1, 0, 0, 1, 0, 1),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::DirectItemDuplicateOrdinal { context_id: 0 }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_nested_at_rule_duplicate_ordinal_with_child_context_is_rejected() {
+        let text = source(30_008, "a{b{}@x{}}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let outer = CssParserContextRecord::new_qualified_rule_block(
+            &text,
+            CssParserContextId::new(0),
+            None,
+            CssParserDirectItemOrdinal::new(0),
+            None,
+            text.anchor(0, 1).unwrap(),
+            text.anchor(1, 2).unwrap(),
+            text.anchor(2, 9).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(9, 10).unwrap(),
+            },
+        )
+        .unwrap();
+        let child = CssParserContextRecord::new_qualified_rule_block(
+            &text,
+            CssParserContextId::new(1),
+            Some(CssParserContextId::new(0)),
+            CssParserDirectItemOrdinal::new(0),
+            Some(CssParserContextId::new(0)),
+            text.anchor(2, 3).unwrap(),
+            text.anchor(3, 4).unwrap(),
+            text.anchor(4, 4).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(4, 5).unwrap(),
+            },
+        )
+        .unwrap();
+        // Duplicate: claims the same item ordinal (0) as the child context.
+        let unsupported = CssParserUnsupportedRegion::new_nested_at_rule(
+            &text,
+            text.anchor(5, 9).unwrap(),
+            text.anchor(5, 7).unwrap(),
+            CssParserContextId::new(0),
+            CssParserDirectItemOrdinal::new(0),
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![unsupported],
+            Vec::new(),
+            vec![outer, child],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::ContainsUnsupportedContexts,
+            CssParserTermination::EndOfTokenizerInput,
+            unsupported_resources(2, 2, 1),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::DirectItemDuplicateOrdinal { context_id: 0 }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_nested_at_rule_source_ordinal_order_mismatch_is_rejected() {
+        let text = source(30_009, "a{@y{}@x{}}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let outer = CssParserContextRecord::new_qualified_rule_block(
+            &text,
+            CssParserContextId::new(0),
+            None,
+            CssParserDirectItemOrdinal::new(0),
+            None,
+            text.anchor(0, 1).unwrap(),
+            text.anchor(1, 2).unwrap(),
+            text.anchor(2, 10).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(10, 11).unwrap(),
+            },
+        )
+        .unwrap();
+        // Ordinal 0 is the *later* source span; ordinal 1 is the *earlier*
+        // one, so numeric ordinal order disagrees with source order.
+        let first_by_ordinal = CssParserUnsupportedRegion::new_nested_at_rule(
+            &text,
+            text.anchor(6, 10).unwrap(),
+            text.anchor(6, 8).unwrap(),
+            CssParserContextId::new(0),
+            CssParserDirectItemOrdinal::new(0),
+        )
+        .unwrap();
+        let second_by_ordinal = CssParserUnsupportedRegion::new_nested_at_rule(
+            &text,
+            text.anchor(2, 6).unwrap(),
+            text.anchor(2, 4).unwrap(),
+            CssParserContextId::new(0),
+            CssParserDirectItemOrdinal::new(1),
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![second_by_ordinal, first_by_ordinal],
+            Vec::new(),
+            vec![outer],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::ContainsUnsupportedContexts,
+            CssParserTermination::EndOfTokenizerInput,
+            unsupported_resources(1, 1, 2),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::DirectItemOrderViolation { context_id: 0 }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_run_boundary_corruption_around_nested_at_rule_is_rejected() {
+        let text = source(30_010, "a{p:v;@x{}q:w;}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let outer = CssParserContextRecord::new_qualified_rule_block(
+            &text,
+            CssParserContextId::new(0),
+            None,
+            CssParserDirectItemOrdinal::new(0),
+            None,
+            text.anchor(0, 1).unwrap(),
+            text.anchor(1, 2).unwrap(),
+            text.anchor(2, 14).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(14, 15).unwrap(),
+            },
+        )
+        .unwrap();
+        let first = CssDeclarationOccurrence::new(
+            &text,
+            text.anchor(2, 6).unwrap(),
+            text.anchor(2, 3).unwrap(),
+            text.anchor(3, 4).unwrap(),
+            text.anchor(4, 5).unwrap(),
+            None,
+            CssDeclarationTermination::AuthoredSemicolon {
+                semicolon: text.anchor(5, 6).unwrap(),
+            },
+            CssDeclarationPlacement::new(
+                CssParserContextId::new(0),
+                CssParserDirectItemOrdinal::new(0),
+                CssDeclarationRunOrdinal::new(0),
+            ),
+        )
+        .unwrap();
+        let unsupported = CssParserUnsupportedRegion::new_nested_at_rule(
+            &text,
+            text.anchor(6, 10).unwrap(),
+            text.anchor(6, 8).unwrap(),
+            CssParserContextId::new(0),
+            CssParserDirectItemOrdinal::new(1),
+        )
+        .unwrap();
+        // Wrong: the nested at-rule at item 1 must close run 0, so this
+        // trailing declaration must open run 1, not reuse run 0.
+        let second = CssDeclarationOccurrence::new(
+            &text,
+            text.anchor(10, 14).unwrap(),
+            text.anchor(10, 11).unwrap(),
+            text.anchor(11, 12).unwrap(),
+            text.anchor(12, 13).unwrap(),
+            None,
+            CssDeclarationTermination::AuthoredSemicolon {
+                semicolon: text.anchor(13, 14).unwrap(),
+            },
+            CssDeclarationPlacement::new(
+                CssParserContextId::new(0),
+                CssParserDirectItemOrdinal::new(2),
+                CssDeclarationRunOrdinal::new(0),
+            ),
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            vec![first, second],
+            Vec::new(),
+            Vec::new(),
+            vec![unsupported],
+            Vec::new(),
+            vec![outer],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::ContainsUnsupportedContexts,
+            CssParserTermination::EndOfTokenizerInput,
+            CssParserResourceUsage::new(1, 0, 1, 2, 0, 0, 1, 0, 1),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::DeclarationRunOrdinalViolation { index: 1 }
+            )
         );
     }
 }

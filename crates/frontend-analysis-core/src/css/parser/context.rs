@@ -51,15 +51,25 @@
 //!
 //! # Deferred to later Leaves
 //!
-//! [`CssParserContextKind`] contains only `QualifiedRuleBlock`, the first
-//! kind #167 needs. Group-rule (#168), descriptor (#169), page (#170), and
-//! keyframe (#171) context meanings are deliberately absent rather than
-//! pre-populated speculatively. Context nesting depth
+//! [`CssParserContextKind`] now also carries `GroupRuleBlock`, the finite
+//! nested `@media`/`@supports`/`@container`/`@layer`/`@scope` registry
+//! approved for #168; descriptor (#169), page (#170), and keyframe (#171)
+//! context meanings remain deliberately absent rather than pre-populated
+//! speculatively. Context nesting depth
 //! ([`super::resource::CssParserResourceKind::PeakContextDepth`]) is tracked
 //! independently of component-value nesting
 //! ([`super::resource::CssParserResourceKind::PeakComponentDepth`]), and
 //! [`super::resource::MAX_ACTIVE_SPECULATIVE_CHECKPOINT_DEPTH`] remains
-//! exactly one: no #166 change widens the checkpoint model.
+//! exactly one: no #166/#168 change widens the checkpoint model.
+//!
+//! # Nearest qualified ancestry (#141/#168)
+//!
+//! Each record also retains [`Self::nearest_qualified_ancestor`]: the
+//! nearest ancestor `QualifiedRuleBlock` context id, or `None` at the
+//! implicit stylesheet root's direct children. A `GroupRuleBlock` context
+//! interposes structurally without itself counting as a qualified ancestor;
+//! [`super::result`] proves this value from the retained parent table rather
+//! than trusting producer-provided ancestry.
 
 use std::error::Error;
 use std::fmt;
@@ -85,16 +95,58 @@ impl CssParserContextId {
     }
 }
 
-/// The finite, deliberately minimal production context-kind vocabulary for
-/// the #166 contract foundation.
+/// The finite, deliberately minimal production context-kind vocabulary.
 ///
-/// Only the first kind #167 needs is present. Later approved Leaves extend
-/// this enum explicitly (#168 group-rule kinds, #169 descriptor contexts,
-/// #170 page/page-margin contexts, #171 keyframe contexts); this Leaf does
-/// not pre-populate them.
+/// #166/#167 needed only `QualifiedRuleBlock`. #168 adds the finite nested
+/// group-rule registry approved by #141: exactly `@media`, `@supports`,
+/// `@container`, `@layer`, and `@scope`, never a generic at-rule/plugin
+/// vocabulary. Later approved Leaves extend this enum explicitly (#169
+/// descriptor contexts, #170 page/page-margin contexts, #171 keyframe
+/// contexts); this Leaf does not pre-populate them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssParserContextKind {
     QualifiedRuleBlock,
+    GroupRuleBlock(CssParserGroupRuleKind),
+}
+
+/// The finite #168 nested group-rule registry approved by #141.
+///
+/// Registry membership alone is necessary but never sufficient to establish
+/// a [`CssParserContextKind::GroupRuleBlock`]: the producer additionally
+/// requires the bounded per-kind prelude subset recorded in the approved
+/// architecture before a context of this kind is ever entered. No
+/// `AnyAtRule`/string-keyed/plugin registry is introduced; a name outside
+/// this finite set can never become a group-rule kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssParserGroupRuleKind {
+    Media,
+    Supports,
+    Container,
+    Layer,
+    Scope,
+}
+
+impl CssParserGroupRuleKind {
+    /// Matches a tokenizer-decoded `AtKeyword` value (without the leading
+    /// `@`) against the finite registry, ASCII-case-insensitively. Returns
+    /// `None` for any name outside the five approved kinds -- including any
+    /// future/unknown at-rule name, which remains explicit unsupported
+    /// evidence rather than a speculative registry member.
+    pub(crate) fn from_decoded_at_keyword(decoded: &str) -> Option<Self> {
+        if decoded.eq_ignore_ascii_case("media") {
+            Some(Self::Media)
+        } else if decoded.eq_ignore_ascii_case("supports") {
+            Some(Self::Supports)
+        } else if decoded.eq_ignore_ascii_case("container") {
+            Some(Self::Container)
+        } else if decoded.eq_ignore_ascii_case("layer") {
+            Some(Self::Layer)
+        } else if decoded.eq_ignore_ascii_case("scope") {
+            Some(Self::Scope)
+        } else {
+            None
+        }
+    }
 }
 
 /// The position of a materialized direct block-content item within its
@@ -245,6 +297,15 @@ pub(crate) enum CssParserContextContractError {
     TerminalBoundaryMismatch,
     /// An `EndOfInput` terminal must sit at the retained source's true end.
     TerminalNotAtSourceEnd,
+    /// A `GroupRuleBlock` group `at_keyword` must start with `@`.
+    GroupAtKeywordMissingSigil,
+    /// A group `at_keyword.start()` must equal `header.start()`.
+    GroupAtKeywordHeaderStartMismatch,
+    /// A group `at_keyword` must be contained within `header`.
+    GroupAtKeywordOutsideHeader,
+    /// The decoded tokenizer `AtKeyword` value supplied at construction does
+    /// not correspond to the declared [`CssParserGroupRuleKind`].
+    GroupKindDecodedMismatch,
 }
 
 impl fmt::Display for CssParserContextContractError {
@@ -276,6 +337,17 @@ pub(crate) struct CssParserContextRecord {
     parent: Option<CssParserContextId>,
     item_ordinal: CssParserDirectItemOrdinal,
     kind: CssParserContextKind,
+    /// The exact authored `AtKeyword` anchor for a `GroupRuleBlock`; always
+    /// `None` for a `QualifiedRuleBlock` (#168). Structurally unrepresentable
+    /// as a mismatch: the two dedicated constructors are the only way to
+    /// build a record, and only [`Self::new_group_rule_block`] can attach
+    /// this evidence.
+    group_at_keyword: Option<SourceAnchor>,
+    /// The nearest ancestor `QualifiedRuleBlock` context, or `None` at the
+    /// implicit stylesheet root's direct children (#141/#168). Structural
+    /// qualified-rule ancestry only: never a selector-validity or
+    /// style-rule-semantic claim.
+    nearest_qualified_ancestor: Option<CssParserContextId>,
     header: SourceAnchor,
     block_opener: SourceAnchor,
     body: SourceAnchor,
@@ -283,53 +355,86 @@ pub(crate) struct CssParserContextRecord {
 }
 
 impl CssParserContextRecord {
-    /// `header` is the exact retained raw interval from the authored
-    /// construct start up to, but excluding, `block_opener`; it may be empty
-    /// where CSS Syntax permits an empty qualified-rule prelude. `body` is
-    /// the exact retained raw interval after `block_opener` and before the
-    /// termination boundary; it never includes a closing `}`.
+    /// Constructs a `QualifiedRuleBlock` record. `header` is the exact
+    /// retained raw interval from the authored construct start up to, but
+    /// excluding, `block_opener`; it may be empty where CSS Syntax permits
+    /// an empty qualified-rule prelude. `body` is the exact retained raw
+    /// interval after `block_opener` and before the termination boundary; it
+    /// never includes a closing `}`.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new(
+    pub(crate) fn new_qualified_rule_block(
         source_text: &SourceText,
         id: CssParserContextId,
         parent: Option<CssParserContextId>,
         item_ordinal: CssParserDirectItemOrdinal,
-        kind: CssParserContextKind,
+        nearest_qualified_ancestor: Option<CssParserContextId>,
         header: SourceAnchor,
         block_opener: SourceAnchor,
         body: SourceAnchor,
         termination: CssParserContextTermination,
     ) -> Result<Self, CssParserContextContractError> {
-        let expected = source_text.id();
-        require_source(expected, &header, CssParserContextEvidenceRole::Header)?;
-        require_source(
-            expected,
-            &block_opener,
-            CssParserContextEvidenceRole::BlockOpener,
-        )?;
-        require_source(expected, &body, CssParserContextEvidenceRole::Body)?;
-
-        non_empty(&block_opener, CssParserContextEvidenceRole::BlockOpener)?;
-        exact(
-            &block_opener,
-            CssParserContextEvidenceRole::BlockOpener,
-            "{",
-        )?;
-
-        if header.range().end() != block_opener.range().start() {
-            return Err(CssParserContextContractError::HeaderOpenerBoundaryMismatch);
-        }
-        if body.range().start() != block_opener.range().end() {
-            return Err(CssParserContextContractError::BodyOpenerBoundaryMismatch);
-        }
-
-        validate_termination(source_text, &body, &termination)?;
+        validate_shared_shape(source_text, &header, &block_opener, &body, &termination)?;
 
         Ok(Self {
             id,
             parent,
             item_ordinal,
-            kind,
+            kind: CssParserContextKind::QualifiedRuleBlock,
+            group_at_keyword: None,
+            nearest_qualified_ancestor,
+            header,
+            block_opener,
+            body,
+            termination,
+        })
+    }
+
+    /// Constructs a `GroupRuleBlock` record (#168): a supported nested
+    /// `@media`/`@supports`/`@container`/`@layer`/`@scope` context. `at_keyword`
+    /// must be the exact authored at-keyword anchor starting `header`.
+    /// `decoded_at_keyword` is the already-decoded tokenizer value (without
+    /// the leading `@`) used only to prove `at_keyword` genuinely
+    /// corresponds to `kind`; it is not retained.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_group_rule_block(
+        source_text: &SourceText,
+        id: CssParserContextId,
+        parent: Option<CssParserContextId>,
+        item_ordinal: CssParserDirectItemOrdinal,
+        nearest_qualified_ancestor: Option<CssParserContextId>,
+        kind: CssParserGroupRuleKind,
+        at_keyword: SourceAnchor,
+        decoded_at_keyword: &str,
+        header: SourceAnchor,
+        block_opener: SourceAnchor,
+        body: SourceAnchor,
+        termination: CssParserContextTermination,
+    ) -> Result<Self, CssParserContextContractError> {
+        validate_shared_shape(source_text, &header, &block_opener, &body, &termination)?;
+
+        let expected = source_text.id();
+        require_source(expected, &at_keyword, CssParserContextEvidenceRole::Header)?;
+        non_empty(&at_keyword, CssParserContextEvidenceRole::Header)?;
+        if !at_keyword.fragment().starts_with('@') {
+            return Err(CssParserContextContractError::GroupAtKeywordMissingSigil);
+        }
+        if at_keyword.range().start() != header.range().start() {
+            return Err(CssParserContextContractError::GroupAtKeywordHeaderStartMismatch);
+        }
+        if at_keyword.range().end() > header.range().end() {
+            return Err(CssParserContextContractError::GroupAtKeywordOutsideHeader);
+        }
+        if CssParserGroupRuleKind::from_decoded_at_keyword(decoded_at_keyword) != Some(kind) {
+            return Err(CssParserContextContractError::GroupKindDecodedMismatch);
+        }
+
+        Ok(Self {
+            id,
+            parent,
+            item_ordinal,
+            kind: CssParserContextKind::GroupRuleBlock(kind),
+            group_at_keyword: Some(at_keyword),
+            nearest_qualified_ancestor,
             header,
             block_opener,
             body,
@@ -351,6 +456,14 @@ impl CssParserContextRecord {
 
     pub(crate) const fn kind(&self) -> CssParserContextKind {
         self.kind
+    }
+
+    pub(crate) const fn group_at_keyword(&self) -> Option<&SourceAnchor> {
+        self.group_at_keyword.as_ref()
+    }
+
+    pub(crate) const fn nearest_qualified_ancestor(&self) -> Option<CssParserContextId> {
+        self.nearest_qualified_ancestor
     }
 
     pub(crate) const fn header(&self) -> &SourceAnchor {
@@ -389,6 +502,12 @@ impl PartialEq for CssParserContextRecord {
             && self.parent == other.parent
             && self.item_ordinal == other.item_ordinal
             && self.kind == other.kind
+            && match (&self.group_at_keyword, &other.group_at_keyword) {
+                (Some(left), Some(right)) => same_anchor(left, right),
+                (None, None) => true,
+                _ => false,
+            }
+            && self.nearest_qualified_ancestor == other.nearest_qualified_ancestor
             && same_anchor(&self.header, &other.header)
             && same_anchor(&self.block_opener, &other.block_opener)
             && same_anchor(&self.body, &other.body)
@@ -407,12 +526,51 @@ impl fmt::Debug for CssParserContextRecord {
             .field("item_ordinal", &self.item_ordinal)
             .field("kind", &self.kind)
             .field("source_id", &self.header.source_id())
+            .field(
+                "group_at_keyword",
+                &self.group_at_keyword.as_ref().map(SourceAnchor::range),
+            )
+            .field(
+                "nearest_qualified_ancestor",
+                &self.nearest_qualified_ancestor,
+            )
             .field("header", &self.header.range())
             .field("block_opener", &self.block_opener.range())
             .field("body", &self.body.range())
             .field("termination", &self.termination)
             .finish()
     }
+}
+
+/// The shape/boundary validation shared by both constructors, independent of
+/// group-specific `at_keyword`/kind correspondence.
+fn validate_shared_shape(
+    source_text: &SourceText,
+    header: &SourceAnchor,
+    block_opener: &SourceAnchor,
+    body: &SourceAnchor,
+    termination: &CssParserContextTermination,
+) -> Result<(), CssParserContextContractError> {
+    let expected = source_text.id();
+    require_source(expected, header, CssParserContextEvidenceRole::Header)?;
+    require_source(
+        expected,
+        block_opener,
+        CssParserContextEvidenceRole::BlockOpener,
+    )?;
+    require_source(expected, body, CssParserContextEvidenceRole::Body)?;
+
+    non_empty(block_opener, CssParserContextEvidenceRole::BlockOpener)?;
+    exact(block_opener, CssParserContextEvidenceRole::BlockOpener, "{")?;
+
+    if header.range().end() != block_opener.range().start() {
+        return Err(CssParserContextContractError::HeaderOpenerBoundaryMismatch);
+    }
+    if body.range().start() != block_opener.range().end() {
+        return Err(CssParserContextContractError::BodyOpenerBoundaryMismatch);
+    }
+
+    validate_termination(source_text, body, termination)
 }
 
 fn validate_termination(
@@ -553,12 +711,39 @@ mod tests {
         body: (usize, usize),
         termination: CssParserContextTermination,
     ) -> Result<CssParserContextRecord, CssParserContextContractError> {
-        CssParserContextRecord::new(
+        CssParserContextRecord::new_qualified_rule_block(
             source_text,
             CssParserContextId::new(0),
             None,
             CssParserDirectItemOrdinal::new(0),
-            CssParserContextKind::QualifiedRuleBlock,
+            None,
+            source_text.anchor(header.0, header.1).unwrap(),
+            source_text.anchor(block_opener.0, block_opener.1).unwrap(),
+            source_text.anchor(body.0, body.1).unwrap(),
+            termination,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn group_rule_block(
+        source_text: &SourceText,
+        kind: CssParserGroupRuleKind,
+        decoded_at_keyword: &str,
+        at_keyword: (usize, usize),
+        header: (usize, usize),
+        block_opener: (usize, usize),
+        body: (usize, usize),
+        termination: CssParserContextTermination,
+    ) -> Result<CssParserContextRecord, CssParserContextContractError> {
+        CssParserContextRecord::new_group_rule_block(
+            source_text,
+            CssParserContextId::new(0),
+            None,
+            CssParserDirectItemOrdinal::new(0),
+            None,
+            kind,
+            source_text.anchor(at_keyword.0, at_keyword.1).unwrap(),
+            decoded_at_keyword,
             source_text.anchor(header.0, header.1).unwrap(),
             source_text.anchor(block_opener.0, block_opener.1).unwrap(),
             source_text.anchor(body.0, body.1).unwrap(),
@@ -639,12 +824,12 @@ mod tests {
     fn foreign_source_id_is_rejected() {
         let text = source(5, "a{color:red;}");
         let other = source(6, "a{color:red;}");
-        let result = CssParserContextRecord::new(
+        let result = CssParserContextRecord::new_qualified_rule_block(
             &text,
             CssParserContextId::new(0),
             None,
             CssParserDirectItemOrdinal::new(0),
-            CssParserContextKind::QualifiedRuleBlock,
+            None,
             other.anchor(0, 1).unwrap(),
             text.anchor(1, 2).unwrap(),
             text.anchor(2, 12).unwrap(),
@@ -799,12 +984,12 @@ mod tests {
         let text = source(14, "a{b{color:red;}}");
         let parent_id = CssParserContextId::new(0);
         let item_ordinal = CssParserDirectItemOrdinal::new(0);
-        let record = CssParserContextRecord::new(
+        let record = CssParserContextRecord::new_qualified_rule_block(
             &text,
             CssParserContextId::new(1),
             Some(parent_id),
             item_ordinal,
-            CssParserContextKind::QualifiedRuleBlock,
+            Some(parent_id),
             text.anchor(2, 3).unwrap(),
             text.anchor(3, 4).unwrap(),
             text.anchor(4, 14).unwrap(),
@@ -820,12 +1005,12 @@ mod tests {
     #[test]
     fn top_level_context_carries_its_own_root_scoped_item_ordinal() {
         let text = source(140, "a{x}");
-        let record = CssParserContextRecord::new(
+        let record = CssParserContextRecord::new_qualified_rule_block(
             &text,
             CssParserContextId::new(0),
             None,
             CssParserDirectItemOrdinal::new(3),
-            CssParserContextKind::QualifiedRuleBlock,
+            None,
             text.anchor(0, 1).unwrap(),
             text.anchor(1, 2).unwrap(),
             text.anchor(2, 3).unwrap(),
@@ -836,6 +1021,159 @@ mod tests {
         .unwrap();
         assert!(record.parent().is_none());
         assert_eq!(record.item_ordinal(), CssParserDirectItemOrdinal::new(3));
+    }
+
+    #[test]
+    fn valid_group_rule_block_constructs_with_at_keyword_evidence() {
+        let text = source(200, "a{@media screen{p:v;}}");
+        let record = group_rule_block(
+            &text,
+            CssParserGroupRuleKind::Media,
+            "media",
+            (2, 8),
+            (2, 15),
+            (15, 16),
+            (16, 21),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(21, 22).unwrap(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            record.kind(),
+            CssParserContextKind::GroupRuleBlock(CssParserGroupRuleKind::Media)
+        );
+        assert_eq!(
+            record.group_at_keyword().map(SourceAnchor::range),
+            Some(text.anchor(2, 8).unwrap().range())
+        );
+        assert!(record.nearest_qualified_ancestor().is_none());
+    }
+
+    #[test]
+    fn qualified_rule_block_never_carries_group_at_keyword() {
+        let text = source(201, "a{p:v;}");
+        let record = qualified_rule_block(
+            &text,
+            (0, 1),
+            (1, 2),
+            (2, 6),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(6, 7).unwrap(),
+            },
+        )
+        .unwrap();
+        assert!(record.group_at_keyword().is_none());
+    }
+
+    #[test]
+    fn group_at_keyword_missing_sigil_is_rejected() {
+        let text = source(202, "a{media screen{p:v;}}");
+        let result = group_rule_block(
+            &text,
+            CssParserGroupRuleKind::Media,
+            "media",
+            (2, 7),
+            (2, 14),
+            (14, 15),
+            (15, 20),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(20, 21).unwrap(),
+            },
+        );
+        assert_eq!(
+            result,
+            Err(CssParserContextContractError::GroupAtKeywordMissingSigil)
+        );
+    }
+
+    #[test]
+    fn group_at_keyword_header_start_mismatch_is_rejected() {
+        let text = source(203, "a{ @media screen{p:v;}}");
+        let result = group_rule_block(
+            &text,
+            CssParserGroupRuleKind::Media,
+            "media",
+            (3, 9),
+            (2, 16),
+            (16, 17),
+            (17, 22),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(22, 23).unwrap(),
+            },
+        );
+        assert_eq!(
+            result,
+            Err(CssParserContextContractError::GroupAtKeywordHeaderStartMismatch)
+        );
+    }
+
+    #[test]
+    fn group_at_keyword_outside_header_is_rejected() {
+        let text = source(204, "a{@media screen{p:v;}}");
+        let result = group_rule_block(
+            &text,
+            CssParserGroupRuleKind::Media,
+            "media",
+            (2, 20),
+            (2, 15),
+            (15, 16),
+            (16, 21),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(21, 22).unwrap(),
+            },
+        );
+        assert_eq!(
+            result,
+            Err(CssParserContextContractError::GroupAtKeywordOutsideHeader)
+        );
+    }
+
+    #[test]
+    fn group_at_keyword_foreign_source_id_is_rejected() {
+        let text = source(206, "a{@media screen{p:v;}}");
+        let other = source(207, "a{@media screen{p:v;}}");
+        let result = CssParserContextRecord::new_group_rule_block(
+            &text,
+            CssParserContextId::new(0),
+            None,
+            CssParserDirectItemOrdinal::new(0),
+            None,
+            CssParserGroupRuleKind::Media,
+            other.anchor(2, 8).unwrap(),
+            "media",
+            text.anchor(2, 15).unwrap(),
+            text.anchor(15, 16).unwrap(),
+            text.anchor(16, 21).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(21, 22).unwrap(),
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(CssParserContextContractError::SourceIdentityMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn group_kind_decoded_mismatch_is_rejected() {
+        let text = source(205, "a{@media screen{p:v;}}");
+        let result = group_rule_block(
+            &text,
+            CssParserGroupRuleKind::Layer,
+            "media",
+            (2, 8),
+            (2, 15),
+            (15, 16),
+            (16, 21),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(21, 22).unwrap(),
+            },
+        );
+        assert_eq!(
+            result,
+            Err(CssParserContextContractError::GroupKindDecodedMismatch)
+        );
     }
 
     #[test]

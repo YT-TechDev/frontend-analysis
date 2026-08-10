@@ -321,13 +321,16 @@ fn discard_propagates_through_core() {
 
 /// #167 supersedes the old whole-remainder outcome for a nested *qualified
 /// rule*: this source now produces zero unsupported regions, so this test
-/// uses a nested at-rule instead (still deferred to #168) to keep
-/// exercising unsupported-region propagation through Core.
+/// uses a nested at-rule instead to keep exercising unsupported-region
+/// propagation through Core. #168 further supersedes the old whole-remainder
+/// outcome for `@media screen` specifically (now a supported group context),
+/// so an unrecognized at-rule name is used to keep this source's nested
+/// at-rule genuinely unsupported.
 #[test]
 fn unsupported_propagates_through_core() {
     let source = SourceText::new(
         SourceId::new(70_005),
-        "a{color:red;@media screen{color:blue;}}".to_owned(),
+        "a{color:red;@unknown-rule{color:blue;}}".to_owned(),
     );
     let result = analyze_css_declarations(
         &source,

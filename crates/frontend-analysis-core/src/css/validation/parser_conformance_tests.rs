@@ -237,9 +237,14 @@ fn top_level_at_rule_between_qualified_rules_advances_root_ordinal() {
     assert_eq!(b.item_ordinal().value(), 2);
 }
 
+/// #168 supersedes the old whole-remainder outcome for `@media screen`
+/// specifically, since it now enters the bounded #168 subset as a supported
+/// group context; this test uses an unrecognized nested at-rule name instead
+/// to keep exercising the "declaration then one unsupported nested at-rule"
+/// shape.
 #[test]
 fn declaration_then_nested_at_rule_produces_exactly_one_supported_occurrence() {
-    let result = parse(60_003, "a{color:red;@media screen{color:blue;}}");
+    let result = parse(60_003, "a{color:red;@unknown-rule{color:blue;}}");
     assert_eq!(result.occurrences().len(), 1);
     assert_eq!(result.unsupported_regions().len(), 1);
 }

@@ -10,6 +10,7 @@
 use std::error::Error;
 use std::fmt;
 
+use super::context::{CssParserContextId, CssParserDirectItemOrdinal};
 use crate::{SourceAnchor, SourceId, SourceText};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,6 +27,8 @@ pub(crate) enum CssParserEvidenceRole {
     UnsupportedAtRuleComplete,
     UnsupportedAtKeyword,
     UnsupportedNestedRemainder,
+    UnsupportedNestedAtRuleComplete,
+    UnsupportedNestedAtRuleAtKeyword,
     DiscardRegion,
     DiscardPropertyName,
     DiscardColon,
@@ -260,7 +263,15 @@ impl fmt::Debug for CssParserRecoveryEvidence {
 /// `TopLevelAtRule` preserves the complete structurally consumed at-rule
 /// region and its exact `AtKeyword` token anchor without descending into its
 /// block. `NestedContentRemainder` covers the raw remainder of a supported
-/// block once actual nesting ends the #137 leading declaration zone.
+/// block once actual nesting ends the #137 leading declaration zone; #168
+/// retains it only as historical/contract vocabulary and no longer produces
+/// it from ordinary nested at-keyword dispatch (see [`Self::NestedAtRule`]).
+/// `NestedAtRule` (#168) represents exactly one structurally consumed
+/// unsupported nested at-rule -- an unknown/future at-rule, a registry
+/// member whose prelude falls outside its approved bounded subset, a
+/// registry member without a supported block shape, or an `@layer`
+/// statement -- retained as one materialized direct item in its owning
+/// context.
 #[derive(Clone)]
 pub(crate) enum CssParserUnsupportedRegion {
     TopLevelAtRule {
@@ -269,6 +280,12 @@ pub(crate) enum CssParserUnsupportedRegion {
     },
     NestedContentRemainder {
         region: SourceAnchor,
+    },
+    NestedAtRule {
+        complete: SourceAnchor,
+        at_keyword: SourceAnchor,
+        context_id: CssParserContextId,
+        item_ordinal: CssParserDirectItemOrdinal,
     },
 }
 
@@ -328,9 +345,69 @@ impl CssParserUnsupportedRegion {
         Ok(Self::NestedContentRemainder { region })
     }
 
+    /// Constructs one context-aware unsupported nested at-rule (#168):
+    /// `complete` is the exact structurally consumed at-rule region (from
+    /// the at-keyword through its statement terminator or block close, or up
+    /// to the boundary where execution stopped), and `at_keyword` is the
+    /// exact authored at-keyword anchor starting it. `context_id`/
+    /// `item_ordinal` retain the owning context and its shared direct-item
+    /// ordinal structurally; the caller is responsible for committing this
+    /// evidence and mutating that ownership atomically together.
+    pub(crate) fn new_nested_at_rule(
+        source_text: &SourceText,
+        complete: SourceAnchor,
+        at_keyword: SourceAnchor,
+        context_id: CssParserContextId,
+        item_ordinal: CssParserDirectItemOrdinal,
+    ) -> Result<Self, CssParserEvidenceContractError> {
+        let expected = source_text.id();
+        require_source(
+            expected,
+            &complete,
+            CssParserEvidenceRole::UnsupportedNestedAtRuleComplete,
+        )?;
+        require_source(
+            expected,
+            &at_keyword,
+            CssParserEvidenceRole::UnsupportedNestedAtRuleAtKeyword,
+        )?;
+        non_empty(
+            &complete,
+            CssParserEvidenceRole::UnsupportedNestedAtRuleComplete,
+        )?;
+        non_empty(
+            &at_keyword,
+            CssParserEvidenceRole::UnsupportedNestedAtRuleAtKeyword,
+        )?;
+
+        if !at_keyword.fragment().starts_with('@') {
+            return Err(CssParserEvidenceContractError::FixedSpellingMismatch {
+                role: CssParserEvidenceRole::UnsupportedNestedAtRuleAtKeyword,
+                expected: "@",
+            });
+        }
+        if complete.range().start() != at_keyword.range().start() {
+            return Err(CssParserEvidenceContractError::EvidenceOutOfOrder {
+                role: CssParserEvidenceRole::UnsupportedNestedAtRuleAtKeyword,
+            });
+        }
+        if at_keyword.range().end() > complete.range().end() {
+            return Err(CssParserEvidenceContractError::EvidenceOutsideContainer {
+                role: CssParserEvidenceRole::UnsupportedNestedAtRuleAtKeyword,
+            });
+        }
+
+        Ok(Self::NestedAtRule {
+            complete,
+            at_keyword,
+            context_id,
+            item_ordinal,
+        })
+    }
+
     pub(crate) fn region(&self) -> &SourceAnchor {
         match self {
-            Self::TopLevelAtRule { complete, .. } => complete,
+            Self::TopLevelAtRule { complete, .. } | Self::NestedAtRule { complete, .. } => complete,
             Self::NestedContentRemainder { region } => region,
         }
     }
@@ -361,6 +438,25 @@ impl PartialEq for CssParserUnsupportedRegion {
                 Self::NestedContentRemainder { region: left },
                 Self::NestedContentRemainder { region: right },
             ) => same_anchor(left, right),
+            (
+                Self::NestedAtRule {
+                    complete: left_complete,
+                    at_keyword: left_at_keyword,
+                    context_id: left_context_id,
+                    item_ordinal: left_item_ordinal,
+                },
+                Self::NestedAtRule {
+                    complete: right_complete,
+                    at_keyword: right_at_keyword,
+                    context_id: right_context_id,
+                    item_ordinal: right_item_ordinal,
+                },
+            ) => {
+                same_anchor(left_complete, right_complete)
+                    && same_anchor(left_at_keyword, right_at_keyword)
+                    && left_context_id == right_context_id
+                    && left_item_ordinal == right_item_ordinal
+            }
             _ => false,
         }
     }
@@ -384,6 +480,19 @@ impl fmt::Debug for CssParserUnsupportedRegion {
                 .debug_struct("NestedContentRemainder")
                 .field("source_id", &region.source_id())
                 .field("region", &region.range())
+                .finish(),
+            Self::NestedAtRule {
+                complete,
+                at_keyword,
+                context_id,
+                item_ordinal,
+            } => formatter
+                .debug_struct("NestedAtRule")
+                .field("source_id", &complete.source_id())
+                .field("complete", &complete.range())
+                .field("at_keyword", &at_keyword.range())
+                .field("context_id", context_id)
+                .field("item_ordinal", item_ordinal)
                 .finish(),
         }
     }
@@ -771,6 +880,84 @@ mod tests {
             result,
             Err(CssParserEvidenceContractError::EmptyEvidence { .. })
         ));
+    }
+
+    #[test]
+    fn nested_at_rule_constructs_with_exact_boundary_relationships() {
+        let text = source(27, "a{@unknown-rule foo;}");
+        let region = CssParserUnsupportedRegion::new_nested_at_rule(
+            &text,
+            text.anchor(2, 20).unwrap(),
+            text.anchor(2, 15).unwrap(),
+            CssParserContextId::new(0),
+            CssParserDirectItemOrdinal::new(0),
+        )
+        .unwrap();
+        assert_eq!(region.region().range(), text.anchor(2, 20).unwrap().range());
+    }
+
+    #[test]
+    fn nested_at_rule_at_keyword_must_start_with_at_sign() {
+        let text = source(28, "a{unknown-rule foo;}");
+        let result = CssParserUnsupportedRegion::new_nested_at_rule(
+            &text,
+            text.anchor(2, 19).unwrap(),
+            text.anchor(2, 14).unwrap(),
+            CssParserContextId::new(0),
+            CssParserDirectItemOrdinal::new(0),
+        );
+        assert!(matches!(
+            result,
+            Err(CssParserEvidenceContractError::FixedSpellingMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn nested_at_rule_complete_must_start_at_at_keyword_start() {
+        let text = source(29, "a{ @unknown-rule foo;}");
+        let result = CssParserUnsupportedRegion::new_nested_at_rule(
+            &text,
+            text.anchor(2, 21).unwrap(),
+            text.anchor(3, 16).unwrap(),
+            CssParserContextId::new(0),
+            CssParserDirectItemOrdinal::new(0),
+        );
+        assert!(matches!(
+            result,
+            Err(CssParserEvidenceContractError::EvidenceOutOfOrder { .. })
+        ));
+    }
+
+    #[test]
+    fn nested_at_rule_cross_source_at_keyword_is_rejected() {
+        let text = source(31, "a{@unknown-rule foo;}");
+        let other = source(32, "a{@unknown-rule foo;}");
+        let result = CssParserUnsupportedRegion::new_nested_at_rule(
+            &text,
+            text.anchor(2, 20).unwrap(),
+            other.anchor(2, 15).unwrap(),
+            CssParserContextId::new(0),
+            CssParserDirectItemOrdinal::new(0),
+        );
+        assert!(matches!(
+            result,
+            Err(CssParserEvidenceContractError::SourceIdentityMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn nested_at_rule_debug_output_does_not_disclose_authored_source() {
+        const SECRET: &str = "secret-nested-at-rule-remainder";
+        let text = source(30, &format!("a{{@x {SECRET};}}"));
+        let region = CssParserUnsupportedRegion::new_nested_at_rule(
+            &text,
+            text.anchor(2, 6 + SECRET.len()).unwrap(),
+            text.anchor(2, 4).unwrap(),
+            CssParserContextId::new(0),
+            CssParserDirectItemOrdinal::new(0),
+        )
+        .unwrap();
+        assert!(!format!("{region:?}").contains(SECRET));
     }
 
     #[test]
