@@ -37,41 +37,23 @@ jobs:
 
           fixtures = Path('crates/frontend-analysis-core/src/css/validation/parser_fixtures.rs')
           text = fixtures.read_text()
-          old = '''        // A top-level `@keyframes` is structurally consumed but unsupported;
-        // no keyframe declaration is extracted.
-        ParserGoldFixture::complete(
-            "CSS-PARSER-UNSUPPORTED-KEYFRAMES-001",
-            ParserGoldGroup::UnsupportedAtRule,
-            2025,
-            "@keyframes spin{from{opacity:0;}to{opacity:1;}}",
-            47,
-            vec![],
-            vec![],
-            vec![],
-            vec![top_level_at_rule((0, 47), (0, 10))],
-        ),'''
-          new = '''        // An unknown top-level at-rule remains structurally consumed as
-        // explicit unsupported evidence after the #171 keyframes capability.
-        ParserGoldFixture::complete(
-            "CSS-PARSER-UNSUPPORTED-UNKNOWN-AT-RULE-001",
-            ParserGoldGroup::UnsupportedAtRule,
-            2025,
-            "@futureabc spin{from{opacity:0;}to{opacity:1;}}",
-            47,
-            vec![],
-            vec![],
-            vec![],
-            vec![top_level_at_rule((0, 47), (0, 10))],
-        ),'''
-          if text.count(old) != 1:
-              raise SystemExit('legacy keyframes unsupported fixture did not match exactly once')
-          fixtures.write_text(text.replace(old, new))
+          replacements = [
+              ('// A top-level `@keyframes` is structurally consumed but unsupported;\n        // no keyframe declaration is extracted.', '// An unknown top-level at-rule remains structurally consumed as\n        // explicit unsupported evidence after the #171 keyframes capability.'),
+              ('"CSS-PARSER-UNSUPPORTED-KEYFRAMES-001"', '"CSS-PARSER-UNSUPPORTED-UNKNOWN-AT-RULE-001"'),
+              ('"@keyframes spin{from{opacity:0;}to{opacity:1;}}"', '"@futureabc spin{from{opacity:0;}to{opacity:1;}}"'),
+          ]
+          for old, new in replacements:
+              if text.count(old) != 1:
+                  raise SystemExit(f'legacy parser fixture replacement did not match exactly once: {old}')
+              text = text.replace(old, new)
+          fixtures.write_text(text)
 
           resources = Path('crates/frontend-analysis-core/src/css/validation/parser_resource_tests.rs')
           text = resources.read_text()
-          if text.count('@keyframes spin{from{opacity:0;}}') != 2:
+          old_input = '@keyframes spin{from{opacity:0;}}'
+          if text.count(old_input) != 2:
               raise SystemExit('legacy keyframes resource inputs did not match exactly twice')
-          text = text.replace('@keyframes spin{from{opacity:0;}}', '@futureabc spin{from{opacity:0;}}')
+          text = text.replace(old_input, '@futureabc spin{from{opacity:0;}}')
           text = text.replace('the refused `@font-face` after it leaves no', 'the refused unknown at-rule after it leaves no')
           resources.write_text(text)
           PY
