@@ -593,13 +593,13 @@ pub(super) fn normative_parser_fixtures() -> Vec<ParserGoldFixture> {
             vec![],
             vec![],
         ),
-        // A top-level `@keyframes` is structurally consumed but unsupported;
-        // no keyframe declaration is extracted.
+        // An unknown top-level at-rule remains structurally consumed as
+        // explicit unsupported evidence after the #171 keyframes capability.
         ParserGoldFixture::complete(
-            "CSS-PARSER-UNSUPPORTED-KEYFRAMES-001",
+            "CSS-PARSER-UNSUPPORTED-UNKNOWN-AT-RULE-001",
             ParserGoldGroup::UnsupportedAtRule,
             2025,
-            "@keyframes spin{from{opacity:0;}to{opacity:1;}}",
+            "@futureabc spin{from{opacity:0;}to{opacity:1;}}",
             47,
             vec![],
             vec![],

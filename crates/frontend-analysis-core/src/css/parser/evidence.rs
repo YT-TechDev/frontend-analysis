@@ -29,6 +29,7 @@ pub(crate) enum CssParserEvidenceRole {
     UnsupportedNestedRemainder,
     UnsupportedNestedAtRuleComplete,
     UnsupportedNestedAtRuleAtKeyword,
+    UnsupportedKeyframeBlockComplete,
     DiscardRegion,
     DiscardPropertyName,
     DiscardColon,
@@ -287,6 +288,15 @@ pub(crate) enum CssParserUnsupportedRegion {
         context_id: CssParserContextId,
         item_ordinal: CssParserDirectItemOrdinal,
     },
+    /// A structurally consumed child block inside a retained `@keyframes`
+    /// context whose prelude did not satisfy #171's bounded keyframe-selector
+    /// grammar. This preserves exact unsupported evidence without claiming a
+    /// browser/CSSOM validity taxonomy.
+    UnqualifiedKeyframeBlock {
+        complete: SourceAnchor,
+        context_id: CssParserContextId,
+        item_ordinal: CssParserDirectItemOrdinal,
+    },
 }
 
 impl CssParserUnsupportedRegion {
@@ -405,9 +415,33 @@ impl CssParserUnsupportedRegion {
         })
     }
 
+    pub(crate) fn new_unqualified_keyframe_block(
+        source_text: &SourceText,
+        complete: SourceAnchor,
+        context_id: CssParserContextId,
+        item_ordinal: CssParserDirectItemOrdinal,
+    ) -> Result<Self, CssParserEvidenceContractError> {
+        require_source(
+            source_text.id(),
+            &complete,
+            CssParserEvidenceRole::UnsupportedKeyframeBlockComplete,
+        )?;
+        non_empty(
+            &complete,
+            CssParserEvidenceRole::UnsupportedKeyframeBlockComplete,
+        )?;
+        Ok(Self::UnqualifiedKeyframeBlock {
+            complete,
+            context_id,
+            item_ordinal,
+        })
+    }
+
     pub(crate) fn region(&self) -> &SourceAnchor {
         match self {
-            Self::TopLevelAtRule { complete, .. } | Self::NestedAtRule { complete, .. } => complete,
+            Self::TopLevelAtRule { complete, .. }
+            | Self::NestedAtRule { complete, .. }
+            | Self::UnqualifiedKeyframeBlock { complete, .. } => complete,
             Self::NestedContentRemainder { region } => region,
         }
     }
@@ -457,6 +491,22 @@ impl PartialEq for CssParserUnsupportedRegion {
                     && left_context_id == right_context_id
                     && left_item_ordinal == right_item_ordinal
             }
+            (
+                Self::UnqualifiedKeyframeBlock {
+                    complete: left_complete,
+                    context_id: left_context_id,
+                    item_ordinal: left_item_ordinal,
+                },
+                Self::UnqualifiedKeyframeBlock {
+                    complete: right_complete,
+                    context_id: right_context_id,
+                    item_ordinal: right_item_ordinal,
+                },
+            ) => {
+                same_anchor(left_complete, right_complete)
+                    && left_context_id == right_context_id
+                    && left_item_ordinal == right_item_ordinal
+            }
             _ => false,
         }
     }
@@ -491,6 +541,17 @@ impl fmt::Debug for CssParserUnsupportedRegion {
                 .field("source_id", &complete.source_id())
                 .field("complete", &complete.range())
                 .field("at_keyword", &at_keyword.range())
+                .field("context_id", context_id)
+                .field("item_ordinal", item_ordinal)
+                .finish(),
+            Self::UnqualifiedKeyframeBlock {
+                complete,
+                context_id,
+                item_ordinal,
+            } => formatter
+                .debug_struct("UnqualifiedKeyframeBlock")
+                .field("source_id", &complete.source_id())
+                .field("complete", &complete.range())
                 .field("context_id", context_id)
                 .field("item_ordinal", item_ordinal)
                 .finish(),
