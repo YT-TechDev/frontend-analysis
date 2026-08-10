@@ -72,13 +72,14 @@
 
 use super::super::declaration::{
     CssDeclarationOccurrence, CssDeclarationPlacement, CssDeclarationPriorityEvidence,
-    CssDeclarationRunOrdinal, CssDeclarationTermination,
+    CssDeclarationRunOrdinal, CssDeclarationTermination, CssDescriptorOccurrence,
+    CssDescriptorPlacement,
 };
 use super::super::token::CssTokenKind;
 use super::super::tokenizer::result::CssTokenizerRunResult;
 use super::context::{
     CssParserContextId, CssParserContextKind, CssParserContextRecord, CssParserContextTermination,
-    CssParserDirectItemOrdinal, CssParserGroupRuleKind,
+    CssParserDescriptorRuleKind, CssParserDirectItemOrdinal, CssParserGroupRuleKind,
 };
 use super::cursor::{CssParserCursor, CssParserRawPosition};
 use super::diagnostic::{CssParserDiagnostic, CssParserDiagnosticCode};
@@ -259,12 +260,24 @@ enum AtRuleOutcome {
 /// nested qualified-rule block, or a supported group-rule block carrying its
 /// exact authored at-keyword evidence and the tokenizer-decoded value needed
 /// (ephemerally) to prove kind correspondence when the record is finalized.
+///
+/// The shared `RuleBlock` suffix mirrors [`CssParserContextKind`]'s own
+/// deliberate naming; `clippy::enum_variant_names` is suppressed for the
+/// same reason.
+#[allow(clippy::enum_variant_names)]
 enum NewContextIdentity {
     QualifiedRuleBlock,
     GroupRuleBlock {
         kind: CssParserGroupRuleKind,
         at_keyword: SourceAnchor,
         decoded_at_keyword: String,
+    },
+    DescriptorRuleBlock {
+        kind: CssParserDescriptorRuleKind,
+        at_keyword: SourceAnchor,
+        decoded_at_keyword: String,
+        property_name: Option<SourceAnchor>,
+        decoded_property_name: Option<String>,
     },
 }
 
@@ -540,6 +553,115 @@ impl PreludeQualifier {
     }
 }
 
+/// The bounded per-kind #169 root-level descriptor parent-qualification
+/// outcome, resolved once the top-level candidate's own block opener has
+/// been reached. `FontFace` qualifies only for a semantically empty prelude
+/// (no non-whitespace top-level token observed). `Property` qualifies only
+/// for exactly one top-level `Ident` whose tokenizer-decoded value satisfies
+/// the bounded `<custom-property-name>` subset (`starts_with("--")` and not
+/// exactly `"--"`); any further top-level token -- including the comma
+/// starting a multi-name `@property --a, --b` prelude -- disqualifies.
+enum DescriptorQualification {
+    Qualified {
+        /// The authored anchor and tokenizer-decoded value of the single
+        /// qualifying `@property` custom-property-name, or `None` for
+        /// `@font-face`.
+        property_name: Option<(SourceAnchor, String)>,
+    },
+    Unqualified,
+}
+
+/// Bounded, streaming per-kind #169 root-level descriptor prelude
+/// qualification, fed one non-whitespace top-level semantic token at a time
+/// by [`Producer::scan_descriptor_candidate_terminator`]. Never retains a
+/// decoded prelude string beyond the single candidate `@property` name, and
+/// never a component-value AST.
+enum DescriptorPreludeQualifier {
+    FontFace {
+        any_seen: bool,
+    },
+    Property {
+        first: Option<(SourceAnchor, String)>,
+        extra_seen: bool,
+    },
+}
+
+impl DescriptorPreludeQualifier {
+    fn new_for(kind: CssParserDescriptorRuleKind) -> Self {
+        match kind {
+            CssParserDescriptorRuleKind::FontFace => Self::FontFace { any_seen: false },
+            CssParserDescriptorRuleKind::Property => Self::Property {
+                first: None,
+                extra_seen: false,
+            },
+        }
+    }
+
+    /// Feeds one non-whitespace top-level (`depth_before == 0`) semantic
+    /// token. Tokens nested inside a component group never disqualify on
+    /// their own: the opener token that introduced that nesting already
+    /// counted as this prelude's (dis)qualifying top-level item.
+    fn observe(&mut self, depth_before: usize, anchor: &SourceAnchor, kind: &ObservedKind) {
+        if depth_before != 0 {
+            return;
+        }
+        match self {
+            Self::FontFace { any_seen } => *any_seen = true,
+            Self::Property { first, extra_seen } => {
+                if first.is_some() {
+                    *extra_seen = true;
+                } else if let ObservedKind::Ident(name) = kind {
+                    *first = Some((anchor.clone(), name.clone()));
+                } else {
+                    *extra_seen = true;
+                }
+            }
+        }
+    }
+
+    fn finish(&self) -> DescriptorQualification {
+        match self {
+            Self::FontFace { any_seen } => {
+                if *any_seen {
+                    DescriptorQualification::Unqualified
+                } else {
+                    DescriptorQualification::Qualified {
+                        property_name: None,
+                    }
+                }
+            }
+            Self::Property { first, extra_seen } => {
+                if *extra_seen {
+                    return DescriptorQualification::Unqualified;
+                }
+                match first {
+                    Some((anchor, decoded)) if decoded.starts_with("--") && decoded != "--" => {
+                        DescriptorQualification::Qualified {
+                            property_name: Some((anchor.clone(), decoded.clone())),
+                        }
+                    }
+                    _ => DescriptorQualification::Unqualified,
+                }
+            }
+        }
+    }
+}
+
+/// How a stylesheet-root #169 descriptor-candidate at-rule's own scan ends.
+/// Deliberately narrower than [`NestedAtRuleTerminator`]: a root-level
+/// at-rule has no enclosing block, so there is no `EnclosingBlockEnd`
+/// variant.
+enum DescriptorCandidateTerminator {
+    Block {
+        block_opener: SourceAnchor,
+        qualification: DescriptorQualification,
+    },
+    Semicolon {
+        semicolon: SourceAnchor,
+    },
+    TrueEndOfInputWithoutBlock,
+}
+
 /// One entry in the bounded iterative active-context stack (#167): parser
 /// execution metadata required to continue a structurally recognized
 /// qualified-rule block's direct content and to resume its parent once it
@@ -560,12 +682,20 @@ struct ActiveContextFrame {
     /// `nearest_qualified_ancestor`.
     kind: CssParserContextKind,
     /// The exact authored at-keyword anchor, present only for a
-    /// `GroupRuleBlock` frame.
-    group_at_keyword: Option<SourceAnchor>,
+    /// `GroupRuleBlock` or `DescriptorRuleBlock` frame.
+    at_keyword: Option<SourceAnchor>,
     /// The tokenizer-decoded at-keyword value (without `@`), retained only
     /// long enough to prove kind correspondence at record-construction time
-    /// (#168); never part of the finalized [`CssParserContextRecord`].
-    group_decoded_at_keyword: Option<String>,
+    /// (#168/#169); never part of the finalized [`CssParserContextRecord`].
+    decoded_at_keyword: Option<String>,
+    /// The exact authored custom-property-name anchor, present only for a
+    /// `DescriptorRuleBlock(Property)` frame (#169).
+    descriptor_property_name: Option<SourceAnchor>,
+    /// The tokenizer-decoded custom-property-name value, retained only long
+    /// enough to prove the bounded `<custom-property-name>` subset at
+    /// record-construction time (#169); never part of the finalized
+    /// [`CssParserContextRecord`].
+    descriptor_decoded_property_name: Option<String>,
     /// This frame's own nearest qualified-rule ancestor (#141/#168): `None`
     /// at the implicit stylesheet root's direct children, `Some(parent_id)`
     /// when the direct parent is a `QualifiedRuleBlock`, and inherited from
@@ -649,6 +779,7 @@ fn push_component(
 struct Checkpoint {
     cursor: CssParserCursor,
     occurrences_len: usize,
+    descriptor_occurrences_len: usize,
     diagnostics_len: usize,
     recovery_len: usize,
     unsupported_len: usize,
@@ -667,6 +798,11 @@ struct Producer<'a> {
     cursor: CssParserCursor,
     committed_pos: usize,
     occurrences: Vec<CssDeclarationOccurrence>,
+    /// Retained #169 descriptor occurrences, counted against the shared
+    /// `DeclarationOccurrences` aggregate cap alongside `occurrences` but
+    /// never merged into that vector: the two occurrence meanings remain
+    /// distinct end to end.
+    descriptor_occurrences: Vec<CssDescriptorOccurrence>,
     diagnostics: Vec<CssParserDiagnostic>,
     recovery: Vec<CssParserRecoveryEvidence>,
     unsupported: Vec<CssParserUnsupportedRegion>,
@@ -707,6 +843,7 @@ impl<'a> Producer<'a> {
             cursor: CssParserCursor::new(),
             committed_pos: 0,
             occurrences: Vec::new(),
+            descriptor_occurrences: Vec::new(),
             diagnostics: Vec::new(),
             recovery: Vec::new(),
             unsupported: Vec::new(),
@@ -849,6 +986,7 @@ impl<'a> Producer<'a> {
         self.checkpoint = Some(Checkpoint {
             cursor: self.cursor.checkpoint(),
             occurrences_len: self.occurrences.len(),
+            descriptor_occurrences_len: self.descriptor_occurrences.len(),
             diagnostics_len: self.diagnostics.len(),
             recovery_len: self.recovery.len(),
             unsupported_len: self.unsupported.len(),
@@ -877,6 +1015,8 @@ impl<'a> Producer<'a> {
         })?;
         self.cursor.restore(checkpoint.cursor);
         self.occurrences.truncate(checkpoint.occurrences_len);
+        self.descriptor_occurrences
+            .truncate(checkpoint.descriptor_occurrences_len);
         self.diagnostics.truncate(checkpoint.diagnostics_len);
         self.recovery.truncate(checkpoint.recovery_len);
         self.unsupported.truncate(checkpoint.unsupported_len);
@@ -924,9 +1064,9 @@ impl<'a> Producer<'a> {
                             self.cursor.advance();
                             self.committed_pos = end;
                         }
-                        ObservedKind::AtKeyword(_) => {
+                        ObservedKind::AtKeyword(decoded) => {
                             self.cursor.advance();
-                            self.consume_top_level_at_rule(anchor)?;
+                            self.handle_top_level_at_rule(anchor, decoded)?;
                         }
                         _ => {
                             self.consume_top_level_qualified_rule(anchor.range().start())?;
@@ -957,7 +1097,11 @@ impl<'a> Producer<'a> {
                         }
                         _ => {
                             let item_start = anchor.range().start();
-                            self.handle_block_item(item_start)?;
+                            if self.innermost_is_descriptor_context() {
+                                self.handle_descriptor_block_item(item_start)?;
+                            } else {
+                                self.handle_block_item(item_start)?;
+                            }
                         }
                     },
                     ParserPosition::TrueEndOfInput => return Ok(()),
@@ -1013,17 +1157,28 @@ impl<'a> Producer<'a> {
         let (parent, item_ordinal, nearest_qualified_ancestor) =
             match self.active_contexts.last_mut() {
                 Some(frame) => {
+                    if matches!(identity, NewContextIdentity::DescriptorRuleBlock { .. }) {
+                        return Err(invariant_flow(
+                            CssParserInvariantViolation::DescriptorContextCannotBeNested,
+                        ));
+                    }
                     frame.run_open = false;
                     let ordinal = frame.next_item_ordinal;
                     frame.next_item_ordinal += 1;
                     let nearest = match frame.kind {
                         CssParserContextKind::QualifiedRuleBlock => Some(frame.id),
                         CssParserContextKind::GroupRuleBlock(_) => frame.nearest_qualified_ancestor,
+                        CssParserContextKind::DescriptorRuleBlock(_) => {
+                            return Err(invariant_flow(
+                                CssParserInvariantViolation::DescriptorContextCannotHaveChildren,
+                            ));
+                        }
                     };
                     (Some(frame.id), ordinal, nearest)
                 }
                 None => match identity {
-                    NewContextIdentity::QualifiedRuleBlock => {
+                    NewContextIdentity::QualifiedRuleBlock
+                    | NewContextIdentity::DescriptorRuleBlock { .. } => {
                         let ordinal = self.root_next_item_ordinal;
                         self.root_next_item_ordinal += 1;
                         (None, ordinal, None)
@@ -1048,10 +1203,20 @@ impl<'a> Producer<'a> {
             .map_err(|error| Flow::Invariant(error.into()))?;
         let body_start = block_opener.range().end();
 
-        let (kind, group_at_keyword, group_decoded_at_keyword) = match identity {
-            NewContextIdentity::QualifiedRuleBlock => {
-                (CssParserContextKind::QualifiedRuleBlock, None, None)
-            }
+        let (
+            kind,
+            at_keyword,
+            decoded_at_keyword,
+            descriptor_property_name,
+            descriptor_decoded_property_name,
+        ) = match identity {
+            NewContextIdentity::QualifiedRuleBlock => (
+                CssParserContextKind::QualifiedRuleBlock,
+                None,
+                None,
+                None,
+                None,
+            ),
             NewContextIdentity::GroupRuleBlock {
                 kind,
                 at_keyword,
@@ -1060,6 +1225,21 @@ impl<'a> Producer<'a> {
                 CssParserContextKind::GroupRuleBlock(kind),
                 Some(at_keyword),
                 Some(decoded_at_keyword),
+                None,
+                None,
+            ),
+            NewContextIdentity::DescriptorRuleBlock {
+                kind,
+                at_keyword,
+                decoded_at_keyword,
+                property_name,
+                decoded_property_name,
+            } => (
+                CssParserContextKind::DescriptorRuleBlock(kind),
+                Some(at_keyword),
+                Some(decoded_at_keyword),
+                property_name,
+                decoded_property_name,
             ),
         };
 
@@ -1068,8 +1248,10 @@ impl<'a> Producer<'a> {
             parent,
             item_ordinal: CssParserDirectItemOrdinal::new(item_ordinal),
             kind,
-            group_at_keyword,
-            group_decoded_at_keyword,
+            at_keyword,
+            decoded_at_keyword,
+            descriptor_property_name,
+            descriptor_decoded_property_name,
             nearest_qualified_ancestor,
             header,
             block_opener,
@@ -1108,15 +1290,16 @@ impl<'a> Producer<'a> {
             CssParserContextKind::GroupRuleBlock(group_kind) => {
                 let at_keyword =
                     frame
-                        .group_at_keyword
+                        .at_keyword
                         .ok_or(CssParserRunError::InternalInvariantFailure(
                             CssParserInvariantViolation::MissingGroupContextEvidence,
                         ))?;
-                let decoded = frame.group_decoded_at_keyword.ok_or(
-                    CssParserRunError::InternalInvariantFailure(
-                        CssParserInvariantViolation::MissingGroupContextEvidence,
-                    ),
-                )?;
+                let decoded =
+                    frame
+                        .decoded_at_keyword
+                        .ok_or(CssParserRunError::InternalInvariantFailure(
+                            CssParserInvariantViolation::MissingGroupContextEvidence,
+                        ))?;
                 CssParserContextRecord::new_group_rule_block(
                     self.source_text,
                     frame.id,
@@ -1126,6 +1309,40 @@ impl<'a> Producer<'a> {
                     group_kind,
                     at_keyword,
                     &decoded,
+                    frame.header,
+                    frame.block_opener,
+                    body,
+                    termination,
+                )
+                .map_err(Into::into)
+            }
+            CssParserContextKind::DescriptorRuleBlock(descriptor_kind) => {
+                if frame.parent.is_some() {
+                    return Err(CssParserRunError::InternalInvariantFailure(
+                        CssParserInvariantViolation::DescriptorContextCannotBeNested,
+                    ));
+                }
+                let at_keyword =
+                    frame
+                        .at_keyword
+                        .ok_or(CssParserRunError::InternalInvariantFailure(
+                            CssParserInvariantViolation::MissingDescriptorContextEvidence,
+                        ))?;
+                let decoded =
+                    frame
+                        .decoded_at_keyword
+                        .ok_or(CssParserRunError::InternalInvariantFailure(
+                            CssParserInvariantViolation::MissingDescriptorContextEvidence,
+                        ))?;
+                CssParserContextRecord::new_descriptor_rule_block(
+                    self.source_text,
+                    frame.id,
+                    frame.item_ordinal,
+                    descriptor_kind,
+                    at_keyword,
+                    &decoded,
+                    frame.descriptor_property_name,
+                    frame.descriptor_decoded_property_name.as_deref(),
                     frame.header,
                     frame.block_opener,
                     body,
@@ -1184,6 +1401,116 @@ impl<'a> Producer<'a> {
         Ok(())
     }
 
+    /// Qualification-aware root at-rule dispatch (#169): observes the
+    /// tokenizer-decoded at-keyword and distinguishes only a candidate
+    /// `font-face`, a candidate `property`, or everything else. Everything
+    /// else takes the unchanged #138 whole-at-rule unsupported path.
+    /// A candidate's own header is scanned structurally and boundedly; if it
+    /// satisfies the approved bounded parent qualification and has a block,
+    /// one descriptor context is entered through the existing context-entry
+    /// resource gate. Otherwise the candidate is consumed through the same
+    /// unsupported path as any other at-rule -- this never overclaims
+    /// invalidity where #169 simply lacks capability (a non-qualifying
+    /// `@font-face`/`@property` remains explicit unsupported evidence, never
+    /// an `Invalid*` diagnostic).
+    fn handle_top_level_at_rule(
+        &mut self,
+        at_keyword: SourceAnchor,
+        decoded_at_keyword: String,
+    ) -> Result<(), Flow> {
+        let Some(candidate_kind) =
+            CssParserDescriptorRuleKind::from_decoded_at_keyword(&decoded_at_keyword)
+        else {
+            return self.consume_top_level_at_rule(at_keyword);
+        };
+
+        match self.scan_descriptor_candidate_terminator(candidate_kind)? {
+            DescriptorCandidateTerminator::Block {
+                block_opener,
+                qualification: DescriptorQualification::Qualified { property_name },
+            } => {
+                self.committed_pos = block_opener.range().end();
+                let (property_name_anchor, decoded_property_name) = match property_name {
+                    Some((anchor, decoded)) => (Some(anchor), Some(decoded)),
+                    None => (None, None),
+                };
+                self.enter_context(
+                    at_keyword.range().start(),
+                    block_opener,
+                    NewContextIdentity::DescriptorRuleBlock {
+                        kind: candidate_kind,
+                        at_keyword,
+                        decoded_at_keyword,
+                        property_name: property_name_anchor,
+                        decoded_property_name,
+                    },
+                )
+            }
+            DescriptorCandidateTerminator::Block {
+                qualification: DescriptorQualification::Unqualified,
+                ..
+            } => match self.consume_remainder_until_enclosing_right_curly()? {
+                RemainderOutcome::EnclosingRightCurly { end, .. } => {
+                    self.cursor.advance();
+                    self.commit_top_level_at_rule_unsupported(at_keyword, end)
+                }
+                RemainderOutcome::TrueEndOfInput => {
+                    let len = self.source_text.as_str().len();
+                    self.commit_top_level_at_rule_unsupported(at_keyword, len)
+                }
+            },
+            DescriptorCandidateTerminator::Semicolon { semicolon } => {
+                self.commit_top_level_at_rule_unsupported(at_keyword, semicolon.range().end())
+            }
+            DescriptorCandidateTerminator::TrueEndOfInputWithoutBlock => {
+                let len = self.source_text.as_str().len();
+                self.commit_top_level_at_rule_unsupported(at_keyword, len)
+            }
+        }
+    }
+
+    /// Structurally scans exactly one root-level #169 descriptor-candidate
+    /// at-rule's prelude, using the existing bounded component-balancing
+    /// machinery, and reports how it ends: a top-level block opener (with
+    /// the resolved [`DescriptorQualification`]), an authored top-level
+    /// semicolon, or true end of input. Never parses a source substring:
+    /// qualification is decided purely from the already observed
+    /// lexical-item stream via [`DescriptorPreludeQualifier`].
+    fn scan_descriptor_candidate_terminator(
+        &mut self,
+        candidate_kind: CssParserDescriptorRuleKind,
+    ) -> Result<DescriptorCandidateTerminator, Flow> {
+        self.component_frames.clear();
+        let mut qualifier = DescriptorPreludeQualifier::new_for(candidate_kind);
+        loop {
+            match self.next_semantic()? {
+                ParserPosition::SemanticToken { anchor, kind } => {
+                    let depth_before = self.component_frames.len();
+                    if depth_before == 0 && matches!(kind, ObservedKind::Semicolon) {
+                        self.cursor.advance();
+                        return Ok(DescriptorCandidateTerminator::Semicolon { semicolon: anchor });
+                    }
+                    if depth_before == 0 && matches!(kind, ObservedKind::LeftCurlyBracket) {
+                        let qualification = qualifier.finish();
+                        self.cursor.advance();
+                        return Ok(DescriptorCandidateTerminator::Block {
+                            block_opener: anchor,
+                            qualification,
+                        });
+                    }
+                    if !matches!(kind, ObservedKind::Whitespace) {
+                        qualifier.observe(depth_before, &anchor, &kind);
+                    }
+                    self.consume_and_balance(&kind)?;
+                }
+                ParserPosition::TrueEndOfInput => {
+                    return Ok(DescriptorCandidateTerminator::TrueEndOfInputWithoutBlock);
+                }
+                ParserPosition::UpstreamTokenizerTerminal => return Err(Flow::UpstreamIncomplete),
+            }
+        }
+    }
+
     /// Commits a structurally recognized top-level at-rule as an unsupported
     /// region. `root_next_item_ordinal` only advances after that evidence is
     /// committed (#167 commit-honest refusal): a resource refusal or
@@ -1192,6 +1519,18 @@ impl<'a> Producer<'a> {
     /// source-relative across intervening at-rules.
     fn consume_top_level_at_rule(&mut self, at_keyword: SourceAnchor) -> Result<(), Flow> {
         let AtRuleOutcome::Ended { end } = self.consume_top_level_at_rule_body()?;
+        self.commit_top_level_at_rule_unsupported(at_keyword, end)
+    }
+
+    /// Shared top-level-at-rule-unsupported commit tail, used both by the
+    /// unchanged #138 whole-at-rule path ([`Self::consume_top_level_at_rule`])
+    /// and by #169's qualification-aware dispatch for a disqualified
+    /// `font-face`/`property` candidate.
+    fn commit_top_level_at_rule_unsupported(
+        &mut self,
+        at_keyword: SourceAnchor,
+        end: usize,
+    ) -> Result<(), Flow> {
         let start = at_keyword.range().start();
         let prospective = checked_resource_add(
             CssParserResourceKind::UnsupportedRegions,
@@ -1420,6 +1759,17 @@ impl<'a> Producer<'a> {
 
     // -- supported block loop -----------------------------------------------
 
+    /// Whether the innermost active context is a #169 `DescriptorRuleBlock`:
+    /// its body uses declaration-list dispatch
+    /// ([`Self::handle_descriptor_block_item`]), never the ordinary
+    /// declaration-vs-qualified-rule block-content transaction.
+    fn innermost_is_descriptor_context(&self) -> bool {
+        matches!(
+            self.active_contexts.last().map(|frame| frame.kind),
+            Some(CssParserContextKind::DescriptorRuleBlock(_))
+        )
+    }
+
     /// Resolves one block-content item: the declaration-vs-qualified-rule
     /// transaction (#139), now extended so a structurally recognized nested
     /// qualified rule enters a real child context instead of falling back
@@ -1608,6 +1958,111 @@ impl<'a> Producer<'a> {
         }
     }
 
+    /// Resolves one #169 descriptor-context block-content item:
+    /// declaration-list dispatch, not the ordinary
+    /// declaration-vs-qualified-rule transaction. A recognized
+    /// declaration-shaped item becomes a [`CssDescriptorOccurrence`], never a
+    /// [`CssDeclarationOccurrence`]. Declaration-recognition failure never
+    /// falls back to a child `QualifiedRuleBlock`: `<declaration-list>`
+    /// admits no such child, so a qualified-rule-shaped fragment here is
+    /// simply malformed descriptor-block input, recovered with the same
+    /// `InvalidBlockItem`/`MalformedBlockItem` evidence as any other
+    /// malformed item.
+    fn handle_descriptor_block_item(&mut self, item_start: usize) -> Result<(), Flow> {
+        self.begin_checkpoint()?;
+        let outcome = match self.try_declaration() {
+            Ok(outcome) => outcome,
+            Err(flow) => return Err(self.rollback_checkpoint_preserving_flow(flow)),
+        };
+        match outcome {
+            DeclarationOutcome::Recognized(parts) => {
+                if let Err(flow) = self.commit_descriptor_occurrence(parts) {
+                    return Err(self.rollback_checkpoint_preserving_flow(flow));
+                }
+                self.commit_checkpoint()?;
+                Ok(())
+            }
+            DeclarationOutcome::NotRecognized => {
+                self.rollback_checkpoint()?;
+                match self.scan_descriptor_malformed_item()? {
+                    FallbackOutcome::NestedRuleTrigger => Err(invariant_flow(
+                        CssParserInvariantViolation::UnreachableDescriptorNestedRuleTrigger,
+                    )),
+                    FallbackOutcome::MalformedEndedAtSemicolon { semicolon } => {
+                        let region_end = semicolon.range().end();
+                        self.commit_malformed_recovery(
+                            item_start,
+                            region_end,
+                            CssParserRecoveryTermination::AuthoredSemicolon { semicolon },
+                        )
+                    }
+                    FallbackOutcome::MalformedEndedAtEnclosingBlock { right_curly } => {
+                        let region_end = right_curly.range().start();
+                        self.commit_malformed_recovery(
+                            item_start,
+                            region_end,
+                            CssParserRecoveryTermination::EnclosingBlockEnd { right_curly },
+                        )
+                    }
+                    FallbackOutcome::MalformedEndedAtTrueEof => {
+                        let len = self.source_text.as_str().len();
+                        let terminal = self
+                            .source_text
+                            .anchor(len, len)
+                            .map_err(|error| Flow::Invariant(error.into()))?;
+                        self.commit_malformed_recovery(
+                            item_start,
+                            len,
+                            CssParserRecoveryTermination::EndOfInput { terminal },
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    /// Scans a malformed #169 descriptor-block item after declaration
+    /// recognition has failed and rolled back, reporting the same
+    /// [`FallbackOutcome`] terminal shapes as
+    /// [`Self::scan_qualified_rule_fallback`] except it never produces
+    /// `NestedRuleTrigger`: a top-level `{` is not a nested-rule trigger
+    /// here, since `<declaration-list>` admits no child rule. Instead it is
+    /// balanced through like any other component (a qualified-rule-shaped
+    /// fragment is malformed content, not a context boundary), and scanning
+    /// continues for the item's real terminator (`;`, the enclosing `}`, or
+    /// true end of input).
+    fn scan_descriptor_malformed_item(&mut self) -> Result<FallbackOutcome, Flow> {
+        self.component_frames.clear();
+        loop {
+            match self.next_semantic()? {
+                ParserPosition::SemanticToken { anchor, kind } => {
+                    let depth_before = self.component_frames.len();
+                    if depth_before == 0 {
+                        match &kind {
+                            ObservedKind::Semicolon => {
+                                self.cursor.advance();
+                                return Ok(FallbackOutcome::MalformedEndedAtSemicolon {
+                                    semicolon: anchor,
+                                });
+                            }
+                            ObservedKind::RightCurlyBracket => {
+                                return Ok(FallbackOutcome::MalformedEndedAtEnclosingBlock {
+                                    right_curly: anchor,
+                                });
+                            }
+                            _ => {}
+                        }
+                    }
+                    self.consume_and_balance(&kind)?;
+                }
+                ParserPosition::TrueEndOfInput => {
+                    return Ok(FallbackOutcome::MalformedEndedAtTrueEof);
+                }
+                ParserPosition::UpstreamTokenizerTerminal => return Err(Flow::UpstreamIncomplete),
+            }
+        }
+    }
+
     /// Nested at-keyword dispatch (#168): structurally scans exactly one
     /// at-rule, then either enters a supported `GroupRuleBlock` context or
     /// commits exactly one context-aware `NestedAtRule` unsupported direct
@@ -1619,7 +2074,16 @@ impl<'a> Producer<'a> {
         at_keyword: SourceAnchor,
         decoded_at_keyword: String,
     ) -> Result<(), Flow> {
-        let candidate_kind = CssParserGroupRuleKind::from_decoded_at_keyword(&decoded_at_keyword);
+        // #169: `<declaration-list>` automatically excludes at-rules, so a
+        // descriptor context's body never qualifies a nested at-rule into a
+        // group-rule context -- not even a registry member like `@media` --
+        // regardless of its own prelude shape. It always becomes one
+        // explicit unsupported direct item.
+        let candidate_kind = if self.innermost_is_descriptor_context() {
+            None
+        } else {
+            CssParserGroupRuleKind::from_decoded_at_keyword(&decoded_at_keyword)
+        };
         match self.scan_nested_at_rule_terminator(candidate_kind)? {
             NestedAtRuleTerminator::Block {
                 block_opener,
@@ -1868,11 +2332,14 @@ impl<'a> Producer<'a> {
     /// computing its [`CssDeclarationPlacement`] from that context's current
     /// item/run counters (#167). The `DeclarationOccurrences` preflight
     /// happens before any counter mutation, so a refusal here never
-    /// advances the owning context's item or run ordinal.
+    /// advances the owning context's item or run ordinal. The preflight is
+    /// against the #169 aggregate cap shared with descriptor occurrences
+    /// (`self.occurrences.len() + self.descriptor_occurrences.len()`), never
+    /// `self.occurrences.len()` alone.
     fn commit_declaration(&mut self, parts: DeclarationParts) -> Result<(), Flow> {
         let prospective = checked_resource_add(
             CssParserResourceKind::DeclarationOccurrences,
-            self.occurrences.len(),
+            self.occurrences.len() + self.descriptor_occurrences.len(),
             1,
         )?;
         self.check_limit(CssParserResourceKind::DeclarationOccurrences, prospective)?;
@@ -1910,6 +2377,56 @@ impl<'a> Producer<'a> {
 
         let end = occurrence.complete().range().end();
         self.occurrences.push(occurrence);
+        self.committed_pos = end;
+        Ok(())
+    }
+
+    /// Commits a recognized #169 descriptor occurrence into the innermost
+    /// active `DescriptorRuleBlock` context. Follows the same commit-honest
+    /// order as [`Self::commit_nested_at_rule_unsupported`], not
+    /// [`Self::commit_declaration`]'s: the `DeclarationOccurrences` aggregate
+    /// preflight happens first, then the occurrence is constructed and
+    /// pushed, and only then does the owning context's direct-item ordinal
+    /// advance -- there is no declaration-run ordinal to open, since
+    /// `<declaration-list>` admits no child rule whose interleaving requires
+    /// that model.
+    fn commit_descriptor_occurrence(&mut self, parts: DeclarationParts) -> Result<(), Flow> {
+        let prospective = checked_resource_add(
+            CssParserResourceKind::DeclarationOccurrences,
+            self.occurrences.len() + self.descriptor_occurrences.len(),
+            1,
+        )?;
+        self.check_limit(CssParserResourceKind::DeclarationOccurrences, prospective)?;
+
+        let frame = self.active_contexts.last().ok_or_else(|| {
+            invariant_flow(CssParserInvariantViolation::DeclarationOutsideActiveContext)
+        })?;
+        let context_id = frame.id;
+        let item_ordinal = frame.next_item_ordinal;
+
+        let placement =
+            CssDescriptorPlacement::new(context_id, CssParserDirectItemOrdinal::new(item_ordinal));
+
+        let occurrence = CssDescriptorOccurrence::new(
+            self.source_text,
+            parts.complete,
+            parts.property_name,
+            parts.colon,
+            parts.value,
+            parts.priority,
+            parts.termination,
+            placement,
+        )
+        .map_err(|error| Flow::Invariant(error.into()))?;
+
+        let end = occurrence.complete().range().end();
+        self.descriptor_occurrences.push(occurrence);
+
+        let frame = self
+            .active_contexts
+            .last_mut()
+            .ok_or_else(|| invariant_flow(CssParserInvariantViolation::NoActiveContextToClose))?;
+        frame.next_item_ordinal += 1;
         self.committed_pos = end;
         Ok(())
     }
@@ -2157,6 +2674,7 @@ impl<'a> Producer<'a> {
             self.source_text,
             self.upstream,
             self.occurrences,
+            self.descriptor_occurrences,
             self.diagnostics,
             self.recovery,
             self.unsupported,
@@ -2183,6 +2701,7 @@ impl<'a> Producer<'a> {
             self.source_text,
             self.upstream,
             self.occurrences,
+            self.descriptor_occurrences,
             self.diagnostics,
             self.recovery,
             self.unsupported,
@@ -2221,6 +2740,7 @@ impl<'a> Producer<'a> {
             self.source_text,
             self.upstream,
             self.occurrences,
+            self.descriptor_occurrences,
             self.diagnostics,
             self.recovery,
             self.unsupported,
@@ -2234,12 +2754,15 @@ impl<'a> Producer<'a> {
         )
     }
 
+    /// `DeclarationOccurrences` usage is the #169 aggregate cap shared by
+    /// ordinary declaration and descriptor occurrences, never
+    /// `self.occurrences.len()` alone.
     fn resource_usage(&self, context_records_len: usize) -> CssParserResourceUsage {
         CssParserResourceUsage::new(
             self.algorithm_steps,
             self.peak_component_depth,
             self.peak_context_depth,
-            self.occurrences.len(),
+            self.occurrences.len() + self.descriptor_occurrences.len(),
             self.diagnostics.len(),
             self.recovery.len(),
             self.unsupported.len(),
@@ -2523,5 +3046,311 @@ mod tests {
         assert_eq!(records[1].item_ordinal().value(), 0);
         assert!(records[2].parent().is_none());
         assert_eq!(records[2].item_ordinal().value(), 1);
+    }
+
+    // -- #169 descriptor-context focused regressions -------------------------
+
+    /// `@font-face` with an empty prelude qualifies as a supported
+    /// descriptor context, and multiple declaration-shaped items inside it
+    /// become `CssDescriptorOccurrence`s, never ordinary
+    /// `CssDeclarationOccurrence`s.
+    #[test]
+    fn font_face_with_multiple_descriptor_occurrences() {
+        let text = source("@font-face{font-family:x;src:y;}");
+        let tokenizer_result = run_tokenizer(&text, generous_tokenizer_limits()).unwrap();
+        let mut producer =
+            Producer::new(&text, tokenizer_result, context_parser_limits(1000, 1000));
+
+        assert!(producer.execute().is_ok());
+
+        assert!(producer.occurrences.is_empty());
+        assert_eq!(producer.descriptor_occurrences.len(), 2);
+        assert_eq!(producer.pending_context_records.len(), 1);
+        let record = producer.pending_context_records[0].as_ref().unwrap();
+        assert_eq!(
+            record.kind(),
+            CssParserContextKind::DescriptorRuleBlock(CssParserDescriptorRuleKind::FontFace)
+        );
+        assert!(record.parent().is_none());
+        assert!(record.descriptor_property_name().is_none());
+        for occurrence in &producer.descriptor_occurrences {
+            assert_eq!(occurrence.placement().context_id(), record.id());
+        }
+        assert_eq!(
+            producer.descriptor_occurrences[0]
+                .placement()
+                .item_ordinal()
+                .value(),
+            0
+        );
+        assert_eq!(
+            producer.descriptor_occurrences[1]
+                .placement()
+                .item_ordinal()
+                .value(),
+            1
+        );
+    }
+
+    /// `@property --x` with a single qualifying custom-property-name
+    /// qualifies as a supported descriptor context, retaining the exact
+    /// authored custom-property-name anchor as parent evidence.
+    #[test]
+    fn property_with_qualifying_name_produces_descriptor_occurrences() {
+        let text = source("@property --x{syntax:y;inherits:false;}");
+        let tokenizer_result = run_tokenizer(&text, generous_tokenizer_limits()).unwrap();
+        let mut producer =
+            Producer::new(&text, tokenizer_result, context_parser_limits(1000, 1000));
+
+        assert!(producer.execute().is_ok());
+
+        assert_eq!(producer.descriptor_occurrences.len(), 2);
+        assert_eq!(producer.pending_context_records.len(), 1);
+        let record = producer.pending_context_records[0].as_ref().unwrap();
+        assert_eq!(
+            record.kind(),
+            CssParserContextKind::DescriptorRuleBlock(CssParserDescriptorRuleKind::Property)
+        );
+        assert_eq!(
+            record
+                .descriptor_property_name()
+                .map(SourceAnchor::fragment),
+            Some("--x")
+        );
+    }
+
+    /// An unqualified `@property` prelude (not a `<custom-property-name>`)
+    /// never enters a descriptor context: the whole at-rule remains
+    /// structurally consumed unsupported evidence and produces no
+    /// descriptor occurrences.
+    #[test]
+    fn unqualified_property_prelude_produces_no_descriptors() {
+        let text = source("@property color{syntax:y;}");
+        let tokenizer_result = run_tokenizer(&text, generous_tokenizer_limits()).unwrap();
+        let mut producer =
+            Producer::new(&text, tokenizer_result, context_parser_limits(1000, 1000));
+
+        assert!(producer.execute().is_ok());
+
+        assert!(producer.descriptor_occurrences.is_empty());
+        assert!(producer.pending_context_records.is_empty());
+        assert_eq!(producer.unsupported.len(), 1);
+    }
+
+    /// The reserved exact spelling `--` never qualifies as a custom-property
+    /// name.
+    #[test]
+    fn reserved_double_hyphen_property_name_does_not_qualify() {
+        let text = source("@property --{syntax:y;}");
+        let tokenizer_result = run_tokenizer(&text, generous_tokenizer_limits()).unwrap();
+        let mut producer =
+            Producer::new(&text, tokenizer_result, context_parser_limits(1000, 1000));
+
+        assert!(producer.execute().is_ok());
+
+        assert!(producer.descriptor_occurrences.is_empty());
+        assert_eq!(producer.unsupported.len(), 1);
+    }
+
+    /// Broader multi-name `@property --a, --b { ... }` syntax remains
+    /// explicit unsupported capability evidence in #169, never a descriptor
+    /// context.
+    #[test]
+    fn multi_name_property_remains_unsupported() {
+        let text = source("@property --a, --b{syntax:y;}");
+        let tokenizer_result = run_tokenizer(&text, generous_tokenizer_limits()).unwrap();
+        let mut producer =
+            Producer::new(&text, tokenizer_result, context_parser_limits(1000, 1000));
+
+        assert!(producer.execute().is_ok());
+
+        assert!(producer.descriptor_occurrences.is_empty());
+        assert!(producer.pending_context_records.is_empty());
+        assert_eq!(producer.unsupported.len(), 1);
+    }
+
+    /// A non-empty `@font-face` prelude never qualifies as a descriptor
+    /// context.
+    #[test]
+    fn non_empty_font_face_prelude_remains_unsupported() {
+        let text = source("@font-face x{font-family:y;}");
+        let tokenizer_result = run_tokenizer(&text, generous_tokenizer_limits()).unwrap();
+        let mut producer =
+            Producer::new(&text, tokenizer_result, context_parser_limits(1000, 1000));
+
+        assert!(producer.execute().is_ok());
+
+        assert!(producer.descriptor_occurrences.is_empty());
+        assert!(producer.pending_context_records.is_empty());
+        assert_eq!(producer.unsupported.len(), 1);
+    }
+
+    /// Identical `name:value` spelling inside an ordinary qualified rule
+    /// versus a descriptor context yields distinct occurrence types.
+    #[test]
+    fn same_spelling_yields_distinct_occurrence_types_by_context() {
+        let text = source("a{color:red;}@font-face{color:red;}");
+        let tokenizer_result = run_tokenizer(&text, generous_tokenizer_limits()).unwrap();
+        let mut producer =
+            Producer::new(&text, tokenizer_result, context_parser_limits(1000, 1000));
+
+        assert!(producer.execute().is_ok());
+
+        assert_eq!(producer.occurrences.len(), 1);
+        assert_eq!(producer.descriptor_occurrences.len(), 1);
+        assert_eq!(
+            producer.occurrences[0].property_name().fragment(),
+            producer.descriptor_occurrences[0].name().fragment()
+        );
+    }
+
+    /// Duplicate raw descriptor spelling retained in two separate descriptor
+    /// contexts keeps distinct owner `ContextId`s.
+    #[test]
+    fn duplicate_descriptor_spelling_in_two_contexts_retains_distinct_owner_ids() {
+        let text = source("@font-face{unicode-range:a;}@property --x{unicode-range:a;}");
+        let tokenizer_result = run_tokenizer(&text, generous_tokenizer_limits()).unwrap();
+        let mut producer =
+            Producer::new(&text, tokenizer_result, context_parser_limits(1000, 1000));
+
+        assert!(producer.execute().is_ok());
+
+        assert_eq!(producer.descriptor_occurrences.len(), 2);
+        assert_eq!(producer.pending_context_records.len(), 2);
+        assert_ne!(
+            producer.descriptor_occurrences[0].placement().context_id(),
+            producer.descriptor_occurrences[1].placement().context_id(),
+        );
+    }
+
+    /// A malformed descriptor-shaped item recovers with the shared
+    /// `InvalidBlockItem`/`MalformedBlockItem` evidence, and a later
+    /// valid-shaped descriptor still commits.
+    #[test]
+    fn malformed_descriptor_item_recovers_and_later_descriptor_survives() {
+        let text = source("@font-face{***;src:y;}");
+        let tokenizer_result = run_tokenizer(&text, generous_tokenizer_limits()).unwrap();
+        let mut producer =
+            Producer::new(&text, tokenizer_result, context_parser_limits(1000, 1000));
+
+        assert!(producer.execute().is_ok());
+
+        assert_eq!(producer.descriptor_occurrences.len(), 1);
+        assert_eq!(producer.recovery.len(), 1);
+        assert_eq!(producer.diagnostics.len(), 1);
+    }
+
+    /// A qualified-rule-shaped fragment inside a descriptor block is
+    /// malformed content, not a child context: a top-level `{` is balanced
+    /// through as ordinary malformed content (never a nested-rule trigger),
+    /// so it never becomes a `QualifiedRuleBlock`, and the descriptor
+    /// context stays the only retained context. The malformed region's own
+    /// terminating `;` bounds it, so the later `src:y;` still recovers as a
+    /// separate, valid descriptor occurrence.
+    #[test]
+    fn qualified_rule_shaped_fragment_inside_descriptor_block_is_not_a_child_context() {
+        let text = source("@font-face{.foo{color:red;};src:y;}");
+        let tokenizer_result = run_tokenizer(&text, generous_tokenizer_limits()).unwrap();
+        let mut producer =
+            Producer::new(&text, tokenizer_result, context_parser_limits(1000, 1000));
+
+        assert!(producer.execute().is_ok());
+
+        assert_eq!(producer.pending_context_records.len(), 1);
+        assert_eq!(producer.descriptor_occurrences.len(), 1);
+        assert_eq!(producer.recovery.len(), 1);
+    }
+
+    /// An unsupported at-rule inside a descriptor block -- including a
+    /// registry member like `@media` that would otherwise qualify as a
+    /// `GroupRuleBlock` in a qualified/group context -- never becomes a
+    /// group context: `<declaration-list>` automatically excludes at-rules,
+    /// so it is always exactly one explicit unsupported direct item, and
+    /// descriptor parsing resumes afterward.
+    #[test]
+    fn media_inside_descriptor_block_never_becomes_a_group_context() {
+        let text = source("@font-face{@media screen{color:red;}src:y;}");
+        let tokenizer_result = run_tokenizer(&text, generous_tokenizer_limits()).unwrap();
+        let mut producer =
+            Producer::new(&text, tokenizer_result, context_parser_limits(1000, 1000));
+
+        assert!(producer.execute().is_ok());
+
+        assert_eq!(producer.pending_context_records.len(), 1);
+        assert_eq!(producer.descriptor_occurrences.len(), 1);
+        assert_eq!(producer.unsupported.len(), 1);
+    }
+
+    /// True EOF with a descriptor context still active retains it with
+    /// honest `EndOfInput` termination and correct root-level ancestry
+    /// (`parent = None`), never a fabricated closing `}`.
+    #[test]
+    fn true_eof_descriptor_context_retains_honest_termination_and_root_ancestry() {
+        let text = source("@font-face{font-family:x");
+        let tokenizer_result = run_tokenizer(&text, generous_tokenizer_limits()).unwrap();
+        let limits = context_parser_limits(1000, 1000);
+        let result = run(&text, tokenizer_result, limits).unwrap();
+
+        assert_eq!(result.context_records().len(), 1);
+        let record = &result.context_records()[0];
+        assert!(record.parent().is_none());
+        assert!(matches!(
+            record.termination(),
+            CssParserContextTermination::EndOfInput { .. }
+        ));
+        assert_eq!(result.descriptor_occurrences().len(), 1);
+        assert_eq!(
+            result.descriptor_occurrences()[0].placement().context_id(),
+            record.id()
+        );
+    }
+
+    /// `PeakContextDepth`/`ContextRecords` refusal at descriptor entry is
+    /// commit-honest (#167/#169): a refused descriptor context allocates no
+    /// ID and leaves no partial record.
+    #[test]
+    fn descriptor_context_entry_resource_refusal_allocates_no_id() {
+        let text = source("@font-face{font-family:x;}");
+        let tokenizer_result = run_tokenizer(&text, generous_tokenizer_limits()).unwrap();
+        let mut producer = Producer::new(&text, tokenizer_result, context_parser_limits(0, 1000));
+
+        let outcome = producer.execute();
+
+        assert!(matches!(
+            outcome,
+            Err(Flow::ResourceLimit(ResourceLimitSignal {
+                kind: CssParserResourceKind::PeakContextDepth,
+                limit: 0,
+                attempted: 1,
+            }))
+        ));
+        assert!(producer.pending_context_records.is_empty());
+        assert!(producer.descriptor_occurrences.is_empty());
+    }
+
+    /// The `DeclarationOccurrences` resource is the #169 aggregate cap
+    /// shared by ordinary declarations and descriptor occurrences: one
+    /// ordinary declaration followed by one descriptor occurrence exhausts a
+    /// limit of one.
+    #[test]
+    fn declaration_occurrences_aggregate_limit_is_shared_across_descriptor_evidence() {
+        let text = source("a{color:red;}@font-face{font-family:x;}");
+        let tokenizer_result = run_tokenizer(&text, generous_tokenizer_limits()).unwrap();
+        let limits = CssParserLimits::new(10_000, 1000, 1000, 1, 1000, 1000, 1000, 1000, 1000)
+            .expect("valid parser limits");
+        let mut producer = Producer::new(&text, tokenizer_result, limits);
+
+        let outcome = producer.execute();
+
+        assert!(matches!(
+            outcome,
+            Err(Flow::ResourceLimit(ResourceLimitSignal {
+                kind: CssParserResourceKind::DeclarationOccurrences,
+                limit: 1,
+                attempted: 2,
+            }))
+        ));
+        assert_eq!(producer.occurrences.len(), 1);
+        assert!(producer.descriptor_occurrences.is_empty());
     }
 }

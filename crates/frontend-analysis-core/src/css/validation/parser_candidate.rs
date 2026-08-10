@@ -557,15 +557,19 @@ fn assert_range(
 /// field: for declarations, the complete/property_name/colon/value ranges,
 /// placement (owning context id, item ordinal, run ordinal; #167), priority
 /// presence with its complete/bang/important_ident ranges, and termination
-/// kind with evidence range; for diagnostics, code and location; for
-/// recovery, kind, region, and termination kind with evidence range; for
-/// unsupported regions, the variant with its complete range and, for
-/// `TopLevelAtRule`, its exact `at_keyword` range; for discard records,
-/// kind, region, property_name, and colon; for context records (#167), id,
-/// parent, implicit-root-or-parent-scoped item ordinal, kind,
-/// header/block_opener/body ranges, and termination kind with evidence
-/// range; and for the run itself, execution completion, coverage,
-/// termination, terminal, and all nine `CssParserResourceUsage` dimensions.
+/// kind with evidence range; for #169 descriptor occurrences, the same
+/// complete/name/colon/value/priority/termination shape under a distinct
+/// `Desc` prefix and placement (owning context id, item ordinal; no run
+/// ordinal); for diagnostics, code and location; for recovery, kind,
+/// region, and termination kind with evidence range; for unsupported
+/// regions, the variant with its complete range and, for `TopLevelAtRule`,
+/// its exact `at_keyword` range; for discard records, kind, region,
+/// property_name, and colon; for context records (#167/#168/#169), id,
+/// parent, implicit-root-or-parent-scoped item ordinal, kind, at_keyword
+/// range, descriptor property_name range, header/block_opener/body ranges,
+/// and termination kind with evidence range; and for the run itself,
+/// execution completion, coverage, termination, terminal, and all nine
+/// `CssParserResourceUsage` dimensions.
 pub(super) fn canonical_signature(result: &CssParserRunResult) -> String {
     use std::fmt::Write;
 
@@ -590,6 +594,57 @@ pub(super) fn canonical_signature(result: &CssParserRunResult) -> String {
             placement.context_id().index(),
             placement.item_ordinal().value(),
             placement.run_ordinal().value(),
+        );
+        match occurrence.priority() {
+            Some(priority) => {
+                let complete = priority.complete().range();
+                let bang = priority.bang().range();
+                let important_ident = priority.important_ident().range();
+                let _ = write!(
+                    signature,
+                    "!P[{},{})Bang[{},{})Important[{},{})",
+                    complete.start(),
+                    complete.end(),
+                    bang.start(),
+                    bang.end(),
+                    important_ident.start(),
+                    important_ident.end()
+                );
+            }
+            None => {
+                let _ = write!(signature, "!NoPriority");
+            }
+        }
+        let _ = write!(
+            signature,
+            "T{:?}",
+            termination_shape(occurrence.termination())
+        );
+    }
+    // #169: empty for every run without a supported descriptor context,
+    // populated with real `CssDescriptorOccurrence` evidence for runs that
+    // retain at least one `DescriptorRuleBlock`. Deliberately distinct from
+    // the `occurrences` signature above -- a `D` prefix versus `Desc` -- so
+    // two runs differing only in occurrence kind never collide.
+    for occurrence in result.descriptor_occurrences() {
+        let range = occurrence.complete().range();
+        let name = occurrence.name().range();
+        let colon = occurrence.colon().range();
+        let value = occurrence.value().range();
+        let placement = occurrence.placement();
+        let _ = write!(
+            signature,
+            "|Desc[{},{})Name[{},{})Colon[{},{})Value[{},{})Ctx{}Item{}",
+            range.start(),
+            range.end(),
+            name.start(),
+            name.end(),
+            colon.start(),
+            colon.end(),
+            value.start(),
+            value.end(),
+            placement.context_id().index(),
+            placement.item_ordinal().value(),
         );
         match occurrence.priority() {
             Some(priority) => {
@@ -657,24 +712,28 @@ pub(super) fn canonical_signature(result: &CssParserRunResult) -> String {
             colon.end()
         );
     }
-    // #166 contract, #167/#168 production: empty for a #166-only run,
-    // populated with real QualifiedRuleBlock/GroupRuleBlock records for
-    // #167/#168 runs. Included so the signature stays honest about every
-    // result-owned field, not merely whichever ones a given run happens to
-    // populate.
+    // #166 contract, #167/#168/#169 production: empty for a #166-only run,
+    // populated with real QualifiedRuleBlock/GroupRuleBlock/
+    // DescriptorRuleBlock records for #167/#168/#169 runs. Included so the
+    // signature stays honest about every result-owned field, not merely
+    // whichever ones a given run happens to populate.
     for context in result.context_records() {
         let header = context.header().range();
         let block_opener = context.block_opener().range();
         let body = context.body().range();
-        let at_keyword = context.group_at_keyword().map(|anchor| anchor.range());
+        let at_keyword = context.at_keyword().map(|anchor| anchor.range());
+        let descriptor_property_name = context
+            .descriptor_property_name()
+            .map(|anchor| anchor.range());
         let _ = write!(
             signature,
-            "|Ctx{:?}Id{}Parent{:?}Ordinal{}AtKeyword{:?}Nearest{:?}Header[{},{})Opener[{},{})Body[{},{}){:?}",
+            "|Ctx{:?}Id{}Parent{:?}Ordinal{}AtKeyword{:?}PropertyName{:?}Nearest{:?}Header[{},{})Opener[{},{})Body[{},{}){:?}",
             context.kind(),
             context.id().index(),
             context.parent().map(|parent_id| parent_id.index()),
             context.item_ordinal().value(),
             at_keyword.map(|range| (range.start(), range.end())),
+            descriptor_property_name.map(|range| (range.start(), range.end())),
             context
                 .nearest_qualified_ancestor()
                 .map(|ancestor_id| ancestor_id.index()),

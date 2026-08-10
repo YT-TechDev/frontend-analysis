@@ -5,6 +5,7 @@ use crate::{SourceAnchor, SourceId, SourceRange, SourceRangeError, SourceText};
 
 use super::super::declaration::{
     CssDeclarationContractError, CssDeclarationOccurrence, CssDeclarationTermination,
+    CssDescriptorOccurrence,
 };
 use super::super::tokenizer::result::{
     CssTokenizerCompletion, CssTokenizerRunResult, CssTokenizerTermination,
@@ -51,6 +52,10 @@ pub(crate) enum CssParserTermination {
 pub(crate) struct CssParserRunResult {
     upstream_tokenizer_result: CssTokenizerRunResult,
     occurrences: Vec<CssDeclarationOccurrence>,
+    /// Retained #169 descriptor occurrences: semantically distinct from
+    /// `occurrences`, counted against the shared `DeclarationOccurrences`
+    /// aggregate resource cap, never merged into that vector.
+    descriptor_occurrences: Vec<CssDescriptorOccurrence>,
     parser_diagnostics: Vec<CssParserDiagnostic>,
     recovery_records: Vec<CssParserRecoveryEvidence>,
     unsupported_regions: Vec<CssParserUnsupportedRegion>,
@@ -73,6 +78,7 @@ impl CssParserRunResult {
         source_text: &SourceText,
         upstream_tokenizer_result: CssTokenizerRunResult,
         occurrences: Vec<CssDeclarationOccurrence>,
+        descriptor_occurrences: Vec<CssDescriptorOccurrence>,
         parser_diagnostics: Vec<CssParserDiagnostic>,
         recovery_records: Vec<CssParserRecoveryEvidence>,
         unsupported_regions: Vec<CssParserUnsupportedRegion>,
@@ -88,6 +94,7 @@ impl CssParserRunResult {
             source_text,
             &upstream_tokenizer_result,
             &occurrences,
+            &descriptor_occurrences,
             &parser_diagnostics,
             &recovery_records,
             &unsupported_regions,
@@ -103,6 +110,7 @@ impl CssParserRunResult {
         Ok(Self {
             upstream_tokenizer_result,
             occurrences,
+            descriptor_occurrences,
             parser_diagnostics,
             recovery_records,
             unsupported_regions,
@@ -122,6 +130,11 @@ impl CssParserRunResult {
 
     pub(crate) fn occurrences(&self) -> &[CssDeclarationOccurrence] {
         &self.occurrences
+    }
+
+    /// Retained #169 descriptor occurrences, in deterministic source order.
+    pub(crate) fn descriptor_occurrences(&self) -> &[CssDescriptorOccurrence] {
+        &self.descriptor_occurrences
     }
 
     pub(crate) fn parser_diagnostics(&self) -> &[CssParserDiagnostic] {
@@ -239,6 +252,7 @@ impl Error for CssParserRunError {}
 pub(crate) enum CssParserRunEvidenceRole {
     Terminal,
     Occurrence { index: usize },
+    DescriptorOccurrence { index: usize },
     Diagnostic { index: usize },
     Recovery { index: usize },
     Unsupported { index: usize },
@@ -516,6 +530,75 @@ pub(crate) enum CssParserInvariantViolation {
     NestedAtRuleOutsideOwnerBody {
         index: usize,
     },
+    /// A #169 descriptor occurrence's complete range extends beyond the
+    /// parser run's own terminal.
+    DescriptorOccurrenceBeyondTerminal {
+        index: usize,
+        end: usize,
+        terminal: usize,
+    },
+    /// Retained #169 descriptor occurrences are not in strict, non-
+    /// overlapping source order.
+    DescriptorOccurrenceOrderViolation {
+        index: usize,
+    },
+    /// A #169 descriptor occurrence's complete range overlaps a retained
+    /// unsupported region.
+    DescriptorOccurrenceOverlapsUnsupportedRegion {
+        index: usize,
+        unsupported_index: usize,
+    },
+    /// A #169 descriptor occurrence's `OmittedAtEndOfInput` termination
+    /// requires the upstream tokenizer to have completed at true
+    /// `EndOfInput`.
+    DescriptorOmittedAtEndOfInputRequiresUpstreamComplete {
+        index: usize,
+    },
+    /// A #169 descriptor occurrence's placement referenced a
+    /// `CssParserContextId` with no corresponding retained context record.
+    DescriptorPlacementUnknownContext {
+        index: usize,
+    },
+    /// A #169 descriptor occurrence's complete source range is not contained
+    /// in its placement context's retained `body`.
+    DescriptorOutsidePlacementContextBody {
+        index: usize,
+    },
+    /// A #169 descriptor occurrence's owning context is not a
+    /// `DescriptorRuleBlock`.
+    DescriptorOwnerMustBeDescriptorContext {
+        index: usize,
+    },
+    /// An ordinary declaration's owning context is a `DescriptorRuleBlock`:
+    /// `<declaration-list>` never produces ordinary `CssDeclarationOccurrence`
+    /// evidence (#169).
+    DeclarationOwnerMustNotBeDescriptorContext {
+        index: usize,
+    },
+    /// A `DescriptorRuleBlock` active-context frame reached record
+    /// finalization without its at-keyword/decoded evidence retained
+    /// alongside it (#169).
+    MissingDescriptorContextEvidence,
+    /// A `DescriptorRuleBlock` identity was attempted while nested inside
+    /// another active context, or a finalized `DescriptorRuleBlock` record
+    /// retained a non-`None` parent: descriptor contexts are
+    /// stylesheet-root-only in #169.
+    DescriptorContextCannotBeNested,
+    /// A new child context was attempted while the innermost active context
+    /// was a `DescriptorRuleBlock`: no child context is ever entered from a
+    /// descriptor context in #169.
+    DescriptorContextCannotHaveChildren,
+    /// A retained context's parent is a `DescriptorRuleBlock` context
+    /// (#169): descriptor contexts are stylesheet-root-only and never have
+    /// children.
+    DescriptorContextHasChild {
+        index: usize,
+    },
+    /// #169's descriptor-block malformed-item scan structurally cannot
+    /// produce a nested-rule trigger (a top-level `{` is balanced through as
+    /// ordinary malformed content, never a context boundary); reaching this
+    /// branch is an internal invariant failure, not a panic.
+    UnreachableDescriptorNestedRuleTrigger,
 }
 
 /// Computes `current + additional` for one [`CssParserResourceKind`] using
@@ -542,6 +625,7 @@ fn validate_run(
     source_text: &SourceText,
     upstream: &CssTokenizerRunResult,
     occurrences: &[CssDeclarationOccurrence],
+    descriptor_occurrences: &[CssDescriptorOccurrence],
     parser_diagnostics: &[CssParserDiagnostic],
     recovery_records: &[CssParserRecoveryEvidence],
     unsupported_regions: &[CssParserUnsupportedRegion],
@@ -581,6 +665,13 @@ fn validate_run(
         terminal_offset,
     )?;
     validate_occurrence_lifecycle(upstream, occurrences)?;
+    validate_descriptor_occurrences(
+        expected_source,
+        descriptor_occurrences,
+        unsupported_regions,
+        terminal_offset,
+    )?;
+    validate_descriptor_occurrence_lifecycle(upstream, descriptor_occurrences)?;
     validate_diagnostics(expected_source, parser_diagnostics, terminal_offset)?;
     validate_recovery(expected_source, recovery_records, terminal_offset)?;
     validate_recovery_lifecycle(upstream, recovery_records)?;
@@ -603,11 +694,16 @@ fn validate_run(
         termination,
     )?;
 
-    validate_declaration_placement(occurrences, unsupported_regions, context_records)?;
+    validate_declaration_placement(
+        occurrences,
+        descriptor_occurrences,
+        unsupported_regions,
+        context_records,
+    )?;
 
     validate_resource_counts(
         resources,
-        occurrences.len(),
+        occurrences.len() + descriptor_occurrences.len(),
         parser_diagnostics.len(),
         recovery_records.len(),
         unsupported_regions.len(),
@@ -814,6 +910,11 @@ fn validate_nearest_qualified_ancestor(
                 CssParserContextKind::GroupRuleBlock(_) => {
                     parent_record.nearest_qualified_ancestor()
                 }
+                CssParserContextKind::DescriptorRuleBlock(_) => {
+                    return invariant(CssParserInvariantViolation::DescriptorContextHasChild {
+                        index,
+                    });
+                }
             }
         }
     };
@@ -827,26 +928,36 @@ fn validate_nearest_qualified_ancestor(
 /// One materialized direct block-content item's ordering data, keyed by its
 /// owning context for [`validate_declaration_placement`]: a declaration
 /// (carrying its `occurrences` index and run ordinal), a retained child
-/// context (qualified-rule or supported group-rule, #168), or a
-/// context-aware nested unsupported at-rule (#168).
+/// context (qualified-rule or supported group-rule, #168), a context-aware
+/// nested unsupported at-rule (#168), or a #169 descriptor occurrence
+/// (carrying its `descriptor_occurrences` index; no run ordinal, since
+/// `<declaration-list>` admits no child rule whose interleaving requires the
+/// style-rule declaration-run model).
 enum DirectItem {
     Declaration { index: usize, run_ordinal: usize },
     ChildContext,
     NestedUnsupportedAtRule,
+    Descriptor { index: usize },
 }
 
-/// Reconciles declaration and nested-unsupported-at-rule placement against
-/// retained context evidence (#167/#168): every declaration's
-/// [`CssParserContextId`] refers to an existing retained context, its
-/// complete range lies within that context's `body`, and -- per owning
-/// context -- the combined direct-item sequence (declarations, retained
-/// child contexts, and nested unsupported at-rules, sharing one ordinal
-/// space) has gapless strictly-increasing ordinals consistent with source
-/// order, and declaration-run ordinals are zero-based, non-decreasing,
-/// shared by consecutive declarations, and reset to the next value by an
-/// intervening materialized child context or nested unsupported at-rule.
+/// Reconciles declaration, descriptor-occurrence, and nested-unsupported-
+/// at-rule placement against retained context evidence (#167/#168/#169):
+/// every occurrence's [`CssParserContextId`] refers to an existing retained
+/// context, its complete range lies within that context's `body`, its owning
+/// context's kind matches the occurrence's semantic meaning (an ordinary
+/// declaration can never be owned by a `DescriptorRuleBlock`, and a
+/// descriptor occurrence can never be owned by a `QualifiedRuleBlock`/
+/// `GroupRuleBlock`), and -- per owning context -- the combined direct-item
+/// sequence (declarations, descriptor occurrences, retained child contexts,
+/// and nested unsupported at-rules, sharing one ordinal space) has gapless
+/// strictly-increasing ordinals consistent with source order, and
+/// declaration-run ordinals are zero-based, non-decreasing, shared by
+/// consecutive declarations, and reset to the next value by an intervening
+/// materialized child context, nested unsupported at-rule, or descriptor
+/// occurrence.
 fn validate_declaration_placement(
     occurrences: &[CssDeclarationOccurrence],
+    descriptor_occurrences: &[CssDescriptorOccurrence],
     unsupported_regions: &[CssParserUnsupportedRegion],
     context_records: &[CssParserContextRecord],
 ) -> Result<(), CssParserRunError> {
@@ -863,6 +974,11 @@ fn validate_declaration_placement(
                 CssParserInvariantViolation::DeclarationPlacementUnknownContext { index },
             ),
         )?;
+        if matches!(context.kind(), CssParserContextKind::DescriptorRuleBlock(_)) {
+            return invariant(
+                CssParserInvariantViolation::DeclarationOwnerMustNotBeDescriptorContext { index },
+            );
+        }
         let complete = occurrence.complete().range();
         let body = context.body().range();
         if occurrence.complete().source_id() != context.body().source_id()
@@ -882,6 +998,38 @@ fn validate_declaration_placement(
                 index,
                 run_ordinal: placement.run_ordinal().value(),
             },
+        ));
+    }
+
+    for (index, occurrence) in descriptor_occurrences.iter().enumerate() {
+        let placement = occurrence.placement();
+        let context_index = placement.context_id().index();
+        let context = context_records.get(context_index).ok_or(
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::DescriptorPlacementUnknownContext { index },
+            ),
+        )?;
+        if !matches!(context.kind(), CssParserContextKind::DescriptorRuleBlock(_)) {
+            return invariant(
+                CssParserInvariantViolation::DescriptorOwnerMustBeDescriptorContext { index },
+            );
+        }
+        let complete = occurrence.complete().range();
+        let body = context.body().range();
+        if occurrence.complete().source_id() != context.body().source_id()
+            || complete.start() < body.start()
+            || complete.end() > body.end()
+        {
+            return invariant(
+                CssParserInvariantViolation::DescriptorOutsidePlacementContextBody { index },
+            );
+        }
+
+        items_by_context.entry(context_index).or_default().push((
+            placement.item_ordinal().value(),
+            complete.start(),
+            complete.end(),
+            DirectItem::Descriptor { index },
         ));
     }
 
@@ -986,7 +1134,9 @@ fn validate_declaration_placement(
                         }
                     }
                 },
-                DirectItem::ChildContext | DirectItem::NestedUnsupportedAtRule => {
+                DirectItem::ChildContext
+                | DirectItem::NestedUnsupportedAtRule
+                | DirectItem::Descriptor { .. } => {
                     current_run = None;
                 }
             }
@@ -1194,6 +1344,85 @@ fn validate_occurrence_lifecycle(
         ) {
             return invariant(
                 CssParserInvariantViolation::OmittedAtEndOfInputRequiresUpstreamComplete { index },
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Mirrors [`validate_occurrences`] for #169 descriptor occurrences: exact
+/// source identity, the terminal bound, strict non-overlapping source order,
+/// and no overlap with a retained unsupported region. Descriptor and
+/// ordinary occurrences are never cross-validated against each other here:
+/// their owning context bodies are structurally disjoint (proved by
+/// [`validate_contexts`]'s sibling-source-order check), so an overlap
+/// between the two vectors is already unreachable once every other
+/// invariant holds.
+fn validate_descriptor_occurrences(
+    expected_source: SourceId,
+    descriptor_occurrences: &[CssDescriptorOccurrence],
+    unsupported_regions: &[CssParserUnsupportedRegion],
+    terminal_offset: usize,
+) -> Result<(), CssParserRunError> {
+    let mut previous_end: Option<usize> = None;
+    for (index, occurrence) in descriptor_occurrences.iter().enumerate() {
+        let complete = occurrence.complete();
+        require_source(
+            expected_source,
+            complete,
+            CssParserRunEvidenceRole::DescriptorOccurrence { index },
+        )?;
+        if complete.range().end() > terminal_offset {
+            return invariant(
+                CssParserInvariantViolation::DescriptorOccurrenceBeyondTerminal {
+                    index,
+                    end: complete.range().end(),
+                    terminal: terminal_offset,
+                },
+            );
+        }
+        if let Some(previous_end) = previous_end
+            && complete.range().start() < previous_end
+        {
+            return invariant(
+                CssParserInvariantViolation::DescriptorOccurrenceOrderViolation { index },
+            );
+        }
+        previous_end = Some(complete.range().end());
+
+        for (unsupported_index, region) in unsupported_regions.iter().enumerate() {
+            if ranges_overlap(complete.range(), region.region().range()) {
+                return invariant(
+                    CssParserInvariantViolation::DescriptorOccurrenceOverlapsUnsupportedRegion {
+                        index,
+                        unsupported_index,
+                    },
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Mirrors [`validate_occurrence_lifecycle`] for #169 descriptor occurrences:
+/// `OmittedAtEndOfInput` is valid termination evidence only when the
+/// upstream tokenizer itself completed at true `EndOfInput`.
+fn validate_descriptor_occurrence_lifecycle(
+    upstream: &CssTokenizerRunResult,
+    descriptor_occurrences: &[CssDescriptorOccurrence],
+) -> Result<(), CssParserRunError> {
+    if upstream_ended_at_true_eof(upstream) {
+        return Ok(());
+    }
+    for (index, occurrence) in descriptor_occurrences.iter().enumerate() {
+        if matches!(
+            occurrence.termination(),
+            CssDeclarationTermination::OmittedAtEndOfInput { .. }
+        ) {
+            return invariant(
+                CssParserInvariantViolation::DescriptorOmittedAtEndOfInputRequiresUpstreamComplete {
+                    index,
+                },
             );
         }
     }
@@ -1463,8 +1692,11 @@ mod tests {
     use super::*;
     use crate::css::declaration::{
         CssDeclarationPlacement, CssDeclarationRunOrdinal, CssDeclarationTermination,
+        CssDescriptorPlacement,
     };
-    use crate::css::parser::context::{CssParserContextId, CssParserDirectItemOrdinal};
+    use crate::css::parser::context::{
+        CssParserContextId, CssParserDescriptorRuleKind, CssParserDirectItemOrdinal,
+    };
     use crate::css::parser::evidence::{
         CssParserDiscardKind, CssParserRecoveryKind, CssParserRecoveryTermination,
     };
@@ -1542,6 +1774,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
             CssParserCoverage::SupportedForSelectedQuestion,
@@ -1571,6 +1804,7 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -1627,6 +1861,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             text.anchor(0, 0).unwrap(),
             CssParserExecutionCompletion::Complete,
             CssParserCoverage::SupportedForSelectedQuestion,
@@ -1659,6 +1894,7 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -1709,6 +1945,7 @@ mod tests {
             &text,
             upstream,
             vec![occurrence],
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             vec![unsupported],
@@ -1766,6 +2003,7 @@ mod tests {
             &text,
             upstream,
             vec![occurrence],
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             vec![unsupported],
@@ -1854,6 +2092,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Incomplete,
             CssParserCoverage::SupportedForSelectedQuestion,
@@ -1890,6 +2129,7 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             vec![recovery],
@@ -1963,6 +2203,7 @@ mod tests {
             upstream,
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             vec![recovery],
             Vec::new(),
             Vec::new(),
@@ -1993,6 +2234,7 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -2030,6 +2272,7 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -2077,6 +2320,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
             CssParserCoverage::SupportedForSelectedQuestion,
@@ -2106,6 +2350,7 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -2151,6 +2396,7 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -2204,6 +2450,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             vec![discard],
             Vec::new(),
             text.anchor(len, len).unwrap(),
@@ -2246,6 +2493,7 @@ mod tests {
             upstream,
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             vec![recovery],
             Vec::new(),
             vec![discard],
@@ -2284,6 +2532,7 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -2329,6 +2578,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             vec![discard],
             Vec::new(),
             text.anchor(4, 4).unwrap(),
@@ -2365,6 +2615,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             vec![discard_b, discard_a],
             Vec::new(),
             text.anchor(len, len).unwrap(),
@@ -2392,6 +2643,7 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -2523,6 +2775,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             vec![context],
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
@@ -2565,6 +2818,7 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -2632,6 +2886,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             vec![outer, escaping_child],
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
@@ -2663,6 +2918,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             records,
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
@@ -2689,6 +2945,7 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -2754,6 +3011,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             vec![first, second],
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
@@ -2794,6 +3052,7 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -2848,6 +3107,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             vec![first, second],
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
@@ -2895,6 +3155,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             vec![first, second],
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
@@ -2924,6 +3185,7 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -2964,6 +3226,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             vec![context],
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
@@ -2994,6 +3257,7 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -3075,6 +3339,7 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -3171,6 +3436,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             vec![outer, inner],
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Incomplete,
@@ -3192,6 +3458,7 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -3325,6 +3592,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             vec![outer, media],
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
@@ -3384,6 +3652,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             vec![outer, outer_media, inner_media],
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
@@ -3412,6 +3681,7 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -3464,6 +3734,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             vec![outer, media],
             text.anchor(len, len).unwrap(),
             CssParserExecutionCompletion::Complete,
@@ -3497,6 +3768,7 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -3551,6 +3823,7 @@ mod tests {
         let result = CssParserRunResult::new(
             &text,
             upstream,
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -3624,6 +3897,7 @@ mod tests {
             vec![occurrence],
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             vec![unsupported],
             Vec::new(),
             vec![outer],
@@ -3691,6 +3965,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             vec![unsupported],
             Vec::new(),
             vec![outer, child],
@@ -3753,6 +4028,7 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             vec![second_by_ordinal, first_by_ordinal],
             Vec::new(),
             vec![outer],
@@ -3767,6 +4043,700 @@ mod tests {
             result.unwrap_err(),
             CssParserRunError::InternalInvariantFailure(
                 CssParserInvariantViolation::DirectItemOrderViolation { context_id: 0 }
+            )
+        );
+    }
+
+    // -- #169 descriptor-context result-level corruption tests --------------
+
+    fn descriptor_placement(context_index: usize, item_ordinal: usize) -> CssDescriptorPlacement {
+        CssDescriptorPlacement::new(
+            CssParserContextId::new(context_index),
+            CssParserDirectItemOrdinal::new(item_ordinal),
+        )
+    }
+
+    #[test]
+    fn contract_only_descriptor_occurrence_owner_must_be_descriptor_context_qualified_is_rejected()
+    {
+        let text = source(30_101, "a{p:v;}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let outer = CssParserContextRecord::new_qualified_rule_block(
+            &text,
+            CssParserContextId::new(0),
+            None,
+            CssParserDirectItemOrdinal::new(0),
+            None,
+            text.anchor(0, 1).unwrap(),
+            text.anchor(1, 2).unwrap(),
+            text.anchor(2, 6).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(6, 7).unwrap(),
+            },
+        )
+        .unwrap();
+        let descriptor = CssDescriptorOccurrence::new(
+            &text,
+            text.anchor(2, 6).unwrap(),
+            text.anchor(2, 3).unwrap(),
+            text.anchor(3, 4).unwrap(),
+            text.anchor(4, 5).unwrap(),
+            None,
+            CssDeclarationTermination::AuthoredSemicolon {
+                semicolon: text.anchor(5, 6).unwrap(),
+            },
+            descriptor_placement(0, 0),
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            vec![descriptor],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![outer],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            CssParserResourceUsage::new(1, 0, 1, 1, 0, 0, 0, 0, 1),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::DescriptorOwnerMustBeDescriptorContext { index: 0 }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_descriptor_occurrence_owner_must_be_descriptor_context_group_is_rejected() {
+        let text = source(30_102, "a{@media{p:v;}}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let outer = CssParserContextRecord::new_qualified_rule_block(
+            &text,
+            CssParserContextId::new(0),
+            None,
+            CssParserDirectItemOrdinal::new(0),
+            None,
+            text.anchor(0, 1).unwrap(),
+            text.anchor(1, 2).unwrap(),
+            text.anchor(2, 14).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(14, 15).unwrap(),
+            },
+        )
+        .unwrap();
+        let media = CssParserContextRecord::new_group_rule_block(
+            &text,
+            CssParserContextId::new(1),
+            Some(CssParserContextId::new(0)),
+            CssParserDirectItemOrdinal::new(0),
+            Some(CssParserContextId::new(0)),
+            CssParserGroupRuleKind::Media,
+            text.anchor(2, 8).unwrap(),
+            "media",
+            text.anchor(2, 8).unwrap(),
+            text.anchor(8, 9).unwrap(),
+            text.anchor(9, 13).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(13, 14).unwrap(),
+            },
+        )
+        .unwrap();
+        let descriptor = CssDescriptorOccurrence::new(
+            &text,
+            text.anchor(9, 13).unwrap(),
+            text.anchor(9, 10).unwrap(),
+            text.anchor(10, 11).unwrap(),
+            text.anchor(11, 12).unwrap(),
+            None,
+            CssDeclarationTermination::AuthoredSemicolon {
+                semicolon: text.anchor(12, 13).unwrap(),
+            },
+            descriptor_placement(1, 0),
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            vec![descriptor],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![outer, media],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            CssParserResourceUsage::new(1, 0, 2, 1, 0, 0, 0, 0, 2),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::DescriptorOwnerMustBeDescriptorContext { index: 0 }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_declaration_owner_must_not_be_descriptor_context_is_rejected() {
+        let text = source(30_103, "@font-face{p:v;}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let descriptor_context = CssParserContextRecord::new_descriptor_rule_block(
+            &text,
+            CssParserContextId::new(0),
+            CssParserDirectItemOrdinal::new(0),
+            CssParserDescriptorRuleKind::FontFace,
+            text.anchor(0, 10).unwrap(),
+            "font-face",
+            None,
+            None,
+            text.anchor(0, 10).unwrap(),
+            text.anchor(10, 11).unwrap(),
+            text.anchor(11, 15).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(15, 16).unwrap(),
+            },
+        )
+        .unwrap();
+        let ordinary = CssDeclarationOccurrence::new(
+            &text,
+            text.anchor(11, 15).unwrap(),
+            text.anchor(11, 12).unwrap(),
+            text.anchor(12, 13).unwrap(),
+            text.anchor(13, 14).unwrap(),
+            None,
+            CssDeclarationTermination::AuthoredSemicolon {
+                semicolon: text.anchor(14, 15).unwrap(),
+            },
+            CssDeclarationPlacement::new(
+                CssParserContextId::new(0),
+                CssParserDirectItemOrdinal::new(0),
+                CssDeclarationRunOrdinal::new(0),
+            ),
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            vec![ordinary],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![descriptor_context],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            CssParserResourceUsage::new(1, 0, 1, 1, 0, 0, 0, 0, 1),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::DeclarationOwnerMustNotBeDescriptorContext {
+                    index: 0
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_descriptor_placement_unknown_context_is_rejected() {
+        let text = source(30_104, "@font-face{p:v;}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let descriptor = CssDescriptorOccurrence::new(
+            &text,
+            text.anchor(11, 15).unwrap(),
+            text.anchor(11, 12).unwrap(),
+            text.anchor(12, 13).unwrap(),
+            text.anchor(13, 14).unwrap(),
+            None,
+            CssDeclarationTermination::AuthoredSemicolon {
+                semicolon: text.anchor(14, 15).unwrap(),
+            },
+            descriptor_placement(5, 0),
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            vec![descriptor],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            CssParserResourceUsage::new(1, 0, 0, 1, 0, 0, 0, 0, 0),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::DescriptorPlacementUnknownContext { index: 0 }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_descriptor_outside_placement_context_body_is_rejected() {
+        let text = source(30_105, "a:b;@font-face{p:v;}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let descriptor_context = CssParserContextRecord::new_descriptor_rule_block(
+            &text,
+            CssParserContextId::new(0),
+            CssParserDirectItemOrdinal::new(0),
+            CssParserDescriptorRuleKind::FontFace,
+            text.anchor(4, 14).unwrap(),
+            "font-face",
+            None,
+            None,
+            text.anchor(4, 14).unwrap(),
+            text.anchor(14, 15).unwrap(),
+            text.anchor(15, 19).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(19, 20).unwrap(),
+            },
+        )
+        .unwrap();
+        // Structurally valid declaration-shaped evidence, but its source
+        // span (0, 4) lies entirely outside the descriptor context's own
+        // body (15, 19) -- an evidence-placement corruption, not a
+        // recognizable production output shape.
+        let descriptor = CssDescriptorOccurrence::new(
+            &text,
+            text.anchor(0, 4).unwrap(),
+            text.anchor(0, 1).unwrap(),
+            text.anchor(1, 2).unwrap(),
+            text.anchor(2, 3).unwrap(),
+            None,
+            CssDeclarationTermination::AuthoredSemicolon {
+                semicolon: text.anchor(3, 4).unwrap(),
+            },
+            descriptor_placement(0, 0),
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            vec![descriptor],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![descriptor_context],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            CssParserResourceUsage::new(1, 0, 1, 1, 0, 0, 0, 0, 1),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::DescriptorOutsidePlacementContextBody { index: 0 }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_descriptor_direct_item_duplicate_ordinal_is_rejected() {
+        let text = source(30_106, "@font-face{p:v;q:w;}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let descriptor_context = CssParserContextRecord::new_descriptor_rule_block(
+            &text,
+            CssParserContextId::new(0),
+            CssParserDirectItemOrdinal::new(0),
+            CssParserDescriptorRuleKind::FontFace,
+            text.anchor(0, 10).unwrap(),
+            "font-face",
+            None,
+            None,
+            text.anchor(0, 10).unwrap(),
+            text.anchor(10, 11).unwrap(),
+            text.anchor(11, 19).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(19, 20).unwrap(),
+            },
+        )
+        .unwrap();
+        let first = CssDescriptorOccurrence::new(
+            &text,
+            text.anchor(11, 15).unwrap(),
+            text.anchor(11, 12).unwrap(),
+            text.anchor(12, 13).unwrap(),
+            text.anchor(13, 14).unwrap(),
+            None,
+            CssDeclarationTermination::AuthoredSemicolon {
+                semicolon: text.anchor(14, 15).unwrap(),
+            },
+            descriptor_placement(0, 0),
+        )
+        .unwrap();
+        // Duplicate: claims the same item ordinal (0) as `first`.
+        let second = CssDescriptorOccurrence::new(
+            &text,
+            text.anchor(15, 19).unwrap(),
+            text.anchor(15, 16).unwrap(),
+            text.anchor(16, 17).unwrap(),
+            text.anchor(17, 18).unwrap(),
+            None,
+            CssDeclarationTermination::AuthoredSemicolon {
+                semicolon: text.anchor(18, 19).unwrap(),
+            },
+            descriptor_placement(0, 0),
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            vec![first, second],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![descriptor_context],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            CssParserResourceUsage::new(1, 0, 1, 2, 0, 0, 0, 0, 1),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::DirectItemDuplicateOrdinal { context_id: 0 }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_descriptor_item_ordinal_collides_with_nested_unsupported_ordinal_is_rejected()
+    {
+        let text = source(30_107, "@font-face{@x{}p:v;}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let descriptor_context = CssParserContextRecord::new_descriptor_rule_block(
+            &text,
+            CssParserContextId::new(0),
+            CssParserDirectItemOrdinal::new(0),
+            CssParserDescriptorRuleKind::FontFace,
+            text.anchor(0, 10).unwrap(),
+            "font-face",
+            None,
+            None,
+            text.anchor(0, 10).unwrap(),
+            text.anchor(10, 11).unwrap(),
+            text.anchor(11, 19).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(19, 20).unwrap(),
+            },
+        )
+        .unwrap();
+        let nested_unsupported = CssParserUnsupportedRegion::new_nested_at_rule(
+            &text,
+            text.anchor(11, 15).unwrap(),
+            text.anchor(11, 13).unwrap(),
+            CssParserContextId::new(0),
+            CssParserDirectItemOrdinal::new(0),
+        )
+        .unwrap();
+        // Collides: claims the same item ordinal (0) as `nested_unsupported`,
+        // instead of the next unused ordinal (1).
+        let descriptor = CssDescriptorOccurrence::new(
+            &text,
+            text.anchor(15, 19).unwrap(),
+            text.anchor(15, 16).unwrap(),
+            text.anchor(16, 17).unwrap(),
+            text.anchor(17, 18).unwrap(),
+            None,
+            CssDeclarationTermination::AuthoredSemicolon {
+                semicolon: text.anchor(18, 19).unwrap(),
+            },
+            descriptor_placement(0, 0),
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            vec![descriptor],
+            Vec::new(),
+            Vec::new(),
+            vec![nested_unsupported],
+            Vec::new(),
+            vec![descriptor_context],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::ContainsUnsupportedContexts,
+            CssParserTermination::EndOfTokenizerInput,
+            CssParserResourceUsage::new(1, 0, 1, 1, 0, 0, 1, 0, 1),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::DirectItemDuplicateOrdinal { context_id: 0 }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_descriptor_source_order_disagrees_with_item_ordinal_is_rejected() {
+        let text = source(30_108, "@font-face{p:v;q:w;}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let descriptor_context = CssParserContextRecord::new_descriptor_rule_block(
+            &text,
+            CssParserContextId::new(0),
+            CssParserDirectItemOrdinal::new(0),
+            CssParserDescriptorRuleKind::FontFace,
+            text.anchor(0, 10).unwrap(),
+            "font-face",
+            None,
+            None,
+            text.anchor(0, 10).unwrap(),
+            text.anchor(10, 11).unwrap(),
+            text.anchor(11, 19).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(19, 20).unwrap(),
+            },
+        )
+        .unwrap();
+        // The retained `descriptor_occurrences` vector itself stays in
+        // strict source order (`p:v;` then `q:w;`), satisfying
+        // `validate_descriptor_occurrences`'s own flat-array order check;
+        // the corruption is purely in the item-ordinal values assigned to
+        // each: the source-earlier `p:v;` claims ordinal 1, and the
+        // source-later `q:w;` claims ordinal 0, so numeric ordinal order
+        // disagrees with source order once `validate_declaration_placement`
+        // reconciles the owning context's direct-item ordinal space.
+        let earlier_source_later_ordinal = CssDescriptorOccurrence::new(
+            &text,
+            text.anchor(11, 15).unwrap(),
+            text.anchor(11, 12).unwrap(),
+            text.anchor(12, 13).unwrap(),
+            text.anchor(13, 14).unwrap(),
+            None,
+            CssDeclarationTermination::AuthoredSemicolon {
+                semicolon: text.anchor(14, 15).unwrap(),
+            },
+            descriptor_placement(0, 1),
+        )
+        .unwrap();
+        let later_source_earlier_ordinal = CssDescriptorOccurrence::new(
+            &text,
+            text.anchor(15, 19).unwrap(),
+            text.anchor(15, 16).unwrap(),
+            text.anchor(16, 17).unwrap(),
+            text.anchor(17, 18).unwrap(),
+            None,
+            CssDeclarationTermination::AuthoredSemicolon {
+                semicolon: text.anchor(18, 19).unwrap(),
+            },
+            descriptor_placement(0, 0),
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            vec![earlier_source_later_ordinal, later_source_earlier_ordinal],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![descriptor_context],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            CssParserResourceUsage::new(1, 0, 1, 2, 0, 0, 0, 0, 1),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::DirectItemOrderViolation { context_id: 0 }
+            )
+        );
+    }
+
+    #[test]
+    fn contract_only_descriptor_occurrence_foreign_source_id_is_rejected() {
+        let text = source(30_109, "@font-face{p:v;}");
+        let other = source(30_110, "@font-face{p:v;}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let descriptor = CssDescriptorOccurrence::new(
+            &other,
+            other.anchor(11, 15).unwrap(),
+            other.anchor(11, 12).unwrap(),
+            other.anchor(12, 13).unwrap(),
+            other.anchor(13, 14).unwrap(),
+            None,
+            CssDeclarationTermination::AuthoredSemicolon {
+                semicolon: other.anchor(14, 15).unwrap(),
+            },
+            descriptor_placement(0, 0),
+        )
+        .unwrap();
+
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            Vec::new(),
+            vec![descriptor],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            CssParserResourceUsage::new(1, 0, 0, 1, 0, 0, 0, 0, 0),
+        );
+
+        assert!(matches!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::SourceIdentityMismatch {
+                    role: CssParserRunEvidenceRole::DescriptorOccurrence { index: 0 },
+                    ..
+                }
+            )
+        ));
+    }
+
+    #[test]
+    fn contract_only_aggregate_declaration_occurrences_usage_mismatch_is_rejected() {
+        let text = source(30_111, "a{p:v;}@font-face{q:w;}");
+        let upstream = complete_tokenizer_run(&text);
+        let len = text.as_str().len();
+        let outer = CssParserContextRecord::new_qualified_rule_block(
+            &text,
+            CssParserContextId::new(0),
+            None,
+            CssParserDirectItemOrdinal::new(0),
+            None,
+            text.anchor(0, 1).unwrap(),
+            text.anchor(1, 2).unwrap(),
+            text.anchor(2, 6).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(6, 7).unwrap(),
+            },
+        )
+        .unwrap();
+        let descriptor_context = CssParserContextRecord::new_descriptor_rule_block(
+            &text,
+            CssParserContextId::new(1),
+            CssParserDirectItemOrdinal::new(1),
+            CssParserDescriptorRuleKind::FontFace,
+            text.anchor(7, 17).unwrap(),
+            "font-face",
+            None,
+            None,
+            text.anchor(7, 17).unwrap(),
+            text.anchor(17, 18).unwrap(),
+            text.anchor(18, 22).unwrap(),
+            CssParserContextTermination::AuthoredRightCurly {
+                right_curly: text.anchor(22, 23).unwrap(),
+            },
+        )
+        .unwrap();
+        let ordinary = CssDeclarationOccurrence::new(
+            &text,
+            text.anchor(2, 6).unwrap(),
+            text.anchor(2, 3).unwrap(),
+            text.anchor(3, 4).unwrap(),
+            text.anchor(4, 5).unwrap(),
+            None,
+            CssDeclarationTermination::AuthoredSemicolon {
+                semicolon: text.anchor(5, 6).unwrap(),
+            },
+            CssDeclarationPlacement::new(
+                CssParserContextId::new(0),
+                CssParserDirectItemOrdinal::new(0),
+                CssDeclarationRunOrdinal::new(0),
+            ),
+        )
+        .unwrap();
+        let descriptor = CssDescriptorOccurrence::new(
+            &text,
+            text.anchor(18, 22).unwrap(),
+            text.anchor(18, 19).unwrap(),
+            text.anchor(19, 20).unwrap(),
+            text.anchor(20, 21).unwrap(),
+            None,
+            CssDeclarationTermination::AuthoredSemicolon {
+                semicolon: text.anchor(21, 22).unwrap(),
+            },
+            descriptor_placement(1, 0),
+        )
+        .unwrap();
+
+        // Actual aggregate usage is 2 (1 ordinary + 1 descriptor), but the
+        // declared `DeclarationOccurrences` resource usage claims 5.
+        let result = CssParserRunResult::new(
+            &text,
+            upstream,
+            vec![ordinary],
+            vec![descriptor],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![outer, descriptor_context],
+            text.anchor(len, len).unwrap(),
+            CssParserExecutionCompletion::Complete,
+            CssParserCoverage::SupportedForSelectedQuestion,
+            CssParserTermination::EndOfTokenizerInput,
+            CssParserResourceUsage::new(1, 0, 1, 5, 0, 0, 0, 0, 2),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CssParserRunError::InternalInvariantFailure(
+                CssParserInvariantViolation::ResourceUsageCountMismatch {
+                    kind: CssParserResourceKind::DeclarationOccurrences,
+                    expected: 2,
+                    actual: 5,
+                }
             )
         );
     }
@@ -3839,6 +4809,7 @@ mod tests {
             &text,
             upstream,
             vec![first, second],
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             vec![unsupported],
