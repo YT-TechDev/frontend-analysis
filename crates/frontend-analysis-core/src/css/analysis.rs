@@ -1,30 +1,18 @@
-//! First Core-integrated CSS declaration analysis vertical slice (#140).
+//! Core-integrated CSS source analysis boundary (#140/#172).
 //!
 //! Connects retained `&SourceText` through the project-owned CSS tokenizer
-//! (`super::tokenizer::producer::run`) and the project-owned bounded
-//! declaration parser (`super::parser::producer::run`) into one synchronous,
-//! crate-private Core operation, per the architecture approved on #140.
-//! Tokenization and declaration parsing remain internal implementation
-//! stages: this boundary exposes neither tokenizer/parser cursor or
-//! checkpoint internals nor a generic parser abstraction. The tokenizer and
-//! parser remain the semantic owners of lexical, diagnostic, recovery,
-//! discard, unsupported, completion, termination, and resource-run
-//! invariants; this module does not duplicate that validation and does not
-//! claim complete CSS parsing, CSSOM membership, cascade participation, or
-//! browser support. On success it returns the exact, unmodified `Core`
-//! upstream result type `CssParserRunResult` already produced by
-//! `super::parser::producer::run`: no second result hierarchy is introduced.
+//! and parser, then revalidates parser-projected source/relationship evidence
+//! against that exact supplied source before returning the same
+//! `CssParserRunResult`. Tokenizer/parser semantics, diagnostics, recovery,
+//! discard, unsupported, completion, termination, and resource ownership stay
+//! lower-layer owned; Core adds reconciliation only.
 //!
-//! This module adds exactly one additional responsibility: revalidating the
-//! parser-projected declaration occurrence evidence against the exact
-//! supplied [`SourceText`], per [`validate_occurrence_evidence`]. Revalidation
-//! reconciles already-projected [`SourceAnchor`] evidence (source identity,
-//! range, and retained fragment) and checks the minimal approved structural
-//! relationships among occurrence anchors; it never searches source text,
-//! scans for delimiters, retokenizes, reparses, or reconstructs an endpoint
-//! from a decoded value. CR/LF/CRLF/FF/NUL/BOM preprocessing and raw-to-
-//! semantic mapping remain entirely tokenizer-owned; this module trusts that
-//! already-validated boundary rather than duplicating it.
+//! #172 extends the original declaration-only #140 reconciliation through the
+//! retained context graph and every distinct declaration-shaped occurrence
+//! category. It does not search source text, rescan delimiters, retokenize,
+//! reparse, reconstruct context boundaries, infer parentage from raw ranges,
+//! or rerun descriptor/page/keyframe qualification. No second successful
+//! result hierarchy or public CSS API is introduced.
 
 use std::error::Error;
 use std::fmt;
@@ -41,10 +29,12 @@ use super::tokenizer::producer::run as run_tokenizer;
 use super::tokenizer::resource::CssTokenizerLimits;
 use super::tokenizer::result::CssTokenizerRunError;
 
+mod context;
+
 #[cfg(test)]
 mod tests;
 
-/// The narrow structural relationship a [`CssDeclarationAnalysisError::OccurrenceRelationshipViolation`]
+/// The narrow structural relationship a [`CssAnalysisError::OccurrenceRelationshipViolation`]
 /// concerns, beyond independently-valid per-anchor evidence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssOccurrenceRelationship {
@@ -90,14 +80,65 @@ pub(crate) enum CssOccurrenceRelationship {
     EofTerminalAtOrAfterCompleteEnd,
 }
 
-/// A Core-integration boundary failure for the first CSS declaration
-/// analysis vertical slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssAnalysisOccurrenceKind {
+    Ordinary,
+    Descriptor,
+    Page,
+    PageMargin,
+    Keyframe,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssAnalysisOccurrenceRef {
+    pub(crate) kind: CssAnalysisOccurrenceKind,
+    pub(crate) index: usize,
+}
+
+impl CssAnalysisOccurrenceRef {
+    const fn ordinary(index: usize) -> Self {
+        Self {
+            kind: CssAnalysisOccurrenceKind::Ordinary,
+            index,
+        }
+    }
+
+    const fn descriptor(index: usize) -> Self {
+        Self {
+            kind: CssAnalysisOccurrenceKind::Descriptor,
+            index,
+        }
+    }
+
+    const fn page(index: usize) -> Self {
+        Self {
+            kind: CssAnalysisOccurrenceKind::Page,
+            index,
+        }
+    }
+
+    const fn page_margin(index: usize) -> Self {
+        Self {
+            kind: CssAnalysisOccurrenceKind::PageMargin,
+            index,
+        }
+    }
+
+    const fn keyframe(index: usize) -> Self {
+        Self {
+            kind: CssAnalysisOccurrenceKind::Keyframe,
+            index,
+        }
+    }
+}
+
+/// A Core-integration boundary failure for CSS source analysis.
 ///
 /// Distinct from tokenizer/parser diagnostics (authored-input evidence) and
 /// from [`CssTokenizerRunError`] / [`CssParserRunError`] (lower-layer
 /// internal contract failures, wrapped here unchanged): this vocabulary
-/// covers only failures owned by this Core boundary, validating
-/// parser-projected declaration occurrence evidence against the exact
+/// covers only failures owned by this Core boundary while reconciling
+/// parser-projected occurrence and context evidence against the exact
 /// supplied [`SourceText`]. A parser/Core contract failure always becomes
 /// `Err`, never clean success, clean absence, unsupported coverage, or
 /// resource-limit completion.
@@ -107,16 +148,17 @@ pub(crate) enum CssOccurrenceRelationship {
 /// and [`SourceRangeError`]) and never arbitrary authored source content or
 /// decoded user-controlled strings.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum CssDeclarationAnalysisError {
+pub(crate) enum CssAnalysisError {
     /// The project-owned tokenizer reported its own run failure.
     TokenizerRun(CssTokenizerRunError),
-    /// The project-owned bounded declaration parser reported its own run
-    /// failure.
+    /// The project-owned bounded CSS parser reported its own run failure.
     ParserRun(CssParserRunError),
+    /// #172 context/placement/resource reconciliation failed.
+    Context(context::CssContextAnalysisError),
     /// The occurrence evidence for the given role is bound to a source
     /// identity other than the exact supplied [`SourceText`].
     OccurrenceSourceIdentityMismatch {
-        occurrence_index: usize,
+        occurrence: CssAnalysisOccurrenceRef,
         role: CssDeclarationEvidenceRole,
         expected: SourceId,
         actual: SourceId,
@@ -124,50 +166,53 @@ pub(crate) enum CssDeclarationAnalysisError {
     /// The occurrence evidence's already-projected range could not be
     /// revalidated through the exact supplied [`SourceText`].
     OccurrenceSourceRangeInvalid {
-        occurrence_index: usize,
+        occurrence: CssAnalysisOccurrenceRef,
         role: CssDeclarationEvidenceRole,
         error: SourceRangeError,
     },
     /// The occurrence evidence's range revalidated, but the exact supplied
     /// [`SourceText`] carries different content at that range.
     OccurrenceSourceContentMismatch {
-        occurrence_index: usize,
+        occurrence: CssAnalysisOccurrenceRef,
         role: CssDeclarationEvidenceRole,
     },
     /// The occurrence's independently-valid anchors violate one of the
     /// minimal approved structural relationships among them.
     OccurrenceRelationshipViolation {
-        occurrence_index: usize,
+        occurrence: CssAnalysisOccurrenceRef,
         relationship: CssOccurrenceRelationship,
     },
 }
 
-impl From<CssTokenizerRunError> for CssDeclarationAnalysisError {
+impl From<CssTokenizerRunError> for CssAnalysisError {
     fn from(error: CssTokenizerRunError) -> Self {
         Self::TokenizerRun(error)
     }
 }
 
-impl From<CssParserRunError> for CssDeclarationAnalysisError {
+impl From<CssParserRunError> for CssAnalysisError {
     fn from(error: CssParserRunError) -> Self {
         Self::ParserRun(error)
     }
 }
 
-impl fmt::Display for CssDeclarationAnalysisError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "CSS declaration analysis boundary violation: {self:?}"
-        )
+impl From<context::CssContextAnalysisError> for CssAnalysisError {
+    fn from(error: context::CssContextAnalysisError) -> Self {
+        Self::Context(error)
     }
 }
 
-impl Error for CssDeclarationAnalysisError {}
+impl fmt::Display for CssAnalysisError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "CSS analysis boundary violation: {self:?}")
+    }
+}
+
+impl Error for CssAnalysisError {}
 
 /// Connects retained `&SourceText` through the project-owned CSS tokenizer
-/// and bounded declaration parser into the first Core-owned end-to-end CSS
-/// declaration analysis operation, per the architecture approved on #140.
+/// and parser into the Core-owned CSS source analysis operation established
+/// by #140 and extended through context evidence by #172.
 ///
 /// The caller retains ownership of `source`; this operation borrows it for
 /// execution and does not clone the complete source. The returned
@@ -182,33 +227,106 @@ impl Error for CssDeclarationAnalysisError {}
 /// unsupported/recovery/discard evidence is never erased). A tokenizer or
 /// parser run failure, or a Core source-evidence/relationship validation
 /// failure, all become `Err`.
-pub(crate) fn analyze_css_declarations(
+pub(crate) fn analyze_css_source(
     source: &SourceText,
     tokenizer_limits: CssTokenizerLimits,
     parser_limits: CssParserLimits,
-) -> Result<CssParserRunResult, CssDeclarationAnalysisError> {
+) -> Result<CssParserRunResult, CssAnalysisError> {
     let tokenizer_result = run_tokenizer(source, tokenizer_limits)?;
     let result = run_parser(source, tokenizer_result, parser_limits)?;
 
-    for (occurrence_index, occurrence) in result.occurrences().iter().enumerate() {
-        validate_occurrence_against_source(source, occurrence_index, occurrence)?;
+    for (index, occurrence) in result.occurrences().iter().enumerate() {
+        validate_occurrence_against_source(source, index, occurrence)?;
+    }
+    for (index, occurrence) in result.descriptor_occurrences().iter().enumerate() {
+        validate_occurrence_evidence_for(
+            source,
+            CssAnalysisOccurrenceRef::descriptor(index),
+            occurrence.complete(),
+            occurrence.name(),
+            occurrence.colon(),
+            occurrence.value(),
+            occurrence.priority().map(|priority| {
+                (
+                    priority.complete(),
+                    priority.bang(),
+                    priority.important_ident(),
+                )
+            }),
+            occurrence.termination(),
+        )?;
+    }
+    for (index, occurrence) in result.page_occurrences().iter().enumerate() {
+        validate_occurrence_evidence_for(
+            source,
+            CssAnalysisOccurrenceRef::page(index),
+            occurrence.complete(),
+            occurrence.name(),
+            occurrence.colon(),
+            occurrence.value(),
+            occurrence.priority().map(|priority| {
+                (
+                    priority.complete(),
+                    priority.bang(),
+                    priority.important_ident(),
+                )
+            }),
+            occurrence.termination(),
+        )?;
+    }
+    for (index, occurrence) in result.page_margin_occurrences().iter().enumerate() {
+        validate_occurrence_evidence_for(
+            source,
+            CssAnalysisOccurrenceRef::page_margin(index),
+            occurrence.complete(),
+            occurrence.name(),
+            occurrence.colon(),
+            occurrence.value(),
+            occurrence.priority().map(|priority| {
+                (
+                    priority.complete(),
+                    priority.bang(),
+                    priority.important_ident(),
+                )
+            }),
+            occurrence.termination(),
+        )?;
+    }
+    for (index, occurrence) in result.keyframe_occurrences().iter().enumerate() {
+        validate_occurrence_evidence_for(
+            source,
+            CssAnalysisOccurrenceRef::keyframe(index),
+            occurrence.complete(),
+            occurrence.name(),
+            occurrence.colon(),
+            occurrence.value(),
+            occurrence.priority().map(|priority| {
+                (
+                    priority.complete(),
+                    priority.bang(),
+                    priority.important_ident(),
+                )
+            }),
+            occurrence.termination(),
+        )?;
     }
 
+    context::validate_context_evidence(source, &result)?;
     Ok(result)
 }
 
 /// Validates one projected occurrence's evidence against the exact supplied
-/// `source`. Delegates to [`validate_occurrence_evidence`], which stays
+/// `source`. Delegates to [`validate_occurrence_evidence_for`], which stays
 /// production-relevant while accepting the anchors directly so tests may
 /// exercise it without widening `CssDeclarationOccurrence`'s private fields.
 fn validate_occurrence_against_source(
     source: &SourceText,
     occurrence_index: usize,
     occurrence: &CssDeclarationOccurrence,
-) -> Result<(), CssDeclarationAnalysisError> {
-    validate_occurrence_evidence(
+) -> Result<(), CssAnalysisError> {
+    validate_occurrence_evidence_for(
         source,
-        occurrence_index,
+        CssAnalysisOccurrenceRef::ordinary(occurrence_index),
         occurrence.complete(),
         occurrence.property_name(),
         occurrence.colon(),
@@ -229,15 +347,16 @@ fn validate_occurrence_against_source(
 /// never source discovery: it performs no source search, delimiter scan,
 /// endpoint reconstruction, retokenization, or reparsing. For each present
 /// anchor it revalidates the already-projected range through
-/// [`SourceText::anchor`] and reconciles the revalidated fragment against
-/// the occurrence's own retained fragment, then checks the minimal approved
-/// structural relationships among the anchors.
+/// [`SourceText::anchor`] and reconciles the anchor's complete retained-source
+/// identity/content through the crate-private Core source helper, then checks
+/// the minimal approved structural relationships among the anchors.
 ///
 /// Property/colon/semicolon/right-curly fixed spelling and the decoded
 /// `important` identifier match remain owned by the declaration domain
 /// (`super::declaration`), which already validated them at construction
 /// time; this boundary does not re-derive or re-check spelling or decoded
 /// semantics.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn validate_occurrence_evidence(
     source: &SourceText,
@@ -248,53 +367,66 @@ fn validate_occurrence_evidence(
     value: &SourceAnchor,
     priority: Option<(&SourceAnchor, &SourceAnchor, &SourceAnchor)>,
     termination: &CssDeclarationTermination,
-) -> Result<(), CssDeclarationAnalysisError> {
+) -> Result<(), CssAnalysisError> {
+    validate_occurrence_evidence_for(
+        source,
+        CssAnalysisOccurrenceRef::ordinary(occurrence_index),
+        complete,
+        property_name,
+        colon,
+        value,
+        priority,
+        termination,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_occurrence_evidence_for(
+    source: &SourceText,
+    occurrence: CssAnalysisOccurrenceRef,
+    complete: &SourceAnchor,
+    property_name: &SourceAnchor,
+    colon: &SourceAnchor,
+    value: &SourceAnchor,
+    priority: Option<(&SourceAnchor, &SourceAnchor, &SourceAnchor)>,
+    termination: &CssDeclarationTermination,
+) -> Result<(), CssAnalysisError> {
     validate_role_evidence(
         source,
-        occurrence_index,
+        occurrence,
         CssDeclarationEvidenceRole::Complete,
         complete,
     )?;
     validate_role_evidence(
         source,
-        occurrence_index,
+        occurrence,
         CssDeclarationEvidenceRole::PropertyName,
         property_name,
     )?;
-    validate_role_evidence(
-        source,
-        occurrence_index,
-        CssDeclarationEvidenceRole::Colon,
-        colon,
-    )?;
-    validate_role_evidence(
-        source,
-        occurrence_index,
-        CssDeclarationEvidenceRole::Value,
-        value,
-    )?;
+    validate_role_evidence(source, occurrence, CssDeclarationEvidenceRole::Colon, colon)?;
+    validate_role_evidence(source, occurrence, CssDeclarationEvidenceRole::Value, value)?;
 
     if complete.range().start() != property_name.range().start() {
         return Err(relationship_violation(
-            occurrence_index,
+            occurrence,
             CssOccurrenceRelationship::CompleteStartMatchesPropertyName,
         ));
     }
     require_contained(
         complete,
         property_name,
-        occurrence_index,
+        occurrence,
         CssOccurrenceRelationship::PropertyNameContained,
     )?;
     require_contained(
         complete,
         colon,
-        occurrence_index,
+        occurrence,
         CssOccurrenceRelationship::ColonContained,
     )?;
     if property_name.range().end() > colon.range().start() {
         return Err(relationship_violation(
-            occurrence_index,
+            occurrence,
             CssOccurrenceRelationship::PropertyNameEndsAtOrBeforeColonStart,
         ));
     }
@@ -302,7 +434,7 @@ fn validate_occurrence_evidence(
     let last_semantic_end = if value.range().is_empty() {
         if value.range().start() != colon.range().end() {
             return Err(relationship_violation(
-                occurrence_index,
+                occurrence,
                 CssOccurrenceRelationship::ZeroLengthValueAtColonEnd,
             ));
         }
@@ -311,12 +443,12 @@ fn validate_occurrence_evidence(
         require_contained(
             complete,
             value,
-            occurrence_index,
+            occurrence,
             CssOccurrenceRelationship::ValueContained,
         )?;
         if colon.range().end() > value.range().start() {
             return Err(relationship_violation(
-                occurrence_index,
+                occurrence,
                 CssOccurrenceRelationship::ColonEndsAtOrBeforeValueStart,
             ));
         }
@@ -326,19 +458,19 @@ fn validate_occurrence_evidence(
     let last_semantic_end = if let Some((priority_complete, bang, important_ident)) = priority {
         validate_role_evidence(
             source,
-            occurrence_index,
+            occurrence,
             CssDeclarationEvidenceRole::PriorityComplete,
             priority_complete,
         )?;
         validate_role_evidence(
             source,
-            occurrence_index,
+            occurrence,
             CssDeclarationEvidenceRole::PriorityBang,
             bang,
         )?;
         validate_role_evidence(
             source,
-            occurrence_index,
+            occurrence,
             CssDeclarationEvidenceRole::PriorityImportantIdent,
             important_ident,
         )?;
@@ -346,24 +478,24 @@ fn validate_occurrence_evidence(
         require_contained(
             complete,
             priority_complete,
-            occurrence_index,
+            occurrence,
             CssOccurrenceRelationship::PriorityContained,
         )?;
         if priority_complete.range().start() != bang.range().start() {
             return Err(relationship_violation(
-                occurrence_index,
+                occurrence,
                 CssOccurrenceRelationship::PriorityStartsAtBang,
             ));
         }
         if priority_complete.range().end() != important_ident.range().end() {
             return Err(relationship_violation(
-                occurrence_index,
+                occurrence,
                 CssOccurrenceRelationship::PriorityEndsAtImportantIdent,
             ));
         }
         if bang.range().end() > important_ident.range().start() {
             return Err(relationship_violation(
-                occurrence_index,
+                occurrence,
                 CssOccurrenceRelationship::BangEndsAtOrBeforeImportantIdentStart,
             ));
         }
@@ -375,7 +507,7 @@ fn validate_occurrence_evidence(
         };
         if value_end_or_point > priority_complete.range().start() {
             return Err(relationship_violation(
-                occurrence_index,
+                occurrence,
                 CssOccurrenceRelationship::ValueDoesNotOverlapPriority,
             ));
         }
@@ -389,25 +521,25 @@ fn validate_occurrence_evidence(
         CssDeclarationTermination::AuthoredSemicolon { semicolon } => {
             validate_role_evidence(
                 source,
-                occurrence_index,
+                occurrence,
                 CssDeclarationEvidenceRole::Semicolon,
                 semicolon,
             )?;
             require_contained(
                 complete,
                 semicolon,
-                occurrence_index,
+                occurrence,
                 CssOccurrenceRelationship::AuthoredSemicolonContained,
             )?;
             if semicolon.range().start() < last_semantic_end {
                 return Err(relationship_violation(
-                    occurrence_index,
+                    occurrence,
                     CssOccurrenceRelationship::AuthoredSemicolonNotBeforeLastEvidence,
                 ));
             }
             if complete.range().end() != semicolon.range().end() {
                 return Err(relationship_violation(
-                    occurrence_index,
+                    occurrence,
                     CssOccurrenceRelationship::AuthoredSemicolonEndsComplete,
                 ));
             }
@@ -415,13 +547,13 @@ fn validate_occurrence_evidence(
         CssDeclarationTermination::OmittedBeforeRightCurly { right_curly } => {
             validate_role_evidence(
                 source,
-                occurrence_index,
+                occurrence,
                 CssDeclarationEvidenceRole::RightCurly,
                 right_curly,
             )?;
             if right_curly.range().start() < complete.range().end() {
                 return Err(relationship_violation(
-                    occurrence_index,
+                    occurrence,
                     CssOccurrenceRelationship::RightCurlyAtOrAfterCompleteEnd,
                 ));
             }
@@ -429,25 +561,25 @@ fn validate_occurrence_evidence(
         CssDeclarationTermination::OmittedAtEndOfInput { terminal } => {
             validate_role_evidence(
                 source,
-                occurrence_index,
+                occurrence,
                 CssDeclarationEvidenceRole::EofTerminal,
                 terminal,
             )?;
             if !terminal.range().is_empty() {
                 return Err(relationship_violation(
-                    occurrence_index,
+                    occurrence,
                     CssOccurrenceRelationship::EofTerminalEmpty,
                 ));
             }
             if terminal.range().start() != source.as_str().len() {
                 return Err(relationship_violation(
-                    occurrence_index,
+                    occurrence,
                     CssOccurrenceRelationship::EofTerminalAtSourceEnd,
                 ));
             }
             if terminal.range().start() < complete.range().end() {
                 return Err(relationship_violation(
-                    occurrence_index,
+                    occurrence,
                     CssOccurrenceRelationship::EofTerminalAtOrAfterCompleteEnd,
                 ));
             }
@@ -459,37 +591,30 @@ fn validate_occurrence_evidence(
 
 fn validate_role_evidence(
     source: &SourceText,
-    occurrence_index: usize,
+    occurrence: CssAnalysisOccurrenceRef,
     role: CssDeclarationEvidenceRole,
     anchor: &SourceAnchor,
-) -> Result<(), CssDeclarationAnalysisError> {
+) -> Result<(), CssAnalysisError> {
     if anchor.source_id() != source.id() {
-        return Err(
-            CssDeclarationAnalysisError::OccurrenceSourceIdentityMismatch {
-                occurrence_index,
-                role,
-                expected: source.id(),
-                actual: anchor.source_id(),
-            },
-        );
+        return Err(CssAnalysisError::OccurrenceSourceIdentityMismatch {
+            occurrence,
+            role,
+            expected: source.id(),
+            actual: anchor.source_id(),
+        });
     }
 
     let range = anchor.range();
-    let revalidated = source.anchor(range.start(), range.end()).map_err(|error| {
-        CssDeclarationAnalysisError::OccurrenceSourceRangeInvalid {
-            occurrence_index,
+    source.anchor(range.start(), range.end()).map_err(|error| {
+        CssAnalysisError::OccurrenceSourceRangeInvalid {
+            occurrence,
             role,
             error,
         }
     })?;
 
-    if revalidated.fragment() != anchor.fragment() {
-        return Err(
-            CssDeclarationAnalysisError::OccurrenceSourceContentMismatch {
-                occurrence_index,
-                role,
-            },
-        );
+    if !source.retains_exact_anchor_source(anchor) {
+        return Err(CssAnalysisError::OccurrenceSourceContentMismatch { occurrence, role });
     }
 
     Ok(())
@@ -498,24 +623,24 @@ fn validate_role_evidence(
 fn require_contained(
     container: &SourceAnchor,
     nested: &SourceAnchor,
-    occurrence_index: usize,
+    occurrence: CssAnalysisOccurrenceRef,
     relationship: CssOccurrenceRelationship,
-) -> Result<(), CssDeclarationAnalysisError> {
+) -> Result<(), CssAnalysisError> {
     if container.source_id() != nested.source_id()
         || nested.range().start() < container.range().start()
         || nested.range().end() > container.range().end()
     {
-        return Err(relationship_violation(occurrence_index, relationship));
+        return Err(relationship_violation(occurrence, relationship));
     }
     Ok(())
 }
 
 const fn relationship_violation(
-    occurrence_index: usize,
+    occurrence: CssAnalysisOccurrenceRef,
     relationship: CssOccurrenceRelationship,
-) -> CssDeclarationAnalysisError {
-    CssDeclarationAnalysisError::OccurrenceRelationshipViolation {
-        occurrence_index,
+) -> CssAnalysisError {
+    CssAnalysisError::OccurrenceRelationshipViolation {
+        occurrence,
         relationship,
     }
 }

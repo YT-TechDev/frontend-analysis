@@ -1,12 +1,12 @@
-//! Candidate-independent validation of the #140 Core-integrated
-//! `analyze_css_declarations` operation against the existing #138/#139
+//! Candidate-independent validation of the #140/#172 Core-integrated
+//! `analyze_css_source` operation against the existing #138/#139
 //! parser gold corpus and generated corpus.
 //!
 //! This is an additional validation layer, not a replacement for the
 //! existing direct parser gate in [`super::parser_conformance_tests`]: that
 //! module proves `css::parser::producer::run` against a caller-supplied
 //! `CssTokenizerRunResult`, while this module proves the complete
-//! `SourceText -> analyze_css_declarations(...)` Core boundary, including
+//! `SourceText -> analyze_css_source(...)` Core boundary, including
 //! the additional source-evidence/relationship validation #140 owns.
 //!
 //! Per the #140 architecture clarification, `CSS-PARSER-LIFECYCLE-
@@ -20,7 +20,7 @@
 //! derives no expected data from production output, and modifies no
 //! existing gold.
 
-use crate::css::analysis::analyze_css_declarations;
+use crate::css::analysis::analyze_css_source;
 use crate::css::parser::producer::run as run_parser;
 use crate::css::tokenizer::producer::run as run_tokenizer;
 use crate::{SourceId, SourceText};
@@ -46,7 +46,7 @@ fn core_operation_matches_every_source_driven_normative_parser_gold_fixture() {
         executed += 1;
 
         let source = SourceText::new(SourceId::new(fixture.source_id), fixture.source.to_owned());
-        let result = analyze_css_declarations(
+        let result = analyze_css_source(
             &source,
             generous_tokenizer_limits(),
             generous_parser_limits(),
@@ -68,7 +68,7 @@ fn core_operation_handles_all_generated_inputs_without_panic_and_preserves_invar
 
     for (index, source) in inputs.iter().enumerate() {
         let primary = SourceText::new(SourceId::new(1), source.clone());
-        let result = analyze_css_declarations(
+        let result = analyze_css_source(
             &primary,
             generous_tokenizer_limits(),
             generous_parser_limits(),
@@ -111,14 +111,14 @@ fn core_operation_is_deterministic_across_repeats_and_source_ids() {
     assert_deterministic_replay(&inputs, |source| {
         let text = SourceText::new(SourceId::new(1), source.to_owned());
         let result =
-            analyze_css_declarations(&text, generous_tokenizer_limits(), generous_parser_limits())
+            analyze_css_source(&text, generous_tokenizer_limits(), generous_parser_limits())
                 .expect("generated input must analyze cleanly");
         canonical_signature(&result)
     });
 
     for source in &inputs {
         let first_text = SourceText::new(SourceId::new(11), source.clone());
-        let first = analyze_css_declarations(
+        let first = analyze_css_source(
             &first_text,
             generous_tokenizer_limits(),
             generous_parser_limits(),
@@ -126,7 +126,7 @@ fn core_operation_is_deterministic_across_repeats_and_source_ids() {
         .unwrap();
 
         let second_text = SourceText::new(SourceId::new(22), source.clone());
-        let second = analyze_css_declarations(
+        let second = analyze_css_source(
             &second_text,
             generous_tokenizer_limits(),
             generous_parser_limits(),
@@ -144,7 +144,7 @@ fn core_operation_is_deterministic_across_repeats_and_source_ids() {
 /// Proves the Core operation is only an integration validator, not a
 /// semantic transformer: for identical source/limits, the direct
 /// `tokenizer::producer::run -> parser::producer::run` pipeline and
-/// `analyze_css_declarations` must carry equivalent parser-owned meaning.
+/// `analyze_css_source` must carry equivalent parser-owned meaning.
 /// Pointer/allocation identity is never required.
 #[test]
 fn core_operation_matches_direct_pipeline_meaning_for_all_generated_inputs() {
@@ -157,7 +157,7 @@ fn core_operation_matches_direct_pipeline_meaning_for_all_generated_inputs() {
         let direct = run_parser(&direct_text, tokenizer_result, generous_parser_limits()).unwrap();
 
         let core_text = SourceText::new(SourceId::new(1), source.clone());
-        let core = analyze_css_declarations(
+        let core = analyze_css_source(
             &core_text,
             generous_tokenizer_limits(),
             generous_parser_limits(),

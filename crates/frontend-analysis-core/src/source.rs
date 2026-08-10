@@ -80,6 +80,20 @@ impl SourceText {
         &self.inner.text
     }
 
+    /// Returns whether `anchor` retains exactly this source identity and
+    /// complete immutable byte content.
+    ///
+    /// The normal parser pipeline shares one [`SourceData`] allocation, so
+    /// the common case is an O(1) pointer-identity check. A separately
+    /// constructed source with the same caller-supplied [`SourceId`] is
+    /// accepted only when its complete retained UTF-8 bytes are also equal.
+    /// This is crate-private Core reconciliation support, not a public source
+    /// identity or hashing contract.
+    pub(crate) fn retains_exact_anchor_source(&self, anchor: &SourceAnchor) -> bool {
+        Rc::ptr_eq(&self.inner, &anchor.source)
+            || (self.inner.id == anchor.source.id && self.inner.text == anchor.source.text)
+    }
+
     /// Validates a half-open UTF-8 byte range and creates an owned anchor.
     ///
     /// Reversal takes precedence over bounds, followed by the start character
@@ -357,6 +371,23 @@ mod tests {
         assert!(Rc::ptr_eq(&source.inner, &first.source));
         assert!(Rc::ptr_eq(&first.source, &second.source));
         assert!(Rc::ptr_eq(&first.source, &first_clone.source));
+    }
+
+    #[test]
+    fn exact_anchor_source_reconciliation_accepts_shared_and_equal_detached_source() {
+        let source = SourceText::new(SourceId::new(20), "same".to_owned());
+        let shared = source.anchor(0, 4).unwrap();
+        let detached = SourceText::new(SourceId::new(20), "same".to_owned());
+        let detached_anchor = detached.anchor(0, 4).unwrap();
+        assert!(source.retains_exact_anchor_source(&shared));
+        assert!(source.retains_exact_anchor_source(&detached_anchor));
+    }
+
+    #[test]
+    fn exact_anchor_source_reconciliation_rejects_same_id_different_bytes() {
+        let source = SourceText::new(SourceId::new(21), "same".to_owned());
+        let different = SourceText::new(SourceId::new(21), "diff".to_owned());
+        assert!(!source.retains_exact_anchor_source(&different.anchor(0, 4).unwrap()));
     }
 
     #[test]
