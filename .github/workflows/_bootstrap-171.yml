@@ -48,6 +48,13 @@ jobs:
               text = text.replace(old, new)
           fixtures.write_text(text)
 
+          contract = Path('crates/frontend-analysis-core/src/css/validation/parser_contract_tests.rs')
+          text = contract.read_text()
+          old_id = '"CSS-PARSER-UNSUPPORTED-KEYFRAMES-001"'
+          if text.count(old_id) != 1:
+              raise SystemExit('legacy parser category id did not match exactly once')
+          contract.write_text(text.replace(old_id, '"CSS-PARSER-UNSUPPORTED-UNKNOWN-AT-RULE-001"'))
+
           resources = Path('crates/frontend-analysis-core/src/css/validation/parser_resource_tests.rs')
           text = resources.read_text()
           old_input = '@keyframes spin{from{opacity:0;}}'
@@ -92,6 +99,7 @@ jobs:
               'crates/frontend-analysis-core/src/css/parser/producer.rs',
               'crates/frontend-analysis-core/src/css/parser/result.rs',
               'crates/frontend-analysis-core/src/css/validation/parser_candidate.rs',
+              'crates/frontend-analysis-core/src/css/validation/parser_contract_tests.rs',
               'crates/frontend-analysis-core/src/css/validation/parser_fixtures.rs',
               'crates/frontend-analysis-core/src/css/validation/parser_resource_tests.rs',
           }
@@ -115,6 +123,7 @@ jobs:
             crates/frontend-analysis-core/src/css/parser/producer.rs \
             crates/frontend-analysis-core/src/css/parser/result.rs \
             crates/frontend-analysis-core/src/css/validation/parser_candidate.rs \
+            crates/frontend-analysis-core/src/css/validation/parser_contract_tests.rs \
             crates/frontend-analysis-core/src/css/validation/parser_fixtures.rs \
             crates/frontend-analysis-core/src/css/validation/parser_resource_tests.rs
           git diff --cached --check
