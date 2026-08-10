@@ -695,6 +695,271 @@ impl fmt::Debug for CssDescriptorOccurrence {
     }
 }
 
+/// A page declaration's structural placement (#170): the owning
+/// [`CssParserContextKind::PageRuleBlock`](super::parser::context::CssParserContextKind::PageRuleBlock)
+/// context and its direct-item ordinal within that context, shared with
+/// sibling `PageMarginRuleBlock` child contexts and nested unsupported
+/// at-rule items.
+///
+/// Deliberately carries no declaration-run ordinal, mirroring
+/// [`CssDescriptorPlacement`]: CSSWG #11271 means Page must not introduce a
+/// new stable declaration-run semantic contract (Amendment A). This is not
+/// [`CssDeclarationPlacement`] with a field omitted -- it is a distinct,
+/// narrower shape reusing only `context_id`/`item_ordinal`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssPageDeclarationPlacement {
+    context_id: CssParserContextId,
+    item_ordinal: CssParserDirectItemOrdinal,
+}
+
+impl CssPageDeclarationPlacement {
+    pub(crate) const fn new(
+        context_id: CssParserContextId,
+        item_ordinal: CssParserDirectItemOrdinal,
+    ) -> Self {
+        Self {
+            context_id,
+            item_ordinal,
+        }
+    }
+
+    pub(crate) const fn context_id(&self) -> CssParserContextId {
+        self.context_id
+    }
+
+    pub(crate) const fn item_ordinal(&self) -> CssParserDirectItemOrdinal {
+        self.item_ordinal
+    }
+}
+
+/// A page-margin declaration's structural placement (#170): the owning
+/// [`CssParserContextKind::PageMarginRuleBlock`](super::parser::context::CssParserContextKind::PageMarginRuleBlock)
+/// context and its direct-item ordinal within that context, shared with
+/// sibling nested unsupported at-rule items. Carries no declaration-run
+/// ordinal for the same Amendment A reason as [`CssPageDeclarationPlacement`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssPageMarginDeclarationPlacement {
+    context_id: CssParserContextId,
+    item_ordinal: CssParserDirectItemOrdinal,
+}
+
+impl CssPageMarginDeclarationPlacement {
+    pub(crate) const fn new(
+        context_id: CssParserContextId,
+        item_ordinal: CssParserDirectItemOrdinal,
+    ) -> Self {
+        Self {
+            context_id,
+            item_ordinal,
+        }
+    }
+
+    pub(crate) const fn context_id(&self) -> CssParserContextId {
+        self.context_id
+    }
+
+    pub(crate) const fn item_ordinal(&self) -> CssParserDirectItemOrdinal {
+        self.item_ordinal
+    }
+}
+
+/// One recognized authored declaration-shaped syntax occurrence retained
+/// inside a root-owned `PageRuleBlock` context (#170).
+///
+/// Means only: a declaration-shaped authored syntax occurrence retained
+/// inside a supported `PageRuleBlock` context. It does not mean the
+/// property name is recognized by `@page`, that its value matches its
+/// grammar, or that it has CSSOM/cascade/print effect. Never interchangeable
+/// with [`CssDeclarationOccurrence`] or [`CssDescriptorOccurrence`], despite
+/// sharing [`CssDeclarationSyntaxEvidence`]: result-level validation
+/// enforces that a page declaration occurrence can only be owned by a
+/// `PageRuleBlock` context.
+#[derive(Clone)]
+pub(crate) struct CssPageDeclarationOccurrence {
+    syntax: CssDeclarationSyntaxEvidence,
+    placement: CssPageDeclarationPlacement,
+}
+
+impl CssPageDeclarationOccurrence {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        source_text: &SourceText,
+        complete: SourceAnchor,
+        name: SourceAnchor,
+        colon: SourceAnchor,
+        value: SourceAnchor,
+        priority: Option<CssDeclarationPriorityEvidence>,
+        termination: CssDeclarationTermination,
+        placement: CssPageDeclarationPlacement,
+    ) -> Result<Self, CssDeclarationContractError> {
+        let syntax = CssDeclarationSyntaxEvidence::new(
+            source_text,
+            complete,
+            name,
+            colon,
+            value,
+            priority,
+            termination,
+        )?;
+        Ok(Self { syntax, placement })
+    }
+
+    pub(crate) const fn complete(&self) -> &SourceAnchor {
+        self.syntax.complete()
+    }
+
+    pub(crate) const fn name(&self) -> &SourceAnchor {
+        self.syntax.name()
+    }
+
+    pub(crate) const fn colon(&self) -> &SourceAnchor {
+        self.syntax.colon()
+    }
+
+    pub(crate) const fn value(&self) -> &SourceAnchor {
+        self.syntax.value()
+    }
+
+    pub(crate) const fn priority(&self) -> Option<&CssDeclarationPriorityEvidence> {
+        self.syntax.priority()
+    }
+
+    pub(crate) const fn termination(&self) -> &CssDeclarationTermination {
+        self.syntax.termination()
+    }
+
+    pub(crate) const fn placement(&self) -> CssPageDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) fn source_order_key(&self) -> (usize, usize) {
+        self.syntax.source_order_key()
+    }
+}
+
+impl PartialEq for CssPageDeclarationOccurrence {
+    fn eq(&self, other: &Self) -> bool {
+        self.syntax == other.syntax && self.placement == other.placement
+    }
+}
+
+impl Eq for CssPageDeclarationOccurrence {}
+
+impl fmt::Debug for CssPageDeclarationOccurrence {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CssPageDeclarationOccurrence")
+            .field("source_id", &self.complete().source_id())
+            .field("complete", &self.complete().range())
+            .field("name", &self.name().range())
+            .field("colon", &self.colon().range())
+            .field("value", &self.value().range())
+            .field("priority", &self.priority())
+            .field("termination", &self.termination())
+            .field("placement", &self.placement)
+            .finish()
+    }
+}
+
+/// One recognized authored declaration-shaped syntax occurrence retained
+/// inside a `PageMarginRuleBlock` context (#170), whose parent is always a
+/// retained `PageRuleBlock`.
+///
+/// Means only a declaration-shaped authored syntax occurrence retained
+/// inside a supported `PageMarginRuleBlock` context; carries none of the
+/// broader claims disclaimed by [`CssPageDeclarationOccurrence`]'s own doc.
+/// Never interchangeable with [`CssDeclarationOccurrence`],
+/// [`CssDescriptorOccurrence`], or [`CssPageDeclarationOccurrence`], despite
+/// sharing [`CssDeclarationSyntaxEvidence`]: result-level validation
+/// enforces that a page-margin declaration occurrence can only be owned by a
+/// `PageMarginRuleBlock` context.
+#[derive(Clone)]
+pub(crate) struct CssPageMarginDeclarationOccurrence {
+    syntax: CssDeclarationSyntaxEvidence,
+    placement: CssPageMarginDeclarationPlacement,
+}
+
+impl CssPageMarginDeclarationOccurrence {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        source_text: &SourceText,
+        complete: SourceAnchor,
+        name: SourceAnchor,
+        colon: SourceAnchor,
+        value: SourceAnchor,
+        priority: Option<CssDeclarationPriorityEvidence>,
+        termination: CssDeclarationTermination,
+        placement: CssPageMarginDeclarationPlacement,
+    ) -> Result<Self, CssDeclarationContractError> {
+        let syntax = CssDeclarationSyntaxEvidence::new(
+            source_text,
+            complete,
+            name,
+            colon,
+            value,
+            priority,
+            termination,
+        )?;
+        Ok(Self { syntax, placement })
+    }
+
+    pub(crate) const fn complete(&self) -> &SourceAnchor {
+        self.syntax.complete()
+    }
+
+    pub(crate) const fn name(&self) -> &SourceAnchor {
+        self.syntax.name()
+    }
+
+    pub(crate) const fn colon(&self) -> &SourceAnchor {
+        self.syntax.colon()
+    }
+
+    pub(crate) const fn value(&self) -> &SourceAnchor {
+        self.syntax.value()
+    }
+
+    pub(crate) const fn priority(&self) -> Option<&CssDeclarationPriorityEvidence> {
+        self.syntax.priority()
+    }
+
+    pub(crate) const fn termination(&self) -> &CssDeclarationTermination {
+        self.syntax.termination()
+    }
+
+    pub(crate) const fn placement(&self) -> CssPageMarginDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) fn source_order_key(&self) -> (usize, usize) {
+        self.syntax.source_order_key()
+    }
+}
+
+impl PartialEq for CssPageMarginDeclarationOccurrence {
+    fn eq(&self, other: &Self) -> bool {
+        self.syntax == other.syntax && self.placement == other.placement
+    }
+}
+
+impl Eq for CssPageMarginDeclarationOccurrence {}
+
+impl fmt::Debug for CssPageMarginDeclarationOccurrence {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("CssPageMarginDeclarationOccurrence")
+            .field("source_id", &self.complete().source_id())
+            .field("complete", &self.complete().range())
+            .field("name", &self.name().range())
+            .field("colon", &self.colon().range())
+            .field("value", &self.value().range())
+            .field("priority", &self.priority())
+            .field("termination", &self.termination())
+            .field("placement", &self.placement)
+            .finish()
+    }
+}
+
 fn validate_termination(
     source_text: &SourceText,
     complete: &SourceAnchor,

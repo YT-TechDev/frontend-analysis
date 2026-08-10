@@ -73,13 +73,15 @@
 use super::super::declaration::{
     CssDeclarationOccurrence, CssDeclarationPlacement, CssDeclarationPriorityEvidence,
     CssDeclarationRunOrdinal, CssDeclarationTermination, CssDescriptorOccurrence,
-    CssDescriptorPlacement,
+    CssDescriptorPlacement, CssPageDeclarationOccurrence, CssPageDeclarationPlacement,
+    CssPageMarginDeclarationOccurrence, CssPageMarginDeclarationPlacement,
 };
 use super::super::token::CssTokenKind;
 use super::super::tokenizer::result::CssTokenizerRunResult;
 use super::context::{
     CssParserContextId, CssParserContextKind, CssParserContextRecord, CssParserContextTermination,
     CssParserDescriptorRuleKind, CssParserDirectItemOrdinal, CssParserGroupRuleKind,
+    CssParserPageMarginRuleKind,
 };
 use super::cursor::{CssParserCursor, CssParserRawPosition};
 use super::diagnostic::{CssParserDiagnostic, CssParserDiagnosticCode};
@@ -158,6 +160,7 @@ enum ObservedKind {
     AtKeyword(String),
     Colon,
     Semicolon,
+    Comma,
     Whitespace,
     Delim(char),
     Function,
@@ -178,6 +181,7 @@ fn observe_kind(kind: &CssTokenKind) -> ObservedKind {
         CssTokenKind::AtKeyword(value) => ObservedKind::AtKeyword(value.clone()),
         CssTokenKind::Colon => ObservedKind::Colon,
         CssTokenKind::Semicolon => ObservedKind::Semicolon,
+        CssTokenKind::Comma => ObservedKind::Comma,
         CssTokenKind::Whitespace => ObservedKind::Whitespace,
         CssTokenKind::Delim(value) => ObservedKind::Delim(*value),
         CssTokenKind::Function(_) => ObservedKind::Function,
@@ -279,6 +283,19 @@ enum NewContextIdentity {
         property_name: Option<SourceAnchor>,
         decoded_property_name: Option<String>,
     },
+    /// The root-owned `@page` context (#170).
+    PageRuleBlock {
+        at_keyword: SourceAnchor,
+        decoded_at_keyword: String,
+        page_selector_list: Option<SourceAnchor>,
+    },
+    /// A page-margin-rule context nested only inside a `PageRuleBlock`
+    /// parent (#170).
+    PageMarginRuleBlock {
+        kind: CssParserPageMarginRuleKind,
+        at_keyword: SourceAnchor,
+        decoded_at_keyword: String,
+    },
 }
 
 /// Bounded transient evidence for the #158 custom-property-like top-level
@@ -364,6 +381,24 @@ enum PreludeQualifier {
         inner_position: u8,
         inner_ok: bool,
     },
+    /// A #170 page-margin-rule candidate: qualifies only for a semantically
+    /// empty prelude, mirroring `@font-face`'s
+    /// [`DescriptorPreludeQualifier::FontFace`]. No per-variant state is
+    /// needed: [`Self::finish`]'s own `any_top_level_seen` parameter already
+    /// carries the only fact this qualifier needs.
+    PageMargin,
+}
+
+/// The #170 nested-at-rule candidate family: either the existing #168 finite
+/// group-rule registry, or the #170 finite page-margin-rule registry (valid
+/// only when the innermost active context is a `PageRuleBlock`). Never a
+/// generic at-rule/plugin vocabulary -- just a two-way wrapper distinguishing
+/// which finite registry [`Producer::scan_nested_at_rule_terminator`] is
+/// qualifying against.
+#[derive(Clone, Copy)]
+enum NestedCandidateKind {
+    Group(CssParserGroupRuleKind),
+    PageMargin(CssParserPageMarginRuleKind),
 }
 
 fn is_css_wide_reserved(name: &str) -> bool {
@@ -384,32 +419,33 @@ fn is_container_reserved(name: &str) -> bool {
 }
 
 impl PreludeQualifier {
-    fn new_for(kind: CssParserGroupRuleKind) -> Self {
+    fn new_for(kind: NestedCandidateKind) -> Self {
         match kind {
-            CssParserGroupRuleKind::Media => Self::Media {
+            NestedCandidateKind::Group(CssParserGroupRuleKind::Media) => Self::Media {
                 top_level_count: 0,
                 ok: true,
             },
-            CssParserGroupRuleKind::Container => Self::Container {
+            NestedCandidateKind::Group(CssParserGroupRuleKind::Container) => Self::Container {
                 top_level_count: 0,
                 ok: true,
             },
-            CssParserGroupRuleKind::Layer => Self::Layer {
+            NestedCandidateKind::Group(CssParserGroupRuleKind::Layer) => Self::Layer {
                 expect_ident: true,
                 ok: true,
                 segments: 0,
                 any_seen: false,
             },
-            CssParserGroupRuleKind::Scope => Self::Scope {
+            NestedCandidateKind::Group(CssParserGroupRuleKind::Scope) => Self::Scope {
                 position: 0,
                 ok: true,
             },
-            CssParserGroupRuleKind::Supports => Self::Supports {
+            NestedCandidateKind::Group(CssParserGroupRuleKind::Supports) => Self::Supports {
                 top_level_count: 0,
                 top_level_ok: true,
                 inner_position: 0,
                 inner_ok: false,
             },
+            NestedCandidateKind::PageMargin(_) => Self::PageMargin,
         }
     }
 
@@ -518,6 +554,7 @@ impl PreludeQualifier {
                     _ => {}
                 }
             }
+            Self::PageMargin => {}
         }
     }
 
@@ -549,6 +586,7 @@ impl PreludeQualifier {
                 inner_ok,
                 ..
             } => *top_level_count == 1 && *top_level_ok && *inner_ok,
+            Self::PageMargin => !any_top_level_seen,
         }
     }
 }
@@ -662,6 +700,178 @@ enum DescriptorCandidateTerminator {
     TrueEndOfInputWithoutBlock,
 }
 
+/// The bounded #170 root-level `@page` prelude qualification outcome,
+/// resolved once the top-level candidate's own block opener has been
+/// reached. `selector_list` is `None` for a genuinely empty prelude
+/// (selector-less `@page`) and `Some((start, end))` -- the exact authored
+/// `<page-selector-list>` envelope, trimmed of leading/trailing whitespace --
+/// otherwise.
+enum PageQualification {
+    Qualified {
+        selector_list: Option<(usize, usize)>,
+    },
+    Unqualified,
+}
+
+/// How a stylesheet-root #170 `@page`-candidate at-rule's own scan ends.
+/// Mirrors [`DescriptorCandidateTerminator`]: a root-level at-rule has no
+/// enclosing block, so there is no `EnclosingBlockEnd` variant.
+enum PageCandidateTerminator {
+    Block {
+        block_opener: SourceAnchor,
+        qualification: PageQualification,
+    },
+    Semicolon {
+        semicolon: SourceAnchor,
+    },
+    TrueEndOfInputWithoutBlock,
+}
+
+/// ASCII-case-insensitive membership in the bounded four-member
+/// `<pseudo-page>` ident vocabulary (`left`, `right`, `first`, `blank`).
+fn is_pseudo_page_name(name: &str) -> bool {
+    name.eq_ignore_ascii_case("left")
+        || name.eq_ignore_ascii_case("right")
+        || name.eq_ignore_ascii_case("first")
+        || name.eq_ignore_ascii_case("blank")
+}
+
+/// Bounded, streaming #170 `<page-selector-list>` qualification, fed one
+/// top-level semantic token at a time (including whitespace, unlike the
+/// #169 descriptor qualifiers, since intra-selector adjacency is
+/// grammar-significant) by [`Producer::scan_page_candidate_terminator`].
+///
+/// Grammar:
+/// ```text
+/// <page-selector-list> = <page-selector>#
+/// <page-selector>      = [ <ident-token>? <pseudo-page>* ]!
+/// <pseudo-page>         = : [ left | right | first | blank ]
+/// ```
+///
+/// Never retains a decoded prelude string, a selector-component vector, or a
+/// selector AST: only two `usize` source offsets (the qualifying envelope's
+/// start/end) and small O(1) position flags are tracked. `ok` is a one-way
+/// ratchet -- once a grammar violation is observed, later tokens still
+/// update trivial bookkeeping (so the outer scan can keep finding the real
+/// block opener) but can no longer flip qualification back to valid.
+struct PageSelectorListQualifier {
+    ok: bool,
+    any_top_level_seen: bool,
+    /// Whether the current (not yet comma-terminated) `<page-selector>` has
+    /// observed at least one component (`<ident-token>` or `<pseudo-page>`);
+    /// the grammar's `!` requires at least one.
+    current_member_component_seen: bool,
+    /// Whether whitespace was observed since the current member's last
+    /// component: further components are disallowed until a comma, but a
+    /// trailing comma/block-opener remains fine (ordinary list trivia).
+    loose: bool,
+    /// Whether a `:` was just consumed and its pseudo-page ident (with no
+    /// intervening whitespace) is still pending.
+    pending_pseudo_colon: bool,
+    first_start: Option<usize>,
+    last_end: Option<usize>,
+}
+
+impl PageSelectorListQualifier {
+    fn new() -> Self {
+        Self {
+            ok: true,
+            any_top_level_seen: false,
+            current_member_component_seen: false,
+            loose: false,
+            pending_pseudo_colon: false,
+            first_start: None,
+            last_end: None,
+        }
+    }
+
+    /// Feeds one semantic token observed at `depth_before` (the
+    /// component-nesting depth immediately before this token is balanced).
+    /// The page-selector-list grammar admits no nested component group, so
+    /// any token observed at `depth_before != 0` -- and any token kind
+    /// outside `Whitespace`/`Comma`/`Colon`/`Ident` -- disqualifies.
+    fn observe(&mut self, depth_before: usize, anchor: &SourceAnchor, kind: &ObservedKind) {
+        if depth_before != 0 {
+            self.ok = false;
+            return;
+        }
+        if matches!(kind, ObservedKind::Whitespace) {
+            if self.pending_pseudo_colon {
+                self.ok = false;
+            } else if self.current_member_component_seen {
+                self.loose = true;
+            }
+            return;
+        }
+        self.any_top_level_seen = true;
+        match kind {
+            ObservedKind::Comma => {
+                if self.pending_pseudo_colon || !self.current_member_component_seen {
+                    self.ok = false;
+                }
+                self.current_member_component_seen = false;
+                self.loose = false;
+                self.pending_pseudo_colon = false;
+            }
+            ObservedKind::Colon => {
+                if self.pending_pseudo_colon || self.loose {
+                    self.ok = false;
+                }
+                self.pending_pseudo_colon = true;
+                self.loose = false;
+                self.extend_span(anchor);
+            }
+            ObservedKind::Ident(name) => {
+                if self.pending_pseudo_colon {
+                    if !is_pseudo_page_name(name) {
+                        self.ok = false;
+                    }
+                    self.pending_pseudo_colon = false;
+                    self.current_member_component_seen = true;
+                    self.loose = false;
+                } else if !self.current_member_component_seen {
+                    self.current_member_component_seen = true;
+                    self.loose = false;
+                } else {
+                    self.ok = false;
+                }
+                self.extend_span(anchor);
+            }
+            _ => {
+                self.ok = false;
+            }
+        }
+    }
+
+    fn extend_span(&mut self, anchor: &SourceAnchor) {
+        if self.first_start.is_none() {
+            self.first_start = Some(anchor.range().start());
+        }
+        self.last_end = Some(anchor.range().end());
+    }
+
+    /// Resolves the final qualification verdict once the top-level block
+    /// opener has been reached. A genuinely empty prelude (no top-level
+    /// token observed at all) is always the valid selector-less `@page`
+    /// case, regardless of `ok`'s initial value.
+    fn finish(&self) -> PageQualification {
+        if !self.any_top_level_seen {
+            return PageQualification::Qualified {
+                selector_list: None,
+            };
+        }
+        if !self.ok || self.pending_pseudo_colon || !self.current_member_component_seen {
+            return PageQualification::Unqualified;
+        }
+        match (self.first_start, self.last_end) {
+            (Some(start), Some(end)) => PageQualification::Qualified {
+                selector_list: Some((start, end)),
+            },
+            _ => PageQualification::Unqualified,
+        }
+    }
+}
+
 /// One entry in the bounded iterative active-context stack (#167): parser
 /// execution metadata required to continue a structurally recognized
 /// qualified-rule block's direct content and to resume its parent once it
@@ -696,6 +906,9 @@ struct ActiveContextFrame {
     /// record-construction time (#169); never part of the finalized
     /// [`CssParserContextRecord`].
     descriptor_decoded_property_name: Option<String>,
+    /// The exact authored `<page-selector-list>` envelope, present only for
+    /// a `PageRuleBlock` frame with a non-empty prelude (#170).
+    page_selector_list: Option<SourceAnchor>,
     /// This frame's own nearest qualified-rule ancestor (#141/#168): `None`
     /// at the implicit stylesheet root's direct children, `Some(parent_id)`
     /// when the direct parent is a `QualifiedRuleBlock`, and inherited from
@@ -780,6 +993,8 @@ struct Checkpoint {
     cursor: CssParserCursor,
     occurrences_len: usize,
     descriptor_occurrences_len: usize,
+    page_occurrences_len: usize,
+    page_margin_occurrences_len: usize,
     diagnostics_len: usize,
     recovery_len: usize,
     unsupported_len: usize,
@@ -803,6 +1018,13 @@ struct Producer<'a> {
     /// never merged into that vector: the two occurrence meanings remain
     /// distinct end to end.
     descriptor_occurrences: Vec<CssDescriptorOccurrence>,
+    /// Retained #170 page-declaration occurrences, counted against the
+    /// shared `DeclarationOccurrences` aggregate cap alongside `occurrences`
+    /// and `descriptor_occurrences` but never merged into either vector.
+    page_occurrences: Vec<CssPageDeclarationOccurrence>,
+    /// Retained #170 page-margin-declaration occurrences, counted against
+    /// the same shared aggregate cap.
+    page_margin_occurrences: Vec<CssPageMarginDeclarationOccurrence>,
     diagnostics: Vec<CssParserDiagnostic>,
     recovery: Vec<CssParserRecoveryEvidence>,
     unsupported: Vec<CssParserUnsupportedRegion>,
@@ -844,6 +1066,8 @@ impl<'a> Producer<'a> {
             committed_pos: 0,
             occurrences: Vec::new(),
             descriptor_occurrences: Vec::new(),
+            page_occurrences: Vec::new(),
+            page_margin_occurrences: Vec::new(),
             diagnostics: Vec::new(),
             recovery: Vec::new(),
             unsupported: Vec::new(),
@@ -987,6 +1211,8 @@ impl<'a> Producer<'a> {
             cursor: self.cursor.checkpoint(),
             occurrences_len: self.occurrences.len(),
             descriptor_occurrences_len: self.descriptor_occurrences.len(),
+            page_occurrences_len: self.page_occurrences.len(),
+            page_margin_occurrences_len: self.page_margin_occurrences.len(),
             diagnostics_len: self.diagnostics.len(),
             recovery_len: self.recovery.len(),
             unsupported_len: self.unsupported.len(),
@@ -1017,6 +1243,10 @@ impl<'a> Producer<'a> {
         self.occurrences.truncate(checkpoint.occurrences_len);
         self.descriptor_occurrences
             .truncate(checkpoint.descriptor_occurrences_len);
+        self.page_occurrences
+            .truncate(checkpoint.page_occurrences_len);
+        self.page_margin_occurrences
+            .truncate(checkpoint.page_margin_occurrences_len);
         self.diagnostics.truncate(checkpoint.diagnostics_len);
         self.recovery.truncate(checkpoint.recovery_len);
         self.unsupported.truncate(checkpoint.unsupported_len);
@@ -1099,6 +1329,10 @@ impl<'a> Producer<'a> {
                             let item_start = anchor.range().start();
                             if self.innermost_is_descriptor_context() {
                                 self.handle_descriptor_block_item(item_start)?;
+                            } else if self.innermost_is_page_context() {
+                                self.handle_page_block_item(item_start)?;
+                            } else if self.innermost_is_page_margin_context() {
+                                self.handle_page_margin_block_item(item_start)?;
                             } else {
                                 self.handle_block_item(item_start)?;
                             }
@@ -1162,6 +1396,18 @@ impl<'a> Producer<'a> {
                             CssParserInvariantViolation::DescriptorContextCannotBeNested,
                         ));
                     }
+                    if matches!(identity, NewContextIdentity::PageRuleBlock { .. }) {
+                        return Err(invariant_flow(
+                            CssParserInvariantViolation::PageContextCannotBeNested,
+                        ));
+                    }
+                    if matches!(identity, NewContextIdentity::PageMarginRuleBlock { .. })
+                        && !matches!(frame.kind, CssParserContextKind::PageRuleBlock)
+                    {
+                        return Err(invariant_flow(
+                            CssParserInvariantViolation::PageMarginContextRequiresPageParent,
+                        ));
+                    }
                     frame.run_open = false;
                     let ordinal = frame.next_item_ordinal;
                     frame.next_item_ordinal += 1;
@@ -1173,12 +1419,22 @@ impl<'a> Producer<'a> {
                                 CssParserInvariantViolation::DescriptorContextCannotHaveChildren,
                             ));
                         }
+                        // A `PageMarginRuleBlock` child's nearest qualified
+                        // ancestor is always `None`: #170 never infers Page
+                        // semantic qualification from group-rule ancestry.
+                        CssParserContextKind::PageRuleBlock => None,
+                        CssParserContextKind::PageMarginRuleBlock(_) => {
+                            return Err(invariant_flow(
+                                CssParserInvariantViolation::PageMarginContextCannotHaveChildren,
+                            ));
+                        }
                     };
                     (Some(frame.id), ordinal, nearest)
                 }
                 None => match identity {
                     NewContextIdentity::QualifiedRuleBlock
-                    | NewContextIdentity::DescriptorRuleBlock { .. } => {
+                    | NewContextIdentity::DescriptorRuleBlock { .. }
+                    | NewContextIdentity::PageRuleBlock { .. } => {
                         let ordinal = self.root_next_item_ordinal;
                         self.root_next_item_ordinal += 1;
                         (None, ordinal, None)
@@ -1186,6 +1442,11 @@ impl<'a> Producer<'a> {
                     NewContextIdentity::GroupRuleBlock { .. } => {
                         return Err(invariant_flow(
                             CssParserInvariantViolation::GroupContextCannotBeTopLevel,
+                        ));
+                    }
+                    NewContextIdentity::PageMarginRuleBlock { .. } => {
+                        return Err(invariant_flow(
+                            CssParserInvariantViolation::PageMarginContextCannotBeTopLevel,
                         ));
                     }
                 },
@@ -1209,9 +1470,11 @@ impl<'a> Producer<'a> {
             decoded_at_keyword,
             descriptor_property_name,
             descriptor_decoded_property_name,
+            page_selector_list,
         ) = match identity {
             NewContextIdentity::QualifiedRuleBlock => (
                 CssParserContextKind::QualifiedRuleBlock,
+                None,
                 None,
                 None,
                 None,
@@ -1227,6 +1490,7 @@ impl<'a> Producer<'a> {
                 Some(decoded_at_keyword),
                 None,
                 None,
+                None,
             ),
             NewContextIdentity::DescriptorRuleBlock {
                 kind,
@@ -1240,6 +1504,31 @@ impl<'a> Producer<'a> {
                 Some(decoded_at_keyword),
                 property_name,
                 decoded_property_name,
+                None,
+            ),
+            NewContextIdentity::PageRuleBlock {
+                at_keyword,
+                decoded_at_keyword,
+                page_selector_list,
+            } => (
+                CssParserContextKind::PageRuleBlock,
+                Some(at_keyword),
+                Some(decoded_at_keyword),
+                None,
+                None,
+                page_selector_list,
+            ),
+            NewContextIdentity::PageMarginRuleBlock {
+                kind,
+                at_keyword,
+                decoded_at_keyword,
+            } => (
+                CssParserContextKind::PageMarginRuleBlock(kind),
+                Some(at_keyword),
+                Some(decoded_at_keyword),
+                None,
+                None,
+                None,
             ),
         };
 
@@ -1252,6 +1541,7 @@ impl<'a> Producer<'a> {
             decoded_at_keyword,
             descriptor_property_name,
             descriptor_decoded_property_name,
+            page_selector_list,
             nearest_qualified_ancestor,
             header,
             block_opener,
@@ -1350,6 +1640,71 @@ impl<'a> Producer<'a> {
                 )
                 .map_err(Into::into)
             }
+            CssParserContextKind::PageRuleBlock => {
+                if frame.parent.is_some() {
+                    return Err(CssParserRunError::InternalInvariantFailure(
+                        CssParserInvariantViolation::PageContextCannotBeNested,
+                    ));
+                }
+                let at_keyword =
+                    frame
+                        .at_keyword
+                        .ok_or(CssParserRunError::InternalInvariantFailure(
+                            CssParserInvariantViolation::MissingPageContextEvidence,
+                        ))?;
+                let decoded =
+                    frame
+                        .decoded_at_keyword
+                        .ok_or(CssParserRunError::InternalInvariantFailure(
+                            CssParserInvariantViolation::MissingPageContextEvidence,
+                        ))?;
+                CssParserContextRecord::new_page_rule_block(
+                    self.source_text,
+                    frame.id,
+                    frame.item_ordinal,
+                    at_keyword,
+                    &decoded,
+                    frame.page_selector_list,
+                    frame.header,
+                    frame.block_opener,
+                    body,
+                    termination,
+                )
+                .map_err(Into::into)
+            }
+            CssParserContextKind::PageMarginRuleBlock(margin_kind) => {
+                let parent = frame
+                    .parent
+                    .ok_or(CssParserRunError::InternalInvariantFailure(
+                        CssParserInvariantViolation::MissingPageMarginContextEvidence,
+                    ))?;
+                let at_keyword =
+                    frame
+                        .at_keyword
+                        .ok_or(CssParserRunError::InternalInvariantFailure(
+                            CssParserInvariantViolation::MissingPageMarginContextEvidence,
+                        ))?;
+                let decoded =
+                    frame
+                        .decoded_at_keyword
+                        .ok_or(CssParserRunError::InternalInvariantFailure(
+                            CssParserInvariantViolation::MissingPageMarginContextEvidence,
+                        ))?;
+                CssParserContextRecord::new_page_margin_rule_block(
+                    self.source_text,
+                    frame.id,
+                    parent,
+                    frame.item_ordinal,
+                    margin_kind,
+                    at_keyword,
+                    &decoded,
+                    frame.header,
+                    frame.block_opener,
+                    body,
+                    termination,
+                )
+                .map_err(Into::into)
+            }
         }
     }
 
@@ -1418,12 +1773,31 @@ impl<'a> Producer<'a> {
         at_keyword: SourceAnchor,
         decoded_at_keyword: String,
     ) -> Result<(), Flow> {
-        let Some(candidate_kind) =
+        if let Some(candidate_kind) =
             CssParserDescriptorRuleKind::from_decoded_at_keyword(&decoded_at_keyword)
-        else {
-            return self.consume_top_level_at_rule(at_keyword);
-        };
+        {
+            return self.handle_top_level_descriptor_candidate(
+                at_keyword,
+                decoded_at_keyword,
+                candidate_kind,
+            );
+        }
+        if decoded_at_keyword.eq_ignore_ascii_case("page") {
+            return self.handle_top_level_page_candidate(at_keyword, decoded_at_keyword);
+        }
+        self.consume_top_level_at_rule(at_keyword)
+    }
 
+    /// Qualification-aware root `@font-face`/`@property` dispatch (#169),
+    /// extracted unchanged from [`Self::handle_top_level_at_rule`] so #170
+    /// can add its own `@page` branch alongside it without widening this
+    /// function into a generic at-rule registry.
+    fn handle_top_level_descriptor_candidate(
+        &mut self,
+        at_keyword: SourceAnchor,
+        decoded_at_keyword: String,
+        candidate_kind: CssParserDescriptorRuleKind,
+    ) -> Result<(), Flow> {
         match self.scan_descriptor_candidate_terminator(candidate_kind)? {
             DescriptorCandidateTerminator::Block {
                 block_opener,
@@ -1465,6 +1839,105 @@ impl<'a> Producer<'a> {
             DescriptorCandidateTerminator::TrueEndOfInputWithoutBlock => {
                 let len = self.source_text.as_str().len();
                 self.commit_top_level_at_rule_unsupported(at_keyword, len)
+            }
+        }
+    }
+
+    /// Qualification-aware root `@page` dispatch (#170): structurally scans
+    /// exactly one `@page`-candidate at-rule's prelude and either enters a
+    /// `PageRuleBlock` context (only when the bounded `<page-selector-list>`
+    /// subset qualifies and a block follows) or falls through to the same
+    /// top-level-unsupported evidence used by every other disqualified or
+    /// unrecognized at-rule (Amendment B: qualification failure never
+    /// creates a distinct persistent validity taxonomy).
+    fn handle_top_level_page_candidate(
+        &mut self,
+        at_keyword: SourceAnchor,
+        decoded_at_keyword: String,
+    ) -> Result<(), Flow> {
+        match self.scan_page_candidate_terminator()? {
+            PageCandidateTerminator::Block {
+                block_opener,
+                qualification: PageQualification::Qualified { selector_list },
+            } => {
+                self.committed_pos = block_opener.range().end();
+                let page_selector_list = match selector_list {
+                    Some((start, end)) => Some(
+                        self.source_text
+                            .anchor(start, end)
+                            .map_err(|error| Flow::Invariant(error.into()))?,
+                    ),
+                    None => None,
+                };
+                self.enter_context(
+                    at_keyword.range().start(),
+                    block_opener,
+                    NewContextIdentity::PageRuleBlock {
+                        at_keyword,
+                        decoded_at_keyword,
+                        page_selector_list,
+                    },
+                )
+            }
+            PageCandidateTerminator::Block {
+                qualification: PageQualification::Unqualified,
+                ..
+            } => match self.consume_remainder_until_enclosing_right_curly()? {
+                RemainderOutcome::EnclosingRightCurly { end, .. } => {
+                    self.cursor.advance();
+                    self.commit_top_level_at_rule_unsupported(at_keyword, end)
+                }
+                RemainderOutcome::TrueEndOfInput => {
+                    let len = self.source_text.as_str().len();
+                    self.commit_top_level_at_rule_unsupported(at_keyword, len)
+                }
+            },
+            PageCandidateTerminator::Semicolon { semicolon } => {
+                self.commit_top_level_at_rule_unsupported(at_keyword, semicolon.range().end())
+            }
+            PageCandidateTerminator::TrueEndOfInputWithoutBlock => {
+                let len = self.source_text.as_str().len();
+                self.commit_top_level_at_rule_unsupported(at_keyword, len)
+            }
+        }
+    }
+
+    /// Structurally scans exactly one root-level #170 `@page`-candidate
+    /// at-rule's prelude, using the existing bounded component-balancing
+    /// machinery, and reports how it ends: a top-level block opener (with
+    /// the resolved [`PageQualification`]), an authored top-level semicolon,
+    /// or true end of input. Never parses a source substring: qualification
+    /// is decided purely from the already observed lexical-item stream via
+    /// [`PageSelectorListQualifier`]. Unlike
+    /// [`Self::scan_descriptor_candidate_terminator`], every token including
+    /// whitespace is fed to the qualifier: intra-selector adjacency is
+    /// grammar-significant for `<page-selector-list>`.
+    fn scan_page_candidate_terminator(&mut self) -> Result<PageCandidateTerminator, Flow> {
+        self.component_frames.clear();
+        let mut qualifier = PageSelectorListQualifier::new();
+        loop {
+            match self.next_semantic()? {
+                ParserPosition::SemanticToken { anchor, kind } => {
+                    let depth_before = self.component_frames.len();
+                    if depth_before == 0 && matches!(kind, ObservedKind::Semicolon) {
+                        self.cursor.advance();
+                        return Ok(PageCandidateTerminator::Semicolon { semicolon: anchor });
+                    }
+                    if depth_before == 0 && matches!(kind, ObservedKind::LeftCurlyBracket) {
+                        let qualification = qualifier.finish();
+                        self.cursor.advance();
+                        return Ok(PageCandidateTerminator::Block {
+                            block_opener: anchor,
+                            qualification,
+                        });
+                    }
+                    qualifier.observe(depth_before, &anchor, &kind);
+                    self.consume_and_balance(&kind)?;
+                }
+                ParserPosition::TrueEndOfInput => {
+                    return Ok(PageCandidateTerminator::TrueEndOfInputWithoutBlock);
+                }
+                ParserPosition::UpstreamTokenizerTerminal => return Err(Flow::UpstreamIncomplete),
             }
         }
     }
@@ -1770,6 +2243,28 @@ impl<'a> Producer<'a> {
         )
     }
 
+    /// Whether the innermost active context is a #170 `PageRuleBlock`: its
+    /// body uses declaration-list dispatch
+    /// ([`Self::handle_page_block_item`]), never the ordinary
+    /// declaration-vs-qualified-rule block-content transaction.
+    fn innermost_is_page_context(&self) -> bool {
+        matches!(
+            self.active_contexts.last().map(|frame| frame.kind),
+            Some(CssParserContextKind::PageRuleBlock)
+        )
+    }
+
+    /// Whether the innermost active context is a #170 `PageMarginRuleBlock`:
+    /// its body uses declaration-list dispatch
+    /// ([`Self::handle_page_margin_block_item`]), never the ordinary
+    /// declaration-vs-qualified-rule block-content transaction.
+    fn innermost_is_page_margin_context(&self) -> bool {
+        matches!(
+            self.active_contexts.last().map(|frame| frame.kind),
+            Some(CssParserContextKind::PageMarginRuleBlock(_))
+        )
+    }
+
     /// Resolves one block-content item: the declaration-vs-qualified-rule
     /// transaction (#139), now extended so a structurally recognized nested
     /// qualified rule enters a real child context instead of falling back
@@ -1984,7 +2479,7 @@ impl<'a> Producer<'a> {
             }
             DeclarationOutcome::NotRecognized => {
                 self.rollback_checkpoint()?;
-                match self.scan_descriptor_malformed_item()? {
+                match self.scan_declaration_list_malformed_item()? {
                     FallbackOutcome::NestedRuleTrigger => Err(invariant_flow(
                         CssParserInvariantViolation::UnreachableDescriptorNestedRuleTrigger,
                     )),
@@ -2021,17 +2516,144 @@ impl<'a> Producer<'a> {
         }
     }
 
-    /// Scans a malformed #169 descriptor-block item after declaration
-    /// recognition has failed and rolled back, reporting the same
-    /// [`FallbackOutcome`] terminal shapes as
+    /// Resolves one #170 `PageRuleBlock` block-content item: declaration-list
+    /// dispatch, mirroring [`Self::handle_descriptor_block_item`]. A
+    /// recognized declaration-shaped item becomes a
+    /// [`CssPageDeclarationOccurrence`], never a [`CssDeclarationOccurrence`]
+    /// or [`CssDescriptorOccurrence`]. Declaration-recognition failure never
+    /// falls back to a child `QualifiedRuleBlock`: qualified-rule-shaped
+    /// content is malformed/recovery evidence here (section 7), not a nested
+    /// context. A qualifying page-margin at-rule and any other nested
+    /// at-rule are handled separately, before this function is ever called
+    /// (see `execute`'s at-keyword dispatch branch).
+    fn handle_page_block_item(&mut self, item_start: usize) -> Result<(), Flow> {
+        self.begin_checkpoint()?;
+        let outcome = match self.try_declaration() {
+            Ok(outcome) => outcome,
+            Err(flow) => return Err(self.rollback_checkpoint_preserving_flow(flow)),
+        };
+        match outcome {
+            DeclarationOutcome::Recognized(parts) => {
+                if let Err(flow) = self.commit_page_declaration(parts) {
+                    return Err(self.rollback_checkpoint_preserving_flow(flow));
+                }
+                self.commit_checkpoint()?;
+                Ok(())
+            }
+            DeclarationOutcome::NotRecognized => {
+                self.rollback_checkpoint()?;
+                match self.scan_declaration_list_malformed_item()? {
+                    FallbackOutcome::NestedRuleTrigger => Err(invariant_flow(
+                        CssParserInvariantViolation::UnreachablePageNestedRuleTrigger,
+                    )),
+                    FallbackOutcome::MalformedEndedAtSemicolon { semicolon } => {
+                        let region_end = semicolon.range().end();
+                        self.commit_malformed_recovery(
+                            item_start,
+                            region_end,
+                            CssParserRecoveryTermination::AuthoredSemicolon { semicolon },
+                        )
+                    }
+                    FallbackOutcome::MalformedEndedAtEnclosingBlock { right_curly } => {
+                        let region_end = right_curly.range().start();
+                        self.commit_malformed_recovery(
+                            item_start,
+                            region_end,
+                            CssParserRecoveryTermination::EnclosingBlockEnd { right_curly },
+                        )
+                    }
+                    FallbackOutcome::MalformedEndedAtTrueEof => {
+                        let len = self.source_text.as_str().len();
+                        let terminal = self
+                            .source_text
+                            .anchor(len, len)
+                            .map_err(|error| Flow::Invariant(error.into()))?;
+                        self.commit_malformed_recovery(
+                            item_start,
+                            len,
+                            CssParserRecoveryTermination::EndOfInput { terminal },
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    /// Resolves one #170 `PageMarginRuleBlock` block-content item:
+    /// declaration-list dispatch, mirroring [`Self::handle_page_block_item`].
+    /// A recognized declaration-shaped item becomes a
+    /// [`CssPageMarginDeclarationOccurrence`]; `PageMarginRuleBlock` never
+    /// has children (section 7), so a qualified-rule-shaped fragment is
+    /// always malformed/recovery evidence here.
+    fn handle_page_margin_block_item(&mut self, item_start: usize) -> Result<(), Flow> {
+        self.begin_checkpoint()?;
+        let outcome = match self.try_declaration() {
+            Ok(outcome) => outcome,
+            Err(flow) => return Err(self.rollback_checkpoint_preserving_flow(flow)),
+        };
+        match outcome {
+            DeclarationOutcome::Recognized(parts) => {
+                if let Err(flow) = self.commit_page_margin_declaration(parts) {
+                    return Err(self.rollback_checkpoint_preserving_flow(flow));
+                }
+                self.commit_checkpoint()?;
+                Ok(())
+            }
+            DeclarationOutcome::NotRecognized => {
+                self.rollback_checkpoint()?;
+                match self.scan_declaration_list_malformed_item()? {
+                    FallbackOutcome::NestedRuleTrigger => Err(invariant_flow(
+                        CssParserInvariantViolation::UnreachablePageMarginNestedRuleTrigger,
+                    )),
+                    FallbackOutcome::MalformedEndedAtSemicolon { semicolon } => {
+                        let region_end = semicolon.range().end();
+                        self.commit_malformed_recovery(
+                            item_start,
+                            region_end,
+                            CssParserRecoveryTermination::AuthoredSemicolon { semicolon },
+                        )
+                    }
+                    FallbackOutcome::MalformedEndedAtEnclosingBlock { right_curly } => {
+                        let region_end = right_curly.range().start();
+                        self.commit_malformed_recovery(
+                            item_start,
+                            region_end,
+                            CssParserRecoveryTermination::EnclosingBlockEnd { right_curly },
+                        )
+                    }
+                    FallbackOutcome::MalformedEndedAtTrueEof => {
+                        let len = self.source_text.as_str().len();
+                        let terminal = self
+                            .source_text
+                            .anchor(len, len)
+                            .map_err(|error| Flow::Invariant(error.into()))?;
+                        self.commit_malformed_recovery(
+                            item_start,
+                            len,
+                            CssParserRecoveryTermination::EndOfInput { terminal },
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    /// Scans a malformed declaration-list-shaped block item after
+    /// declaration recognition has failed and rolled back, reporting the
+    /// same [`FallbackOutcome`] terminal shapes as
     /// [`Self::scan_qualified_rule_fallback`] except it never produces
     /// `NestedRuleTrigger`: a top-level `{` is not a nested-rule trigger
     /// here, since `<declaration-list>` admits no child rule. Instead it is
     /// balanced through like any other component (a qualified-rule-shaped
     /// fragment is malformed content, not a context boundary), and scanning
     /// continues for the item's real terminator (`;`, the enclosing `}`, or
-    /// true end of input).
-    fn scan_descriptor_malformed_item(&mut self) -> Result<FallbackOutcome, Flow> {
+    /// true end of input). Shared, low-level scanner reused by
+    /// [`Self::handle_descriptor_block_item`] (#169),
+    /// [`Self::handle_page_block_item`], and
+    /// [`Self::handle_page_margin_block_item`] (#170): never a generic
+    /// `DeclarationContainer` semantic framework, just one bounded iterative
+    /// scan shared by structurally identical declaration-list bodies.
+    fn scan_declaration_list_malformed_item(&mut self) -> Result<FallbackOutcome, Flow> {
         self.component_frames.clear();
         loop {
             match self.next_semantic()? {
@@ -2063,12 +2685,13 @@ impl<'a> Producer<'a> {
         }
     }
 
-    /// Nested at-keyword dispatch (#168): structurally scans exactly one
-    /// at-rule, then either enters a supported `GroupRuleBlock` context or
-    /// commits exactly one context-aware `NestedAtRule` unsupported direct
-    /// item, resuming the same parent afterward. Supersedes #167's
-    /// whole-remainder outcome for ordinary nested-at-rule production; never
-    /// consumes more than one at-rule regardless of qualification.
+    /// Nested at-keyword dispatch (#168/#170): structurally scans exactly
+    /// one at-rule, then either enters a supported `GroupRuleBlock` or
+    /// `PageMarginRuleBlock` context or commits exactly one context-aware
+    /// `NestedAtRule` unsupported direct item, resuming the same parent
+    /// afterward. Supersedes #167's whole-remainder outcome for ordinary
+    /// nested-at-rule production; never consumes more than one at-rule
+    /// regardless of qualification.
     fn handle_nested_at_rule(
         &mut self,
         at_keyword: SourceAnchor,
@@ -2078,12 +2701,24 @@ impl<'a> Producer<'a> {
         // descriptor context's body never qualifies a nested at-rule into a
         // group-rule context -- not even a registry member like `@media` --
         // regardless of its own prelude shape. It always becomes one
-        // explicit unsupported direct item.
-        let candidate_kind = if self.innermost_is_descriptor_context() {
-            None
-        } else {
-            CssParserGroupRuleKind::from_decoded_at_keyword(&decoded_at_keyword)
-        };
+        // explicit unsupported direct item. #170: the same holds for a
+        // `PageMarginRuleBlock` body (also declaration-list-shaped).
+        let candidate_kind =
+            if self.innermost_is_descriptor_context() || self.innermost_is_page_margin_context() {
+                None
+            } else if self.innermost_is_page_context() {
+                // #170: inside a `PageRuleBlock`, only a qualifying finite
+                // page-margin rule may become a child context; `@media` and
+                // every other name -- including the registry #168 group-rule
+                // names -- remain one explicit unsupported direct item. Page
+                // semantic qualification is never inferred from group-rule
+                // ancestry.
+                CssParserPageMarginRuleKind::from_decoded_at_keyword(&decoded_at_keyword)
+                    .map(NestedCandidateKind::PageMargin)
+            } else {
+                CssParserGroupRuleKind::from_decoded_at_keyword(&decoded_at_keyword)
+                    .map(NestedCandidateKind::Group)
+            };
         match self.scan_nested_at_rule_terminator(candidate_kind)? {
             NestedAtRuleTerminator::Block {
                 block_opener,
@@ -2091,15 +2726,26 @@ impl<'a> Producer<'a> {
             } => {
                 if let (Some(kind), true) = (candidate_kind, qualifies) {
                     self.committed_pos = block_opener.range().end();
-                    self.enter_context(
-                        at_keyword.range().start(),
-                        block_opener,
-                        NewContextIdentity::GroupRuleBlock {
-                            kind,
-                            at_keyword,
-                            decoded_at_keyword,
-                        },
-                    )
+                    match kind {
+                        NestedCandidateKind::Group(group_kind) => self.enter_context(
+                            at_keyword.range().start(),
+                            block_opener,
+                            NewContextIdentity::GroupRuleBlock {
+                                kind: group_kind,
+                                at_keyword,
+                                decoded_at_keyword,
+                            },
+                        ),
+                        NestedCandidateKind::PageMargin(margin_kind) => self.enter_context(
+                            at_keyword.range().start(),
+                            block_opener,
+                            NewContextIdentity::PageMarginRuleBlock {
+                                kind: margin_kind,
+                                at_keyword,
+                                decoded_at_keyword,
+                            },
+                        ),
+                    }
                 } else {
                     match self.consume_remainder_until_enclosing_right_curly()? {
                         RemainderOutcome::EnclosingRightCurly { end, .. } => {
@@ -2139,7 +2785,7 @@ impl<'a> Producer<'a> {
     /// observed lexical-item stream via `PreludeQualifier`.
     fn scan_nested_at_rule_terminator(
         &mut self,
-        candidate_kind: Option<CssParserGroupRuleKind>,
+        candidate_kind: Option<NestedCandidateKind>,
     ) -> Result<NestedAtRuleTerminator, Flow> {
         self.component_frames.clear();
         let mut qualifier = candidate_kind.map(PreludeQualifier::new_for);
@@ -2328,18 +2974,29 @@ impl<'a> Producer<'a> {
         }))
     }
 
+    /// The #169/#170 `DeclarationOccurrences` aggregate cap: ordinary
+    /// declarations, descriptor occurrences, page declarations, and
+    /// page-margin declarations all share this one resource dimension
+    /// (section 6/13: exactly nine parser resource dimensions total, no
+    /// Page-specific budget).
+    fn declaration_occurrences_aggregate_len(&self) -> usize {
+        self.occurrences.len()
+            + self.descriptor_occurrences.len()
+            + self.page_occurrences.len()
+            + self.page_margin_occurrences.len()
+    }
+
     /// Commits a recognized declaration into the innermost active context,
     /// computing its [`CssDeclarationPlacement`] from that context's current
     /// item/run counters (#167). The `DeclarationOccurrences` preflight
     /// happens before any counter mutation, so a refusal here never
     /// advances the owning context's item or run ordinal. The preflight is
-    /// against the #169 aggregate cap shared with descriptor occurrences
-    /// (`self.occurrences.len() + self.descriptor_occurrences.len()`), never
-    /// `self.occurrences.len()` alone.
+    /// against the #169/#170 aggregate cap shared with descriptor, page, and
+    /// page-margin occurrences, never `self.occurrences.len()` alone.
     fn commit_declaration(&mut self, parts: DeclarationParts) -> Result<(), Flow> {
         let prospective = checked_resource_add(
             CssParserResourceKind::DeclarationOccurrences,
-            self.occurrences.len() + self.descriptor_occurrences.len(),
+            self.declaration_occurrences_aggregate_len(),
             1,
         )?;
         self.check_limit(CssParserResourceKind::DeclarationOccurrences, prospective)?;
@@ -2393,7 +3050,7 @@ impl<'a> Producer<'a> {
     fn commit_descriptor_occurrence(&mut self, parts: DeclarationParts) -> Result<(), Flow> {
         let prospective = checked_resource_add(
             CssParserResourceKind::DeclarationOccurrences,
-            self.occurrences.len() + self.descriptor_occurrences.len(),
+            self.declaration_occurrences_aggregate_len(),
             1,
         )?;
         self.check_limit(CssParserResourceKind::DeclarationOccurrences, prospective)?;
@@ -2421,6 +3078,102 @@ impl<'a> Producer<'a> {
 
         let end = occurrence.complete().range().end();
         self.descriptor_occurrences.push(occurrence);
+
+        let frame = self
+            .active_contexts
+            .last_mut()
+            .ok_or_else(|| invariant_flow(CssParserInvariantViolation::NoActiveContextToClose))?;
+        frame.next_item_ordinal += 1;
+        self.committed_pos = end;
+        Ok(())
+    }
+
+    /// Commits a recognized #170 page-declaration occurrence into the
+    /// innermost active `PageRuleBlock` context. Follows the same
+    /// commit-honest order as [`Self::commit_descriptor_occurrence`]: the
+    /// `DeclarationOccurrences` aggregate preflight happens first, then the
+    /// occurrence is constructed and pushed, and only then does the owning
+    /// context's direct-item ordinal advance. No declaration-run ordinal is
+    /// opened (Amendment A).
+    fn commit_page_declaration(&mut self, parts: DeclarationParts) -> Result<(), Flow> {
+        let prospective = checked_resource_add(
+            CssParserResourceKind::DeclarationOccurrences,
+            self.declaration_occurrences_aggregate_len(),
+            1,
+        )?;
+        self.check_limit(CssParserResourceKind::DeclarationOccurrences, prospective)?;
+
+        let frame = self.active_contexts.last().ok_or_else(|| {
+            invariant_flow(CssParserInvariantViolation::DeclarationOutsideActiveContext)
+        })?;
+        let context_id = frame.id;
+        let item_ordinal = frame.next_item_ordinal;
+
+        let placement = CssPageDeclarationPlacement::new(
+            context_id,
+            CssParserDirectItemOrdinal::new(item_ordinal),
+        );
+
+        let occurrence = CssPageDeclarationOccurrence::new(
+            self.source_text,
+            parts.complete,
+            parts.property_name,
+            parts.colon,
+            parts.value,
+            parts.priority,
+            parts.termination,
+            placement,
+        )
+        .map_err(|error| Flow::Invariant(error.into()))?;
+
+        let end = occurrence.complete().range().end();
+        self.page_occurrences.push(occurrence);
+
+        let frame = self
+            .active_contexts
+            .last_mut()
+            .ok_or_else(|| invariant_flow(CssParserInvariantViolation::NoActiveContextToClose))?;
+        frame.next_item_ordinal += 1;
+        self.committed_pos = end;
+        Ok(())
+    }
+
+    /// Commits a recognized #170 page-margin-declaration occurrence into the
+    /// innermost active `PageMarginRuleBlock` context, mirroring
+    /// [`Self::commit_page_declaration`].
+    fn commit_page_margin_declaration(&mut self, parts: DeclarationParts) -> Result<(), Flow> {
+        let prospective = checked_resource_add(
+            CssParserResourceKind::DeclarationOccurrences,
+            self.declaration_occurrences_aggregate_len(),
+            1,
+        )?;
+        self.check_limit(CssParserResourceKind::DeclarationOccurrences, prospective)?;
+
+        let frame = self.active_contexts.last().ok_or_else(|| {
+            invariant_flow(CssParserInvariantViolation::DeclarationOutsideActiveContext)
+        })?;
+        let context_id = frame.id;
+        let item_ordinal = frame.next_item_ordinal;
+
+        let placement = CssPageMarginDeclarationPlacement::new(
+            context_id,
+            CssParserDirectItemOrdinal::new(item_ordinal),
+        );
+
+        let occurrence = CssPageMarginDeclarationOccurrence::new(
+            self.source_text,
+            parts.complete,
+            parts.property_name,
+            parts.colon,
+            parts.value,
+            parts.priority,
+            parts.termination,
+            placement,
+        )
+        .map_err(|error| Flow::Invariant(error.into()))?;
+
+        let end = occurrence.complete().range().end();
+        self.page_margin_occurrences.push(occurrence);
 
         let frame = self
             .active_contexts
@@ -2675,6 +3428,8 @@ impl<'a> Producer<'a> {
             self.upstream,
             self.occurrences,
             self.descriptor_occurrences,
+            self.page_occurrences,
+            self.page_margin_occurrences,
             self.diagnostics,
             self.recovery,
             self.unsupported,
@@ -2702,6 +3457,8 @@ impl<'a> Producer<'a> {
             self.upstream,
             self.occurrences,
             self.descriptor_occurrences,
+            self.page_occurrences,
+            self.page_margin_occurrences,
             self.diagnostics,
             self.recovery,
             self.unsupported,
@@ -2741,6 +3498,8 @@ impl<'a> Producer<'a> {
             self.upstream,
             self.occurrences,
             self.descriptor_occurrences,
+            self.page_occurrences,
+            self.page_margin_occurrences,
             self.diagnostics,
             self.recovery,
             self.unsupported,
@@ -2754,15 +3513,15 @@ impl<'a> Producer<'a> {
         )
     }
 
-    /// `DeclarationOccurrences` usage is the #169 aggregate cap shared by
-    /// ordinary declaration and descriptor occurrences, never
-    /// `self.occurrences.len()` alone.
+    /// `DeclarationOccurrences` usage is the #169/#170 aggregate cap shared
+    /// by ordinary declaration, descriptor, page, and page-margin
+    /// occurrences, never `self.occurrences.len()` alone.
     fn resource_usage(&self, context_records_len: usize) -> CssParserResourceUsage {
         CssParserResourceUsage::new(
             self.algorithm_steps,
             self.peak_component_depth,
             self.peak_context_depth,
-            self.occurrences.len() + self.descriptor_occurrences.len(),
+            self.declaration_occurrences_aggregate_len(),
             self.diagnostics.len(),
             self.recovery.len(),
             self.unsupported.len(),
@@ -2834,6 +3593,164 @@ mod tests {
 
     fn generous_tokenizer_limits() -> CssTokenizerLimits {
         CssTokenizerLimits::new(1 << 20, 1 << 20, 1 << 16, 1 << 16, 1 << 20, 1 << 20).unwrap()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn smoke_parser_limits() -> CssParserLimits {
+        CssParserLimits::new(
+            1 << 20,
+            1 << 12,
+            1 << 12,
+            1 << 16,
+            1 << 16,
+            1 << 16,
+            1 << 16,
+            1 << 16,
+            1 << 16,
+        )
+        .unwrap()
+    }
+
+    fn smoke_run(text: &str) -> CssParserRunResult {
+        let source_text = source(text);
+        let tokenizer_result = run_tokenizer(&source_text, generous_tokenizer_limits()).unwrap();
+        run(&source_text, tokenizer_result, smoke_parser_limits()).unwrap()
+    }
+
+    #[test]
+    fn smoke_selector_less_page_qualifies() {
+        let result = smoke_run("@page{size:auto;}");
+        assert_eq!(result.context_records().len(), 1);
+        let page = &result.context_records()[0];
+        assert_eq!(page.kind(), CssParserContextKind::PageRuleBlock);
+        assert!(page.parent().is_none());
+        assert!(page.page_selector_list().is_none());
+        assert_eq!(result.page_occurrences().len(), 1);
+        assert_eq!(result.page_occurrences()[0].name().fragment(), "size");
+    }
+
+    #[test]
+    fn smoke_named_pseudo_page_qualifies_with_envelope() {
+        let result = smoke_run("@page foo:first{size:auto;}");
+        let page = &result.context_records()[0];
+        assert_eq!(page.kind(), CssParserContextKind::PageRuleBlock);
+        let selector_list = page.page_selector_list().expect("selector list expected");
+        assert_eq!(selector_list.fragment(), "foo:first");
+    }
+
+    #[test]
+    fn smoke_comment_before_colon_qualifies_whitespace_disqualifies() {
+        let qualifies = smoke_run("@page foo/**/:first{size:auto;}");
+        assert_eq!(qualifies.context_records().len(), 1);
+        assert_eq!(
+            qualifies.context_records()[0].kind(),
+            CssParserContextKind::PageRuleBlock
+        );
+
+        let disqualifies = smoke_run("@page foo/**/ :first{size:auto;}");
+        assert!(disqualifies.context_records().is_empty());
+        assert_eq!(disqualifies.unsupported_regions().len(), 1);
+    }
+
+    #[test]
+    fn smoke_leading_comma_disqualifies() {
+        let result = smoke_run("@page ,foo{size:auto;}");
+        assert!(result.context_records().is_empty());
+        assert_eq!(result.unsupported_regions().len(), 1);
+    }
+
+    #[test]
+    fn smoke_page_margin_child_context() {
+        let result = smoke_run("@page{@top-center{content:'x';}size:auto;}");
+        assert_eq!(result.context_records().len(), 2);
+        let page = &result.context_records()[0];
+        assert_eq!(page.kind(), CssParserContextKind::PageRuleBlock);
+        let margin = &result.context_records()[1];
+        assert_eq!(
+            margin.kind(),
+            CssParserContextKind::PageMarginRuleBlock(CssParserPageMarginRuleKind::TopCenter)
+        );
+        assert_eq!(margin.parent(), Some(page.id()));
+        assert_eq!(result.page_margin_occurrences().len(), 1);
+        assert_eq!(result.page_occurrences().len(), 1);
+        assert_eq!(
+            result.page_occurrences()[0]
+                .placement()
+                .item_ordinal()
+                .value(),
+            1
+        );
+    }
+
+    #[test]
+    fn smoke_page_margin_non_empty_prelude_unsupported() {
+        let result = smoke_run("@page{@top-center foo{content:'x';}}");
+        assert_eq!(result.context_records().len(), 1);
+        assert_eq!(result.unsupported_regions().len(), 1);
+        assert!(result.page_margin_occurrences().is_empty());
+    }
+
+    #[test]
+    fn smoke_top_level_page_margin_unsupported() {
+        let result = smoke_run("@top-center{content:'x';}");
+        assert!(result.context_records().is_empty());
+        assert_eq!(result.unsupported_regions().len(), 1);
+    }
+
+    #[test]
+    fn smoke_nested_page_in_group_remains_unsupported() {
+        // `GroupRuleBlock` requires a real parent context (#168): nest
+        // `@media` inside a qualified rule so it actually qualifies, then
+        // confirm the `@page` nested inside it never becomes a
+        // `PageRuleBlock` (category 23: Page is root-owned in #170).
+        let result = smoke_run("a{@media screen{@page{size:auto;}}}");
+        assert_eq!(result.context_records().len(), 2);
+        assert_eq!(
+            result.context_records()[1].kind(),
+            CssParserContextKind::GroupRuleBlock(CssParserGroupRuleKind::Media)
+        );
+        assert_eq!(result.unsupported_regions().len(), 1);
+        assert!(result.page_occurrences().is_empty());
+        assert!(
+            !result
+                .context_records()
+                .iter()
+                .any(|record| record.kind() == CssParserContextKind::PageRuleBlock)
+        );
+    }
+
+    #[test]
+    fn smoke_all_sixteen_margin_kinds_qualify() {
+        let names = [
+            "top-left-corner",
+            "top-left",
+            "top-center",
+            "top-right",
+            "top-right-corner",
+            "bottom-left-corner",
+            "bottom-left",
+            "bottom-center",
+            "bottom-right",
+            "bottom-right-corner",
+            "left-top",
+            "left-middle",
+            "left-bottom",
+            "right-top",
+            "right-middle",
+            "right-bottom",
+        ];
+        for name in names {
+            let text = format!("@page{{@{name}{{content:'x';}}}}");
+            let result = smoke_run(&text);
+            assert_eq!(result.context_records().len(), 2, "{name}");
+            assert!(
+                matches!(
+                    result.context_records()[1].kind(),
+                    CssParserContextKind::PageMarginRuleBlock(_)
+                ),
+                "{name}"
+            );
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
