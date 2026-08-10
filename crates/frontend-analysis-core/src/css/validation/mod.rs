@@ -21,6 +21,8 @@ mod core_analysis_gate;
 #[cfg(test)]
 mod group_context_contract_tests;
 #[cfg(test)]
+mod group_lifecycle_validation_tests;
+#[cfg(test)]
 mod parser_conformance_tests;
 #[cfg(test)]
 mod parser_contract_tests;
