@@ -53,10 +53,10 @@
 //!
 //! [`CssParserContextKind`] now also carries `GroupRuleBlock`, the finite
 //! nested `@media`/`@supports`/`@container`/`@layer`/`@scope` registry
-//! approved for #168, and `DescriptorRuleBlock`, the finite stylesheet-root-
-//! only `@font-face`/`@property` registry approved for #169; page (#170) and
-//! keyframe (#171) context meanings remain deliberately absent rather than
-//! pre-populated speculatively. Context nesting depth
+//! approved for #168, `DescriptorRuleBlock` for the finite stylesheet-root-
+//! only `@font-face`/`@property` registry approved for #169, Page/PageMargin
+//! contexts from #170, and root-owned Keyframes/KeyframeBlock contexts from
+//! #171. Context nesting depth
 //! ([`super::resource::CssParserResourceKind::PeakContextDepth`]) is tracked
 //! independently of component-value nesting
 //! ([`super::resource::CssParserResourceKind::PeakComponentDepth`]), and
@@ -103,9 +103,9 @@ impl CssParserContextId {
 /// `@container`, `@layer`, and `@scope`, never a generic at-rule/plugin
 /// vocabulary. #169 adds the finite stylesheet-root-only descriptor-rule
 /// registry: exactly `@font-face` and `@property`, never a generic
-/// descriptor-block flag/plugin vocabulary. Later approved Leaves extend this
-/// enum explicitly (#170 page/page-margin contexts, #171 keyframe contexts);
-/// this Leaf does not pre-populate them.
+/// descriptor-block flag/plugin vocabulary. #170 and #171 extend this enum
+/// explicitly with Page/PageMargin and root-owned Keyframes/KeyframeBlock
+/// contexts; no generic special-rule registry is introduced.
 ///
 /// The shared `RuleBlock` suffix is deliberate, load-bearing naming (every
 /// variant is a kind of retained rule-block context); stripping it per
