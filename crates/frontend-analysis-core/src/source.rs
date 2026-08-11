@@ -162,6 +162,17 @@ impl SourceAnchor {
         &self.source.text[self.range.start..self.range.end]
     }
 
+    /// Returns whether `other` retains exactly the same source identity and
+    /// complete immutable byte content.
+    ///
+    /// The normal same-run path is an O(1) pointer-identity check. A detached
+    /// anchor with the same caller-supplied [`SourceId`] is accepted only when
+    /// its complete retained UTF-8 bytes are also equal.
+    pub(crate) fn retains_exact_source(&self, other: &SourceAnchor) -> bool {
+        Rc::ptr_eq(&self.source, &other.source)
+            || (self.source.id == other.source.id && self.source.text == other.source.text)
+    }
+
     /// Projects the validated inclusive start endpoint to a raw coordinate.
     ///
     /// The authoritative byte offset and the derived line index and UTF-8 byte
@@ -388,6 +399,29 @@ mod tests {
         let source = SourceText::new(SourceId::new(21), "same".to_owned());
         let different = SourceText::new(SourceId::new(21), "diff".to_owned());
         assert!(!source.retains_exact_anchor_source(&different.anchor(0, 4).unwrap()));
+    }
+
+    #[test]
+    fn anchor_exact_source_reconciliation_accepts_equal_detached_source() {
+        let source = SourceText::new(SourceId::new(22), "same".to_owned());
+        let shared = source.anchor(0, 1).unwrap();
+        let detached = SourceText::new(SourceId::new(22), "same".to_owned());
+        let detached_anchor = detached.anchor(0, 1).unwrap();
+
+        assert!(shared.retains_exact_source(&detached_anchor));
+    }
+
+    #[test]
+    fn anchor_exact_source_reconciliation_rejects_same_id_different_bytes() {
+        let source = SourceText::new(SourceId::new(23), "same".to_owned());
+        let different = SourceText::new(SourceId::new(23), "diff".to_owned());
+
+        assert!(
+            !source
+                .anchor(0, 1)
+                .unwrap()
+                .retains_exact_source(&different.anchor(0, 1).unwrap())
+        );
     }
 
     #[test]

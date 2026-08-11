@@ -1,0 +1,447 @@
+//! Independent selector-qualification gold model for #182.
+//!
+//! Deliberately does not import `css::selector` production contracts, parser
+//! enums, an external selector parser, CSSOM, or browser output. These
+//! fixtures are hand-authored expectations for the later producer Leaf.
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SelectorGoldGroup {
+    NormalCore,
+    InvalidCore,
+    SourceProvenance,
+    Nesting,
+    GroupAncestry,
+    PseudoProfile,
+    Namespace,
+    Lifecycle,
+    Resource,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)]
+pub(super) enum SelectorGoldMode {
+    NormalSelectorList,
+    NestedRelativeSelectorList,
+    ScopedRelativeSelectorList,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SelectorGoldInvalidReason {
+    EmptySelectorList,
+    UnexpectedComma,
+    UnexpectedCombinator,
+    InvalidAttributeSelector,
+    InvalidNestingSelectorPlacement,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SelectorGoldUnsupportedFeature {
+    IdentifierPseudoClass,
+    FunctionalPseudoClass,
+    PseudoElement,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SelectorGoldIndeterminateReason {
+    MissingNamespaceEnvironment,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SelectorGoldOutcome {
+    Qualified,
+    Invalid(SelectorGoldInvalidReason),
+    Unsupported(SelectorGoldUnsupportedFeature),
+    Indeterminate(SelectorGoldIndeterminateReason),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SelectorGoldLifecycle {
+    StructurallyComplete,
+    TrueEofPartialBody,
+    UpstreamTokenizerIncompleteAfterHeader,
+    ParserResourceLimitAfterHeader,
+    SelectorResourceLimitBeforeObservation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct SelectorGoldRange {
+    pub(super) start: usize,
+    pub(super) end: usize,
+}
+
+impl SelectorGoldRange {
+    const fn new(start: usize, end: usize) -> Self {
+        Self { start, end }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct SelectorGoldFixture {
+    pub(super) id: &'static str,
+    pub(super) group: SelectorGoldGroup,
+    pub(super) source: &'static str,
+    pub(super) header: SelectorGoldRange,
+    pub(super) mode: SelectorGoldMode,
+    pub(super) outcome: SelectorGoldOutcome,
+    pub(super) subject: Option<SelectorGoldRange>,
+    pub(super) lifecycle: SelectorGoldLifecycle,
+}
+
+#[allow(clippy::too_many_arguments)]
+const fn fixture(
+    id: &'static str,
+    group: SelectorGoldGroup,
+    source: &'static str,
+    header: (usize, usize),
+    mode: SelectorGoldMode,
+    outcome: SelectorGoldOutcome,
+    subject: Option<(usize, usize)>,
+    lifecycle: SelectorGoldLifecycle,
+) -> SelectorGoldFixture {
+    SelectorGoldFixture {
+        id,
+        group,
+        source,
+        header: SelectorGoldRange::new(header.0, header.1),
+        mode,
+        outcome,
+        subject: match subject {
+            Some((start, end)) => Some(SelectorGoldRange::new(start, end)),
+            None => None,
+        },
+        lifecycle,
+    }
+}
+
+pub(super) fn fixtures() -> Vec<SelectorGoldFixture> {
+    use SelectorGoldGroup as Group;
+    use SelectorGoldIndeterminateReason as Indeterminate;
+    use SelectorGoldInvalidReason as Invalid;
+    use SelectorGoldLifecycle as Lifecycle;
+    use SelectorGoldMode as Mode;
+    use SelectorGoldOutcome as Outcome;
+    use SelectorGoldUnsupportedFeature as Unsupported;
+
+    vec![
+        fixture(
+            "CSS-SELECTOR-CORE-TYPE-001",
+            Group::NormalCore,
+            "a{}",
+            (0, 1),
+            Mode::NormalSelectorList,
+            Outcome::Qualified,
+            None,
+            Lifecycle::StructurallyComplete,
+        ),
+        fixture(
+            "CSS-SELECTOR-CORE-CLASS-001",
+            Group::NormalCore,
+            ".foo{}",
+            (0, 4),
+            Mode::NormalSelectorList,
+            Outcome::Qualified,
+            None,
+            Lifecycle::StructurallyComplete,
+        ),
+        fixture(
+            "CSS-SELECTOR-CORE-ID-001",
+            Group::NormalCore,
+            "#id{}",
+            (0, 3),
+            Mode::NormalSelectorList,
+            Outcome::Qualified,
+            None,
+            Lifecycle::StructurallyComplete,
+        ),
+        fixture(
+            "CSS-SELECTOR-CORE-LIST-001",
+            Group::NormalCore,
+            "a,.b,#c{}",
+            (0, 7),
+            Mode::NormalSelectorList,
+            Outcome::Qualified,
+            None,
+            Lifecycle::StructurallyComplete,
+        ),
+        fixture(
+            "CSS-SELECTOR-CORE-COMBINATORS-001",
+            Group::NormalCore,
+            "a > b + c ~ d{}",
+            (0, 13),
+            Mode::NormalSelectorList,
+            Outcome::Qualified,
+            None,
+            Lifecycle::StructurallyComplete,
+        ),
+        fixture(
+            "CSS-SELECTOR-CORE-ATTRIBUTE-001",
+            Group::NormalCore,
+            "[attr=\"v\" i]{}",
+            (0, 12),
+            Mode::NormalSelectorList,
+            Outcome::Qualified,
+            None,
+            Lifecycle::StructurallyComplete,
+        ),
+        fixture(
+            "CSS-SELECTOR-INVALID-EMPTY-001",
+            Group::InvalidCore,
+            "{}",
+            (0, 0),
+            Mode::NormalSelectorList,
+            Outcome::Invalid(Invalid::EmptySelectorList),
+            Some((0, 0)),
+            Lifecycle::StructurallyComplete,
+        ),
+        fixture(
+            "CSS-SELECTOR-INVALID-COMMA-001",
+            Group::InvalidCore,
+            "a,,b{}",
+            (0, 4),
+            Mode::NormalSelectorList,
+            Outcome::Invalid(Invalid::UnexpectedComma),
+            Some((2, 3)),
+            Lifecycle::StructurallyComplete,
+        ),
+        fixture(
+            "CSS-SELECTOR-INVALID-COMBINATOR-001",
+            Group::InvalidCore,
+            "a > > b{}",
+            (0, 7),
+            Mode::NormalSelectorList,
+            Outcome::Invalid(Invalid::UnexpectedCombinator),
+            Some((4, 5)),
+            Lifecycle::StructurallyComplete,
+        ),
+        fixture(
+            "CSS-SELECTOR-INVALID-ATTRIBUTE-001",
+            Group::InvalidCore,
+            "[attr=x y]{}",
+            (0, 10),
+            Mode::NormalSelectorList,
+            Outcome::Invalid(Invalid::InvalidAttributeSelector),
+            Some((8, 9)),
+            Lifecycle::StructurallyComplete,
+        ),
+        fixture(
+            "CSS-SELECTOR-SOURCE-COMMENT-WHITESPACE-001",
+            Group::SourceProvenance,
+            "a/*c*/ b{}",
+            (0, 8),
+            Mode::NormalSelectorList,
+            Outcome::Qualified,
+            None,
+            Lifecycle::StructurallyComplete,
+        ),
+        fixture(
+            "CSS-SELECTOR-SOURCE-ESCAPED-IDENT-001",
+            Group::SourceProvenance,
+            r".\66 oo{}",
+            (0, 7),
+            Mode::NormalSelectorList,
+            Outcome::Qualified,
+            None,
+            Lifecycle::StructurallyComplete,
+        ),
+        fixture(
+            "CSS-SELECTOR-SOURCE-MULTIBYTE-001",
+            Group::SourceProvenance,
+            ".é{}",
+            (0, 3),
+            Mode::NormalSelectorList,
+            Outcome::Qualified,
+            None,
+            Lifecycle::StructurallyComplete,
+        ),
+        fixture(
+            "CSS-SELECTOR-NEST-IMPLICIT-001",
+            Group::Nesting,
+            ".a{.b{}}",
+            (3, 5),
+            Mode::NestedRelativeSelectorList,
+            Outcome::Qualified,
+            None,
+            Lifecycle::StructurallyComplete,
+        ),
+        fixture(
+            "CSS-SELECTOR-NEST-AMPERSAND-001",
+            Group::Nesting,
+            ".a{&.b{}}",
+            (3, 6),
+            Mode::NestedRelativeSelectorList,
+            Outcome::Qualified,
+            None,
+            Lifecycle::StructurallyComplete,
+        ),
+        fixture(
+            "CSS-SELECTOR-NEST-LEADING-COMBINATOR-001",
+            Group::Nesting,
+            ".a{> .b{}}",
+            (3, 7),
+            Mode::NestedRelativeSelectorList,
+            Outcome::Qualified,
+            None,
+            Lifecycle::StructurallyComplete,
+        ),
+        fixture(
+            "CSS-SELECTOR-NEST-PREFIX-AMPERSAND-001",
+            Group::Nesting,
+            ".a{.prefix &{}}",
+            (3, 12),
+            Mode::NestedRelativeSelectorList,
+            Outcome::Qualified,
+            None,
+            Lifecycle::StructurallyComplete,
+        ),
+        fixture(
+            "CSS-SELECTOR-NEST-INVALID-AMP-TYPE-001",
+            Group::Nesting,
+            ".a{&Bar{}}",
+            (3, 7),
+            Mode::NestedRelativeSelectorList,
+            Outcome::Invalid(Invalid::InvalidNestingSelectorPlacement),
+            Some((3, 4)),
+            Lifecycle::StructurallyComplete,
+        ),
+        fixture(
+            "CSS-SELECTOR-GROUP-MEDIA-ANCESTRY-001",
+            Group::GroupAncestry,
+            "a{@media{b{}}}",
+            (9, 10),
+            Mode::NestedRelativeSelectorList,
+            Outcome::Qualified,
+            None,
+            Lifecycle::StructurallyComplete,
+        ),
+        fixture(
+            "CSS-SELECTOR-GROUP-SCOPE-MODE-001",
+            Group::GroupAncestry,
+            "a{@scope{b{}}}",
+            (9, 10),
+            Mode::ScopedRelativeSelectorList,
+            Outcome::Qualified,
+            None,
+            Lifecycle::StructurallyComplete,
+        ),
+        fixture(
+            "CSS-SELECTOR-PSEUDO-IDENT-SUPPORTED-001",
+            Group::PseudoProfile,
+            ":hover{}",
+            (0, 6),
+            Mode::NormalSelectorList,
+            Outcome::Qualified,
+            None,
+            Lifecycle::StructurallyComplete,
+        ),
+        fixture(
+            "CSS-SELECTOR-PSEUDO-IDENT-UNSUPPORTED-001",
+            Group::PseudoProfile,
+            ":future-pseudo{}",
+            (0, 14),
+            Mode::NormalSelectorList,
+            Outcome::Unsupported(Unsupported::IdentifierPseudoClass),
+            Some((1, 14)),
+            Lifecycle::StructurallyComplete,
+        ),
+        fixture(
+            "CSS-SELECTOR-PSEUDO-IS-001",
+            Group::PseudoProfile,
+            ":is(.a,.b){}",
+            (0, 10),
+            Mode::NormalSelectorList,
+            Outcome::Qualified,
+            None,
+            Lifecycle::StructurallyComplete,
+        ),
+        fixture(
+            "CSS-SELECTOR-PSEUDO-FUNCTION-UNSUPPORTED-001",
+            Group::PseudoProfile,
+            ":nth-child(2n){}",
+            (0, 14),
+            Mode::NormalSelectorList,
+            Outcome::Unsupported(Unsupported::FunctionalPseudoClass),
+            Some((1, 10)),
+            Lifecycle::StructurallyComplete,
+        ),
+        fixture(
+            "CSS-SELECTOR-PSEUDO-ELEMENT-UNSUPPORTED-001",
+            Group::PseudoProfile,
+            "::before{}",
+            (0, 8),
+            Mode::NormalSelectorList,
+            Outcome::Unsupported(Unsupported::PseudoElement),
+            Some((2, 8)),
+            Lifecycle::StructurallyComplete,
+        ),
+        fixture(
+            "CSS-SELECTOR-NS-NAMED-INDETERMINATE-001",
+            Group::Namespace,
+            "svg|a{}",
+            (0, 5),
+            Mode::NormalSelectorList,
+            Outcome::Indeterminate(Indeterminate::MissingNamespaceEnvironment),
+            Some((0, 3)),
+            Lifecycle::StructurallyComplete,
+        ),
+        fixture(
+            "CSS-SELECTOR-NS-WILDCARD-001",
+            Group::Namespace,
+            "*|a{}",
+            (0, 3),
+            Mode::NormalSelectorList,
+            Outcome::Qualified,
+            None,
+            Lifecycle::StructurallyComplete,
+        ),
+        fixture(
+            "CSS-SELECTOR-NS-NULL-001",
+            Group::Namespace,
+            "|a{}",
+            (0, 2),
+            Mode::NormalSelectorList,
+            Outcome::Qualified,
+            None,
+            Lifecycle::StructurallyComplete,
+        ),
+        fixture(
+            "CSS-SELECTOR-LIFECYCLE-TRUE-EOF-001",
+            Group::Lifecycle,
+            "a{p:v;",
+            (0, 1),
+            Mode::NormalSelectorList,
+            Outcome::Qualified,
+            None,
+            Lifecycle::TrueEofPartialBody,
+        ),
+        fixture(
+            "CSS-SELECTOR-LIFECYCLE-TOKENIZER-INCOMPLETE-001",
+            Group::Lifecycle,
+            "a{p:v;}",
+            (0, 1),
+            Mode::NormalSelectorList,
+            Outcome::Qualified,
+            None,
+            Lifecycle::UpstreamTokenizerIncompleteAfterHeader,
+        ),
+        fixture(
+            "CSS-SELECTOR-LIFECYCLE-PARSER-LIMIT-001",
+            Group::Lifecycle,
+            "a{p:v;}",
+            (0, 1),
+            Mode::NormalSelectorList,
+            Outcome::Qualified,
+            None,
+            Lifecycle::ParserResourceLimitAfterHeader,
+        ),
+        fixture(
+            "CSS-SELECTOR-RESOURCE-REFUSAL-001",
+            Group::Resource,
+            "a{}",
+            (0, 1),
+            Mode::NormalSelectorList,
+            Outcome::Qualified,
+            None,
+            Lifecycle::SelectorResourceLimitBeforeObservation,
+        ),
+    ]
+}

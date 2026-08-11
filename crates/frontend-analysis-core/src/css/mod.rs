@@ -3,6 +3,7 @@
 pub(crate) mod analysis;
 pub(crate) mod declaration;
 pub(crate) mod parser;
+pub(crate) mod selector;
 pub(crate) mod token;
 pub(crate) mod tokenizer;
 
