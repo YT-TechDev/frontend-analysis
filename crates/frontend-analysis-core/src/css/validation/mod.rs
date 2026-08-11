@@ -18,6 +18,7 @@ mod page_gold;
 mod parser_candidate;
 mod parser_fixtures;
 mod parser_gold;
+mod selector_gold;
 
 #[cfg(test)]
 mod conformance_tests;
@@ -53,5 +54,7 @@ mod parser_contract_tests;
 mod parser_resource_tests;
 #[cfg(test)]
 mod resource_tests;
+#[cfg(test)]
+mod selector_gold_contract_tests;
 #[cfg(test)]
 mod tests;
