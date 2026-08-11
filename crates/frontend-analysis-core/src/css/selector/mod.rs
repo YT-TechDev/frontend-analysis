@@ -1,14 +1,16 @@
-//! Source-backed CSS selector qualification domain contracts (#182).
+//! Source-backed CSS selector qualification boundary (#182/#184).
 //!
-//! This module materializes the #181-approved semantic boundary without
-//! implementing the production selector qualifier. Structural CSS parsing
-//! remains owned by `super::parser`; selector qualification is a later stage
-//! over the Core-validated parser result.
+//! #182 freezes the crate-private domain/resource/gold contracts. #184 adds
+//! the bounded production `CoreV1` qualifier and a Core-integrated entry path
+//! over the existing structurally validated parser result. Structural parsing
+//! remains owned by `super::parser`.
 //!
 //! No type in this module is publicly exported.
 
+pub(crate) mod analysis;
 pub(crate) mod context;
 pub(crate) mod lexical;
+pub(crate) mod producer;
 pub(crate) mod profile;
 pub(crate) mod resource;
 pub(crate) mod result;
