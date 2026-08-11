@@ -55,6 +55,8 @@ mod parser_resource_tests;
 #[cfg(test)]
 mod resource_tests;
 #[cfg(test)]
+mod selector_conformance_tests;
+#[cfg(test)]
 mod selector_gold_contract_tests;
 #[cfg(test)]
 mod tests;
