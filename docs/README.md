@@ -47,6 +47,7 @@ record must still satisfy the
 | Architecture layers | [Architecture Layers and Boundaries](architecture/LAYERS.md) | Normative architecture contract | Layer responsibilities, exclusions, allowed dependencies, boundary crossings, and cross-cutting capability ownership. |
 | Rust Core contracts | [Rust Core Contracts](architecture/RUST_CORE_CONTRACTS.md) | Normative Rust architecture contract | Ownership, borrowing, mutation, domain types, errors, concurrency, async boundaries, visibility, compatibility, and Rust-specific unsafe implementation constraints. |
 | Source parser ownership | [Source Parser Ownership](architecture/SOURCE_PARSER_OWNERSHIP.md) | Normative architecture contract | Project-owned HTML, CSS, and ECMAScript parser authority; retained-source provenance; capability and result integrity; third-party parser policy; implementation sequencing; validation; and parser-specific security boundaries. |
+| JavaScript / ECMAScript semantic architecture | [JavaScript / ECMAScript Architecture](architecture/JAVASCRIPT_ARCHITECTURE.md) | Normative architecture contract | ECMAScript Standard Qualification, semantic capability ownership, qualified host/runtime evidence consumption, scoped lifecycle, qualified result/provenance semantics, and representation-neutral JavaScript analysis boundaries. |
 | Validated Source Anchors Guide | [Validated Source Anchors Guide](architecture/VALIDATED_SOURCE_ANCHORS.md) | Guide | Contributor guidance for current source-anchor semantics, layer consumption, accepted and rejected responsibilities, and review triggers. |
 | Raw Source Coordinates Guide | [Raw Source Coordinates Guide](architecture/RAW_SOURCE_COORDINATES.md) | Guide | Explanatory contributor guidance for the accepted raw coordinate projection, units, layer conversions, and review triggers. |
 | Documentation classification and precedence | This index | Normative documentation-governance contract | Documentation classes, source-of-truth selection, conflict handling, and index maintenance. It cannot redefine substantive authority owned by another specialized contract. |
@@ -68,9 +69,13 @@ owns topology and extraction review, [ADR 0002](decisions/0002-rust-bootstrap-to
 owns toolchain policy, [ADR 0003](decisions/0003-validated-source-anchors-first-rust-core-domain.md)
 owns the selected domain and crate boundary, [ADR 0004](decisions/0004-validated-source-anchor-semantics.md)
 owns source-anchor semantics, accepted [ADR 0005](decisions/0005-raw-source-coordinate-semantics.md)
-owns raw source-coordinate semantics, and accepted
+owns raw source-coordinate semantics, accepted
 [ADR 0007](decisions/0007-own-lossless-source-parsers.md) owns the project-owned
-lossless source-parser strategy and language sequencing.
+lossless source-parser strategy and language sequencing, accepted
+[ADR 0008](decisions/0008-browser-runtime-evidence-normalization-and-core-import.md)
+owns browser-runtime evidence normalization/import ownership, and accepted
+[ADR 0009](decisions/0009-javascript-semantic-analysis-architecture.md) owns the
+JavaScript semantic architecture decision recorded by the specialized contract.
 
 ### Contributor Setup and Validation
 
@@ -154,9 +159,13 @@ Authority follows topic ownership and specificity, not a single global ranking:
    architecture principles; [Architecture Layers and Boundaries](architecture/LAYERS.md)
    governs layer responsibilities and dependency boundaries; [Rust Core
    Contracts](architecture/RUST_CORE_CONTRACTS.md) governs Rust-specific Core
-   design constraints; and [Source Parser Ownership](architecture/SOURCE_PARSER_OWNERSHIP.md)
+   design constraints; [Source Parser Ownership](architecture/SOURCE_PARSER_OWNERSHIP.md)
    governs project-owned language-parser authority, provenance, capability,
-   third-party comparison boundaries, sequencing, and parser validation.
+   third-party comparison boundaries, sequencing, and parser validation; and
+   [JavaScript / ECMAScript Architecture](architecture/JAVASCRIPT_ARCHITECTURE.md)
+   governs specialized JavaScript qualification, semantic-capability,
+   host/runtime-evidence-consumption, lifecycle, provenance, and
+   representation-neutrality rules.
 9. The [ADR Process](decisions/README.md) governs ADR mechanics. ADRs do not
    override specialized normative contracts.
 10. Templates collect information but do not create approval. Guides and
