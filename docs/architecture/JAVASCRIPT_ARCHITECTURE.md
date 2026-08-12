@@ -125,15 +125,15 @@ Standard Qualification MUST NOT use successful execution in Chrome, Firefox,
 WebKit, or another runtime as authority for ECMAScript source-standard validity.
 Browser/runtime evidence belongs to the Host / Runtime Evidence boundary.
 
-Source-standard-qualified does not imply:
+Source-standard qualification does not by itself establish any of the following:
 
 ```text
-loadable
-= link-valid
-= evaluation-safe
-= terminating
-= effect-free
-= host-supported
+loadability
+link validity
+evaluation safety
+termination
+effect-freedom
+host support
 ```
 
 ### JA-3 — Downstream analysis is claim-prerequisite-driven
@@ -302,8 +302,8 @@ scope of that status is explicitly defined.
 A complete run may still produce an indeterminate claim. A resource-limited run
 may still contain claims already justified before the limit was reached.
 
-No emitted finding is not evidence of semantic absence unless the relevant
-negative query completed under sufficient prerequisites and coverage.
+Absence of an emitted finding is not evidence of semantic absence unless the
+relevant negative query completed under sufficient prerequisites and coverage.
 
 ### JA-11 — Provenance and conflicts survive derivation
 
