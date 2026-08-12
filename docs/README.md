@@ -47,6 +47,7 @@ record must still satisfy the
 | Architecture layers | [Architecture Layers and Boundaries](architecture/LAYERS.md) | Normative architecture contract | Layer responsibilities, exclusions, allowed dependencies, boundary crossings, and cross-cutting capability ownership. |
 | Rust Core contracts | [Rust Core Contracts](architecture/RUST_CORE_CONTRACTS.md) | Normative Rust architecture contract | Ownership, borrowing, mutation, domain types, errors, concurrency, async boundaries, visibility, compatibility, and Rust-specific unsafe implementation constraints. |
 | Source parser ownership | [Source Parser Ownership](architecture/SOURCE_PARSER_OWNERSHIP.md) | Normative architecture contract | Project-owned HTML, CSS, and ECMAScript parser authority; retained-source provenance; capability and result integrity; third-party parser policy; implementation sequencing; validation; and parser-specific security boundaries. |
+| JavaScript / ECMAScript semantic architecture | [JavaScript / ECMAScript Architecture](architecture/JAVASCRIPT_ARCHITECTURE.md) | Normative architecture contract | ECMAScript Standard Qualification, semantic capability ownership, qualified host/runtime evidence consumption, scoped lifecycle, qualified result/provenance semantics, and representation-neutral JavaScript analysis boundaries. |
 | Validated Source Anchors Guide | [Validated Source Anchors Guide](architecture/VALIDATED_SOURCE_ANCHORS.md) | Guide | Contributor guidance for current source-anchor semantics, layer consumption, accepted and rejected responsibilities, and review triggers. |
 | Raw Source Coordinates Guide | [Raw Source Coordinates Guide](architecture/RAW_SOURCE_COORDINATES.md) | Guide | Explanatory contributor guidance for the accepted raw coordinate projection, units, layer conversions, and review triggers. |
 | Documentation classification and precedence | This index | Normative documentation-governance contract | Documentation classes, source-of-truth selection, conflict handling, and index maintenance. It cannot redefine substantive authority owned by another specialized contract. |
@@ -68,9 +69,13 @@ owns topology and extraction review, [ADR 0002](decisions/0002-rust-bootstrap-to
 owns toolchain policy, [ADR 0003](decisions/0003-validated-source-anchors-first-rust-core-domain.md)
 owns the selected domain and crate boundary, [ADR 0004](decisions/0004-validated-source-anchor-semantics.md)
 owns source-anchor semantics, accepted [ADR 0005](decisions/0005-raw-source-coordinate-semantics.md)
-owns raw source-coordinate semantics, and accepted
+owns raw source-coordinate semantics, accepted
 [ADR 0007](decisions/0007-own-lossless-source-parsers.md) owns the project-owned
-lossless source-parser strategy and language sequencing.
+lossless source-parser strategy and language sequencing, accepted
+[ADR 0008](decisions/0008-browser-runtime-evidence-normalization-and-core-import.md)
+owns browser-runtime evidence normalization/import ownership, and accepted
+[ADR 0009](decisions/0009-javascript-semantic-analysis-architecture.md) owns the
+JavaScript semantic architecture decision recorded by the specialized contract.
 
 ### Contributor Setup and Validation
 
@@ -154,9 +159,13 @@ Authority follows topic ownership and specificity, not a single global ranking:
    architecture principles; [Architecture Layers and Boundaries](architecture/LAYERS.md)
    governs layer responsibilities and dependency boundaries; [Rust Core
    Contracts](architecture/RUST_CORE_CONTRACTS.md) governs Rust-specific Core
-   design constraints; and [Source Parser Ownership](architecture/SOURCE_PARSER_OWNERSHIP.md)
+   design constraints; [Source Parser Ownership](architecture/SOURCE_PARSER_OWNERSHIP.md)
    governs project-owned language-parser authority, provenance, capability,
-   third-party comparison boundaries, sequencing, and parser validation.
+   third-party comparison boundaries, sequencing, and parser validation; and
+   [JavaScript / ECMAScript Architecture](architecture/JAVASCRIPT_ARCHITECTURE.md)
+   governs specialized JavaScript qualification, semantic-capability,
+   host/runtime-evidence-consumption, lifecycle, provenance, and
+   representation-neutrality rules.
 9. The [ADR Process](decisions/README.md) governs ADR mechanics. ADRs do not
    override specialized normative contracts.
 10. Templates collect information but do not create approval. Guides and
@@ -257,64 +266,3 @@ ADR-specific naming, status, deprecation, and supersession mechanics.
 | Maintainers | Are accountable for normative contracts; approve normative changes and supersession, resolve conflicts, ensure durable rationale, decide whether documents are authoritative, and protect browser independence and repository purpose. |
 | Contributors | May identify stale or contradictory content, propose corrections, provide evidence, update documentation within approved scope, and request clarification. Authorship or editing grants no authority. |
 | Implementation agents | May inspect documentation, report broken links or conflicts, propose alternatives, implement approved updates, and validate links and structure. They cannot independently select authority during a contract conflict, approve or supersede a contract, promote an example to architecture, or rely on private AI context as the only durable rationale. |
-
-### Documentation Update Requirements
-
-Work must update documentation when it changes repository contracts, public
-behavior, architecture boundaries, ownership, compatibility, security
-boundaries, contribution workflow, or validation expectations. A normative
-change should update its authoritative document in the same focused change
-when practical. If work must be split, the approved Issue must define the
-dependency, the contract update cannot be omitted, and implementation cannot
-be called complete while required normative documentation remains unresolved.
-Purely internal mechanical changes need no documentation update when they do
-not affect behavior, contracts, ownership, or contributor understanding.
-
-## Adding or Changing Documentation
-
-Before adding a document, identify its purpose, knowledge class, topic owner,
-normative or explanatory status, audience, update responsibility, links to
-authoritative contracts, and whether an existing document already owns the
-topic. Do not add documentation merely to duplicate rules, reserve a
-speculative directory, create a placeholder, preserve private AI output, avoid
-updating an authoritative source, or introduce unapproved future architecture.
-
-When a new authoritative document is approved, add it to this map, identify its
-domain and relationship to existing contracts, validate links, and remove or
-revise duplicated normative text.
-
-## Resolving Conflicts
-
-1. Stop implementation at the affected boundary.
-2. Identify the conflicting statements.
-3. Classify each document and identify the topic each owns.
-4. Check for an explicit approved supersession.
-5. Do not decide from recency or preference alone.
-6. Collect evidence and impact, then request maintainer review.
-7. Record the decision durably.
-8. Update every affected authoritative document.
-9. Validate links and remove contradictory duplicated rules.
-10. Resume implementation only within the resolved contract.
-
-If a conflict exposes an active vulnerability, use the private Security Policy
-process and do not publish sensitive details here.
-
-### Required Scenario Outcomes
-
-| Scenario | Authority | Proceed? | Escalation | Durable record and documentation update |
-| --- | --- | --- | --- | --- |
-| Task Issue conflicts with Secure Development | Secure Development | Stop at the conflict. | Maintainer review of a focused contract proposal. | Record approval and rationale; update Secure Development before affected work. |
-| Root README has an outdated governance summary | Maintainership and Decision Authority | Only unaffected work proceeds. | Report the mismatch for maintainer review. | Correct the README summary; retain governance as the authority. |
-| Pull Request template checkbox conflicts with Contributing | Contributing | Do not rely on the checkbox. | Maintainer review of the mismatch. | Correct the template; selection records no approval. |
-| Approved decision changes a future normative architecture rule | The applicable architecture contract and Maintainership and Decision Authority | Proceed only after approval and contract update. | Obtain explicit maintainer approval. | Preserve rationale, explicitly supersede the old rule, and update the authoritative architecture contract; this index creates no such contract. |
-| Example contradicts an established public contract | The established public contract | Do not rely on the example. | Report the conflict to the topic owner. | Correct or remove the example; do not redefine compatibility. |
-| Security and architecture both apply | Both specialized domain contracts | Proceed only when both are satisfied. | Escalate ambiguity and satisfy all approval boundaries. | Record the cross-domain resolution and update every affected contract. |
-| Newer Issue contradicts an older approved contract | The approved contract | Stop affected work. | Request explicit maintainer approval; recency is insufficient. | Record the decision and update the contract if change is approved. |
-| Merged Pull Request hides an architecture decision | Maintainership and Decision Authority and the applicable architecture contract | Stop affected work; merge alone is insufficient. | Escalate for focused durable approval. | Record rationale and approval, then correct documentation and implementation scope. |
-| Agent finds two normative documents claiming one topic | Maintainer determines ownership under Maintainership and Decision Authority | Agent stops at the boundary and does not choose. | Maintainers resolve ownership. | Record resolution; remove duplicate normative content or convert it to a linked summary. |
-| Private AI conversation is the only major-decision rationale | Maintainership and Decision Authority | Do not treat the decision as adequately recorded. | Request durable evidence, rationale, and approval. | Add them to an approved repository record; private conversation links are neither required nor accepted as the source of truth. |
-
-This model has no circular precedence: the maintainership contract defines who
-may approve; specialized contracts define their substantive domains; this
-index classifies documentation and defines conflict handling. None derives or
-expands its authority from a template, task record, summary, or newer document.
