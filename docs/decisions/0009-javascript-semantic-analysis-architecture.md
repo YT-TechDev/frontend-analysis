@@ -2,14 +2,14 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Proposed |
+| Status | Accepted |
 | Date | 2026-08-12 |
-| Decision owner / approver | YT-TechDev — approval pending |
+| Decision owner / approver | YT-TechDev |
 | Linked Issue | #187 |
-| Related Pull Request | #188 |
+| Related Pull Request | #188; acceptance Pull Request pending |
 | Supersedes | None |
 | Superseded by | None |
-| Affected normative contracts | Proposed new `docs/architecture/JAVASCRIPT_ARCHITECTURE.md`; `docs/README.md` authority map on acceptance. Existing `PRINCIPLES.md`, `LAYERS.md`, `RUST_CORE_CONTRACTS.md`, `SOURCE_PARSER_OWNERSHIP.md`, ADR 0007, and ADR 0008 remain unsuperseded. |
+| Affected normative contracts | New `docs/architecture/JAVASCRIPT_ARCHITECTURE.md`; `docs/README.md` authority map. Existing `PRINCIPLES.md`, `LAYERS.md`, `RUST_CORE_CONTRACTS.md`, `SOURCE_PARSER_OWNERSHIP.md`, ADR 0007, and ADR 0008 remain unsuperseded. |
 
 ## Context
 
@@ -17,7 +17,7 @@ Frontend Analysis needs a durable JavaScript / ECMAScript semantic architecture 
 
 The JavaScript research phase then expanded across control/completion, value and abstract interpretation, effects and hidden invocation, interprocedural analysis, dynamic code, async/Promise/Job semantics, modules, Realms/Agents/shared memory, Proxy/exotic objects, WeakRef/finalization, and iterator cleanup. The consolidated evidence is recorded in `docs/evidence/javascript/README.md`.
 
-The final adversarial evidence audit and cross-contract audit established that the architecture must preserve semantic distinctions without prematurely requiring separate Rust representations. It also established two material qualifications before this proposal:
+The final adversarial evidence audit and cross-contract audit established that the architecture must preserve semantic distinctions without prematurely requiring separate Rust representations. It also established two material qualifications before acceptance:
 
 1. source qualification may require an explicit standardized host / Normative Optional qualification profile, including applicable Annex B source/static-semantics policy; and
 2. useful analysis of invalid, recovered, incomplete, or partial source does not authorize normative execution claims whose required validity prerequisites are unsatisfied.
@@ -28,7 +28,7 @@ This decision is required because leaving Standard Qualification, semantic-capab
 
 ## Decision
 
-Frontend Analysis adopts JavaScript Architecture Model v1.1 as the proposed durable semantic architecture, subject to explicit maintainer approval and the acceptance update that creates the active specialized normative contract.
+Frontend Analysis adopts JavaScript Architecture Model v1.1 as the durable JavaScript / ECMAScript semantic architecture baseline. The active specialized normative contract is `docs/architecture/JAVASCRIPT_ARCHITECTURE.md`.
 
 The architecture has four conceptual responsibility boundaries:
 
@@ -127,7 +127,7 @@ Not selected. The current evidence is sufficient to freeze long-lived responsibi
 
 ### Continue qualification-detail research before freezing any architecture
 
-Not selected. ES2026 Annex B / host-dependent Early Error / Normative Optional details remain important, but v1.1 now contains the correct qualification-profile extension point. Continuing that research as a blocker would mix architecture consolidation with an edition-specific qualification inventory and risk reopening already stable boundaries without contradictory evidence.
+Not selected. ES2026 Annex B / host-dependent Early Error / Normative Optional details remain important, but v1.1 contains the qualification-profile extension point needed to defer those details safely. Continuing that research as a blocker would mix architecture consolidation with an edition-specific qualification inventory and risk reopening already stable boundaries without contradictory evidence.
 
 ## Consequences
 
@@ -169,13 +169,13 @@ Changing JA-1 through JA-12, the four responsibility boundaries, semantic author
 
 ## Compatibility and Migration
 
-No current production Rust API, workspace member, dependency, serialized format, browser protocol, ABI, or product contract changes merely by proposing or accepting this decision.
+No current production Rust API, workspace member, dependency, serialized format, browser protocol, ABI, or product contract changes by accepting this decision.
 
 Accepted ADR 0007 remains authoritative for project-owned lossless source parser strategy and sequencing. Accepted ADR 0008 remains authoritative for browser-runtime evidence normalization/import ownership and is not superseded.
 
-On acceptance, `docs/architecture/JAVASCRIPT_ARCHITECTURE.md` becomes the specialized normative JavaScript semantic architecture contract and `docs/README.md` is updated to register its authority. Existing architecture contracts remain authoritative for their broader or Rust-specific topics.
+`docs/architecture/JAVASCRIPT_ARCHITECTURE.md` is the specialized normative JavaScript semantic architecture contract and `docs/README.md` registers its authority. Existing architecture contracts remain authoritative for their broader or Rust-specific topics.
 
-Future ECMAScript implementation work must conform to the accepted JavaScript contract but requires separately approved focused Issues. No migration of production code is required at acceptance time because production ECMAScript implementation has not begun.
+Future ECMAScript implementation work must conform to the accepted JavaScript contract but requires separately approved focused Issues. No migration of production code is required at acceptance time because this acceptance introduces no production ECMAScript implementation.
 
 ## Security and License Impact
 
@@ -187,23 +187,23 @@ The repository remains MIT licensed. Third-party parser, analysis-library, brows
 
 ## Validation
 
-Before this ADR may become Accepted, review must demonstrate:
+Acceptance review demonstrated:
 
-1. #187 contains explicit durable maintainer approval for this exact decision;
-2. JA-1 through JA-12 match the final v1.1 architecture audit and include the host-qualification-profile and invalid-source claim-prerequisite corrections;
-3. the four responsibility boundaries are semantic responsibilities, not physical module requirements;
-4. `PRINCIPLES.md`, `LAYERS.md`, `RUST_CORE_CONTRACTS.md`, and `SOURCE_PARSER_OWNERSHIP.md` are not contradicted;
-5. ADR 0007 and ADR 0008 remain accepted and unsuperseded;
-6. browser-specific runtime/protocol details do not become Core semantic authority;
-7. whole-source qualification success is not a universal analysis gate, while execution claims still require their validity prerequisites;
-8. capability lifecycle and claim modality remain distinct;
-9. negative findings cannot be inferred from missing/incomplete analysis;
-10. evidence conflicts and provenance remain representable;
-11. no AST/IR/lattice/graph/solver/crate/trait/public API/serialization/async/concurrency implementation is frozen;
-12. the acceptance change creates or updates the specialized normative JavaScript architecture contract and documentation authority map consistently; and
-13. no production Rust/dependency/workspace change is introduced by architecture acceptance.
+1. **Passed** — #187 contains explicit durable maintainer approval for this exact decision;
+2. **Passed** — JA-1 through JA-12 match the final v1.1 architecture audit and include the host-qualification-profile and invalid-source claim-prerequisite corrections;
+3. **Passed** — the four responsibility boundaries are semantic responsibilities, not physical module requirements;
+4. **Passed** — `PRINCIPLES.md`, `LAYERS.md`, `RUST_CORE_CONTRACTS.md`, and `SOURCE_PARSER_OWNERSHIP.md` are not contradicted;
+5. **Passed** — ADR 0007 and ADR 0008 remain accepted and unsuperseded;
+6. **Passed** — browser-specific runtime/protocol details do not become Core semantic authority;
+7. **Passed** — whole-source qualification success is not a universal analysis gate, while execution claims still require their validity prerequisites;
+8. **Passed** — capability lifecycle and claim modality remain distinct;
+9. **Passed** — negative findings cannot be inferred from missing/incomplete analysis;
+10. **Passed** — evidence conflicts and provenance remain representable;
+11. **Passed** — no AST/IR/lattice/graph/solver/crate/trait/public API/serialization/async/concurrency implementation is frozen;
+12. **Passed** — the acceptance change creates the specialized normative JavaScript architecture contract and documentation authority map consistently; and
+13. **Passed** — no production Rust/dependency/workspace change is introduced by architecture acceptance.
 
-Use only repository-approved validation status vocabulary.
+Repository CI for the acceptance Pull Request remains required before merge and must use repository-approved validation status vocabulary.
 
 ## Follow-Up
 
@@ -221,18 +221,21 @@ No follow-up implementation begins automatically from this ADR.
 
 ## Approval
 
-Pending explicit maintainer approval on #187.
+Approved by maintainer `YT-TechDev` on 2026-08-12 in Issue #187:
 
-`Proposed` status authorizes no production implementation and is not an active normative JavaScript contract.
+https://github.com/YT-TechDev/frontend-analysis/issues/187#issuecomment-5266431572
+
+The approval explicitly adopts JavaScript Architecture Model v1.1 and ADR 0009 as the JavaScript semantic architecture baseline, does not authorize production implementation, and does not freeze Representation OPEN decisions.
 
 ## References
 
-- Issue #187 — JavaScript Architecture Model v1.1 freeze proposal
+- Issue #187 — JavaScript Architecture Model v1.1 freeze proposal and approval
 - Pull Request #188 — Proposed ADR 0009
 - Issue #108 — project-owned ECMAScript parser/static-semantics program
 - Issue #142 — project-owned ECMAScript analysis guarantee research
 - Issue #144 — project-owned ECMAScript language-profile research
 - `docs/evidence/javascript/README.md`
+- `docs/architecture/JAVASCRIPT_ARCHITECTURE.md`
 - `docs/architecture/PRINCIPLES.md`
 - `docs/architecture/LAYERS.md`
 - `docs/architecture/RUST_CORE_CONTRACTS.md`
