@@ -6,7 +6,7 @@
 | Date | 2026-08-12 |
 | Decision owner / approver | YT-TechDev — approval pending |
 | Linked Issue | #187 |
-| Related Pull Request | None (proposal PR pending) |
+| Related Pull Request | #188 |
 | Supersedes | None |
 | Superseded by | None |
 | Affected normative contracts | Proposed new `docs/architecture/JAVASCRIPT_ARCHITECTURE.md`; `docs/README.md` authority map on acceptance. Existing `PRINCIPLES.md`, `LAYERS.md`, `RUST_CORE_CONTRACTS.md`, `SOURCE_PARSER_OWNERSHIP.md`, ADR 0007, and ADR 0008 remain unsuperseded. |
@@ -228,6 +228,7 @@ Pending explicit maintainer approval on #187.
 ## References
 
 - Issue #187 — JavaScript Architecture Model v1.1 freeze proposal
+- Pull Request #188 — Proposed ADR 0009
 - Issue #108 — project-owned ECMAScript parser/static-semantics program
 - Issue #142 — project-owned ECMAScript analysis guarantee research
 - Issue #144 — project-owned ECMAScript language-profile research
