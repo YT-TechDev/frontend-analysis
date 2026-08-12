@@ -266,3 +266,64 @@ ADR-specific naming, status, deprecation, and supersession mechanics.
 | Maintainers | Are accountable for normative contracts; approve normative changes and supersession, resolve conflicts, ensure durable rationale, decide whether documents are authoritative, and protect browser independence and repository purpose. |
 | Contributors | May identify stale or contradictory content, propose corrections, provide evidence, update documentation within approved scope, and request clarification. Authorship or editing grants no authority. |
 | Implementation agents | May inspect documentation, report broken links or conflicts, propose alternatives, implement approved updates, and validate links and structure. They cannot independently select authority during a contract conflict, approve or supersede a contract, promote an example to architecture, or rely on private AI context as the only durable rationale. |
+
+### Documentation Update Requirements
+
+Work must update documentation when it changes repository contracts, public
+behavior, architecture boundaries, ownership, compatibility, security
+boundaries, contribution workflow, or validation expectations. A normative
+change should update its authoritative document in the same focused change
+when practical. If work must be split, the approved Issue must define the
+dependency, the contract update cannot be omitted, and implementation cannot
+be called complete while required normative documentation remains unresolved.
+Purely internal mechanical changes need no documentation update when they do
+not affect behavior, contracts, ownership, or contributor understanding.
+
+## Adding or Changing Documentation
+
+Before adding a document, identify its purpose, knowledge class, topic owner,
+normative or explanatory status, audience, update responsibility, links to
+authoritative contracts, and whether an existing document already owns the
+topic. Do not add documentation merely to duplicate rules, reserve a
+speculative directory, create a placeholder, preserve private AI output, avoid
+updating an authoritative source, or introduce unapproved future architecture.
+
+When a new authoritative document is approved, add it to this map, identify its
+domain and relationship to existing contracts, validate links, and remove or
+revise duplicated normative text.
+
+## Resolving Conflicts
+
+1. Stop implementation at the affected boundary.
+2. Identify the conflicting statements.
+3. Classify each document and identify the topic each owns.
+4. Check for an explicit approved supersession.
+5. Do not decide from recency or preference alone.
+6. Collect evidence and impact, then request maintainer review.
+7. Record the decision durably.
+8. Update every affected authoritative document.
+9. Validate links and remove contradictory duplicated rules.
+10. Resume implementation only within the resolved contract.
+
+If a conflict exposes an active vulnerability, use the private Security Policy
+process and do not publish sensitive details here.
+
+### Required Scenario Outcomes
+
+| Scenario | Authority | Proceed? | Escalation | Durable record and documentation update |
+| --- | --- | --- | --- | --- |
+| Task Issue conflicts with Secure Development | Secure Development | Stop at the conflict. | Maintainer review of a focused contract proposal. | Record approval and rationale; update Secure Development before affected work. |
+| Root README has an outdated governance summary | Maintainership and Decision Authority | Only unaffected work proceeds. | Report the mismatch for maintainer review. | Correct the README summary; retain governance as the authority. |
+| Pull Request template checkbox conflicts with Contributing | Contributing | Do not rely on the checkbox. | Maintainer review of the mismatch. | Correct the template; selection records no approval. |
+| Approved decision changes a future normative architecture rule | The applicable architecture contract and Maintainership and Decision Authority | Proceed only after approval and contract update. | Obtain explicit maintainer approval. | Preserve rationale, explicitly supersede the old rule, and update the authoritative architecture contract; this index creates no such contract. |
+| Example contradicts an established public contract | The established public contract | Do not rely on the example. | Report the conflict to the topic owner. | Correct or remove the example; do not redefine compatibility. |
+| Security and architecture both apply | Both specialized domain contracts | Proceed only when both are satisfied. | Escalate ambiguity and satisfy all approval boundaries. | Record the cross-domain resolution and update every affected contract. |
+| Newer Issue contradicts an older approved contract | The approved contract | Stop affected work. | Request explicit maintainer approval; recency is insufficient. | Record the decision and update the contract if change is approved. |
+| Merged Pull Request hides an architecture decision | Maintainership and Decision Authority and the applicable architecture contract | Stop affected work; merge alone is insufficient. | Escalate for focused durable approval. | Record rationale and approval, then correct documentation and implementation scope. |
+| Agent finds two normative documents claiming one topic | Maintainer determines ownership under Maintainership and Decision Authority | Agent stops at the boundary and does not choose. | Maintainers resolve ownership. | Record resolution; remove duplicate normative content or convert it to a linked summary. |
+| Private AI conversation is the only major-decision rationale | Maintainership and Decision Authority | Do not treat the decision as adequately recorded. | Request durable evidence, rationale, and approval. | Add them to an approved repository record; private conversation links are neither required nor accepted as the source of truth. |
+
+This model has no circular precedence: the maintainership contract defines who
+may approve; specialized contracts define their substantive domains; this
+index classifies documentation and defines conflict handling. None derives or
+expands its authority from a template, task record, summary, or newer document.
