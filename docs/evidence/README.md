@@ -48,7 +48,7 @@ Language research follows these rules:
 | --- | --- | --- |
 | HTML | First browser-independent tokenizer → analysis-parser → Core vertical slice completed and independently validated; tree construction remains a separate future domain. | [HTML evidence](html/README.md) |
 | CSS | Semantic Foundation Freeze completed on `main`; source, tokenizer, structural parser, context, declaration, and bounded selector-qualification foundations are frozen while broader CSS semantics remain research work. | [CSS evidence](css/README.md) |
-| JavaScript / ECMAScript | Deep architecture evidence audit completed; evidence judged sufficiently stable for Architecture Model consolidation while production representation and implementation remain intentionally open. | [JavaScript evidence](javascript/README.md) |
+| JavaScript / ECMAScript | Architecture Model v1.1 is accepted; the subsequent adversarial research wave is closed/frozen with no architecture-breaking contradiction found, while production representation and implementation remain intentionally open. | [JavaScript evidence](javascript/README.md) · [Post-v1.1 closure](javascript/2026-08-post-v1.1-research-wave-closure.md) |
 
 ## Shared Cross-Language Evidence
 
