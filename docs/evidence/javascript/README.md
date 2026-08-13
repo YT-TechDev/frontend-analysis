@@ -1,10 +1,26 @@
 # JavaScript / ECMAScript Research Evidence
 
-Status date: 2026-08-12
+Status date: 2026-08-14
 
 Classification: task and evidence record; non-normative.
 
 ## Current Status
+
+Since this pre-acceptance consolidation was recorded, JavaScript Architecture
+Model v1.1 and ADR 0009 have been accepted. A subsequent post-v1.1 adversarial
+research wave covering the mature concurrency/lifecycle boundary, including
+WaiterList synchronization, Agent liveness/termination, host Job delivery, and
+the BA–BD cross-batch contradiction audit, has also completed and is now
+**closed / frozen**.
+
+That post-v1.1 wave found no architecture-breaking contradiction and requires no
+revision of the accepted JavaScript architecture. Representation remains
+intentionally **OPEN**. See the
+[post-v1.1 research wave closure](2026-08-post-v1.1-research-wave-closure.md).
+
+The remainder of this record preserves the earlier evidence state that led to
+Architecture Model consolidation; it is not rewritten as though the later
+post-v1.1 conclusions existed before architecture acceptance.
 
 The current JavaScript / ECMAScript architecture research phase has completed a
 deep adversarial evidence audit covering state, control, effects,
