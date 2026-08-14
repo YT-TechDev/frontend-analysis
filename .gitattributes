@@ -1,0 +1,15 @@
+# Retained upstream evidence is content-addressed over exact bytes.
+# Disable Git EOL normalization and whitespace-error classification only for
+# these paths; they remain reviewable as text and must match their frozen blobs.
+tools/unicode/inputs/** -text -whitespace
+tools/unicode/UNICODE-LICENSE.txt -text -whitespace
+tools/unicode/ECMA262-LICENSE.md -text -whitespace
+tools/unicode/ECMA262-COPYRIGHT.html -text -whitespace
+
+# Project-authored reproducibility inputs/outputs use canonical LF bytes.
+# This keeps manifest hashing, generated-output checks, and executable Python
+# entry points independent of core.autocrlf.
+tools/unicode/upstream-manifest.json text eol=lf
+tools/unicode/generate_ecmascript_unicode.py text eol=lf
+tools/unicode/verify_generated_ecmascript_unicode.py text eol=lf
+crates/frontend-analysis-core/src/ecmascript/unicode_generated.rs text eol=lf
