@@ -1,12 +1,12 @@
-#[path = "qualification_validation_tests/model.rs"]
-mod model;
 #[path = "qualification_validation_tests/gold.rs"]
 mod gold;
+#[path = "qualification_validation_tests/model.rs"]
+mod model;
 
 use super::qualification::{
-    EvidenceOrigin, EvidenceSourceMismatch, EvidenceSubject, ProcessingStatus,
-    QualificationOutcome, QualificationVerdictKind, RejectionFamily,
-    FIRST_QUALIFICATION_ENVELOPE, test_complete_qualification_witness,
+    EvidenceOrigin, EvidenceSourceMismatch, EvidenceSubject, FIRST_QUALIFICATION_ENVELOPE,
+    ProcessingStatus, QualificationOutcome, QualificationVerdictKind, RejectionFamily,
+    test_complete_qualification_witness,
 };
 use crate::{SourceId, SourceText};
 use model::{
@@ -132,7 +132,10 @@ fn derived_evidence_never_fabricates_an_authored_range() {
 fn rejection_constructors_preserve_distinct_semantic_families() {
     let syntax = QualificationOutcome::syntax_rejected(EvidenceSubject::derived());
     assert_eq!(syntax.processing(), ProcessingStatus::Complete);
-    assert_eq!(syntax.verdict(), Some(QualificationVerdictKind::SyntaxRejected));
+    assert_eq!(
+        syntax.verdict(),
+        Some(QualificationVerdictKind::SyntaxRejected)
+    );
     assert_eq!(
         syntax.rejection_evidence().unwrap().family(),
         RejectionFamily::Grammar
