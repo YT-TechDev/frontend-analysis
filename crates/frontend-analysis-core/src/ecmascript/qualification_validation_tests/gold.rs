@@ -66,6 +66,22 @@ pub(crate) fn fixtures() -> Vec<GoldFixture> {
             ],
         },
         GoldFixture {
+            id: "JS-GOLD-LEXDECL-LET-BINDING-001",
+            source: "let let;",
+            request_context: RequestContext::ScriptIndependentSource,
+            applicability: RequestApplicability::Supported,
+            qualification: Some(ExpectedQualification::StaticSemanticsRejected),
+            processing: ExpectedProcessing::Complete,
+            implementation_coverage: ImplementationCoverage::Pending,
+            subject: Some(GoldRange::new(4, 7)),
+            synthetic: NO_SYNTHETIC,
+            dimensions: &[
+                ValidationDimension::EarlyErrorRule,
+                ValidationDimension::ValidityDependency,
+                ValidationDimension::SourceProvenance,
+            ],
+        },
+        GoldFixture {
             id: "JS-GOLD-STRICT-WITH-001",
             source: "\"use strict\"; with ({}) {}",
             request_context: RequestContext::ScriptIndependentSource,

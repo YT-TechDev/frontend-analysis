@@ -305,7 +305,7 @@ fn inventoried_gold_references_resolve_and_uncovered_rules_remain_explicit() {
 #[test]
 fn gold_fixture_ids_ranges_and_dimensions_are_self_consistent() {
     let fixtures = fixtures();
-    assert_eq!(fixtures.len(), 14);
+    assert_eq!(fixtures.len(), 15);
     let mut ids = BTreeSet::new();
 
     for fixture in &fixtures {
