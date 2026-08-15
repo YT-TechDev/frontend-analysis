@@ -9,14 +9,9 @@ use crate::{SourceId, SourceText};
 
 use super::qualification_validation_tests::{gold_source, gold_subject_range};
 
-#[allow(dead_code)]
-#[path = "qualification_validation_tests/inventory.rs"]
-mod inventory;
-
-use inventory::{RULE_UNITS, RuleUnit, RuleUnitKind};
-
 const EE_15_R01_GOLD_ID: &str = "JS-GOLD-LEXDECL-LET-BINDING-001";
 const SCRIPT_DUPLICATE_GOLD_ID: &str = "JS-GOLD-SCRIPT-DUPLEXICAL-001";
+const INVENTORY_SOURCE: &str = include_str!("qualification_validation_tests/inventory.rs");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct RuleNonTriggerFixture {
@@ -63,11 +58,17 @@ const RULE_NON_TRIGGER_FIXTURES: &[RuleNonTriggerFixture] = &[
     },
 ];
 
-fn rule(rule_id: &str) -> &'static RuleUnit {
-    RULE_UNITS
-        .iter()
-        .find(|rule| rule.id == rule_id)
-        .unwrap_or_else(|| panic!("rule-local expectation maps to missing rule {rule_id}"))
+fn active_rule_block(rule_id: &str) -> &'static str {
+    let marker = format!("active_rule(\n        \"{rule_id}\",");
+    let start = INVENTORY_SOURCE
+        .find(&marker)
+        .unwrap_or_else(|| panic!("rule-local expectation maps to missing active rule {rule_id}"));
+    let rest = &INVENTORY_SOURCE[start..];
+    let end = rest
+        .find("\n    ),")
+        .unwrap_or_else(|| panic!("active rule {rule_id} must retain a complete inventory block"))
+        + "\n    ),".len();
+    &rest[..end]
 }
 
 #[test]
@@ -81,9 +82,11 @@ fn ee_15_r01_rejection_gold_is_exact_and_inventory_mapped() {
         .expect("the EE-15-R01 gold subject must select the binding occurrence");
     assert_eq!(binding.fragment(), "let");
 
-    let rule = rule("EE-15-R01");
-    assert_eq!(rule.kind, RuleUnitKind::NormativeRule);
-    assert_eq!(rule.gold_fixture_ids, &[EE_15_R01_GOLD_ID]);
+    let rule = active_rule_block("EE-15-R01");
+    assert!(
+        rule.contains("&[\"JS-GOLD-LEXDECL-LET-BINDING-001\"]"),
+        "EE-15-R01 must map exactly to its dedicated rejecting gold"
+    );
 }
 
 #[test]
@@ -91,9 +94,11 @@ fn existing_script_duplicate_gold_remains_exact() {
     assert_eq!(gold_source(SCRIPT_DUPLICATE_GOLD_ID), Some("let x; let x;"));
     assert_eq!(gold_subject_range(SCRIPT_DUPLICATE_GOLD_ID), Some((11, 12)));
 
-    let rule = rule("EE-36-R01");
-    assert_eq!(rule.kind, RuleUnitKind::NormativeRule);
-    assert_eq!(rule.gold_fixture_ids, &[SCRIPT_DUPLICATE_GOLD_ID]);
+    let rule = active_rule_block("EE-36-R01");
+    assert!(
+        rule.contains("&[\"JS-GOLD-SCRIPT-DUPLEXICAL-001\"]"),
+        "EE-36-R01 must preserve the existing duplicate Script gold mapping"
+    );
 }
 
 #[test]
@@ -143,12 +148,7 @@ fn selected_non_strict_identifier_expectations_are_rule_local() {
             fixture.id
         );
         for rule_id in fixture.rule_ids {
-            assert_eq!(
-                rule(rule_id).kind,
-                RuleUnitKind::NormativeRule,
-                "{} must map only to an active first-envelope rule",
-                fixture.id
-            );
+            let _ = active_rule_block(rule_id);
         }
     }
 }
@@ -161,6 +161,7 @@ fn rule_local_validation_does_not_import_production_semantics_or_qualified_meani
         concat!("qualification", "::"),
         concat!("ExpectedQualification", "::Qualified"),
         concat!("QualificationOutcome", "::qualified"),
+        concat!("mod ", "inventory;"),
     ] {
         assert!(
             !source.contains(forbidden),
