@@ -8,6 +8,8 @@ mod html;
 // validate the project-owned CSS frontend before any public API commitment.
 #[allow(dead_code)]
 mod css;
+#[allow(dead_code)]
+mod ecmascript;
 mod raw_source_coordinate;
 mod source;
 

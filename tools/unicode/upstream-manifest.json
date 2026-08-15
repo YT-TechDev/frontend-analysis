@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "unicode_version": "17.0.0",
+  "ecma262_snapshot": "d89c03f2db8a597bc915b363a6518d0cc8acdbc0",
+  "inputs": [
+    {
+      "id": "unicode-derived-core-properties",
+      "retained_path": "tools/unicode/inputs/DerivedCoreProperties.txt",
+      "official_url": "https://www.unicode.org/Public/17.0.0/ucd/DerivedCoreProperties.txt",
+      "required_header": "# DerivedCoreProperties-17.0.0.txt",
+      "git_mirror": {
+        "repository": "unicode-org/unicodetools",
+        "commit": "a363a170c5ecb1c509535f6730dd19e720443cd9",
+        "path": "unicodetools/data/ucd/17.0.0/DerivedCoreProperties.txt",
+        "blob_sha1": "f327784bf3956436efeb85e213fc637d7b3c0207",
+        "size": 1134783
+      }
+    },
+    {
+      "id": "unicode-derived-general-category",
+      "retained_path": "tools/unicode/inputs/extracted/DerivedGeneralCategory.txt",
+      "official_url": "https://www.unicode.org/Public/17.0.0/ucd/extracted/DerivedGeneralCategory.txt",
+      "required_header": "# DerivedGeneralCategory-17.0.0.txt",
+      "git_mirror": {
+        "repository": "unicode-org/unicodetools",
+        "commit": "a363a170c5ecb1c509535f6730dd19e720443cd9",
+        "path": "unicodetools/data/ucd/17.0.0/extracted/DerivedGeneralCategory.txt",
+        "blob_sha1": "41996d6348fdcd7f1a88127766b7e6b21b6159e3",
+        "size": 277514
+      }
+    },
+    {
+      "id": "unicode-property-value-aliases",
+      "retained_path": "tools/unicode/inputs/PropertyValueAliases.txt",
+      "official_url": "https://www.unicode.org/Public/17.0.0/ucd/PropertyValueAliases.txt",
+      "required_header": "# PropertyValueAliases-17.0.0.txt",
+      "git_mirror": {
+        "repository": "unicode-org/unicodetools",
+        "commit": "a363a170c5ecb1c509535f6730dd19e720443cd9",
+        "path": "unicodetools/data/ucd/17.0.0/PropertyValueAliases.txt",
+        "blob_sha1": "b92662eda2867baed56e55440e5187d52c1cb341",
+        "size": 81858
+      }
+    },
+    {
+      "id": "ecma262-nonbinary-unicode-properties",
+      "retained_path": "tools/unicode/inputs/ecma262/table-nonbinary-unicode-properties.html",
+      "required_table_id": "table-nonbinary-unicode-properties",
+      "git_source": {
+        "repository": "tc39/ecma262",
+        "commit": "d89c03f2db8a597bc915b363a6518d0cc8acdbc0",
+        "path": "table-nonbinary-unicode-properties.html",
+        "blob_sha1": "2bf328116d7085f3e220c8325d0fb737b3bd19a6",
+        "size": 1033
+      }
+    },
+    {
+      "id": "ecma262-binary-unicode-properties",
+      "retained_path": "tools/unicode/inputs/ecma262/table-binary-unicode-properties.html",
+      "required_table_id": "table-binary-unicode-properties",
+      "git_source": {
+        "repository": "tc39/ecma262",
+        "commit": "d89c03f2db8a597bc915b363a6518d0cc8acdbc0",
+        "path": "table-binary-unicode-properties.html",
+        "blob_sha1": "8ab11640ed8bd6234a3c2b42a36a99847eee76ef",
+        "size": 10528
+      }
+    },
+    {
+      "id": "ecma262-binary-unicode-properties-of-strings",
+      "retained_path": "tools/unicode/inputs/ecma262/table-binary-unicode-properties-of-strings.html",
+      "required_table_id": "table-binary-unicode-properties-of-strings",
+      "git_source": {
+        "repository": "tc39/ecma262",
+        "commit": "d89c03f2db8a597bc915b363a6518d0cc8acdbc0",
+        "path": "table-binary-unicode-properties-of-strings.html",
+        "blob_sha1": "1b6479a126902e04394f8bb684e7d3740bde608e",
+        "size": 702
+      }
+    }
+  ]
+}
