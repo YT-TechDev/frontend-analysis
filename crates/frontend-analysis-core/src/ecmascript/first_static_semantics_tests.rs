@@ -7,9 +7,7 @@ use super::first_static_semantics::{
     SelectedStaticSemanticsOutcome, SelectedStaticSemanticsRejection,
     evaluate_first_static_semantics, selected_rejection_to_qualification,
 };
-use super::qualification::{
-    ProcessingStatus, QualificationVerdictKind, RejectionFamily,
-};
+use super::qualification::{ProcessingStatus, QualificationVerdictKind, RejectionFamily};
 use super::qualification_validation_tests::{gold_source, gold_subject_range};
 
 fn source(text: &str) -> SourceText {
