@@ -217,14 +217,14 @@ pub(crate) const RULE_UNITS: &[RuleUnit] = &[
     active_rule(
         "EE-01-R01",
         "EE-01",
-        "IdentifierStart :: \\ UnicodeEscapeSequence / escaped code point must match IdentifierStartChar",
+        "IdentifierStart :: \\\\ UnicodeEscapeSequence / escaped code point must match IdentifierStartChar",
         &["IdentifierCodePoint", "Unicode ID_Start"],
         &[],
     ),
     active_rule(
         "EE-01-R02",
         "EE-01",
-        "IdentifierPart :: \\ UnicodeEscapeSequence / escaped code point must match IdentifierPartChar",
+        "IdentifierPart :: \\\\ UnicodeEscapeSequence / escaped code point must match IdentifierPartChar",
         &["IdentifierCodePoint", "Unicode ID_Continue"],
         &[],
     ),

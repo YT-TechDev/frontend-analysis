@@ -140,7 +140,7 @@ fn selected_non_strict_identifier_expectations_are_rule_local() {
         .filter(|fixture| fixture.id != "JS-RULE-NONTRIGGER-CANONICAL-DISTINCT-001")
         .map(|fixture| fixture.source)
         .collect();
-    assert_eq!(actual_sources, expected_sources);
+    assert_eq!(actual_sources.as_slice(), expected_sources.as_slice());
 
     for fixture in RULE_NON_TRIGGER_FIXTURES {
         assert!(
@@ -163,10 +163,10 @@ fn selected_non_strict_identifier_expectations_are_rule_local() {
 fn rule_local_validation_does_not_import_production_semantics_or_qualified_meaning() {
     let source = include_str!("qualification_static_semantics_validation_tests.rs");
     for forbidden in [
-        "first_lexical_slice::",
-        "qualification::",
-        "ExpectedQualification::Qualified",
-        "QualificationOutcome::qualified",
+        concat!("first_", "lexical_slice::"),
+        concat!("qualification", "::"),
+        concat!("ExpectedQualification", "::Qualified"),
+        concat!("QualificationOutcome", "::qualified"),
     ] {
         assert!(
             !source.contains(forbidden),
