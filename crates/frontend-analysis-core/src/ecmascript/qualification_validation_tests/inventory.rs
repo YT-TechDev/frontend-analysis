@@ -518,7 +518,7 @@ pub(crate) const RULE_UNITS: &[RuleUnit] = &[
         "EE-15",
         "LexicalDeclaration / BoundNames must not contain let",
         &["BoundNames"],
-        &[],
+        &["JS-GOLD-LEXDECL-LET-BINDING-001"],
     ),
     active_rule(
         "EE-15-R02",
