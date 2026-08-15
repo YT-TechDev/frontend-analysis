@@ -1,3 +1,8 @@
+#![allow(clippy::duplicate_mod)]
+
+// This test-only comparison adapter deliberately compiles the exact #197 gold/model
+// sources as its independent oracle rather than widening their module visibility or
+// deriving expected meaning from the production qualification contract.
 #[path = "qualification_validation_tests/gold.rs"]
 mod gold;
 #[path = "qualification_validation_tests/model.rs"]
