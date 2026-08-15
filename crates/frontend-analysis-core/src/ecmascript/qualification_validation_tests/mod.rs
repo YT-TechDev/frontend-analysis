@@ -25,6 +25,20 @@ use test262::{
     select_evidence,
 };
 
+pub(super) fn gold_source(fixture_id: &str) -> Option<&'static str> {
+    fixtures()
+        .into_iter()
+        .find(|fixture| fixture.id == fixture_id)
+        .map(|fixture| fixture.source)
+}
+
+pub(super) fn gold_subject_range(fixture_id: &str) -> Option<(usize, usize)> {
+    fixtures()
+        .into_iter()
+        .find(|fixture| fixture.id == fixture_id)
+        .and_then(|fixture| fixture.subject.map(|range| (range.start, range.end)))
+}
+
 // Independent literal expectations recovered from the pinned ECMA extractor
 // checkpoint. Do not derive this table from RULE_UNITS.
 const EXPECTED_RULE_COUNTS: &[(&str, usize, usize)] = &[
