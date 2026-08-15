@@ -1,7 +1,7 @@
 use crate::{SourceId, SourceText};
 
 use super::first_lexical_slice::{
-    recognize_first_lexical_slice, FirstLexicalSliceOutcome, SelectedLexicalScript,
+    FirstLexicalSliceOutcome, SelectedLexicalScript, recognize_first_lexical_slice,
 };
 use super::qualification_validation_tests::{gold_source, gold_subject_range};
 
@@ -54,8 +54,7 @@ fn consumes_candidate_independent_valid_and_multibyte_gold() {
     let valid = gold_source("JS-GOLD-SCRIPT-VALID-001").expect("valid gold must exist");
     let _ = recognized(valid);
 
-    let multibyte =
-        gold_source("JS-GOLD-SCRIPT-MULTIBYTE-001").expect("multibyte gold must exist");
+    let multibyte = gold_source("JS-GOLD-SCRIPT-MULTIBYTE-001").expect("multibyte gold must exist");
     let (expected_start, expected_end) = gold_subject_range("JS-GOLD-SCRIPT-MULTIBYTE-001")
         .expect("multibyte gold must retain its authoritative subject range");
     let script = recognized(multibyte);
@@ -141,7 +140,13 @@ fn identifier_continue_does_not_become_identifier_start() {
 
 #[test]
 fn does_not_split_let_keyword_prefix_from_identifier_name() {
-    for text in ["letx=1;", "letπ=1;", "let$=1;", "let_foo=1;", "let\\u0061=1;"] {
+    for text in [
+        "letx=1;",
+        "letπ=1;",
+        "let$=1;",
+        "let_foo=1;",
+        "let\\u0061=1;",
+    ] {
         assert_unsupported(text);
     }
 }
@@ -181,8 +186,8 @@ fn selected_decimal_subset_is_exact_and_not_a_numeric_prefix_parser() {
 
 #[test]
 fn asi_comments_hashbang_and_broader_grammar_remain_unsupported() {
-    let asi_gold = gold_source("JS-GOLD-ASI-NO-FABRICATED-RANGE-001")
-        .expect("ASI provenance gold must exist");
+    let asi_gold =
+        gold_source("JS-GOLD-ASI-NO-FABRICATED-RANGE-001").expect("ASI provenance gold must exist");
     assert_unsupported(asi_gold);
 
     for text in [
