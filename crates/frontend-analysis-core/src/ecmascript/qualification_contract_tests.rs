@@ -48,7 +48,10 @@ fn normal_processing_completion_does_not_imply_qualified() {
         rejected.verdict(),
         Some(QualificationVerdictKind::StaticSemanticsRejected)
     );
-    assert_eq!(qualified.verdict(), Some(QualificationVerdictKind::Qualified));
+    assert_eq!(
+        qualified.verdict(),
+        Some(QualificationVerdictKind::Qualified)
+    );
     assert!(!rejected.equivalent_meaning(&qualified));
 }
 
@@ -56,7 +59,10 @@ fn normal_processing_completion_does_not_imply_qualified() {
 fn resource_and_internal_incompleteness_never_fabricate_a_verdict() {
     let resource_gold = gold_fixture("JS-GOLD-LIFECYCLE-RESOURCE-LIMIT-001");
     let resource = QualificationOutcome::resource_limited();
-    assert_eq!(resource_gold.processing, ExpectedProcessing::ResourceLimited);
+    assert_eq!(
+        resource_gold.processing,
+        ExpectedProcessing::ResourceLimited
+    );
     assert_eq!(resource_gold.qualification, None);
     assert_eq!(resource.processing(), ProcessingStatus::ResourceLimited);
     assert_eq!(resource.verdict(), None);
@@ -64,7 +70,10 @@ fn resource_and_internal_incompleteness_never_fabricate_a_verdict() {
 
     let internal_gold = gold_fixture("JS-GOLD-LIFECYCLE-INTERNAL-FAILURE-001");
     let internal = QualificationOutcome::internal_failure();
-    assert_eq!(internal_gold.processing, ExpectedProcessing::InternalFailure);
+    assert_eq!(
+        internal_gold.processing,
+        ExpectedProcessing::InternalFailure
+    );
     assert_eq!(internal_gold.qualification, None);
     assert_eq!(internal.processing(), ProcessingStatus::InternalFailure);
     assert_eq!(internal.verdict(), None);
@@ -81,10 +90,16 @@ fn implementation_pending_gold_remains_normatively_qualified_not_rejected() {
         fixture.implementation_coverage,
         ImplementationCoverage::Pending
     );
-    assert_eq!(fixture.qualification, Some(ExpectedQualification::Qualified));
+    assert_eq!(
+        fixture.qualification,
+        Some(ExpectedQualification::Qualified)
+    );
 
     let qualified = QualificationOutcome::qualified(test_complete_qualification_witness());
-    assert_eq!(qualified.verdict(), Some(QualificationVerdictKind::Qualified));
+    assert_eq!(
+        qualified.verdict(),
+        Some(QualificationVerdictKind::Qualified)
+    );
 }
 
 #[test]
@@ -94,7 +109,9 @@ fn authored_evidence_preserves_exact_source_identity_and_range() {
     let subject = EvidenceSubject::authored(&source, anchor).unwrap();
 
     assert_eq!(subject.origin(), EvidenceOrigin::Authored);
-    let retained = subject.authored_anchor().expect("authored anchor must exist");
+    let retained = subject
+        .authored_anchor()
+        .expect("authored anchor must exist");
     assert_eq!(retained.source_id(), SourceId::new(200));
     assert_eq!(retained.range().start(), 4);
     assert_eq!(retained.range().end(), 6);
@@ -177,11 +194,9 @@ fn equivalent_meaning_is_independent_of_allocation_identity() {
     assert!(first.equivalent_meaning(&second));
 
     let different_source = SourceText::new(SourceId::new(202), "let y; let y;".to_owned());
-    let different_subject = EvidenceSubject::authored(
-        &different_source,
-        different_source.anchor(11, 12).unwrap(),
-    )
-    .unwrap();
+    let different_subject =
+        EvidenceSubject::authored(&different_source, different_source.anchor(11, 12).unwrap())
+            .unwrap();
     let different = QualificationOutcome::static_semantics_rejected(different_subject);
     assert!(!first.equivalent_meaning(&different));
 }
