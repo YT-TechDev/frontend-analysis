@@ -88,14 +88,8 @@ fn ee_15_r01_rejection_gold_is_exact_and_inventory_mapped() {
 
 #[test]
 fn existing_script_duplicate_gold_remains_exact() {
-    assert_eq!(
-        gold_source(SCRIPT_DUPLICATE_GOLD_ID),
-        Some("let x; let x;")
-    );
-    assert_eq!(
-        gold_subject_range(SCRIPT_DUPLICATE_GOLD_ID),
-        Some((11, 12))
-    );
+    assert_eq!(gold_source(SCRIPT_DUPLICATE_GOLD_ID), Some("let x; let x;"));
+    assert_eq!(gold_subject_range(SCRIPT_DUPLICATE_GOLD_ID), Some((11, 12)));
 
     let rule = rule("EE-36-R01");
     assert_eq!(rule.kind, RuleUnitKind::NormativeRule);
