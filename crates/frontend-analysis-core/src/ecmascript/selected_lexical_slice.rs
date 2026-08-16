@@ -210,10 +210,10 @@ impl<'source> Cursor<'source> {
         }
 
         let after_keyword = self.offset + keyword.len();
-        if let Some(next) = self.text[after_keyword..].chars().next() {
-            if is_identifier_part(next) || next == '\\' {
-                return false;
-            }
+        if let Some(next) = self.text[after_keyword..].chars().next()
+            && (is_identifier_part(next) || next == '\\')
+        {
+            return false;
         }
 
         self.offset = after_keyword;
