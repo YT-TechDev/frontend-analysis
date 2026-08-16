@@ -72,9 +72,15 @@ fn ee_15_r02_is_declaration_local_and_retains_first_duplicate_occurrences() {
                 duplicate_binding,
             },
         ) => {
-            assert_eq!((first_binding.range().start(), first_binding.range().end()), (4, 5));
             assert_eq!(
-                (duplicate_binding.range().start(), duplicate_binding.range().end()),
+                (first_binding.range().start(), first_binding.range().end()),
+                (4, 5)
+            );
+            assert_eq!(
+                (
+                    duplicate_binding.range().start(),
+                    duplicate_binding.range().end()
+                ),
                 expected
             );
         }
@@ -124,9 +130,15 @@ fn ee_36_runs_after_all_local_checks_and_flattens_binding_source_order() {
             },
         ) => {
             assert_eq!(first_binding.fragment(), "y");
-            assert_eq!((first_binding.range().start(), first_binding.range().end()), (7, 8));
             assert_eq!(
-                (duplicate_binding.range().start(), duplicate_binding.range().end()),
+                (first_binding.range().start(), first_binding.range().end()),
+                (7, 8)
+            );
+            assert_eq!(
+                (
+                    duplicate_binding.range().start(),
+                    duplicate_binding.range().end()
+                ),
                 expected
             );
         }
@@ -153,12 +165,12 @@ fn accepted_precedence_matrix_is_declaration_source_order_then_local_rule_order(
         };
 
         let (actual_rule, actual_range) = match rejection {
-            SelectedStaticSemanticsRejection::BindingNamedLet { binding } => (
-                "R01",
-                (binding.range().start(), binding.range().end()),
-            ),
+            SelectedStaticSemanticsRejection::BindingNamedLet { binding } => {
+                ("R01", (binding.range().start(), binding.range().end()))
+            }
             SelectedStaticSemanticsRejection::DuplicateDeclarationBinding {
-                duplicate_binding, ..
+                duplicate_binding,
+                ..
             } => (
                 "R02",
                 (
@@ -166,10 +178,9 @@ fn accepted_precedence_matrix_is_declaration_source_order_then_local_rule_order(
                     duplicate_binding.range().end(),
                 ),
             ),
-            SelectedStaticSemanticsRejection::ConstBindingMissingInitializer { binding } => (
-                "R03",
-                (binding.range().start(), binding.range().end()),
-            ),
+            SelectedStaticSemanticsRejection::ConstBindingMissingInitializer { binding } => {
+                ("R03", (binding.range().start(), binding.range().end()))
+            }
             SelectedStaticSemanticsRejection::DuplicateLexicalName {
                 duplicate_binding, ..
             } => (
@@ -181,8 +192,14 @@ fn accepted_precedence_matrix_is_declaration_source_order_then_local_rule_order(
             ),
         };
 
-        assert_eq!(actual_rule, expected_rule, "wrong primary rule for {text:?}");
-        assert_eq!(actual_range, expected_range, "wrong primary range for {text:?}");
+        assert_eq!(
+            actual_rule, expected_rule,
+            "wrong primary rule for {text:?}"
+        );
+        assert_eq!(
+            actual_range, expected_range,
+            "wrong primary range for {text:?}"
+        );
     }
 }
 
