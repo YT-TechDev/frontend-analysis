@@ -258,7 +258,10 @@ fn whole_source_transaction_prevents_prefix_success_and_truncated_facts() {
 
 #[test]
 fn repeated_recognition_preserves_equivalent_declaration_binding_order_and_ranges() {
-    fn ranges(text: &str) -> Vec<((usize, usize), Vec<(usize, usize)>)> {
+    type ByteRange = (usize, usize);
+    type DeclarationRanges = (ByteRange, Vec<ByteRange>);
+
+    fn ranges(text: &str) -> Vec<DeclarationRanges> {
         recognized(text)
             .declarations()
             .iter()
