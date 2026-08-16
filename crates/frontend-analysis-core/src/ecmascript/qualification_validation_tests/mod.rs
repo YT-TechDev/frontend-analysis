@@ -823,7 +823,12 @@ fn second_lexical_slice_focused_evidence_is_candidate_independent_and_consistent
         let fixture = fixtures
             .iter()
             .find(|fixture| fixture.id == evidence.fixture_id)
-            .unwrap_or_else(|| panic!("focused evidence references missing fixture {}", evidence.fixture_id));
+            .unwrap_or_else(|| {
+                panic!(
+                    "focused evidence references missing fixture {}",
+                    evidence.fixture_id
+                )
+            });
         assert_eq!(
             fixture.qualification,
             Some(model::ExpectedQualification::StaticSemanticsRejected),
@@ -955,8 +960,14 @@ fn second_lexical_positive_gold_stays_whole_standard_qualified_and_pending() {
             .unwrap_or_else(|| panic!("{fixture_id} must exist"));
         assert_eq!(fixture.processing, ExpectedProcessing::Complete);
         assert_eq!(fixture.applicability, RequestApplicability::Supported);
-        assert_eq!(fixture.qualification, Some(model::ExpectedQualification::Qualified));
-        assert_eq!(fixture.implementation_coverage, ImplementationCoverage::Pending);
+        assert_eq!(
+            fixture.qualification,
+            Some(model::ExpectedQualification::Qualified)
+        );
+        assert_eq!(
+            fixture.implementation_coverage,
+            ImplementationCoverage::Pending
+        );
     }
 }
 
@@ -997,11 +1008,28 @@ fn widened_binding_shape_preserves_selected_ee04_non_trigger_context() {
             .into_iter()
             .find(|fixture| fixture.id == fixture_id)
             .unwrap_or_else(|| panic!("{fixture_id} must exist"));
-        assert_eq!(fixture.request_context, RequestContext::ScriptIndependentSource);
-        assert_eq!(fixture.qualification, Some(model::ExpectedQualification::Qualified));
-        assert_eq!(fixture.implementation_coverage, ImplementationCoverage::Pending);
-        assert!(fixture.dimensions.contains(&ValidationDimension::EarlyErrorRule));
-        assert!(fixture.dimensions.contains(&ValidationDimension::ValidityDependency));
+        assert_eq!(
+            fixture.request_context,
+            RequestContext::ScriptIndependentSource
+        );
+        assert_eq!(
+            fixture.qualification,
+            Some(model::ExpectedQualification::Qualified)
+        );
+        assert_eq!(
+            fixture.implementation_coverage,
+            ImplementationCoverage::Pending
+        );
+        assert!(
+            fixture
+                .dimensions
+                .contains(&ValidationDimension::EarlyErrorRule)
+        );
+        assert!(
+            fixture
+                .dimensions
+                .contains(&ValidationDimension::ValidityDependency)
+        );
     }
 }
 
@@ -1011,7 +1039,10 @@ fn multi_binding_name_identity_does_not_normalize_unicode() {
         .into_iter()
         .find(|fixture| fixture.id == "JS-GOLD-LEXDECL-MULTIBIND-CANONICAL-DISTINCT-001")
         .expect("canonical-distinct multi-binding fixture must exist");
-    assert_eq!(fixture.qualification, Some(model::ExpectedQualification::Qualified));
+    assert_eq!(
+        fixture.qualification,
+        Some(model::ExpectedQualification::Qualified)
+    );
 
     let source = SourceText::new(SourceId::new(216), fixture.source.to_owned());
     let composed = source.anchor(4, 6).expect("é occupies UTF-8 bytes 4..6");
