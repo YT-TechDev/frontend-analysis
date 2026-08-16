@@ -93,6 +93,22 @@ const RULE_PRECEDENCE_FIXTURES: &[RulePrecedenceFixture] = &[
         supporting_subjects: &[(4, 5), (11, 12)],
         co_trigger_rule_ids: &["EE-36-R01"],
     },
+    RulePrecedenceFixture {
+        id: "JS-RULE-PRECEDENCE-EARLIER-R02-BEFORE-LATER-R03-001",
+        source: "let x, x; const y;",
+        primary_rule_id: "EE-15-R02",
+        primary_subject: (7, 8),
+        supporting_subjects: &[(4, 5), (16, 17)],
+        co_trigger_rule_ids: &["EE-15-R03", "EE-36-R01"],
+    },
+    RulePrecedenceFixture {
+        id: "JS-RULE-PRECEDENCE-EARLIER-R03-BEFORE-LATER-R02-001",
+        source: "const x; let y, y;",
+        primary_rule_id: "EE-15-R03",
+        primary_subject: (6, 7),
+        supporting_subjects: &[(13, 14), (16, 17)],
+        co_trigger_rule_ids: &["EE-15-R02", "EE-36-R01"],
+    },
 ];
 
 fn active_rule_block(rule_id: &str) -> &'static str {
@@ -192,7 +208,7 @@ fn selected_non_strict_identifier_expectations_are_rule_local() {
 
 #[test]
 fn second_lexical_slice_precedence_witnesses_reject_family_global_traversal() {
-    assert_eq!(RULE_PRECEDENCE_FIXTURES.len(), 3);
+    assert_eq!(RULE_PRECEDENCE_FIXTURES.len(), 5);
 
     for fixture in RULE_PRECEDENCE_FIXTURES {
         let _ = active_rule_block(fixture.primary_rule_id);
@@ -239,6 +255,32 @@ fn second_lexical_slice_precedence_witnesses_reject_family_global_traversal() {
     assert_eq!(local_before_script.primary_subject, (18, 21));
     assert_eq!(local_before_script.supporting_subjects, &[(4, 5), (11, 12)]);
     assert_eq!(local_before_script.co_trigger_rule_ids, &["EE-36-R01"]);
+
+    let earlier_r02_before_later_r03 = &RULE_PRECEDENCE_FIXTURES[3];
+    assert_eq!(earlier_r02_before_later_r03.source, "let x, x; const y;");
+    assert_eq!(earlier_r02_before_later_r03.primary_rule_id, "EE-15-R02");
+    assert_eq!(earlier_r02_before_later_r03.primary_subject, (7, 8));
+    assert_eq!(
+        earlier_r02_before_later_r03.supporting_subjects,
+        &[(4, 5), (16, 17)]
+    );
+    assert_eq!(
+        earlier_r02_before_later_r03.co_trigger_rule_ids,
+        &["EE-15-R03", "EE-36-R01"]
+    );
+
+    let earlier_r03_before_later_r02 = &RULE_PRECEDENCE_FIXTURES[4];
+    assert_eq!(earlier_r03_before_later_r02.source, "const x; let y, y;");
+    assert_eq!(earlier_r03_before_later_r02.primary_rule_id, "EE-15-R03");
+    assert_eq!(earlier_r03_before_later_r02.primary_subject, (6, 7));
+    assert_eq!(
+        earlier_r03_before_later_r02.supporting_subjects,
+        &[(13, 14), (16, 17)]
+    );
+    assert_eq!(
+        earlier_r03_before_later_r02.co_trigger_rule_ids,
+        &["EE-15-R02", "EE-36-R01"]
+    );
 }
 
 #[test]
