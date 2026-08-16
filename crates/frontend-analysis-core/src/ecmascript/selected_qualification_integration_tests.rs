@@ -56,7 +56,10 @@ fn selected_r01_r02_r03_and_ee36_rejections_preserve_static_family() {
             Some(QualificationVerdictKind::StaticSemanticsRejected)
         );
         assert_eq!(
-            outcome.rejection_evidence().expect("rejection evidence").family(),
+            outcome
+                .rejection_evidence()
+                .expect("rejection evidence")
+                .family(),
             RejectionFamily::StaticSemantics
         );
     }
@@ -72,7 +75,8 @@ fn candidate_independent_primary_ranges_survive_aggregate_handoff() {
         ("JS-GOLD-LEXDECL-CONST-DUP-MISSING-INIT-001", "x"),
     ] {
         let text = gold_source(fixture_id).unwrap_or_else(|| panic!("{fixture_id} source"));
-        let expected = gold_subject_range(fixture_id).unwrap_or_else(|| panic!("{fixture_id} range"));
+        let expected =
+            gold_subject_range(fixture_id).unwrap_or_else(|| panic!("{fixture_id} range"));
         let outcome = static_rejection(text);
         let anchor = outcome
             .rejection_evidence()
