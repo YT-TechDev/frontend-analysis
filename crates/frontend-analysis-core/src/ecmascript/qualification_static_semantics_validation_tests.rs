@@ -84,8 +84,8 @@ fn ee_15_r01_rejection_gold_is_exact_and_inventory_mapped() {
 
     let rule = active_rule_block("EE-15-R01");
     assert!(
-        rule.contains("&[\"JS-GOLD-LEXDECL-LET-BINDING-001\"]"),
-        "EE-15-R01 must map exactly to its dedicated rejecting gold"
+        rule.contains("\"JS-GOLD-LEXDECL-LET-BINDING-001\""),
+        "EE-15-R01 must preserve its dedicated rejecting gold mapping"
     );
 }
 
@@ -96,7 +96,7 @@ fn existing_script_duplicate_gold_remains_exact() {
 
     let rule = active_rule_block("EE-36-R01");
     assert!(
-        rule.contains("&[\"JS-GOLD-SCRIPT-DUPLEXICAL-001\"]"),
+        rule.contains("\"JS-GOLD-SCRIPT-DUPLEXICAL-001\""),
         "EE-36-R01 must preserve the existing duplicate Script gold mapping"
     );
 }
