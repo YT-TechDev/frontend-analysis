@@ -122,12 +122,16 @@ fn integration_source_preserves_aggregate_architecture_boundaries() {
     }
 
     assert_eq!(
-        production.matches("recognize_first_lexical_slice(source)").count(),
+        production
+            .matches("recognize_first_lexical_slice(source)")
+            .count(),
         1,
         "aggregate integration must invoke the selected recognizer exactly once"
     );
     assert_eq!(
-        production.matches("evaluate_first_static_semantics(&script)").count(),
+        production
+            .matches("evaluate_first_static_semantics(&script)")
+            .count(),
         1,
         "recognized selected facts must enter the selected static-semantics owner exactly once"
     );

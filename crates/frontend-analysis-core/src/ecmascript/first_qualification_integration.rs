@@ -38,9 +38,9 @@ pub(super) fn attempt_first_selected_qualification(
                     FirstSelectedQualificationAttempt::SelectedAcceptedIncomplete
                 }
                 SelectedStaticSemanticsOutcome::Rejected(rejection) => {
-                    FirstSelectedQualificationAttempt::Outcome(
-                        selected_rejection_to_qualification(source, &rejection),
-                    )
+                    FirstSelectedQualificationAttempt::Outcome(selected_rejection_to_qualification(
+                        source, &rejection,
+                    ))
                 }
                 SelectedStaticSemanticsOutcome::ResourceLimited => {
                     FirstSelectedQualificationAttempt::Outcome(
@@ -58,11 +58,11 @@ pub(super) fn attempt_first_selected_qualification(
             // whole-source SyntaxRejected verdict.
             FirstSelectedQualificationAttempt::Outcome(QualificationOutcome::internal_failure())
         }
-        FirstLexicalSliceOutcome::ResourceLimited => FirstSelectedQualificationAttempt::Outcome(
-            QualificationOutcome::resource_limited(),
-        ),
-        FirstLexicalSliceOutcome::InternalFailure => FirstSelectedQualificationAttempt::Outcome(
-            QualificationOutcome::internal_failure(),
-        ),
+        FirstLexicalSliceOutcome::ResourceLimited => {
+            FirstSelectedQualificationAttempt::Outcome(QualificationOutcome::resource_limited())
+        }
+        FirstLexicalSliceOutcome::InternalFailure => {
+            FirstSelectedQualificationAttempt::Outcome(QualificationOutcome::internal_failure())
+        }
     }
 }
