@@ -1,9 +1,9 @@
-//! First source-backed ECMAScript lexical declaration slice for Issue #204.
+//! Selected source-backed ECMAScript lexical declaration slice for Issue #218.
 //!
 //! This module recognizes only the bounded top-level Script subset accepted by
-//! #203/#204. Recognition is transactional for the whole authoritative
-//! `SourceText`: tentative declaration facts are returned only when the entire
-//! source is consumed by selected declarations plus selected trivia.
+//! #215/#218. Recognition is transactional for the whole authoritative
+//! `SourceText`: tentative declaration/binding facts are returned only when the
+//! entire source is consumed by selected declarations plus selected trivia.
 //!
 //! This is not aggregate ECMAScript qualification and cannot construct
 //! `QualificationOutcome::Qualified`.
@@ -12,16 +12,8 @@ use crate::{SourceAnchor, SourceText};
 
 use super::unicode::{is_id_continue, is_id_start, is_space_separator};
 
-/// Slice-local processing result.
-///
-/// `DefinitiveGrammarRejectionEvidence` is retained as an explicit future
-/// meaning boundary, but this first implementation does not construct it. A
-/// selected-grammar failure is conservatively `UnsupportedCoverage` unless a
-/// future leaf adds an independently reviewed full-Script invalidity proof.
-/// `ResourceLimited` is reserved for an actual fallible retained-evidence
-/// allocation, not an invented numeric parser budget.
 #[derive(Debug)]
-pub(super) enum FirstLexicalSliceOutcome {
+pub(super) enum SelectedLexicalSliceOutcome {
     RecognizedSelectedSlice(SelectedLexicalScript),
     UnsupportedCoverage,
     DefinitiveGrammarRejectionEvidence,
@@ -29,33 +21,64 @@ pub(super) enum FirstLexicalSliceOutcome {
     InternalFailure,
 }
 
-/// Minimal retained facts for the selected whole-source Script slice.
 #[derive(Debug)]
 pub(super) struct SelectedLexicalScript {
-    declarations: Vec<LexicalDeclarationFact>,
+    declarations: Vec<SelectedLexicalDeclaration>,
 }
 
 impl SelectedLexicalScript {
-    pub(super) fn declarations(&self) -> &[LexicalDeclarationFact] {
+    pub(super) fn declarations(&self) -> &[SelectedLexicalDeclaration] {
         &self.declarations
     }
 }
 
-/// Source-backed syntax facts required by the next named static-semantic owner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SelectedLexicalDeclarationKind {
+    Let,
+    Const,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SelectedInitializerState {
+    Absent,
+    SelectedPresent,
+}
+
 #[derive(Debug)]
-pub(super) struct LexicalDeclarationFact {
-    declaration: SourceAnchor,
+pub(super) struct SelectedLexicalBinding {
     binding: SourceAnchor,
+    initializer: SelectedInitializerState,
+}
+
+impl SelectedLexicalBinding {
+    pub(super) fn binding(&self) -> &SourceAnchor {
+        &self.binding
+    }
+
+    pub(super) fn initializer(&self) -> SelectedInitializerState {
+        self.initializer
+    }
+}
+
+#[derive(Debug)]
+pub(super) struct SelectedLexicalDeclaration {
+    kind: SelectedLexicalDeclarationKind,
+    declaration: SourceAnchor,
+    bindings: Vec<SelectedLexicalBinding>,
     semicolon: SourceAnchor,
 }
 
-impl LexicalDeclarationFact {
+impl SelectedLexicalDeclaration {
+    pub(super) fn kind(&self) -> SelectedLexicalDeclarationKind {
+        self.kind
+    }
+
     pub(super) fn declaration(&self) -> &SourceAnchor {
         &self.declaration
     }
 
-    pub(super) fn binding(&self) -> &SourceAnchor {
-        &self.binding
+    pub(super) fn bindings(&self) -> &[SelectedLexicalBinding] {
+        &self.bindings
     }
 
     pub(super) fn semicolon(&self) -> &SourceAnchor {
@@ -66,6 +89,7 @@ impl LexicalDeclarationFact {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ParseFailure {
     UnsupportedCoverage,
+    ResourceLimited,
     InternalFailure,
 }
 
@@ -111,25 +135,46 @@ impl<'source> Cursor<'source> {
         }
     }
 
-    fn parse_declaration(&mut self) -> Result<LexicalDeclarationFact, ParseFailure> {
+    fn parse_declaration(&mut self) -> Result<SelectedLexicalDeclaration, ParseFailure> {
         let declaration_start = self.offset;
-
-        if !self.consume_let_keyword() {
-            return Err(ParseFailure::UnsupportedCoverage);
-        }
-
-        self.skip_selected_trivia();
-        let (binding_start, binding_end) = self
-            .parse_unescaped_binding_identifier()
+        let kind = self
+            .consume_declaration_kind()
             .ok_or(ParseFailure::UnsupportedCoverage)?;
 
         self.skip_selected_trivia();
-        if self.consume_initializer_equals() {
+        let mut bindings = Vec::new();
+
+        loop {
+            let (binding_start, binding_end) = self
+                .parse_unescaped_binding_identifier()
+                .ok_or(ParseFailure::UnsupportedCoverage)?;
+
             self.skip_selected_trivia();
-            if !self.consume_selected_decimal_integer() {
-                return Err(ParseFailure::UnsupportedCoverage);
+            let initializer = if self.consume_initializer_equals() {
+                self.skip_selected_trivia();
+                if !self.consume_selected_decimal_integer() {
+                    return Err(ParseFailure::UnsupportedCoverage);
+                }
+                self.skip_selected_trivia();
+                SelectedInitializerState::SelectedPresent
+            } else {
+                SelectedInitializerState::Absent
+            };
+
+            let binding = self.anchor(binding_start, binding_end)?;
+            bindings
+                .try_reserve(1)
+                .map_err(|_| ParseFailure::ResourceLimited)?;
+            bindings.push(SelectedLexicalBinding {
+                binding,
+                initializer,
+            });
+
+            if self.consume_ascii(',') {
+                self.skip_selected_trivia();
+                continue;
             }
-            self.skip_selected_trivia();
+            break;
         }
 
         let semicolon_start = self.offset;
@@ -139,33 +184,39 @@ impl<'source> Cursor<'source> {
         let semicolon_end = self.offset;
 
         let declaration = self.anchor(declaration_start, semicolon_end)?;
-        let binding = self.anchor(binding_start, binding_end)?;
         let semicolon = self.anchor(semicolon_start, semicolon_end)?;
 
-        Ok(LexicalDeclarationFact {
+        Ok(SelectedLexicalDeclaration {
+            kind,
             declaration,
-            binding,
+            bindings,
             semicolon,
         })
     }
 
-    fn consume_let_keyword(&mut self) -> bool {
-        const LET: &str = "let";
+    fn consume_declaration_kind(&mut self) -> Option<SelectedLexicalDeclarationKind> {
+        if self.consume_keyword("let") {
+            return Some(SelectedLexicalDeclarationKind::Let);
+        }
+        if self.consume_keyword("const") {
+            return Some(SelectedLexicalDeclarationKind::Const);
+        }
+        None
+    }
 
-        if !self.remaining().starts_with(LET) {
+    fn consume_keyword(&mut self, keyword: &str) -> bool {
+        if !self.remaining().starts_with(keyword) {
             return false;
         }
 
-        let after_let = self.offset + LET.len();
-        if let Some(next) = self.text[after_let..].chars().next() {
-            // A following IdentifierPart or Unicode escape introducer means
-            // `let` is only a prefix of an IdentifierName, not the keyword.
+        let after_keyword = self.offset + keyword.len();
+        if let Some(next) = self.text[after_keyword..].chars().next() {
             if is_identifier_part(next) || next == '\\' {
                 return false;
             }
         }
 
-        self.offset = after_let;
+        self.offset = after_keyword;
         true
     }
 
@@ -184,9 +235,6 @@ impl<'source> Cursor<'source> {
             let _ = self.advance_char();
         }
 
-        // An escape would be part of the same IdentifierName in the full
-        // lexical grammar. Escaped identifiers are deferred by this Leaf, so
-        // do not expose the unescaped prefix as a selected binding.
         if self.peek_char() == Some('\\') {
             return None;
         }
@@ -205,10 +253,6 @@ impl<'source> Cursor<'source> {
             return false;
         }
 
-        // `=`, `==`, `===`, and `=>` are distinct punctuator tokens. The
-        // selected initializer owns only the single `=` token and must not
-        // split a longer punctuator prefix before reporting unsupported
-        // coverage.
         if self.remaining().starts_with("==") || self.remaining().starts_with("=>") {
             return false;
         }
@@ -262,17 +306,12 @@ impl<'source> Cursor<'source> {
     }
 }
 
-/// Recognizes the first bounded source-backed lexical declaration Script slice.
-///
-/// The authoritative source is accepted only when every non-trivia byte belongs
-/// to one or more selected `let` lexical declarations. No tentative fact escapes
-/// on whole-source coverage failure.
-pub(super) fn recognize_first_lexical_slice(source: &SourceText) -> FirstLexicalSliceOutcome {
+pub(super) fn recognize_selected_lexical_slice(source: &SourceText) -> SelectedLexicalSliceOutcome {
     let mut cursor = Cursor::new(source);
     cursor.skip_selected_trivia();
 
     if cursor.is_eof() {
-        return FirstLexicalSliceOutcome::UnsupportedCoverage;
+        return SelectedLexicalSliceOutcome::UnsupportedCoverage;
     }
 
     let mut declarations = Vec::new();
@@ -281,15 +320,18 @@ pub(super) fn recognize_first_lexical_slice(source: &SourceText) -> FirstLexical
         match cursor.parse_declaration() {
             Ok(declaration) => {
                 if declarations.try_reserve(1).is_err() {
-                    return FirstLexicalSliceOutcome::ResourceLimited;
+                    return SelectedLexicalSliceOutcome::ResourceLimited;
                 }
                 declarations.push(declaration);
             }
             Err(ParseFailure::UnsupportedCoverage) => {
-                return FirstLexicalSliceOutcome::UnsupportedCoverage;
+                return SelectedLexicalSliceOutcome::UnsupportedCoverage;
+            }
+            Err(ParseFailure::ResourceLimited) => {
+                return SelectedLexicalSliceOutcome::ResourceLimited;
             }
             Err(ParseFailure::InternalFailure) => {
-                return FirstLexicalSliceOutcome::InternalFailure;
+                return SelectedLexicalSliceOutcome::InternalFailure;
             }
         }
 
@@ -299,7 +341,7 @@ pub(super) fn recognize_first_lexical_slice(source: &SourceText) -> FirstLexical
         }
     }
 
-    FirstLexicalSliceOutcome::RecognizedSelectedSlice(SelectedLexicalScript { declarations })
+    SelectedLexicalSliceOutcome::RecognizedSelectedSlice(SelectedLexicalScript { declarations })
 }
 
 fn is_selected_trivia(code_point: char) -> bool {
@@ -318,11 +360,6 @@ fn is_identifier_part(code_point: char) -> bool {
 }
 
 fn is_unconditionally_reserved_word(spelling: &str) -> bool {
-    // ES2026 ReservedWord except `await` and `yield`, which are explicitly
-    // permitted by BindingIdentifier[~Yield, ~Await] in this top-level Script
-    // context. `let` is not in ReservedWord and remains a syntactically
-    // recognizable Identifier here; its LexicalDeclaration Early Error belongs
-    // to the later static-semantic owner.
     matches!(
         spelling,
         "break"

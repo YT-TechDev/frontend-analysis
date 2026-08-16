@@ -1,19 +1,19 @@
-mod first_lexical_slice;
-mod first_qualification_integration;
-mod first_static_semantics;
 mod qualification;
+mod selected_lexical_slice;
+mod selected_qualification_integration;
+mod selected_static_semantics;
 mod unicode;
 mod unicode_generated;
 
-#[cfg(test)]
-mod first_lexical_slice_tests;
-#[cfg(test)]
-mod first_qualification_integration_tests;
-#[cfg(test)]
-mod first_static_semantics_tests;
 #[cfg(test)]
 mod qualification_contract_tests;
 #[cfg(test)]
 mod qualification_static_semantics_validation_tests;
 #[cfg(test)]
 mod qualification_validation_tests;
+#[cfg(test)]
+mod selected_lexical_slice_tests;
+#[cfg(test)]
+mod selected_qualification_integration_tests;
+#[cfg(test)]
+mod selected_static_semantics_tests;
