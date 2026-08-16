@@ -93,7 +93,10 @@ fn preserves_multibyte_binding_provenance_without_normalization() {
     assert_eq!((binding.range().start(), binding.range().end()), expected);
 
     let script = recognized("let é, e\u{0301};");
-    assert_eq!(script.declarations()[0].bindings()[0].binding().fragment(), "é");
+    assert_eq!(
+        script.declarations()[0].bindings()[0].binding().fragment(),
+        "é"
+    );
     assert_eq!(
         script.declarations()[0].bindings()[1].binding().fragment(),
         "e\u{0301}"
@@ -209,8 +212,7 @@ fn initializer_transaction_never_degrades_failed_rhs_to_absent() {
 
 #[test]
 fn broader_script_grammar_remains_unsupported() {
-    let asi_gold =
-        gold_source("JS-GOLD-ASI-NO-FABRICATED-RANGE-001").expect("ASI gold must exist");
+    let asi_gold = gold_source("JS-GOLD-ASI-NO-FABRICATED-RANGE-001").expect("ASI gold must exist");
     assert_unsupported(asi_gold);
 
     for text in [
