@@ -219,14 +219,18 @@ pub(crate) const RULE_UNITS: &[RuleUnit] = &[
         "EE-01",
         "IdentifierStart :: \\\\ UnicodeEscapeSequence / escaped code point must match IdentifierStartChar",
         &["IdentifierCodePoint", "Unicode ID_Start"],
-        &[],
+        &[
+            "JS-GOLD-IDENTIFIER-ESCAPED-START-DIGIT-001",
+            "JS-GOLD-IDENTIFIER-ESCAPED-START-SURROGATE-FIXED-001",
+            "JS-GOLD-IDENTIFIER-ESCAPED-START-SURROGATE-BRACED-001",
+        ],
     ),
     active_rule(
         "EE-01-R02",
         "EE-01",
         "IdentifierPart :: \\\\ UnicodeEscapeSequence / escaped code point must match IdentifierPartChar",
         &["IdentifierCodePoint", "Unicode ID_Continue"],
-        &[],
+        &["JS-GOLD-IDENTIFIER-ESCAPED-PART-HYPHEN-001"],
     ),
     // EE-02
     active_rule(
@@ -311,7 +315,7 @@ pub(crate) const RULE_UNITS: &[RuleUnit] = &[
         "EE-04",
         "Identifier : IdentifierName but not ReservedWord / escaped ReservedWord StringValue rejection",
         &["StringValue"],
-        &[],
+        &["JS-GOLD-IDENTIFIER-ESCAPED-RESERVED-WORD-001"],
     ),
     // EE-05
     active_rule(
@@ -521,6 +525,7 @@ pub(crate) const RULE_UNITS: &[RuleUnit] = &[
         &[
             "JS-GOLD-LEXDECL-LET-BINDING-001",
             "JS-GOLD-LEXDECL-CONST-LET-MISSING-INIT-001",
+            "JS-GOLD-LEXDECL-ESCAPED-LET-BINDING-001",
         ],
     ),
     active_rule(
@@ -531,6 +536,10 @@ pub(crate) const RULE_UNITS: &[RuleUnit] = &[
         &[
             "JS-GOLD-LEXDECL-DUPBOUNDNAMES-001",
             "JS-GOLD-LEXDECL-CONST-DUP-MISSING-INIT-001",
+            "JS-GOLD-LEXDECL-ESCAPED-DUPBOUNDNAMES-001",
+            "JS-GOLD-LEXDECL-DOLLAR-ESCAPED-DUPBOUNDNAMES-001",
+            "JS-GOLD-LEXDECL-UNDERSCORE-ESCAPED-DUPBOUNDNAMES-001",
+            "JS-GOLD-LEXDECL-SUPPLEMENTARY-ESCAPED-DUPBOUNDNAMES-001",
         ],
     ),
     active_rule(
