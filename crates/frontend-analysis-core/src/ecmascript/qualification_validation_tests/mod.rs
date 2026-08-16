@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+mod focused;
 mod gold;
 mod inventory;
 mod model;
@@ -8,6 +9,7 @@ mod test262;
 use std::collections::BTreeSet;
 
 use crate::{SourceId, SourceText};
+use focused::FOCUSED_RULE_EVIDENCE;
 use gold::fixtures;
 use inventory::{
     CONTAINERS, RULE_UNITS, RuleUnitKind, active_rule_container_count,
@@ -15,7 +17,7 @@ use inventory::{
     validate_inventory,
 };
 use model::{
-    ECMA_262_EDITION, ECMA_262_SNAPSHOT, ExpectedProcessing, ImplementationCoverage,
+    ECMA_262_EDITION, ECMA_262_SNAPSHOT, ExpectedProcessing, GoldRange, ImplementationCoverage,
     REQUIRED_DIMENSIONS, RequestApplicability, RequestContext, SyntheticKind, TEST262_REVISION,
     UNICODE_VERSION, ValidationDimension,
 };
@@ -305,7 +307,7 @@ fn inventoried_gold_references_resolve_and_uncovered_rules_remain_explicit() {
 #[test]
 fn gold_fixture_ids_ranges_and_dimensions_are_self_consistent() {
     let fixtures = fixtures();
-    assert_eq!(fixtures.len(), 15);
+    assert_eq!(fixtures.len(), 29);
     let mut ids = BTreeSet::new();
 
     for fixture in &fixtures {
@@ -808,16 +810,267 @@ fn test262_non_static_or_out_of_profile_evidence_is_excluded() {
 }
 
 #[test]
-fn validation_gold_source_does_not_import_ecmascript_production_contracts() {
-    let source = include_str!("gold.rs");
-    for forbidden in [
-        "frontend_analysis_core::ecmascript",
-        "crate::ecmascript",
-        "css::selector",
-    ] {
+fn second_lexical_slice_focused_evidence_is_candidate_independent_and_consistent() {
+    let fixtures = fixtures();
+    let mut focused_fixture_ids = BTreeSet::new();
+
+    for evidence in FOCUSED_RULE_EVIDENCE {
         assert!(
-            !source.contains(forbidden),
-            "gold authority must remain candidate-independent: found {forbidden}"
+            focused_fixture_ids.insert(evidence.fixture_id),
+            "focused evidence must have one primary ownership record per fixture"
         );
+
+        let fixture = fixtures
+            .iter()
+            .find(|fixture| fixture.id == evidence.fixture_id)
+            .unwrap_or_else(|| {
+                panic!(
+                    "focused evidence references missing fixture {}",
+                    evidence.fixture_id
+                )
+            });
+        assert_eq!(
+            fixture.qualification,
+            Some(model::ExpectedQualification::StaticSemanticsRejected),
+            "focused Early Error evidence must refer to whole-source static rejection gold"
+        );
+        assert_eq!(fixture.subject, Some(evidence.primary_subject));
+        assert!(evidence.primary_subject.is_valid_for(fixture.source));
+        for supporting in evidence.supporting_subjects {
+            assert!(supporting.is_valid_for(fixture.source));
+        }
+
+        let primary_rule = RULE_UNITS
+            .iter()
+            .find(|rule| rule.id == evidence.primary_rule_id)
+            .unwrap_or_else(|| panic!("missing focused primary rule {}", evidence.primary_rule_id));
+        assert_eq!(primary_rule.kind, RuleUnitKind::NormativeRule);
+        assert!(
+            primary_rule.gold_fixture_ids.contains(&evidence.fixture_id),
+            "{} must map its focused primary fixture {}",
+            evidence.primary_rule_id,
+            evidence.fixture_id
+        );
+
+        let mut co_triggers = BTreeSet::new();
+        for co_trigger in evidence.co_trigger_rule_ids {
+            assert_ne!(*co_trigger, evidence.primary_rule_id);
+            assert!(
+                co_triggers.insert(*co_trigger),
+                "co-trigger identities must be unique for {}",
+                evidence.fixture_id
+            );
+            let rule = RULE_UNITS
+                .iter()
+                .find(|rule| rule.id == *co_trigger)
+                .unwrap_or_else(|| panic!("missing focused co-trigger rule {co_trigger}"));
+            assert_eq!(rule.kind, RuleUnitKind::NormativeRule);
+        }
+    }
+}
+
+#[test]
+fn r02_and_r03_inventory_coverage_requires_matching_focused_primary_evidence() {
+    for rule_id in ["EE-15-R02", "EE-15-R03"] {
+        let rule = RULE_UNITS
+            .iter()
+            .find(|rule| rule.id == rule_id)
+            .unwrap_or_else(|| panic!("{rule_id} must remain inventoried"));
+        let inventory_fixtures: BTreeSet<_> = rule.gold_fixture_ids.iter().copied().collect();
+        let focused_fixtures: BTreeSet<_> = FOCUSED_RULE_EVIDENCE
+            .iter()
+            .filter(|evidence| evidence.primary_rule_id == rule_id)
+            .map(|evidence| evidence.fixture_id)
+            .collect();
+        assert_eq!(
+            inventory_fixtures, focused_fixtures,
+            "{rule_id} inventory coverage must not outrun focused rule ownership evidence"
+        );
+    }
+}
+
+#[test]
+fn second_lexical_slice_focused_evidence_pins_ownership_precedence_and_ranges() {
+    let evidence = |fixture_id| {
+        FOCUSED_RULE_EVIDENCE
+            .iter()
+            .find(|evidence| evidence.fixture_id == fixture_id)
+            .unwrap_or_else(|| panic!("missing focused evidence for {fixture_id}"))
+    };
+
+    let r02 = evidence("JS-GOLD-LEXDECL-DUPBOUNDNAMES-001");
+    assert_eq!(r02.primary_rule_id, "EE-15-R02");
+    assert_eq!(r02.primary_subject, GoldRange::new(7, 8));
+    assert_eq!(r02.supporting_subjects, &[GoldRange::new(4, 5)]);
+    assert_eq!(r02.co_trigger_rule_ids, &["EE-36-R01"]);
+
+    let r03 = evidence("JS-GOLD-LEXDECL-CONST-MISSING-INIT-001");
+    assert_eq!(r03.primary_rule_id, "EE-15-R03");
+    assert_eq!(r03.primary_subject, GoldRange::new(6, 7));
+    assert!(r03.supporting_subjects.is_empty());
+    assert!(r03.co_trigger_rule_ids.is_empty());
+
+    let ee36 = evidence("JS-GOLD-SCRIPT-DUPLEXICAL-MULTIBIND-001");
+    assert_eq!(ee36.primary_rule_id, "EE-36-R01");
+    assert_eq!(ee36.primary_subject, GoldRange::new(14, 15));
+    assert_eq!(ee36.supporting_subjects, &[GoldRange::new(7, 8)]);
+    assert!(ee36.co_trigger_rule_ids.is_empty());
+
+    let r01_before_r03 = evidence("JS-GOLD-LEXDECL-CONST-LET-MISSING-INIT-001");
+    assert_eq!(r01_before_r03.primary_rule_id, "EE-15-R01");
+    assert_eq!(r01_before_r03.primary_subject, GoldRange::new(6, 9));
+    assert_eq!(r01_before_r03.co_trigger_rule_ids, &["EE-15-R03"]);
+
+    let r02_before_r03_ee36 = evidence("JS-GOLD-LEXDECL-CONST-DUP-MISSING-INIT-001");
+    assert_eq!(r02_before_r03_ee36.primary_rule_id, "EE-15-R02");
+    assert_eq!(r02_before_r03_ee36.primary_subject, GoldRange::new(13, 14));
+    assert_eq!(
+        r02_before_r03_ee36.supporting_subjects,
+        &[GoldRange::new(6, 7)]
+    );
+    assert_eq!(
+        r02_before_r03_ee36.co_trigger_rule_ids,
+        &["EE-15-R03", "EE-36-R01"]
+    );
+}
+
+#[test]
+fn ee_15_r03_retains_is_constant_declaration_dependency() {
+    let rule = RULE_UNITS
+        .iter()
+        .find(|rule| rule.id == "EE-15-R03")
+        .expect("EE-15-R03 must remain inventoried");
+    assert_eq!(rule.dependencies, &["IsConstantDeclaration"]);
+    assert!(
+        rule.gold_fixture_ids
+            .contains(&"JS-GOLD-LEXDECL-CONST-MISSING-INIT-001")
+    );
+}
+
+#[test]
+fn second_lexical_positive_gold_stays_whole_standard_qualified_and_pending() {
+    for fixture_id in [
+        "JS-GOLD-LEXDECL-CONST-VALID-001",
+        "JS-GOLD-LEXDECL-MULTIBIND-VALID-001",
+        "JS-GOLD-LEXDECL-CONST-MULTIBIND-VALID-001",
+    ] {
+        let fixture = fixtures()
+            .into_iter()
+            .find(|fixture| fixture.id == fixture_id)
+            .unwrap_or_else(|| panic!("{fixture_id} must exist"));
+        assert_eq!(fixture.processing, ExpectedProcessing::Complete);
+        assert_eq!(fixture.applicability, RequestApplicability::Supported);
+        assert_eq!(
+            fixture.qualification,
+            Some(model::ExpectedQualification::Qualified)
+        );
+        assert_eq!(
+            fixture.implementation_coverage,
+            ImplementationCoverage::Pending
+        );
+    }
+}
+
+#[test]
+fn initializer_presence_and_malformed_syntax_remain_distinct_from_missing_initializer() {
+    let fixture = |fixture_id| {
+        fixtures()
+            .into_iter()
+            .find(|fixture| fixture.id == fixture_id)
+            .unwrap_or_else(|| panic!("{fixture_id} must exist"))
+    };
+
+    assert_eq!(
+        fixture("JS-GOLD-LEXDECL-CONST-IDENTIFIER-INIT-001").qualification,
+        Some(model::ExpectedQualification::Qualified)
+    );
+    assert_eq!(
+        fixture("JS-GOLD-LEXDECL-CONST-MALFORMED-INIT-001").qualification,
+        Some(model::ExpectedQualification::SyntaxRejected)
+    );
+    let missing = fixture("JS-GOLD-LEXDECL-CONST-MISSING-INIT-001");
+    assert_eq!(
+        missing.qualification,
+        Some(model::ExpectedQualification::StaticSemanticsRejected)
+    );
+    assert_eq!(missing.subject, Some(GoldRange::new(6, 7)));
+    assert!(missing.synthetic.is_empty());
+}
+
+#[test]
+fn widened_binding_shape_preserves_selected_ee04_non_trigger_context() {
+    for fixture_id in [
+        "JS-GOLD-LEXDECL-EE04-AWAIT-YIELD-001",
+        "JS-GOLD-LEXDECL-EE04-FUTURE-RESERVED-001",
+        "JS-GOLD-LEXDECL-EE04-EVAL-ARGUMENTS-001",
+    ] {
+        let fixture = fixtures()
+            .into_iter()
+            .find(|fixture| fixture.id == fixture_id)
+            .unwrap_or_else(|| panic!("{fixture_id} must exist"));
+        assert_eq!(
+            fixture.request_context,
+            RequestContext::ScriptIndependentSource
+        );
+        assert_eq!(
+            fixture.qualification,
+            Some(model::ExpectedQualification::Qualified)
+        );
+        assert_eq!(
+            fixture.implementation_coverage,
+            ImplementationCoverage::Pending
+        );
+        assert!(
+            fixture
+                .dimensions
+                .contains(&ValidationDimension::EarlyErrorRule)
+        );
+        assert!(
+            fixture
+                .dimensions
+                .contains(&ValidationDimension::ValidityDependency)
+        );
+    }
+}
+
+#[test]
+fn multi_binding_name_identity_does_not_normalize_unicode() {
+    let fixture = fixtures()
+        .into_iter()
+        .find(|fixture| fixture.id == "JS-GOLD-LEXDECL-MULTIBIND-CANONICAL-DISTINCT-001")
+        .expect("canonical-distinct multi-binding fixture must exist");
+    assert_eq!(
+        fixture.qualification,
+        Some(model::ExpectedQualification::Qualified)
+    );
+
+    let source = SourceText::new(SourceId::new(216), fixture.source.to_owned());
+    let composed = source.anchor(4, 6).expect("é occupies UTF-8 bytes 4..6");
+    let decomposed = source
+        .anchor(8, 11)
+        .expect("e + combining acute occupies UTF-8 bytes 8..11");
+    assert_eq!(composed.fragment(), "é");
+    assert_eq!(decomposed.fragment(), "é");
+    assert_ne!(composed.fragment(), decomposed.fragment());
+}
+
+#[test]
+fn validation_gold_source_does_not_import_ecmascript_production_contracts() {
+    for (name, source) in [
+        ("gold", include_str!("gold.rs")),
+        ("focused", include_str!("focused.rs")),
+    ] {
+        for forbidden in [
+            "frontend_analysis_core::ecmascript",
+            "crate::ecmascript",
+            "css::selector",
+            "SelectedStaticSemanticsOutcome",
+            "FirstLexicalSliceOutcome",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{name} validation authority must remain candidate-independent: found {forbidden}"
+            );
+        }
     }
 }

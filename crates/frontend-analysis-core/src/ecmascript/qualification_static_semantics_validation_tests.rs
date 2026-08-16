@@ -20,6 +20,16 @@ struct RuleNonTriggerFixture {
     rule_ids: &'static [&'static str],
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RulePrecedenceFixture {
+    id: &'static str,
+    source: &'static str,
+    primary_rule_id: &'static str,
+    primary_subject: (usize, usize),
+    supporting_subjects: &'static [(usize, usize)],
+    co_trigger_rule_ids: &'static [&'static str],
+}
+
 const RULE_NON_TRIGGER_FIXTURES: &[RuleNonTriggerFixture] = &[
     RuleNonTriggerFixture {
         id: "JS-RULE-NONTRIGGER-CANONICAL-DISTINCT-001",
@@ -58,6 +68,33 @@ const RULE_NON_TRIGGER_FIXTURES: &[RuleNonTriggerFixture] = &[
     },
 ];
 
+const RULE_PRECEDENCE_FIXTURES: &[RulePrecedenceFixture] = &[
+    RulePrecedenceFixture {
+        id: "JS-RULE-PRECEDENCE-EARLIER-R03-BEFORE-LATER-R01-001",
+        source: "const x; let let;",
+        primary_rule_id: "EE-15-R03",
+        primary_subject: (6, 7),
+        supporting_subjects: &[(13, 16)],
+        co_trigger_rule_ids: &["EE-15-R01"],
+    },
+    RulePrecedenceFixture {
+        id: "JS-RULE-PRECEDENCE-R01-BEFORE-R02-001",
+        source: "let let, let;",
+        primary_rule_id: "EE-15-R01",
+        primary_subject: (4, 7),
+        supporting_subjects: &[(9, 12)],
+        co_trigger_rule_ids: &["EE-15-R02", "EE-36-R01"],
+    },
+    RulePrecedenceFixture {
+        id: "JS-RULE-PRECEDENCE-LOCAL-R01-BEFORE-SCRIPT-DUPLICATE-001",
+        source: "let x; let x; let let;",
+        primary_rule_id: "EE-15-R01",
+        primary_subject: (18, 21),
+        supporting_subjects: &[(4, 5), (11, 12)],
+        co_trigger_rule_ids: &["EE-36-R01"],
+    },
+];
+
 fn active_rule_block(rule_id: &str) -> &'static str {
     let marker = format!("active_rule(\n        \"{rule_id}\",");
     let start = INVENTORY_SOURCE
@@ -84,8 +121,8 @@ fn ee_15_r01_rejection_gold_is_exact_and_inventory_mapped() {
 
     let rule = active_rule_block("EE-15-R01");
     assert!(
-        rule.contains("&[\"JS-GOLD-LEXDECL-LET-BINDING-001\"]"),
-        "EE-15-R01 must map exactly to its dedicated rejecting gold"
+        rule.contains("\"JS-GOLD-LEXDECL-LET-BINDING-001\""),
+        "EE-15-R01 must preserve its dedicated rejecting gold mapping"
     );
 }
 
@@ -96,7 +133,7 @@ fn existing_script_duplicate_gold_remains_exact() {
 
     let rule = active_rule_block("EE-36-R01");
     assert!(
-        rule.contains("&[\"JS-GOLD-SCRIPT-DUPLEXICAL-001\"]"),
+        rule.contains("\"JS-GOLD-SCRIPT-DUPLEXICAL-001\""),
         "EE-36-R01 must preserve the existing duplicate Script gold mapping"
     );
 }
@@ -151,6 +188,57 @@ fn selected_non_strict_identifier_expectations_are_rule_local() {
             let _ = active_rule_block(rule_id);
         }
     }
+}
+
+#[test]
+fn second_lexical_slice_precedence_witnesses_reject_family_global_traversal() {
+    assert_eq!(RULE_PRECEDENCE_FIXTURES.len(), 3);
+
+    for fixture in RULE_PRECEDENCE_FIXTURES {
+        let _ = active_rule_block(fixture.primary_rule_id);
+        assert!(!fixture.co_trigger_rule_ids.is_empty());
+        for rule_id in fixture.co_trigger_rule_ids {
+            assert_ne!(*rule_id, fixture.primary_rule_id);
+            let _ = active_rule_block(rule_id);
+        }
+
+        let source = SourceText::new(SourceId::new(216), fixture.source.to_owned());
+        let primary = source
+            .anchor(fixture.primary_subject.0, fixture.primary_subject.1)
+            .unwrap_or_else(|_| panic!("{} primary subject must be an authored range", fixture.id));
+        assert!(!primary.fragment().is_empty());
+
+        for (start, end) in fixture.supporting_subjects {
+            let supporting = source
+                .anchor(*start, *end)
+                .unwrap_or_else(|_| panic!("{} supporting subject must be authored", fixture.id));
+            assert!(!supporting.fragment().is_empty());
+        }
+    }
+
+    let earlier_r03 = &RULE_PRECEDENCE_FIXTURES[0];
+    assert_eq!(earlier_r03.source, "const x; let let;");
+    assert_eq!(earlier_r03.primary_rule_id, "EE-15-R03");
+    assert_eq!(earlier_r03.primary_subject, (6, 7));
+    assert_eq!(earlier_r03.supporting_subjects, &[(13, 16)]);
+    assert_eq!(earlier_r03.co_trigger_rule_ids, &["EE-15-R01"]);
+
+    let r01_before_r02 = &RULE_PRECEDENCE_FIXTURES[1];
+    assert_eq!(r01_before_r02.source, "let let, let;");
+    assert_eq!(r01_before_r02.primary_rule_id, "EE-15-R01");
+    assert_eq!(r01_before_r02.primary_subject, (4, 7));
+    assert_eq!(r01_before_r02.supporting_subjects, &[(9, 12)]);
+    assert_eq!(
+        r01_before_r02.co_trigger_rule_ids,
+        &["EE-15-R02", "EE-36-R01"]
+    );
+
+    let local_before_script = &RULE_PRECEDENCE_FIXTURES[2];
+    assert_eq!(local_before_script.source, "let x; let x; let let;");
+    assert_eq!(local_before_script.primary_rule_id, "EE-15-R01");
+    assert_eq!(local_before_script.primary_subject, (18, 21));
+    assert_eq!(local_before_script.supporting_subjects, &[(4, 5), (11, 12)]);
+    assert_eq!(local_before_script.co_trigger_rule_ids, &["EE-36-R01"]);
 }
 
 #[test]

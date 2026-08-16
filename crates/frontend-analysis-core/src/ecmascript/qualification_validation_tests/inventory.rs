@@ -518,21 +518,27 @@ pub(crate) const RULE_UNITS: &[RuleUnit] = &[
         "EE-15",
         "LexicalDeclaration / BoundNames must not contain let",
         &["BoundNames"],
-        &["JS-GOLD-LEXDECL-LET-BINDING-001"],
+        &[
+            "JS-GOLD-LEXDECL-LET-BINDING-001",
+            "JS-GOLD-LEXDECL-CONST-LET-MISSING-INIT-001",
+        ],
     ),
     active_rule(
         "EE-15-R02",
         "EE-15",
         "LexicalDeclaration / BoundNames must not contain duplicates",
         &["BoundNames"],
-        &[],
+        &[
+            "JS-GOLD-LEXDECL-DUPBOUNDNAMES-001",
+            "JS-GOLD-LEXDECL-CONST-DUP-MISSING-INIT-001",
+        ],
     ),
     active_rule(
         "EE-15-R03",
         "EE-15",
         "LexicalBinding in const declaration / initializer required",
-        &[],
-        &[],
+        &["IsConstantDeclaration"],
+        &["JS-GOLD-LEXDECL-CONST-MISSING-INIT-001"],
     ),
     // EE-16
     inactive_rule(
@@ -1361,7 +1367,10 @@ pub(crate) const RULE_UNITS: &[RuleUnit] = &[
         "EE-36",
         "Script : ScriptBody / duplicate LexicallyDeclaredNames",
         &["LexicallyDeclaredNames"],
-        &["JS-GOLD-SCRIPT-DUPLEXICAL-001"],
+        &[
+            "JS-GOLD-SCRIPT-DUPLEXICAL-001",
+            "JS-GOLD-SCRIPT-DUPLEXICAL-MULTIBIND-001",
+        ],
     ),
     active_rule(
         "EE-36-R02",
