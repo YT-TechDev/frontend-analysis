@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+mod escaped_identifier;
 mod focused;
 mod gold;
 mod inventory;
@@ -307,7 +308,7 @@ fn inventoried_gold_references_resolve_and_uncovered_rules_remain_explicit() {
 #[test]
 fn gold_fixture_ids_ranges_and_dimensions_are_self_consistent() {
     let fixtures = fixtures();
-    assert_eq!(fixtures.len(), 29);
+    assert_eq!(fixtures.len(), 46);
     let mut ids = BTreeSet::new();
 
     for fixture in &fixtures {
