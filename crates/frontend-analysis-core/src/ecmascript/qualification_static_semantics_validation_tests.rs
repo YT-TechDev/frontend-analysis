@@ -205,13 +205,15 @@ fn second_lexical_slice_precedence_witnesses_reject_family_global_traversal() {
         let source = SourceText::new(SourceId::new(216), fixture.source.to_owned());
         let primary = source
             .anchor(fixture.primary_subject.0, fixture.primary_subject.1)
-            .unwrap_or_else(|| panic!("{} primary subject must be an authored range", fixture.id));
+            .unwrap_or_else(|_| {
+                panic!("{} primary subject must be an authored range", fixture.id)
+            });
         assert!(!primary.fragment().is_empty());
 
         for (start, end) in fixture.supporting_subjects {
-            let supporting = source
-                .anchor(*start, *end)
-                .unwrap_or_else(|| panic!("{} supporting subject must be authored", fixture.id));
+            let supporting = source.anchor(*start, *end).unwrap_or_else(|_| {
+                panic!("{} supporting subject must be authored", fixture.id)
+            });
             assert!(!supporting.fragment().is_empty());
         }
     }
