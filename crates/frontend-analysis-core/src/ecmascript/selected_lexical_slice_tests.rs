@@ -258,17 +258,25 @@ fn whole_source_transaction_prevents_prefix_success_and_truncated_facts() {
 
 #[test]
 fn repeated_recognition_preserves_equivalent_declaration_binding_order_and_ranges() {
-    fn ranges(text: &str) -> Vec<(std::ops::Range<usize>, Vec<std::ops::Range<usize>>)> {
+    fn ranges(text: &str) -> Vec<((usize, usize), Vec<(usize, usize)>)> {
         recognized(text)
             .declarations()
             .iter()
             .map(|declaration| {
                 (
-                    declaration.declaration().range(),
+                    (
+                        declaration.declaration().range().start(),
+                        declaration.declaration().range().end(),
+                    ),
                     declaration
                         .bindings()
                         .iter()
-                        .map(|binding| binding.binding().range())
+                        .map(|binding| {
+                            (
+                                binding.binding().range().start(),
+                                binding.binding().range().end(),
+                            )
+                        })
                         .collect(),
                 )
             })
