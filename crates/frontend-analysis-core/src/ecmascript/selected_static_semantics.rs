@@ -9,8 +9,10 @@ use std::collections::HashMap;
 use crate::{SourceAnchor, SourceText};
 
 use super::qualification::{EvidenceSubject, QualificationOutcome};
+use super::selected_binding_identifier::is_unconditionally_reserved_word;
 use super::selected_lexical_slice::{
-    SelectedInitializerState, SelectedLexicalDeclarationKind, SelectedLexicalScript,
+    SelectedBindingNameState, SelectedInitializerState, SelectedInvalidEscapePosition,
+    SelectedLexicalDeclarationKind, SelectedLexicalScript,
 };
 
 #[derive(Debug)]
@@ -18,10 +20,20 @@ pub(super) enum SelectedStaticSemanticsOutcome {
     Accepted,
     Rejected(SelectedStaticSemanticsRejection),
     ResourceLimited,
+    InternalFailure,
 }
 
 #[derive(Debug)]
 pub(super) enum SelectedStaticSemanticsRejection {
+    InvalidEscapedIdentifierStart {
+        escape: SourceAnchor,
+    },
+    InvalidEscapedIdentifierPart {
+        escape: SourceAnchor,
+    },
+    EscapedReservedWord {
+        binding: SourceAnchor,
+    },
     BindingNamedLet {
         binding: SourceAnchor,
     },
@@ -39,9 +51,11 @@ pub(super) enum SelectedStaticSemanticsRejection {
 }
 
 impl SelectedStaticSemanticsRejection {
-    fn primary_binding(&self) -> &SourceAnchor {
+    fn primary_anchor(&self) -> &SourceAnchor {
         match self {
-            Self::BindingNamedLet { binding } => binding,
+            Self::InvalidEscapedIdentifierStart { escape }
+            | Self::InvalidEscapedIdentifierPart { escape } => escape,
+            Self::EscapedReservedWord { binding } | Self::BindingNamedLet { binding } => binding,
             Self::DuplicateDeclarationBinding {
                 duplicate_binding, ..
             } => duplicate_binding,
@@ -65,9 +79,38 @@ pub(super) fn evaluate_selected_static_semantics(
     let declarations = script.declarations();
 
     for declaration in declarations {
-        // EE-15-R01: every binding in binding source order.
+        // Tier A: binding-attributed classification in binding source order.
         for binding in declaration.bindings() {
-            if binding.binding().fragment() == "let" {
+            let semantic_name = match binding.name_state() {
+                SelectedBindingNameState::InvalidEscapedPosition { position, escape } => {
+                    let rejection = match position {
+                        SelectedInvalidEscapePosition::Start => {
+                            SelectedStaticSemanticsRejection::InvalidEscapedIdentifierStart {
+                                escape: escape.clone(),
+                            }
+                        }
+                        SelectedInvalidEscapePosition::Part => {
+                            SelectedStaticSemanticsRejection::InvalidEscapedIdentifierPart {
+                                escape: escape.clone(),
+                            }
+                        }
+                    };
+                    return SelectedStaticSemanticsOutcome::Rejected(rejection);
+                }
+                SelectedBindingNameState::EscapedValid { decoded } => {
+                    if is_unconditionally_reserved_word(decoded) {
+                        return SelectedStaticSemanticsOutcome::Rejected(
+                            SelectedStaticSemanticsRejection::EscapedReservedWord {
+                                binding: binding.binding().clone(),
+                            },
+                        );
+                    }
+                    decoded.as_str()
+                }
+                SelectedBindingNameState::Unescaped => binding.binding().fragment(),
+            };
+
+            if semantic_name == "let" {
                 return SelectedStaticSemanticsOutcome::Rejected(
                     SelectedStaticSemanticsRejection::BindingNamedLet {
                         binding: binding.binding().clone(),
@@ -79,7 +122,9 @@ pub(super) fn evaluate_selected_static_semantics(
         // EE-15-R02: declaration-local BoundNames duplicates.
         let mut first_by_name: HashMap<&str, usize> = HashMap::new();
         for (binding_index, binding) in declaration.bindings().iter().enumerate() {
-            let name = binding.binding().fragment();
+            let Some(name) = binding.semantic_name() else {
+                return SelectedStaticSemanticsOutcome::InternalFailure;
+            };
 
             if let Some(&first_index) = first_by_name.get(name) {
                 return SelectedStaticSemanticsOutcome::Rejected(
@@ -117,7 +162,9 @@ pub(super) fn evaluate_selected_static_semantics(
     let mut first_by_name: HashMap<&str, (usize, usize)> = HashMap::new();
     for (declaration_index, declaration) in declarations.iter().enumerate() {
         for (binding_index, binding) in declaration.bindings().iter().enumerate() {
-            let name = binding.binding().fragment();
+            let Some(name) = binding.semantic_name() else {
+                return SelectedStaticSemanticsOutcome::InternalFailure;
+            };
 
             if let Some(&(first_declaration, first_binding)) = first_by_name.get(name) {
                 return SelectedStaticSemanticsOutcome::Rejected(
@@ -146,7 +193,7 @@ pub(super) fn selected_rejection_to_qualification(
     source: &SourceText,
     rejection: &SelectedStaticSemanticsRejection,
 ) -> QualificationOutcome {
-    let subject = match EvidenceSubject::authored(source, rejection.primary_binding().clone()) {
+    let subject = match EvidenceSubject::authored(source, rejection.primary_anchor().clone()) {
         Ok(subject) => subject,
         Err(_) => return QualificationOutcome::internal_failure(),
     };

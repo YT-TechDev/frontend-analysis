@@ -105,6 +105,81 @@ fn unsupported_rhs_and_broader_grammar_remain_unsupported_without_source_verdict
 }
 
 #[test]
+fn escaped_bindingidentifier_candidate_conforms_to_oracle_handoff() {
+    for fixture_id in [
+        "JS-GOLD-LEXDECL-ESCAPED-CANONICAL-DISTINCT-001",
+        "JS-GOLD-LEXDECL-ESCAPED-CONTEXTUAL-NAMES-001",
+        "JS-GOLD-LEXDECL-LONG-BRACED-ESCAPE-001",
+    ] {
+        let text = gold_source(fixture_id).unwrap_or_else(|| panic!("{fixture_id} source"));
+        assert!(matches!(
+            attempt(text),
+            SelectedQualificationAttempt::SelectedAcceptedIncomplete
+        ));
+    }
+
+    for fixture_id in [
+        "JS-GOLD-IDENTIFIER-ESCAPED-START-DIGIT-001",
+        "JS-GOLD-IDENTIFIER-ESCAPED-PART-HYPHEN-001",
+        "JS-GOLD-IDENTIFIER-ESCAPED-START-SURROGATE-FIXED-001",
+        "JS-GOLD-IDENTIFIER-ESCAPED-START-SURROGATE-BRACED-001",
+        "JS-GOLD-LEXDECL-ESCAPED-DUPBOUNDNAMES-001",
+        "JS-GOLD-LEXDECL-DOLLAR-ESCAPED-DUPBOUNDNAMES-001",
+        "JS-GOLD-LEXDECL-UNDERSCORE-ESCAPED-DUPBOUNDNAMES-001",
+        "JS-GOLD-LEXDECL-SUPPLEMENTARY-ESCAPED-DUPBOUNDNAMES-001",
+        "JS-GOLD-IDENTIFIER-ESCAPED-RESERVED-WORD-001",
+        "JS-GOLD-LEXDECL-ESCAPED-LET-BINDING-001",
+    ] {
+        let text = gold_source(fixture_id).unwrap_or_else(|| panic!("{fixture_id} source"));
+        let expected =
+            gold_subject_range(fixture_id).unwrap_or_else(|| panic!("{fixture_id} range"));
+        let outcome = static_rejection(text);
+        assert_eq!(
+            outcome.verdict(),
+            Some(QualificationVerdictKind::StaticSemanticsRejected)
+        );
+        let anchor = outcome
+            .rejection_evidence()
+            .and_then(|evidence| evidence.subject().authored_anchor())
+            .expect("authored primary evidence");
+        assert_eq!(
+            (anchor.range().start(), anchor.range().end()),
+            expected,
+            "{fixture_id}"
+        );
+    }
+}
+
+#[test]
+fn malformed_escaped_binding_and_transactional_tails_remain_unsupported() {
+    for fixture_id in [
+        "JS-GOLD-IDENTIFIER-ESCAPE-MALFORMED-EMPTY-BRACED-001",
+        "JS-GOLD-IDENTIFIER-ESCAPE-MALFORMED-SHORT-FIXED-001",
+        "JS-GOLD-IDENTIFIER-ESCAPE-MALFORMED-UNCLOSED-BRACED-001",
+        "JS-GOLD-IDENTIFIER-ESCAPE-NONCODEPOINT-001",
+    ] {
+        let text = gold_source(fixture_id).unwrap_or_else(|| panic!("{fixture_id} source"));
+        assert!(matches!(
+            attempt(text),
+            SelectedQualificationAttempt::UnsupportedCoverage
+        ));
+    }
+
+    for text in [
+        r"let \u0030; foo();",
+        r"let \u0030 = foo;",
+        r"let a\u00001\u{};",
+        r"let\u0030;",
+        r"let\u002D\u{};",
+    ] {
+        assert!(matches!(
+            attempt(text),
+            SelectedQualificationAttempt::UnsupportedCoverage
+        ));
+    }
+}
+
+#[test]
 fn aggregate_integration_source_preserves_incomplete_and_single_pass_boundaries() {
     let production = include_str!("selected_qualification_integration.rs");
 

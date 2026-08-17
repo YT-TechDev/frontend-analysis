@@ -1,4 +1,5 @@
 mod qualification;
+mod selected_binding_identifier;
 mod selected_lexical_slice;
 mod selected_qualification_integration;
 mod selected_static_semantics;

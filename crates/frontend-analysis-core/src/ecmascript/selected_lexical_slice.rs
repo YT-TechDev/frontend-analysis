@@ -10,7 +10,11 @@
 
 use crate::{SourceAnchor, SourceText};
 
-use super::unicode::{is_id_continue, is_id_start, is_space_separator};
+use super::selected_binding_identifier::{
+    formed_unicode_escape_at, is_selected_identifier_part, is_selected_identifier_start,
+    is_unconditionally_reserved_word,
+};
+use super::unicode::is_space_separator;
 
 #[derive(Debug)]
 pub(super) enum SelectedLexicalSliceOutcome {
@@ -44,15 +48,46 @@ pub(super) enum SelectedInitializerState {
     SelectedPresent,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SelectedInvalidEscapePosition {
+    Start,
+    Part,
+}
+
+#[derive(Debug)]
+pub(super) enum SelectedBindingNameState {
+    Unescaped,
+    EscapedValid {
+        decoded: String,
+    },
+    InvalidEscapedPosition {
+        position: SelectedInvalidEscapePosition,
+        escape: SourceAnchor,
+    },
+}
+
 #[derive(Debug)]
 pub(super) struct SelectedLexicalBinding {
     binding: SourceAnchor,
+    name_state: SelectedBindingNameState,
     initializer: SelectedInitializerState,
 }
 
 impl SelectedLexicalBinding {
     pub(super) fn binding(&self) -> &SourceAnchor {
         &self.binding
+    }
+
+    pub(super) fn name_state(&self) -> &SelectedBindingNameState {
+        &self.name_state
+    }
+
+    pub(super) fn semantic_name(&self) -> Option<&str> {
+        match &self.name_state {
+            SelectedBindingNameState::Unescaped => Some(self.binding.fragment()),
+            SelectedBindingNameState::EscapedValid { decoded } => Some(decoded.as_str()),
+            SelectedBindingNameState::InvalidEscapedPosition { .. } => None,
+        }
     }
 
     pub(super) fn initializer(&self) -> SelectedInitializerState {
@@ -145,9 +180,8 @@ impl<'source> Cursor<'source> {
         let mut bindings = Vec::new();
 
         loop {
-            let (binding_start, binding_end) = self
-                .parse_unescaped_binding_identifier()
-                .ok_or(ParseFailure::UnsupportedCoverage)?;
+            let (binding_start, binding_end, name_state) =
+                self.parse_selected_binding_identifier()?;
 
             self.skip_selected_trivia();
             let initializer = if self.consume_initializer_equals() {
@@ -167,6 +201,7 @@ impl<'source> Cursor<'source> {
                 .map_err(|_| ParseFailure::ResourceLimited)?;
             bindings.push(SelectedLexicalBinding {
                 binding,
+                name_state,
                 initializer,
             });
 
@@ -211,7 +246,8 @@ impl<'source> Cursor<'source> {
 
         let after_keyword = self.offset + keyword.len();
         if let Some(next) = self.text[after_keyword..].chars().next()
-            && (is_identifier_part(next) || next == '\\')
+            && (is_selected_identifier_part(next as u32)
+                || (next == '\\' && formed_unicode_escape_at(self.text, after_keyword).is_some()))
         {
             return false;
         }
@@ -220,32 +256,110 @@ impl<'source> Cursor<'source> {
         true
     }
 
-    fn parse_unescaped_binding_identifier(&mut self) -> Option<(usize, usize)> {
+    fn parse_selected_binding_identifier(
+        &mut self,
+    ) -> Result<(usize, usize, SelectedBindingNameState), ParseFailure> {
         let start = self.offset;
-        let first = self.peek_char()?;
-        if !is_identifier_start(first) {
-            return None;
-        }
-        let _ = self.advance_char();
+        let mut first_element = true;
+        let mut saw_escape = false;
+        let mut decoded: Option<String> = None;
+        let mut first_invalid: Option<(SelectedInvalidEscapePosition, SourceAnchor)> = None;
 
-        while let Some(next) = self.peek_char() {
-            if !is_identifier_part(next) {
+        loop {
+            if self.peek_char() == Some('\\') {
+                let escape_start = self.offset;
+                let formation = formed_unicode_escape_at(self.text, escape_start)
+                    .ok_or(ParseFailure::UnsupportedCoverage)?;
+                self.offset = formation.end;
+                saw_escape = true;
+
+                let position = if first_element {
+                    SelectedInvalidEscapePosition::Start
+                } else {
+                    SelectedInvalidEscapePosition::Part
+                };
+                let valid_position = match position {
+                    SelectedInvalidEscapePosition::Start => {
+                        is_selected_identifier_start(formation.code_point)
+                    }
+                    SelectedInvalidEscapePosition::Part => {
+                        is_selected_identifier_part(formation.code_point)
+                    }
+                };
+
+                if !valid_position {
+                    if first_invalid.is_none() {
+                        first_invalid = Some((position, self.anchor(escape_start, formation.end)?));
+                        decoded = None;
+                    }
+                } else if first_invalid.is_none() {
+                    if decoded.is_none() {
+                        let prefix = &self.text[start..escape_start];
+                        let mut name = String::new();
+                        name.try_reserve(prefix.len())
+                            .map_err(|_| ParseFailure::ResourceLimited)?;
+                        name.push_str(prefix);
+                        decoded = Some(name);
+                    }
+
+                    let scalar = char::from_u32(formation.code_point)
+                        .ok_or(ParseFailure::InternalFailure)?;
+                    let name = decoded.as_mut().ok_or(ParseFailure::InternalFailure)?;
+                    name.try_reserve(scalar.len_utf8())
+                        .map_err(|_| ParseFailure::ResourceLimited)?;
+                    name.push(scalar);
+                }
+
+                first_element = false;
+                continue;
+            }
+
+            let Some(next) = self.peek_char() else {
+                break;
+            };
+            let valid_position = if first_element {
+                is_selected_identifier_start(next as u32)
+            } else {
+                is_selected_identifier_part(next as u32)
+            };
+            if !valid_position {
+                if first_element {
+                    return Err(ParseFailure::UnsupportedCoverage);
+                }
                 break;
             }
+
             let _ = self.advance_char();
+            if first_invalid.is_none()
+                && let Some(name) = decoded.as_mut()
+            {
+                name.try_reserve(next.len_utf8())
+                    .map_err(|_| ParseFailure::ResourceLimited)?;
+                name.push(next);
+            }
+            first_element = false;
         }
 
-        if self.peek_char() == Some('\\') {
-            return None;
+        if first_element {
+            return Err(ParseFailure::UnsupportedCoverage);
         }
 
         let end = self.offset;
-        let spelling = &self.text[start..end];
-        if is_unconditionally_reserved_word(spelling) {
-            return None;
-        }
+        let name_state = if let Some((position, escape)) = first_invalid {
+            SelectedBindingNameState::InvalidEscapedPosition { position, escape }
+        } else if saw_escape {
+            SelectedBindingNameState::EscapedValid {
+                decoded: decoded.ok_or(ParseFailure::InternalFailure)?,
+            }
+        } else {
+            let spelling = &self.text[start..end];
+            if is_unconditionally_reserved_word(spelling) {
+                return Err(ParseFailure::UnsupportedCoverage);
+            }
+            SelectedBindingNameState::Unescaped
+        };
 
-        Some((start, end))
+        Ok((start, end, name_state))
     }
 
     fn consume_initializer_equals(&mut self) -> bool {
@@ -349,54 +463,4 @@ fn is_selected_trivia(code_point: char) -> bool {
         code_point,
         '\u{0009}' | '\u{000B}' | '\u{000C}' | '\u{FEFF}' | '\n' | '\r' | '\u{2028}' | '\u{2029}'
     ) || is_space_separator(code_point as u32)
-}
-
-fn is_identifier_start(code_point: char) -> bool {
-    code_point == '$' || code_point == '_' || is_id_start(code_point as u32)
-}
-
-fn is_identifier_part(code_point: char) -> bool {
-    code_point == '$' || is_id_continue(code_point as u32)
-}
-
-fn is_unconditionally_reserved_word(spelling: &str) -> bool {
-    matches!(
-        spelling,
-        "break"
-            | "case"
-            | "catch"
-            | "class"
-            | "const"
-            | "continue"
-            | "debugger"
-            | "default"
-            | "delete"
-            | "do"
-            | "else"
-            | "enum"
-            | "export"
-            | "extends"
-            | "false"
-            | "finally"
-            | "for"
-            | "function"
-            | "if"
-            | "import"
-            | "in"
-            | "instanceof"
-            | "new"
-            | "null"
-            | "return"
-            | "super"
-            | "switch"
-            | "this"
-            | "throw"
-            | "true"
-            | "try"
-            | "typeof"
-            | "var"
-            | "void"
-            | "while"
-            | "with"
-    )
 }

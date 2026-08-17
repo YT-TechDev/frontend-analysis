@@ -37,6 +37,9 @@ pub(super) fn attempt_selected_qualification(source: &SourceText) -> SelectedQua
                 SelectedStaticSemanticsOutcome::ResourceLimited => {
                     SelectedQualificationAttempt::Outcome(QualificationOutcome::resource_limited())
                 }
+                SelectedStaticSemanticsOutcome::InternalFailure => {
+                    SelectedQualificationAttempt::Outcome(QualificationOutcome::internal_failure())
+                }
             }
         }
         SelectedLexicalSliceOutcome::UnsupportedCoverage => {
