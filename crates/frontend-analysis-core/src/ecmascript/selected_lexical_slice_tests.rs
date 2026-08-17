@@ -197,6 +197,7 @@ fn selected_decimal_subset_is_exact_for_each_initializer() {
         assert_unsupported(text);
     }
 }
+
 #[test]
 fn initializer_transaction_never_degrades_failed_rhs_to_absent() {
     for text in [
