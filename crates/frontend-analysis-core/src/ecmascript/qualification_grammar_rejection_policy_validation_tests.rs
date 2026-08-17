@@ -239,14 +239,8 @@ const TERMINAL_TAIL_FIXTURES: &[TerminalTailFixture] = &[
     },
 ];
 
-const DEFERRED_ADJACENT_MALFORMED: &[&str] = &[
-    r"\u{G}",
-    r"\u00G0",
-    r"\u{61;",
-    r"\u0x",
-    r"\u",
-    r"\u{",
-];
+const DEFERRED_ADJACENT_MALFORMED: &[&str] =
+    &[r"\u{G}", r"\u00G0", r"\u{61;", r"\u0x", r"\u", r"\u{"];
 
 fn authored_fragment(source: &str, range: EvidenceRange) -> &str {
     assert!(range.is_valid_for(source));
@@ -268,9 +262,9 @@ fn assert_source_anchor(source: &str, range: EvidenceRange) {
 
 fn active_rule_block(rule_id: &str) -> &'static str {
     let marker = format!("active_rule(\n        \"{rule_id}\",");
-    let start = INVENTORY_SOURCE
-        .find(&marker)
-        .unwrap_or_else(|| panic!("#229 supporting evidence maps to missing active rule {rule_id}"));
+    let start = INVENTORY_SOURCE.find(&marker).unwrap_or_else(|| {
+        panic!("#229 supporting evidence maps to missing active rule {rule_id}")
+    });
     let rest = &INVENTORY_SOURCE[start..];
     let end = rest
         .find("\n    ),")
@@ -349,7 +343,10 @@ fn cross_family_matrix_covers_existing_selected_static_families_without_reorderi
         let fixture = &CROSS_FAMILY_FIXTURES[index];
         assert_eq!(fixture.primary.family, EvidenceFamily::Grammar);
         assert_eq!(fixture.supporting.len(), 1);
-        assert_eq!(fixture.supporting[0], EvidencePoint::static_rule(rule_id, subject));
+        assert_eq!(
+            fixture.supporting[0],
+            EvidencePoint::static_rule(rule_id, subject)
+        );
         let _ = active_rule_block(rule_id);
     }
 
@@ -398,7 +395,10 @@ fn authored_subject_and_terminal_decision_point_remain_distinct() {
             }
             TerminalDecisionKind::RequiresLookahead(expected) => {
                 assert_eq!(fixture.decision_offset, fixture.subject.end);
-                assert_eq!(fixture.source.get(fixture.decision_offset..), Some(expected));
+                assert_eq!(
+                    fixture.source.get(fixture.decision_offset..),
+                    Some(expected)
+                );
                 assert_eq!(
                     authored_fragment(fixture.source, fixture.subject),
                     r"\u0",
@@ -419,7 +419,10 @@ fn stable_owned_grammar_proof_is_terminal_across_bounded_unowned_tails() {
 
     for fixture in TERMINAL_TAIL_FIXTURES {
         assert_grammar_subject_is_227_owned(fixture.source, fixture.subject);
-        assert_eq!(fixture.source.get(fixture.subject.end..), Some(fixture.tail));
+        assert_eq!(
+            fixture.source.get(fixture.subject.end..),
+            Some(fixture.tail)
+        );
         assert!(!fixture.tail.is_empty());
     }
 
@@ -464,10 +467,16 @@ fn adjacent_malformed_classes_remain_explicitly_deferred() {
     for deferred in DEFERRED_ADJACENT_MALFORMED {
         assert!(!deferred.is_empty());
         for fixture in CROSS_FAMILY_FIXTURES {
-            assert_ne!(authored_fragment(fixture.source, fixture.primary.subject), *deferred);
+            assert_ne!(
+                authored_fragment(fixture.source, fixture.primary.subject),
+                *deferred
+            );
         }
         for fixture in MULTIPLE_GRAMMAR_FIXTURES {
-            assert_ne!(authored_fragment(fixture.source, fixture.primary), *deferred);
+            assert_ne!(
+                authored_fragment(fixture.source, fixture.primary),
+                *deferred
+            );
             for later in fixture.later {
                 assert_ne!(authored_fragment(fixture.source, *later), *deferred);
             }
