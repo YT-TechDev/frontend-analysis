@@ -124,9 +124,9 @@ impl SelectedLexicalDeclaration {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SelectedGrammarEvidenceContext {
-    GeneralSelectedBinding,
-    KeywordAdjacentLetBinding,
-    UnsupportedKeywordAdjacentBinding,
+    General,
+    KeywordAdjacentLet,
+    UnsupportedKeywordAdjacent,
 }
 
 #[derive(Debug)]
@@ -195,14 +195,14 @@ impl<'source> Cursor<'source> {
             let grammar_context = if first_binding && first_binding_is_keyword_adjacent {
                 match kind {
                     SelectedLexicalDeclarationKind::Let => {
-                        SelectedGrammarEvidenceContext::KeywordAdjacentLetBinding
+                        SelectedGrammarEvidenceContext::KeywordAdjacentLet
                     }
                     SelectedLexicalDeclarationKind::Const => {
-                        SelectedGrammarEvidenceContext::UnsupportedKeywordAdjacentBinding
+                        SelectedGrammarEvidenceContext::UnsupportedKeywordAdjacent
                     }
                 }
             } else {
-                SelectedGrammarEvidenceContext::GeneralSelectedBinding
+                SelectedGrammarEvidenceContext::General
             };
 
             let (binding_start, binding_end, name_state) =
@@ -298,18 +298,16 @@ impl<'source> Cursor<'source> {
                 let Some(formation) = formed_unicode_escape_at(self.text, escape_start) else {
                     let grammar_end = if first_element {
                         match grammar_context {
-                            SelectedGrammarEvidenceContext::GeneralSelectedBinding => {
+                            SelectedGrammarEvidenceContext::General => {
                                 selected_grammar_escape_subject_end(self.text, escape_start)
                             }
-                            SelectedGrammarEvidenceContext::KeywordAdjacentLetBinding => {
+                            SelectedGrammarEvidenceContext::KeywordAdjacentLet => {
                                 selected_keyword_adjacent_grammar_escape_subject_end(
                                     self.text,
                                     escape_start,
                                 )
                             }
-                            SelectedGrammarEvidenceContext::UnsupportedKeywordAdjacentBinding => {
-                                None
-                            }
+                            SelectedGrammarEvidenceContext::UnsupportedKeywordAdjacent => None,
                         }
                     } else {
                         selected_grammar_escape_subject_end(self.text, escape_start)
