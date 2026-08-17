@@ -154,9 +154,18 @@ fn escaped_bindingidentifier_candidate_conforms_to_oracle_handoff() {
 #[test]
 fn bounded_malformed_escaped_binding_gold_now_produces_grammar_rejection() {
     for (fixture_id, expected_fragment) in [
-        ("JS-GOLD-IDENTIFIER-ESCAPE-MALFORMED-EMPTY-BRACED-001", r"\u{}"),
-        ("JS-GOLD-IDENTIFIER-ESCAPE-MALFORMED-SHORT-FIXED-001", r"\u0"),
-        ("JS-GOLD-IDENTIFIER-ESCAPE-MALFORMED-UNCLOSED-BRACED-001", r"\u{61"),
+        (
+            "JS-GOLD-IDENTIFIER-ESCAPE-MALFORMED-EMPTY-BRACED-001",
+            r"\u{}",
+        ),
+        (
+            "JS-GOLD-IDENTIFIER-ESCAPE-MALFORMED-SHORT-FIXED-001",
+            r"\u0",
+        ),
+        (
+            "JS-GOLD-IDENTIFIER-ESCAPE-MALFORMED-UNCLOSED-BRACED-001",
+            r"\u{61",
+        ),
         ("JS-GOLD-IDENTIFIER-ESCAPE-NONCODEPOINT-001", r"\u{110000}"),
     ] {
         let text = gold_source(fixture_id).unwrap_or_else(|| panic!("{fixture_id} source"));
@@ -230,7 +239,10 @@ fn grammar_primary_discards_tentative_static_evidence_and_is_terminal() {
             "{text}"
         );
         assert_eq!(
-            outcome.rejection_evidence().expect("grammar evidence").family(),
+            outcome
+                .rejection_evidence()
+                .expect("grammar evidence")
+                .family(),
             RejectionFamily::Grammar,
             "{text}"
         );
@@ -255,10 +267,13 @@ fn unowned_and_deferred_grammar_boundaries_remain_unsupported() {
         r"let \u;",
         r"let \u{",
     ] {
-        assert!(matches!(
-            attempt(text),
-            SelectedQualificationAttempt::UnsupportedCoverage
-        ), "{text}");
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::UnsupportedCoverage
+            ),
+            "{text}"
+        );
     }
 }
 
