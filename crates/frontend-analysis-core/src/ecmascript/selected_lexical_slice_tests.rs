@@ -197,7 +197,6 @@ fn selected_decimal_subset_is_exact_for_each_initializer() {
         assert_unsupported(text);
     }
 }
-
 #[test]
 fn initializer_transaction_never_degrades_failed_rhs_to_absent() {
     for text in [
@@ -340,10 +339,7 @@ fn formed_unicode_escape_extends_literal_keyword_candidate_without_backtracking(
         assert_unsupported(text);
     }
 
-    for (text, expected_range) in [
-        (r"let\u{};", (3, 7)),
-        (r"let\u{110000};", (3, 13)),
-    ] {
+    for (text, expected_range) in [(r"let\u{};", (3, 7)), (r"let\u{110000};", (3, 13))] {
         let subject = grammar_rejection(text);
         assert_eq!(
             (subject.range().start(), subject.range().end()),
