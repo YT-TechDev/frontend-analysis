@@ -221,6 +221,7 @@ fn grammar_primary_discards_tentative_static_evidence_and_is_terminal() {
     for text in [
         r"let \u0030\u{};",
         r"let a\u002D\u{};",
+        r"let a\u00001\u{};",
         r"let \u{}\u0030;",
         r"let \u0069f; let \u{};",
         r"let let; let \u{};",
@@ -254,7 +255,6 @@ fn unowned_and_deferred_grammar_boundaries_remain_unsupported() {
     for text in [
         r"let \u0030; foo();",
         r"let \u0030 = foo;",
-        r"let a\u00001\u{};",
         r"let\u0030;",
         r"let\u002D\u{};",
         r"let\u0;",
