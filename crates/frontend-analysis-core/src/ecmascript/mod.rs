@@ -11,6 +11,8 @@ mod qualification_contract_tests;
 #[cfg(test)]
 mod qualification_grammar_evidence_validation_tests;
 #[cfg(test)]
+mod qualification_grammar_rejection_policy_validation_tests;
+#[cfg(test)]
 mod qualification_static_semantics_validation_tests;
 #[cfg(test)]
 mod qualification_validation_tests;
