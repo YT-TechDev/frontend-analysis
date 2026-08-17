@@ -2,8 +2,9 @@ use crate::{SourceId, SourceText};
 
 use super::qualification_validation_tests::{gold_source, gold_subject_range};
 use super::selected_lexical_slice::{
-    SelectedInitializerState, SelectedLexicalDeclarationKind, SelectedLexicalScript,
-    SelectedLexicalSliceOutcome, recognize_selected_lexical_slice,
+    SelectedBindingNameState, SelectedInitializerState, SelectedInvalidEscapePosition,
+    SelectedLexicalDeclarationKind, SelectedLexicalScript, SelectedLexicalSliceOutcome,
+    recognize_selected_lexical_slice,
 };
 
 fn source(text: &str) -> SourceText {
@@ -140,6 +141,7 @@ fn recognizes_complete_selected_trivia_without_generic_unicode_whitespace() {
 
 #[test]
 fn declaration_keywords_and_identifiers_do_not_split_prefixes_or_escapes() {
+    // These sources still do not contain a selected literal declaration head.
     for text in [
         "letx=1;",
         "letπ=1;",
@@ -150,12 +152,15 @@ fn declaration_keywords_and_identifiers_do_not_split_prefixes_or_escapes() {
         "constπ=1;",
         "const_foo=1;",
         "const\\u0061=1;",
-        "let \\u0078=1;",
-        "let x\\u0061=1;",
-        "const \\u0078=1;",
         "l\\u0065t x=1;",
     ] {
         assert_unsupported(text);
+    }
+
+    // Issue #225 deliberately widens escaped BindingIdentifier spelling after
+    // an already-recognized literal declaration keyword.
+    for text in ["let \\u0078=1;", "let x\\u0061=1;", "const \\u0078=1;"] {
+        let _ = recognized(text);
     }
 }
 
@@ -253,6 +258,95 @@ fn whole_source_transaction_prevents_prefix_success_and_truncated_facts() {
         ";let x=1;",
     ] {
         assert_unsupported(text);
+    }
+}
+
+#[test]
+fn escaped_binding_state_preserves_authored_and_decoded_identity_separately() {
+    let script = recognized(r"let \u0061, a;");
+    let first = &script.declarations()[0].bindings()[0];
+    assert_eq!(first.binding().fragment(), r"\u0061");
+    match first.name_state() {
+        SelectedBindingNameState::EscapedValid { decoded } => assert_eq!(decoded, "a"),
+        other => panic!("expected escaped valid state, got {other:?}"),
+    }
+    assert_eq!(first.semantic_name(), Some("a"));
+
+    let second = &script.declarations()[0].bindings()[1];
+    assert!(matches!(
+        second.name_state(),
+        SelectedBindingNameState::Unescaped
+    ));
+    assert_eq!(second.semantic_name(), Some("a"));
+
+    let script = recognized(r"let \u0030;");
+    let invalid = &script.declarations()[0].bindings()[0];
+    match invalid.name_state() {
+        SelectedBindingNameState::InvalidEscapedPosition { position, escape } => {
+            assert_eq!(*position, SelectedInvalidEscapePosition::Start);
+            assert_eq!(escape.fragment(), r"\u0030");
+            assert_eq!((escape.range().start(), escape.range().end()), (4, 10));
+        }
+        other => panic!("expected invalid escaped start, got {other:?}"),
+    }
+    assert_eq!(invalid.semantic_name(), None);
+}
+
+#[test]
+fn escaped_binding_recognition_separates_formed_invalid_from_malformed_coverage() {
+    for text in [
+        r"let \u0030;",
+        r"let a\u002D;",
+        r"let \uD800;",
+        r"let \u{D800};",
+    ] {
+        let _ = recognized(text);
+    }
+
+    for text in [r"let \u{};", r"let \u0;", r"let \u{61", r"let \u{110000};"] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn formed_unicode_escape_extends_literal_keyword_candidate_without_backtracking() {
+    for text in [
+        r"let\u0030;",
+        r"let\u002D;",
+        r"let\u00001;",
+        r"const\u0030;",
+        r"let\u{00000061};",
+        r"let\u002D\u{};",
+    ] {
+        assert_unsupported(text);
+    }
+
+    for text in [r"let\u{};", r"let\u{110000};"] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn escaped_binding_whole_source_transaction_discards_tentative_local_facts() {
+    for text in [
+        r"let \u0030; foo();",
+        r"let \u0030 = foo;",
+        r"let a\u00001\u{};",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn selected_binding_recognition_accepts_long_and_contextual_escaped_names() {
+    for text in [
+        r"let \u{00000061};",
+        r"let \u0061wait, \u0079ield, \u0073tatic, \u0069mplements, \u0061rguments, \u0065val;",
+        r"let \u0069f;",
+        r"let \u006Cet;",
+        "let \\u{1D49C}, 𝒜;",
+    ] {
+        let _ = recognized(text);
     }
 }
 
