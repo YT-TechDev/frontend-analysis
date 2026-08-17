@@ -136,6 +136,34 @@ pub(super) fn selected_grammar_escape_subject_end(source: &str, start: usize) ->
     }
 }
 
+/// Restricts the no-trivia declaration-keyword boundary to the two grammar
+/// classes that #227 independently owns in that exact context: empty braced
+/// spelling and closed non-CodePoint braced spelling.
+pub(super) fn selected_keyword_adjacent_grammar_escape_subject_end(
+    source: &str,
+    start: usize,
+) -> Option<usize> {
+    let end = selected_grammar_escape_subject_end(source, start)?;
+    let bytes = source.as_bytes();
+    let payload = start.checked_add(2)?;
+    if bytes.get(payload) != Some(&b'{') {
+        return None;
+    }
+
+    let digits_start = payload.checked_add(1)?;
+    let close = end.checked_sub(1)?;
+    if bytes.get(close) != Some(&b'}') {
+        return None;
+    }
+
+    let digits = bytes.get(digits_start..close)?;
+    if digits.is_empty() || parse_braced_code_point(digits).is_none() {
+        Some(end)
+    } else {
+        None
+    }
+}
+
 pub(super) fn is_selected_identifier_start(code_point: u32) -> bool {
     matches!(code_point, 0x24 | 0x5F) || is_id_start(code_point)
 }
@@ -231,6 +259,25 @@ mod tests {
             assert_eq!(
                 selected_grammar_escape_subject_end(source, 0),
                 Some(expected_end),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn keyword_adjacent_classifier_keeps_unvalidated_classes_out_of_scope() {
+        assert_eq!(
+            selected_keyword_adjacent_grammar_escape_subject_end(r"\u{};", 0),
+            Some(4)
+        );
+        assert_eq!(
+            selected_keyword_adjacent_grammar_escape_subject_end(r"\u{110000};", 0),
+            Some(10)
+        );
+        for source in [r"\u0;", r"\u{61"] {
+            assert_eq!(
+                selected_keyword_adjacent_grammar_escape_subject_end(source, 0),
+                None,
                 "{source}"
             );
         }
