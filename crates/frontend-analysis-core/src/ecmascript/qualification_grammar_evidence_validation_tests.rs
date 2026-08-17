@@ -472,7 +472,10 @@ fn formed_ues_positional_failures_remain_static_semantics_evidence_not_grammar_e
             None,
             "formed UES positional failures must not be reclassified as malformed grammar evidence"
         );
-        assert_eq!(formed_unicode_escape_end(source, subject.start), Some(subject.end));
+        assert_eq!(
+            formed_unicode_escape_end(source, subject.start),
+            Some(subject.end)
+        );
     }
 }
 
