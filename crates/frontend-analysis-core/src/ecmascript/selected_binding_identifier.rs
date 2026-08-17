@@ -86,6 +86,56 @@ pub(super) fn formed_unicode_escape_at(source: &str, start: usize) -> Option<For
     Some(FormedUnicodeEscape { end, code_point })
 }
 
+/// Returns the exact authored end of one #227-owned grammar-invalid escape
+/// spelling once the spelling is stable enough to support a source verdict.
+///
+/// This deliberately does not classify every malformed `UnicodeEscapeSequence`.
+/// Adjacent malformed forms deferred by #229 remain outside this helper.
+pub(super) fn selected_grammar_escape_subject_end(source: &str, start: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let u = start.checked_add(1)?;
+    if bytes.get(start) != Some(&b'\\') || bytes.get(u) != Some(&b'u') {
+        return None;
+    }
+
+    let payload = start.checked_add(2)?;
+    if bytes.get(payload) == Some(&b'{') {
+        let digits_start = payload.checked_add(1)?;
+        let mut end = digits_start;
+        while bytes.get(end).is_some_and(|byte| byte.is_ascii_hexdigit()) {
+            end = end.checked_add(1)?;
+        }
+
+        match bytes.get(end) {
+            Some(b'}') => {
+                let digits = bytes.get(digits_start..end)?;
+                if digits.is_empty() || parse_braced_code_point(digits).is_none() {
+                    return end.checked_add(1);
+                }
+                None
+            }
+            None if end > digits_start => Some(end),
+            _ => None,
+        }
+    } else {
+        let mut end = payload;
+        while end
+            .checked_sub(payload)
+            .is_some_and(|digit_count| digit_count < 4)
+            && bytes.get(end).is_some_and(|byte| byte.is_ascii_hexdigit())
+        {
+            end = end.checked_add(1)?;
+        }
+
+        let digit_count = end.checked_sub(payload)?;
+        if (1..4).contains(&digit_count) && bytes.get(end) == Some(&b';') {
+            Some(end)
+        } else {
+            None
+        }
+    }
+}
+
 pub(super) fn is_selected_identifier_start(code_point: u32) -> bool {
     matches!(code_point, 0x24 | 0x5F) || is_id_start(code_point)
 }
@@ -166,6 +216,46 @@ mod tests {
     fn malformed_and_non_code_point_escapes_do_not_form() {
         for source in [r"\u{}", r"\u0", r"\u{61", r"\u{110000}"] {
             assert_eq!(formed_unicode_escape_at(source, 0), None, "{source}");
+        }
+    }
+
+    #[test]
+    fn bounded_grammar_escape_classifier_retains_truthful_authored_end() {
+        for (source, expected_end) in [
+            (r"\u{};", 4),
+            (r"\u0;", 3),
+            (r"\u{61", 5),
+            (r"\u{110000};", 10),
+            (r"\u{000000110000};", 16),
+        ] {
+            assert_eq!(
+                selected_grammar_escape_subject_end(source, 0),
+                Some(expected_end),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn bounded_grammar_escape_classifier_does_not_widen_deferred_adjacent_forms() {
+        for source in [r"\u{G}", r"\u00G0", r"\u{61;", r"\u0x", r"\u", r"\u{"] {
+            assert_eq!(
+                selected_grammar_escape_subject_end(source, 0),
+                None,
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn bounded_grammar_escape_classifier_does_not_claim_formed_ues() {
+        for source in [r"\u0061;", r"\u0030;", r"\uD800;", r"\u{D800};"] {
+            assert!(formed_unicode_escape_at(source, 0).is_some(), "{source}");
+            assert_eq!(
+                selected_grammar_escape_subject_end(source, 0),
+                None,
+                "{source}"
+            );
         }
     }
 
