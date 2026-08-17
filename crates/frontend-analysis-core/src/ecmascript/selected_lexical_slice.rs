@@ -12,7 +12,8 @@ use crate::{SourceAnchor, SourceText};
 
 use super::selected_binding_identifier::{
     formed_unicode_escape_at, is_selected_identifier_part, is_selected_identifier_start,
-    is_unconditionally_reserved_word,
+    is_unconditionally_reserved_word, selected_grammar_escape_subject_end,
+    selected_keyword_adjacent_grammar_escape_subject_end,
 };
 use super::unicode::is_space_separator;
 
@@ -20,7 +21,7 @@ use super::unicode::is_space_separator;
 pub(super) enum SelectedLexicalSliceOutcome {
     RecognizedSelectedSlice(SelectedLexicalScript),
     UnsupportedCoverage,
-    DefinitiveGrammarRejectionEvidence,
+    DefinitiveGrammarRejectionEvidence { subject: SourceAnchor },
     ResourceLimited,
     InternalFailure,
 }
@@ -122,8 +123,16 @@ impl SelectedLexicalDeclaration {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SelectedGrammarEvidenceContext {
+    General,
+    KeywordAdjacentLet,
+    UnsupportedKeywordAdjacent,
+}
+
+#[derive(Debug)]
 enum ParseFailure {
     UnsupportedCoverage,
+    DefinitiveGrammarRejectionEvidence { subject: SourceAnchor },
     ResourceLimited,
     InternalFailure,
 }
@@ -176,12 +185,28 @@ impl<'source> Cursor<'source> {
             .consume_declaration_kind()
             .ok_or(ParseFailure::UnsupportedCoverage)?;
 
+        let after_keyword = self.offset;
         self.skip_selected_trivia();
+        let first_binding_is_keyword_adjacent = self.offset == after_keyword;
         let mut bindings = Vec::new();
+        let mut first_binding = true;
 
         loop {
+            let grammar_context = if first_binding && first_binding_is_keyword_adjacent {
+                match kind {
+                    SelectedLexicalDeclarationKind::Let => {
+                        SelectedGrammarEvidenceContext::KeywordAdjacentLet
+                    }
+                    SelectedLexicalDeclarationKind::Const => {
+                        SelectedGrammarEvidenceContext::UnsupportedKeywordAdjacent
+                    }
+                }
+            } else {
+                SelectedGrammarEvidenceContext::General
+            };
+
             let (binding_start, binding_end, name_state) =
-                self.parse_selected_binding_identifier()?;
+                self.parse_selected_binding_identifier(grammar_context)?;
 
             self.skip_selected_trivia();
             let initializer = if self.consume_initializer_equals() {
@@ -204,6 +229,7 @@ impl<'source> Cursor<'source> {
                 name_state,
                 initializer,
             });
+            first_binding = false;
 
             if self.consume_ascii(',') {
                 self.skip_selected_trivia();
@@ -258,6 +284,7 @@ impl<'source> Cursor<'source> {
 
     fn parse_selected_binding_identifier(
         &mut self,
+        grammar_context: SelectedGrammarEvidenceContext,
     ) -> Result<(usize, usize, SelectedBindingNameState), ParseFailure> {
         let start = self.offset;
         let mut first_element = true;
@@ -268,8 +295,31 @@ impl<'source> Cursor<'source> {
         loop {
             if self.peek_char() == Some('\\') {
                 let escape_start = self.offset;
-                let formation = formed_unicode_escape_at(self.text, escape_start)
-                    .ok_or(ParseFailure::UnsupportedCoverage)?;
+                let Some(formation) = formed_unicode_escape_at(self.text, escape_start) else {
+                    let grammar_end = if first_element {
+                        match grammar_context {
+                            SelectedGrammarEvidenceContext::General => {
+                                selected_grammar_escape_subject_end(self.text, escape_start)
+                            }
+                            SelectedGrammarEvidenceContext::KeywordAdjacentLet => {
+                                selected_keyword_adjacent_grammar_escape_subject_end(
+                                    self.text,
+                                    escape_start,
+                                )
+                            }
+                            SelectedGrammarEvidenceContext::UnsupportedKeywordAdjacent => None,
+                        }
+                    } else {
+                        selected_grammar_escape_subject_end(self.text, escape_start)
+                    };
+
+                    let Some(grammar_end) = grammar_end else {
+                        return Err(ParseFailure::UnsupportedCoverage);
+                    };
+                    let subject = self.anchor(escape_start, grammar_end)?;
+                    return Err(ParseFailure::DefinitiveGrammarRejectionEvidence { subject });
+                };
+
                 self.offset = formation.end;
                 saw_escape = true;
 
@@ -440,6 +490,9 @@ pub(super) fn recognize_selected_lexical_slice(source: &SourceText) -> SelectedL
             }
             Err(ParseFailure::UnsupportedCoverage) => {
                 return SelectedLexicalSliceOutcome::UnsupportedCoverage;
+            }
+            Err(ParseFailure::DefinitiveGrammarRejectionEvidence { subject }) => {
+                return SelectedLexicalSliceOutcome::DefinitiveGrammarRejectionEvidence { subject };
             }
             Err(ParseFailure::ResourceLimited) => {
                 return SelectedLexicalSliceOutcome::ResourceLimited;
