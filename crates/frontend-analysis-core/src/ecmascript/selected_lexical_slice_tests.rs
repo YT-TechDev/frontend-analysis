@@ -369,14 +369,14 @@ fn adjacent_malformed_classes_remain_unsupported() {
 }
 
 #[test]
-fn escaped_binding_whole_source_transaction_discards_tentative_local_facts() {
-    for text in [
-        r"let \u0030; foo();",
-        r"let \u0030 = foo;",
-        r"let a\u00001\u{};",
-    ] {
+fn escaped_binding_whole_source_transaction_distinguishes_unsupported_tail_from_owned_grammar() {
+    for text in [r"let \u0030; foo();", r"let \u0030 = foo;"] {
         assert_unsupported(text);
     }
+
+    let subject = grammar_rejection(r"let a\u00001\u{};");
+    assert_eq!(subject.fragment(), r"\u{}");
+    assert_eq!((subject.range().start(), subject.range().end()), (12, 16));
 }
 
 #[test]
