@@ -2,7 +2,7 @@
 //!
 //! This module fixes the selected `LexicalDeclaration` composition policy
 //! without calling production lexical, static-semantics, or aggregate code.
-//! It deliberately validates meaning and provenance rather than a future
+//! It validates expected meaning and source provenance rather than a future
 //! production representation.
 
 use crate::{SourceId, SourceText};
@@ -144,12 +144,12 @@ const EOF_SELECTED_FIXTURES: &[EofSelectedFixture] = &[
         id: "EOF-ASI-POSITIVE-TRAILING-TRIVIA-001",
         source: "let x = 1 \t\n\r\u{2028}\u{2029}\u{00A0}\u{1680}\u{2000}\u{202F}\u{205F}\u{3000}\u{FEFF}",
         final_declaration: ByteRange::new(0, 9),
-        trailing_trivia: ByteRange::new(9, 37),
+        trailing_trivia: ByteRange::new(9, 39),
         required_authored_semicolons: &[],
         lifecycle: FutureLifecycle::SelectedAcceptedIncomplete,
         static_expectation: None,
         synthetic_semicolon: SyntheticSemicolonExpectation {
-            decision_offset: 37,
+            decision_offset: 39,
             authored_range: None,
         },
     },
@@ -322,7 +322,7 @@ fn fixture_block<'a>(source: &'a str, fixture_id: &str) -> &'a str {
 
 fn slice(text: &str, range: ByteRange) -> &str {
     text.get(range.start..range.end)
-        .unwrap_or_else(|| panic!("range {:?} must be a UTF-8 boundary in {text:?}", range))
+        .unwrap_or_else(|| panic!("range {range:?} must be a UTF-8 boundary in {text:?}"))
 }
 
 fn is_selected_trivia_for_oracle(code_point: char) -> bool {
@@ -373,28 +373,41 @@ fn frozen_authority_separates_generic_asi_provenance_from_selected_eof_applicabi
     let asi_block = fixture_block(GOLD_SOURCE, ASI_GOLD_ID);
     assert!(asi_block.contains("synthetic: ASI_EXPECTATION"));
 
-    let expectation_start = GOLD_SOURCE
+    let start = GOLD_SOURCE
         .find("const ASI_EXPECTATION: &[SyntheticExpectation]")
         .expect("#197 ASI expectation authority must remain present");
-    let expectation = &GOLD_SOURCE[expectation_start..];
-    let expectation_end = expectation
+    let rest = &GOLD_SOURCE[start..];
+    let end = rest
         .find("];\n")
         .expect("#197 ASI expectation must retain a complete declaration")
         + "];\n".len();
-    let expectation = &expectation[..expectation_end];
+    let expectation = &rest[..end];
     assert!(expectation.contains("SyntheticKind::AutomaticSemicolonInsertion"));
     assert!(expectation.contains("authored_range: None"));
 }
 
 #[test]
-fn eof_selected_fixtures_keep_authored_bytes_trivia_decision_and_synthetic_event_distinct() {
+fn eof_selected_fixtures_separate_authored_bytes_trivia_eof_and_synthetic_semicolon() {
     for fixture in EOF_SELECTED_FIXTURES {
         let text = fixture.source;
         let source = SourceText::new(SourceId::new(ISSUE_ID), text.to_owned());
 
-        assert_eq!(fixture.synthetic_semicolon.decision_offset, text.len(), "{}", fixture.id);
-        assert_eq!(fixture.synthetic_semicolon.authored_range, None, "{}", fixture.id);
-        assert_eq!(fixture.final_declaration.end, fixture.trailing_trivia.start, "{}", fixture.id);
+        assert_eq!(
+            fixture.synthetic_semicolon.decision_offset,
+            text.len(),
+            "{}",
+            fixture.id
+        );
+        assert_eq!(
+            fixture.synthetic_semicolon.authored_range, None,
+            "{}",
+            fixture.id
+        );
+        assert_eq!(
+            fixture.final_declaration.end, fixture.trailing_trivia.start,
+            "{}",
+            fixture.id
+        );
         assert_eq!(fixture.trailing_trivia.end, text.len(), "{}", fixture.id);
 
         let declaration = source
@@ -405,7 +418,7 @@ fn eof_selected_fixtures_keep_authored_bytes_trivia_decision_and_synthetic_event
         let trailing = slice(text, fixture.trailing_trivia);
         assert!(
             trailing.chars().all(is_selected_trivia_for_oracle),
-            "{} trailing bytes must stay inside the independently frozen selected trivia set",
+            "{} trailing bytes must stay in the independently frozen selected trivia set",
             fixture.id
         );
 
@@ -414,7 +427,11 @@ fn eof_selected_fixtures_keep_authored_bytes_trivia_decision_and_synthetic_event
                 .anchor(semicolon_range.start, semicolon_range.end)
                 .unwrap_or_else(|_| panic!("{} prior terminator must be authored", fixture.id));
             assert_eq!(semicolon.fragment(), ";", "{}", fixture.id);
-            assert!(semicolon_range.end <= fixture.final_declaration.start, "{}", fixture.id);
+            assert!(
+                semicolon_range.end <= fixture.final_declaration.start,
+                "{}",
+                fixture.id
+            );
         }
 
         match fixture.lifecycle {
@@ -443,7 +460,12 @@ fn eof_asi_static_composition_preserves_existing_rule_and_authored_subject_ident
         let control_subject = gold_subject_range(expected.explicit_control_gold_id)
             .unwrap_or_else(|| panic!("{} explicit-semicolon subject must exist", fixture.id));
 
-        assert_eq!(control_source.strip_suffix(';'), Some(fixture.source), "{}", fixture.id);
+        assert_eq!(
+            control_source.strip_suffix(';'),
+            Some(fixture.source),
+            "{}",
+            fixture.id
+        );
         assert_eq!(
             control_subject,
             (expected.subject.start, expected.subject.end),
@@ -479,9 +501,18 @@ fn existing_terminal_grammar_controls_never_acquire_an_eof_asi_event() {
         );
     }
 
-    assert_eq!(slice(GRAMMAR_CONTROLS[0].source, GRAMMAR_CONTROLS[0].subject), r"\u{}");
-    assert_eq!(slice(GRAMMAR_CONTROLS[1].source, GRAMMAR_CONTROLS[1].subject), r"\u{}");
-    assert_eq!(slice(GRAMMAR_CONTROLS[2].source, GRAMMAR_CONTROLS[2].subject), r"\u{61");
+    assert_eq!(
+        slice(GRAMMAR_CONTROLS[0].source, GRAMMAR_CONTROLS[0].subject),
+        r"\u{}"
+    );
+    assert_eq!(
+        slice(GRAMMAR_CONTROLS[1].source, GRAMMAR_CONTROLS[1].subject),
+        r"\u{}"
+    );
+    assert_eq!(
+        slice(GRAMMAR_CONTROLS[2].source, GRAMMAR_CONTROLS[2].subject),
+        r"\u{61"
+    );
 }
 
 #[test]
@@ -516,7 +547,7 @@ fn unsupported_neighbors_do_not_receive_synthetic_repair_or_source_verdicts() {
         .filter(|fixture| fixture.reason == UnsupportedReason::DeferredMalformedEscape)
         .map(|fixture| fixture.source)
         .collect();
-    assert_eq!(deferred, [r"let \u", r"let \u{", r"let \u0"]);
+    assert_eq!(deferred.as_slice(), &[r"let \u", r"let \u{", r"let \u0"]);
 }
 
 #[test]
@@ -526,7 +557,10 @@ fn only_the_final_declaration_may_use_the_eof_only_policy() {
         .find(|fixture| fixture.id == "EOF-ASI-POSITIVE-FINAL-DECLARATION-ONLY-001")
         .expect("final-only positive fixture must exist");
     assert_eq!(selected.source, "let x; const y = 1");
-    assert_eq!(selected.required_authored_semicolons, &[ByteRange::new(5, 6)]);
+    assert_eq!(
+        selected.required_authored_semicolons,
+        &[ByteRange::new(5, 6)]
+    );
     assert_eq!(slice(selected.source, selected.final_declaration), "const y = 1");
 
     let unsupported = UNSUPPORTED_FIXTURES
@@ -559,7 +593,7 @@ fn explicit_semicolon_gold_remains_the_no_synthetic_control() {
 }
 
 #[test]
-fn long_multibyte_trailing_trivia_preserves_linear_source_partition_without_fabrication() {
+fn long_multibyte_trailing_trivia_preserves_source_partition_without_fabrication() {
     let declaration = "let x = 1";
     let trailing_unit = "\u{3000}\u{2028}\n";
     let trailing = trailing_unit.repeat(4096);
