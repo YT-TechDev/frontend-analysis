@@ -362,7 +362,8 @@ fn frozen_authority_separates_generic_asi_provenance_from_selected_eof_applicabi
     assert!(MODEL_SOURCE.contains(ECMA_262_SNAPSHOT));
     assert!(MODEL_SOURCE.contains(UNICODE_VERSION));
 
-    let generic_asi_source = gold_source(ASI_GOLD_ID).expect("#197 generic ASI gold must remain present");
+    let generic_asi_source =
+        gold_source(ASI_GOLD_ID).expect("#197 generic ASI gold must remain present");
     assert!(
         !EOF_SELECTED_FIXTURES
             .iter()
@@ -411,7 +412,10 @@ fn eof_selected_fixtures_separate_authored_bytes_trivia_eof_and_synthetic_semico
         assert_eq!(fixture.trailing_trivia.end, text.len(), "{}", fixture.id);
 
         let declaration = source
-            .anchor(fixture.final_declaration.start, fixture.final_declaration.end)
+            .anchor(
+                fixture.final_declaration.start,
+                fixture.final_declaration.end,
+            )
             .unwrap_or_else(|_| panic!("{} declaration must remain authored", fixture.id));
         assert!(!declaration.fragment().ends_with(';'), "{}", fixture.id);
 
@@ -561,7 +565,10 @@ fn only_the_final_declaration_may_use_the_eof_only_policy() {
         selected.required_authored_semicolons,
         &[ByteRange::new(5, 6)]
     );
-    assert_eq!(slice(selected.source, selected.final_declaration), "const y = 1");
+    assert_eq!(
+        slice(selected.source, selected.final_declaration),
+        "const y = 1"
+    );
 
     let unsupported = UNSUPPORTED_FIXTURES
         .iter()
@@ -600,8 +607,15 @@ fn long_multibyte_trailing_trivia_preserves_source_partition_without_fabrication
     let text = format!("{declaration}{trailing}");
     let declaration_end = declaration.len();
 
-    assert_eq!(slice(&text, ByteRange::new(0, declaration_end)), declaration);
-    assert!(text[declaration_end..].chars().all(is_selected_trivia_for_oracle));
+    assert_eq!(
+        slice(&text, ByteRange::new(0, declaration_end)),
+        declaration
+    );
+    assert!(
+        text[declaration_end..]
+            .chars()
+            .all(is_selected_trivia_for_oracle)
+    );
     assert_eq!(text.len(), declaration_end + trailing.len());
     assert!(!text.as_bytes().contains(&b';'));
 
@@ -613,7 +627,11 @@ fn long_multibyte_trailing_trivia_preserves_source_partition_without_fabrication
 
     for _ in 0..4 {
         assert_eq!(text.len(), declaration_end + trailing.len());
-        assert!(text[declaration_end..].chars().all(is_selected_trivia_for_oracle));
+        assert!(
+            text[declaration_end..]
+                .chars()
+                .all(is_selected_trivia_for_oracle)
+        );
     }
 }
 
