@@ -1,4 +1,4 @@
-use crate::{SourceId, SourceText};
+use crate::{SourceAnchor, SourceId, SourceText};
 
 use super::qualification_validation_tests::{gold_source, gold_subject_range};
 use super::selected_lexical_slice::{
@@ -17,8 +17,8 @@ fn recognized(text: &str) -> SelectedLexicalScript {
         SelectedLexicalSliceOutcome::UnsupportedCoverage => {
             panic!("expected selected-slice recognition, got unsupported coverage for {text:?}")
         }
-        SelectedLexicalSliceOutcome::DefinitiveGrammarRejectionEvidence => {
-            panic!("selected slice must not emit definitive grammar rejection for {text:?}")
+        SelectedLexicalSliceOutcome::DefinitiveGrammarRejectionEvidence { .. } => {
+            panic!("expected selected-slice recognition, got grammar rejection for {text:?}")
         }
         SelectedLexicalSliceOutcome::ResourceLimited => {
             panic!("unexpected resource limitation for {text:?}")
@@ -26,6 +26,13 @@ fn recognized(text: &str) -> SelectedLexicalScript {
         SelectedLexicalSliceOutcome::InternalFailure => {
             panic!("unexpected internal failure for {text:?}")
         }
+    }
+}
+
+fn grammar_rejection(text: &str) -> SourceAnchor {
+    match recognize_selected_lexical_slice(&source(text)) {
+        SelectedLexicalSliceOutcome::DefinitiveGrammarRejectionEvidence { subject } => subject,
+        other => panic!("expected grammar rejection for {text:?}, got {other:?}"),
     }
 }
 
@@ -141,7 +148,6 @@ fn recognizes_complete_selected_trivia_without_generic_unicode_whitespace() {
 
 #[test]
 fn declaration_keywords_and_identifiers_do_not_split_prefixes_or_escapes() {
-    // These sources still do not contain a selected literal declaration head.
     for text in [
         "letx=1;",
         "letπ=1;",
@@ -157,8 +163,6 @@ fn declaration_keywords_and_identifiers_do_not_split_prefixes_or_escapes() {
         assert_unsupported(text);
     }
 
-    // Issue #225 deliberately widens escaped BindingIdentifier spelling after
-    // an already-recognized literal declaration keyword.
     for text in ["let \\u0078=1;", "let x\\u0061=1;", "const \\u0078=1;"] {
         let _ = recognized(text);
     }
@@ -293,7 +297,7 @@ fn escaped_binding_state_preserves_authored_and_decoded_identity_separately() {
 }
 
 #[test]
-fn escaped_binding_recognition_separates_formed_invalid_from_malformed_coverage() {
+fn escaped_binding_recognition_separates_formed_invalid_from_bounded_grammar_rejection() {
     for text in [
         r"let \u0030;",
         r"let a\u002D;",
@@ -303,8 +307,23 @@ fn escaped_binding_recognition_separates_formed_invalid_from_malformed_coverage(
         let _ = recognized(text);
     }
 
-    for text in [r"let \u{};", r"let \u0;", r"let \u{61", r"let \u{110000};"] {
-        assert_unsupported(text);
+    for (text, expected_fragment, expected_range) in [
+        (r"let \u{};", r"\u{}", (4, 8)),
+        (r"let \u0;", r"\u0", (4, 7)),
+        (r"let \u{61", r"\u{61", (4, 9)),
+        (r"let \u{110000};", r"\u{110000}", (4, 14)),
+        (r"let a\u{};", r"\u{}", (5, 9)),
+        (r"let a\u0;", r"\u0", (5, 8)),
+        (r"let a\u{61", r"\u{61", (5, 10)),
+        (r"let a\u{110000};", r"\u{110000}", (5, 15)),
+    ] {
+        let subject = grammar_rejection(text);
+        assert_eq!(subject.fragment(), expected_fragment, "{text}");
+        assert_eq!(
+            (subject.range().start(), subject.range().end()),
+            expected_range,
+            "{text}"
+        );
     }
 }
 
@@ -321,7 +340,33 @@ fn formed_unicode_escape_extends_literal_keyword_candidate_without_backtracking(
         assert_unsupported(text);
     }
 
-    for text in [r"let\u{};", r"let\u{110000};"] {
+    for (text, expected_range) in [
+        (r"let\u{};", (3, 7)),
+        (r"let\u{110000};", (3, 13)),
+    ] {
+        let subject = grammar_rejection(text);
+        assert_eq!(
+            (subject.range().start(), subject.range().end()),
+            expected_range,
+            "{text}"
+        );
+    }
+
+    for text in [r"let\u0;", r"let\u{61", r"const\u{};"] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn adjacent_malformed_classes_remain_unsupported() {
+    for text in [
+        r"let \u{G};",
+        r"let \u00G0;",
+        r"let \u{61;",
+        r"let \u0x;",
+        r"let \u;",
+        r"let \u{",
+    ] {
         assert_unsupported(text);
     }
 }
