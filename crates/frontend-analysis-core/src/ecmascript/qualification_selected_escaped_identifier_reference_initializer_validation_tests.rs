@@ -870,16 +870,15 @@ fn formed_escape_at(spelling: &str, start: usize) -> Result<EscapeFormation, Dec
 
     let mut code_point = 0_u32;
     for byte in digits {
-        code_point = code_point * 16 + ascii_hex_value(*byte).ok_or(DecodeFailure::MalformedEscape)?;
+        code_point =
+            code_point * 16 + ascii_hex_value(*byte).ok_or(DecodeFailure::MalformedEscape)?;
     }
 
     Ok(EscapeFormation { end, code_point })
 }
 
 fn is_selected_identifier_start_for_oracle(code_point: u32) -> bool {
-    code_point == u32::from(b'$')
-        || code_point == u32::from(b'_')
-        || is_id_start(code_point)
+    code_point == u32::from(b'$') || code_point == u32::from(b'_') || is_id_start(code_point)
 }
 
 fn is_selected_identifier_part_for_oracle(code_point: u32) -> bool {
@@ -990,8 +989,17 @@ fn is_selected_trivia_for_oracle(code_point: char) -> bool {
 }
 
 fn assert_positive_fixture(index: usize, fixture: &PositiveFixture) {
-    assert_eq!(slice(fixture.source, fixture.rhs_range), fixture.rhs, "{}", fixture.id);
-    assert!(fixture.rhs.contains('\\'), "{} must contain an authored UES", fixture.id);
+    assert_eq!(
+        slice(fixture.source, fixture.rhs_range),
+        fixture.rhs,
+        "{}",
+        fixture.id
+    );
+    assert!(
+        fixture.rhs.contains('\\'),
+        "{} must contain an authored UES",
+        fixture.id
+    );
     assert_eq!(fixture.route, IdentifierReferenceRoute::EscapedIdentifier);
     assert_eq!(fixture.expected, SELECTED_ACCEPTED_INCOMPLETE);
 
@@ -1006,7 +1014,12 @@ fn assert_positive_fixture(index: usize, fixture: &PositiveFixture) {
 
     let decoded = decode_selected_escaped_identifier(fixture.rhs)
         .unwrap_or_else(|failure| panic!("{} must decode successfully: {failure:?}", fixture.id));
-    assert_eq!(decoded.code_points, fixture.decoded_code_points, "{}", fixture.id);
+    assert_eq!(
+        decoded.code_points.as_slice(),
+        fixture.decoded_code_points,
+        "{}",
+        fixture.id
+    );
     assert_eq!(decoded.string_value, fixture.string_value, "{}", fixture.id);
 
     let trivia = fixture
@@ -1082,7 +1095,9 @@ fn escaped_rhs_name_policy_matrix_is_position_specific_and_selected_positive() {
             NamePolicyCategory::StrictOnlyInSelectedNonStrictScript => strict_only += 1,
             NamePolicyCategory::YieldAwaitViaEscapedIdentifier => parameter_special += 1,
             NamePolicyCategory::BindingPolicyContrast => binding_contrast += 1,
-            NamePolicyCategory::Ordinary => panic!("name-policy table must not contain ordinary rows"),
+            NamePolicyCategory::Ordinary => {
+                panic!("name-policy table must not contain ordinary rows")
+            }
         }
     }
 
@@ -1100,12 +1115,21 @@ fn direct_yield_await_alternatives_are_not_the_escaped_identifier_route() {
             .expect("escaped route fixture must be position-valid");
         assert_eq!(decoded.string_value, fixture.expected_string_value);
         assert_eq!(fixture.direct_spelling, fixture.expected_string_value);
-        assert_eq!(fixture.escaped_route, IdentifierReferenceRoute::EscapedIdentifier);
+        assert_eq!(
+            fixture.escaped_route,
+            IdentifierReferenceRoute::EscapedIdentifier
+        );
         assert_ne!(fixture.direct_route, fixture.escaped_route);
 
         match fixture.direct_spelling {
-            "yield" => assert_eq!(fixture.direct_route, IdentifierReferenceRoute::DirectYieldAlternative),
-            "await" => assert_eq!(fixture.direct_route, IdentifierReferenceRoute::DirectAwaitAlternative),
+            "yield" => assert_eq!(
+                fixture.direct_route,
+                IdentifierReferenceRoute::DirectYieldAlternative
+            ),
+            "await" => assert_eq!(
+                fixture.direct_route,
+                IdentifierReferenceRoute::DirectAwaitAlternative
+            ),
             other => panic!("unexpected direct parameter-special spelling {other}"),
         }
     }
@@ -1216,10 +1240,16 @@ fn canonical_equivalents_are_not_normalized_or_conflated() {
 fn existing_static_subjects_remain_binding_owned_when_escaped_rhs_becomes_reachable() {
     for (index, fixture) in STATIC_REACHABILITY_FIXTURES.iter().enumerate() {
         let rhs = slice(fixture.source, fixture.rhs_range);
-        let _decoded = decode_selected_escaped_identifier(rhs)
-            .unwrap_or_else(|failure| panic!("{} RHS must be selected-positive: {failure:?}", fixture.id));
+        let _decoded = decode_selected_escaped_identifier(rhs).unwrap_or_else(|failure| {
+            panic!("{} RHS must be selected-positive: {failure:?}", fixture.id)
+        });
 
-        assert_eq!(slice(fixture.source, fixture.subject), fixture.subject_fragment, "{}", fixture.id);
+        assert_eq!(
+            slice(fixture.source, fixture.subject),
+            fixture.subject_fragment,
+            "{}",
+            fixture.id
+        );
         assert!(fixture.rule_id.starts_with("EE-"), "{}", fixture.id);
 
         let source = SourceText::new(
@@ -1229,14 +1259,19 @@ fn existing_static_subjects_remain_binding_owned_when_escaped_rhs_becomes_reacha
         let subject = source
             .anchor(fixture.subject.start, fixture.subject.end)
             .expect("static subject must be a valid authored anchor");
-        assert_eq!(subject.fragment(), fixture.subject_fragment, "{}", fixture.id);
+        assert_eq!(
+            subject.fragment(),
+            fixture.subject_fragment,
+            "{}",
+            fixture.id
+        );
 
         let control_source = gold_source(fixture.control_gold_id)
             .unwrap_or_else(|| panic!("{} control gold must remain available", fixture.id));
         let control_range = gold_subject_range(fixture.control_gold_id)
             .unwrap_or_else(|| panic!("{} control gold must remain source-backed", fixture.id));
-        assert!(!
-            control_source
+        assert!(
+            !control_source
                 .get(control_range.0..control_range.1)
                 .expect("control gold subject must be UTF-8 valid")
                 .is_empty()
@@ -1248,9 +1283,15 @@ fn existing_static_subjects_remain_binding_owned_when_escaped_rhs_becomes_reacha
 fn later_existing_grammar_subjects_remain_exact_and_terminal_after_valid_escaped_rhs() {
     for (index, fixture) in GRAMMAR_REACHABILITY_FIXTURES.iter().enumerate() {
         let rhs = slice(fixture.source, fixture.rhs_range);
-        let _decoded = decode_selected_escaped_identifier(rhs)
-            .unwrap_or_else(|failure| panic!("{} RHS must be selected-positive: {failure:?}", fixture.id));
-        assert_eq!(slice(fixture.source, fixture.subject), fixture.subject_fragment, "{}", fixture.id);
+        let _decoded = decode_selected_escaped_identifier(rhs).unwrap_or_else(|failure| {
+            panic!("{} RHS must be selected-positive: {failure:?}", fixture.id)
+        });
+        assert_eq!(
+            slice(fixture.source, fixture.subject),
+            fixture.subject_fragment,
+            "{}",
+            fixture.id
+        );
 
         let source = SourceText::new(
             SourceId::new(241_400 + index as u64),
@@ -1259,7 +1300,12 @@ fn later_existing_grammar_subjects_remain_exact_and_terminal_after_valid_escaped
         let subject = source
             .anchor(fixture.subject.start, fixture.subject.end)
             .expect("existing Grammar subject must remain source-backed");
-        assert_eq!(subject.fragment(), fixture.subject_fragment, "{}", fixture.id);
+        assert_eq!(
+            subject.fragment(),
+            fixture.subject_fragment,
+            "{}",
+            fixture.id
+        );
     }
 }
 
@@ -1269,8 +1315,12 @@ fn valid_escaped_atom_plus_unsupported_tail_never_becomes_whole_source_success()
 
     for fixture in UNSUPPORTED_TAIL_FIXTURES {
         let rhs = slice(fixture.source, fixture.rhs_range);
-        let decoded = decode_selected_escaped_identifier(rhs)
-            .unwrap_or_else(|failure| panic!("{} prefix must be a valid escaped atom: {failure:?}", fixture.id));
+        let decoded = decode_selected_escaped_identifier(rhs).unwrap_or_else(|failure| {
+            panic!(
+                "{} prefix must be a valid escaped atom: {failure:?}",
+                fixture.id
+            )
+        });
         assert_eq!(decoded.string_value, "foo", "{}", fixture.id);
 
         let tail = fixture
@@ -1331,21 +1381,35 @@ fn validation_source_has_no_dependency_on_production_or_runtime_reference_paths(
 #[test]
 fn validation_handoff_remains_one_focused_future_production_frontier() {
     for fixture in BASE_POSITIVE_FIXTURES.iter().chain(NAME_POLICY_FIXTURES) {
-        assert_eq!(fixture.expected.static_semantics, ExpectedStaticSemantics::Accepted);
-        assert_eq!(fixture.expected.lifecycle, FutureLifecycle::SelectedAcceptedIncomplete);
+        assert_eq!(
+            fixture.expected.static_semantics,
+            ExpectedStaticSemantics::Accepted
+        );
+        assert_eq!(
+            fixture.expected.lifecycle,
+            FutureLifecycle::SelectedAcceptedIncomplete
+        );
         assert_eq!(fixture.route, IdentifierReferenceRoute::EscapedIdentifier);
     }
 
-    assert!(NEGATIVE_FIXTURES.iter().any(|fixture| {
-        fixture.expected == DecodeFailure::MalformedEscape
-    }));
-    assert!(NEGATIVE_FIXTURES.iter().any(|fixture| {
-        fixture.expected == DecodeFailure::NonCodePoint
-    }));
-    assert!(NEGATIVE_FIXTURES.iter().any(|fixture| {
-        fixture.expected == DecodeFailure::InvalidStart
-    }));
-    assert!(NEGATIVE_FIXTURES.iter().any(|fixture| {
-        fixture.expected == DecodeFailure::InvalidPart
-    }));
+    assert!(
+        NEGATIVE_FIXTURES
+            .iter()
+            .any(|fixture| { fixture.expected == DecodeFailure::MalformedEscape })
+    );
+    assert!(
+        NEGATIVE_FIXTURES
+            .iter()
+            .any(|fixture| { fixture.expected == DecodeFailure::NonCodePoint })
+    );
+    assert!(
+        NEGATIVE_FIXTURES
+            .iter()
+            .any(|fixture| { fixture.expected == DecodeFailure::InvalidStart })
+    );
+    assert!(
+        NEGATIVE_FIXTURES
+            .iter()
+            .any(|fixture| { fixture.expected == DecodeFailure::InvalidPart })
+    );
 }
