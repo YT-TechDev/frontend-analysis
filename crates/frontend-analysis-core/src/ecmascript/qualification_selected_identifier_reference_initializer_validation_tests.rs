@@ -2,12 +2,16 @@
 //!
 //! This module fixes the selected, escape-free `IdentifierReference` initializer
 //! boundary without calling production lexical, static-semantics, aggregate, or
-//! future expression code. It validates expected meaning and source provenance,
-//! not a production parser representation.
+//! future expression code. It consumes the frozen Unicode authority directly and
+//! records selected lifecycle expectations independently of production.
 
 use crate::{SourceId, SourceText};
 
 use super::qualification_validation_tests::{gold_source, gold_subject_range};
+use super::unicode::{is_id_continue, is_id_start};
+use super::unicode_generated::{
+    ECMA262_SNAPSHOT as FROZEN_ECMA262_SNAPSHOT, UNICODE_VERSION as FROZEN_UNICODE_VERSION,
+};
 
 const ISSUE_ID: u64 = 237;
 const ECMA_262_EDITION: &str = "ECMA-262, 17th edition, 2026";
@@ -39,6 +43,27 @@ enum BoundaryKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExpectedStaticSemantics {
+    Accepted,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FutureLifecycle {
+    SelectedAcceptedIncomplete,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FutureSelectedExpectation {
+    static_semantics: ExpectedStaticSemantics,
+    lifecycle: FutureLifecycle,
+}
+
+const SELECTED_ACCEPTED_INCOMPLETE: FutureSelectedExpectation = FutureSelectedExpectation {
+    static_semantics: ExpectedStaticSemantics::Accepted,
+    lifecycle: FutureLifecycle::SelectedAcceptedIncomplete,
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct RhsFixture {
     id: &'static str,
     source: &'static str,
@@ -46,6 +71,26 @@ struct RhsFixture {
     rhs_range: ByteRange,
     boundary_offset: usize,
     boundary: BoundaryKind,
+    expected: FutureSelectedExpectation,
+}
+
+const fn rhs_fixture(
+    id: &'static str,
+    source: &'static str,
+    rhs: &'static str,
+    rhs_range: ByteRange,
+    boundary_offset: usize,
+    boundary: BoundaryKind,
+) -> RhsFixture {
+    RhsFixture {
+        id,
+        source,
+        rhs,
+        rhs_range,
+        boundary_offset,
+        boundary,
+        expected: SELECTED_ACCEPTED_INCOMPLETE,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,6 +107,24 @@ struct NamePolicyFixture {
     rhs: &'static str,
     rhs_range: ByteRange,
     category: NamePolicyCategory,
+    expected: FutureSelectedExpectation,
+}
+
+const fn name_fixture(
+    id: &'static str,
+    source: &'static str,
+    rhs: &'static str,
+    rhs_range: ByteRange,
+    category: NamePolicyCategory,
+) -> NamePolicyFixture {
+    NamePolicyFixture {
+        id,
+        source,
+        rhs,
+        rhs_range,
+        category,
+        expected: SELECTED_ACCEPTED_INCOMPLETE,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,157 +168,244 @@ struct UnsupportedFixture {
 }
 
 const RHS_FIXTURES: &[RhsFixture] = &[
-    RhsFixture {
-        id: "IDREF-INIT-POSITIVE-SEMICOLON-001",
-        source: "const x = foo;",
-        rhs: "foo",
-        rhs_range: ByteRange::new(10, 13),
-        boundary_offset: 13,
-        boundary: BoundaryKind::AuthoredSemicolon,
-    },
-    RhsFixture {
-        id: "IDREF-INIT-POSITIVE-COMMA-001",
-        source: "let x = foo, y = bar;",
-        rhs: "foo",
-        rhs_range: ByteRange::new(8, 11),
-        boundary_offset: 11,
-        boundary: BoundaryKind::BindingListComma,
-    },
-    RhsFixture {
-        id: "IDREF-INIT-POSITIVE-COMMA-002",
-        source: "let x = foo, y = bar;",
-        rhs: "bar",
-        rhs_range: ByteRange::new(17, 20),
-        boundary_offset: 20,
-        boundary: BoundaryKind::AuthoredSemicolon,
-    },
-    RhsFixture {
-        id: "IDREF-INIT-POSITIVE-EOF-001",
-        source: "const x = foo",
-        rhs: "foo",
-        rhs_range: ByteRange::new(10, 13),
-        boundary_offset: 13,
-        boundary: BoundaryKind::AutomaticAtEof,
-    },
-    RhsFixture {
-        id: "IDREF-INIT-POSITIVE-MULTIDECL-001",
-        source: "let x = 1; const y = foo",
-        rhs: "foo",
-        rhs_range: ByteRange::new(21, 24),
-        boundary_offset: 24,
-        boundary: BoundaryKind::AutomaticAtEof,
-    },
-    RhsFixture {
-        id: "IDREF-INIT-POSITIVE-UNICODE-001",
-        source: "const π = 𝒜;",
-        rhs: "𝒜",
-        rhs_range: ByteRange::new(11, 15),
-        boundary_offset: 15,
-        boundary: BoundaryKind::AuthoredSemicolon,
-    },
-    RhsFixture {
-        id: "IDREF-INIT-POSITIVE-ESCAPED-BINDING-COMPOSITION-001",
-        source: r"const \u0078 = foo;",
-        rhs: "foo",
-        rhs_range: ByteRange::new(15, 18),
-        boundary_offset: 18,
-        boundary: BoundaryKind::AuthoredSemicolon,
-    },
-    RhsFixture {
-        id: "IDREF-INIT-POSITIVE-TRIVIA-BEFORE-SEMICOLON-001",
-        source: "const x = foo \t\n;",
-        rhs: "foo",
-        rhs_range: ByteRange::new(10, 13),
-        boundary_offset: 16,
-        boundary: BoundaryKind::AuthoredSemicolon,
-    },
+    rhs_fixture(
+        "IDREF-INIT-POSITIVE-SEMICOLON-001",
+        "const x = foo;",
+        "foo",
+        ByteRange::new(10, 13),
+        13,
+        BoundaryKind::AuthoredSemicolon,
+    ),
+    rhs_fixture(
+        "IDREF-INIT-POSITIVE-COMMA-001",
+        "let x = foo, y = bar;",
+        "foo",
+        ByteRange::new(8, 11),
+        11,
+        BoundaryKind::BindingListComma,
+    ),
+    rhs_fixture(
+        "IDREF-INIT-POSITIVE-COMMA-002",
+        "let x = foo, y = bar;",
+        "bar",
+        ByteRange::new(17, 20),
+        20,
+        BoundaryKind::AuthoredSemicolon,
+    ),
+    rhs_fixture(
+        "IDREF-INIT-POSITIVE-EOF-001",
+        "const x = foo",
+        "foo",
+        ByteRange::new(10, 13),
+        13,
+        BoundaryKind::AutomaticAtEof,
+    ),
+    rhs_fixture(
+        "IDREF-INIT-POSITIVE-MULTIDECL-001",
+        "let x = 1; const y = foo",
+        "foo",
+        ByteRange::new(21, 24),
+        24,
+        BoundaryKind::AutomaticAtEof,
+    ),
+    rhs_fixture(
+        "IDREF-INIT-POSITIVE-UNICODE-001",
+        "const π = 𝒜;",
+        "𝒜",
+        ByteRange::new(11, 15),
+        15,
+        BoundaryKind::AuthoredSemicolon,
+    ),
+    rhs_fixture(
+        "IDREF-INIT-POSITIVE-ESCAPED-BINDING-COMPOSITION-001",
+        r"const \u0078 = foo;",
+        "foo",
+        ByteRange::new(15, 18),
+        18,
+        BoundaryKind::AuthoredSemicolon,
+    ),
+    rhs_fixture(
+        "IDREF-INIT-POSITIVE-TRIVIA-BEFORE-SEMICOLON-001",
+        "const x = foo \t\n;",
+        "foo",
+        ByteRange::new(10, 13),
+        16,
+        BoundaryKind::AuthoredSemicolon,
+    ),
+    rhs_fixture(
+        "IDREF-INIT-DIRECT-DOLLAR-001",
+        "const x = $;",
+        "$",
+        ByteRange::new(10, 11),
+        11,
+        BoundaryKind::AuthoredSemicolon,
+    ),
+    rhs_fixture(
+        "IDREF-INIT-DIRECT-LOW-LINE-001",
+        "const x = _;",
+        "_",
+        ByteRange::new(10, 11),
+        11,
+        BoundaryKind::AuthoredSemicolon,
+    ),
+    rhs_fixture(
+        "IDREF-INIT-DIRECT-DIGIT-PART-001",
+        "const x = a0;",
+        "a0",
+        ByteRange::new(10, 12),
+        12,
+        BoundaryKind::AuthoredSemicolon,
+    ),
+    rhs_fixture(
+        "IDREF-INIT-DIRECT-COMBINING-PART-001",
+        "const x = a\u{0301};",
+        "a\u{0301}",
+        ByteRange::new(10, 13),
+        13,
+        BoundaryKind::AuthoredSemicolon,
+    ),
+    rhs_fixture(
+        "IDREF-INIT-DIRECT-ZWNJ-PART-001",
+        "const x = a\u{200C}b;",
+        "a\u{200C}b",
+        ByteRange::new(10, 15),
+        15,
+        BoundaryKind::AuthoredSemicolon,
+    ),
+    rhs_fixture(
+        "IDREF-INIT-DIRECT-ZWJ-PART-001",
+        "const x = a\u{200D}b;",
+        "a\u{200D}b",
+        ByteRange::new(10, 15),
+        15,
+        BoundaryKind::AuthoredSemicolon,
+    ),
 ];
 
 const NAME_POLICY_FIXTURES: &[NamePolicyFixture] = &[
-    NamePolicyFixture {
-        id: "IDREF-NAME-STRICT-ONLY-LET",
-        source: "const x = let;",
-        rhs: "let",
-        rhs_range: ByteRange::new(10, 13),
-        category: NamePolicyCategory::StrictOnlyRestricted,
-    },
-    NamePolicyFixture {
-        id: "IDREF-NAME-STRICT-ONLY-STATIC",
-        source: "const x = static;",
-        rhs: "static",
-        rhs_range: ByteRange::new(10, 16),
-        category: NamePolicyCategory::StrictOnlyRestricted,
-    },
-    NamePolicyFixture {
-        id: "IDREF-NAME-STRICT-ONLY-IMPLEMENTS",
-        source: "const x = implements;",
-        rhs: "implements",
-        rhs_range: ByteRange::new(10, 20),
-        category: NamePolicyCategory::StrictOnlyRestricted,
-    },
-    NamePolicyFixture {
-        id: "IDREF-NAME-STRICT-ONLY-INTERFACE",
-        source: "const x = interface;",
-        rhs: "interface",
-        rhs_range: ByteRange::new(10, 19),
-        category: NamePolicyCategory::StrictOnlyRestricted,
-    },
-    NamePolicyFixture {
-        id: "IDREF-NAME-STRICT-ONLY-PACKAGE",
-        source: "const x = package;",
-        rhs: "package",
-        rhs_range: ByteRange::new(10, 17),
-        category: NamePolicyCategory::StrictOnlyRestricted,
-    },
-    NamePolicyFixture {
-        id: "IDREF-NAME-STRICT-ONLY-PRIVATE",
-        source: "const x = private;",
-        rhs: "private",
-        rhs_range: ByteRange::new(10, 17),
-        category: NamePolicyCategory::StrictOnlyRestricted,
-    },
-    NamePolicyFixture {
-        id: "IDREF-NAME-STRICT-ONLY-PROTECTED",
-        source: "const x = protected;",
-        rhs: "protected",
-        rhs_range: ByteRange::new(10, 19),
-        category: NamePolicyCategory::StrictOnlyRestricted,
-    },
-    NamePolicyFixture {
-        id: "IDREF-NAME-STRICT-ONLY-PUBLIC",
-        source: "const x = public;",
-        rhs: "public",
-        rhs_range: ByteRange::new(10, 16),
-        category: NamePolicyCategory::StrictOnlyRestricted,
-    },
-    NamePolicyFixture {
-        id: "IDREF-NAME-PARAMETER-SPECIAL-YIELD",
-        source: "const x = yield;",
-        rhs: "yield",
-        rhs_range: ByteRange::new(10, 15),
-        category: NamePolicyCategory::YieldAwaitParameterSpecial,
-    },
-    NamePolicyFixture {
-        id: "IDREF-NAME-PARAMETER-SPECIAL-AWAIT",
-        source: "const x = await;",
-        rhs: "await",
-        rhs_range: ByteRange::new(10, 15),
-        category: NamePolicyCategory::YieldAwaitParameterSpecial,
-    },
-    NamePolicyFixture {
-        id: "IDREF-NAME-BINDING-CONTRAST-EVAL",
-        source: "const x = eval;",
-        rhs: "eval",
-        rhs_range: ByteRange::new(10, 14),
-        category: NamePolicyCategory::BindingContrast,
-    },
-    NamePolicyFixture {
-        id: "IDREF-NAME-BINDING-CONTRAST-ARGUMENTS",
-        source: "const x = arguments;",
-        rhs: "arguments",
-        rhs_range: ByteRange::new(10, 19),
-        category: NamePolicyCategory::BindingContrast,
-    },
+    name_fixture(
+        "IDREF-NAME-STRICT-ONLY-LET",
+        "const x = let;",
+        "let",
+        ByteRange::new(10, 13),
+        NamePolicyCategory::StrictOnlyRestricted,
+    ),
+    name_fixture(
+        "IDREF-NAME-STRICT-ONLY-STATIC",
+        "const x = static;",
+        "static",
+        ByteRange::new(10, 16),
+        NamePolicyCategory::StrictOnlyRestricted,
+    ),
+    name_fixture(
+        "IDREF-NAME-STRICT-ONLY-IMPLEMENTS",
+        "const x = implements;",
+        "implements",
+        ByteRange::new(10, 20),
+        NamePolicyCategory::StrictOnlyRestricted,
+    ),
+    name_fixture(
+        "IDREF-NAME-STRICT-ONLY-INTERFACE",
+        "const x = interface;",
+        "interface",
+        ByteRange::new(10, 19),
+        NamePolicyCategory::StrictOnlyRestricted,
+    ),
+    name_fixture(
+        "IDREF-NAME-STRICT-ONLY-PACKAGE",
+        "const x = package;",
+        "package",
+        ByteRange::new(10, 17),
+        NamePolicyCategory::StrictOnlyRestricted,
+    ),
+    name_fixture(
+        "IDREF-NAME-STRICT-ONLY-PRIVATE",
+        "const x = private;",
+        "private",
+        ByteRange::new(10, 17),
+        NamePolicyCategory::StrictOnlyRestricted,
+    ),
+    name_fixture(
+        "IDREF-NAME-STRICT-ONLY-PROTECTED",
+        "const x = protected;",
+        "protected",
+        ByteRange::new(10, 19),
+        NamePolicyCategory::StrictOnlyRestricted,
+    ),
+    name_fixture(
+        "IDREF-NAME-STRICT-ONLY-PUBLIC",
+        "const x = public;",
+        "public",
+        ByteRange::new(10, 16),
+        NamePolicyCategory::StrictOnlyRestricted,
+    ),
+    name_fixture(
+        "IDREF-NAME-PARAMETER-SPECIAL-YIELD",
+        "const x = yield;",
+        "yield",
+        ByteRange::new(10, 15),
+        NamePolicyCategory::YieldAwaitParameterSpecial,
+    ),
+    name_fixture(
+        "IDREF-NAME-PARAMETER-SPECIAL-AWAIT",
+        "const x = await;",
+        "await",
+        ByteRange::new(10, 15),
+        NamePolicyCategory::YieldAwaitParameterSpecial,
+    ),
+    name_fixture(
+        "IDREF-NAME-BINDING-CONTRAST-EVAL",
+        "const x = eval;",
+        "eval",
+        ByteRange::new(10, 14),
+        NamePolicyCategory::BindingContrast,
+    ),
+    name_fixture(
+        "IDREF-NAME-BINDING-CONTRAST-ARGUMENTS",
+        "const x = arguments;",
+        "arguments",
+        ByteRange::new(10, 19),
+        NamePolicyCategory::BindingContrast,
+    ),
+];
+
+const UNCONDITIONALLY_RESERVED_RHS: &[&str] = &[
+    "break",
+    "case",
+    "catch",
+    "class",
+    "const",
+    "continue",
+    "debugger",
+    "default",
+    "delete",
+    "do",
+    "else",
+    "enum",
+    "export",
+    "extends",
+    "false",
+    "finally",
+    "for",
+    "function",
+    "if",
+    "import",
+    "in",
+    "instanceof",
+    "new",
+    "null",
+    "return",
+    "super",
+    "switch",
+    "this",
+    "throw",
+    "true",
+    "try",
+    "typeof",
+    "var",
+    "void",
+    "while",
+    "with",
 ];
 
 const STATIC_COMPOSITION_FIXTURES: &[StaticCompositionFixture] = &[
@@ -423,12 +573,31 @@ fn is_selected_trivia_for_oracle(code_point: char) -> bool {
     )
 }
 
+fn is_direct_identifier_start(code_point: char) -> bool {
+    matches!(code_point, '$' | '_') || is_id_start(code_point as u32)
+}
+
+fn is_direct_identifier_part(code_point: char) -> bool {
+    code_point == '$' || is_id_continue(code_point as u32)
+}
+
+fn is_escape_free_identifier_name(spelling: &str) -> bool {
+    let mut code_points = spelling.chars();
+    let Some(first) = code_points.next() else {
+        return false;
+    };
+
+    is_direct_identifier_start(first) && code_points.all(is_direct_identifier_part)
+}
+
 #[test]
 fn frozen_authority_and_existing_identifier_initializer_gold_are_exact() {
     assert_eq!(ISSUE_ID, 237);
     assert!(MODEL_SOURCE.contains(ECMA_262_EDITION));
     assert!(MODEL_SOURCE.contains(ECMA_262_SNAPSHOT));
     assert!(MODEL_SOURCE.contains(UNICODE_VERSION));
+    assert_eq!(FROZEN_ECMA262_SNAPSHOT, ECMA_262_SNAPSHOT);
+    assert_eq!(FROZEN_UNICODE_VERSION, UNICODE_VERSION);
 
     assert_eq!(
         gold_source(IDENTIFIER_INITIALIZER_GOLD_ID),
@@ -440,12 +609,82 @@ fn frozen_authority_and_existing_identifier_initializer_gold_are_exact() {
     assert!(block.contains("processing: ExpectedProcessing::Complete"));
     assert!(block.contains("implementation_coverage: ImplementationCoverage::Pending"));
     assert!(block.contains("synthetic: NO_SYNTHETIC"));
-
     assert_eq!(gold_subject_range(IDENTIFIER_INITIALIZER_GOLD_ID), None);
 }
 
 #[test]
-fn rhs_fixtures_pin_exact_authored_ranges_and_existing_boundaries() {
+fn direct_code_point_family_consumes_frozen_unicode_17_authority() {
+    for code_point in ['A', 'π', '𝒜'] {
+        assert!(is_id_start(code_point as u32));
+        assert!(is_direct_identifier_start(code_point));
+        assert!(is_direct_identifier_part(code_point));
+    }
+
+    assert!(!is_id_start('$' as u32));
+    assert!(!is_id_continue('$' as u32));
+    assert!(is_direct_identifier_start('$'));
+    assert!(is_direct_identifier_part('$'));
+
+    assert!(!is_id_start('_' as u32));
+    assert!(is_id_continue('_' as u32));
+    assert!(is_direct_identifier_start('_'));
+    assert!(is_direct_identifier_part('_'));
+
+    assert!(!is_direct_identifier_start('0'));
+    assert!(is_id_continue('0' as u32));
+    assert!(is_direct_identifier_part('0'));
+
+    assert!(!is_direct_identifier_start('\u{0301}'));
+    assert!(is_id_continue('\u{0301}' as u32));
+    assert!(is_direct_identifier_part('\u{0301}'));
+
+    for code_point in ['\u{200C}', '\u{200D}'] {
+        assert!(!is_id_start(code_point as u32));
+        assert!(is_id_continue(code_point as u32));
+        assert!(!is_direct_identifier_start(code_point));
+        assert!(is_direct_identifier_part(code_point));
+    }
+
+    for code_point in ['-', '\u{FEFF}'] {
+        assert!(!is_direct_identifier_start(code_point));
+        assert!(!is_direct_identifier_part(code_point));
+    }
+}
+
+#[test]
+fn escape_free_identifier_name_shape_is_exact_and_not_a_reserved_word_policy() {
+    for spelling in [
+        "$",
+        "_",
+        "$x",
+        "a0",
+        "π",
+        "𝒜",
+        "a\u{0301}",
+        "a\u{200C}b",
+        "a\u{200D}b",
+        "if",
+    ] {
+        assert!(
+            is_escape_free_identifier_name(spelling),
+            "{spelling:?} must match the direct IdentifierName code-point family"
+        );
+    }
+
+    for spelling in ["", "0a", "-a", "a-b", "\u{200C}a", "\u{200D}a"] {
+        assert!(!is_escape_free_identifier_name(spelling), "{spelling:?}");
+    }
+
+    assert!(UNCONDITIONALLY_RESERVED_RHS.contains(&"if"));
+    assert!(!UNCONDITIONALLY_RESERVED_RHS.contains(&"yield"));
+    assert!(!UNCONDITIONALLY_RESERVED_RHS.contains(&"await"));
+    for spelling in UNCONDITIONALLY_RESERVED_RHS {
+        assert!(is_escape_free_identifier_name(spelling));
+    }
+}
+
+#[test]
+fn rhs_fixtures_pin_authored_ranges_boundaries_and_future_selected_lifecycle() {
     for (index, fixture) in RHS_FIXTURES.iter().enumerate() {
         assert_eq!(
             slice(fixture.source, fixture.rhs_range),
@@ -453,11 +692,8 @@ fn rhs_fixtures_pin_exact_authored_ranges_and_existing_boundaries() {
             "{}",
             fixture.id
         );
-        assert!(
-            !fixture.rhs.contains('\\'),
-            "{} must stay inside the escape-free RHS leaf",
-            fixture.id
-        );
+        assert!(is_escape_free_identifier_name(fixture.rhs), "{}", fixture.id);
+        assert_eq!(fixture.expected, SELECTED_ACCEPTED_INCOMPLETE, "{}", fixture.id);
 
         let source = SourceText::new(
             SourceId::new(237_000 + index as u64),
@@ -484,52 +720,38 @@ fn rhs_fixtures_pin_exact_authored_ranges_and_existing_boundaries() {
         );
 
         match fixture.boundary {
-            BoundaryKind::BindingListComma => {
-                assert_eq!(
-                    fixture.source.as_bytes().get(fixture.boundary_offset),
-                    Some(&b','),
-                    "{}",
-                    fixture.id
-                );
-            }
-            BoundaryKind::AuthoredSemicolon => {
-                assert_eq!(
-                    fixture.source.as_bytes().get(fixture.boundary_offset),
-                    Some(&b';'),
-                    "{}",
-                    fixture.id
-                );
-            }
-            BoundaryKind::AutomaticAtEof => {
-                assert_eq!(
-                    fixture.boundary_offset,
-                    fixture.source.len(),
-                    "{} must reach actual EOF",
-                    fixture.id
-                );
-            }
+            BoundaryKind::BindingListComma => assert_eq!(
+                fixture.source.as_bytes().get(fixture.boundary_offset),
+                Some(&b','),
+                "{}",
+                fixture.id
+            ),
+            BoundaryKind::AuthoredSemicolon => assert_eq!(
+                fixture.source.as_bytes().get(fixture.boundary_offset),
+                Some(&b';'),
+                "{}",
+                fixture.id
+            ),
+            BoundaryKind::AutomaticAtEof => assert_eq!(
+                fixture.boundary_offset,
+                fixture.source.len(),
+                "{} must reach actual EOF",
+                fixture.id
+            ),
         }
     }
 }
 
 #[test]
-fn name_policy_matrix_keeps_three_rhs_categories_distinct() {
-    let mut strict_only = 0;
-    let mut parameter_special = 0;
-    let mut binding_contrast = 0;
+fn name_policy_matrix_pins_three_categories_and_selected_positive_disposition() {
+    let mut strict_only = Vec::new();
+    let mut parameter_special = Vec::new();
+    let mut binding_contrast = Vec::new();
 
     for (index, fixture) in NAME_POLICY_FIXTURES.iter().enumerate() {
-        assert_eq!(
-            slice(fixture.source, fixture.rhs_range),
-            fixture.rhs,
-            "{}",
-            fixture.id
-        );
-        assert!(
-            !fixture.rhs.contains('\\'),
-            "{} must use direct authored RHS spelling",
-            fixture.id
-        );
+        assert_eq!(slice(fixture.source, fixture.rhs_range), fixture.rhs);
+        assert!(is_escape_free_identifier_name(fixture.rhs), "{}", fixture.id);
+        assert_eq!(fixture.expected, SELECTED_ACCEPTED_INCOMPLETE, "{}", fixture.id);
 
         let source = SourceText::new(
             SourceId::new(237_100 + index as u64),
@@ -544,23 +766,14 @@ fn name_policy_matrix_keeps_three_rhs_categories_distinct() {
         );
 
         match fixture.category {
-            NamePolicyCategory::StrictOnlyRestricted => strict_only += 1,
-            NamePolicyCategory::YieldAwaitParameterSpecial => parameter_special += 1,
-            NamePolicyCategory::BindingContrast => binding_contrast += 1,
+            NamePolicyCategory::StrictOnlyRestricted => strict_only.push(fixture.rhs),
+            NamePolicyCategory::YieldAwaitParameterSpecial => parameter_special.push(fixture.rhs),
+            NamePolicyCategory::BindingContrast => binding_contrast.push(fixture.rhs),
         }
     }
 
-    assert_eq!(strict_only, 8);
-    assert_eq!(parameter_special, 2);
-    assert_eq!(binding_contrast, 2);
-
-    let strict_spellings: Vec<_> = NAME_POLICY_FIXTURES
-        .iter()
-        .filter(|fixture| fixture.category == NamePolicyCategory::StrictOnlyRestricted)
-        .map(|fixture| fixture.rhs)
-        .collect();
     assert_eq!(
-        strict_spellings,
+        strict_only,
         [
             "let",
             "static",
@@ -572,20 +785,27 @@ fn name_policy_matrix_keeps_three_rhs_categories_distinct() {
             "public"
         ]
     );
+    assert_eq!(parameter_special, ["yield", "await"]);
+    assert_eq!(binding_contrast, ["eval", "arguments"]);
+}
 
-    let parameter_spellings: Vec<_> = NAME_POLICY_FIXTURES
-        .iter()
-        .filter(|fixture| fixture.category == NamePolicyCategory::YieldAwaitParameterSpecial)
-        .map(|fixture| fixture.rhs)
-        .collect();
-    assert_eq!(parameter_spellings, ["yield", "await"]);
+#[test]
+fn selected_positive_expectation_cannot_be_confused_with_whole_standard_qualified() {
+    assert_eq!(
+        SELECTED_ACCEPTED_INCOMPLETE.static_semantics,
+        ExpectedStaticSemantics::Accepted
+    );
+    assert_eq!(
+        SELECTED_ACCEPTED_INCOMPLETE.lifecycle,
+        FutureLifecycle::SelectedAcceptedIncomplete
+    );
 
-    let contrast_spellings: Vec<_> = NAME_POLICY_FIXTURES
-        .iter()
-        .filter(|fixture| fixture.category == NamePolicyCategory::BindingContrast)
-        .map(|fixture| fixture.rhs)
-        .collect();
-    assert_eq!(contrast_spellings, ["eval", "arguments"]);
+    for fixture in RHS_FIXTURES {
+        assert_eq!(fixture.expected, SELECTED_ACCEPTED_INCOMPLETE);
+    }
+    for fixture in NAME_POLICY_FIXTURES {
+        assert_eq!(fixture.expected, SELECTED_ACCEPTED_INCOMPLETE);
+    }
 }
 
 #[test]
@@ -610,17 +830,8 @@ fn direct_unicode_rhs_provenance_is_utf8_exact_and_not_normalized() {
 #[test]
 fn static_composition_keeps_existing_binding_subjects_primary() {
     for fixture in STATIC_COMPOSITION_FIXTURES {
-        assert_eq!(
-            slice(fixture.source, fixture.subject),
-            fixture.subject_fragment,
-            "{}",
-            fixture.id
-        );
-        assert!(
-            fixture.rule_id.starts_with("EE-"),
-            "{} must name accepted static authority",
-            fixture.id
-        );
+        assert_eq!(slice(fixture.source, fixture.subject), fixture.subject_fragment);
+        assert!(fixture.rule_id.starts_with("EE-"), "{}", fixture.id);
 
         let control_source = gold_source(fixture.control_gold_id)
             .unwrap_or_else(|| panic!("{} control gold must remain present", fixture.id));
@@ -640,15 +851,13 @@ fn static_composition_keeps_existing_binding_subjects_primary() {
 #[test]
 fn valid_rhs_before_later_owned_grammar_evidence_does_not_create_prefix_success() {
     for (index, fixture) in GRAMMAR_CONTROLS.iter().enumerate() {
-        assert_eq!(
-            slice(fixture.source, fixture.subject),
-            match fixture.id {
-                "IDREF-GRAMMAR-LATER-EMPTY-BRACED-001"
-                | "IDREF-GRAMMAR-LATER-PART-EMPTY-BRACED-001" => r"\u{}",
-                "IDREF-GRAMMAR-LATER-UNCLOSED-BRACED-001" => r"\u{61",
-                other => panic!("unrecognized grammar control {other}"),
-            }
-        );
+        let expected_subject = match fixture.id {
+            "IDREF-GRAMMAR-LATER-EMPTY-BRACED-001"
+            | "IDREF-GRAMMAR-LATER-PART-EMPTY-BRACED-001" => r"\u{}",
+            "IDREF-GRAMMAR-LATER-UNCLOSED-BRACED-001" => r"\u{61",
+            other => panic!("unrecognized grammar control {other}"),
+        };
+        assert_eq!(slice(fixture.source, fixture.subject), expected_subject);
 
         let source = SourceText::new(
             SourceId::new(237_200 + index as u64),
@@ -657,8 +866,7 @@ fn valid_rhs_before_later_owned_grammar_evidence_does_not_create_prefix_success(
         let anchor = source
             .anchor(fixture.subject.start, fixture.subject.end)
             .expect("existing Grammar subject must remain a valid authored anchor");
-        assert_eq!(anchor.range().start(), fixture.subject.start);
-        assert_eq!(anchor.range().end(), fixture.subject.end);
+        assert_eq!(anchor.fragment(), expected_subject);
     }
 }
 
@@ -692,24 +900,9 @@ fn unsupported_neighbors_are_explicit_and_do_not_gain_a_selected_verdict() {
 }
 
 #[test]
-fn rhs_identifier_is_not_a_bound_name_or_runtime_reference_resolution_claim() {
-    const FUTURE_SELECTED_LIFECYCLE: &str = "SelectedAcceptedIncomplete";
-    const FORBIDDEN_RUNTIME_OWNER: &str = "ResolveBinding";
-
-    assert_eq!(FUTURE_SELECTED_LIFECYCLE, "SelectedAcceptedIncomplete");
-    assert_eq!(FORBIDDEN_RUNTIME_OWNER, "ResolveBinding");
-
-    for fixture in NAME_POLICY_FIXTURES {
-        assert!(
-            !fixture.id.contains("BOUNDNAME"),
-            "RHS names must not be modeled as declaration BoundNames"
-        );
-    }
-}
-
-#[test]
-fn deterministic_pathological_utf8_ranges_remain_checked_and_linear_to_validate() {
+fn deterministic_pathological_utf8_ranges_remain_checked_and_bounded() {
     let identifier = format!("π{}", "α".repeat(4096));
+    assert!(is_escape_free_identifier_name(&identifier));
     let source_text = format!("const x = {identifier};");
     let start = "const x = ".len();
     let end = start + identifier.len();
@@ -726,7 +919,7 @@ fn deterministic_pathological_utf8_ranges_remain_checked_and_linear_to_validate(
 }
 
 #[test]
-fn validation_source_has_no_dependency_on_selected_production_or_future_expression_code() {
+fn validation_source_has_no_dependency_on_selected_production_or_runtime_evaluation() {
     for forbidden in [
         ["use super::selected_", "lexical_slice"].concat(),
         ["use super::selected_", "static_semantics"].concat(),
@@ -745,27 +938,24 @@ fn validation_source_has_no_dependency_on_selected_production_or_future_expressi
 
 #[test]
 fn validation_contract_handoff_stays_focused_on_one_future_architecture_gate() {
-    let positive_ids = RHS_FIXTURES
-        .iter()
-        .map(|fixture| fixture.id)
-        .collect::<Vec<_>>();
-    assert!(positive_ids.contains(&"IDREF-INIT-POSITIVE-SEMICOLON-001"));
-    assert!(positive_ids.contains(&"IDREF-INIT-POSITIVE-EOF-001"));
-    assert!(positive_ids.contains(&"IDREF-INIT-POSITIVE-COMMA-001"));
-
-    assert!(
-        UNSUPPORTED_FIXTURES
-            .iter()
-            .any(|fixture| { fixture.reason == UnsupportedReason::EscapedIdentifierReference })
-    );
-    assert!(
-        UNSUPPORTED_FIXTURES
-            .iter()
-            .any(|fixture| { fixture.reason == UnsupportedReason::RequiresNonEofAsi })
-    );
-    assert!(
-        UNSUPPORTED_FIXTURES
-            .iter()
-            .any(|fixture| { fixture.reason == UnsupportedReason::MemberExpression })
-    );
+    assert!(RHS_FIXTURES.iter().any(|fixture| {
+        fixture.id == "IDREF-INIT-POSITIVE-SEMICOLON-001"
+            && fixture.expected == SELECTED_ACCEPTED_INCOMPLETE
+    }));
+    assert!(RHS_FIXTURES.iter().any(|fixture| {
+        fixture.id == "IDREF-INIT-POSITIVE-EOF-001"
+            && fixture.expected == SELECTED_ACCEPTED_INCOMPLETE
+    }));
+    assert!(NAME_POLICY_FIXTURES.iter().all(|fixture| {
+        fixture.expected == SELECTED_ACCEPTED_INCOMPLETE
+    }));
+    assert!(UNSUPPORTED_FIXTURES.iter().any(|fixture| {
+        fixture.reason == UnsupportedReason::EscapedIdentifierReference
+    }));
+    assert!(UNSUPPORTED_FIXTURES.iter().any(|fixture| {
+        fixture.reason == UnsupportedReason::RequiresNonEofAsi
+    }));
+    assert!(UNSUPPORTED_FIXTURES.iter().any(|fixture| {
+        fixture.reason == UnsupportedReason::MemberExpression
+    }));
 }
