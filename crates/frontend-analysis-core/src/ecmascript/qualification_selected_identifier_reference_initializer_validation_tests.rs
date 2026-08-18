@@ -466,7 +466,10 @@ fn rhs_fixtures_pin_exact_authored_ranges_and_existing_boundaries() {
         let anchor = source
             .anchor(fixture.rhs_range.start, fixture.rhs_range.end)
             .unwrap_or_else(|error| {
-                panic!("{} must have a valid authored RHS anchor: {error}", fixture.id)
+                panic!(
+                    "{} must have a valid authored RHS anchor: {error}",
+                    fixture.id
+                )
             });
         assert_eq!(anchor.fragment(), fixture.rhs, "{}", fixture.id);
 
