@@ -652,9 +652,7 @@ fn formed_unicode_escape_at_for_oracle(source: &str, start: usize) -> Option<Esc
                     code_point: parse_hex_digits(digits)?,
                 });
             }
-            if hex_value(*byte).is_none() {
-                return None;
-            }
+            hex_value(*byte)?;
             end += 1;
         }
         return None;
