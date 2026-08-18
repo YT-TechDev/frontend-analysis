@@ -65,7 +65,10 @@ fn retains_selected_declaration_kind_binding_order_and_initializer_state() {
     match first.terminator() {
         SelectedDeclarationTerminator::AuthoredSemicolon(semicolon) => {
             assert_eq!(semicolon.fragment(), ";");
-            assert_eq!((semicolon.range().start(), semicolon.range().end()), (10, 11));
+            assert_eq!(
+                (semicolon.range().start(), semicolon.range().end()),
+                (10, 11)
+            );
         }
         SelectedDeclarationTerminator::AutomaticAtEof => {
             panic!("explicit semicolon must retain authored terminator provenance")
@@ -93,7 +96,11 @@ fn recognizes_eof_only_asi_with_truthful_terminator_provenance() {
     ] {
         let script = recognized(text);
         let declaration = &script.declarations()[0];
-        assert_eq!(declaration.declaration().fragment(), expected_declaration, "{text}");
+        assert_eq!(
+            declaration.declaration().fragment(),
+            expected_declaration,
+            "{text}"
+        );
         assert!(matches!(
             declaration.terminator(),
             SelectedDeclarationTerminator::AutomaticAtEof
@@ -114,7 +121,8 @@ fn recognizes_eof_only_asi_with_truthful_terminator_provenance() {
 
 #[test]
 fn eof_asi_excludes_selected_trailing_trivia_from_declaration_anchor() {
-    let text = "let x = 1 \t\n\r\u{2028}\u{2029}\u{00A0}\u{1680}\u{2000}\u{202F}\u{205F}\u{3000}\u{FEFF}";
+    let text =
+        "let x = 1 \t\n\r\u{2028}\u{2029}\u{00A0}\u{1680}\u{2000}\u{202F}\u{205F}\u{3000}\u{FEFF}";
     let script = recognized(text);
     let declaration = &script.declarations()[0];
     assert_eq!(declaration.declaration().fragment(), "let x = 1");
