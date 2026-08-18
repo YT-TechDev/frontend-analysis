@@ -64,6 +64,7 @@ struct PositiveFixture {
     rhs_range: ByteRange,
     boundary_offset: usize,
     boundary: BoundaryKind,
+    expected: FutureOutcome,
 }
 
 const fn positive_fixture(
@@ -81,6 +82,7 @@ const fn positive_fixture(
         rhs_range,
         boundary_offset,
         boundary,
+        expected: FutureOutcome::SelectedAcceptedIncomplete,
     }
 }
 
@@ -114,6 +116,7 @@ struct UnsupportedFixture {
     source: &'static str,
     rhs_range: ByteRange,
     reason: UnsupportedReason,
+    expected: FutureOutcome,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,6 +128,7 @@ struct StaticReachabilityFixture {
     subject: ByteRange,
     subject_fragment: &'static str,
     control_gold_id: &'static str,
+    expected: FutureOutcome,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -134,6 +138,7 @@ struct GrammarReachabilityFixture {
     rhs_range: ByteRange,
     subject: ByteRange,
     subject_fragment: &'static str,
+    expected: FutureOutcome,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -318,96 +323,112 @@ const UNSUPPORTED_FIXTURES: &[UnsupportedFixture] = &[
         source: r"const x = \u0074rue;",
         rhs_range: ByteRange::new(10, 19),
         reason: UnsupportedReason::EscapedBooleanLikeIdentifierName,
+        expected: FutureOutcome::UnsupportedCoverage,
     },
     UnsupportedFixture {
         id: "BOOLEAN-UNSUPPORTED-ESCAPED-FALSE",
         source: r"const x = \u0066alse;",
         rhs_range: ByteRange::new(10, 20),
         reason: UnsupportedReason::EscapedBooleanLikeIdentifierName,
+        expected: FutureOutcome::UnsupportedCoverage,
     },
     UnsupportedFixture {
         id: "BOOLEAN-UNSUPPORTED-MALFORMED-CONTINUATION-EMPTY-BRACED",
         source: r"const x = true\u{};",
         rhs_range: ByteRange::new(10, 18),
         reason: UnsupportedReason::MalformedContinuation,
+        expected: FutureOutcome::UnsupportedCoverage,
     },
     UnsupportedFixture {
         id: "BOOLEAN-UNSUPPORTED-MALFORMED-CONTINUATION-SHORT",
         source: r"const x = false\u0;",
         rhs_range: ByteRange::new(10, 18),
         reason: UnsupportedReason::MalformedContinuation,
+        expected: FutureOutcome::UnsupportedCoverage,
     },
     UnsupportedFixture {
         id: "BOOLEAN-UNSUPPORTED-MALFORMED-CONTINUATION-UNCLOSED",
         source: r"const x = true\u{61",
         rhs_range: ByteRange::new(10, 19),
         reason: UnsupportedReason::MalformedContinuation,
+        expected: FutureOutcome::UnsupportedCoverage,
     },
     UnsupportedFixture {
         id: "BOOLEAN-UNSUPPORTED-OTHER-RESERVED-NULL",
         source: "const x = null;",
         rhs_range: ByteRange::new(10, 14),
         reason: UnsupportedReason::OtherReservedDirectRhs,
+        expected: FutureOutcome::UnsupportedCoverage,
     },
     UnsupportedFixture {
         id: "BOOLEAN-UNSUPPORTED-OTHER-RESERVED-THIS",
         source: "const x = this;",
         rhs_range: ByteRange::new(10, 14),
         reason: UnsupportedReason::OtherReservedDirectRhs,
+        expected: FutureOutcome::UnsupportedCoverage,
     },
     UnsupportedFixture {
         id: "BOOLEAN-UNSUPPORTED-MEMBER",
         source: "const x = true.foo;",
         rhs_range: ByteRange::new(10, 14),
         reason: UnsupportedReason::MemberExpression,
+        expected: FutureOutcome::UnsupportedCoverage,
     },
     UnsupportedFixture {
         id: "BOOLEAN-UNSUPPORTED-CALL",
         source: "const x = false();",
         rhs_range: ByteRange::new(10, 15),
         reason: UnsupportedReason::CallExpression,
+        expected: FutureOutcome::UnsupportedCoverage,
     },
     UnsupportedFixture {
         id: "BOOLEAN-UNSUPPORTED-BINARY",
         source: "const x = true + x;",
         rhs_range: ByteRange::new(10, 14),
         reason: UnsupportedReason::BinaryExpression,
+        expected: FutureOutcome::UnsupportedCoverage,
     },
     UnsupportedFixture {
         id: "BOOLEAN-UNSUPPORTED-ASSIGNMENT",
         source: "const x = false = x;",
         rhs_range: ByteRange::new(10, 15),
         reason: UnsupportedReason::AssignmentExpression,
+        expected: FutureOutcome::UnsupportedCoverage,
     },
     UnsupportedFixture {
         id: "BOOLEAN-UNSUPPORTED-CONDITIONAL",
         source: "const x = true ? x : y;",
         rhs_range: ByteRange::new(10, 14),
         reason: UnsupportedReason::ConditionalExpression,
+        expected: FutureOutcome::UnsupportedCoverage,
     },
     UnsupportedFixture {
         id: "BOOLEAN-UNSUPPORTED-COMMENT",
         source: "const x = true/*comment*/;",
         rhs_range: ByteRange::new(10, 14),
         reason: UnsupportedReason::Comment,
+        expected: FutureOutcome::UnsupportedCoverage,
     },
     UnsupportedFixture {
         id: "BOOLEAN-UNSUPPORTED-UNEXPECTED-TAIL",
         source: "const x = true unexpected;",
         rhs_range: ByteRange::new(10, 14),
         reason: UnsupportedReason::UnexpectedTail,
+        expected: FutureOutcome::UnsupportedCoverage,
     },
     UnsupportedFixture {
         id: "BOOLEAN-UNSUPPORTED-EXTRA-SEMICOLON",
         source: "const x = true;;",
         rhs_range: ByteRange::new(10, 14),
         reason: UnsupportedReason::ExtraSemicolon,
+        expected: FutureOutcome::UnsupportedCoverage,
     },
     UnsupportedFixture {
         id: "BOOLEAN-UNSUPPORTED-NON-EOF-ASI",
         source: "const x = true\nconst y = foo;",
         rhs_range: ByteRange::new(10, 14),
         reason: UnsupportedReason::RequiresNonEofAsi,
+        expected: FutureOutcome::UnsupportedCoverage,
     },
 ];
 
@@ -420,6 +441,7 @@ const STATIC_REACHABILITY_FIXTURES: &[StaticReachabilityFixture] = &[
         subject: ByteRange::new(4, 10),
         subject_fragment: r"\u0030",
         control_gold_id: "JS-GOLD-IDENTIFIER-ESCAPED-START-DIGIT-001",
+        expected: FutureOutcome::StaticSemanticsRejected,
     },
     StaticReachabilityFixture {
         id: "BOOLEAN-STATIC-EE04",
@@ -429,6 +451,7 @@ const STATIC_REACHABILITY_FIXTURES: &[StaticReachabilityFixture] = &[
         subject: ByteRange::new(4, 11),
         subject_fragment: r"\u0069f",
         control_gold_id: "JS-GOLD-IDENTIFIER-ESCAPED-RESERVED-WORD-001",
+        expected: FutureOutcome::StaticSemanticsRejected,
     },
     StaticReachabilityFixture {
         id: "BOOLEAN-STATIC-R01",
@@ -438,6 +461,7 @@ const STATIC_REACHABILITY_FIXTURES: &[StaticReachabilityFixture] = &[
         subject: ByteRange::new(4, 7),
         subject_fragment: "let",
         control_gold_id: "JS-GOLD-LEXDECL-LET-BINDING-001",
+        expected: FutureOutcome::StaticSemanticsRejected,
     },
     StaticReachabilityFixture {
         id: "BOOLEAN-STATIC-R02",
@@ -447,6 +471,7 @@ const STATIC_REACHABILITY_FIXTURES: &[StaticReachabilityFixture] = &[
         subject: ByteRange::new(14, 15),
         subject_fragment: "x",
         control_gold_id: "JS-GOLD-LEXDECL-DUPBOUNDNAMES-001",
+        expected: FutureOutcome::StaticSemanticsRejected,
     },
     StaticReachabilityFixture {
         id: "BOOLEAN-STATIC-R03",
@@ -456,6 +481,7 @@ const STATIC_REACHABILITY_FIXTURES: &[StaticReachabilityFixture] = &[
         subject: ByteRange::new(16, 17),
         subject_fragment: "y",
         control_gold_id: "JS-GOLD-LEXDECL-CONST-MISSING-INIT-001",
+        expected: FutureOutcome::StaticSemanticsRejected,
     },
     StaticReachabilityFixture {
         id: "BOOLEAN-STATIC-EE36",
@@ -465,6 +491,7 @@ const STATIC_REACHABILITY_FIXTURES: &[StaticReachabilityFixture] = &[
         subject: ByteRange::new(18, 19),
         subject_fragment: "x",
         control_gold_id: "JS-GOLD-SCRIPT-DUPLEXICAL-001",
+        expected: FutureOutcome::StaticSemanticsRejected,
     },
 ];
 
@@ -475,6 +502,7 @@ const GRAMMAR_REACHABILITY_FIXTURES: &[GrammarReachabilityFixture] = &[
         rhs_range: ByteRange::new(10, 14),
         subject: ByteRange::new(20, 24),
         subject_fragment: r"\u{}",
+        expected: FutureOutcome::SyntaxRejected,
     },
     GrammarReachabilityFixture {
         id: "BOOLEAN-GRAMMAR-LATER-PART-EMPTY-BRACED",
@@ -482,6 +510,7 @@ const GRAMMAR_REACHABILITY_FIXTURES: &[GrammarReachabilityFixture] = &[
         rhs_range: ByteRange::new(10, 14),
         subject: ByteRange::new(21, 25),
         subject_fragment: r"\u{}",
+        expected: FutureOutcome::SyntaxRejected,
     },
     GrammarReachabilityFixture {
         id: "BOOLEAN-GRAMMAR-LATER-UNCLOSED-BRACED",
@@ -489,6 +518,7 @@ const GRAMMAR_REACHABILITY_FIXTURES: &[GrammarReachabilityFixture] = &[
         rhs_range: ByteRange::new(10, 14),
         subject: ByteRange::new(20, 25),
         subject_fragment: r"\u{61",
+        expected: FutureOutcome::SyntaxRejected,
     },
 ];
 
@@ -770,6 +800,12 @@ fn positive_fixtures_pin_authored_ranges_boundaries_and_future_lifecycle() {
             "{}",
             fixture.id
         );
+        assert_eq!(
+            fixture.expected,
+            FutureOutcome::SelectedAcceptedIncomplete,
+            "{}",
+            fixture.id
+        );
 
         let source = SourceText::new(
             SourceId::new(245_000 + index as u64),
@@ -835,6 +871,12 @@ fn unsupported_controls_pin_whole_source_disposition_without_local_commit_policy
             "{}",
             fixture.id
         );
+        assert_eq!(
+            fixture.expected,
+            FutureOutcome::UnsupportedCoverage,
+            "{}",
+            fixture.id
+        );
 
         match fixture.reason {
             UnsupportedReason::EscapedBooleanLikeIdentifierName => assert_eq!(
@@ -871,11 +913,6 @@ fn unsupported_controls_pin_whole_source_disposition_without_local_commit_policy
             }
         }
     }
-
-    assert_eq!(
-        FutureOutcome::UnsupportedCoverage,
-        FutureOutcome::UnsupportedCoverage
-    );
 }
 
 #[test]
@@ -894,6 +931,12 @@ fn static_reachability_preserves_existing_subjects_and_outcome_family() {
             "{} / {}",
             fixture.id,
             fixture.rule_id
+        );
+        assert_eq!(
+            fixture.expected,
+            FutureOutcome::StaticSemanticsRejected,
+            "{}",
+            fixture.id
         );
         assert!(
             gold_source(fixture.control_gold_id).is_some(),
@@ -915,11 +958,6 @@ fn static_reachability_preserves_existing_subjects_and_outcome_family() {
             fixture.id
         );
     }
-
-    assert_eq!(
-        FutureOutcome::StaticSemanticsRejected,
-        FutureOutcome::StaticSemanticsRejected
-    );
 }
 
 #[test]
@@ -938,6 +976,12 @@ fn later_existing_grammar_reachability_preserves_authored_subjects() {
             "{}",
             fixture.id
         );
+        assert_eq!(
+            fixture.expected,
+            FutureOutcome::SyntaxRejected,
+            "{}",
+            fixture.id
+        );
 
         let source = SourceText::new(
             SourceId::new(245_500 + index as u64),
@@ -953,28 +997,22 @@ fn later_existing_grammar_reachability_preserves_authored_subjects() {
             fixture.id
         );
     }
-
-    assert_eq!(FutureOutcome::SyntaxRejected, FutureOutcome::SyntaxRejected);
 }
 
 #[test]
 fn future_handoff_stays_incomplete_unsupported_where_unowned_and_validation_only() {
-    for fixture in ROUTE_FIXTURES {
-        match fixture.expected_route {
-            AuthoredRoute::DirectBooleanLiteral | AuthoredRoute::IdentifierReference => assert_eq!(
-                fixture.expected_outcome,
-                FutureOutcome::SelectedAcceptedIncomplete,
-                "{}",
-                fixture.id
-            ),
-            AuthoredRoute::ReservedIdentifierName | AuthoredRoute::Unowned => assert_eq!(
-                fixture.expected_outcome,
-                FutureOutcome::UnsupportedCoverage,
-                "{}",
-                fixture.id
-            ),
-        }
-    }
+    assert!(POSITIVE_FIXTURES
+        .iter()
+        .all(|fixture| fixture.expected == FutureOutcome::SelectedAcceptedIncomplete));
+    assert!(UNSUPPORTED_FIXTURES
+        .iter()
+        .all(|fixture| fixture.expected == FutureOutcome::UnsupportedCoverage));
+    assert!(STATIC_REACHABILITY_FIXTURES
+        .iter()
+        .all(|fixture| fixture.expected == FutureOutcome::StaticSemanticsRejected));
+    assert!(GRAMMAR_REACHABILITY_FIXTURES
+        .iter()
+        .all(|fixture| fixture.expected == FutureOutcome::SyntaxRejected));
 
     for forbidden_retained_or_qualified_state in [
         concat!("ExpectedQualification", "::Qualified"),
