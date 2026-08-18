@@ -43,6 +43,15 @@ fn assert_unsupported(text: &str) {
     ));
 }
 
+fn escaped_first_ascii_code_point(name: &str) -> String {
+    assert!(name.is_ascii());
+    let mut chars = name.chars();
+    let first = chars
+        .next()
+        .expect("reserved-word control must be non-empty");
+    format!(r"\u{:04X}{}", first as u32, chars.as_str())
+}
+
 #[test]
 fn retains_selected_declaration_kind_binding_order_and_initializer_state() {
     let script = recognized("let x=1, y; const z = 2;");
@@ -403,6 +412,203 @@ fn identifier_reference_name_policy_is_fixed_to_non_strict_script_yield_false_aw
 }
 
 #[test]
+fn recognizes_escaped_identifier_reference_initializers_as_presence_only_and_maximal() {
+    for text in [
+        r"const x = \u0066oo;",
+        r"const x = f\u006Fo;",
+        r"let x = \u{66}oo, y = bar;",
+        r"const x = \u{00000066}oo",
+        r"const x = \u0066\u006F\u006F;",
+        r"const x = \u{1D49C};",
+        r"const x = \u0024;",
+        r"const x = \u005F;",
+        r"const x = a\u0030;",
+        r"const x = a\u0301;",
+        r"const x = a\u200Cb;",
+        r"const x = a\u200Db;",
+        r"const \u0078 = \u0066oo;",
+        r"let x = \u0066oo, y = bar;",
+        r"let x = foo, y = \u0062ar;",
+        r"let x = 1, y = \u0062ar;",
+        r"let x = \u0066oo, y = 1;",
+        r"const x = \u0066oo, y = \u0062ar;",
+        r"const x = \u00E9; const y = e\u0301;",
+        r"const x = \u0069fx;",
+    ] {
+        let script = recognized(text);
+        assert!(
+            script
+                .declarations()
+                .iter()
+                .flat_map(|declaration| declaration.bindings())
+                .any(|binding| binding.initializer() == SelectedInitializerState::SelectedPresent),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn escaped_identifier_reference_name_policy_matches_fixed_selected_context() {
+    for rhs in [
+        r"\u006Cet",
+        r"\u0073tatic",
+        r"\u0069mplements",
+        r"\u0069nterface",
+        r"\u0070ackage",
+        r"\u0070rivate",
+        r"\u0070rotected",
+        r"\u0070ublic",
+        r"\u0079ield",
+        r"a\u0077ait",
+        r"\u0065val",
+        r"\u0061rguments",
+    ] {
+        let text = format!("const x = {rhs};");
+        let _ = recognized(&text);
+    }
+
+    for name in [
+        "break",
+        "case",
+        "catch",
+        "class",
+        "const",
+        "continue",
+        "debugger",
+        "default",
+        "delete",
+        "do",
+        "else",
+        "enum",
+        "export",
+        "extends",
+        "false",
+        "finally",
+        "for",
+        "function",
+        "if",
+        "import",
+        "in",
+        "instanceof",
+        "new",
+        "null",
+        "return",
+        "super",
+        "switch",
+        "this",
+        "throw",
+        "true",
+        "try",
+        "typeof",
+        "var",
+        "void",
+        "while",
+        "with",
+    ] {
+        let rhs = escaped_first_ascii_code_point(name);
+        let text = format!("const x = {rhs};");
+        assert_unsupported(&text);
+    }
+}
+
+#[test]
+fn escaped_identifier_reference_invalid_and_unowned_rhs_remain_unsupported() {
+    for text in [
+        r"const x = \u{};",
+        r"const x = \u0;",
+        r"const x = \u{61",
+        r"const x = \u{110000};",
+        r"const x = \u{G};",
+        r"const x = \u00G0;",
+        r"const x = \u{61;",
+        r"const x = \u0x;",
+        r"const x = \u;",
+        r"const x = \u{",
+        r"const x = \u0030;",
+        r"const x = a\u002D;",
+        r"const x = \uD800;",
+        r"const x = \u{D800};",
+        r"const x = \u200C;",
+        r"const x = \u200D;",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn escaped_identifier_reference_valid_atom_does_not_widen_expression_or_asi_coverage() {
+    for text in [
+        r"const x = \u0066oo.bar;",
+        r"const x = \u0066oo();",
+        r"const x = \u0066oo + 1;",
+        r"const x = \u0066oo = bar;",
+        r"const x = \u0066oo ? bar : baz;",
+        r"const x = \u0066oo/*comment*/;",
+        r"const x = \u0066oo unexpected;",
+        r"const x = \u0066oo;;",
+        "const x = \\u0066oo\nconst y = bar;",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn escaped_identifier_reference_eof_asi_preserves_complete_authored_significant_end() {
+    let text = r"const x = \u0066oo ";
+    let script = recognized(text);
+    let declaration = &script.declarations()[0];
+    assert_eq!(declaration.declaration().fragment(), r"const x = \u0066oo");
+    assert_eq!(
+        (
+            declaration.declaration().range().start(),
+            declaration.declaration().range().end()
+        ),
+        (0, 18)
+    );
+    assert!(matches!(
+        declaration.terminator(),
+        SelectedDeclarationTerminator::AutomaticAtEof
+    ));
+}
+
+#[test]
+fn escaped_identifier_reference_coverage_makes_later_existing_grammar_evidence_reachable() {
+    for (text, expected_fragment, expected_range) in [
+        (r"const x = \u0066oo; let \u{};", r"\u{}", (24, 28)),
+        (r"const x = \u0066oo; let a\u{};", r"\u{}", (25, 29)),
+        (r"const x = \u0066oo; let \u{61", r"\u{61", (24, 29)),
+    ] {
+        let subject = grammar_rejection(text);
+        assert_eq!(subject.fragment(), expected_fragment, "{text}");
+        assert_eq!(
+            (subject.range().start(), subject.range().end()),
+            expected_range,
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn escaped_identifier_reference_pathological_inputs_remain_linear_and_deterministic() {
+    let zeros = "0".repeat(4096);
+    let long_escape = format!(r"const x = \u{{{zeros}66}}oo;");
+    let first = recognized(&long_escape);
+    let second = recognized(&long_escape);
+    assert_eq!(
+        first.declarations()[0].declaration().fragment(),
+        second.declarations()[0].declaration().fragment()
+    );
+
+    let long_utf8 = format!(r"const x = \u0061{};", "α".repeat(4096));
+    let first = recognized(&long_utf8);
+    let second = recognized(&long_utf8);
+    assert_eq!(
+        first.declarations()[0].declaration().fragment(),
+        second.declarations()[0].declaration().fragment()
+    );
+}
+
+#[test]
 fn identifier_reference_eof_asi_preserves_significant_end_before_selected_trivia() {
     let text = "const x = foo \t\n\r\u{2028}\u{2029}\u{00A0}\u{1680}\u{2000}\u{202F}\u{205F}\u{3000}\u{FEFF}";
     let script = recognized(text);
@@ -424,8 +630,6 @@ fn identifier_reference_eof_asi_preserves_significant_end_before_selected_trivia
 #[test]
 fn identifier_reference_prefixes_do_not_widen_richer_expression_or_escape_coverage() {
     for text in [
-        r"const x = \u0066oo;",
-        r"const x = f\u006Fo;",
         "const x = foo.bar;",
         "const x = foo();",
         "const x = foo + 1;",
@@ -469,7 +673,6 @@ fn initializer_transaction_never_degrades_failed_rhs_to_absent() {
         "let x==1;",
         "const x=>1;",
         "const x=if;",
-        r"const x=\u0066oo;",
     ] {
         assert_unsupported(text);
     }

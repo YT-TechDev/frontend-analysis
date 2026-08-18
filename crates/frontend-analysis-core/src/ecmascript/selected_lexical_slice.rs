@@ -143,6 +143,14 @@ enum ParseFailure {
     InternalFailure,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SelectedIdentifierReferenceRecognition {
+    Matched,
+    NotSelected,
+    ResourceLimited,
+    InternalFailure,
+}
+
 struct Cursor<'source> {
     source: &'source SourceText,
     text: &'source str,
@@ -217,10 +225,19 @@ impl<'source> Cursor<'source> {
             self.skip_selected_trivia();
             let (initializer, significant_end) = if self.consume_initializer_equals() {
                 self.skip_selected_trivia();
-                if !self.consume_selected_decimal_integer()
-                    && !self.consume_selected_escape_free_identifier_reference()
-                {
-                    return Err(ParseFailure::UnsupportedCoverage);
+                if !self.consume_selected_decimal_integer() {
+                    match self.consume_selected_identifier_reference() {
+                        SelectedIdentifierReferenceRecognition::Matched => {}
+                        SelectedIdentifierReferenceRecognition::NotSelected => {
+                            return Err(ParseFailure::UnsupportedCoverage);
+                        }
+                        SelectedIdentifierReferenceRecognition::ResourceLimited => {
+                            return Err(ParseFailure::ResourceLimited);
+                        }
+                        SelectedIdentifierReferenceRecognition::InternalFailure => {
+                            return Err(ParseFailure::InternalFailure);
+                        }
+                    }
                 }
                 let initializer_end = self.offset;
                 self.skip_selected_trivia();
@@ -432,39 +449,105 @@ impl<'source> Cursor<'source> {
         Ok((start, end, name_state))
     }
 
-    /// Recognizes one direct-authored `IdentifierReference` in the fixed
-    /// selected non-strict Script envelope (`Yield=false`, `Await=false`).
+    /// Recognizes one selected `IdentifierReference` atom in the fixed
+    /// non-strict Script envelope (`Yield=false`, `Await=false`).
     ///
-    /// The scan is atomic for a rejected RHS atom: it finds the maximal direct
-    /// `IdentifierName` with a temporary end, applies complete-spelling policy,
-    /// and commits `offset` only when the spelling is accepted. In this fixed
-    /// envelope, strict-only names, `yield`, `await`, `eval`, and `arguments`
-    /// are accepted while unconditionally reserved spellings remain outside
-    /// selected coverage. Escaped spelling is deliberately not recognized.
-    fn consume_selected_escape_free_identifier_reference(&mut self) -> bool {
+    /// This is a position-specific recognizer, not a general ECMAScript
+    /// Identifier abstraction. It scans one maximal direct/escaped
+    /// `IdentifierName` with local offsets and commits `self.offset` only after
+    /// the complete name is selected. Direct-only spelling stays borrowed and
+    /// allocation-free. Once a formed, position-valid authored escape appears,
+    /// a temporary decoded `StringValue` is built only for complete-name policy
+    /// and discarded after recognition.
+    ///
+    /// Direct authored `yield` / `await` and escaped Identifier spellings that
+    /// decode to those names use different grammar routes, as fixed by #242.
+    /// This fixed context selects both routes, so the production domain model
+    /// needs only successful applicability and retains no route state.
+    fn consume_selected_identifier_reference(&mut self) -> SelectedIdentifierReferenceRecognition {
         let start = self.offset;
-        let Some(first) = self.text[start..].chars().next() else {
-            return false;
-        };
-        if !is_selected_identifier_start(first as u32) {
-            return false;
-        }
+        let mut end = start;
+        let mut first_element = true;
+        let mut decoded: Option<String> = None;
 
-        let mut end = start + first.len_utf8();
-        while let Some(next) = self.text[end..].chars().next() {
-            if !is_selected_identifier_part(next as u32) {
+        loop {
+            if self.text.as_bytes().get(end) == Some(&b'\\') {
+                let escape_start = end;
+                let Some(formation) = formed_unicode_escape_at(self.text, escape_start) else {
+                    return SelectedIdentifierReferenceRecognition::NotSelected;
+                };
+
+                let valid_position = if first_element {
+                    is_selected_identifier_start(formation.code_point)
+                } else {
+                    is_selected_identifier_part(formation.code_point)
+                };
+                if !valid_position {
+                    return SelectedIdentifierReferenceRecognition::NotSelected;
+                }
+
+                let Some(scalar) = char::from_u32(formation.code_point) else {
+                    return SelectedIdentifierReferenceRecognition::InternalFailure;
+                };
+
+                if decoded.is_none() {
+                    let prefix = &self.text[start..escape_start];
+                    let mut name = String::new();
+                    if name.try_reserve(prefix.len()).is_err() {
+                        return SelectedIdentifierReferenceRecognition::ResourceLimited;
+                    }
+                    name.push_str(prefix);
+                    decoded = Some(name);
+                }
+
+                let Some(name) = decoded.as_mut() else {
+                    return SelectedIdentifierReferenceRecognition::InternalFailure;
+                };
+                if name.try_reserve(scalar.len_utf8()).is_err() {
+                    return SelectedIdentifierReferenceRecognition::ResourceLimited;
+                }
+                name.push(scalar);
+                end = formation.end;
+                first_element = false;
+                continue;
+            }
+
+            let Some(next) = self.text[end..].chars().next() else {
+                break;
+            };
+            let valid_position = if first_element {
+                is_selected_identifier_start(next as u32)
+            } else {
+                is_selected_identifier_part(next as u32)
+            };
+            if !valid_position {
+                if first_element {
+                    return SelectedIdentifierReferenceRecognition::NotSelected;
+                }
                 break;
             }
+
             end += next.len_utf8();
+            if let Some(name) = decoded.as_mut() {
+                if name.try_reserve(next.len_utf8()).is_err() {
+                    return SelectedIdentifierReferenceRecognition::ResourceLimited;
+                }
+                name.push(next);
+            }
+            first_element = false;
         }
 
-        let spelling = &self.text[start..end];
-        if is_unconditionally_reserved_word(spelling) {
-            return false;
+        if first_element {
+            return SelectedIdentifierReferenceRecognition::NotSelected;
+        }
+
+        let semantic_name = decoded.as_deref().unwrap_or_else(|| &self.text[start..end]);
+        if is_unconditionally_reserved_word(semantic_name) {
+            return SelectedIdentifierReferenceRecognition::NotSelected;
         }
 
         self.offset = end;
-        true
+        SelectedIdentifierReferenceRecognition::Matched
     }
 
     fn consume_initializer_equals(&mut self) -> bool {

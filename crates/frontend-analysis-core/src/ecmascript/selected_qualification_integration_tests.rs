@@ -12,6 +12,15 @@ fn attempt(text: &str) -> SelectedQualificationAttempt {
     attempt_selected_qualification(&source)
 }
 
+fn escaped_first_ascii_code_point(name: &str) -> String {
+    assert!(name.is_ascii());
+    let mut chars = name.chars();
+    let first = chars
+        .next()
+        .expect("reserved-word control must be non-empty");
+    format!(r"\u{:04X}{}", first as u32, chars.as_str())
+}
+
 #[test]
 fn selected_positive_gold_remains_explicitly_incomplete_not_qualified() {
     for fixture_id in [
@@ -112,6 +121,151 @@ fn identifier_reference_initializers_remain_selected_accepted_incomplete() {
     }
 }
 
+#[test]
+fn escaped_identifier_reference_initializers_remain_selected_accepted_incomplete() {
+    for text in [
+        r"const x = \u0066oo;",
+        r"const x = f\u006Fo;",
+        r"let x = \u{66}oo, y = bar;",
+        r"const x = \u{00000066}oo",
+        r"const x = \u0066\u006F\u006F;",
+        r"const x = \u{1D49C};",
+        r"const x = \u0024;",
+        r"const x = \u005F;",
+        r"const x = a\u0030;",
+        r"const x = a\u0301;",
+        r"const x = a\u200Cb;",
+        r"const x = a\u200Db;",
+        r"const \u0078 = \u0066oo;",
+        r"let x = \u0066oo, y = bar;",
+        r"let x = foo, y = \u0062ar;",
+        r"let x = 1, y = \u0062ar;",
+        r"let x = \u0066oo, y = 1;",
+        r"const x = \u0066oo, y = \u0062ar;",
+        r"const x = \u00E9; const y = e\u0301;",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text}"
+        );
+    }
+
+    for rhs in [
+        r"\u006Cet",
+        r"\u0073tatic",
+        r"\u0069mplements",
+        r"\u0069nterface",
+        r"\u0070ackage",
+        r"\u0070rivate",
+        r"\u0070rotected",
+        r"\u0070ublic",
+        r"\u0079ield",
+        r"a\u0077ait",
+        r"\u0065val",
+        r"\u0061rguments",
+    ] {
+        let text = format!("const x = {rhs};");
+        assert!(
+            matches!(
+                attempt(&text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn escaped_identifier_reference_invalid_reserved_and_tail_families_remain_unsupported() {
+    for text in [
+        r"const x = \u{};",
+        r"const x = \u0;",
+        r"const x = \u{61",
+        r"const x = \u{110000};",
+        r"const x = \u{G};",
+        r"const x = \u00G0;",
+        r"const x = \u{61;",
+        r"const x = \u0x;",
+        r"const x = \u;",
+        r"const x = \u{",
+        r"const x = \u0030;",
+        r"const x = a\u002D;",
+        r"const x = \uD800;",
+        r"const x = \u{D800};",
+        r"const x = \u200C;",
+        r"const x = \u200D;",
+        r"const x = \u0066oo.bar;",
+        r"const x = \u0066oo();",
+        r"const x = \u0066oo + 1;",
+        r"const x = \u0066oo = bar;",
+        r"const x = \u0066oo ? bar : baz;",
+        r"const x = \u0066oo/*comment*/;",
+        r"const x = \u0066oo unexpected;",
+        r"const x = \u0066oo;;",
+        "const x = \\u0066oo\nconst y = bar;",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::UnsupportedCoverage
+            ),
+            "{text}"
+        );
+    }
+
+    for name in [
+        "break",
+        "case",
+        "catch",
+        "class",
+        "const",
+        "continue",
+        "debugger",
+        "default",
+        "delete",
+        "do",
+        "else",
+        "enum",
+        "export",
+        "extends",
+        "false",
+        "finally",
+        "for",
+        "function",
+        "if",
+        "import",
+        "in",
+        "instanceof",
+        "new",
+        "null",
+        "return",
+        "super",
+        "switch",
+        "this",
+        "throw",
+        "true",
+        "try",
+        "typeof",
+        "var",
+        "void",
+        "while",
+        "with",
+    ] {
+        let rhs = escaped_first_ascii_code_point(name);
+        let text = format!("const x = {rhs};");
+        assert!(
+            matches!(
+                attempt(&text),
+                SelectedQualificationAttempt::UnsupportedCoverage
+            ),
+            "{text}"
+        );
+    }
+}
+
 fn qualification_outcome(text: &str) -> super::qualification::QualificationOutcome {
     match attempt(text) {
         SelectedQualificationAttempt::Outcome(outcome) => outcome,
@@ -161,6 +315,42 @@ fn identifier_reference_static_composition_preserves_existing_authored_subjects(
         ("let x = foo; let x = bar;", "x", (17, 18)),
         (r"let \u006Cet = let;", r"\u006Cet", (4, 12)),
         (r"let \u0030 = foo;", r"\u0030", (4, 10)),
+    ] {
+        let outcome = qualification_outcome(text);
+        assert_eq!(outcome.processing(), ProcessingStatus::Complete, "{text}");
+        assert_eq!(
+            outcome.verdict(),
+            Some(QualificationVerdictKind::StaticSemanticsRejected),
+            "{text}"
+        );
+        let evidence = outcome.rejection_evidence().expect("static evidence");
+        assert_eq!(
+            evidence.family(),
+            RejectionFamily::StaticSemantics,
+            "{text}"
+        );
+        let anchor = evidence
+            .subject()
+            .authored_anchor()
+            .expect("authored static subject");
+        assert_eq!(anchor.fragment(), expected_fragment, "{text}");
+        assert_eq!(
+            (anchor.range().start(), anchor.range().end()),
+            expected_range,
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn escaped_identifier_reference_static_reachability_preserves_existing_authored_subjects() {
+    for (text, expected_fragment, expected_range) in [
+        (r"let \u0030 = \u0066oo;", r"\u0030", (4, 10)),
+        (r"let \u0069f = \u0066oo;", r"\u0069f", (4, 11)),
+        (r"let \u006Cet = \u006Cet;", r"\u006Cet", (4, 12)),
+        (r"let x = \u0066oo, x = \u0062ar;", "x", (18, 19)),
+        (r"const x = \u0066oo, y;", "y", (20, 21)),
+        (r"let x = \u0066oo; let x = \u0062ar;", "x", (22, 23)),
     ] {
         let outcome = qualification_outcome(text);
         assert_eq!(outcome.processing(), ProcessingStatus::Complete, "{text}");
@@ -240,7 +430,6 @@ fn candidate_independent_primary_ranges_survive_aggregate_handoff() {
 fn unsupported_rhs_and_broader_grammar_remain_unsupported_without_source_verdict() {
     for text in [
         gold_source("JS-GOLD-LEXDECL-CONST-MALFORMED-INIT-001").expect("malformed init gold"),
-        r"const x=\u0066oo;",
         "const x=if;",
         "const x=foo.bar;",
         "const x=foo();",
@@ -324,6 +513,35 @@ fn identifier_reference_coverage_makes_existing_later_grammar_evidence_reachable
         (r"const x = foo; let \u{};", r"\u{}", (19, 23)),
         (r"const x = foo; let a\u{};", r"\u{}", (20, 24)),
         (r"const x = foo; let \u{61", r"\u{61", (19, 24)),
+    ] {
+        let outcome = qualification_outcome(text);
+        assert_eq!(outcome.processing(), ProcessingStatus::Complete, "{text}");
+        assert_eq!(
+            outcome.verdict(),
+            Some(QualificationVerdictKind::SyntaxRejected),
+            "{text}"
+        );
+        let evidence = outcome.rejection_evidence().expect("grammar evidence");
+        assert_eq!(evidence.family(), RejectionFamily::Grammar, "{text}");
+        let anchor = evidence
+            .subject()
+            .authored_anchor()
+            .expect("authored grammar subject");
+        assert_eq!(anchor.fragment(), expected_fragment, "{text}");
+        assert_eq!(
+            (anchor.range().start(), anchor.range().end()),
+            expected_range,
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn escaped_identifier_reference_coverage_makes_existing_later_grammar_evidence_reachable() {
+    for (text, expected_fragment, expected_range) in [
+        (r"const x = \u0066oo; let \u{};", r"\u{}", (24, 28)),
+        (r"const x = \u0066oo; let a\u{};", r"\u{}", (25, 29)),
+        (r"const x = \u0066oo; let \u{61", r"\u{61", (24, 29)),
     ] {
         let outcome = qualification_outcome(text);
         assert_eq!(outcome.processing(), ProcessingStatus::Complete, "{text}");
