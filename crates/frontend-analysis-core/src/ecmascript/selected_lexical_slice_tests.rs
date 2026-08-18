@@ -653,8 +653,21 @@ fn adjacent_malformed_classes_remain_unsupported() {
 
 #[test]
 fn escaped_binding_whole_source_transaction_distinguishes_unsupported_tail_from_owned_grammar() {
-    for text in [r"let \u0030; foo();", r"let \u0030 = foo;"] {
-        assert_unsupported(text);
+    assert_unsupported(r"let \u0030; foo();");
+
+    let script = recognized(r"let \u0030 = foo;");
+    let binding = &script.declarations()[0].bindings()[0];
+    assert_eq!(
+        binding.initializer(),
+        SelectedInitializerState::SelectedPresent
+    );
+    match binding.name_state() {
+        SelectedBindingNameState::InvalidEscapedPosition { position, escape } => {
+            assert_eq!(*position, SelectedInvalidEscapePosition::Start);
+            assert_eq!(escape.fragment(), r"\u0030");
+            assert_eq!((escape.range().start(), escape.range().end()), (4, 10));
+        }
+        other => panic!("expected invalid escaped start, got {other:?}"),
     }
 
     let subject = grammar_rejection(r"let a\u00001\u{};");
