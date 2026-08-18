@@ -301,11 +301,13 @@ fn recognizes_escape_free_identifier_reference_initializers_as_presence_only() {
         r"const \u0078 = foo;",
     ] {
         let script = recognized(text);
-        assert!(script
-            .declarations()
-            .iter()
-            .flat_map(|declaration| declaration.bindings())
-            .any(|binding| binding.initializer() == SelectedInitializerState::SelectedPresent));
+        assert!(
+            script
+                .declarations()
+                .iter()
+                .flat_map(|declaration| declaration.bindings())
+                .any(|binding| binding.initializer() == SelectedInitializerState::SelectedPresent)
+        );
     }
 }
 
@@ -358,10 +360,42 @@ fn identifier_reference_name_policy_is_fixed_to_non_strict_script_yield_false_aw
     }
 
     for name in [
-        "break", "case", "catch", "class", "const", "continue", "debugger", "default",
-        "delete", "do", "else", "enum", "export", "extends", "false", "finally", "for",
-        "function", "if", "import", "in", "instanceof", "new", "null", "return", "super",
-        "switch", "this", "throw", "true", "try", "typeof", "var", "void", "while", "with",
+        "break",
+        "case",
+        "catch",
+        "class",
+        "const",
+        "continue",
+        "debugger",
+        "default",
+        "delete",
+        "do",
+        "else",
+        "enum",
+        "export",
+        "extends",
+        "false",
+        "finally",
+        "for",
+        "function",
+        "if",
+        "import",
+        "in",
+        "instanceof",
+        "new",
+        "null",
+        "return",
+        "super",
+        "switch",
+        "this",
+        "throw",
+        "true",
+        "try",
+        "typeof",
+        "var",
+        "void",
+        "while",
+        "with",
     ] {
         let text = format!("const x = {name};");
         assert_unsupported(&text);
@@ -370,8 +404,7 @@ fn identifier_reference_name_policy_is_fixed_to_non_strict_script_yield_false_aw
 
 #[test]
 fn identifier_reference_eof_asi_preserves_significant_end_before_selected_trivia() {
-    let text =
-        "const x = foo \t\n\r\u{2028}\u{2029}\u{00A0}\u{1680}\u{2000}\u{202F}\u{205F}\u{3000}\u{FEFF}";
+    let text = "const x = foo \t\n\r\u{2028}\u{2029}\u{00A0}\u{1680}\u{2000}\u{202F}\u{205F}\u{3000}\u{FEFF}";
     let script = recognized(text);
     let declaration = &script.declarations()[0];
     assert_eq!(declaration.declaration().fragment(), "const x = foo");
