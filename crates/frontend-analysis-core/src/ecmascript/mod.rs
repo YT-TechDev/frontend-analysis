@@ -13,6 +13,8 @@ mod qualification_grammar_evidence_validation_tests;
 #[cfg(test)]
 mod qualification_grammar_rejection_policy_validation_tests;
 #[cfg(test)]
+mod qualification_selected_boolean_literal_initializer_validation_tests;
+#[cfg(test)]
 mod qualification_selected_eof_asi_validation_tests;
 #[cfg(test)]
 mod qualification_selected_escaped_identifier_reference_initializer_validation_tests;
