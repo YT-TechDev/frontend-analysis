@@ -61,6 +61,11 @@ enum FutureLifecycle {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FutureUnsupportedDisposition {
+    UnsupportedCoverage,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct FutureSelectedExpectation {
     static_semantics: ExpectedStaticSemantics,
     lifecycle: FutureLifecycle,
@@ -199,6 +204,11 @@ struct UnsupportedTailFixture {
     source: &'static str,
     rhs_range: ByteRange,
     tail_kind: UnsupportedTailKind,
+}
+
+struct FutureUnsupportedFixtureSet<T: 'static> {
+    fixtures: &'static [T],
+    disposition: FutureUnsupportedDisposition,
 }
 
 const BASE_POSITIVE_FIXTURES: &[PositiveFixture] = &[
@@ -805,6 +815,24 @@ const UNSUPPORTED_TAIL_FIXTURES: &[UnsupportedTailFixture] = &[
     },
 ];
 
+const NEGATIVE_UNSUPPORTED_EXPECTATION: FutureUnsupportedFixtureSet<NegativeFixture> =
+    FutureUnsupportedFixtureSet {
+        fixtures: NEGATIVE_FIXTURES,
+        disposition: FutureUnsupportedDisposition::UnsupportedCoverage,
+    };
+
+const DECODED_RESERVED_UNSUPPORTED_EXPECTATION: FutureUnsupportedFixtureSet<&'static str> =
+    FutureUnsupportedFixtureSet {
+        fixtures: UNCONDITIONALLY_RESERVED_WORDS,
+        disposition: FutureUnsupportedDisposition::UnsupportedCoverage,
+    };
+
+const UNSUPPORTED_TAIL_EXPECTATION: FutureUnsupportedFixtureSet<UnsupportedTailFixture> =
+    FutureUnsupportedFixtureSet {
+        fixtures: UNSUPPORTED_TAIL_FIXTURES,
+        disposition: FutureUnsupportedDisposition::UnsupportedCoverage,
+    };
+
 fn ascii_hex_value(byte: u8) -> Option<u32> {
     match byte {
         b'0'..=b'9' => Some(u32::from(byte - b'0')),
@@ -1075,7 +1103,9 @@ fn frozen_authority_and_validation_only_envelope_are_exact() {
 
     assert_eq!(BASE_POSITIVE_FIXTURES.len(), 17);
     assert_eq!(NAME_POLICY_FIXTURES.len(), 12);
-    assert_eq!(NEGATIVE_FIXTURES.len(), 16);
+    assert_eq!(NEGATIVE_UNSUPPORTED_EXPECTATION.fixtures.len(), 16);
+    assert_eq!(DECODED_RESERVED_UNSUPPORTED_EXPECTATION.fixtures.len(), 36);
+    assert_eq!(UNSUPPORTED_TAIL_EXPECTATION.fixtures.len(), 9);
 }
 
 #[test]
@@ -1197,7 +1227,12 @@ fn identifier_position_additions_and_unicode_membership_are_composed_explicitly(
 
 #[test]
 fn malformed_non_code_point_and_invalid_position_controls_remain_outside_positive_family() {
-    for fixture in NEGATIVE_FIXTURES {
+    assert_eq!(
+        NEGATIVE_UNSUPPORTED_EXPECTATION.disposition,
+        FutureUnsupportedDisposition::UnsupportedCoverage
+    );
+
+    for fixture in NEGATIVE_UNSUPPORTED_EXPECTATION.fixtures {
         assert_eq!(
             decode_selected_escaped_identifier(fixture.rhs),
             Err(fixture.expected),
@@ -1209,9 +1244,13 @@ fn malformed_non_code_point_and_invalid_position_controls_remain_outside_positiv
 
 #[test]
 fn every_unconditionally_reserved_decoded_name_is_a_negative_control() {
-    assert_eq!(UNCONDITIONALLY_RESERVED_WORDS.len(), 36);
+    assert_eq!(
+        DECODED_RESERVED_UNSUPPORTED_EXPECTATION.disposition,
+        FutureUnsupportedDisposition::UnsupportedCoverage
+    );
+    assert_eq!(DECODED_RESERVED_UNSUPPORTED_EXPECTATION.fixtures.len(), 36);
 
-    for word in UNCONDITIONALLY_RESERVED_WORDS {
+    for word in DECODED_RESERVED_UNSUPPORTED_EXPECTATION.fixtures {
         let escaped = escaped_first_ascii_code_point(word);
         assert_eq!(
             decode_selected_escaped_identifier(&escaped),
@@ -1314,9 +1353,13 @@ fn later_existing_grammar_subjects_remain_exact_and_terminal_after_valid_escaped
 
 #[test]
 fn valid_escaped_atom_plus_unsupported_tail_never_becomes_whole_source_success() {
-    assert_eq!(UNSUPPORTED_TAIL_FIXTURES.len(), 9);
+    assert_eq!(
+        UNSUPPORTED_TAIL_EXPECTATION.disposition,
+        FutureUnsupportedDisposition::UnsupportedCoverage
+    );
+    assert_eq!(UNSUPPORTED_TAIL_EXPECTATION.fixtures.len(), 9);
 
-    for fixture in UNSUPPORTED_TAIL_FIXTURES {
+    for fixture in UNSUPPORTED_TAIL_EXPECTATION.fixtures {
         let rhs = slice(fixture.source, fixture.rhs_range);
         let decoded = decode_selected_escaped_identifier(rhs).unwrap_or_else(|failure| {
             panic!(
@@ -1395,23 +1438,40 @@ fn validation_handoff_remains_one_focused_future_production_frontier() {
         assert_eq!(fixture.route, IdentifierReferenceRoute::EscapedIdentifier);
     }
 
+    assert_eq!(
+        NEGATIVE_UNSUPPORTED_EXPECTATION.disposition,
+        FutureUnsupportedDisposition::UnsupportedCoverage
+    );
+    assert_eq!(
+        DECODED_RESERVED_UNSUPPORTED_EXPECTATION.disposition,
+        FutureUnsupportedDisposition::UnsupportedCoverage
+    );
+    assert_eq!(
+        UNSUPPORTED_TAIL_EXPECTATION.disposition,
+        FutureUnsupportedDisposition::UnsupportedCoverage
+    );
+
     assert!(
-        NEGATIVE_FIXTURES
+        NEGATIVE_UNSUPPORTED_EXPECTATION
+            .fixtures
             .iter()
             .any(|fixture| { fixture.expected == DecodeFailure::MalformedEscape })
     );
     assert!(
-        NEGATIVE_FIXTURES
+        NEGATIVE_UNSUPPORTED_EXPECTATION
+            .fixtures
             .iter()
             .any(|fixture| { fixture.expected == DecodeFailure::NonCodePoint })
     );
     assert!(
-        NEGATIVE_FIXTURES
+        NEGATIVE_UNSUPPORTED_EXPECTATION
+            .fixtures
             .iter()
             .any(|fixture| { fixture.expected == DecodeFailure::InvalidStart })
     );
     assert!(
-        NEGATIVE_FIXTURES
+        NEGATIVE_UNSUPPORTED_EXPECTATION
+            .fixtures
             .iter()
             .any(|fixture| { fixture.expected == DecodeFailure::InvalidPart })
     );
