@@ -97,11 +97,17 @@ impl SelectedLexicalBinding {
 }
 
 #[derive(Debug)]
+pub(super) enum SelectedDeclarationTerminator {
+    AuthoredSemicolon(SourceAnchor),
+    AutomaticAtEof,
+}
+
+#[derive(Debug)]
 pub(super) struct SelectedLexicalDeclaration {
     kind: SelectedLexicalDeclarationKind,
     declaration: SourceAnchor,
     bindings: Vec<SelectedLexicalBinding>,
-    semicolon: SourceAnchor,
+    terminator: SelectedDeclarationTerminator,
 }
 
 impl SelectedLexicalDeclaration {
@@ -117,8 +123,8 @@ impl SelectedLexicalDeclaration {
         &self.bindings
     }
 
-    pub(super) fn semicolon(&self) -> &SourceAnchor {
-        &self.semicolon
+    pub(super) fn terminator(&self) -> &SelectedDeclarationTerminator {
+        &self.terminator
     }
 }
 
@@ -190,6 +196,7 @@ impl<'source> Cursor<'source> {
         let first_binding_is_keyword_adjacent = self.offset == after_keyword;
         let mut bindings = Vec::new();
         let mut first_binding = true;
+        let mut final_significant_end = declaration_start;
 
         loop {
             let grammar_context = if first_binding && first_binding_is_keyword_adjacent {
@@ -209,16 +216,18 @@ impl<'source> Cursor<'source> {
                 self.parse_selected_binding_identifier(grammar_context)?;
 
             self.skip_selected_trivia();
-            let initializer = if self.consume_initializer_equals() {
+            let (initializer, significant_end) = if self.consume_initializer_equals() {
                 self.skip_selected_trivia();
                 if !self.consume_selected_decimal_integer() {
                     return Err(ParseFailure::UnsupportedCoverage);
                 }
+                let initializer_end = self.offset;
                 self.skip_selected_trivia();
-                SelectedInitializerState::SelectedPresent
+                (SelectedInitializerState::SelectedPresent, initializer_end)
             } else {
-                SelectedInitializerState::Absent
+                (SelectedInitializerState::Absent, binding_end)
             };
+            final_significant_end = significant_end;
 
             let binding = self.anchor(binding_start, binding_end)?;
             bindings
@@ -239,19 +248,30 @@ impl<'source> Cursor<'source> {
         }
 
         let semicolon_start = self.offset;
-        if !self.consume_ascii(';') {
+        let (declaration_end, terminator) = if self.consume_ascii(';') {
+            let semicolon_end = self.offset;
+            (
+                semicolon_end,
+                SelectedDeclarationTerminator::AuthoredSemicolon(
+                    self.anchor(semicolon_start, semicolon_end)?,
+                ),
+            )
+        } else if self.is_eof() {
+            (
+                final_significant_end,
+                SelectedDeclarationTerminator::AutomaticAtEof,
+            )
+        } else {
             return Err(ParseFailure::UnsupportedCoverage);
-        }
-        let semicolon_end = self.offset;
+        };
 
-        let declaration = self.anchor(declaration_start, semicolon_end)?;
-        let semicolon = self.anchor(semicolon_start, semicolon_end)?;
+        let declaration = self.anchor(declaration_start, declaration_end)?;
 
         Ok(SelectedLexicalDeclaration {
             kind,
             declaration,
             bindings,
-            semicolon,
+            terminator,
         })
     }
 
