@@ -692,8 +692,16 @@ fn rhs_fixtures_pin_authored_ranges_boundaries_and_future_selected_lifecycle() {
             "{}",
             fixture.id
         );
-        assert!(is_escape_free_identifier_name(fixture.rhs), "{}", fixture.id);
-        assert_eq!(fixture.expected, SELECTED_ACCEPTED_INCOMPLETE, "{}", fixture.id);
+        assert!(
+            is_escape_free_identifier_name(fixture.rhs),
+            "{}",
+            fixture.id
+        );
+        assert_eq!(
+            fixture.expected, SELECTED_ACCEPTED_INCOMPLETE,
+            "{}",
+            fixture.id
+        );
 
         let source = SourceText::new(
             SourceId::new(237_000 + index as u64),
@@ -750,8 +758,16 @@ fn name_policy_matrix_pins_three_categories_and_selected_positive_disposition() 
 
     for (index, fixture) in NAME_POLICY_FIXTURES.iter().enumerate() {
         assert_eq!(slice(fixture.source, fixture.rhs_range), fixture.rhs);
-        assert!(is_escape_free_identifier_name(fixture.rhs), "{}", fixture.id);
-        assert_eq!(fixture.expected, SELECTED_ACCEPTED_INCOMPLETE, "{}", fixture.id);
+        assert!(
+            is_escape_free_identifier_name(fixture.rhs),
+            "{}",
+            fixture.id
+        );
+        assert_eq!(
+            fixture.expected, SELECTED_ACCEPTED_INCOMPLETE,
+            "{}",
+            fixture.id
+        );
 
         let source = SourceText::new(
             SourceId::new(237_100 + index as u64),
@@ -830,7 +846,10 @@ fn direct_unicode_rhs_provenance_is_utf8_exact_and_not_normalized() {
 #[test]
 fn static_composition_keeps_existing_binding_subjects_primary() {
     for fixture in STATIC_COMPOSITION_FIXTURES {
-        assert_eq!(slice(fixture.source, fixture.subject), fixture.subject_fragment);
+        assert_eq!(
+            slice(fixture.source, fixture.subject),
+            fixture.subject_fragment
+        );
         assert!(fixture.rule_id.starts_with("EE-"), "{}", fixture.id);
 
         let control_source = gold_source(fixture.control_gold_id)
@@ -946,16 +965,24 @@ fn validation_contract_handoff_stays_focused_on_one_future_architecture_gate() {
         fixture.id == "IDREF-INIT-POSITIVE-EOF-001"
             && fixture.expected == SELECTED_ACCEPTED_INCOMPLETE
     }));
-    assert!(NAME_POLICY_FIXTURES.iter().all(|fixture| {
-        fixture.expected == SELECTED_ACCEPTED_INCOMPLETE
-    }));
-    assert!(UNSUPPORTED_FIXTURES.iter().any(|fixture| {
-        fixture.reason == UnsupportedReason::EscapedIdentifierReference
-    }));
-    assert!(UNSUPPORTED_FIXTURES.iter().any(|fixture| {
-        fixture.reason == UnsupportedReason::RequiresNonEofAsi
-    }));
-    assert!(UNSUPPORTED_FIXTURES.iter().any(|fixture| {
-        fixture.reason == UnsupportedReason::MemberExpression
-    }));
+    assert!(
+        NAME_POLICY_FIXTURES
+            .iter()
+            .all(|fixture| { fixture.expected == SELECTED_ACCEPTED_INCOMPLETE })
+    );
+    assert!(
+        UNSUPPORTED_FIXTURES
+            .iter()
+            .any(|fixture| { fixture.reason == UnsupportedReason::EscapedIdentifierReference })
+    );
+    assert!(
+        UNSUPPORTED_FIXTURES
+            .iter()
+            .any(|fixture| { fixture.reason == UnsupportedReason::RequiresNonEofAsi })
+    );
+    assert!(
+        UNSUPPORTED_FIXTURES
+            .iter()
+            .any(|fixture| { fixture.reason == UnsupportedReason::MemberExpression })
+    );
 }
