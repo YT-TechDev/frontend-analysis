@@ -793,7 +793,12 @@ fn direct_boolean_spelling_and_identifier_name_collision_are_independent() {
 #[test]
 fn positive_fixtures_pin_authored_ranges_boundaries_and_future_lifecycle() {
     for (index, fixture) in POSITIVE_FIXTURES.iter().enumerate() {
-        assert_eq!(slice(fixture.source, fixture.rhs_range), fixture.rhs, "{}", fixture.id);
+        assert_eq!(
+            slice(fixture.source, fixture.rhs_range),
+            fixture.rhs,
+            "{}",
+            fixture.id
+        );
         assert_eq!(
             classify_authored_route(fixture.rhs),
             AuthoredRoute::DirectBooleanLiteral,
@@ -886,7 +891,12 @@ fn unsupported_controls_pin_whole_source_disposition_without_local_commit_policy
                 fixture.id
             ),
             UnsupportedReason::MalformedContinuation => {
-                assert_eq!(classify_authored_route(rhs), AuthoredRoute::Unowned, "{}", fixture.id);
+                assert_eq!(
+                    classify_authored_route(rhs),
+                    AuthoredRoute::Unowned,
+                    "{}",
+                    fixture.id
+                );
             }
             UnsupportedReason::OtherReservedDirectRhs => assert_eq!(
                 classify_authored_route(rhs),
@@ -918,7 +928,12 @@ fn unsupported_controls_pin_whole_source_disposition_without_local_commit_policy
 #[test]
 fn static_reachability_preserves_existing_subjects_and_outcome_family() {
     for (index, fixture) in STATIC_REACHABILITY_FIXTURES.iter().enumerate() {
-        assert_eq!(slice(fixture.source, fixture.rhs_range), "true", "{}", fixture.id);
+        assert_eq!(
+            slice(fixture.source, fixture.rhs_range),
+            "true",
+            "{}",
+            fixture.id
+        );
         assert_eq!(
             classify_authored_route(slice(fixture.source, fixture.rhs_range)),
             AuthoredRoute::DirectBooleanLiteral,
@@ -963,7 +978,12 @@ fn static_reachability_preserves_existing_subjects_and_outcome_family() {
 #[test]
 fn later_existing_grammar_reachability_preserves_authored_subjects() {
     for (index, fixture) in GRAMMAR_REACHABILITY_FIXTURES.iter().enumerate() {
-        assert_eq!(slice(fixture.source, fixture.rhs_range), "true", "{}", fixture.id);
+        assert_eq!(
+            slice(fixture.source, fixture.rhs_range),
+            "true",
+            "{}",
+            fixture.id
+        );
         assert_eq!(
             classify_authored_route(slice(fixture.source, fixture.rhs_range)),
             AuthoredRoute::DirectBooleanLiteral,
@@ -1001,18 +1021,26 @@ fn later_existing_grammar_reachability_preserves_authored_subjects() {
 
 #[test]
 fn future_handoff_stays_incomplete_unsupported_where_unowned_and_validation_only() {
-    assert!(POSITIVE_FIXTURES
-        .iter()
-        .all(|fixture| fixture.expected == FutureOutcome::SelectedAcceptedIncomplete));
-    assert!(UNSUPPORTED_FIXTURES
-        .iter()
-        .all(|fixture| fixture.expected == FutureOutcome::UnsupportedCoverage));
-    assert!(STATIC_REACHABILITY_FIXTURES
-        .iter()
-        .all(|fixture| fixture.expected == FutureOutcome::StaticSemanticsRejected));
-    assert!(GRAMMAR_REACHABILITY_FIXTURES
-        .iter()
-        .all(|fixture| fixture.expected == FutureOutcome::SyntaxRejected));
+    assert!(
+        POSITIVE_FIXTURES
+            .iter()
+            .all(|fixture| fixture.expected == FutureOutcome::SelectedAcceptedIncomplete)
+    );
+    assert!(
+        UNSUPPORTED_FIXTURES
+            .iter()
+            .all(|fixture| fixture.expected == FutureOutcome::UnsupportedCoverage)
+    );
+    assert!(
+        STATIC_REACHABILITY_FIXTURES
+            .iter()
+            .all(|fixture| fixture.expected == FutureOutcome::StaticSemanticsRejected)
+    );
+    assert!(
+        GRAMMAR_REACHABILITY_FIXTURES
+            .iter()
+            .all(|fixture| fixture.expected == FutureOutcome::SyntaxRejected)
+    );
 
     for forbidden_retained_or_qualified_state in [
         concat!("ExpectedQualification", "::Qualified"),
