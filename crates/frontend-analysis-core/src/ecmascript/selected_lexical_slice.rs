@@ -541,9 +541,7 @@ impl<'source> Cursor<'source> {
             return SelectedIdentifierReferenceRecognition::NotSelected;
         }
 
-        let semantic_name = decoded
-            .as_deref()
-            .unwrap_or_else(|| &self.text[start..end]);
+        let semantic_name = decoded.as_deref().unwrap_or_else(|| &self.text[start..end]);
         if is_unconditionally_reserved_word(semantic_name) {
             return SelectedIdentifierReferenceRecognition::NotSelected;
         }
