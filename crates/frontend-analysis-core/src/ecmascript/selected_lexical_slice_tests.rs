@@ -46,7 +46,9 @@ fn assert_unsupported(text: &str) {
 fn escaped_first_ascii_code_point(name: &str) -> String {
     assert!(name.is_ascii());
     let mut chars = name.chars();
-    let first = chars.next().expect("reserved-word control must be non-empty");
+    let first = chars
+        .next()
+        .expect("reserved-word control must be non-empty");
     format!(r"\u{:04X}{}", first as u32, chars.as_str())
 }
 
