@@ -2,9 +2,9 @@ use crate::{SourceAnchor, SourceId, SourceText};
 
 use super::qualification_validation_tests::{gold_source, gold_subject_range};
 use super::selected_lexical_slice::{
-    SelectedBindingNameState, SelectedInitializerState, SelectedInvalidEscapePosition,
-    SelectedLexicalDeclarationKind, SelectedLexicalScript, SelectedLexicalSliceOutcome,
-    recognize_selected_lexical_slice,
+    SelectedBindingNameState, SelectedDeclarationTerminator, SelectedInitializerState,
+    SelectedInvalidEscapePosition, SelectedLexicalDeclarationKind, SelectedLexicalScript,
+    SelectedLexicalSliceOutcome, recognize_selected_lexical_slice,
 };
 
 fn source(text: &str) -> SourceText {
@@ -62,7 +62,15 @@ fn retains_selected_declaration_kind_binding_order_and_initializer_state() {
         first.bindings()[1].initializer(),
         SelectedInitializerState::Absent
     );
-    assert_eq!(first.semicolon().fragment(), ";");
+    match first.terminator() {
+        SelectedDeclarationTerminator::AuthoredSemicolon(semicolon) => {
+            assert_eq!(semicolon.fragment(), ";");
+            assert_eq!((semicolon.range().start(), semicolon.range().end()), (10, 11));
+        }
+        SelectedDeclarationTerminator::AutomaticAtEof => {
+            panic!("explicit semicolon must retain authored terminator provenance")
+        }
+    }
 
     let second = &script.declarations()[1];
     assert_eq!(second.kind(), SelectedLexicalDeclarationKind::Const);
@@ -72,6 +80,77 @@ fn retains_selected_declaration_kind_binding_order_and_initializer_state() {
         second.bindings()[0].initializer(),
         SelectedInitializerState::SelectedPresent
     );
+}
+
+#[test]
+fn recognizes_eof_only_asi_with_truthful_terminator_provenance() {
+    for (text, expected_declaration) in [
+        ("let x = 1", "let x = 1"),
+        ("const x = 1", "const x = 1"),
+        ("let x", "let x"),
+        ("let x, y", "let x, y"),
+        ("const x = 1, y = 2", "const x = 1, y = 2"),
+    ] {
+        let script = recognized(text);
+        let declaration = &script.declarations()[0];
+        assert_eq!(declaration.declaration().fragment(), expected_declaration, "{text}");
+        assert!(matches!(
+            declaration.terminator(),
+            SelectedDeclarationTerminator::AutomaticAtEof
+        ));
+    }
+
+    let script = recognized("let x; const y = 1");
+    assert_eq!(script.declarations().len(), 2);
+    assert!(matches!(
+        script.declarations()[0].terminator(),
+        SelectedDeclarationTerminator::AuthoredSemicolon(_)
+    ));
+    assert!(matches!(
+        script.declarations()[1].terminator(),
+        SelectedDeclarationTerminator::AutomaticAtEof
+    ));
+}
+
+#[test]
+fn eof_asi_excludes_selected_trailing_trivia_from_declaration_anchor() {
+    let text = "let x = 1 \t\n\r\u{2028}\u{2029}\u{00A0}\u{1680}\u{2000}\u{202F}\u{205F}\u{3000}\u{FEFF}";
+    let script = recognized(text);
+    let declaration = &script.declarations()[0];
+    assert_eq!(declaration.declaration().fragment(), "let x = 1");
+    assert_eq!(
+        (
+            declaration.declaration().range().start(),
+            declaration.declaration().range().end()
+        ),
+        (0, 9)
+    );
+    assert!(matches!(
+        declaration.terminator(),
+        SelectedDeclarationTerminator::AutomaticAtEof
+    ));
+
+    let again = recognized(text);
+    assert_eq!(
+        (
+            again.declarations()[0].declaration().range().start(),
+            again.declarations()[0].declaration().range().end()
+        ),
+        (0, 9)
+    );
+}
+
+#[test]
+fn eof_asi_composes_with_existing_escaped_binding_capability() {
+    let script = recognized(r"let \u0061");
+    let declaration = &script.declarations()[0];
+    assert_eq!(declaration.declaration().fragment(), r"let \u0061");
+    assert_eq!(declaration.bindings()[0].binding().fragment(), r"\u0061");
+    assert_eq!(declaration.bindings()[0].semantic_name(), Some("a"));
+    assert!(matches!(
+        declaration.terminator(),
+        SelectedDeclarationTerminator::AutomaticAtEof
+    ));
 }
 
 #[test]
@@ -225,7 +304,6 @@ fn broader_script_grammar_remains_unsupported() {
     assert_unsupported(asi_gold);
 
     for text in [
-        "let x=1",
         "let x=1\nlet y=2;",
         "let/*comment*/x=1;",
         "let x=1;//comment",
@@ -254,12 +332,30 @@ fn whole_source_transaction_prevents_prefix_success_and_truncated_facts() {
         "let ",
         "const",
         "const ",
-        "let x",
         "let x,",
         "const x=",
         "let x=1; foo();",
+        "let x=1\nfoo();",
         "let x=1;;",
         ";let x=1;",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn eof_asi_keeps_non_eof_incomplete_and_deferred_neighbors_unsupported() {
+    for text in [
+        "let x\nconst y = 1",
+        "let x =",
+        "let x,",
+        "let x y",
+        "const x = foo",
+        "let x/*comment*/",
+        "#!node\nlet x = 1",
+        r"let \u",
+        r"let \u{",
+        r"let \u0",
     ] {
         assert_unsupported(text);
     }
@@ -424,5 +520,9 @@ fn repeated_recognition_preserves_equivalent_declaration_binding_order_and_range
 
     let first = ranges("let π=1, x; const y=2;");
     let second = ranges("let π=1, x; const y=2;");
+    assert_eq!(first, second);
+
+    let first = ranges("let π=1, x \u{2028}\u{00A0}");
+    let second = ranges("let π=1, x \u{2028}\u{00A0}");
     assert_eq!(first, second);
 }
