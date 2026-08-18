@@ -93,6 +93,9 @@ struct PositiveFixture {
     expected: FutureSelectedExpectation,
 }
 
+// The constructor deliberately mirrors independent authored, decoded, boundary,
+// and policy fields instead of grouping them into opaque test-only containers.
+#[allow(clippy::too_many_arguments)]
 const fn positive_fixture(
     id: &'static str,
     source: &'static str,
