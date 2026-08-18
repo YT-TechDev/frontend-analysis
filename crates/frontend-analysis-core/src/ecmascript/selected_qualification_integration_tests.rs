@@ -33,10 +33,62 @@ fn selected_positive_gold_remains_explicitly_incomplete_not_qualified() {
     }
 }
 
+#[test]
+fn eof_asi_positive_sources_remain_selected_accepted_incomplete() {
+    for text in [
+        "let x = 1",
+        "const x = 1",
+        "let x",
+        "let x, y",
+        "const x = 1, y = 2",
+        "let x; const y = 1",
+        r"let \u0061",
+        "let x = 1 \t\n\r\u{2028}\u{2029}\u{00A0}\u{1680}\u{2000}\u{202F}\u{205F}\u{3000}\u{FEFF}",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+}
+
 fn qualification_outcome(text: &str) -> super::qualification::QualificationOutcome {
     match attempt(text) {
         SelectedQualificationAttempt::Outcome(outcome) => outcome,
         other => panic!("expected qualification outcome for {text:?}, got {other:?}"),
+    }
+}
+
+#[test]
+fn eof_asi_static_composition_preserves_existing_authored_subjects() {
+    for (text, expected_fragment, expected_range) in [
+        ("const x", "x", (6, 7)),
+        ("let let", "let", (4, 7)),
+        ("let x, x", "x", (7, 8)),
+        ("let x; let x", "x", (11, 12)),
+    ] {
+        let outcome = qualification_outcome(text);
+        assert_eq!(outcome.processing(), ProcessingStatus::Complete, "{text}");
+        assert_eq!(
+            outcome.verdict(),
+            Some(QualificationVerdictKind::StaticSemanticsRejected),
+            "{text}"
+        );
+        let evidence = outcome.rejection_evidence().expect("static evidence");
+        assert_eq!(evidence.family(), RejectionFamily::StaticSemantics, "{text}");
+        let anchor = evidence
+            .subject()
+            .authored_anchor()
+            .expect("authored static subject");
+        assert_eq!(anchor.fragment(), expected_fragment, "{text}");
+        assert_eq!(
+            (anchor.range().start(), anchor.range().end()),
+            expected_range,
+            "{text}"
+        );
     }
 }
 
@@ -102,6 +154,59 @@ fn unsupported_rhs_and_broader_grammar_remain_unsupported_without_source_verdict
             attempt(text),
             SelectedQualificationAttempt::UnsupportedCoverage
         ));
+    }
+}
+
+#[test]
+fn eof_asi_keeps_non_eof_incomplete_and_deferred_neighbors_unsupported() {
+    for text in [
+        "let x\nconst y = 1",
+        "let x =",
+        "let x,",
+        "let x y",
+        "const x = foo",
+        "let x/*comment*/",
+        "#!node\nlet x = 1",
+        r"let \u",
+        r"let \u{",
+        r"let \u0",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::UnsupportedCoverage
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn eof_asi_preserves_existing_terminal_grammar_evidence() {
+    for (text, expected_fragment, expected_range) in [
+        (r"let \u{}", r"\u{}", (4, 8)),
+        (r"let a\u{}", r"\u{}", (5, 9)),
+        (r"let \u{61", r"\u{61", (4, 9)),
+    ] {
+        let outcome = qualification_outcome(text);
+        assert_eq!(outcome.processing(), ProcessingStatus::Complete, "{text}");
+        assert_eq!(
+            outcome.verdict(),
+            Some(QualificationVerdictKind::SyntaxRejected),
+            "{text}"
+        );
+        let evidence = outcome.rejection_evidence().expect("grammar evidence");
+        assert_eq!(evidence.family(), RejectionFamily::Grammar, "{text}");
+        let anchor = evidence
+            .subject()
+            .authored_anchor()
+            .expect("authored grammar subject");
+        assert_eq!(anchor.fragment(), expected_fragment, "{text}");
+        assert_eq!(
+            (anchor.range().start(), anchor.range().end()),
+            expected_range,
+            "{text}"
+        );
     }
 }
 
