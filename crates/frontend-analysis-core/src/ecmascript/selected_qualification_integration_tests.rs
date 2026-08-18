@@ -78,7 +78,11 @@ fn eof_asi_static_composition_preserves_existing_authored_subjects() {
             "{text}"
         );
         let evidence = outcome.rejection_evidence().expect("static evidence");
-        assert_eq!(evidence.family(), RejectionFamily::StaticSemantics, "{text}");
+        assert_eq!(
+            evidence.family(),
+            RejectionFamily::StaticSemantics,
+            "{text}"
+        );
         let anchor = evidence
             .subject()
             .authored_anchor()
