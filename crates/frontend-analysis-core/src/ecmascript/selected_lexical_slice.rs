@@ -196,9 +196,8 @@ impl<'source> Cursor<'source> {
         let first_binding_is_keyword_adjacent = self.offset == after_keyword;
         let mut bindings = Vec::new();
         let mut first_binding = true;
-        let mut final_significant_end = declaration_start;
 
-        loop {
+        let final_significant_end = loop {
             let grammar_context = if first_binding && first_binding_is_keyword_adjacent {
                 match kind {
                     SelectedLexicalDeclarationKind::Let => {
@@ -227,7 +226,6 @@ impl<'source> Cursor<'source> {
             } else {
                 (SelectedInitializerState::Absent, binding_end)
             };
-            final_significant_end = significant_end;
 
             let binding = self.anchor(binding_start, binding_end)?;
             bindings
@@ -244,8 +242,8 @@ impl<'source> Cursor<'source> {
                 self.skip_selected_trivia();
                 continue;
             }
-            break;
-        }
+            break significant_end;
+        };
 
         let semicolon_start = self.offset;
         let (declaration_end, terminator) = if self.consume_ascii(';') {
