@@ -15,7 +15,9 @@ fn attempt(text: &str) -> SelectedQualificationAttempt {
 fn escaped_first_ascii_code_point(name: &str) -> String {
     assert!(name.is_ascii());
     let mut chars = name.chars();
-    let first = chars.next().expect("reserved-word control must be non-empty");
+    let first = chars
+        .next()
+        .expect("reserved-word control must be non-empty");
     format!(r"\u{:04X}{}", first as u32, chars.as_str())
 }
 
@@ -358,7 +360,11 @@ fn escaped_identifier_reference_static_reachability_preserves_existing_authored_
             "{text}"
         );
         let evidence = outcome.rejection_evidence().expect("static evidence");
-        assert_eq!(evidence.family(), RejectionFamily::StaticSemantics, "{text}");
+        assert_eq!(
+            evidence.family(),
+            RejectionFamily::StaticSemantics,
+            "{text}"
+        );
         let anchor = evidence
             .subject()
             .authored_anchor()
