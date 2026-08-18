@@ -217,7 +217,9 @@ impl<'source> Cursor<'source> {
             self.skip_selected_trivia();
             let (initializer, significant_end) = if self.consume_initializer_equals() {
                 self.skip_selected_trivia();
-                if !self.consume_selected_decimal_integer() {
+                if !self.consume_selected_decimal_integer()
+                    && !self.consume_selected_escape_free_identifier_reference()
+                {
                     return Err(ParseFailure::UnsupportedCoverage);
                 }
                 let initializer_end = self.offset;
@@ -428,6 +430,41 @@ impl<'source> Cursor<'source> {
         };
 
         Ok((start, end, name_state))
+    }
+
+    /// Recognizes one direct-authored `IdentifierReference` in the fixed
+    /// selected non-strict Script envelope (`Yield=false`, `Await=false`).
+    ///
+    /// The scan is atomic for a rejected RHS atom: it finds the maximal direct
+    /// `IdentifierName` with a temporary end, applies complete-spelling policy,
+    /// and commits `offset` only when the spelling is accepted. In this fixed
+    /// envelope, strict-only names, `yield`, `await`, `eval`, and `arguments`
+    /// are accepted while unconditionally reserved spellings remain outside
+    /// selected coverage. Escaped spelling is deliberately not recognized.
+    fn consume_selected_escape_free_identifier_reference(&mut self) -> bool {
+        let start = self.offset;
+        let Some(first) = self.text[start..].chars().next() else {
+            return false;
+        };
+        if !is_selected_identifier_start(first as u32) {
+            return false;
+        }
+
+        let mut end = start + first.len_utf8();
+        while let Some(next) = self.text[end..].chars().next() {
+            if !is_selected_identifier_part(next as u32) {
+                break;
+            }
+            end += next.len_utf8();
+        }
+
+        let spelling = &self.text[start..end];
+        if is_unconditionally_reserved_word(spelling) {
+            return false;
+        }
+
+        self.offset = end;
+        true
     }
 
     fn consume_initializer_equals(&mut self) -> bool {

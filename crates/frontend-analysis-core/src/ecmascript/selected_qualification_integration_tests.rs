@@ -55,6 +55,63 @@ fn eof_asi_positive_sources_remain_selected_accepted_incomplete() {
     }
 }
 
+#[test]
+fn identifier_reference_initializers_remain_selected_accepted_incomplete() {
+    for text in [
+        gold_source("JS-GOLD-LEXDECL-CONST-IDENTIFIER-INIT-001").expect("identifier init gold"),
+        "const x = foo",
+        "let x = foo;",
+        "let x = foo",
+        "let x = foo, y = bar;",
+        "let x = 1, y = foo;",
+        "let x = foo, y = 1;",
+        "const x = foo, y = bar;",
+        "let x = 1; const y = foo",
+        "let x = foo; const y = bar",
+        "const π = 𝒜;",
+        r"const \u0078 = foo;",
+        "const x = $;",
+        "const x = _;",
+        "const x = a0;",
+        "const x = a\u{0301};",
+        "const x = a\u{200C}b;",
+        "const x = a\u{200D}b;",
+        "const x = 𝒜;",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+
+    for name in [
+        "let",
+        "static",
+        "implements",
+        "interface",
+        "package",
+        "private",
+        "protected",
+        "public",
+        "yield",
+        "await",
+        "eval",
+        "arguments",
+    ] {
+        let text = format!("const x = {name};");
+        assert!(
+            matches!(
+                attempt(&text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+}
+
 fn qualification_outcome(text: &str) -> super::qualification::QualificationOutcome {
     match attempt(text) {
         SelectedQualificationAttempt::Outcome(outcome) => outcome,
@@ -69,6 +126,41 @@ fn eof_asi_static_composition_preserves_existing_authored_subjects() {
         ("let let", "let", (4, 7)),
         ("let x, x", "x", (7, 8)),
         ("let x; let x", "x", (11, 12)),
+    ] {
+        let outcome = qualification_outcome(text);
+        assert_eq!(outcome.processing(), ProcessingStatus::Complete, "{text}");
+        assert_eq!(
+            outcome.verdict(),
+            Some(QualificationVerdictKind::StaticSemanticsRejected),
+            "{text}"
+        );
+        let evidence = outcome.rejection_evidence().expect("static evidence");
+        assert_eq!(
+            evidence.family(),
+            RejectionFamily::StaticSemantics,
+            "{text}"
+        );
+        let anchor = evidence
+            .subject()
+            .authored_anchor()
+            .expect("authored static subject");
+        assert_eq!(anchor.fragment(), expected_fragment, "{text}");
+        assert_eq!(
+            (anchor.range().start(), anchor.range().end()),
+            expected_range,
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn identifier_reference_static_composition_preserves_existing_authored_subjects() {
+    for (text, expected_fragment, expected_range) in [
+        ("let let = foo;", "let", (4, 7)),
+        ("let x = foo, x = bar;", "x", (13, 14)),
+        ("let x = foo; let x = bar;", "x", (17, 18)),
+        (r"let \u006Cet = let;", r"\u006Cet", (4, 12)),
+        (r"let \u0030 = foo;", r"\u0030", (4, 10)),
     ] {
         let outcome = qualification_outcome(text);
         assert_eq!(outcome.processing(), ProcessingStatus::Complete, "{text}");
@@ -147,17 +239,29 @@ fn candidate_independent_primary_ranges_survive_aggregate_handoff() {
 #[test]
 fn unsupported_rhs_and_broader_grammar_remain_unsupported_without_source_verdict() {
     for text in [
-        gold_source("JS-GOLD-LEXDECL-CONST-IDENTIFIER-INIT-001").expect("identifier init gold"),
         gold_source("JS-GOLD-LEXDECL-CONST-MALFORMED-INIT-001").expect("malformed init gold"),
+        r"const x=\u0066oo;",
+        "const x=if;",
+        "const x=foo.bar;",
+        "const x=foo();",
+        "const x=foo + 1;",
+        "const x=(foo);",
+        "const x=foo = bar;",
+        "const x=foo ? bar : baz;",
+        "const x=foo/*comment*/;",
+        "const x=foo unexpected;",
         "const x=/a/;",
         "var x=1;",
         "let [x]=y;",
         "'use strict'; let x=1;",
     ] {
-        assert!(matches!(
-            attempt(text),
-            SelectedQualificationAttempt::UnsupportedCoverage
-        ));
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::UnsupportedCoverage
+            ),
+            "{text:?}"
+        );
     }
 }
 
@@ -168,7 +272,7 @@ fn eof_asi_keeps_non_eof_incomplete_and_deferred_neighbors_unsupported() {
         "let x =",
         "let x,",
         "let x y",
-        "const x = foo",
+        "let x = foo\nconst y = bar;",
         "let x/*comment*/",
         "#!node\nlet x = 1",
         r"let \u",
@@ -191,6 +295,35 @@ fn eof_asi_preserves_existing_terminal_grammar_evidence() {
         (r"let \u{}", r"\u{}", (4, 8)),
         (r"let a\u{}", r"\u{}", (5, 9)),
         (r"let \u{61", r"\u{61", (4, 9)),
+    ] {
+        let outcome = qualification_outcome(text);
+        assert_eq!(outcome.processing(), ProcessingStatus::Complete, "{text}");
+        assert_eq!(
+            outcome.verdict(),
+            Some(QualificationVerdictKind::SyntaxRejected),
+            "{text}"
+        );
+        let evidence = outcome.rejection_evidence().expect("grammar evidence");
+        assert_eq!(evidence.family(), RejectionFamily::Grammar, "{text}");
+        let anchor = evidence
+            .subject()
+            .authored_anchor()
+            .expect("authored grammar subject");
+        assert_eq!(anchor.fragment(), expected_fragment, "{text}");
+        assert_eq!(
+            (anchor.range().start(), anchor.range().end()),
+            expected_range,
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn identifier_reference_coverage_makes_existing_later_grammar_evidence_reachable() {
+    for (text, expected_fragment, expected_range) in [
+        (r"const x = foo; let \u{};", r"\u{}", (19, 23)),
+        (r"const x = foo; let a\u{};", r"\u{}", (20, 24)),
+        (r"const x = foo; let \u{61", r"\u{61", (19, 24)),
     ] {
         let outcome = qualification_outcome(text);
         assert_eq!(outcome.processing(), ProcessingStatus::Complete, "{text}");
@@ -341,6 +474,7 @@ fn grammar_primary_discards_tentative_static_evidence_and_is_terminal() {
         r"let a\u{} = foo;",
         r"let \u{}, x;",
         r"let \u{}; var x;",
+        r"const x = foo; let \u{};",
     ] {
         let outcome = qualification_outcome(text);
         assert_eq!(
@@ -363,7 +497,6 @@ fn grammar_primary_discards_tentative_static_evidence_and_is_terminal() {
 fn unowned_and_deferred_grammar_boundaries_remain_unsupported() {
     for text in [
         r"let \u0030; foo();",
-        r"let \u0030 = foo;",
         r"let\u0030;",
         r"let\u002D\u{};",
         r"let\u0;",

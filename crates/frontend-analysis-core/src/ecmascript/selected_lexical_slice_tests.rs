@@ -276,7 +276,6 @@ fn selected_decimal_subset_is_exact_for_each_initializer() {
         "let x=01;",
         "let x=-1;",
         "const x=1/2;",
-        "const x=foo;",
         "const x=/a/;",
         "const x=[1];",
         "const x={};",
@@ -286,15 +285,191 @@ fn selected_decimal_subset_is_exact_for_each_initializer() {
 }
 
 #[test]
-fn initializer_transaction_never_degrades_failed_rhs_to_absent() {
+fn recognizes_escape_free_identifier_reference_initializers_as_presence_only() {
     for text in [
         gold_source("JS-GOLD-LEXDECL-CONST-IDENTIFIER-INIT-001").expect("identifier-init gold"),
+        "const x = foo",
+        "let x = foo;",
+        "let x = foo",
+        "let x = foo, y = bar;",
+        "let x = 1, y = foo;",
+        "let x = foo, y = 1;",
+        "const x = foo, y = bar;",
+        "let x = 1; const y = foo",
+        "let x = foo; const y = bar",
+        "const π = 𝒜;",
+        r"const \u0078 = foo;",
+    ] {
+        let script = recognized(text);
+        assert!(
+            script
+                .declarations()
+                .iter()
+                .flat_map(|declaration| declaration.bindings())
+                .any(|binding| binding.initializer() == SelectedInitializerState::SelectedPresent)
+        );
+    }
+}
+
+#[test]
+fn identifier_reference_direct_code_point_family_is_recognized_without_normalization() {
+    for text in [
+        "const x = $;",
+        "const x = _;",
+        "const x = a0;",
+        "const x = a\u{0301};",
+        "const x = a\u{200C}b;",
+        "const x = a\u{200D}b;",
+        "const x = 𝒜;",
+        "const x = ifx;",
+    ] {
+        let _ = recognized(text);
+    }
+
+    for text in [
+        "const x = 0a;",
+        "const x = -foo;",
+        "const x = foo-bar;",
+        "const x = foo💥;",
+    ] {
+        assert_unsupported(text);
+    }
+
+    let composed = recognized("const x = é; const y = e\u{0301};");
+    assert_eq!(composed.declarations().len(), 2);
+}
+
+#[test]
+fn identifier_reference_name_policy_is_fixed_to_non_strict_script_yield_false_await_false() {
+    for name in [
+        "let",
+        "static",
+        "implements",
+        "interface",
+        "package",
+        "private",
+        "protected",
+        "public",
+        "yield",
+        "await",
+        "eval",
+        "arguments",
+    ] {
+        let text = format!("const x = {name};");
+        let _ = recognized(&text);
+    }
+
+    for name in [
+        "break",
+        "case",
+        "catch",
+        "class",
+        "const",
+        "continue",
+        "debugger",
+        "default",
+        "delete",
+        "do",
+        "else",
+        "enum",
+        "export",
+        "extends",
+        "false",
+        "finally",
+        "for",
+        "function",
+        "if",
+        "import",
+        "in",
+        "instanceof",
+        "new",
+        "null",
+        "return",
+        "super",
+        "switch",
+        "this",
+        "throw",
+        "true",
+        "try",
+        "typeof",
+        "var",
+        "void",
+        "while",
+        "with",
+    ] {
+        let text = format!("const x = {name};");
+        assert_unsupported(&text);
+    }
+}
+
+#[test]
+fn identifier_reference_eof_asi_preserves_significant_end_before_selected_trivia() {
+    let text = "const x = foo \t\n\r\u{2028}\u{2029}\u{00A0}\u{1680}\u{2000}\u{202F}\u{205F}\u{3000}\u{FEFF}";
+    let script = recognized(text);
+    let declaration = &script.declarations()[0];
+    assert_eq!(declaration.declaration().fragment(), "const x = foo");
+    assert_eq!(
+        (
+            declaration.declaration().range().start(),
+            declaration.declaration().range().end()
+        ),
+        (0, 13)
+    );
+    assert!(matches!(
+        declaration.terminator(),
+        SelectedDeclarationTerminator::AutomaticAtEof
+    ));
+}
+
+#[test]
+fn identifier_reference_prefixes_do_not_widen_richer_expression_or_escape_coverage() {
+    for text in [
+        r"const x = \u0066oo;",
+        r"const x = f\u006Fo;",
+        "const x = foo.bar;",
+        "const x = foo();",
+        "const x = foo + 1;",
+        "const x = (foo);",
+        "const x = foo = bar;",
+        "const x = foo ? bar : baz;",
+        "const x = foo/*comment*/;",
+        "const x = foo unexpected;",
+        "const x = foo; foo()",
+        "const x = foo;;",
+        "; const x = foo;",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn identifier_reference_coverage_makes_later_existing_grammar_evidence_reachable() {
+    for (text, expected_fragment, expected_range) in [
+        (r"const x = foo; let \u{};", r"\u{}", (19, 23)),
+        (r"const x = foo; let a\u{};", r"\u{}", (20, 24)),
+        (r"const x = foo; let \u{61", r"\u{61", (19, 24)),
+    ] {
+        let subject = grammar_rejection(text);
+        assert_eq!(subject.fragment(), expected_fragment, "{text}");
+        assert_eq!(
+            (subject.range().start(), subject.range().end()),
+            expected_range,
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn initializer_transaction_never_degrades_failed_rhs_to_absent() {
+    for text in [
         gold_source("JS-GOLD-LEXDECL-CONST-MALFORMED-INIT-001").expect("malformed-init gold"),
         "const x=/a/;",
         "const x=;",
         "let x=;",
         "let x==1;",
         "const x=>1;",
+        "const x=if;",
+        r"const x=\u0066oo;",
     ] {
         assert_unsupported(text);
     }
@@ -346,6 +521,10 @@ fn whole_source_transaction_prevents_prefix_success_and_truncated_facts() {
         "let x=1\nfoo();",
         "let x=1;;",
         ";let x=1;",
+        "const x=foo; foo();",
+        "const x=foo\nfoo();",
+        "const x=foo;;",
+        ";const x=foo;",
     ] {
         assert_unsupported(text);
     }
@@ -358,7 +537,7 @@ fn eof_asi_keeps_non_eof_incomplete_and_deferred_neighbors_unsupported() {
         "let x =",
         "let x,",
         "let x y",
-        "const x = foo",
+        "let x = foo\nconst y = bar;",
         "let x/*comment*/",
         "#!node\nlet x = 1",
         r"let \u",
@@ -474,8 +653,21 @@ fn adjacent_malformed_classes_remain_unsupported() {
 
 #[test]
 fn escaped_binding_whole_source_transaction_distinguishes_unsupported_tail_from_owned_grammar() {
-    for text in [r"let \u0030; foo();", r"let \u0030 = foo;"] {
-        assert_unsupported(text);
+    assert_unsupported(r"let \u0030; foo();");
+
+    let script = recognized(r"let \u0030 = foo;");
+    let binding = &script.declarations()[0].bindings()[0];
+    assert_eq!(
+        binding.initializer(),
+        SelectedInitializerState::SelectedPresent
+    );
+    match binding.name_state() {
+        SelectedBindingNameState::InvalidEscapedPosition { position, escape } => {
+            assert_eq!(*position, SelectedInvalidEscapePosition::Start);
+            assert_eq!(escape.fragment(), r"\u0030");
+            assert_eq!((escape.range().start(), escape.range().end()), (4, 10));
+        }
+        other => panic!("expected invalid escaped start, got {other:?}"),
     }
 
     let subject = grammar_rejection(r"let a\u00001\u{};");
@@ -532,5 +724,10 @@ fn repeated_recognition_preserves_equivalent_declaration_binding_order_and_range
 
     let first = ranges("let π=1, x \u{2028}\u{00A0}");
     let second = ranges("let π=1, x \u{2028}\u{00A0}");
+    assert_eq!(first, second);
+
+    let long = format!("const x = a{};", "α".repeat(4096));
+    let first = ranges(&long);
+    let second = ranges(&long);
     assert_eq!(first, second);
 }
