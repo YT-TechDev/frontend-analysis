@@ -160,6 +160,7 @@ fn identifier_reference_static_composition_preserves_existing_authored_subjects(
         ("let x = foo, x = bar;", "x", (13, 14)),
         ("let x = foo; let x = bar;", "x", (17, 18)),
         (r"let \u006Cet = let;", r"\u006Cet", (4, 12)),
+        (r"let \u0030 = foo;", r"\u0030", (4, 10)),
     ] {
         let outcome = qualification_outcome(text);
         assert_eq!(outcome.processing(), ProcessingStatus::Complete, "{text}");
@@ -496,7 +497,6 @@ fn grammar_primary_discards_tentative_static_evidence_and_is_terminal() {
 fn unowned_and_deferred_grammar_boundaries_remain_unsupported() {
     for text in [
         r"let \u0030; foo();",
-        r"let \u0030 = foo;",
         r"let\u0030;",
         r"let\u002D\u{};",
         r"let\u0;",
