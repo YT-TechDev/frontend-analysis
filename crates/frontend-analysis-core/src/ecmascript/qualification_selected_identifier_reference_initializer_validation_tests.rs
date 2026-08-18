@@ -447,7 +447,12 @@ fn frozen_authority_and_existing_identifier_initializer_gold_are_exact() {
 #[test]
 fn rhs_fixtures_pin_exact_authored_ranges_and_existing_boundaries() {
     for (index, fixture) in RHS_FIXTURES.iter().enumerate() {
-        assert_eq!(slice(fixture.source, fixture.rhs_range), fixture.rhs, "{}", fixture.id);
+        assert_eq!(
+            slice(fixture.source, fixture.rhs_range),
+            fixture.rhs,
+            "{}",
+            fixture.id
+        );
         assert!(
             !fixture.rhs.contains('\\'),
             "{} must stay inside the escape-free RHS leaf",
@@ -460,7 +465,9 @@ fn rhs_fixtures_pin_exact_authored_ranges_and_existing_boundaries() {
         );
         let anchor = source
             .anchor(fixture.rhs_range.start, fixture.rhs_range.end)
-            .unwrap_or_else(|| panic!("{} must have a valid authored RHS anchor", fixture.id));
+            .unwrap_or_else(|error| {
+                panic!("{} must have a valid authored RHS anchor: {error}", fixture.id)
+            });
         assert_eq!(anchor.fragment(), fixture.rhs, "{}", fixture.id);
 
         let trivia = fixture
@@ -509,7 +516,12 @@ fn name_policy_matrix_keeps_three_rhs_categories_distinct() {
     let mut binding_contrast = 0;
 
     for (index, fixture) in NAME_POLICY_FIXTURES.iter().enumerate() {
-        assert_eq!(slice(fixture.source, fixture.rhs_range), fixture.rhs, "{}", fixture.id);
+        assert_eq!(
+            slice(fixture.source, fixture.rhs_range),
+            fixture.rhs,
+            "{}",
+            fixture.id
+        );
         assert!(
             !fixture.rhs.contains('\\'),
             "{} must use direct authored RHS spelling",
@@ -656,13 +668,17 @@ fn unsupported_neighbors_are_explicit_and_do_not_gain_a_selected_verdict() {
         assert!(!fixture.source.is_empty());
 
         match fixture.reason {
-            UnsupportedReason::EscapedIdentifierReference => assert!(fixture.source.contains(r"\u")),
+            UnsupportedReason::EscapedIdentifierReference => {
+                assert!(fixture.source.contains(r"\u"))
+            }
             UnsupportedReason::ReservedToken => assert!(fixture.source.contains(" = if;")),
             UnsupportedReason::MemberExpression => assert!(fixture.source.contains('.')),
             UnsupportedReason::CallExpression => assert!(fixture.source.contains("()")),
             UnsupportedReason::BinaryExpression => assert!(fixture.source.contains(" + ")),
             UnsupportedReason::ParenthesizedExpression => assert!(fixture.source.contains("(foo)")),
-            UnsupportedReason::AssignmentExpression => assert!(fixture.source.contains(" = foo = ")),
+            UnsupportedReason::AssignmentExpression => {
+                assert!(fixture.source.contains(" = foo = "))
+            }
             UnsupportedReason::ConditionalExpression => assert!(fixture.source.contains(" ? ")),
             UnsupportedReason::MissingRightHandSide => assert!(fixture.source.contains("= ;")),
             UnsupportedReason::Comment => assert!(fixture.source.contains("/*")),
@@ -734,13 +750,19 @@ fn validation_contract_handoff_stays_focused_on_one_future_architecture_gate() {
     assert!(positive_ids.contains(&"IDREF-INIT-POSITIVE-EOF-001"));
     assert!(positive_ids.contains(&"IDREF-INIT-POSITIVE-COMMA-001"));
 
-    assert!(UNSUPPORTED_FIXTURES.iter().any(|fixture| {
-        fixture.reason == UnsupportedReason::EscapedIdentifierReference
-    }));
-    assert!(UNSUPPORTED_FIXTURES.iter().any(|fixture| {
-        fixture.reason == UnsupportedReason::RequiresNonEofAsi
-    }));
-    assert!(UNSUPPORTED_FIXTURES.iter().any(|fixture| {
-        fixture.reason == UnsupportedReason::MemberExpression
-    }));
+    assert!(
+        UNSUPPORTED_FIXTURES
+            .iter()
+            .any(|fixture| { fixture.reason == UnsupportedReason::EscapedIdentifierReference })
+    );
+    assert!(
+        UNSUPPORTED_FIXTURES
+            .iter()
+            .any(|fixture| { fixture.reason == UnsupportedReason::RequiresNonEofAsi })
+    );
+    assert!(
+        UNSUPPORTED_FIXTURES
+            .iter()
+            .any(|fixture| { fixture.reason == UnsupportedReason::MemberExpression })
+    );
 }
