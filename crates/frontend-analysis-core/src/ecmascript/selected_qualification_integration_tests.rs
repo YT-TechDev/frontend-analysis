@@ -274,7 +274,11 @@ fn escaped_reserved_identifier_initializers_reach_existing_static_rejection() {
             "{text}"
         );
         let evidence = outcome.rejection_evidence().expect("static evidence");
-        assert_eq!(evidence.family(), RejectionFamily::StaticSemantics, "{text}");
+        assert_eq!(
+            evidence.family(),
+            RejectionFamily::StaticSemantics,
+            "{text}"
+        );
         let anchor = evidence
             .subject()
             .authored_anchor()
@@ -308,7 +312,11 @@ fn escaped_reserved_identifier_initializers_reach_existing_static_rejection() {
             "{text}"
         );
         let evidence = outcome.rejection_evidence().expect("static evidence");
-        assert_eq!(evidence.family(), RejectionFamily::StaticSemantics, "{text}");
+        assert_eq!(
+            evidence.family(),
+            RejectionFamily::StaticSemantics,
+            "{text}"
+        );
         let anchor = evidence
             .subject()
             .authored_anchor()
@@ -328,11 +336,7 @@ fn escaped_reserved_initializer_static_precedence_survives_aggregate_handoff() {
         (r"let let = \u006Eull;", "let", (4, 7)),
         (r"let x = \u006Eull, x = foo;", r"\u006Eull", (8, 17)),
         (r"const x = \u006Eull, y;", r"\u006Eull", (10, 19)),
-        (
-            r"let x = foo; let x = \u006Eull;",
-            r"\u006Eull",
-            (21, 30),
-        ),
+        (r"let x = foo; let x = \u006Eull;", r"\u006Eull", (21, 30)),
     ] {
         let outcome = qualification_outcome(text);
         assert_eq!(
@@ -341,7 +345,11 @@ fn escaped_reserved_initializer_static_precedence_survives_aggregate_handoff() {
             "{text}"
         );
         let evidence = outcome.rejection_evidence().expect("static evidence");
-        assert_eq!(evidence.family(), RejectionFamily::StaticSemantics, "{text}");
+        assert_eq!(
+            evidence.family(),
+            RejectionFamily::StaticSemantics,
+            "{text}"
+        );
         let anchor = evidence
             .subject()
             .authored_anchor()
