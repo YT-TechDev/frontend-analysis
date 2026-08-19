@@ -38,7 +38,7 @@ pub(super) fn attempt_selected_qualification(source: &SourceText) -> SelectedQua
     match recognize_selected_lexical_slice(source) {
         SelectedLexicalSliceOutcome::RecognizedSelectedSlice(script) => {
             match evaluate_selected_static_semantics(&script) {
-                SelectedStaticSemanticsOutcome::Accepted => {
+                SelectedStaticSemanticsOutcome::Accepted(_) => {
                     SelectedQualificationAttempt::SelectedAcceptedIncomplete
                 }
                 SelectedStaticSemanticsOutcome::Rejected(rejection) => {
