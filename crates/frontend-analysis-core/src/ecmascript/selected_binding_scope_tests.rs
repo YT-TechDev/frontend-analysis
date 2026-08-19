@@ -83,7 +83,10 @@ fn direct_and_escaped_reference_facts_retain_only_consumer_required_identity() {
         .expect("direct reference fact must be retained");
     assert_eq!(direct_fact.reference().fragment(), "y");
     assert_eq!(
-        (direct_fact.reference().range().start(), direct_fact.reference().range().end()),
+        (
+            direct_fact.reference().range().start(),
+            direct_fact.reference().range().end()
+        ),
         (6, 7)
     );
     assert!(matches!(
