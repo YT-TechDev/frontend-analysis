@@ -227,6 +227,7 @@ impl<'source> Cursor<'source> {
                 self.skip_selected_trivia();
                 if !self.consume_selected_decimal_integer()
                     && !self.consume_selected_boolean_literal()
+                    && !self.consume_selected_null_literal()
                 {
                     match self.consume_selected_identifier_reference() {
                         SelectedIdentifierReferenceRecognition::Matched => {}
@@ -461,6 +462,17 @@ impl<'source> Cursor<'source> {
     /// policy for that class is retained as domain state.
     fn consume_selected_boolean_literal(&mut self) -> bool {
         self.consume_keyword("true") || self.consume_keyword("false")
+    }
+
+    /// Recognizes exactly one direct-authored `NullLiteral` in the selected
+    /// initializer position without widening into a general Literal owner.
+    ///
+    /// The shared keyword boundary preserves maximal IdentifierName routing for
+    /// direct IdentifierPart and formed authored UES continuations. Malformed or
+    /// non-CodePoint UES tails remain owned only by the enclosing whole-source
+    /// transaction; this helper retains no local commit policy as domain state.
+    fn consume_selected_null_literal(&mut self) -> bool {
+        self.consume_keyword("null")
     }
 
     /// Recognizes one selected `IdentifierReference` atom in the fixed

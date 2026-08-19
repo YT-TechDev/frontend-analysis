@@ -391,7 +391,6 @@ fn identifier_reference_name_policy_is_fixed_to_non_strict_script_yield_false_aw
         "in",
         "instanceof",
         "new",
-        "null",
         "return",
         "super",
         "switch",
@@ -1109,6 +1108,202 @@ fn direct_boolean_literal_aggregate_lifecycle_remains_incomplete_or_existing_rej
 
     let SelectedQualificationAttempt::Outcome(outcome) =
         attempt_selected_qualification(&source(r"const x = true; let \u{};"))
+    else {
+        panic!("expected existing Grammar rejection to become reachable");
+    };
+    assert_eq!(
+        outcome.verdict(),
+        Some(QualificationVerdictKind::SyntaxRejected)
+    );
+    let evidence = outcome
+        .rejection_evidence()
+        .expect("Grammar rejection evidence");
+    assert_eq!(evidence.family(), RejectionFamily::Grammar);
+    let subject = evidence
+        .subject()
+        .authored_anchor()
+        .expect("Grammar subject must remain authored");
+    assert_eq!(subject.fragment(), r"\u{}");
+    assert_eq!((subject.range().start(), subject.range().end()), (20, 24));
+}
+
+#[test]
+fn direct_null_literal_initializers_compose_as_presence_only() {
+    for text in [
+        "const x = null;",
+        "const x = null",
+        "const x = null   \t\n",
+        "let x = null, y = foo;",
+        "let x = foo, y = null;",
+        "let x = 1, y = null;",
+        "const x = null, y = false;",
+        "const x = true, y = null;",
+        r"const x = \u0066oo, y = null;",
+        "const x = null \t\n;",
+    ] {
+        let script = recognized(text);
+        assert!(
+            script
+                .declarations()
+                .iter()
+                .flat_map(|declaration| declaration.bindings())
+                .any(|binding| binding.initializer() == SelectedInitializerState::SelectedPresent),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn direct_null_literal_boundary_preserves_maximal_identifier_reference_routing() {
+    for text in [
+        "const x = nullx;",
+        "const x = nullValue;",
+        "const x = nullπ;",
+        "const x = null0;",
+        "const x = null$;",
+        "const x = null_;",
+        r"const x = null\u0061;",
+        r"const x = null\u{61};",
+        r"const x = null\u{00000061};",
+        r"const x = null\u0030;",
+        r"const x = null\u200C;",
+        r"const x = null\u200D;",
+    ] {
+        let _ = recognized(text);
+    }
+
+    for text in [
+        r"const x = null\u002D;",
+        r"const x = null\uD800;",
+        r"const x = null\u{D800};",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn direct_null_literal_does_not_claim_escaped_malformed_or_richer_neighbors() {
+    for text in [
+        r"const x = \u006Eull;",
+        r"const x = n\u0075ll;",
+        r"const x = nu\u006Cl;",
+        r"const x = nul\u006C;",
+        r"const x = null\u{};",
+        r"const x = null\u0;",
+        r"const x = null\u{61",
+        r"const x = null\u{110000};",
+        "const x = null.foo;",
+        "const x = null();",
+        "const x = null + x;",
+        "const x = null = x;",
+        "const x = null ? x : y;",
+        "const x = null/*comment*/;",
+        "const x = null unexpected;",
+        "const x = null;;",
+        "const x = null\nconst y = foo;",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn direct_null_literal_eof_asi_preserves_significant_end_before_selected_trivia() {
+    let text = "const x = null   \t\n";
+    let script = recognized(text);
+    let declaration = &script.declarations()[0];
+    assert_eq!(declaration.declaration().fragment(), "const x = null");
+    assert_eq!(
+        (
+            declaration.declaration().range().start(),
+            declaration.declaration().range().end()
+        ),
+        (0, 14)
+    );
+    assert!(matches!(
+        declaration.terminator(),
+        SelectedDeclarationTerminator::AutomaticAtEof
+    ));
+}
+
+#[test]
+fn direct_null_literal_coverage_makes_later_existing_grammar_evidence_reachable() {
+    for (text, expected_fragment, expected_range) in [
+        (r"const x = null; let \u{};", r"\u{}", (20, 24)),
+        (r"const x = null; let a\u{};", r"\u{}", (21, 25)),
+        (r"const x = null; let \u{61", r"\u{61", (20, 25)),
+    ] {
+        let subject = grammar_rejection(text);
+        assert_eq!(subject.fragment(), expected_fragment, "{text}");
+        assert_eq!(
+            (subject.range().start(), subject.range().end()),
+            expected_range,
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn direct_null_literal_aggregate_lifecycle_remains_incomplete_or_existing_rejection() {
+    use super::qualification::{QualificationVerdictKind, RejectionFamily};
+    use super::selected_qualification_integration::{
+        SelectedQualificationAttempt, attempt_selected_qualification,
+    };
+
+    for text in [
+        "const x = null;",
+        "const x = null",
+        "let x = null, y = foo;",
+        "const x = true, y = null;",
+    ] {
+        assert!(
+            matches!(
+                attempt_selected_qualification(&source(text)),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text}"
+        );
+    }
+
+    for (text, expected_fragment, expected_range) in [
+        (r"let \u0030 = null;", r"\u0030", (4, 10)),
+        (r"let \u0069f = null;", r"\u0069f", (4, 11)),
+        ("let let = null;", "let", (4, 7)),
+        ("let x = null, x = foo;", "x", (14, 15)),
+        ("const x = null, y;", "y", (16, 17)),
+        ("let x = null; let x = foo;", "x", (18, 19)),
+    ] {
+        let SelectedQualificationAttempt::Outcome(outcome) =
+            attempt_selected_qualification(&source(text))
+        else {
+            panic!("expected static rejection for {text}");
+        };
+        assert_eq!(
+            outcome.verdict(),
+            Some(QualificationVerdictKind::StaticSemanticsRejected),
+            "{text}"
+        );
+        let evidence = outcome
+            .rejection_evidence()
+            .expect("static rejection evidence");
+        assert_eq!(
+            evidence.family(),
+            RejectionFamily::StaticSemantics,
+            "{text}"
+        );
+        let subject = evidence
+            .subject()
+            .authored_anchor()
+            .expect("static subject must remain authored");
+        assert_eq!(subject.fragment(), expected_fragment, "{text}");
+        assert_eq!(
+            (subject.range().start(), subject.range().end()),
+            expected_range,
+            "{text}"
+        );
+    }
+
+    let SelectedQualificationAttempt::Outcome(outcome) =
+        attempt_selected_qualification(&source(r"const x = null; let \u{};"))
     else {
         panic!("expected existing Grammar rejection to become reachable");
     };
