@@ -326,7 +326,7 @@ const ROUTE_FIXTURES: &[RouteFixture] = &[
     },
     RouteFixture {
         id: "NULL-ROUTE-ESCAPED-LATE",
-        rhs: r"nu\u006Cll",
+        rhs: r"nu\u006Cl",
         expected_route: AuthoredRoute::ReservedIdentifierName,
         expected_outcome: FutureOutcome::UnsupportedCoverage,
     },
