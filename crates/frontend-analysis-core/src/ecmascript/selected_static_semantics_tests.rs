@@ -27,7 +27,7 @@ fn accepted(text: &str) {
     let (_, script) = recognized(text);
     assert!(matches!(
         evaluate_selected_static_semantics(&script),
-        SelectedStaticSemanticsOutcome::Accepted
+        SelectedStaticSemanticsOutcome::Accepted(_)
     ));
 }
 
