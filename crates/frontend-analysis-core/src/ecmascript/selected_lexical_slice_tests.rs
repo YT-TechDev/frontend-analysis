@@ -1522,3 +1522,202 @@ fn direct_this_aggregate_lifecycle_remains_incomplete_or_existing_rejection() {
     assert_eq!(subject.fragment(), r"\u{}");
     assert_eq!((subject.range().start(), subject.range().end()), (20, 24));
 }
+
+#[test]
+fn escape_free_string_literal_initializers_compose_as_presence_only() {
+    for text in [
+        "const x = \"\";",
+        "const x = '';",
+        "const x = \"abc\";",
+        "const x = 'abc';",
+        "const x = \"𝒜\";",
+        "const x = \"a'b\";",
+        "const x = 'a\"b';",
+        "const x = \"a b\";",
+        "const x = \"a\tb\";",
+        "const x = \"a\u{FEFF}b\";",
+        "const x = \"a\u{2028}b\";",
+        "const x = 'a\u{2029}b';",
+        "const x = \"abc\"",
+        "const x = \"abc\"   \t\n",
+        "let x = \"abc\", y = foo;",
+        "let x = foo, y = \"abc\";",
+        "let x = 1, y = \"abc\";",
+        "const x = \"abc\", y = null;",
+        "const x = this, y = \"abc\";",
+    ] {
+        let script = recognized(text);
+        assert!(
+            script
+                .declarations()
+                .iter()
+                .flat_map(|declaration| declaration.bindings())
+                .any(|binding| binding.initializer() == SelectedInitializerState::SelectedPresent),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn escape_free_string_literal_raw_line_terminator_boundary_is_exact() {
+    for text in [
+        "const x = \"a\nb\";",
+        "const x = \"a\rb\";",
+        "const x = \"a\r\nb\";",
+        "const x = 'a\nb';",
+        "const x = 'a\rb';",
+    ] {
+        assert_unsupported(text);
+    }
+
+    for text in [
+        "const x = \"a\u{2028}b\";",
+        "const x = \"a\u{2029}b\";",
+        "const x = 'a\u{2028}b';",
+        "const x = 'a\u{2029}b';",
+    ] {
+        let _ = recognized(text);
+    }
+}
+
+#[test]
+fn escape_free_string_literal_does_not_claim_escape_malformed_or_richer_frontiers() {
+    for text in [
+        r#"const x = "\n";"#,
+        r#"const x = "\u0061";"#,
+        r#"const x = "\x61";"#,
+        r#"const x = "\\";"#,
+        r#"const x = "\"";"#,
+        "const x = '\\'';",
+        "const x = \"\\\n\";",
+        "const x = '\\\r\n';",
+        "const x = \"abc;",
+        "const x = 'abc;",
+        "const x = \"abc';",
+        "const x = 'abc\";",
+        "const x = \"abc\".length;",
+        "const x = \"abc\"();",
+        "const x = \"abc\" + x;",
+        "const x = \"abc\" = x;",
+        "const x = \"abc\" ? x : y;",
+        "const x = \"abc\"/*comment*/;",
+        "const x = \"abc\" unexpected;",
+        "const x = \"abc\";;",
+        "const x = \"abc\"\nconst y = foo;",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn escape_free_string_literal_eof_asi_preserves_closing_quote_significant_end() {
+    let text = "const x = \"abc\"   \t\n";
+    let script = recognized(text);
+    let declaration = &script.declarations()[0];
+    assert_eq!(declaration.declaration().fragment(), "const x = \"abc\"");
+    assert_eq!(
+        (
+            declaration.declaration().range().start(),
+            declaration.declaration().range().end()
+        ),
+        (0, 15)
+    );
+    assert!(matches!(
+        declaration.terminator(),
+        SelectedDeclarationTerminator::AutomaticAtEof
+    ));
+}
+
+#[test]
+fn escape_free_string_literal_coverage_makes_later_existing_grammar_evidence_reachable() {
+    for (text, expected_fragment, expected_range) in [
+        (r#"const x = "abc"; let \u{};"#, r"\u{}", (21, 25)),
+        (r#"const x = "abc"; let a\u{};"#, r"\u{}", (22, 26)),
+        (r#"const x = "abc"; let \u{61"#, r"\u{61", (21, 26)),
+    ] {
+        let subject = grammar_rejection(text);
+        assert_eq!(subject.fragment(), expected_fragment, "{text}");
+        assert_eq!(
+            (subject.range().start(), subject.range().end()),
+            expected_range,
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn escape_free_string_literal_aggregate_lifecycle_remains_incomplete_or_existing_rejection() {
+    use super::qualification::{QualificationVerdictKind, RejectionFamily};
+    use super::selected_qualification_integration::{
+        SelectedQualificationAttempt, attempt_selected_qualification,
+    };
+
+    for text in [
+        "const x = \"abc\";",
+        "const x = 'abc';",
+        "const x = \"a\u{2028}b\";",
+        "let x = \"abc\", y = foo;",
+    ] {
+        assert!(
+            matches!(
+                attempt_selected_qualification(&source(text)),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text}"
+        );
+    }
+
+    for (text, expected_fragment, expected_range) in [
+        (r#"let \u0030 = "abc";"#, r"\u0030", (4, 10)),
+        (r#"let \u0069f = "abc";"#, r"\u0069f", (4, 11)),
+        ("let let = \"abc\";", "let", (4, 7)),
+        ("let x = \"abc\", x = foo;", "x", (15, 16)),
+        ("const x = \"abc\", y;", "y", (17, 18)),
+        ("let x = \"abc\"; let x = foo;", "x", (19, 20)),
+    ] {
+        let SelectedQualificationAttempt::Outcome(outcome) =
+            attempt_selected_qualification(&source(text))
+        else {
+            panic!("expected static rejection for {text}");
+        };
+        assert_eq!(
+            outcome.verdict(),
+            Some(QualificationVerdictKind::StaticSemanticsRejected),
+            "{text}"
+        );
+        let evidence = outcome
+            .rejection_evidence()
+            .expect("static rejection evidence");
+        assert_eq!(evidence.family(), RejectionFamily::StaticSemantics, "{text}");
+        let subject = evidence
+            .subject()
+            .authored_anchor()
+            .expect("static subject must remain authored");
+        assert_eq!(subject.fragment(), expected_fragment, "{text}");
+        assert_eq!(
+            (subject.range().start(), subject.range().end()),
+            expected_range,
+            "{text}"
+        );
+    }
+
+    let SelectedQualificationAttempt::Outcome(outcome) =
+        attempt_selected_qualification(&source(r#"const x = "abc"; let \u{};"#))
+    else {
+        panic!("expected existing Grammar rejection to become reachable");
+    };
+    assert_eq!(
+        outcome.verdict(),
+        Some(QualificationVerdictKind::SyntaxRejected)
+    );
+    let evidence = outcome
+        .rejection_evidence()
+        .expect("Grammar rejection evidence");
+    assert_eq!(evidence.family(), RejectionFamily::Grammar);
+    let subject = evidence
+        .subject()
+        .authored_anchor()
+        .expect("Grammar subject must remain authored");
+    assert_eq!(subject.fragment(), r"\u{}");
+    assert_eq!((subject.range().start(), subject.range().end()), (21, 25));
+}
