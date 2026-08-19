@@ -54,10 +54,42 @@ struct Escape {
 }
 
 const RESERVED: &[&str] = &[
-    "break", "case", "catch", "class", "const", "continue", "debugger", "default", "delete",
-    "do", "else", "enum", "export", "extends", "false", "finally", "for", "function", "if",
-    "import", "in", "instanceof", "new", "null", "return", "super", "switch", "this",
-    "throw", "true", "try", "typeof", "var", "void", "while", "with",
+    "break",
+    "case",
+    "catch",
+    "class",
+    "const",
+    "continue",
+    "debugger",
+    "default",
+    "delete",
+    "do",
+    "else",
+    "enum",
+    "export",
+    "extends",
+    "false",
+    "finally",
+    "for",
+    "function",
+    "if",
+    "import",
+    "in",
+    "instanceof",
+    "new",
+    "null",
+    "return",
+    "super",
+    "switch",
+    "this",
+    "throw",
+    "true",
+    "try",
+    "typeof",
+    "var",
+    "void",
+    "while",
+    "with",
 ];
 
 fn slice(text: &str, Range(start, end): Range) -> &str {
@@ -397,7 +429,10 @@ fn position_controls_pin_non_ownership_not_permanent_global_disposition() {
     for (index, (text, range)) in fixtures.iter().enumerate() {
         assert_eq!(slice(text, *range), "this");
         assert_eq!(route("this"), Route::DirectThis);
-        assert_eq!(authored_anchor(253_300 + index as u64, text, *range), "this");
+        assert_eq!(
+            authored_anchor(253_300 + index as u64, text, *range),
+            "this"
+        );
     }
 
     let expected = FrontierOutcome::UnsupportedCoverage;
@@ -464,30 +499,15 @@ fn existing_static_subjects_and_families_remain_reachable() {
     }
 
     let expected = FrontierOutcome::StaticSemanticsRejected;
-    assert!(matches!(
-        expected,
-        FrontierOutcome::StaticSemanticsRejected
-    ));
+    assert!(matches!(expected, FrontierOutcome::StaticSemanticsRejected));
 }
 
 #[test]
 fn existing_grammar_subjects_and_syntax_family_remain_reachable() {
     let fixtures = [
-        (
-            r"const x = this; let \u{};",
-            Range(20, 24),
-            r"\u{}",
-        ),
-        (
-            r"const x = this; let a\u{};",
-            Range(21, 25),
-            r"\u{}",
-        ),
-        (
-            r"const x = this; let \u{61",
-            Range(20, 25),
-            r"\u{61",
-        ),
+        (r"const x = this; let \u{};", Range(20, 24), r"\u{}"),
+        (r"const x = this; let a\u{};", Range(21, 25), r"\u{}"),
+        (r"const x = this; let \u{61", Range(20, 25), r"\u{61"),
     ];
 
     for (index, (text, subject, fragment)) in fixtures.iter().enumerate() {
