@@ -21,6 +21,8 @@ mod qualification_selected_escaped_identifier_reference_initializer_validation_t
 #[cfg(test)]
 mod qualification_selected_identifier_reference_initializer_validation_tests;
 #[cfg(test)]
+mod qualification_selected_null_literal_initializer_validation_tests;
+#[cfg(test)]
 mod qualification_static_semantics_validation_tests;
 #[cfg(test)]
 mod qualification_validation_tests;
