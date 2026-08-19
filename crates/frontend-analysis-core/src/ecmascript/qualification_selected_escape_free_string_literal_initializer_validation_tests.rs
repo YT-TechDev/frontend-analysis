@@ -269,18 +269,8 @@ fn selected_boundaries_and_existing_sibling_initializers_compose() {
             25,
             Some(b';'),
         ),
-        (
-            "const x = \"a\u{2028}b\";",
-            Range(10, 17),
-            17,
-            Some(b';'),
-        ),
-        (
-            "const x = 'a\u{2029}b';",
-            Range(10, 17),
-            17,
-            Some(b';'),
-        ),
+        ("const x = \"a\u{2028}b\";", Range(10, 17), 17, Some(b';')),
+        ("const x = 'a\u{2029}b';", Range(10, 17), 17, Some(b';')),
     ];
 
     for (index, (text, rhs_range, boundary, expected_byte)) in fixtures.iter().enumerate() {
@@ -420,11 +410,7 @@ fn existing_static_subjects_and_families_remain_reachable() {
 fn existing_grammar_subjects_and_syntax_family_remain_reachable() {
     let fixtures = [
         (r#"const x = "abc"; let \u{};"#, Range(21, 25), r"\u{}"),
-        (
-            r#"const x = "abc"; let a\u{};"#,
-            Range(22, 26),
-            r"\u{}",
-        ),
+        (r#"const x = "abc"; let a\u{};"#, Range(22, 26), r"\u{}"),
         (r#"const x = "abc"; let \u{61"#, Range(21, 26), r"\u{61"),
     ];
 
