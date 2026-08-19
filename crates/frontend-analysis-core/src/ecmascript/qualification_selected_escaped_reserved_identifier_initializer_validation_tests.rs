@@ -208,23 +208,11 @@ const NON_TRIGGERS: &[NonTriggerFixture] = &[
     non_trigger_fixture(r"a\u0077ait", "await", NonTriggerKind::YieldAwait),
     non_trigger_fixture(r"\u006Cet", "let", NonTriggerKind::StrictOnly),
     non_trigger_fixture(r"\u0073tatic", "static", NonTriggerKind::StrictOnly),
-    non_trigger_fixture(
-        r"\u0069mplements",
-        "implements",
-        NonTriggerKind::StrictOnly,
-    ),
-    non_trigger_fixture(
-        r"\u0069nterface",
-        "interface",
-        NonTriggerKind::StrictOnly,
-    ),
+    non_trigger_fixture(r"\u0069mplements", "implements", NonTriggerKind::StrictOnly),
+    non_trigger_fixture(r"\u0069nterface", "interface", NonTriggerKind::StrictOnly),
     non_trigger_fixture(r"\u0070ackage", "package", NonTriggerKind::StrictOnly),
     non_trigger_fixture(r"\u0070rivate", "private", NonTriggerKind::StrictOnly),
-    non_trigger_fixture(
-        r"\u0070rotected",
-        "protected",
-        NonTriggerKind::StrictOnly,
-    ),
+    non_trigger_fixture(r"\u0070rotected", "protected", NonTriggerKind::StrictOnly),
     non_trigger_fixture(r"\u0070ublic", "public", NonTriggerKind::StrictOnly),
     non_trigger_fixture(r"\u0065val", "eval", NonTriggerKind::EvalArguments),
     non_trigger_fixture(
@@ -390,15 +378,11 @@ fn escape_at(text: &str, start: usize) -> Result<(usize, u32), DecodeFailure> {
 }
 
 fn valid_start(code_point: u32) -> bool {
-    code_point == u32::from(b'$')
-        || code_point == u32::from(b'_')
-        || is_id_start(code_point)
+    code_point == u32::from(b'$') || code_point == u32::from(b'_') || is_id_start(code_point)
 }
 
 fn valid_part(code_point: u32) -> bool {
-    valid_start(code_point)
-        || is_id_continue(code_point)
-        || matches!(code_point, 0x200C | 0x200D)
+    valid_start(code_point) || is_id_continue(code_point) || matches!(code_point, 0x200C | 0x200D)
 }
 
 fn decode(text: &str) -> Result<Decoded, DecodeFailure> {
@@ -515,12 +499,7 @@ fn escaped_reserved_rhs_pins_authored_subject_decoding_and_static_outcome() {
             "{}",
             fixture.id
         );
-        assert_eq!(
-            decoded.string_value,
-            fixture.string_value,
-            "{}",
-            fixture.id
-        );
+        assert_eq!(decoded.string_value, fixture.string_value, "{}", fixture.id);
         assert!(is_reserved(&decoded.string_value), "{}", fixture.id);
         assert_eq!(fixture.rule_id, RULE_ID, "{}", fixture.id);
         assert_eq!(
