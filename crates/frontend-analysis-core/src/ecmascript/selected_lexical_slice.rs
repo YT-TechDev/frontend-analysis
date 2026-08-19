@@ -68,10 +68,40 @@ pub(super) enum SelectedBindingNameState {
 }
 
 #[derive(Debug)]
+pub(super) enum SelectedIdentifierReferenceNameState {
+    Direct,
+    Escaped { decoded: String },
+}
+
+#[derive(Debug)]
+pub(super) struct SelectedIdentifierReferenceFact {
+    reference: SourceAnchor,
+    name_state: SelectedIdentifierReferenceNameState,
+}
+
+impl SelectedIdentifierReferenceFact {
+    pub(super) fn reference(&self) -> &SourceAnchor {
+        &self.reference
+    }
+
+    pub(super) fn name_state(&self) -> &SelectedIdentifierReferenceNameState {
+        &self.name_state
+    }
+
+    pub(super) fn semantic_name(&self) -> &str {
+        match &self.name_state {
+            SelectedIdentifierReferenceNameState::Direct => self.reference.fragment(),
+            SelectedIdentifierReferenceNameState::Escaped { decoded } => decoded.as_str(),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub(super) struct SelectedLexicalBinding {
     binding: SourceAnchor,
     name_state: SelectedBindingNameState,
     initializer: SelectedInitializerState,
+    identifier_reference_initializer: Option<SelectedIdentifierReferenceFact>,
     escaped_reserved_initializer_identifier: Option<SourceAnchor>,
 }
 
@@ -94,6 +124,10 @@ impl SelectedLexicalBinding {
 
     pub(super) fn initializer(&self) -> SelectedInitializerState {
         self.initializer
+    }
+
+    pub(super) fn identifier_reference_initializer(&self) -> Option<&SelectedIdentifierReferenceFact> {
+        self.identifier_reference_initializer.as_ref()
     }
 
     pub(super) fn escaped_reserved_initializer_identifier(&self) -> Option<&SourceAnchor> {
@@ -150,7 +184,7 @@ enum ParseFailure {
 
 #[derive(Debug)]
 enum SelectedIdentifierReferenceRecognition {
-    Matched,
+    Matched(SelectedIdentifierReferenceFact),
     EscapedReservedIdentifierName { identifier: SourceAnchor },
     NotSelected,
     ResourceLimited,
@@ -229,44 +263,52 @@ impl<'source> Cursor<'source> {
                 self.parse_selected_binding_identifier(grammar_context)?;
 
             self.skip_selected_trivia();
-            let (initializer, escaped_reserved_initializer_identifier, significant_end) =
-                if self.consume_initializer_equals() {
-                    self.skip_selected_trivia();
-                    let mut escaped_reserved_initializer_identifier = None;
-                    if !self.consume_selected_decimal_integer()
-                        && !self.consume_selected_boolean_literal()
-                        && !self.consume_selected_null_literal()
-                        && !self.consume_selected_this_expression()
-                        && !self.consume_selected_escape_free_string_literal()
-                    {
-                        match self.consume_selected_identifier_reference() {
-                            SelectedIdentifierReferenceRecognition::Matched => {}
-                            SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName {
-                                identifier,
-                            } => {
-                                escaped_reserved_initializer_identifier = Some(identifier);
-                            }
-                            SelectedIdentifierReferenceRecognition::NotSelected => {
-                                return Err(ParseFailure::UnsupportedCoverage);
-                            }
-                            SelectedIdentifierReferenceRecognition::ResourceLimited => {
-                                return Err(ParseFailure::ResourceLimited);
-                            }
-                            SelectedIdentifierReferenceRecognition::InternalFailure => {
-                                return Err(ParseFailure::InternalFailure);
-                            }
+            let (
+                initializer,
+                identifier_reference_initializer,
+                escaped_reserved_initializer_identifier,
+                significant_end,
+            ) = if self.consume_initializer_equals() {
+                self.skip_selected_trivia();
+                let mut identifier_reference_initializer = None;
+                let mut escaped_reserved_initializer_identifier = None;
+                if !self.consume_selected_decimal_integer()
+                    && !self.consume_selected_boolean_literal()
+                    && !self.consume_selected_null_literal()
+                    && !self.consume_selected_this_expression()
+                    && !self.consume_selected_escape_free_string_literal()
+                {
+                    match self.consume_selected_identifier_reference() {
+                        SelectedIdentifierReferenceRecognition::Matched(reference) => {
+                            identifier_reference_initializer = Some(reference);
+                        }
+                        SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName {
+                            identifier,
+                        } => {
+                            escaped_reserved_initializer_identifier = Some(identifier);
+                        }
+                        SelectedIdentifierReferenceRecognition::NotSelected => {
+                            return Err(ParseFailure::UnsupportedCoverage);
+                        }
+                        SelectedIdentifierReferenceRecognition::ResourceLimited => {
+                            return Err(ParseFailure::ResourceLimited);
+                        }
+                        SelectedIdentifierReferenceRecognition::InternalFailure => {
+                            return Err(ParseFailure::InternalFailure);
                         }
                     }
-                    let initializer_end = self.offset;
-                    self.skip_selected_trivia();
-                    (
-                        SelectedInitializerState::SelectedPresent,
-                        escaped_reserved_initializer_identifier,
-                        initializer_end,
-                    )
-                } else {
-                    (SelectedInitializerState::Absent, None, binding_end)
-                };
+                }
+                let initializer_end = self.offset;
+                self.skip_selected_trivia();
+                (
+                    SelectedInitializerState::SelectedPresent,
+                    identifier_reference_initializer,
+                    escaped_reserved_initializer_identifier,
+                    initializer_end,
+                )
+            } else {
+                (SelectedInitializerState::Absent, None, None, binding_end)
+            };
 
             let binding = self.anchor(binding_start, binding_end)?;
             bindings
@@ -276,6 +318,7 @@ impl<'source> Cursor<'source> {
                 binding,
                 name_state,
                 initializer,
+                identifier_reference_initializer,
                 escaped_reserved_initializer_identifier,
             });
             first_binding = false;
@@ -550,15 +593,14 @@ impl<'source> Cursor<'source> {
     /// This is a position-specific recognizer, not a general ECMAScript
     /// Identifier abstraction. It scans one maximal direct/escaped
     /// `IdentifierName` with local offsets and commits `self.offset` only after
-    /// the complete name is selected. Direct-only spelling stays borrowed and
-    /// allocation-free. Once a formed, position-valid authored escape appears,
-    /// a temporary decoded `StringValue` is built only for complete-name policy
-    /// and discarded after recognition.
+    /// the complete name is selected. Direct-only spelling stays source-backed
+    /// and allocation-free. Once a formed, position-valid authored escape
+    /// appears, the exact decoded semantic name is retained only for the first
+    /// Binding / Scope consumer fixed by #270/#273.
     ///
     /// Direct authored `yield` / `await` and escaped Identifier spellings that
     /// decode to those names use different grammar routes, as fixed by #242.
-    /// This fixed context selects both routes, so the production domain model
-    /// needs only successful applicability and retains no route state.
+    /// This fixed context selects both routes; route identity is not retained.
     fn consume_selected_identifier_reference(&mut self) -> SelectedIdentifierReferenceRecognition {
         let start = self.offset;
         let mut end = start;
@@ -652,8 +694,20 @@ impl<'source> Cursor<'source> {
             };
         }
 
+        let reference = match self.anchor(start, end) {
+            Ok(reference) => reference,
+            Err(_) => return SelectedIdentifierReferenceRecognition::InternalFailure,
+        };
+        let name_state = match decoded {
+            Some(decoded) => SelectedIdentifierReferenceNameState::Escaped { decoded },
+            None => SelectedIdentifierReferenceNameState::Direct,
+        };
+
         self.offset = end;
-        SelectedIdentifierReferenceRecognition::Matched
+        SelectedIdentifierReferenceRecognition::Matched(SelectedIdentifierReferenceFact {
+            reference,
+            name_state,
+        })
     }
 
     fn consume_initializer_equals(&mut self) -> bool {
