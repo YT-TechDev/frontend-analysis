@@ -72,6 +72,7 @@ pub(super) struct SelectedLexicalBinding {
     binding: SourceAnchor,
     name_state: SelectedBindingNameState,
     initializer: SelectedInitializerState,
+    escaped_reserved_initializer_identifier: Option<SourceAnchor>,
 }
 
 impl SelectedLexicalBinding {
@@ -93,6 +94,10 @@ impl SelectedLexicalBinding {
 
     pub(super) fn initializer(&self) -> SelectedInitializerState {
         self.initializer
+    }
+
+    pub(super) fn escaped_reserved_initializer_identifier(&self) -> Option<&SourceAnchor> {
+        self.escaped_reserved_initializer_identifier.as_ref()
     }
 }
 
@@ -143,9 +148,10 @@ enum ParseFailure {
     InternalFailure,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug)]
 enum SelectedIdentifierReferenceRecognition {
     Matched,
+    EscapedReservedIdentifierName { identifier: SourceAnchor },
     NotSelected,
     ResourceLimited,
     InternalFailure,
@@ -223,33 +229,44 @@ impl<'source> Cursor<'source> {
                 self.parse_selected_binding_identifier(grammar_context)?;
 
             self.skip_selected_trivia();
-            let (initializer, significant_end) = if self.consume_initializer_equals() {
-                self.skip_selected_trivia();
-                if !self.consume_selected_decimal_integer()
-                    && !self.consume_selected_boolean_literal()
-                    && !self.consume_selected_null_literal()
-                    && !self.consume_selected_this_expression()
-                    && !self.consume_selected_escape_free_string_literal()
-                {
-                    match self.consume_selected_identifier_reference() {
-                        SelectedIdentifierReferenceRecognition::Matched => {}
-                        SelectedIdentifierReferenceRecognition::NotSelected => {
-                            return Err(ParseFailure::UnsupportedCoverage);
-                        }
-                        SelectedIdentifierReferenceRecognition::ResourceLimited => {
-                            return Err(ParseFailure::ResourceLimited);
-                        }
-                        SelectedIdentifierReferenceRecognition::InternalFailure => {
-                            return Err(ParseFailure::InternalFailure);
+            let (initializer, escaped_reserved_initializer_identifier, significant_end) =
+                if self.consume_initializer_equals() {
+                    self.skip_selected_trivia();
+                    let mut escaped_reserved_initializer_identifier = None;
+                    if !self.consume_selected_decimal_integer()
+                        && !self.consume_selected_boolean_literal()
+                        && !self.consume_selected_null_literal()
+                        && !self.consume_selected_this_expression()
+                        && !self.consume_selected_escape_free_string_literal()
+                    {
+                        match self.consume_selected_identifier_reference() {
+                            SelectedIdentifierReferenceRecognition::Matched => {}
+                            SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName {
+                                identifier,
+                            } => {
+                                escaped_reserved_initializer_identifier = Some(identifier);
+                            }
+                            SelectedIdentifierReferenceRecognition::NotSelected => {
+                                return Err(ParseFailure::UnsupportedCoverage);
+                            }
+                            SelectedIdentifierReferenceRecognition::ResourceLimited => {
+                                return Err(ParseFailure::ResourceLimited);
+                            }
+                            SelectedIdentifierReferenceRecognition::InternalFailure => {
+                                return Err(ParseFailure::InternalFailure);
+                            }
                         }
                     }
-                }
-                let initializer_end = self.offset;
-                self.skip_selected_trivia();
-                (SelectedInitializerState::SelectedPresent, initializer_end)
-            } else {
-                (SelectedInitializerState::Absent, binding_end)
-            };
+                    let initializer_end = self.offset;
+                    self.skip_selected_trivia();
+                    (
+                        SelectedInitializerState::SelectedPresent,
+                        escaped_reserved_initializer_identifier,
+                        initializer_end,
+                    )
+                } else {
+                    (SelectedInitializerState::Absent, None, binding_end)
+                };
 
             let binding = self.anchor(binding_start, binding_end)?;
             bindings
@@ -259,6 +276,7 @@ impl<'source> Cursor<'source> {
                 binding,
                 name_state,
                 initializer,
+                escaped_reserved_initializer_identifier,
             });
             first_binding = false;
 
@@ -620,7 +638,18 @@ impl<'source> Cursor<'source> {
 
         let semantic_name = decoded.as_deref().unwrap_or_else(|| &self.text[start..end]);
         if is_unconditionally_reserved_word(semantic_name) {
-            return SelectedIdentifierReferenceRecognition::NotSelected;
+            if decoded.is_none() {
+                return SelectedIdentifierReferenceRecognition::NotSelected;
+            }
+
+            let identifier = match self.anchor(start, end) {
+                Ok(identifier) => identifier,
+                Err(_) => return SelectedIdentifierReferenceRecognition::InternalFailure,
+            };
+            self.offset = end;
+            return SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName {
+                identifier,
+            };
         }
 
         self.offset = end;

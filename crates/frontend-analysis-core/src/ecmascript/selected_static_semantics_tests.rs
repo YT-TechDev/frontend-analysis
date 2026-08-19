@@ -199,6 +199,10 @@ fn accepted_precedence_matrix_is_declaration_source_order_then_local_rule_order(
             SelectedStaticSemanticsRejection::EscapedReservedWord { binding } => {
                 ("EE04-R08", (binding.range().start(), binding.range().end()))
             }
+            SelectedStaticSemanticsRejection::EscapedReservedWordInitializer { identifier } => (
+                "EE04-R08",
+                (identifier.range().start(), identifier.range().end()),
+            ),
         };
 
         assert_eq!(
@@ -262,6 +266,96 @@ fn escaped_ee01_and_ee04_preserve_exact_primary_authored_evidence() {
 }
 
 #[test]
+fn escaped_reserved_initializer_ee04_preserves_exact_rhs_subject_and_precedence() {
+    for (text, expected_fragment, expected_range) in [
+        (r"const x = \u0074his;", r"\u0074his", (10, 19)),
+        (r"const x = \u006Eull;", r"\u006Eull", (10, 19)),
+        (r"const x = \u0074rue;", r"\u0074rue", (10, 19)),
+        (r"const x = \u0066alse;", r"\u0066alse", (10, 20)),
+        (r"const x = n\u0075ll;", r"n\u0075ll", (10, 19)),
+        (r"const x = tr\u0075e;", r"tr\u0075e", (10, 19)),
+        (r"const x = thi\u0073;", r"thi\u0073", (10, 19)),
+    ] {
+        let (_, script) = recognized(text);
+        match evaluate_selected_static_semantics(&script) {
+            SelectedStaticSemanticsOutcome::Rejected(
+                SelectedStaticSemanticsRejection::EscapedReservedWordInitializer { identifier },
+            ) => {
+                assert_eq!(identifier.fragment(), expected_fragment, "{text}");
+                assert_eq!(
+                    (identifier.range().start(), identifier.range().end()),
+                    expected_range,
+                    "{text}"
+                );
+            }
+            other => panic!("expected RHS EE-04-R08 rejection for {text:?}, got {other:?}"),
+        }
+    }
+
+    for (text, expected_rule, expected_fragment, expected_range) in [
+        (r"let let = \u006Eull;", "R01", "let", (4, 7)),
+        (
+            r"let x = \u006Eull, x = foo;",
+            "EE04-R08-RHS",
+            r"\u006Eull",
+            (8, 17),
+        ),
+        (
+            r"const x = \u006Eull, y;",
+            "EE04-R08-RHS",
+            r"\u006Eull",
+            (10, 19),
+        ),
+        (
+            r"let x = foo; let x = \u006Eull;",
+            "EE04-R08-RHS",
+            r"\u006Eull",
+            (21, 30),
+        ),
+    ] {
+        let (_, script) = recognized(text);
+        let rejection = match evaluate_selected_static_semantics(&script) {
+            SelectedStaticSemanticsOutcome::Rejected(rejection) => rejection,
+            other => panic!("expected precedence rejection for {text:?}, got {other:?}"),
+        };
+        let (actual_rule, anchor) = match rejection {
+            SelectedStaticSemanticsRejection::BindingNamedLet { binding } => ("R01", binding),
+            SelectedStaticSemanticsRejection::EscapedReservedWordInitializer { identifier } => {
+                ("EE04-R08-RHS", identifier)
+            }
+            other => panic!("unexpected precedence rejection for {text:?}: {other:?}"),
+        };
+        assert_eq!(actual_rule, expected_rule, "{text}");
+        assert_eq!(anchor.fragment(), expected_fragment, "{text}");
+        assert_eq!(
+            (anchor.range().start(), anchor.range().end()),
+            expected_range,
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn escaped_reserved_initializer_non_triggers_remain_accepted() {
+    for rhs in [
+        r"\u0079ield",
+        r"a\u0077ait",
+        r"\u006Cet",
+        r"\u0073tatic",
+        r"\u0069mplements",
+        r"\u0069nterface",
+        r"\u0070ackage",
+        r"\u0070rivate",
+        r"\u0070rotected",
+        r"\u0070ublic",
+        r"\u0065val",
+        r"\u0061rguments",
+    ] {
+        accepted(&format!("const x = {rhs};"));
+    }
+}
+
+#[test]
 fn escaped_semantic_name_equality_is_exact_and_not_normalized() {
     for text in [
         r"let \u0061, a;",
@@ -321,6 +415,10 @@ fn escaped_binding_precedence_matches_all_twelve_candidate_independent_witnesses
             SelectedStaticSemanticsRejection::EscapedReservedWord { binding } => {
                 ("EE04-R08", (binding.range().start(), binding.range().end()))
             }
+            SelectedStaticSemanticsRejection::EscapedReservedWordInitializer { identifier } => (
+                "EE04-R08",
+                (identifier.range().start(), identifier.range().end()),
+            ),
             SelectedStaticSemanticsRejection::BindingNamedLet { binding } => {
                 ("R01", (binding.range().start(), binding.range().end()))
             }
@@ -385,6 +483,7 @@ fn selected_rejections_map_to_static_semantics_rejected_with_authored_primary_ev
         ("let x, x;", "x"),
         ("const x;", "x"),
         ("let x, y; let y;", "y"),
+        (r"const x = \u006Eull;", r"\u006Eull"),
     ] {
         let (source, script) = recognized(text);
         let rejection = match evaluate_selected_static_semantics(&script) {
@@ -448,4 +547,5 @@ fn production_static_semantics_preserves_architecture_boundaries_in_source() {
     assert_eq!(production.matches("try_reserve(1)").count(), 2);
     assert!(production.contains("DuplicateDeclarationBinding"));
     assert!(production.contains("DuplicateLexicalName"));
+    assert!(production.contains("EscapedReservedWordInitializer"));
 }

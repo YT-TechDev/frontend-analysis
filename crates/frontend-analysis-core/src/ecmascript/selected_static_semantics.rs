@@ -34,6 +34,9 @@ pub(super) enum SelectedStaticSemanticsRejection {
     EscapedReservedWord {
         binding: SourceAnchor,
     },
+    EscapedReservedWordInitializer {
+        identifier: SourceAnchor,
+    },
     BindingNamedLet {
         binding: SourceAnchor,
     },
@@ -56,6 +59,7 @@ impl SelectedStaticSemanticsRejection {
             Self::InvalidEscapedIdentifierStart { escape }
             | Self::InvalidEscapedIdentifierPart { escape } => escape,
             Self::EscapedReservedWord { binding } | Self::BindingNamedLet { binding } => binding,
+            Self::EscapedReservedWordInitializer { identifier } => identifier,
             Self::DuplicateDeclarationBinding {
                 duplicate_binding, ..
             } => duplicate_binding,
@@ -114,6 +118,14 @@ pub(super) fn evaluate_selected_static_semantics(
                 return SelectedStaticSemanticsOutcome::Rejected(
                     SelectedStaticSemanticsRejection::BindingNamedLet {
                         binding: binding.binding().clone(),
+                    },
+                );
+            }
+
+            if let Some(identifier) = binding.escaped_reserved_initializer_identifier() {
+                return SelectedStaticSemanticsOutcome::Rejected(
+                    SelectedStaticSemanticsRejection::EscapedReservedWordInitializer {
+                        identifier: identifier.clone(),
                     },
                 );
             }
