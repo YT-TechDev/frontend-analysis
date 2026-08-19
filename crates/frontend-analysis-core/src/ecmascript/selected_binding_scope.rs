@@ -10,13 +10,13 @@ use crate::SourceAnchor;
 
 use super::selected_static_semantics::SelectedStaticSemanticsAccepted;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 pub(super) enum SelectedBindingScopeTarget<'script> {
     SameSourceSelectedLexicalBinding(&'script SourceAnchor),
     NoSameSourceSelectedLexicalBinding,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 pub(super) struct SelectedBindingScopeRelation<'script> {
     reference: &'script SourceAnchor,
     semantic_name: &'script str,
