@@ -126,7 +126,9 @@ impl SelectedLexicalBinding {
         self.initializer
     }
 
-    pub(super) fn identifier_reference_initializer(&self) -> Option<&SelectedIdentifierReferenceFact> {
+    pub(super) fn identifier_reference_initializer(
+        &self,
+    ) -> Option<&SelectedIdentifierReferenceFact> {
         self.identifier_reference_initializer.as_ref()
     }
 
