@@ -225,7 +225,9 @@ impl<'source> Cursor<'source> {
             self.skip_selected_trivia();
             let (initializer, significant_end) = if self.consume_initializer_equals() {
                 self.skip_selected_trivia();
-                if !self.consume_selected_decimal_integer() {
+                if !self.consume_selected_decimal_integer()
+                    && !self.consume_selected_boolean_literal()
+                {
                     match self.consume_selected_identifier_reference() {
                         SelectedIdentifierReferenceRecognition::Matched => {}
                         SelectedIdentifierReferenceRecognition::NotSelected => {
@@ -447,6 +449,18 @@ impl<'source> Cursor<'source> {
         };
 
         Ok((start, end, name_state))
+    }
+
+    /// Recognizes exactly one direct-authored `BooleanLiteral` in the selected
+    /// initializer position without widening into a general Literal owner.
+    ///
+    /// Reusing the existing keyword boundary prevents a direct `true` / `false`
+    /// prefix from committing when a direct IdentifierPart or formed authored
+    /// Unicode escape continues the same maximal IdentifierName. Malformed UES
+    /// continuation remains a whole-source transaction concern; no local commit
+    /// policy for that class is retained as domain state.
+    fn consume_selected_boolean_literal(&mut self) -> bool {
+        self.consume_keyword("true") || self.consume_keyword("false")
     }
 
     /// Recognizes one selected `IdentifierReference` atom in the fixed
