@@ -21,6 +21,8 @@ mod qualification_selected_escape_free_string_literal_initializer_validation_tes
 #[cfg(test)]
 mod qualification_selected_escaped_identifier_reference_initializer_validation_tests;
 #[cfg(test)]
+mod qualification_selected_escaped_reserved_identifier_initializer_validation_tests;
+#[cfg(test)]
 mod qualification_selected_identifier_reference_initializer_validation_tests;
 #[cfg(test)]
 mod qualification_selected_null_literal_initializer_validation_tests;
