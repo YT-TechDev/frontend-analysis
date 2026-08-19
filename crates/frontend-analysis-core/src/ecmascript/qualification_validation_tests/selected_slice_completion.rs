@@ -63,10 +63,10 @@ const _: () = {
 enum NonTriggerReason {
     OwningSyntaxAbsent(&'static str),
     StrictModeImpossibleInSelectedGrammar,
+    StrictModeImpossibleAndSelectedLiteralAlternativeExcluded(&'static str),
     YieldParameterFalse,
     AwaitParameterFalse,
     ScriptGoalExcludesModuleRule,
-    SelectedLiteralAlternativeCannotTriggerRule(&'static str),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -176,14 +176,14 @@ fn classify(rule: &RuleUnit) -> SelectedSliceDisposition {
     match (rule.container_id, rule.id) {
         ("EE-01", unexpected) => panic!("unclassified selected EE-01 rule {unexpected}"),
         ("EE-02", "EE-02-R01") => SelectedSliceDisposition::StructurallyNonTriggering(
-            NonTriggerReason::SelectedLiteralAlternativeCannotTriggerRule(
-                "strict-only rule; selected grammar is structurally non-strict; selected decimal integer also excludes legacy numeric alternatives",
+            NonTriggerReason::StrictModeImpossibleAndSelectedLiteralAlternativeExcluded(
+                "selected decimal integer excludes legacy numeric alternatives",
             ),
         ),
         ("EE-02", unexpected) => panic!("unclassified selected EE-02 rule {unexpected}"),
         ("EE-03", "EE-03-R01") => SelectedSliceDisposition::StructurallyNonTriggering(
-            NonTriggerReason::SelectedLiteralAlternativeCannotTriggerRule(
-                "strict-only rule; selected grammar is structurally non-strict; selected StringLiteral is also escape-free and excludes legacy escape alternatives",
+            NonTriggerReason::StrictModeImpossibleAndSelectedLiteralAlternativeExcluded(
+                "selected StringLiteral is escape-free and excludes legacy escape alternatives",
             ),
         ),
         ("EE-03", unexpected) => panic!("unclassified selected EE-03 rule {unexpected}"),
@@ -380,7 +380,7 @@ fn strict_numeric_and_string_non_triggers_are_not_inferred_from_production_omiss
     assert!(matches!(
         classify(ee02),
         SelectedSliceDisposition::StructurallyNonTriggering(
-            NonTriggerReason::SelectedLiteralAlternativeCannotTriggerRule(_)
+            NonTriggerReason::StrictModeImpossibleAndSelectedLiteralAlternativeExcluded(_)
         )
     ));
 
@@ -391,7 +391,7 @@ fn strict_numeric_and_string_non_triggers_are_not_inferred_from_production_omiss
     assert!(matches!(
         classify(ee03),
         SelectedSliceDisposition::StructurallyNonTriggering(
-            NonTriggerReason::SelectedLiteralAlternativeCannotTriggerRule(_)
+            NonTriggerReason::StrictModeImpossibleAndSelectedLiteralAlternativeExcluded(_)
         )
     ));
 }
