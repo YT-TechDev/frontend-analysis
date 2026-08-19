@@ -244,7 +244,11 @@ fn fixture_ids_and_sources_are_stable_and_unique() {
     let mut sources = BTreeSet::new();
 
     for fixture in FIXTURES {
-        assert!(ids.insert(fixture.id), "duplicate fixture id {}", fixture.id);
+        assert!(
+            ids.insert(fixture.id),
+            "duplicate fixture id {}",
+            fixture.id
+        );
         assert!(
             sources.insert(fixture.source),
             "duplicate fixture source {}",
@@ -252,7 +256,8 @@ fn fixture_ids_and_sources_are_stable_and_unique() {
         );
     }
 
-    assert_eq!(FIXTURES.len(), 12);
+    assert_eq!(ids.len(), 12);
+    assert_eq!(sources.len(), 12);
 }
 
 #[test]
@@ -328,7 +333,9 @@ fn canonical_equivalence_does_not_create_a_same_source_relation() {
     let relation = canonical.relations[0];
     let source = SourceText::new(SourceId::new(100), canonical.source.to_owned());
 
-    let composed = source.anchor(4, 6).expect("composed binding range must be valid");
+    let composed = source
+        .anchor(4, 6)
+        .expect("composed binding range must be valid");
     assert_eq!(composed.fragment(), "é");
     assert_eq!(relation.reference, ExpectedAnchor::new(16, 23, "e\\u0301"));
     assert_eq!(relation.semantic_name, "e\u{301}");
@@ -403,7 +410,10 @@ fn static_rejection_prerequisites_never_choose_a_relation_target() {
 #[test]
 fn unsupported_grammar_is_not_a_no_match_relation() {
     let unsupported = fixture("unsupported-parenthesized-initializer");
-    assert_eq!(unsupported.processing, ExpectedProcessing::UnsupportedCoverage);
+    assert_eq!(
+        unsupported.processing,
+        ExpectedProcessing::UnsupportedCoverage
+    );
     assert!(unsupported.relations.is_empty());
     assert!(unsupported.source.contains("(y)"));
 }
