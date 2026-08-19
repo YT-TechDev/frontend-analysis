@@ -383,7 +383,6 @@ fn identifier_reference_name_policy_is_fixed_to_non_strict_script_yield_false_aw
         "enum",
         "export",
         "extends",
-        "false",
         "finally",
         "for",
         "function",
@@ -398,7 +397,6 @@ fn identifier_reference_name_policy_is_fixed_to_non_strict_script_yield_false_aw
         "switch",
         "this",
         "throw",
-        "true",
         "try",
         "typeof",
         "var",
@@ -933,4 +931,199 @@ fn repeated_recognition_preserves_equivalent_declaration_binding_order_and_range
     let first = ranges(&long);
     let second = ranges(&long);
     assert_eq!(first, second);
+}
+
+#[test]
+fn direct_boolean_literal_initializers_compose_as_presence_only() {
+    for text in [
+        "const x = true;",
+        "const x = false;",
+        "const x = true",
+        "const x = false   ",
+        "let x = true, y = foo;",
+        "let x = foo, y = false;",
+        "let x = 1, y = true;",
+        "const x = true, y = false;",
+        "const x = true \t\n;",
+    ] {
+        let script = recognized(text);
+        assert!(
+            script
+                .declarations()
+                .iter()
+                .flat_map(|declaration| declaration.bindings())
+                .any(|binding| binding.initializer() == SelectedInitializerState::SelectedPresent),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn direct_boolean_literal_boundary_preserves_maximal_identifier_reference_routing() {
+    for text in [
+        "const x = truex;",
+        "const x = falseValue;",
+        "const x = trueπ;",
+        "const x = true0;",
+        "const x = true$;",
+        "const x = true_;",
+        r"const x = true\u0061;",
+        r"const x = false\u0061;",
+        r"const x = true\u{61};",
+        r"const x = true\u{00000061};",
+        r"const x = true\u0030;",
+        r"const x = true\u200C;",
+        r"const x = true\u200D;",
+    ] {
+        let _ = recognized(text);
+    }
+
+    for text in [
+        r"const x = true\u002D;",
+        r"const x = true\uD800;",
+        r"const x = true\u{D800};",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn direct_boolean_literal_does_not_claim_escaped_malformed_or_richer_neighbors() {
+    for text in [
+        r"const x = \u0074rue;",
+        r"const x = \u0066alse;",
+        r"const x = t\u0072ue;",
+        r"const x = f\u0061lse;",
+        r"const x = true\u{};",
+        r"const x = false\u0;",
+        r"const x = true\u{61",
+        "const x = true.foo;",
+        "const x = false();",
+        "const x = true + x;",
+        "const x = false = x;",
+        "const x = true ? x : y;",
+        "const x = true/*comment*/;",
+        "const x = true unexpected;",
+        "const x = true;;",
+        "const x = true\nconst y = foo;",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn direct_boolean_literal_eof_asi_preserves_significant_end_before_selected_trivia() {
+    let text = "const x = false   \t\n";
+    let script = recognized(text);
+    let declaration = &script.declarations()[0];
+    assert_eq!(declaration.declaration().fragment(), "const x = false");
+    assert_eq!(
+        (
+            declaration.declaration().range().start(),
+            declaration.declaration().range().end()
+        ),
+        (0, 15)
+    );
+    assert!(matches!(
+        declaration.terminator(),
+        SelectedDeclarationTerminator::AutomaticAtEof
+    ));
+}
+
+#[test]
+fn direct_boolean_literal_coverage_makes_later_existing_grammar_evidence_reachable() {
+    for (text, expected_fragment, expected_range) in [
+        (r"const x = true; let \u{};", r"\u{}", (20, 24)),
+        (r"const x = true; let a\u{};", r"\u{}", (21, 25)),
+        (r"const x = true; let \u{61", r"\u{61", (20, 25)),
+    ] {
+        let subject = grammar_rejection(text);
+        assert_eq!(subject.fragment(), expected_fragment, "{text}");
+        assert_eq!(
+            (subject.range().start(), subject.range().end()),
+            expected_range,
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn direct_boolean_literal_aggregate_lifecycle_remains_incomplete_or_existing_rejection() {
+    use super::qualification::{QualificationVerdictKind, RejectionFamily};
+    use super::selected_qualification_integration::{
+        SelectedQualificationAttempt, attempt_selected_qualification,
+    };
+
+    for text in [
+        "const x = true;",
+        "const x = false;",
+        "let x = true, y = foo;",
+        "const x = true, y = false;",
+    ] {
+        assert!(
+            matches!(
+                attempt_selected_qualification(&source(text)),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text}"
+        );
+    }
+
+    for (text, expected_fragment, expected_range) in [
+        (r"let \u0030 = true;", r"\u0030", (4, 10)),
+        (r"let \u0069f = true;", r"\u0069f", (4, 11)),
+        ("let let = true;", "let", (4, 7)),
+        ("let x = true, x = foo;", "x", (14, 15)),
+        ("const x = true, y;", "y", (16, 17)),
+        ("let x = true; let x = foo;", "x", (18, 19)),
+    ] {
+        let SelectedQualificationAttempt::Outcome(outcome) =
+            attempt_selected_qualification(&source(text))
+        else {
+            panic!("expected static rejection for {text}");
+        };
+        assert_eq!(
+            outcome.verdict(),
+            Some(QualificationVerdictKind::StaticSemanticsRejected),
+            "{text}"
+        );
+        let evidence = outcome
+            .rejection_evidence()
+            .expect("static rejection evidence");
+        assert_eq!(
+            evidence.family(),
+            RejectionFamily::StaticSemantics,
+            "{text}"
+        );
+        let subject = evidence
+            .subject()
+            .authored_anchor()
+            .expect("static subject must remain authored");
+        assert_eq!(subject.fragment(), expected_fragment, "{text}");
+        assert_eq!(
+            (subject.range().start(), subject.range().end()),
+            expected_range,
+            "{text}"
+        );
+    }
+
+    let SelectedQualificationAttempt::Outcome(outcome) =
+        attempt_selected_qualification(&source(r"const x = true; let \u{};"))
+    else {
+        panic!("expected existing Grammar rejection to become reachable");
+    };
+    assert_eq!(
+        outcome.verdict(),
+        Some(QualificationVerdictKind::SyntaxRejected)
+    );
+    let evidence = outcome
+        .rejection_evidence()
+        .expect("Grammar rejection evidence");
+    assert_eq!(evidence.family(), RejectionFamily::Grammar);
+    let subject = evidence
+        .subject()
+        .authored_anchor()
+        .expect("Grammar subject must remain authored");
+    assert_eq!(subject.fragment(), r"\u{}");
+    assert_eq!((subject.range().start(), subject.range().end()), (20, 24));
 }
