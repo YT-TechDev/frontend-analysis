@@ -236,7 +236,7 @@ fn authority_independence_and_frontier_scope_are_exact() {
 
     assert!(FRONTIER_SCOPE_NOTE.contains("direct-this frontier only"));
     assert!(FRONTIER_SCOPE_NOTE.contains("may strengthen classification"));
-    assert!(!THIS_SOURCE.contains("FutureUnsupportedDisposition"));
+    assert!(!THIS_SOURCE.contains(concat!("FutureUnsupported", "Disposition")));
 
     for forbidden in [
         concat!("use super::", "selected_lexical_slice"),
