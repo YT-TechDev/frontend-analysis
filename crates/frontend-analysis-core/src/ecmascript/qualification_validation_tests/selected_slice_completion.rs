@@ -177,13 +177,13 @@ fn classify(rule: &RuleUnit) -> SelectedSliceDisposition {
         ("EE-01", unexpected) => panic!("unclassified selected EE-01 rule {unexpected}"),
         ("EE-02", "EE-02-R01") => SelectedSliceDisposition::StructurallyNonTriggering(
             NonTriggerReason::SelectedLiteralAlternativeCannotTriggerRule(
-                "selected decimal integer excludes the strict legacy numeric alternatives",
+                "strict-only rule; selected grammar is structurally non-strict; selected decimal integer also excludes legacy numeric alternatives",
             ),
         ),
         ("EE-02", unexpected) => panic!("unclassified selected EE-02 rule {unexpected}"),
         ("EE-03", "EE-03-R01") => SelectedSliceDisposition::StructurallyNonTriggering(
             NonTriggerReason::SelectedLiteralAlternativeCannotTriggerRule(
-                "selected StringLiteral is escape-free and excludes legacy escape alternatives",
+                "strict-only rule; selected grammar is structurally non-strict; selected StringLiteral is also escape-free and excludes legacy escape alternatives",
             ),
         ),
         ("EE-03", unexpected) => panic!("unclassified selected EE-03 rule {unexpected}"),
