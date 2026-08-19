@@ -228,6 +228,7 @@ impl<'source> Cursor<'source> {
                 if !self.consume_selected_decimal_integer()
                     && !self.consume_selected_boolean_literal()
                     && !self.consume_selected_null_literal()
+                    && !self.consume_selected_this_expression()
                 {
                     match self.consume_selected_identifier_reference() {
                         SelectedIdentifierReferenceRecognition::Matched => {}
@@ -473,6 +474,20 @@ impl<'source> Cursor<'source> {
     /// transaction; this helper retains no local commit policy as domain state.
     fn consume_selected_null_literal(&mut self) -> bool {
         self.consume_keyword("null")
+    }
+
+    /// Recognizes exactly one direct-authored `PrimaryExpression : this` in the
+    /// selected initializer position without widening into a generic
+    /// `PrimaryExpression` or `Expression` owner.
+    ///
+    /// The shared keyword boundary preserves maximal IdentifierName routing for
+    /// direct IdentifierPart and formed authored UES continuations. Malformed or
+    /// non-CodePoint UES tails remain owned only by the enclosing whole-source
+    /// transaction; this helper retains no local commit policy as domain state.
+    /// Runtime `this` Evaluation and `ResolveThisBinding()` are outside this
+    /// source-recognition slice.
+    fn consume_selected_this_expression(&mut self) -> bool {
+        self.consume_keyword("this")
     }
 
     /// Recognizes one selected `IdentifierReference` atom in the fixed
