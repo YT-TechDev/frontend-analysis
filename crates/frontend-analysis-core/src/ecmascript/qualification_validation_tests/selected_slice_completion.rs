@@ -44,6 +44,21 @@ const FULL_FIRST_ENVELOPE_PROFILE_COMPLETION_PROVEN: bool = false;
 const SELECTED_GRAMMAR_REJECTION_AUTHORITY: &str = "#227/#229/#231";
 const SELECTED_SLICE_COMPLETION_SCOPE: &str = "validation-only local selected slice";
 
+const _: () = {
+    assert!(!SELECTED_HAS_TOP_LEVEL_EXPRESSION_STATEMENT);
+    assert!(!SELECTED_CAN_FORM_DIRECTIVE_PROLOGUE);
+    assert!(!SELECTED_IS_STRICT);
+    assert!(FULL_FIRST_ENVELOPE_CAN_CONTAIN_STRICT_SCRIPT);
+    assert!(!SELECTED_YIELD_PARAMETER);
+    assert!(!SELECTED_AWAIT_PARAMETER);
+    assert!(SELECTED_INCLUDES_MANDATORY_LEGACY);
+    assert!(!SELECTED_INCLUDES_NORMATIVE_OPTIONAL_SOURCE_STATIC);
+    assert!(!SELECTED_REACHES_REGEXP_PATTERN);
+    assert!(FULL_FIRST_ENVELOPE_REQUIRES_REGEXP_PATTERN);
+    assert!(!SELECTED_REQUIRES_PROFILE_BOUNDARY_PRODUCER);
+    assert!(!FULL_FIRST_ENVELOPE_PROFILE_COMPLETION_PROVEN);
+};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NonTriggerReason {
     OwningSyntaxAbsent(&'static str),
@@ -243,14 +258,6 @@ fn selected_context_is_pinned_independently_from_production_behavior() {
     assert_eq!(SELECTED_SOURCE_CONTEXT, "Independent Source Unit");
     assert_eq!(SELECTED_PARSE_GOAL, "Script");
     assert_eq!(SELECTED_TOP_LEVEL_GRAMMAR, "LexicalDeclaration+");
-    assert!(!SELECTED_HAS_TOP_LEVEL_EXPRESSION_STATEMENT);
-    assert!(!SELECTED_CAN_FORM_DIRECTIVE_PROLOGUE);
-    assert!(!SELECTED_IS_STRICT);
-    assert!(FULL_FIRST_ENVELOPE_CAN_CONTAIN_STRICT_SCRIPT);
-    assert!(!SELECTED_YIELD_PARAMETER);
-    assert!(!SELECTED_AWAIT_PARAMETER);
-    assert!(SELECTED_INCLUDES_MANDATORY_LEGACY);
-    assert!(!SELECTED_INCLUDES_NORMATIVE_OPTIONAL_SOURCE_STATIC);
 }
 
 #[test]
@@ -387,10 +394,6 @@ fn strict_numeric_and_string_non_triggers_are_not_inferred_from_production_omiss
             NonTriggerReason::SelectedLiteralAlternativeCannotTriggerRule(_)
         )
     ));
-
-    assert!(!SELECTED_IS_STRICT);
-    assert!(!SELECTED_CAN_FORM_DIRECTIVE_PROLOGUE);
-    assert!(FULL_FIRST_ENVELOPE_CAN_CONTAIN_STRICT_SCRIPT);
 }
 
 #[test]
@@ -552,11 +555,6 @@ fn absent_container_table_is_complete_and_reviewable() {
 
 #[test]
 fn regexp_and_profile_non_reachability_are_slice_local_only() {
-    assert!(!SELECTED_REACHES_REGEXP_PATTERN);
-    assert!(FULL_FIRST_ENVELOPE_REQUIRES_REGEXP_PATTERN);
-    assert!(!SELECTED_REQUIRES_PROFILE_BOUNDARY_PRODUCER);
-    assert!(!FULL_FIRST_ENVELOPE_PROFILE_COMPLETION_PROVEN);
-
     for rule in RULE_UNITS
         .iter()
         .filter(|rule| rule.container_id == "EE-37")
