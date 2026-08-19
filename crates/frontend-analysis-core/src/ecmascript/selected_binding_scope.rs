@@ -89,7 +89,9 @@ pub(super) fn analyze_selected_binding_scope<'script>(
 
             let semantic_name = reference.semantic_name();
             let target = match binding_by_name.get(semantic_name).copied() {
-                Some(target) => SelectedBindingScopeTarget::SameSourceSelectedLexicalBinding(target),
+                Some(target) => {
+                    SelectedBindingScopeTarget::SameSourceSelectedLexicalBinding(target)
+                }
                 None => SelectedBindingScopeTarget::NoSameSourceSelectedLexicalBinding,
             };
             relations.push(SelectedBindingScopeRelation {
