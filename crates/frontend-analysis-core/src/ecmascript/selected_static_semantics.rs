@@ -16,8 +16,19 @@ use super::selected_lexical_slice::{
 };
 
 #[derive(Debug)]
-pub(super) enum SelectedStaticSemanticsOutcome {
-    Accepted,
+pub(super) struct SelectedStaticSemanticsAccepted<'script> {
+    script: &'script SelectedLexicalScript,
+}
+
+impl<'script> SelectedStaticSemanticsAccepted<'script> {
+    pub(super) fn script(&self) -> &'script SelectedLexicalScript {
+        self.script
+    }
+}
+
+#[derive(Debug)]
+pub(super) enum SelectedStaticSemanticsOutcome<'script> {
+    Accepted(SelectedStaticSemanticsAccepted<'script>),
     Rejected(SelectedStaticSemanticsRejection),
     ResourceLimited,
     InternalFailure,
@@ -77,9 +88,9 @@ impl SelectedStaticSemanticsRejection {
 /// This ordering is the project evidence-selection policy accepted by #215 and
 /// independently challenged by #216/#219. It is not an ECMAScript-specified
 /// diagnostic ordering.
-pub(super) fn evaluate_selected_static_semantics(
-    script: &SelectedLexicalScript,
-) -> SelectedStaticSemanticsOutcome {
+pub(super) fn evaluate_selected_static_semantics<'script>(
+    script: &'script SelectedLexicalScript,
+) -> SelectedStaticSemanticsOutcome<'script> {
     let declarations = script.declarations();
 
     for declaration in declarations {
@@ -198,7 +209,7 @@ pub(super) fn evaluate_selected_static_semantics(
         }
     }
 
-    SelectedStaticSemanticsOutcome::Accepted
+    SelectedStaticSemanticsOutcome::Accepted(SelectedStaticSemanticsAccepted { script })
 }
 
 pub(super) fn selected_rejection_to_qualification(
