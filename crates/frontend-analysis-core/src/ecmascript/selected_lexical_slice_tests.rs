@@ -462,7 +462,10 @@ fn escaped_identifier_reference_name_policy_matches_fixed_selected_context() {
         let text = format!("const x = {rhs};");
         let script = recognized(&text);
         let binding = &script.declarations()[0].bindings()[0];
-        assert_eq!(binding.initializer(), SelectedInitializerState::SelectedPresent);
+        assert_eq!(
+            binding.initializer(),
+            SelectedInitializerState::SelectedPresent
+        );
         assert!(binding.escaped_reserved_initializer_identifier().is_none());
     }
 
@@ -508,7 +511,10 @@ fn escaped_identifier_reference_name_policy_matches_fixed_selected_context() {
         let text = format!("const x = {rhs};");
         let script = recognized(&text);
         let binding = &script.declarations()[0].bindings()[0];
-        assert_eq!(binding.initializer(), SelectedInitializerState::SelectedPresent);
+        assert_eq!(
+            binding.initializer(),
+            SelectedInitializerState::SelectedPresent
+        );
         let identifier = binding
             .escaped_reserved_initializer_identifier()
             .expect("escaped reserved initializer evidence");
@@ -538,7 +544,10 @@ fn escaped_reserved_initializer_evidence_is_exact_and_direct_owners_remain_separ
         let text = format!("const x = {rhs};");
         let script = recognized(&text);
         let binding = &script.declarations()[0].bindings()[0];
-        assert_eq!(binding.initializer(), SelectedInitializerState::SelectedPresent);
+        assert_eq!(
+            binding.initializer(),
+            SelectedInitializerState::SelectedPresent
+        );
         let identifier = binding
             .escaped_reserved_initializer_identifier()
             .expect("escaped reserved initializer must retain authored evidence");
