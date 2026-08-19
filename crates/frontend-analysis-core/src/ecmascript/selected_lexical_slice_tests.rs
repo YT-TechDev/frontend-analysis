@@ -1089,8 +1089,14 @@ fn direct_boolean_literal_aggregate_lifecycle_remains_incomplete_or_existing_rej
             Some(QualificationVerdictKind::StaticSemanticsRejected),
             "{text}"
         );
-        let evidence = outcome.rejection_evidence().expect("static rejection evidence");
-        assert_eq!(evidence.family(), RejectionFamily::StaticSemantics, "{text}");
+        let evidence = outcome
+            .rejection_evidence()
+            .expect("static rejection evidence");
+        assert_eq!(
+            evidence.family(),
+            RejectionFamily::StaticSemantics,
+            "{text}"
+        );
         let subject = evidence
             .subject()
             .authored_anchor()
@@ -1112,7 +1118,9 @@ fn direct_boolean_literal_aggregate_lifecycle_remains_incomplete_or_existing_rej
         outcome.verdict(),
         Some(QualificationVerdictKind::SyntaxRejected)
     );
-    let evidence = outcome.rejection_evidence().expect("Grammar rejection evidence");
+    let evidence = outcome
+        .rejection_evidence()
+        .expect("Grammar rejection evidence");
     assert_eq!(evidence.family(), RejectionFamily::Grammar);
     let subject = evidence
         .subject()
