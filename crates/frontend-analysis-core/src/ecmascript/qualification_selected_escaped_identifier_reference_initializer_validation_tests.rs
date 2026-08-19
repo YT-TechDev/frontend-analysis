@@ -820,26 +820,26 @@ const UNSUPPORTED_TAIL_FIXTURES: &[UnsupportedTailFixture] = &[
     },
 ];
 
-const NEGATIVE_UNSUPPORTED_EXPECTATION:
-    EscapedIdentifierReferenceFrontierExpectationSet<NegativeFixture> =
-    EscapedIdentifierReferenceFrontierExpectationSet {
-        fixtures: NEGATIVE_FIXTURES,
-        outcome: EscapedIdentifierReferenceFrontierOutcome::UnsupportedCoverage,
-    };
+const NEGATIVE_UNSUPPORTED_EXPECTATION: EscapedIdentifierReferenceFrontierExpectationSet<
+    NegativeFixture,
+> = EscapedIdentifierReferenceFrontierExpectationSet {
+    fixtures: NEGATIVE_FIXTURES,
+    outcome: EscapedIdentifierReferenceFrontierOutcome::UnsupportedCoverage,
+};
 
-const DECODED_RESERVED_UNSUPPORTED_EXPECTATION:
-    EscapedIdentifierReferenceFrontierExpectationSet<&'static str> =
-    EscapedIdentifierReferenceFrontierExpectationSet {
-        fixtures: UNCONDITIONALLY_RESERVED_WORDS,
-        outcome: EscapedIdentifierReferenceFrontierOutcome::UnsupportedCoverage,
-    };
+const DECODED_RESERVED_UNSUPPORTED_EXPECTATION: EscapedIdentifierReferenceFrontierExpectationSet<
+    &'static str,
+> = EscapedIdentifierReferenceFrontierExpectationSet {
+    fixtures: UNCONDITIONALLY_RESERVED_WORDS,
+    outcome: EscapedIdentifierReferenceFrontierOutcome::UnsupportedCoverage,
+};
 
-const UNSUPPORTED_TAIL_EXPECTATION:
-    EscapedIdentifierReferenceFrontierExpectationSet<UnsupportedTailFixture> =
-    EscapedIdentifierReferenceFrontierExpectationSet {
-        fixtures: UNSUPPORTED_TAIL_FIXTURES,
-        outcome: EscapedIdentifierReferenceFrontierOutcome::UnsupportedCoverage,
-    };
+const UNSUPPORTED_TAIL_EXPECTATION: EscapedIdentifierReferenceFrontierExpectationSet<
+    UnsupportedTailFixture,
+> = EscapedIdentifierReferenceFrontierExpectationSet {
+    fixtures: UNSUPPORTED_TAIL_FIXTURES,
+    outcome: EscapedIdentifierReferenceFrontierOutcome::UnsupportedCoverage,
+};
 
 fn ascii_hex_value(byte: u8) -> Option<u32> {
     match byte {
