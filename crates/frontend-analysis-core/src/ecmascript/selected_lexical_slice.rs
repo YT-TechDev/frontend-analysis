@@ -229,6 +229,7 @@ impl<'source> Cursor<'source> {
                     && !self.consume_selected_boolean_literal()
                     && !self.consume_selected_null_literal()
                     && !self.consume_selected_this_expression()
+                    && !self.consume_selected_escape_free_string_literal()
                 {
                     match self.consume_selected_identifier_reference() {
                         SelectedIdentifierReferenceRecognition::Matched => {}
@@ -488,6 +489,41 @@ impl<'source> Cursor<'source> {
     /// source-recognition slice.
     fn consume_selected_this_expression(&mut self) -> bool {
         self.consume_keyword("this")
+    }
+
+    /// Recognizes exactly one direct-authored, escape-free `StringLiteral` in
+    /// the selected initializer position without retaining a `StringValue` or
+    /// widening into a generic Literal / PrimaryExpression / Expression owner.
+    ///
+    /// The matching authored quote terminates the selected atom. Reverse solidus,
+    /// raw LF, raw CR, or EOF before that matching quote causes this helper to
+    /// restore its starting cursor and decline. ES2026 direct LS / PS characters
+    /// remain ordinary direct string content as fixed by #257.
+    fn consume_selected_escape_free_string_literal(&mut self) -> bool {
+        let start = self.offset;
+        let Some(quote) = self.peek_char() else {
+            return false;
+        };
+        if !matches!(quote, '"' | '\'') {
+            return false;
+        }
+        let _ = self.advance_char();
+
+        loop {
+            match self.peek_char() {
+                Some(next) if next == quote => {
+                    let _ = self.advance_char();
+                    return true;
+                }
+                Some('\\' | '\n' | '\r') | None => {
+                    self.offset = start;
+                    return false;
+                }
+                Some(_) => {
+                    let _ = self.advance_char();
+                }
+            }
+        }
     }
 
     /// Recognizes one selected `IdentifierReference` atom in the fixed
