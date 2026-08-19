@@ -26,7 +26,7 @@ const MODEL_SOURCE: &str = include_str!("qualification_validation_tests/model.rs
 const THIS_SOURCE: &str = include_str!(
     "qualification_selected_escaped_identifier_reference_initializer_validation_tests.rs"
 );
-const FRONTIER_SCOPE_NOTE: &str = "At the escaped-IdentifierReference frontier, malformed, non-CodePoint, position-invalid, decoded-reserved, and richer-tail controls are UnsupportedCoverage. Later independently qualified owners may strengthen classification without rewriting this frontier's historical result.";
+const FRONTIER_SCOPE_NOTE: &str = "At the escaped-IdentifierReference frontier, malformed, non-CodePoint, position-invalid, decoded-reserved, and richer-tail controls are UnsupportedCoverage. later independently qualified owners may strengthen classification without rewriting this frontier's historical result.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ByteRange {
