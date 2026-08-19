@@ -262,7 +262,11 @@ fn all_frozen_rule_units_receive_exactly_one_selected_slice_disposition() {
     let mut sentinels = 0;
 
     for rule in RULE_UNITS {
-        assert!(seen.insert(rule.id), "duplicate frozen rule unit {}", rule.id);
+        assert!(
+            seen.insert(rule.id),
+            "duplicate frozen rule unit {}",
+            rule.id
+        );
 
         match rule.kind {
             RuleUnitKind::NormativeRule => active += 1,
@@ -352,13 +356,11 @@ fn escaped_reserved_initializer_oracle_extends_the_same_ee_04_r08_identity() {
             .count(),
         1
     );
-    assert!(RHS_ESCAPED_RESERVED_ORACLE_SOURCE.contains(
-        "Candidate-independent RHS escaped-ReservedWord validation for Issue #263"
-    ));
     assert!(
         RHS_ESCAPED_RESERVED_ORACLE_SOURCE
-            .contains("const RULE_ID: &str = \"EE-04-R08\";")
+            .contains("Candidate-independent RHS escaped-ReservedWord validation for Issue #263")
     );
+    assert!(RHS_ESCAPED_RESERVED_ORACLE_SOURCE.contains("const RULE_ID: &str = \"EE-04-R08\";"));
     assert!(RHS_ESCAPED_RESERVED_ORACLE_SOURCE.contains("StaticSemanticsRejected"));
 }
 
@@ -538,7 +540,9 @@ fn absent_container_table_is_complete_and_reviewable() {
             *id
         })
         .collect();
-    for special in ["EE-01", "EE-02", "EE-03", "EE-04", "EE-15", "EE-36", "EE-37"] {
+    for special in [
+        "EE-01", "EE-02", "EE-03", "EE-04", "EE-15", "EE-36", "EE-37",
+    ] {
         assert!(accounted.insert(special));
     }
 
@@ -553,7 +557,10 @@ fn regexp_and_profile_non_reachability_are_slice_local_only() {
     assert!(!SELECTED_REQUIRES_PROFILE_BOUNDARY_PRODUCER);
     assert!(!FULL_FIRST_ENVELOPE_PROFILE_COMPLETION_PROVEN);
 
-    for rule in RULE_UNITS.iter().filter(|rule| rule.container_id == "EE-37") {
+    for rule in RULE_UNITS
+        .iter()
+        .filter(|rule| rule.container_id == "EE-37")
+    {
         assert!(matches!(
             classify(rule),
             SelectedSliceDisposition::StructurallyNonTriggering(
