@@ -179,7 +179,7 @@ fn escaped_identifier_reference_initializers_remain_selected_accepted_incomplete
 }
 
 #[test]
-fn escaped_identifier_reference_invalid_reserved_and_tail_families_remain_unsupported() {
+fn escaped_identifier_reference_invalid_and_tail_families_remain_unsupported() {
     for text in [
         r"const x = \u{};",
         r"const x = \u0;",
@@ -215,7 +215,17 @@ fn escaped_identifier_reference_invalid_reserved_and_tail_families_remain_unsupp
             "{text}"
         );
     }
+}
 
+fn qualification_outcome(text: &str) -> super::qualification::QualificationOutcome {
+    match attempt(text) {
+        SelectedQualificationAttempt::Outcome(outcome) => outcome,
+        other => panic!("expected qualification outcome for {text:?}, got {other:?}"),
+    }
+}
+
+#[test]
+fn escaped_reserved_identifier_initializers_reach_existing_static_rejection() {
     for name in [
         "break",
         "case",
@@ -256,20 +266,92 @@ fn escaped_identifier_reference_invalid_reserved_and_tail_families_remain_unsupp
     ] {
         let rhs = escaped_first_ascii_code_point(name);
         let text = format!("const x = {rhs};");
-        assert!(
-            matches!(
-                attempt(&text),
-                SelectedQualificationAttempt::UnsupportedCoverage
-            ),
+        let outcome = qualification_outcome(&text);
+        assert_eq!(outcome.processing(), ProcessingStatus::Complete, "{text}");
+        assert_eq!(
+            outcome.verdict(),
+            Some(QualificationVerdictKind::StaticSemanticsRejected),
+            "{text}"
+        );
+        let evidence = outcome.rejection_evidence().expect("static evidence");
+        assert_eq!(evidence.family(), RejectionFamily::StaticSemantics, "{text}");
+        let anchor = evidence
+            .subject()
+            .authored_anchor()
+            .expect("authored static subject");
+        assert_eq!(anchor.fragment(), rhs, "{text}");
+        assert_eq!(
+            (anchor.range().start(), anchor.range().end()),
+            (10, 10 + rhs.len()),
+            "{text}"
+        );
+    }
+
+    for rhs in [
+        r"\u0074his",
+        r"\u006Eull",
+        r"\u0074rue",
+        r"\u0066alse",
+        r"\u0069f",
+        r"\u0063lass",
+        r"\u0069mport",
+        r"\u0065xport",
+        r"n\u0075ll",
+        r"tr\u0075e",
+        r"thi\u0073",
+    ] {
+        let text = format!("const x = {rhs};");
+        let outcome = qualification_outcome(&text);
+        assert_eq!(
+            outcome.verdict(),
+            Some(QualificationVerdictKind::StaticSemanticsRejected),
+            "{text}"
+        );
+        let evidence = outcome.rejection_evidence().expect("static evidence");
+        assert_eq!(evidence.family(), RejectionFamily::StaticSemantics, "{text}");
+        let anchor = evidence
+            .subject()
+            .authored_anchor()
+            .expect("authored static subject");
+        assert_eq!(anchor.fragment(), rhs, "{text}");
+        assert_eq!(
+            (anchor.range().start(), anchor.range().end()),
+            (10, 10 + rhs.len()),
             "{text}"
         );
     }
 }
 
-fn qualification_outcome(text: &str) -> super::qualification::QualificationOutcome {
-    match attempt(text) {
-        SelectedQualificationAttempt::Outcome(outcome) => outcome,
-        other => panic!("expected qualification outcome for {text:?}, got {other:?}"),
+#[test]
+fn escaped_reserved_initializer_static_precedence_survives_aggregate_handoff() {
+    for (text, expected_fragment, expected_range) in [
+        (r"let let = \u006Eull;", "let", (4, 7)),
+        (r"let x = \u006Eull, x = foo;", r"\u006Eull", (8, 17)),
+        (r"const x = \u006Eull, y;", r"\u006Eull", (10, 19)),
+        (
+            r"let x = foo; let x = \u006Eull;",
+            r"\u006Eull",
+            (21, 30),
+        ),
+    ] {
+        let outcome = qualification_outcome(text);
+        assert_eq!(
+            outcome.verdict(),
+            Some(QualificationVerdictKind::StaticSemanticsRejected),
+            "{text}"
+        );
+        let evidence = outcome.rejection_evidence().expect("static evidence");
+        assert_eq!(evidence.family(), RejectionFamily::StaticSemantics, "{text}");
+        let anchor = evidence
+            .subject()
+            .authored_anchor()
+            .expect("authored static subject");
+        assert_eq!(anchor.fragment(), expected_fragment, "{text}");
+        assert_eq!(
+            (anchor.range().start(), anchor.range().end()),
+            expected_range,
+            "{text}"
+        );
     }
 }
 
@@ -693,6 +775,7 @@ fn grammar_primary_discards_tentative_static_evidence_and_is_terminal() {
         r"let \u{}, x;",
         r"let \u{}; var x;",
         r"const x = foo; let \u{};",
+        r"const x = \u006Eull; let \u{};",
     ] {
         let outcome = qualification_outcome(text);
         assert_eq!(
