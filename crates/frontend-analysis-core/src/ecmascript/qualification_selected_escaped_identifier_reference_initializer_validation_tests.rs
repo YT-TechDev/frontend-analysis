@@ -5,6 +5,10 @@
 //! static-semantics, aggregate, runtime-evaluation, or future expression code.
 //! Expected authored ranges, decoded identity, applicability, and lifecycle are
 //! fixture authority in this module rather than output from a candidate parser.
+//!
+//! `UnsupportedCoverage` expectations below are scoped to the escaped-
+//! `IdentifierReference` frontier represented by this oracle. They preserve the
+//! result at that frontier without constraining later independently qualified owners.
 
 use crate::{SourceId, SourceText};
 
@@ -22,6 +26,7 @@ const MODEL_SOURCE: &str = include_str!("qualification_validation_tests/model.rs
 const THIS_SOURCE: &str = include_str!(
     "qualification_selected_escaped_identifier_reference_initializer_validation_tests.rs"
 );
+const FRONTIER_SCOPE_NOTE: &str = "At the escaped-IdentifierReference frontier, malformed, non-CodePoint, position-invalid, decoded-reserved, and richer-tail controls are UnsupportedCoverage. Later independently qualified owners may strengthen classification without rewriting this frontier's historical result.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ByteRange {
@@ -61,7 +66,7 @@ enum FutureLifecycle {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FutureUnsupportedDisposition {
+enum EscapedIdentifierReferenceFrontierOutcome {
     UnsupportedCoverage,
 }
 
@@ -206,9 +211,9 @@ struct UnsupportedTailFixture {
     tail_kind: UnsupportedTailKind,
 }
 
-struct FutureUnsupportedFixtureSet<T: 'static> {
+struct EscapedIdentifierReferenceFrontierExpectationSet<T: 'static> {
     fixtures: &'static [T],
-    disposition: FutureUnsupportedDisposition,
+    outcome: EscapedIdentifierReferenceFrontierOutcome,
 }
 
 const BASE_POSITIVE_FIXTURES: &[PositiveFixture] = &[
@@ -815,22 +820,25 @@ const UNSUPPORTED_TAIL_FIXTURES: &[UnsupportedTailFixture] = &[
     },
 ];
 
-const NEGATIVE_UNSUPPORTED_EXPECTATION: FutureUnsupportedFixtureSet<NegativeFixture> =
-    FutureUnsupportedFixtureSet {
+const NEGATIVE_UNSUPPORTED_EXPECTATION:
+    EscapedIdentifierReferenceFrontierExpectationSet<NegativeFixture> =
+    EscapedIdentifierReferenceFrontierExpectationSet {
         fixtures: NEGATIVE_FIXTURES,
-        disposition: FutureUnsupportedDisposition::UnsupportedCoverage,
+        outcome: EscapedIdentifierReferenceFrontierOutcome::UnsupportedCoverage,
     };
 
-const DECODED_RESERVED_UNSUPPORTED_EXPECTATION: FutureUnsupportedFixtureSet<&'static str> =
-    FutureUnsupportedFixtureSet {
+const DECODED_RESERVED_UNSUPPORTED_EXPECTATION:
+    EscapedIdentifierReferenceFrontierExpectationSet<&'static str> =
+    EscapedIdentifierReferenceFrontierExpectationSet {
         fixtures: UNCONDITIONALLY_RESERVED_WORDS,
-        disposition: FutureUnsupportedDisposition::UnsupportedCoverage,
+        outcome: EscapedIdentifierReferenceFrontierOutcome::UnsupportedCoverage,
     };
 
-const UNSUPPORTED_TAIL_EXPECTATION: FutureUnsupportedFixtureSet<UnsupportedTailFixture> =
-    FutureUnsupportedFixtureSet {
+const UNSUPPORTED_TAIL_EXPECTATION:
+    EscapedIdentifierReferenceFrontierExpectationSet<UnsupportedTailFixture> =
+    EscapedIdentifierReferenceFrontierExpectationSet {
         fixtures: UNSUPPORTED_TAIL_FIXTURES,
-        disposition: FutureUnsupportedDisposition::UnsupportedCoverage,
+        outcome: EscapedIdentifierReferenceFrontierOutcome::UnsupportedCoverage,
     };
 
 fn ascii_hex_value(byte: u8) -> Option<u32> {
@@ -1228,8 +1236,8 @@ fn identifier_position_additions_and_unicode_membership_are_composed_explicitly(
 #[test]
 fn malformed_non_code_point_and_invalid_position_controls_remain_outside_positive_family() {
     assert_eq!(
-        NEGATIVE_UNSUPPORTED_EXPECTATION.disposition,
-        FutureUnsupportedDisposition::UnsupportedCoverage
+        NEGATIVE_UNSUPPORTED_EXPECTATION.outcome,
+        EscapedIdentifierReferenceFrontierOutcome::UnsupportedCoverage
     );
 
     for fixture in NEGATIVE_UNSUPPORTED_EXPECTATION.fixtures {
@@ -1245,8 +1253,8 @@ fn malformed_non_code_point_and_invalid_position_controls_remain_outside_positiv
 #[test]
 fn every_unconditionally_reserved_decoded_name_is_a_negative_control() {
     assert_eq!(
-        DECODED_RESERVED_UNSUPPORTED_EXPECTATION.disposition,
-        FutureUnsupportedDisposition::UnsupportedCoverage
+        DECODED_RESERVED_UNSUPPORTED_EXPECTATION.outcome,
+        EscapedIdentifierReferenceFrontierOutcome::UnsupportedCoverage
     );
     assert_eq!(DECODED_RESERVED_UNSUPPORTED_EXPECTATION.fixtures.len(), 36);
 
@@ -1354,8 +1362,8 @@ fn later_existing_grammar_subjects_remain_exact_and_terminal_after_valid_escaped
 #[test]
 fn valid_escaped_atom_plus_unsupported_tail_never_becomes_whole_source_success() {
     assert_eq!(
-        UNSUPPORTED_TAIL_EXPECTATION.disposition,
-        FutureUnsupportedDisposition::UnsupportedCoverage
+        UNSUPPORTED_TAIL_EXPECTATION.outcome,
+        EscapedIdentifierReferenceFrontierOutcome::UnsupportedCoverage
     );
     assert_eq!(UNSUPPORTED_TAIL_EXPECTATION.fixtures.len(), 9);
 
@@ -1425,6 +1433,20 @@ fn validation_source_has_no_dependency_on_production_or_runtime_reference_paths(
 }
 
 #[test]
+fn unsupported_expectations_are_scoped_to_this_frontier_not_permanent_future_verdicts() {
+    assert!(FRONTIER_SCOPE_NOTE.contains("escaped-IdentifierReference frontier"));
+    assert!(FRONTIER_SCOPE_NOTE.contains("malformed"));
+    assert!(FRONTIER_SCOPE_NOTE.contains("non-CodePoint"));
+    assert!(FRONTIER_SCOPE_NOTE.contains("position-invalid"));
+    assert!(FRONTIER_SCOPE_NOTE.contains("decoded-reserved"));
+    assert!(FRONTIER_SCOPE_NOTE.contains("richer-tail"));
+    assert!(FRONTIER_SCOPE_NOTE.contains("later independently qualified owners"));
+    assert!(FRONTIER_SCOPE_NOTE.contains("strengthen classification"));
+    assert!(!THIS_SOURCE.contains(concat!("FutureUnsupported", "Disposition")));
+    assert!(!THIS_SOURCE.contains(concat!("FutureUnsupported", "FixtureSet")));
+}
+
+#[test]
 fn validation_handoff_remains_one_focused_future_production_frontier() {
     for fixture in BASE_POSITIVE_FIXTURES.iter().chain(NAME_POLICY_FIXTURES) {
         assert_eq!(
@@ -1439,16 +1461,16 @@ fn validation_handoff_remains_one_focused_future_production_frontier() {
     }
 
     assert_eq!(
-        NEGATIVE_UNSUPPORTED_EXPECTATION.disposition,
-        FutureUnsupportedDisposition::UnsupportedCoverage
+        NEGATIVE_UNSUPPORTED_EXPECTATION.outcome,
+        EscapedIdentifierReferenceFrontierOutcome::UnsupportedCoverage
     );
     assert_eq!(
-        DECODED_RESERVED_UNSUPPORTED_EXPECTATION.disposition,
-        FutureUnsupportedDisposition::UnsupportedCoverage
+        DECODED_RESERVED_UNSUPPORTED_EXPECTATION.outcome,
+        EscapedIdentifierReferenceFrontierOutcome::UnsupportedCoverage
     );
     assert_eq!(
-        UNSUPPORTED_TAIL_EXPECTATION.disposition,
-        FutureUnsupportedDisposition::UnsupportedCoverage
+        UNSUPPORTED_TAIL_EXPECTATION.outcome,
+        EscapedIdentifierReferenceFrontierOutcome::UnsupportedCoverage
     );
 
     assert!(
