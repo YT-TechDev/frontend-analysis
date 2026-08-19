@@ -32,7 +32,7 @@ impl Range {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FutureOutcome {
+enum ExpectedOutcome {
     StaticSemanticsRejected,
     SelectedAcceptedIncomplete,
 }
@@ -58,21 +58,121 @@ struct RejectingFixture {
     source: &'static str,
     rhs: &'static str,
     range: Range,
-    decoded: &'static str,
+    code_points: &'static [u32],
+    string_value: &'static str,
+    rule_id: &'static str,
+    expected: ExpectedOutcome,
+}
+
+const fn rejecting_fixture(
+    id: &'static str,
+    source: &'static str,
+    rhs: &'static str,
+    range: Range,
+    code_points: &'static [u32],
+    string_value: &'static str,
+) -> RejectingFixture {
+    RejectingFixture {
+        id,
+        source,
+        rhs,
+        range,
+        code_points,
+        string_value,
+        rule_id: RULE_ID,
+        expected: ExpectedOutcome::StaticSemanticsRejected,
+    }
 }
 
 const REJECTING: &[RejectingFixture] = &[
-    RejectingFixture { id: "THIS", source: r"const x = \u0074his;", rhs: r"\u0074his", range: Range::new(10, 19), decoded: "this" },
-    RejectingFixture { id: "NULL", source: r"const x = \u006Eull;", rhs: r"\u006Eull", range: Range::new(10, 19), decoded: "null" },
-    RejectingFixture { id: "TRUE", source: r"const x = \u0074rue;", rhs: r"\u0074rue", range: Range::new(10, 19), decoded: "true" },
-    RejectingFixture { id: "FALSE", source: r"const x = \u0066alse;", rhs: r"\u0066alse", range: Range::new(10, 20), decoded: "false" },
-    RejectingFixture { id: "IF", source: r"const x = \u0069f;", rhs: r"\u0069f", range: Range::new(10, 17), decoded: "if" },
-    RejectingFixture { id: "CLASS", source: r"const x = \u0063lass;", rhs: r"\u0063lass", range: Range::new(10, 20), decoded: "class" },
-    RejectingFixture { id: "IMPORT", source: r"const x = \u0069mport;", rhs: r"\u0069mport", range: Range::new(10, 21), decoded: "import" },
-    RejectingFixture { id: "EXPORT", source: r"const x = \u0065xport;", rhs: r"\u0065xport", range: Range::new(10, 21), decoded: "export" },
-    RejectingFixture { id: "NULL-MIXED", source: r"const x = n\u0075ll;", rhs: r"n\u0075ll", range: Range::new(10, 19), decoded: "null" },
-    RejectingFixture { id: "TRUE-MIXED", source: r"const x = tr\u0075e;", rhs: r"tr\u0075e", range: Range::new(10, 19), decoded: "true" },
-    RejectingFixture { id: "THIS-MIXED", source: r"const x = thi\u0073;", rhs: r"thi\u0073", range: Range::new(10, 19), decoded: "this" },
+    rejecting_fixture(
+        "THIS",
+        r"const x = \u0074his;",
+        r"\u0074his",
+        Range::new(10, 19),
+        &[0x74, 0x68, 0x69, 0x73],
+        "this",
+    ),
+    rejecting_fixture(
+        "NULL",
+        r"const x = \u006Eull;",
+        r"\u006Eull",
+        Range::new(10, 19),
+        &[0x6E, 0x75, 0x6C, 0x6C],
+        "null",
+    ),
+    rejecting_fixture(
+        "TRUE",
+        r"const x = \u0074rue;",
+        r"\u0074rue",
+        Range::new(10, 19),
+        &[0x74, 0x72, 0x75, 0x65],
+        "true",
+    ),
+    rejecting_fixture(
+        "FALSE",
+        r"const x = \u0066alse;",
+        r"\u0066alse",
+        Range::new(10, 20),
+        &[0x66, 0x61, 0x6C, 0x73, 0x65],
+        "false",
+    ),
+    rejecting_fixture(
+        "IF",
+        r"const x = \u0069f;",
+        r"\u0069f",
+        Range::new(10, 17),
+        &[0x69, 0x66],
+        "if",
+    ),
+    rejecting_fixture(
+        "CLASS",
+        r"const x = \u0063lass;",
+        r"\u0063lass",
+        Range::new(10, 20),
+        &[0x63, 0x6C, 0x61, 0x73, 0x73],
+        "class",
+    ),
+    rejecting_fixture(
+        "IMPORT",
+        r"const x = \u0069mport;",
+        r"\u0069mport",
+        Range::new(10, 21),
+        &[0x69, 0x6D, 0x70, 0x6F, 0x72, 0x74],
+        "import",
+    ),
+    rejecting_fixture(
+        "EXPORT",
+        r"const x = \u0065xport;",
+        r"\u0065xport",
+        Range::new(10, 21),
+        &[0x65, 0x78, 0x70, 0x6F, 0x72, 0x74],
+        "export",
+    ),
+    rejecting_fixture(
+        "NULL-MIXED",
+        r"const x = n\u0075ll;",
+        r"n\u0075ll",
+        Range::new(10, 19),
+        &[0x6E, 0x75, 0x6C, 0x6C],
+        "null",
+    ),
+    rejecting_fixture(
+        "TRUE-MIXED",
+        r"const x = tr\u0075e;",
+        r"tr\u0075e",
+        Range::new(10, 19),
+        &[0x74, 0x72, 0x75, 0x65],
+        "true",
+    ),
+    rejecting_fixture(
+        "THIS-MIXED",
+        r"const x = thi\u0073;",
+        r"thi\u0073",
+        Range::new(10, 19),
+        &[0x74, 0x68, 0x69, 0x73],
+        "this",
+    ),
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,30 +185,92 @@ enum NonTriggerKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct NonTriggerFixture {
     rhs: &'static str,
-    decoded: &'static str,
+    string_value: &'static str,
     kind: NonTriggerKind,
+    expected: ExpectedOutcome,
+}
+
+const fn non_trigger_fixture(
+    rhs: &'static str,
+    string_value: &'static str,
+    kind: NonTriggerKind,
+) -> NonTriggerFixture {
+    NonTriggerFixture {
+        rhs,
+        string_value,
+        kind,
+        expected: ExpectedOutcome::SelectedAcceptedIncomplete,
+    }
 }
 
 const NON_TRIGGERS: &[NonTriggerFixture] = &[
-    NonTriggerFixture { rhs: r"\u0079ield", decoded: "yield", kind: NonTriggerKind::YieldAwait },
-    NonTriggerFixture { rhs: r"a\u0077ait", decoded: "await", kind: NonTriggerKind::YieldAwait },
-    NonTriggerFixture { rhs: r"\u006Cet", decoded: "let", kind: NonTriggerKind::StrictOnly },
-    NonTriggerFixture { rhs: r"\u0073tatic", decoded: "static", kind: NonTriggerKind::StrictOnly },
-    NonTriggerFixture { rhs: r"\u0069mplements", decoded: "implements", kind: NonTriggerKind::StrictOnly },
-    NonTriggerFixture { rhs: r"\u0069nterface", decoded: "interface", kind: NonTriggerKind::StrictOnly },
-    NonTriggerFixture { rhs: r"\u0070ackage", decoded: "package", kind: NonTriggerKind::StrictOnly },
-    NonTriggerFixture { rhs: r"\u0070rivate", decoded: "private", kind: NonTriggerKind::StrictOnly },
-    NonTriggerFixture { rhs: r"\u0070rotected", decoded: "protected", kind: NonTriggerKind::StrictOnly },
-    NonTriggerFixture { rhs: r"\u0070ublic", decoded: "public", kind: NonTriggerKind::StrictOnly },
-    NonTriggerFixture { rhs: r"\u0065val", decoded: "eval", kind: NonTriggerKind::EvalArguments },
-    NonTriggerFixture { rhs: r"\u0061rguments", decoded: "arguments", kind: NonTriggerKind::EvalArguments },
+    non_trigger_fixture(r"\u0079ield", "yield", NonTriggerKind::YieldAwait),
+    non_trigger_fixture(r"a\u0077ait", "await", NonTriggerKind::YieldAwait),
+    non_trigger_fixture(r"\u006Cet", "let", NonTriggerKind::StrictOnly),
+    non_trigger_fixture(r"\u0073tatic", "static", NonTriggerKind::StrictOnly),
+    non_trigger_fixture(
+        r"\u0069mplements",
+        "implements",
+        NonTriggerKind::StrictOnly,
+    ),
+    non_trigger_fixture(
+        r"\u0069nterface",
+        "interface",
+        NonTriggerKind::StrictOnly,
+    ),
+    non_trigger_fixture(r"\u0070ackage", "package", NonTriggerKind::StrictOnly),
+    non_trigger_fixture(r"\u0070rivate", "private", NonTriggerKind::StrictOnly),
+    non_trigger_fixture(
+        r"\u0070rotected",
+        "protected",
+        NonTriggerKind::StrictOnly,
+    ),
+    non_trigger_fixture(r"\u0070ublic", "public", NonTriggerKind::StrictOnly),
+    non_trigger_fixture(r"\u0065val", "eval", NonTriggerKind::EvalArguments),
+    non_trigger_fixture(
+        r"\u0061rguments",
+        "arguments",
+        NonTriggerKind::EvalArguments,
+    ),
 ];
 
 const RESERVED: &[&str] = &[
-    "break", "case", "catch", "class", "const", "continue", "debugger", "default",
-    "delete", "do", "else", "enum", "export", "extends", "false", "finally", "for",
-    "function", "if", "import", "in", "instanceof", "new", "null", "return", "super",
-    "switch", "this", "throw", "true", "try", "typeof", "var", "void", "while", "with",
+    "break",
+    "case",
+    "catch",
+    "class",
+    "const",
+    "continue",
+    "debugger",
+    "default",
+    "delete",
+    "do",
+    "else",
+    "enum",
+    "export",
+    "extends",
+    "false",
+    "finally",
+    "for",
+    "function",
+    "if",
+    "import",
+    "in",
+    "instanceof",
+    "new",
+    "null",
+    "return",
+    "super",
+    "switch",
+    "this",
+    "throw",
+    "true",
+    "try",
+    "typeof",
+    "var",
+    "void",
+    "while",
+    "with",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -127,11 +289,41 @@ struct PrecedenceFixture {
 }
 
 const PRECEDENCE: &[PrecedenceFixture] = &[
-    PrecedenceFixture { source: r"let let = \u006Eull;", family: PrecedenceFamily::Static, primary_rule: Some("EE-15-R01"), primary: Range::new(4, 7), co_trigger: RULE_ID },
-    PrecedenceFixture { source: r"let x = \u006Eull, x = foo;", family: PrecedenceFamily::Static, primary_rule: Some(RULE_ID), primary: Range::new(8, 17), co_trigger: "EE-15-R02" },
-    PrecedenceFixture { source: r"const x = \u006Eull, y;", family: PrecedenceFamily::Static, primary_rule: Some(RULE_ID), primary: Range::new(10, 19), co_trigger: "EE-15-R03" },
-    PrecedenceFixture { source: r"let x = foo; let x = \u006Eull;", family: PrecedenceFamily::Static, primary_rule: Some(RULE_ID), primary: Range::new(21, 30), co_trigger: "EE-36-R01" },
-    PrecedenceFixture { source: r"const x = \u006Eull; let \u{};", family: PrecedenceFamily::Grammar, primary_rule: None, primary: Range::new(25, 29), co_trigger: RULE_ID },
+    PrecedenceFixture {
+        source: r"let let = \u006Eull;",
+        family: PrecedenceFamily::Static,
+        primary_rule: Some("EE-15-R01"),
+        primary: Range::new(4, 7),
+        co_trigger: RULE_ID,
+    },
+    PrecedenceFixture {
+        source: r"let x = \u006Eull, x = foo;",
+        family: PrecedenceFamily::Static,
+        primary_rule: Some(RULE_ID),
+        primary: Range::new(8, 17),
+        co_trigger: "EE-15-R02",
+    },
+    PrecedenceFixture {
+        source: r"const x = \u006Eull, y;",
+        family: PrecedenceFamily::Static,
+        primary_rule: Some(RULE_ID),
+        primary: Range::new(10, 19),
+        co_trigger: "EE-15-R03",
+    },
+    PrecedenceFixture {
+        source: r"let x = foo; let x = \u006Eull;",
+        family: PrecedenceFamily::Static,
+        primary_rule: Some(RULE_ID),
+        primary: Range::new(21, 30),
+        co_trigger: "EE-36-R01",
+    },
+    PrecedenceFixture {
+        source: r"const x = \u006Eull; let \u{};",
+        family: PrecedenceFamily::Grammar,
+        primary_rule: None,
+        primary: Range::new(25, 29),
+        co_trigger: RULE_ID,
+    },
 ];
 
 fn hex(byte: u8) -> Option<u32> {
@@ -144,19 +336,21 @@ fn hex(byte: u8) -> Option<u32> {
 }
 
 fn braced_code_point(digits: &[u8]) -> Result<u32, DecodeFailure> {
-    if digits.is_empty() || digits.iter().any(|b| hex(*b).is_none()) {
+    if digits.is_empty() || digits.iter().any(|byte| hex(*byte).is_none()) {
         return Err(DecodeFailure::Malformed);
     }
-    let significant = match digits.iter().position(|b| *b != b'0') {
-        Some(i) => &digits[i..],
+
+    let significant = match digits.iter().position(|byte| *byte != b'0') {
+        Some(index) => &digits[index..],
         None => return Ok(0),
     };
     if significant.len() > 6 {
         return Err(DecodeFailure::NonCodePoint);
     }
+
     let mut value = 0_u32;
-    for b in significant {
-        value = value * 16 + hex(*b).ok_or(DecodeFailure::Malformed)?;
+    for byte in significant {
+        value = value * 16 + hex(*byte).ok_or(DecodeFailure::Malformed)?;
     }
     (value <= 0x10_FFFF)
         .then_some(value)
@@ -168,11 +362,12 @@ fn escape_at(text: &str, start: usize) -> Result<(usize, u32), DecodeFailure> {
     if bytes.get(start) != Some(&b'\\') || bytes.get(start + 1) != Some(&b'u') {
         return Err(DecodeFailure::Malformed);
     }
+
     let payload = start + 2;
     if bytes.get(payload) == Some(&b'{') {
         let digits_start = payload + 1;
         let mut end = digits_start;
-        while bytes.get(end).is_some_and(|b| b.is_ascii_hexdigit()) {
+        while bytes.get(end).is_some_and(|byte| byte.is_ascii_hexdigit()) {
             end += 1;
         }
         if bytes.get(end) != Some(&b'}') {
@@ -180,24 +375,30 @@ fn escape_at(text: &str, start: usize) -> Result<(usize, u32), DecodeFailure> {
         }
         return Ok((end + 1, braced_code_point(&bytes[digits_start..end])?));
     }
+
     let end = payload.checked_add(4).ok_or(DecodeFailure::Malformed)?;
     let digits = bytes.get(payload..end).ok_or(DecodeFailure::Malformed)?;
-    if !digits.iter().all(|b| b.is_ascii_hexdigit()) {
+    if !digits.iter().all(|byte| byte.is_ascii_hexdigit()) {
         return Err(DecodeFailure::Malformed);
     }
+
     let mut value = 0_u32;
-    for b in digits {
-        value = value * 16 + hex(*b).ok_or(DecodeFailure::Malformed)?;
+    for byte in digits {
+        value = value * 16 + hex(*byte).ok_or(DecodeFailure::Malformed)?;
     }
     Ok((end, value))
 }
 
-fn valid_start(cp: u32) -> bool {
-    cp == u32::from(b'$') || cp == u32::from(b'_') || is_id_start(cp)
+fn valid_start(code_point: u32) -> bool {
+    code_point == u32::from(b'$')
+        || code_point == u32::from(b'_')
+        || is_id_start(code_point)
 }
 
-fn valid_part(cp: u32) -> bool {
-    valid_start(cp) || is_id_continue(cp) || matches!(cp, 0x200C | 0x200D)
+fn valid_part(code_point: u32) -> bool {
+    valid_start(code_point)
+        || is_id_continue(code_point)
+        || matches!(code_point, 0x200C | 0x200D)
 }
 
 fn decode(text: &str) -> Result<Decoded, DecodeFailure> {
@@ -205,31 +406,54 @@ fn decode(text: &str) -> Result<Decoded, DecodeFailure> {
     let mut index = 0;
     let mut saw_escape = false;
     let mut code_points = Vec::new();
+
     while offset < text.len() {
-        let (cp, end, escaped) = if text.as_bytes().get(offset) == Some(&b'\\') {
-            let (end, cp) = escape_at(text, offset)?;
-            (cp, end, true)
+        let (code_point, end, escaped) = if text.as_bytes().get(offset) == Some(&b'\\') {
+            let (end, code_point) = escape_at(text, offset)?;
+            (code_point, end, true)
         } else {
-            let ch = text[offset..].chars().next().ok_or(DecodeFailure::Malformed)?;
-            (ch as u32, offset + ch.len_utf8(), false)
+            let scalar = text[offset..]
+                .chars()
+                .next()
+                .ok_or(DecodeFailure::Malformed)?;
+            (scalar as u32, offset + scalar.len_utf8(), false)
         };
-        let valid = if index == 0 { valid_start(cp) } else { valid_part(cp) };
+
+        let valid = if index == 0 {
+            valid_start(code_point)
+        } else {
+            valid_part(code_point)
+        };
         if !valid {
-            return Err(if index == 0 { DecodeFailure::InvalidStart } else { DecodeFailure::InvalidPart });
+            return Err(if index == 0 {
+                DecodeFailure::InvalidStart
+            } else {
+                DecodeFailure::InvalidPart
+            });
         }
-        code_points.push(cp);
+
+        code_points.push(code_point);
         saw_escape |= escaped;
         offset = end;
         index += 1;
     }
+
     if !saw_escape {
         return Err(DecodeFailure::MissingEscape);
     }
+
     let mut string_value = String::new();
-    for cp in &code_points {
-        string_value.push(char::from_u32(*cp).expect("position-valid fixture code point must be scalar"));
+    for code_point in &code_points {
+        string_value.push(
+            char::from_u32(*code_point)
+                .expect("position-valid fixture code point must be a Unicode scalar value"),
+        );
     }
-    Ok(Decoded { code_points, string_value })
+
+    Ok(Decoded {
+        code_points,
+        string_value,
+    })
 }
 
 fn is_reserved(name: &str) -> bool {
@@ -237,19 +461,27 @@ fn is_reserved(name: &str) -> bool {
 }
 
 fn fragment(source: &str, range: Range) -> &str {
-    source.get(range.start..range.end).expect("fixture range must be valid UTF-8")
+    source
+        .get(range.start..range.end)
+        .expect("fixture range must be valid UTF-8")
 }
 
 fn anchor(source: &str, range: Range, id: u64) -> String {
     let source = SourceText::new(SourceId::new(id), source.to_owned());
-    source.anchor(range.start, range.end).expect("authored range must anchor").fragment().to_owned()
+    source
+        .anchor(range.start, range.end)
+        .expect("authored range must anchor")
+        .fragment()
+        .to_owned()
 }
 
 fn active_rule(rule_id: &str) -> &'static str {
     let marker = format!("active_rule(\n        \"{rule_id}\",");
-    let start = INVENTORY_SOURCE.find(&marker).unwrap_or_else(|| panic!("missing {rule_id}"));
+    let start = INVENTORY_SOURCE
+        .find(&marker)
+        .unwrap_or_else(|| panic!("missing active rule {rule_id}"));
     let rest = &INVENTORY_SOURCE[start..];
-    let end = rest.find("\n    ),").expect("rule block must close") + "\n    ),".len();
+    let end = rest.find("\n    ),").expect("active rule block must close") + "\n    ),".len();
     &rest[..end]
 }
 
@@ -267,20 +499,40 @@ fn authority_and_existing_ee_04_r08_identity_are_exact() {
 }
 
 #[test]
-fn escaped_reserved_rhs_pins_exact_authored_subject_decoding_and_static_outcome() {
-    for (i, fixture) in REJECTING.iter().enumerate() {
-        assert_eq!(fragment(fixture.source, fixture.range), fixture.rhs, "{}", fixture.id);
-        let decoded = decode(fixture.rhs).unwrap_or_else(|e| panic!("{}: {e:?}", fixture.id));
-        assert_eq!(decoded.string_value, fixture.decoded, "{}", fixture.id);
+fn escaped_reserved_rhs_pins_authored_subject_decoding_and_static_outcome() {
+    for (index, fixture) in REJECTING.iter().enumerate() {
         assert_eq!(
-            decoded.code_points,
-            fixture.decoded.chars().map(|ch| ch as u32).collect::<Vec<_>>(),
+            fragment(fixture.source, fixture.range),
+            fixture.rhs,
+            "{}",
+            fixture.id
+        );
+        let decoded = decode(fixture.rhs)
+            .unwrap_or_else(|failure| panic!("{} must decode: {failure:?}", fixture.id));
+        assert_eq!(
+            decoded.code_points.as_slice(),
+            fixture.code_points,
+            "{}",
+            fixture.id
+        );
+        assert_eq!(
+            decoded.string_value,
+            fixture.string_value,
             "{}",
             fixture.id
         );
         assert!(is_reserved(&decoded.string_value), "{}", fixture.id);
-        assert_eq!(anchor(fixture.source, fixture.range, 263_000 + i as u64), fixture.rhs);
-        assert_eq!(FutureOutcome::StaticSemanticsRejected, FutureOutcome::StaticSemanticsRejected);
+        assert_eq!(fixture.rule_id, RULE_ID, "{}", fixture.id);
+        assert_eq!(
+            fixture.expected,
+            ExpectedOutcome::StaticSemanticsRejected,
+            "{}",
+            fixture.id
+        );
+        assert_eq!(
+            anchor(fixture.source, fixture.range, 263_000 + index as u64),
+            fixture.rhs
+        );
     }
 }
 
@@ -288,9 +540,13 @@ fn escaped_reserved_rhs_pins_exact_authored_subject_decoding_and_static_outcome(
 fn yield_await_strict_only_and_eval_arguments_are_non_triggers_in_this_envelope() {
     let mut counts = [0_usize; 3];
     for fixture in NON_TRIGGERS {
-        let decoded = decode(fixture.rhs).expect("non-trigger must decode");
-        assert_eq!(decoded.string_value, fixture.decoded);
-        assert!(!is_reserved(fixture.decoded));
+        let decoded = decode(fixture.rhs).expect("non-trigger fixture must decode");
+        assert_eq!(decoded.string_value, fixture.string_value);
+        assert!(!is_reserved(fixture.string_value));
+        assert_eq!(
+            fixture.expected,
+            ExpectedOutcome::SelectedAcceptedIncomplete
+        );
         match fixture.kind {
             NonTriggerKind::YieldAwait => counts[0] += 1,
             NonTriggerKind::StrictOnly => counts[1] += 1,
@@ -298,24 +554,22 @@ fn yield_await_strict_only_and_eval_arguments_are_non_triggers_in_this_envelope(
         }
     }
     assert_eq!(counts, [2, 8, 2]);
-    assert_eq!(FutureOutcome::SelectedAcceptedIncomplete, FutureOutcome::SelectedAcceptedIncomplete);
 }
 
 #[test]
 fn direct_this_null_boolean_spellings_remain_separate_existing_owners() {
-    for (i, (source, rhs, range)) in [
+    let fixtures = [
         ("const x = this;", "this", Range::new(10, 14)),
         ("const x = null;", "null", Range::new(10, 14)),
         ("const x = true;", "true", Range::new(10, 14)),
         ("const x = false;", "false", Range::new(10, 15)),
-    ]
-    .iter()
-    .enumerate()
-    {
+    ];
+
+    for (index, (source, rhs, range)) in fixtures.iter().enumerate() {
         assert_eq!(fragment(source, *range), *rhs);
         assert!(is_reserved(rhs));
         assert_eq!(decode(rhs), Err(DecodeFailure::MissingEscape));
-        assert_eq!(anchor(source, *range, 263_100 + i as u64), *rhs);
+        assert_eq!(anchor(source, *range, 263_100 + index as u64), *rhs);
     }
 }
 
@@ -337,6 +591,7 @@ fn malformed_non_code_point_and_position_invalid_families_are_not_reclassified()
 fn richer_tail_controls_remain_frontier_scoped_without_prefix_verdict() {
     assert!(FRONTIER_SCOPE_NOTE.contains("Richer syntax remains outside"));
     assert!(FRONTIER_SCOPE_NOTE.contains("not assigned a permanent future disposition"));
+
     for source in [
         r"const x = \u006Eull.x;",
         r"const x = \u006Eull();",
@@ -345,7 +600,12 @@ fn richer_tail_controls_remain_frontier_scoped_without_prefix_verdict() {
         r"const x = \u006Eull/*c*/;",
     ] {
         assert_eq!(fragment(source, Range::new(10, 19)), r"\u006Eull");
-        assert_eq!(decode(r"\u006Eull").expect("prefix must decode").string_value, "null");
+        assert_eq!(
+            decode(r"\u006Eull")
+                .expect("reserved prefix must decode")
+                .string_value,
+            "null"
+        );
         assert!(source.len() > 19);
     }
 }
@@ -358,16 +618,24 @@ fn static_and_grammar_precedence_witnesses_are_explicit() {
     assert_eq!(PRECEDENCE[3].primary_rule, Some(RULE_ID));
     assert_eq!(PRECEDENCE[4].family, PrecedenceFamily::Grammar);
     assert_eq!(PRECEDENCE[4].primary_rule, None);
-    for (i, fixture) in PRECEDENCE.iter().enumerate() {
+
+    for (index, fixture) in PRECEDENCE.iter().enumerate() {
         let subject = fragment(fixture.source, fixture.primary);
         assert!(!subject.is_empty());
         let _ = active_rule(fixture.co_trigger);
-        if let Some(rule) = fixture.primary_rule {
-            let _ = active_rule(rule);
+        if let Some(rule_id) = fixture.primary_rule {
+            let _ = active_rule(rule_id);
         }
-        assert_eq!(anchor(fixture.source, fixture.primary, 263_200 + i as u64), subject);
+        assert_eq!(
+            anchor(fixture.source, fixture.primary, 263_200 + index as u64),
+            subject
+        );
     }
-    assert_eq!(fragment(PRECEDENCE[4].source, PRECEDENCE[4].primary), r"\u{}");
+
+    assert_eq!(
+        fragment(PRECEDENCE[4].source, PRECEDENCE[4].primary),
+        r"\u{}"
+    );
 }
 
 #[test]
@@ -389,6 +657,9 @@ fn source_is_candidate_independent_and_representation_neutral() {
         ["Initializer", "Kind"].concat(),
         ["Expression", "Node"].concat(),
     ] {
-        assert!(!THIS_SOURCE.contains(&forbidden), "forbidden dependency {forbidden}");
+        assert!(
+            !THIS_SOURCE.contains(&forbidden),
+            "forbidden dependency {forbidden}"
+        );
     }
 }
