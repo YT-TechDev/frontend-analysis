@@ -460,7 +460,10 @@ fn escaped_identifier_reference_name_policy_matches_fixed_selected_context() {
         r"\u0061rguments",
     ] {
         let text = format!("const x = {rhs};");
-        let _ = recognized(&text);
+        let script = recognized(&text);
+        let binding = &script.declarations()[0].bindings()[0];
+        assert_eq!(binding.initializer(), SelectedInitializerState::SelectedPresent);
+        assert!(binding.escaped_reserved_initializer_identifier().is_none());
     }
 
     for name in [
@@ -503,7 +506,58 @@ fn escaped_identifier_reference_name_policy_matches_fixed_selected_context() {
     ] {
         let rhs = escaped_first_ascii_code_point(name);
         let text = format!("const x = {rhs};");
-        assert_unsupported(&text);
+        let script = recognized(&text);
+        let binding = &script.declarations()[0].bindings()[0];
+        assert_eq!(binding.initializer(), SelectedInitializerState::SelectedPresent);
+        let identifier = binding
+            .escaped_reserved_initializer_identifier()
+            .expect("escaped reserved initializer evidence");
+        assert_eq!(identifier.fragment(), rhs);
+        assert_eq!(
+            (identifier.range().start(), identifier.range().end()),
+            (10, 10 + rhs.len())
+        );
+    }
+}
+
+#[test]
+fn escaped_reserved_initializer_evidence_is_exact_and_direct_owners_remain_separate() {
+    for rhs in [
+        r"\u0074his",
+        r"\u006Eull",
+        r"\u0074rue",
+        r"\u0066alse",
+        r"\u0069f",
+        r"\u0063lass",
+        r"\u0069mport",
+        r"\u0065xport",
+        r"n\u0075ll",
+        r"tr\u0075e",
+        r"thi\u0073",
+    ] {
+        let text = format!("const x = {rhs};");
+        let script = recognized(&text);
+        let binding = &script.declarations()[0].bindings()[0];
+        assert_eq!(binding.initializer(), SelectedInitializerState::SelectedPresent);
+        let identifier = binding
+            .escaped_reserved_initializer_identifier()
+            .expect("escaped reserved initializer must retain authored evidence");
+        assert_eq!(identifier.fragment(), rhs);
+        assert_eq!(
+            (identifier.range().start(), identifier.range().end()),
+            (10, 10 + rhs.len())
+        );
+    }
+
+    for text in [
+        "const x = true;",
+        "const x = false;",
+        "const x = null;",
+        "const x = this;",
+    ] {
+        let script = recognized(text);
+        let binding = &script.declarations()[0].bindings()[0];
+        assert!(binding.escaped_reserved_initializer_identifier().is_none());
     }
 }
 
@@ -988,10 +1042,6 @@ fn direct_boolean_literal_boundary_preserves_maximal_identifier_reference_routin
 #[test]
 fn direct_boolean_literal_does_not_claim_escaped_malformed_or_richer_neighbors() {
     for text in [
-        r"const x = \u0074rue;",
-        r"const x = \u0066alse;",
-        r"const x = t\u0072ue;",
-        r"const x = f\u0061lse;",
         r"const x = true\u{};",
         r"const x = false\u0;",
         r"const x = true\u{61",
@@ -1183,10 +1233,6 @@ fn direct_null_literal_boundary_preserves_maximal_identifier_reference_routing()
 #[test]
 fn direct_null_literal_does_not_claim_escaped_malformed_or_richer_neighbors() {
     for text in [
-        r"const x = \u006Eull;",
-        r"const x = n\u0075ll;",
-        r"const x = nu\u006Cl;",
-        r"const x = nul\u006C;",
         r"const x = null\u{};",
         r"const x = null\u0;",
         r"const x = null\u{61",
@@ -1380,10 +1426,6 @@ fn direct_this_boundary_preserves_maximal_identifier_reference_routing() {
 #[test]
 fn direct_this_does_not_claim_other_frontiers() {
     for text in [
-        r"const x = \u0074his;",
-        r"const x = t\u0068is;",
-        r"const x = th\u0069s;",
-        r"const x = thi\u0073;",
         r"const x = this\u{};",
         r"const x = this\u0;",
         r"const x = this\u{61",
