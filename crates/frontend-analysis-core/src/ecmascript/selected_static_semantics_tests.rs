@@ -657,3 +657,36 @@ fn production_static_semantics_preserves_architecture_boundaries_in_source() {
     assert!(production.contains("SelectedOneLevelBlockStaticSemanticsAccepted"));
     assert!(production.contains("EscapedReservedWordInitializer"));
 }
+
+#[test]
+fn one_level_block_preserves_existing_malformed_binding_and_rhs_lifecycles() {
+    let source = source(r"{ let \u{}; }");
+    match recognize_selected_lexical_slice(&source) {
+        SelectedLexicalSliceOutcome::DefinitiveGrammarRejectionEvidence { subject } => {
+            assert_eq!(subject.fragment(), r"\u{}");
+            assert_eq!((subject.range().start(), subject.range().end()), (6, 10));
+        }
+        other => panic!(
+            "expected existing malformed BindingIdentifier grammar lifecycle, got {other:?}"
+        ),
+    }
+
+    let (_, script) = recognized_block(r"{ let \u0030; }");
+    match evaluate_selected_one_level_block_static_semantics(&script) {
+        SelectedOneLevelBlockStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::InvalidEscapedIdentifierStart { escape },
+        ) => {
+            assert_eq!(escape.fragment(), r"\u0030");
+            assert_eq!((escape.range().start(), escape.range().end()), (6, 12));
+        }
+        other => panic!(
+            "expected existing formed-invalid BindingIdentifier static lifecycle, got {other:?}"
+        ),
+    }
+
+    let source = source(r"{ const x = \u{}; }");
+    assert!(matches!(
+        recognize_selected_lexical_slice(&source),
+        SelectedLexicalSliceOutcome::UnsupportedCoverage
+    ));
+}
