@@ -9,6 +9,8 @@ use crate::{SourceId, SourceText};
 const ISSUE_ID: u64 = 295;
 const STATIC_PRECEDENCE_ORACLE: &str =
     include_str!("qualification_static_semantics_validation_tests.rs");
+const ESCAPED_BINDING_ORACLE: &str =
+    include_str!("qualification_validation_tests/escaped_identifier.rs");
 const GRAMMAR_EVIDENCE_ORACLE: &str =
     include_str!("qualification_grammar_evidence_validation_tests.rs");
 const GRAMMAR_POLICY_ORACLE: &str =
@@ -352,6 +354,13 @@ fn authority_chain_is_present_and_candidate_independent() {
     assert!(STATIC_PRECEDENCE_ORACLE.contains("EE-15-R03"));
     assert!(STATIC_PRECEDENCE_ORACLE.contains("EE-36-R01"));
 
+    assert!(ESCAPED_BINDING_ORACLE.contains("Issue #222"));
+    assert!(ESCAPED_BINDING_ORACLE.contains("formed_unicode_escape_at"));
+    assert!(
+        ESCAPED_BINDING_ORACLE
+            .contains("permanent_long_braced_gold_and_large_leading_zero_challenge")
+    );
+
     assert!(GRAMMAR_EVIDENCE_ORACLE.contains("BASE_GRAMMAR_EVIDENCE"));
     assert!(GRAMMAR_EVIDENCE_ORACLE.contains("CandidateDefinitiveGrammarEvidence"));
 
@@ -366,6 +375,8 @@ fn authority_chain_is_present_and_candidate_independent() {
     assert!(RHS_ORACLE.contains("NEGATIVE_UNSUPPORTED_EXPECTATION"));
     assert!(RHS_ORACLE.contains("EscapedIdentifierReferenceFrontierOutcome::UnsupportedCoverage"));
 
+    assert!(BLOCK_ORACLE.contains("SELECTED_BLOCK_BODY"));
+    assert!(BLOCK_ORACLE.contains("LexicalDeclaration+"));
     assert!(BLOCK_ORACLE.contains("EE-14-R01"));
     assert!(BLOCK_ORACLE.contains("EE-14-R02"));
     assert!(BLOCK_ORACLE.contains("SIBLING_BLOCKS"));
@@ -392,6 +403,8 @@ fn authority_chain_is_present_and_candidate_independent() {
 #[test]
 fn bounded_binding_grammar_subjects_relocate_truthfully_inside_block_context() {
     assert_eq!(EMBEDDED_GRAMMAR_FIXTURES.len(), 4);
+    assert!(BLOCK_ORACLE.contains("SELECTED_BLOCK_BODY"));
+    assert!(BLOCK_ORACLE.contains("LexicalDeclaration+"));
 
     for fixture in EMBEDDED_GRAMMAR_FIXTURES {
         assert_anchor(fixture.source, fixture.subject, fixture.subject_fragment);
@@ -541,6 +554,11 @@ fn region_duplicate_domains_remain_separate_after_block_embedding() {
 #[test]
 fn unicode_escape_close_and_block_close_are_distinct_authored_delimiters() {
     assert_eq!(DELIMITER_FIXTURES.len(), 4);
+    assert!(ESCAPED_BINDING_ORACLE.contains("formed_unicode_escape_at"));
+    assert!(
+        ESCAPED_BINDING_ORACLE
+            .contains("permanent_long_braced_gold_and_large_leading_zero_challenge")
+    );
 
     let unclosed = DELIMITER_FIXTURES[0];
     assert_anchor(unclosed.source, unclosed.escape, r"\u{61");
