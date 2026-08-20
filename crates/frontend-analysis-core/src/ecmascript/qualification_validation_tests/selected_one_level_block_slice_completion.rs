@@ -122,10 +122,26 @@ fn fixed_envelope_and_accepted_authority_chain_are_present() {
         HISTORICAL_FLAT_COMPLETION
             .contains("const SELECTED_TOP_LEVEL_GRAMMAR: &str = \"LexicalDeclaration+\";")
     );
+    assert!(HISTORICAL_FLAT_COMPLETION.contains(
+        "fn selected_slice_required_rule_set_is_exact_and_independently_evidence_backed()"
+    ));
+    assert!(HISTORICAL_FLAT_COMPLETION.contains("assert_eq!(configured_rule_ids, expected_rule_ids);"));
+    for rule_id in HISTORICAL_REQUIRED_RULE_IDS {
+        assert!(
+            HISTORICAL_FLAT_COMPLETION.contains(rule_id),
+            "#268 historical completion must retain required rule {rule_id}"
+        );
+    }
     assert!(HISTORICAL_FLAT_COMPLETION.contains("assert_eq!(required.len(), 7);"));
     assert!(HISTORICAL_FLAT_COMPLETION.contains("(\"EE-14\", \"Block\")"));
+    assert!(HISTORICAL_FLAT_COMPLETION.contains("validation-only local selected slice"));
+    assert!(HISTORICAL_FLAT_COMPLETION.contains(
+        "const FULL_FIRST_ENVELOPE_PROFILE_COMPLETION_PROVEN: bool = false;"
+    ));
 
     assert!(BLOCK_ORACLE.contains("const SELECTED_BLOCK_BODY: &str = \"LexicalDeclaration+\";"));
+    assert!(BLOCK_ORACLE.contains("id: \"mixed-shadowing\""));
+    assert!(BLOCK_ORACLE.contains("id: \"sibling-regions\""));
     assert!(BLOCK_ORACLE.contains("const BLOCK_RULES"));
     assert!(BLOCK_ORACLE.contains("EE-14-R01"));
     assert!(BLOCK_ORACLE.contains("fixture_id: \"block-local-duplicate\""));
@@ -299,6 +315,18 @@ fn composition_and_terminal_closure_remain_owned_by_prior_oracles() {
     }
 
     for marker in [
+        "static_primary_evidence_tiers_are_explicit_across_regions",
+        "later declaration-local evidence intentionally outranks earlier Block duplicate evidence",
+        "Block duplicate evidence intentionally outranks Script duplicate evidence",
+        "first Block in source order owns the primary Tier-2 duplicate evidence",
+    ] {
+        assert!(
+            BLOCK_COMPOSITION_ORACLE.contains(marker),
+            "#295/#296 deterministic primary-evidence authority must retain {marker}"
+        );
+    }
+
+    for marker in [
         "KEYWORD_ADJACENT_FIXTURES",
         "EOF_COMPOSITION_FIXTURES",
         "NON_EOF_ASI_FIXTURES",
@@ -325,14 +353,26 @@ fn selected_lifecycle_stays_incomplete_and_resource_failures_stay_distinct() {
     assert!(SELECTED_AGGREGATE_SOURCE.contains("SelectedAcceptedIncomplete"));
     assert!(SELECTED_AGGREGATE_SOURCE.contains("UnsupportedCoverage"));
     assert!(SELECTED_AGGREGATE_SOURCE.contains("DefinitiveGrammarRejectionEvidence"));
+    assert!(SELECTED_AGGREGATE_SOURCE.contains("selected_grammar_rejection_to_qualification"));
+    assert!(SELECTED_AGGREGATE_SOURCE.contains("SelectedStaticSemanticsOutcome::Rejected"));
+    assert!(
+        SELECTED_AGGREGATE_SOURCE
+            .contains("SelectedOneLevelBlockStaticSemanticsOutcome::Rejected")
+    );
+    assert!(SELECTED_AGGREGATE_SOURCE.contains("selected_rejection_to_qualification"));
     assert!(SELECTED_AGGREGATE_SOURCE.contains("QualificationOutcome::resource_limited()"));
     assert!(SELECTED_AGGREGATE_SOURCE.contains("QualificationOutcome::internal_failure()"));
     assert!(
         SELECTED_AGGREGATE_SOURCE
             .contains("does not construct aggregate `QualificationOutcome::Qualified`")
     );
+    assert!(
+        !SELECTED_AGGREGATE_SOURCE.contains(concat!("QualificationOutcome::", "qualified(")),
+        "selected aggregate production must not construct Qualified"
+    );
 
     assert!(QUALIFICATION_SOURCE.contains("struct CompleteQualificationWitness"));
+    assert!(QUALIFICATION_SOURCE.contains("No production constructor is exposed by this foundation."));
     assert!(QUALIFICATION_SOURCE.contains("#[cfg(test)]"));
     assert!(QUALIFICATION_SOURCE.contains("test_complete_qualification_witness"));
 }
