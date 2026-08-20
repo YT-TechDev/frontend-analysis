@@ -14,6 +14,9 @@ fn source(text: &str) -> SourceText {
 fn recognized(text: &str) -> SelectedLexicalScript {
     match recognize_selected_lexical_slice(&source(text)) {
         SelectedLexicalSliceOutcome::RecognizedSelectedSlice(script) => script,
+        SelectedLexicalSliceOutcome::RecognizedOneLevelBlockSlice(_) => {
+            panic!("expected flat selected-slice recognition, got Block-enabled slice for {text:?}")
+        }
         SelectedLexicalSliceOutcome::UnsupportedCoverage => {
             panic!("expected selected-slice recognition, got unsupported coverage for {text:?}")
         }
@@ -26,6 +29,15 @@ fn recognized(text: &str) -> SelectedLexicalScript {
         SelectedLexicalSliceOutcome::InternalFailure => {
             panic!("unexpected internal failure for {text:?}")
         }
+    }
+}
+
+fn recognized_block(
+    text: &str,
+) -> super::selected_lexical_slice::SelectedOneLevelBlockScript {
+    match recognize_selected_lexical_slice(&source(text)) {
+        SelectedLexicalSliceOutcome::RecognizedOneLevelBlockSlice(script) => script,
+        other => panic!("expected one-level Block recognition for {text:?}, got {other:?}"),
     }
 }
 
@@ -1775,4 +1787,121 @@ fn escape_free_string_literal_aggregate_lifecycle_remains_incomplete_or_existing
         .expect("Grammar subject must remain authored");
     assert_eq!(subject.fragment(), r"\u{}");
     assert_eq!((subject.range().start(), subject.range().end()), (21, 25));
+}
+
+#[test]
+fn one_level_block_retains_ordered_items_and_exact_source_provenance() {
+    use super::selected_lexical_slice::SelectedTopLevelItem;
+
+    let script = recognized_block("let a=1; { let a=2; let x=a; } let y=a;");
+    assert_eq!(script.items().len(), 3);
+
+    let SelectedTopLevelItem::LexicalDeclaration(first) = &script.items()[0] else {
+        panic!("first selected item must remain the top-level declaration");
+    };
+    assert_eq!(
+        (first.declaration().range().start(), first.declaration().range().end()),
+        (0, 8)
+    );
+
+    let SelectedTopLevelItem::Block(block) = &script.items()[1] else {
+        panic!("second selected item must be the one-level Block");
+    };
+    assert_eq!(block.block().fragment(), "{ let a=2; let x=a; }");
+    assert_eq!((block.block().range().start(), block.block().range().end()), (9, 30));
+    assert_eq!(block.declarations().len(), 2);
+    assert_eq!(
+        (
+            block.declarations()[0].declaration().range().start(),
+            block.declarations()[0].declaration().range().end()
+        ),
+        (11, 19)
+    );
+    assert_eq!(
+        (
+            block.declarations()[1].declaration().range().start(),
+            block.declarations()[1].declaration().range().end()
+        ),
+        (20, 28)
+    );
+    let rhs = block.declarations()[1].bindings()[0]
+        .identifier_reference_initializer()
+        .expect("selected RHS IdentifierReference fact");
+    assert_eq!((rhs.reference().range().start(), rhs.reference().range().end()), (26, 27));
+    assert_eq!(rhs.semantic_name(), "a");
+
+    let SelectedTopLevelItem::LexicalDeclaration(last) = &script.items()[2] else {
+        panic!("last selected item must remain the top-level declaration");
+    };
+    assert_eq!(
+        (last.declaration().range().start(), last.declaration().range().end()),
+        (31, 39)
+    );
+}
+
+#[test]
+fn one_level_block_preserves_sibling_and_identifier_reference_provenance() {
+    use super::selected_lexical_slice::SelectedTopLevelItem;
+
+    let siblings = recognized_block("{ let a=1; } { let x=a; }");
+    let SelectedTopLevelItem::Block(first) = &siblings.items()[0] else {
+        panic!("first item must be Block");
+    };
+    let SelectedTopLevelItem::Block(second) = &siblings.items()[1] else {
+        panic!("second item must be Block");
+    };
+    assert_eq!((first.block().range().start(), first.block().range().end()), (0, 12));
+    assert_eq!((second.block().range().start(), second.block().range().end()), (13, 25));
+
+    let escaped = recognized_block(r"let a=1; { let x=\u0061; }");
+    let SelectedTopLevelItem::Block(block) = &escaped.items()[1] else {
+        panic!("escaped fixture must retain Block item");
+    };
+    let reference = block.declarations()[0].bindings()[0]
+        .identifier_reference_initializer()
+        .expect("escaped RHS reference fact");
+    assert_eq!(reference.reference().fragment(), r"\u0061");
+    assert_eq!(
+        (reference.reference().range().start(), reference.reference().range().end()),
+        (17, 23)
+    );
+    assert_eq!(reference.semantic_name(), "a");
+
+    let canonical = recognized_block(r"let é=1; { let x=e\u0301; }");
+    let SelectedTopLevelItem::LexicalDeclaration(outer) = &canonical.items()[0] else {
+        panic!("canonical fixture must retain outer declaration");
+    };
+    assert_eq!(outer.bindings()[0].binding().fragment(), "é");
+    let SelectedTopLevelItem::Block(block) = &canonical.items()[1] else {
+        panic!("canonical fixture must retain Block");
+    };
+    let reference = block.declarations()[0].bindings()[0]
+        .identifier_reference_initializer()
+        .expect("canonical-distinct RHS reference");
+    assert_eq!(reference.semantic_name(), "e\u{301}");
+    assert_ne!(reference.semantic_name(), outer.bindings()[0].binding().fragment());
+    assert_eq!(
+        (reference.reference().range().start(), reference.reference().range().end()),
+        (18, 25)
+    );
+}
+
+#[test]
+fn one_level_block_frontier_does_not_widen_nested_empty_comment_statement_or_asi_coverage() {
+    for text in [
+        "{}",
+        "{ let a=1 }",
+        "{ { let a=1; } }",
+        "{ let a=1; /*c*/ let x=a; }",
+        "{ var a=1; }",
+        "{ function f(){} }",
+        "{ 1; }",
+    ] {
+        assert_unsupported(text);
+    }
+
+    assert!(matches!(
+        recognize_selected_lexical_slice(&source("let a=1; let x=a;")),
+        SelectedLexicalSliceOutcome::RecognizedSelectedSlice(_)
+    ));
 }
