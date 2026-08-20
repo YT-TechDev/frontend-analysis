@@ -1,9 +1,10 @@
 //! Selected source-backed ECMAScript lexical declaration slice for Issue #218.
 //!
 //! This module recognizes only the bounded top-level Script subset accepted by
-//! #215/#218. Recognition is transactional for the whole authoritative
-//! `SourceText`: tentative declaration/binding facts are returned only when the
-//! entire source is consumed by selected declarations plus selected trivia.
+//! #215/#218 and the additive one-level selected Block frontier accepted by
+//! #283/#291. Recognition is transactional for the whole authoritative
+//! `SourceText`: tentative declaration/binding/Block facts are returned only
+//! when the entire source is consumed by selected items plus selected trivia.
 //!
 //! This is not aggregate ECMAScript qualification and cannot construct
 //! `QualificationOutcome::Qualified`.
@@ -20,6 +21,7 @@ use super::unicode::is_space_separator;
 #[derive(Debug)]
 pub(super) enum SelectedLexicalSliceOutcome {
     RecognizedSelectedSlice(SelectedLexicalScript),
+    RecognizedOneLevelBlockSlice(SelectedOneLevelBlockScript),
     UnsupportedCoverage,
     DefinitiveGrammarRejectionEvidence { subject: SourceAnchor },
     ResourceLimited,
@@ -32,6 +34,39 @@ pub(super) struct SelectedLexicalScript {
 }
 
 impl SelectedLexicalScript {
+    pub(super) fn declarations(&self) -> &[SelectedLexicalDeclaration] {
+        &self.declarations
+    }
+}
+
+#[derive(Debug)]
+pub(super) struct SelectedOneLevelBlockScript {
+    items: Vec<SelectedTopLevelItem>,
+}
+
+impl SelectedOneLevelBlockScript {
+    pub(super) fn items(&self) -> &[SelectedTopLevelItem] {
+        &self.items
+    }
+}
+
+#[derive(Debug)]
+pub(super) enum SelectedTopLevelItem {
+    LexicalDeclaration(SelectedLexicalDeclaration),
+    Block(SelectedBlock),
+}
+
+#[derive(Debug)]
+pub(super) struct SelectedBlock {
+    block: SourceAnchor,
+    declarations: Vec<SelectedLexicalDeclaration>,
+}
+
+impl SelectedBlock {
+    pub(super) fn block(&self) -> &SourceAnchor {
+        &self.block
+    }
+
     pub(super) fn declarations(&self) -> &[SelectedLexicalDeclaration] {
         &self.declarations
     }
@@ -169,6 +204,52 @@ impl SelectedLexicalDeclaration {
     }
 }
 
+#[derive(Debug)]
+enum SelectedScriptBuilder {
+    Flat(Vec<SelectedLexicalDeclaration>),
+    BlockEnabled(Vec<SelectedTopLevelItem>),
+}
+
+impl SelectedScriptBuilder {
+    fn push_item(&mut self, item: SelectedTopLevelItem) -> Result<(), ParseFailure> {
+        match (self, item) {
+            (Self::Flat(declarations), SelectedTopLevelItem::LexicalDeclaration(declaration)) => {
+                declarations
+                    .try_reserve(1)
+                    .map_err(|_| ParseFailure::ResourceLimited)?;
+                declarations.push(declaration);
+                Ok(())
+            }
+            (builder @ Self::Flat(_), SelectedTopLevelItem::Block(block)) => {
+                let Self::Flat(declarations) = builder else {
+                    return Err(ParseFailure::InternalFailure);
+                };
+                let item_count = declarations
+                    .len()
+                    .checked_add(1)
+                    .ok_or(ParseFailure::InternalFailure)?;
+                let mut items = Vec::new();
+                items
+                    .try_reserve(item_count)
+                    .map_err(|_| ParseFailure::ResourceLimited)?;
+                for declaration in std::mem::take(declarations) {
+                    items.push(SelectedTopLevelItem::LexicalDeclaration(declaration));
+                }
+                items.push(SelectedTopLevelItem::Block(block));
+                *builder = Self::BlockEnabled(items);
+                Ok(())
+            }
+            (Self::BlockEnabled(items), item) => {
+                items
+                    .try_reserve(1)
+                    .map_err(|_| ParseFailure::ResourceLimited)?;
+                items.push(item);
+                Ok(())
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SelectedGrammarEvidenceContext {
     General,
@@ -233,6 +314,41 @@ impl<'source> Cursor<'source> {
             }
             let _ = self.advance_char();
         }
+    }
+
+    fn parse_selected_block(&mut self) -> Result<SelectedBlock, ParseFailure> {
+        let block_start = self.offset;
+        if !self.consume_ascii('{') {
+            return Err(ParseFailure::UnsupportedCoverage);
+        }
+        self.skip_selected_trivia();
+
+        if self.peek_char() == Some('}') {
+            return Err(ParseFailure::UnsupportedCoverage);
+        }
+
+        let mut declarations = Vec::new();
+        loop {
+            let declaration = self.parse_declaration()?;
+            declarations
+                .try_reserve(1)
+                .map_err(|_| ParseFailure::ResourceLimited)?;
+            declarations.push(declaration);
+
+            self.skip_selected_trivia();
+            if self.consume_ascii('}') {
+                break;
+            }
+            if self.is_eof() {
+                return Err(ParseFailure::UnsupportedCoverage);
+            }
+        }
+
+        let block = self.anchor(block_start, self.offset)?;
+        Ok(SelectedBlock {
+            block,
+            declarations,
+        })
     }
 
     fn parse_declaration(&mut self) -> Result<SelectedLexicalDeclaration, ParseFailure> {
@@ -770,6 +886,17 @@ impl<'source> Cursor<'source> {
     }
 }
 
+fn parse_failure_to_outcome(failure: ParseFailure) -> SelectedLexicalSliceOutcome {
+    match failure {
+        ParseFailure::UnsupportedCoverage => SelectedLexicalSliceOutcome::UnsupportedCoverage,
+        ParseFailure::DefinitiveGrammarRejectionEvidence { subject } => {
+            SelectedLexicalSliceOutcome::DefinitiveGrammarRejectionEvidence { subject }
+        }
+        ParseFailure::ResourceLimited => SelectedLexicalSliceOutcome::ResourceLimited,
+        ParseFailure::InternalFailure => SelectedLexicalSliceOutcome::InternalFailure,
+    }
+}
+
 pub(super) fn recognize_selected_lexical_slice(source: &SourceText) -> SelectedLexicalSliceOutcome {
     let mut cursor = Cursor::new(source);
     cursor.skip_selected_trivia();
@@ -778,28 +905,23 @@ pub(super) fn recognize_selected_lexical_slice(source: &SourceText) -> SelectedL
         return SelectedLexicalSliceOutcome::UnsupportedCoverage;
     }
 
-    let mut declarations = Vec::new();
+    let mut builder = SelectedScriptBuilder::Flat(Vec::new());
 
     loop {
-        match cursor.parse_declaration() {
-            Ok(declaration) => {
-                if declarations.try_reserve(1).is_err() {
-                    return SelectedLexicalSliceOutcome::ResourceLimited;
-                }
-                declarations.push(declaration);
+        let item = if cursor.peek_char() == Some('{') {
+            match cursor.parse_selected_block() {
+                Ok(block) => SelectedTopLevelItem::Block(block),
+                Err(failure) => return parse_failure_to_outcome(failure),
             }
-            Err(ParseFailure::UnsupportedCoverage) => {
-                return SelectedLexicalSliceOutcome::UnsupportedCoverage;
+        } else {
+            match cursor.parse_declaration() {
+                Ok(declaration) => SelectedTopLevelItem::LexicalDeclaration(declaration),
+                Err(failure) => return parse_failure_to_outcome(failure),
             }
-            Err(ParseFailure::DefinitiveGrammarRejectionEvidence { subject }) => {
-                return SelectedLexicalSliceOutcome::DefinitiveGrammarRejectionEvidence { subject };
-            }
-            Err(ParseFailure::ResourceLimited) => {
-                return SelectedLexicalSliceOutcome::ResourceLimited;
-            }
-            Err(ParseFailure::InternalFailure) => {
-                return SelectedLexicalSliceOutcome::InternalFailure;
-            }
+        };
+
+        if let Err(failure) = builder.push_item(item) {
+            return parse_failure_to_outcome(failure);
         }
 
         cursor.skip_selected_trivia();
@@ -808,7 +930,18 @@ pub(super) fn recognize_selected_lexical_slice(source: &SourceText) -> SelectedL
         }
     }
 
-    SelectedLexicalSliceOutcome::RecognizedSelectedSlice(SelectedLexicalScript { declarations })
+    match builder {
+        SelectedScriptBuilder::Flat(declarations) => {
+            SelectedLexicalSliceOutcome::RecognizedSelectedSlice(SelectedLexicalScript {
+                declarations,
+            })
+        }
+        SelectedScriptBuilder::BlockEnabled(items) => {
+            SelectedLexicalSliceOutcome::RecognizedOneLevelBlockSlice(SelectedOneLevelBlockScript {
+                items,
+            })
+        }
+    }
 }
 
 fn is_selected_trivia(code_point: char) -> bool {
