@@ -67,11 +67,15 @@ fn recognized(text: &str) -> SelectedOneLevelBlockScript {
     let source = SourceText::new(SourceId::new(304), text.to_owned());
     match recognize_selected_lexical_slice(&source) {
         SelectedLexicalSliceOutcome::RecognizedOneLevelBlockSlice(script) => script,
-        other => panic!("expected one-level Block selected recognition for {text:?}, got {other:?}"),
+        other => {
+            panic!("expected one-level Block selected recognition for {text:?}, got {other:?}")
+        }
     }
 }
 
-fn accepted(script: &SelectedOneLevelBlockScript) -> SelectedOneLevelBlockStaticSemanticsAccepted<'_> {
+fn accepted(
+    script: &SelectedOneLevelBlockScript,
+) -> SelectedOneLevelBlockStaticSemanticsAccepted<'_> {
     match evaluate_selected_one_level_block_static_semantics(script) {
         SelectedOneLevelBlockStaticSemanticsOutcome::Accepted(accepted) => accepted,
         other => panic!("expected one-level Block static acceptance, got {other:?}"),
@@ -126,12 +130,7 @@ fn block(start: usize, end: usize, fragment: &str) -> RegionSnapshot {
     RegionSnapshot::Block(anchor(start, end, fragment))
 }
 
-fn target(
-    start: usize,
-    end: usize,
-    fragment: &str,
-    region: RegionSnapshot,
-) -> TargetSnapshot {
+fn target(start: usize, end: usize, fragment: &str, region: RegionSnapshot) -> TargetSnapshot {
     TargetSnapshot::SelectedLexicalBinding {
         binding: anchor(start, end, fragment),
         region,
@@ -315,12 +314,7 @@ fn multiple_relations_preserve_reference_traversal_order_across_regions() {
                 current_region: block(18, 48, "{ let x=a; let y=z; let z=3; }"),
                 reference: anchor(35, 36, "z"),
                 semantic_name: "z".to_owned(),
-                target: target(
-                    42,
-                    43,
-                    "z",
-                    block(18, 48, "{ let x=a; let y=z; let z=3; }"),
-                ),
+                target: target(42, 43, "z", block(18, 48, "{ let x=a; let y=z; let z=3; }")),
             },
             RelationSnapshot {
                 containing_binding: anchor(53, 54, "q"),
