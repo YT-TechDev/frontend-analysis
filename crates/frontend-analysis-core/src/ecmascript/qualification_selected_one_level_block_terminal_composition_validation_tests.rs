@@ -141,10 +141,7 @@ const EOF_COMPOSITION_FIXTURES: &[EofCompositionFixture] = &[
     },
 ];
 
-const NON_EOF_ASI_FIXTURES: &[&str] = &[
-    "let a=1 { let b=2; }",
-    "{ let a=1; } let b=2\nconst c=3",
-];
+const NON_EOF_ASI_FIXTURES: &[&str] = &["let a=1 { let b=2; }", "{ let a=1; } let b=2\nconst c=3"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct IncompleteBlockFixture {
@@ -453,9 +450,11 @@ fn definitive_grammar_remains_primary_over_tentative_facts_even_when_block_never
         }
     }
 
-    assert!(GRAMMAR_POLICY_ORACLE.contains(
-        "grammar_primary_discards_tentative_selected_static_evidence_across_families"
-    ));
+    assert!(
+        GRAMMAR_POLICY_ORACLE.contains(
+            "grammar_primary_discards_tentative_selected_static_evidence_across_families"
+        )
+    );
     assert!(BLOCK_COMPOSITION_ORACLE.contains("GrammarVsBlockFixture"));
 }
 
