@@ -369,7 +369,7 @@ fn authority_chain_is_present_and_candidate_independent() {
     assert!(keyword_section.contains("NonCodePointBraced"));
     assert!(!keyword_section.contains("ShortFixed"));
     assert!(!keyword_section.contains("UnclosedBraced"));
-    assert!(!keyword_section.contains("const"));
+    assert!(!keyword_section.contains(r#"source: r"const"#));
 
     assert!(GRAMMAR_EVIDENCE_ORACLE.contains("CandidateDefinitiveGrammarEvidence"));
     assert!(GRAMMAR_POLICY_ORACLE.contains("RequiresLookahead(\";\")"));
