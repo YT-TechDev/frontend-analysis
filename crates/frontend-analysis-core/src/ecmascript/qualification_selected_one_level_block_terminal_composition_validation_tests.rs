@@ -528,8 +528,7 @@ fn incomplete_block_retains_only_already_owned_terminal_grammar_when_decision_is
         r"\u{}"
     );
     assert_eq!(
-        INCOMPLETE_BLOCK_GRAMMAR_FIXTURES[0].block_close,
-        None,
+        INCOMPLETE_BLOCK_GRAMMAR_FIXTURES[0].block_close, None,
         "the final `}` belongs to the malformed escape subject, not to a Block close"
     );
 }
@@ -556,7 +555,10 @@ fn definitive_grammar_remains_primary_over_uncommitted_static_candidates() {
             ExpectedOutcome::Grammar { subject, .. } => subject,
             _ => panic!("competition fixture must retain definitive Grammar as primary"),
         };
-        assert_ne!(fixture.uncommitted_static_candidate.subject, grammar_subject);
+        assert_ne!(
+            fixture.uncommitted_static_candidate.subject,
+            grammar_subject
+        );
         assert!(fixture.uncommitted_static_candidate.subject.end <= grammar_subject.start);
     }
 
