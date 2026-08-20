@@ -19,10 +19,7 @@ const RAW_OFFSET_BOUNDARY: &str =
     "authored target range before reference range != TargetBindingBeforeContainingBinding";
 
 const EXECUTION_PREMISES: &[(&str, &str)] = &[
-    (
-        "P1",
-        "whole current selected lexical recognition completed",
-    ),
+    ("P1", "whole current selected lexical recognition completed"),
     (
         "P2",
         "selected static semantics Accepted for the exact retained script",
@@ -131,9 +128,7 @@ const FIXTURES: &[InitializationFixture] = &[
                 4, 5, "a",
             )),
             order: Some(ExpectedBindingOrder::TargetBindingBeforeContainingBinding),
-            conditional_state: Some(
-                ExpectedConditionalInitializationState::InitializedAtReference,
-            ),
+            conditional_state: Some(ExpectedConditionalInitializationState::InitializedAtReference),
         }),
     },
     InitializationFixture {
@@ -185,9 +180,7 @@ const FIXTURES: &[InitializationFixture] = &[
                 4, 5, "a",
             )),
             order: Some(ExpectedBindingOrder::TargetBindingBeforeContainingBinding),
-            conditional_state: Some(
-                ExpectedConditionalInitializationState::InitializedAtReference,
-            ),
+            conditional_state: Some(ExpectedConditionalInitializationState::InitializedAtReference),
         }),
     },
     InitializationFixture {
@@ -239,9 +232,7 @@ const FIXTURES: &[InitializationFixture] = &[
                 4, 5, "a",
             )),
             order: Some(ExpectedBindingOrder::TargetBindingBeforeContainingBinding),
-            conditional_state: Some(
-                ExpectedConditionalInitializationState::InitializedAtReference,
-            ),
+            conditional_state: Some(ExpectedConditionalInitializationState::InitializedAtReference),
         }),
     },
     InitializationFixture {
@@ -257,9 +248,7 @@ const FIXTURES: &[InitializationFixture] = &[
                 4, 5, "a",
             )),
             order: Some(ExpectedBindingOrder::TargetBindingBeforeContainingBinding),
-            conditional_state: Some(
-                ExpectedConditionalInitializationState::InitializedAtReference,
-            ),
+            conditional_state: Some(ExpectedConditionalInitializationState::InitializedAtReference),
         }),
     },
     InitializationFixture {
@@ -359,10 +348,22 @@ fn execution_premises_are_explicit_complete_and_unique() {
 
     assert_eq!(ids.len(), 7);
     assert_eq!(descriptions.len(), 7);
-    assert!(EXECUTION_PREMISES[3].1.contains("GlobalDeclarationInstantiation"));
+    assert!(
+        EXECUTION_PREMISES[3]
+            .1
+            .contains("GlobalDeclarationInstantiation")
+    );
     assert!(EXECUTION_PREMISES[4].1.contains("ScriptEvaluation"));
-    assert!(EXECUTION_PREMISES[5].1.contains("evaluation point is reached"));
-    assert!(EXECUTION_PREMISES[6].1.contains("intervening lexical Environment Record"));
+    assert!(
+        EXECUTION_PREMISES[5]
+            .1
+            .contains("evaluation point is reached")
+    );
+    assert!(
+        EXECUTION_PREMISES[6]
+            .1
+            .contains("intervening lexical Environment Record")
+    );
 }
 
 #[test]
@@ -371,7 +372,11 @@ fn fixture_ids_and_sources_are_stable_and_unique() {
     let mut sources = BTreeSet::new();
 
     for fixture in FIXTURES {
-        assert!(ids.insert(fixture.id), "duplicate fixture id {}", fixture.id);
+        assert!(
+            ids.insert(fixture.id),
+            "duplicate fixture id {}",
+            fixture.id
+        );
         assert!(
             sources.insert(fixture.source),
             "duplicate fixture source {}",
@@ -475,7 +480,10 @@ fn binding_list_order_and_prior_uninitialized_let_are_pinned() {
     );
 
     let prior_let = expected_reference("prior-let-without-initializer");
-    assert_eq!(prior_let.containing_binding, ExpectedAnchor::new(11, 12, "x"));
+    assert_eq!(
+        prior_let.containing_binding,
+        ExpectedAnchor::new(11, 12, "x")
+    );
     assert_eq!(prior_let.reference, ExpectedAnchor::new(13, 14, "a"));
     assert_eq!(
         prior_let.conditional_state,
@@ -495,15 +503,18 @@ fn escaped_identity_and_no_normalization_are_independently_pinned() {
     );
 
     let canonical = expected_reference("canonical-distinct");
-    assert_eq!(canonical.containing_binding, ExpectedAnchor::new(14, 15, "x"));
+    assert_eq!(
+        canonical.containing_binding,
+        ExpectedAnchor::new(14, 15, "x")
+    );
     assert_eq!(canonical.reference, ExpectedAnchor::new(16, 23, "e\\u0301"));
     assert_eq!(canonical.semantic_name, "e\u{301}");
     assert!(matches!(
         canonical.target,
         ExpectedTarget::NoSameSourceSelectedLexicalBinding
     ));
-    assert_eq!(canonical.order, None);
-    assert_eq!(canonical.conditional_state, None);
+    assert!(canonical.order.is_none());
+    assert!(canonical.conditional_state.is_none());
 }
 
 #[test]
@@ -529,15 +540,15 @@ fn applicability_controls_whether_execution_state_is_available() {
                     reference.target,
                     ExpectedTarget::NoSameSourceSelectedLexicalBinding
                 ));
-                assert_eq!(reference.order, None);
-                assert_eq!(reference.conditional_state, None);
+                assert!(reference.order.is_none());
+                assert!(reference.conditional_state.is_none());
             }
             ExpectedApplicability::PrerequisiteStaticRejected { authority } => {
                 assert!(matches!(authority, "EE-36-R01" | "EE-04-R08"));
-                assert_eq!(fixture.reference, None);
+                assert!(fixture.reference.is_none());
             }
             ExpectedApplicability::UnsupportedCoverage => {
-                assert_eq!(fixture.reference, None);
+                assert!(fixture.reference.is_none());
             }
         }
     }
@@ -555,8 +566,8 @@ fn no_same_source_target_remains_runtime_undetermined() {
         reference.target,
         ExpectedTarget::NoSameSourceSelectedLexicalBinding
     ));
-    assert_eq!(reference.order, None);
-    assert_eq!(reference.conditional_state, None);
+    assert!(reference.order.is_none());
+    assert!(reference.conditional_state.is_none());
     assert!(NO_MATCH_BOUNDARY.contains("runtime unbound"));
     assert!(NO_MATCH_BOUNDARY.contains("ReferenceError"));
 }
