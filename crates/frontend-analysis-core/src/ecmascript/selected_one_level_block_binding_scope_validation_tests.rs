@@ -10,8 +10,7 @@ use crate::{SourceId, SourceText};
 
 const ISSUE_ID: u64 = 302;
 const FLAT_RELATION_ORACLE: &str = include_str!("selected_binding_scope_validation_tests.rs");
-const FLAT_ORDER_ORACLE: &str =
-    include_str!("selected_lexical_initialization_validation_tests.rs");
+const FLAT_ORDER_ORACLE: &str = include_str!("selected_lexical_initialization_validation_tests.rs");
 const BLOCK_ORACLE: &str =
     include_str!("qualification_selected_one_level_block_validation_tests.rs");
 const BLOCK_COMPOSITION_ORACLE: &str =
@@ -241,8 +240,7 @@ const GENUINE_NO_TARGET_RELATIONS: &[ExpectedRelation] = &[ExpectedRelation {
 
 const ZERO_RELATION_BLOCK: ExpectedAnchor = ExpectedAnchor::new(9, 21, "{ let a=2; }");
 
-const ESCAPED_REFERENCE_BLOCK: ExpectedAnchor =
-    ExpectedAnchor::new(9, 26, r"{ let x=\u0061; }");
+const ESCAPED_REFERENCE_BLOCK: ExpectedAnchor = ExpectedAnchor::new(9, 26, r"{ let x=\u0061; }");
 const ESCAPED_REFERENCE_RELATIONS: &[ExpectedRelation] = &[ExpectedRelation {
     containing_binding: ExpectedAnchor::new(15, 16, "x"),
     current_region: ExpectedRegion::Block(ESCAPED_REFERENCE_BLOCK),
@@ -279,8 +277,7 @@ const CANONICAL_RELATIONS: &[ExpectedRelation] = &[ExpectedRelation {
     target: ExpectedTarget::NoSelectedLexicalBindingTargetInCoveredRegions,
 }];
 
-const MULTI_BLOCK: ExpectedAnchor =
-    ExpectedAnchor::new(18, 48, "{ let x=a; let y=z; let z=3; }");
+const MULTI_BLOCK: ExpectedAnchor = ExpectedAnchor::new(18, 48, "{ let x=a; let y=z; let z=3; }");
 const MULTI_RELATIONS: &[ExpectedRelation] = &[
     ExpectedRelation {
         containing_binding: ExpectedAnchor::new(24, 25, "x"),
@@ -552,18 +549,27 @@ fn source_section<'source>(source: &'source str, start: &str, end: &str) -> &'so
 
 #[test]
 fn accepted_authority_chain_is_present_and_candidate_independent() {
-    assert!(FLAT_RELATION_ORACLE.contains("Candidate-independent validation for the first selected Binding / Scope"));
+    assert!(
+        FLAT_RELATION_ORACLE
+            .contains("Candidate-independent validation for the first selected Binding / Scope")
+    );
     assert!(FLAT_RELATION_ORACLE.contains("SameSourceSelectedLexicalBinding"));
     assert!(FLAT_RELATION_ORACLE.contains("NoSameSourceSelectedLexicalBinding"));
-    assert!(FLAT_RELATION_ORACLE.contains("multiple_relations_are_ordered_by_reference_source_order"));
+    assert!(
+        FLAT_RELATION_ORACLE.contains("multiple_relations_are_ordered_by_reference_source_order")
+    );
 
-    assert!(FLAT_ORDER_ORACLE.contains("Candidate-independent validation for the selected lexical initialization-order"));
+    assert!(FLAT_ORDER_ORACLE.contains(
+        "Candidate-independent validation for the selected lexical initialization-order"
+    ));
     assert!(FLAT_ORDER_ORACLE.contains("TargetBindingBeforeContainingBinding"));
     assert!(FLAT_ORDER_ORACLE.contains("TargetBindingAfterContainingBinding"));
     assert!(FLAT_ORDER_ORACLE.contains("P1"));
     assert!(FLAT_ORDER_ORACLE.contains("P7"));
 
-    assert!(BLOCK_ORACLE.contains("lexical-region source structure != hierarchical Binding / Scope target selection"));
+    assert!(BLOCK_ORACLE.contains(
+        "lexical-region source structure != hierarchical Binding / Scope target selection"
+    ));
     for marker in [
         "id: \"mixed-shadowing\"",
         "id: \"outer-fallback-shape\"",
@@ -573,7 +579,10 @@ fn accepted_authority_chain_is_present_and_candidate_independent() {
         "id: \"canonical-distinct\"",
         "id: \"legal-outer-inner-shadowing\"",
     ] {
-        assert!(BLOCK_ORACLE.contains(marker), "missing #285 authority {marker}");
+        assert!(
+            BLOCK_ORACLE.contains(marker),
+            "missing #285 authority {marker}"
+        );
     }
 
     assert!(BLOCK_COMPOSITION_ORACLE.contains("REGION_DOMAIN_FIXTURES"));
@@ -585,13 +594,18 @@ fn accepted_authority_chain_is_present_and_candidate_independent() {
     assert!(CURRENT_COMPLETION_ORACLE.contains("BlockEnabled"));
     assert!(CURRENT_COMPLETION_ORACLE.contains("CURRENT_SELECTED_TOP_LEVEL_ITEM_GRAMMAR"));
 
-    assert!(ESCAPED_BINDING_ORACLE.contains("permanent_long_braced_gold_and_large_leading_zero_challenge"));
+    assert!(
+        ESCAPED_BINDING_ORACLE
+            .contains("permanent_long_braced_gold_and_large_leading_zero_challenge")
+    );
     assert!(ESCAPED_BINDING_ORACLE.contains("validation must not apply Unicode normalization"));
 
     assert!(PRIMARY_BOUNDARY.contains("runtime ResolveBinding"));
     assert!(NO_TARGET_BOUNDARY.contains("runtime unbound"));
     assert!(NO_TARGET_BOUNDARY.contains("ReferenceError"));
-    assert!(ORDER_COMPATIBILITY_BOUNDARY.contains("without requiring future hierarchical production"));
+    assert!(
+        ORDER_COMPATIBILITY_BOUNDARY.contains("without requiring future hierarchical production")
+    );
 
     for forbidden in [
         concat!("recognize_selected_", "lexical_slice("),
@@ -617,8 +631,16 @@ fn seventeen_fixture_matrix_is_unique_source_backed_and_block_bounded() {
     let mut upstream = 0usize;
 
     for fixture in FIXTURES {
-        assert!(ids.insert(fixture.id), "duplicate fixture id {}", fixture.id);
-        assert!(sources.insert(fixture.source), "duplicate fixture source {}", fixture.source);
+        assert!(
+            ids.insert(fixture.id),
+            "duplicate fixture id {}",
+            fixture.id
+        );
+        assert!(
+            sources.insert(fixture.source),
+            "duplicate fixture source {}",
+            fixture.source
+        );
         let source = SourceText::new(SourceId::new(ISSUE_ID), fixture.source.to_owned());
 
         for block in fixture.blocks {
@@ -630,14 +652,22 @@ fn seventeen_fixture_matrix_is_unique_source_backed_and_block_bounded() {
         match fixture.processing {
             ExpectedProcessing::Complete(relations) => {
                 complete += 1;
-                assert!(!fixture.blocks.is_empty(), "positive fixture must be Block-enabled");
+                assert!(
+                    !fixture.blocks.is_empty(),
+                    "positive fixture must be Block-enabled"
+                );
                 let mut previous_reference = None;
                 for relation in relations {
                     validate_anchor(&source, relation.containing_binding);
                     validate_anchor(&source, relation.reference);
                     validate_region(&source, relation.current_region, fixture.blocks);
-                    assert_eq!(decoded_expected_name(relation.semantic_code_points), relation.semantic_name);
-                    if let ExpectedTarget::SelectedLexicalBinding { binding, region } = relation.target {
+                    assert_eq!(
+                        decoded_expected_name(relation.semantic_code_points),
+                        relation.semantic_name
+                    );
+                    if let ExpectedTarget::SelectedLexicalBinding { binding, region } =
+                        relation.target
+                    {
                         validate_anchor(&source, binding);
                         validate_region(&source, region, fixture.blocks);
                     }
@@ -649,7 +679,10 @@ fn seventeen_fixture_matrix_is_unique_source_backed_and_block_bounded() {
             }
             ExpectedProcessing::UpstreamPrerequisiteUnavailable(reason) => {
                 upstream += 1;
-                assert_eq!(fixture.provenance, FixtureProvenance::UpstreamPrerequisiteControl);
+                assert_eq!(
+                    fixture.provenance,
+                    FixtureProvenance::UpstreamPrerequisiteControl
+                );
                 match reason {
                     UpstreamPrerequisite::StaticSemanticsRejected { rule_id, subject } => {
                         assert!(matches!(rule_id, "EE-14-R01" | "EE-36-R01"));
@@ -676,8 +709,28 @@ fn target_selection_falsifiers_are_explicit() {
         panic!("mixed fixture must be complete");
     };
     assert_eq!(relations.len(), 2);
-    assert!(matches!(relations[0].target, ExpectedTarget::SelectedLexicalBinding { binding: ExpectedAnchor { start: 15, end: 16, .. }, region: ExpectedRegion::Block(_) }));
-    assert!(matches!(relations[1].target, ExpectedTarget::SelectedLexicalBinding { binding: ExpectedAnchor { start: 4, end: 5, .. }, region: ExpectedRegion::TopLevel }));
+    assert!(matches!(
+        relations[0].target,
+        ExpectedTarget::SelectedLexicalBinding {
+            binding: ExpectedAnchor {
+                start: 15,
+                end: 16,
+                ..
+            },
+            region: ExpectedRegion::Block(_)
+        }
+    ));
+    assert!(matches!(
+        relations[1].target,
+        ExpectedTarget::SelectedLexicalBinding {
+            binding: ExpectedAnchor {
+                start: 4,
+                end: 5,
+                ..
+            },
+            region: ExpectedRegion::TopLevel
+        }
+    ));
 
     let forward = fixture("forward-inner-shadowing");
     let ExpectedProcessing::Complete(relations) = forward.processing else {
@@ -694,7 +747,17 @@ fn target_selection_falsifiers_are_explicit() {
     let ExpectedProcessing::Complete(relations) = self_shadow.processing else {
         panic!("self fixture must be complete");
     };
-    assert!(matches!(relations[0].target, ExpectedTarget::SelectedLexicalBinding { binding: ExpectedAnchor { start: 15, end: 16, .. }, .. }));
+    assert!(matches!(
+        relations[0].target,
+        ExpectedTarget::SelectedLexicalBinding {
+            binding: ExpectedAnchor {
+                start: 15,
+                end: 16,
+                ..
+            },
+            ..
+        }
+    ));
 
     let sibling = fixture("sibling-exclusion-later-top-fallback");
     let ExpectedProcessing::Complete(relations) = sibling.processing else {
@@ -725,7 +788,10 @@ fn no_target_distinguishes_true_absence_from_search_path_exclusion() {
     let ExpectedProcessing::Complete(relations) = excluded.processing else {
         panic!("excluded fixture must be complete");
     };
-    assert!(matches!(relations[0].target, ExpectedTarget::NoSelectedLexicalBindingTargetInCoveredRegions));
+    assert!(matches!(
+        relations[0].target,
+        ExpectedTarget::NoSelectedLexicalBindingTargetInCoveredRegions
+    ));
     let source = SourceText::new(SourceId::new(ISSUE_ID), excluded.source.to_owned());
     validate_anchor(&source, ExpectedAnchor::new(6, 7, "a"));
 
@@ -733,7 +799,10 @@ fn no_target_distinguishes_true_absence_from_search_path_exclusion() {
     let ExpectedProcessing::Complete(relations) = genuine.processing else {
         panic!("genuine fixture must be complete");
     };
-    assert!(matches!(relations[0].target, ExpectedTarget::NoSelectedLexicalBindingTargetInCoveredRegions));
+    assert!(matches!(
+        relations[0].target,
+        ExpectedTarget::NoSelectedLexicalBindingTargetInCoveredRegions
+    ));
     assert_ne!(excluded.source, genuine.source);
 }
 
@@ -773,7 +842,10 @@ fn escaped_and_unicode_identity_are_exact_and_non_normalized() {
     validate_anchor(&source, ExpectedAnchor::new(4, 6, "é"));
     assert_eq!(relations[0].semantic_code_points, E_COMBINING_ACUTE);
     assert_eq!(relations[0].semantic_name, "e\u{301}");
-    assert!(matches!(relations[0].target, ExpectedTarget::NoSelectedLexicalBindingTargetInCoveredRegions));
+    assert!(matches!(
+        relations[0].target,
+        ExpectedTarget::NoSelectedLexicalBindingTargetInCoveredRegions
+    ));
 }
 
 #[test]
@@ -782,20 +854,68 @@ fn multiple_relations_preserve_reference_order_not_target_region_order() {
     let ExpectedProcessing::Complete(relations) = multiple.processing else {
         panic!("multiple fixture must be complete");
     };
-    assert_eq!(relations.iter().map(|relation| relation.reference.start).collect::<Vec<_>>(), vec![26, 35, 55]);
-    assert!(matches!(relations[0].target, ExpectedTarget::SelectedLexicalBinding { region: ExpectedRegion::TopLevel, .. }));
-    assert!(matches!(relations[1].target, ExpectedTarget::SelectedLexicalBinding { region: ExpectedRegion::Block(_), .. }));
-    assert!(matches!(relations[2].target, ExpectedTarget::SelectedLexicalBinding { region: ExpectedRegion::TopLevel, .. }));
+    assert_eq!(
+        relations
+            .iter()
+            .map(|relation| relation.reference.start)
+            .collect::<Vec<_>>(),
+        vec![26, 35, 55]
+    );
+    assert!(matches!(
+        relations[0].target,
+        ExpectedTarget::SelectedLexicalBinding {
+            region: ExpectedRegion::TopLevel,
+            ..
+        }
+    ));
+    assert!(matches!(
+        relations[1].target,
+        ExpectedTarget::SelectedLexicalBinding {
+            region: ExpectedRegion::Block(_),
+            ..
+        }
+    ));
+    assert!(matches!(
+        relations[2].target,
+        ExpectedTarget::SelectedLexicalBinding {
+            region: ExpectedRegion::TopLevel,
+            ..
+        }
+    ));
 }
 
 #[test]
 fn upstream_failures_never_become_relation_results() {
-    assert!(matches!(fixture("block-static-rejection").processing, ExpectedProcessing::UpstreamPrerequisiteUnavailable(UpstreamPrerequisite::StaticSemanticsRejected { rule_id: "EE-14-R01", .. })));
-    assert!(matches!(fixture("script-static-rejection").processing, ExpectedProcessing::UpstreamPrerequisiteUnavailable(UpstreamPrerequisite::StaticSemanticsRejected { rule_id: "EE-36-R01", .. })));
-    assert!(matches!(fixture("incomplete-block").processing, ExpectedProcessing::UpstreamPrerequisiteUnavailable(UpstreamPrerequisite::UnsupportedCoverage)));
+    assert!(matches!(
+        fixture("block-static-rejection").processing,
+        ExpectedProcessing::UpstreamPrerequisiteUnavailable(
+            UpstreamPrerequisite::StaticSemanticsRejected {
+                rule_id: "EE-14-R01",
+                ..
+            }
+        )
+    ));
+    assert!(matches!(
+        fixture("script-static-rejection").processing,
+        ExpectedProcessing::UpstreamPrerequisiteUnavailable(
+            UpstreamPrerequisite::StaticSemanticsRejected {
+                rule_id: "EE-36-R01",
+                ..
+            }
+        )
+    ));
+    assert!(matches!(
+        fixture("incomplete-block").processing,
+        ExpectedProcessing::UpstreamPrerequisiteUnavailable(
+            UpstreamPrerequisite::UnsupportedCoverage
+        )
+    ));
 
     let grammar = fixture("definitive-grammar-after-tentative-relation");
-    let ExpectedProcessing::UpstreamPrerequisiteUnavailable(UpstreamPrerequisite::DefinitiveGrammarRejected { subject }) = grammar.processing else {
+    let ExpectedProcessing::UpstreamPrerequisiteUnavailable(
+        UpstreamPrerequisite::DefinitiveGrammarRejected { subject },
+    ) = grammar.processing
+    else {
         panic!("grammar fixture must remain an upstream prerequisite failure");
     };
     assert_eq!(subject, ExpectedAnchor::new(15, 19, r"\u{}"));
@@ -804,7 +924,11 @@ fn upstream_failures_never_become_relation_results() {
 #[test]
 fn structural_order_is_secondary_compatibility_not_primary_requirement() {
     assert_eq!(ORDER_COMPATIBILITY.len(), 6);
-    let primary_section = source_section(THIS_SOURCE, "struct ExpectedRelation", "enum UpstreamPrerequisite");
+    let primary_section = source_section(
+        THIS_SOURCE,
+        "struct ExpectedRelation",
+        "enum UpstreamPrerequisite",
+    );
     assert!(!primary_section.contains("order:"));
 
     for expectation in ORDER_COMPATIBILITY {
@@ -837,12 +961,26 @@ fn structural_order_is_secondary_compatibility_not_primary_requirement() {
 
 #[test]
 fn provenance_layers_remain_distinct_and_historical_oracles_are_not_reowned() {
-    let existing = FIXTURES.iter().filter(|fixture| fixture.provenance == FixtureProvenance::ExistingBlockAuthority).count();
-    let composition = FIXTURES.iter().filter(|fixture| fixture.provenance == FixtureProvenance::HierarchicalComposition).count();
-    let upstream = FIXTURES.iter().filter(|fixture| fixture.provenance == FixtureProvenance::UpstreamPrerequisiteControl).count();
+    let existing = FIXTURES
+        .iter()
+        .filter(|fixture| fixture.provenance == FixtureProvenance::ExistingBlockAuthority)
+        .count();
+    let composition = FIXTURES
+        .iter()
+        .filter(|fixture| fixture.provenance == FixtureProvenance::HierarchicalComposition)
+        .count();
+    let upstream = FIXTURES
+        .iter()
+        .filter(|fixture| fixture.provenance == FixtureProvenance::UpstreamPrerequisiteControl)
+        .count();
     assert_eq!((existing, composition, upstream), (6, 7, 4));
 
-    assert!(FLAT_RELATION_ORACLE.contains("Candidate-independent validation for the first selected Binding / Scope"));
-    assert!(FLAT_ORDER_ORACLE.contains("Candidate-independent validation for the selected lexical initialization-order"));
+    assert!(
+        FLAT_RELATION_ORACLE
+            .contains("Candidate-independent validation for the first selected Binding / Scope")
+    );
+    assert!(FLAT_ORDER_ORACLE.contains(
+        "Candidate-independent validation for the selected lexical initialization-order"
+    ));
     assert!(CURRENT_COMPLETION_ORACLE.contains("HISTORICAL_FLAT_COMPLETION"));
 }
