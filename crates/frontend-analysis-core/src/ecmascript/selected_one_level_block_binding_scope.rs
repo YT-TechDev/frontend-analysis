@@ -228,8 +228,7 @@ fn analyze<'script>(
             }
             SelectedTopLevelItem::Block(block) => {
                 let current_bindings = block_bindings(block)?;
-                let current_region =
-                    SelectedOneLevelBlockBindingScopeRegion::Block(block.block());
+                let current_region = SelectedOneLevelBlockBindingScopeRegion::Block(block.block());
                 for declaration in block.declarations() {
                     append_declaration_relations(
                         declaration,
