@@ -375,11 +375,15 @@ fn authority_chain_is_present_and_candidate_independent() {
     assert!(GRAMMAR_POLICY_ORACLE.contains("RequiresLookahead(\";\")"));
     assert!(GRAMMAR_POLICY_ORACLE.contains("RequiresEof"));
     assert!(EOF_ASI_ORACLE.contains("EOF_SELECTED_FIXTURES"));
+    assert!(EOF_ASI_ORACLE.contains("EOF-ASI-STATIC-R03-001"));
+    assert!(EOF_ASI_ORACLE.contains("EE-15-R03"));
     assert!(EOF_ASI_ORACLE.contains("only_the_final_declaration_may_use_the_eof_only_policy"));
     assert!(EOF_ASI_ORACLE.contains("RequiresNonEofAsi"));
     assert!(EOF_ASI_ORACLE.contains("DeferredMalformedEscape"));
     assert!(BLOCK_ORACLE.contains("SELECTED_BLOCK_BODY"));
     assert!(BLOCK_ORACLE.contains("LexicalDeclaration+"));
+    assert!(BLOCK_ORACLE.contains("struct ExpectedBlockRegion"));
+    assert!(BLOCK_ORACLE.contains("close_brace: ExpectedAnchor"));
     assert!(BLOCK_COMPOSITION_ORACLE.contains("SHORT_FIXED_DELIMITER_FIXTURES"));
     assert!(BLOCK_COMPOSITION_ORACLE.contains("FormedEscapeButUnclosedBlock"));
     assert!(HISTORICAL_COMPLETION_ORACLE.contains("SELECTED_TOP_LEVEL_GRAMMAR"));
