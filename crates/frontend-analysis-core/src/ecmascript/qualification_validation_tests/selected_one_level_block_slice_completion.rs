@@ -118,9 +118,10 @@ fn fixed_envelope_and_accepted_authority_chain_are_present() {
     assert_eq!(SELECTED_PARSE_GOAL, "Script");
 
     assert!(HISTORICAL_FLAT_COMPLETION.contains("Candidate-independent completion proof"));
-    assert!(HISTORICAL_FLAT_COMPLETION.contains(
-        "const SELECTED_TOP_LEVEL_GRAMMAR: &str = \"LexicalDeclaration+\";"
-    ));
+    assert!(
+        HISTORICAL_FLAT_COMPLETION
+            .contains("const SELECTED_TOP_LEVEL_GRAMMAR: &str = \"LexicalDeclaration+\";")
+    );
     assert!(HISTORICAL_FLAT_COMPLETION.contains("assert_eq!(required.len(), 7);"));
     assert!(HISTORICAL_FLAT_COMPLETION.contains("(\"EE-14\", \"Block\")"));
 
@@ -189,7 +190,11 @@ fn frozen_rule_universe_closes_as_exact_eight_plus_one_hundred_eighty_five() {
     let mut sentinels = 0usize;
 
     for rule in RULE_UNITS {
-        assert!(seen.insert(rule.id), "duplicate frozen rule unit {}", rule.id);
+        assert!(
+            seen.insert(rule.id),
+            "duplicate frozen rule unit {}",
+            rule.id
+        );
 
         match rule.kind {
             RuleUnitKind::NormativeRule => active += 1,
@@ -322,9 +327,10 @@ fn selected_lifecycle_stays_incomplete_and_resource_failures_stay_distinct() {
     assert!(SELECTED_AGGREGATE_SOURCE.contains("DefinitiveGrammarRejectionEvidence"));
     assert!(SELECTED_AGGREGATE_SOURCE.contains("QualificationOutcome::resource_limited()"));
     assert!(SELECTED_AGGREGATE_SOURCE.contains("QualificationOutcome::internal_failure()"));
-    assert!(SELECTED_AGGREGATE_SOURCE.contains(
-        "does not construct aggregate `QualificationOutcome::Qualified`"
-    ));
+    assert!(
+        SELECTED_AGGREGATE_SOURCE
+            .contains("does not construct aggregate `QualificationOutcome::Qualified`")
+    );
 
     assert!(QUALIFICATION_SOURCE.contains("struct CompleteQualificationWitness"));
     assert!(QUALIFICATION_SOURCE.contains("#[cfg(test)]"));
@@ -363,8 +369,9 @@ fn completion_oracle_remains_candidate_independent_and_does_not_widen_capability
         );
     }
 
-    assert!(BLOCK_ORACLE.contains(
-        "UnsupportedCoverage in the selected Block frontier != invalid ECMAScript"
-    ));
+    assert!(
+        BLOCK_ORACLE
+            .contains("UnsupportedCoverage in the selected Block frontier != invalid ECMAScript")
+    );
     assert!(TERMINAL_COMPOSITION_ORACLE.contains("UnsupportedCoverage"));
 }
