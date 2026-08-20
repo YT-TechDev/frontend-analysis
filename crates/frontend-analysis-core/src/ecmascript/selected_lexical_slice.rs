@@ -937,9 +937,9 @@ pub(super) fn recognize_selected_lexical_slice(source: &SourceText) -> SelectedL
             })
         }
         SelectedScriptBuilder::BlockEnabled(items) => {
-            SelectedLexicalSliceOutcome::RecognizedOneLevelBlockSlice(
-                SelectedOneLevelBlockScript { items },
-            )
+            SelectedLexicalSliceOutcome::RecognizedOneLevelBlockSlice(SelectedOneLevelBlockScript {
+                items,
+            })
         }
     }
 }
