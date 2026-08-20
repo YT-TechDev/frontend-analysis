@@ -121,9 +121,7 @@ fn top_level_bindings(
     Ok(bindings_by_name)
 }
 
-fn block_bindings(
-    block: &SelectedBlock,
-) -> Result<HashMap<&str, &SourceAnchor>, AnalysisFailure> {
+fn block_bindings(block: &SelectedBlock) -> Result<HashMap<&str, &SourceAnchor>, AnalysisFailure> {
     let mut bindings_by_name = HashMap::new();
     for declaration in block.declarations() {
         insert_declaration_bindings(declaration, &mut bindings_by_name)?;
