@@ -1,9 +1,10 @@
 //! Selected source-backed ECMAScript lexical declaration slice for Issue #218.
 //!
 //! This module recognizes only the bounded top-level Script subset accepted by
-//! #215/#218. Recognition is transactional for the whole authoritative
-//! `SourceText`: tentative declaration/binding facts are returned only when the
-//! entire source is consumed by selected declarations plus selected trivia.
+//! #215/#218 and subsequently widened by #283/#289 with one-level selected
+//! Blocks. Recognition is transactional for the whole authoritative
+//! `SourceText`: tentative declaration/binding/region facts are returned only
+//! when the entire source is consumed by selected items plus selected trivia.
 //!
 //! This is not aggregate ECMAScript qualification and cannot construct
 //! `QualificationOutcome::Qualified`.
@@ -28,10 +29,38 @@ pub(super) enum SelectedLexicalSliceOutcome {
 
 #[derive(Debug)]
 pub(super) struct SelectedLexicalScript {
-    declarations: Vec<SelectedLexicalDeclaration>,
+    items: Vec<SelectedLexicalItem>,
 }
 
 impl SelectedLexicalScript {
+    pub(super) fn items(&self) -> &[SelectedLexicalItem] {
+        &self.items
+    }
+
+    pub(super) fn contains_block(&self) -> bool {
+        self.items
+            .iter()
+            .any(|item| matches!(item, SelectedLexicalItem::Block(_)))
+    }
+}
+
+#[derive(Debug)]
+pub(super) enum SelectedLexicalItem {
+    Declaration(SelectedLexicalDeclaration),
+    Block(SelectedLexicalBlock),
+}
+
+#[derive(Debug)]
+pub(super) struct SelectedLexicalBlock {
+    block: SourceAnchor,
+    declarations: Vec<SelectedLexicalDeclaration>,
+}
+
+impl SelectedLexicalBlock {
+    pub(super) fn block(&self) -> &SourceAnchor {
+        &self.block
+    }
+
     pub(super) fn declarations(&self) -> &[SelectedLexicalDeclaration] {
         &self.declarations
     }
@@ -170,6 +199,12 @@ impl SelectedLexicalDeclaration {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SelectedDeclarationTerminatorPolicy {
+    TopLevel,
+    InsideSelectedBlock,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SelectedGrammarEvidenceContext {
     General,
     KeywordAdjacentLet,
@@ -235,7 +270,10 @@ impl<'source> Cursor<'source> {
         }
     }
 
-    fn parse_declaration(&mut self) -> Result<SelectedLexicalDeclaration, ParseFailure> {
+    fn parse_declaration(
+        &mut self,
+        terminator_policy: SelectedDeclarationTerminatorPolicy,
+    ) -> Result<SelectedLexicalDeclaration, ParseFailure> {
         let declaration_start = self.offset;
         let kind = self
             .consume_declaration_kind()
@@ -341,7 +379,9 @@ impl<'source> Cursor<'source> {
                     self.anchor(semicolon_start, semicolon_end)?,
                 ),
             )
-        } else if self.is_eof() {
+        } else if terminator_policy == SelectedDeclarationTerminatorPolicy::TopLevel
+            && self.is_eof()
+        {
             (
                 final_significant_end,
                 SelectedDeclarationTerminator::AutomaticAtEof,
@@ -358,6 +398,49 @@ impl<'source> Cursor<'source> {
             bindings,
             terminator,
         })
+    }
+
+    fn parse_selected_block(&mut self) -> Result<SelectedLexicalBlock, ParseFailure> {
+        let block_start = self.offset;
+        if !self.consume_ascii('{') {
+            return Err(ParseFailure::UnsupportedCoverage);
+        }
+
+        self.skip_selected_trivia();
+        if self.is_eof() || self.peek_char() == Some('}') {
+            return Err(ParseFailure::UnsupportedCoverage);
+        }
+
+        let mut declarations = Vec::new();
+        loop {
+            let declaration =
+                self.parse_declaration(SelectedDeclarationTerminatorPolicy::InsideSelectedBlock)?;
+            declarations
+                .try_reserve(1)
+                .map_err(|_| ParseFailure::ResourceLimited)?;
+            declarations.push(declaration);
+
+            self.skip_selected_trivia();
+            if self.consume_ascii('}') {
+                let block_end = self.offset;
+                return Ok(SelectedLexicalBlock {
+                    block: self.anchor(block_start, block_end)?,
+                    declarations,
+                });
+            }
+            if self.is_eof() {
+                return Err(ParseFailure::UnsupportedCoverage);
+            }
+        }
+    }
+
+    fn parse_top_level_item(&mut self) -> Result<SelectedLexicalItem, ParseFailure> {
+        if self.peek_char() == Some('{') {
+            self.parse_selected_block().map(SelectedLexicalItem::Block)
+        } else {
+            self.parse_declaration(SelectedDeclarationTerminatorPolicy::TopLevel)
+                .map(SelectedLexicalItem::Declaration)
+        }
     }
 
     fn consume_declaration_kind(&mut self) -> Option<SelectedLexicalDeclarationKind> {
@@ -417,7 +500,6 @@ impl<'source> Cursor<'source> {
                     } else {
                         selected_grammar_escape_subject_end(self.text, escape_start)
                     };
-
                     let Some(grammar_end) = grammar_end else {
                         return Err(ParseFailure::UnsupportedCoverage);
                     };
@@ -778,15 +860,15 @@ pub(super) fn recognize_selected_lexical_slice(source: &SourceText) -> SelectedL
         return SelectedLexicalSliceOutcome::UnsupportedCoverage;
     }
 
-    let mut declarations = Vec::new();
+    let mut items = Vec::new();
 
     loop {
-        match cursor.parse_declaration() {
-            Ok(declaration) => {
-                if declarations.try_reserve(1).is_err() {
+        match cursor.parse_top_level_item() {
+            Ok(item) => {
+                if items.try_reserve(1).is_err() {
                     return SelectedLexicalSliceOutcome::ResourceLimited;
                 }
-                declarations.push(declaration);
+                items.push(item);
             }
             Err(ParseFailure::UnsupportedCoverage) => {
                 return SelectedLexicalSliceOutcome::UnsupportedCoverage;
@@ -808,7 +890,7 @@ pub(super) fn recognize_selected_lexical_slice(source: &SourceText) -> SelectedL
         }
     }
 
-    SelectedLexicalSliceOutcome::RecognizedSelectedSlice(SelectedLexicalScript { declarations })
+    SelectedLexicalSliceOutcome::RecognizedSelectedSlice(SelectedLexicalScript { items })
 }
 
 fn is_selected_trivia(code_point: char) -> bool {
