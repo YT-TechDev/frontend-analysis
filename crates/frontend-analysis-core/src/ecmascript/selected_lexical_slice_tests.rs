@@ -32,9 +32,7 @@ fn recognized(text: &str) -> SelectedLexicalScript {
     }
 }
 
-fn recognized_block(
-    text: &str,
-) -> super::selected_lexical_slice::SelectedOneLevelBlockScript {
+fn recognized_block(text: &str) -> super::selected_lexical_slice::SelectedOneLevelBlockScript {
     match recognize_selected_lexical_slice(&source(text)) {
         SelectedLexicalSliceOutcome::RecognizedOneLevelBlockSlice(script) => script,
         other => panic!("expected one-level Block recognition for {text:?}, got {other:?}"),
@@ -1800,7 +1798,10 @@ fn one_level_block_retains_ordered_items_and_exact_source_provenance() {
         panic!("first selected item must remain the top-level declaration");
     };
     assert_eq!(
-        (first.declaration().range().start(), first.declaration().range().end()),
+        (
+            first.declaration().range().start(),
+            first.declaration().range().end()
+        ),
         (0, 8)
     );
 
@@ -1808,7 +1809,10 @@ fn one_level_block_retains_ordered_items_and_exact_source_provenance() {
         panic!("second selected item must be the one-level Block");
     };
     assert_eq!(block.block().fragment(), "{ let a=2; let x=a; }");
-    assert_eq!((block.block().range().start(), block.block().range().end()), (9, 30));
+    assert_eq!(
+        (block.block().range().start(), block.block().range().end()),
+        (9, 30)
+    );
     assert_eq!(block.declarations().len(), 2);
     assert_eq!(
         (
@@ -1827,14 +1831,23 @@ fn one_level_block_retains_ordered_items_and_exact_source_provenance() {
     let rhs = block.declarations()[1].bindings()[0]
         .identifier_reference_initializer()
         .expect("selected RHS IdentifierReference fact");
-    assert_eq!((rhs.reference().range().start(), rhs.reference().range().end()), (26, 27));
+    assert_eq!(
+        (
+            rhs.reference().range().start(),
+            rhs.reference().range().end()
+        ),
+        (26, 27)
+    );
     assert_eq!(rhs.semantic_name(), "a");
 
     let SelectedTopLevelItem::LexicalDeclaration(last) = &script.items()[2] else {
         panic!("last selected item must remain the top-level declaration");
     };
     assert_eq!(
-        (last.declaration().range().start(), last.declaration().range().end()),
+        (
+            last.declaration().range().start(),
+            last.declaration().range().end()
+        ),
         (31, 39)
     );
 }
@@ -1850,8 +1863,14 @@ fn one_level_block_preserves_sibling_and_identifier_reference_provenance() {
     let SelectedTopLevelItem::Block(second) = &siblings.items()[1] else {
         panic!("second item must be Block");
     };
-    assert_eq!((first.block().range().start(), first.block().range().end()), (0, 12));
-    assert_eq!((second.block().range().start(), second.block().range().end()), (13, 25));
+    assert_eq!(
+        (first.block().range().start(), first.block().range().end()),
+        (0, 12)
+    );
+    assert_eq!(
+        (second.block().range().start(), second.block().range().end()),
+        (13, 25)
+    );
 
     let escaped = recognized_block(r"let a=1; { let x=\u0061; }");
     let SelectedTopLevelItem::Block(block) = &escaped.items()[1] else {
@@ -1862,7 +1881,10 @@ fn one_level_block_preserves_sibling_and_identifier_reference_provenance() {
         .expect("escaped RHS reference fact");
     assert_eq!(reference.reference().fragment(), r"\u0061");
     assert_eq!(
-        (reference.reference().range().start(), reference.reference().range().end()),
+        (
+            reference.reference().range().start(),
+            reference.reference().range().end()
+        ),
         (17, 23)
     );
     assert_eq!(reference.semantic_name(), "a");
@@ -1879,9 +1901,15 @@ fn one_level_block_preserves_sibling_and_identifier_reference_provenance() {
         .identifier_reference_initializer()
         .expect("canonical-distinct RHS reference");
     assert_eq!(reference.semantic_name(), "e\u{301}");
-    assert_ne!(reference.semantic_name(), outer.bindings()[0].binding().fragment());
+    assert_ne!(
+        reference.semantic_name(),
+        outer.bindings()[0].binding().fragment()
+    );
     assert_eq!(
-        (reference.reference().range().start(), reference.reference().range().end()),
+        (
+            reference.reference().range().start(),
+            reference.reference().range().end()
+        ),
         (18, 25)
     );
 }

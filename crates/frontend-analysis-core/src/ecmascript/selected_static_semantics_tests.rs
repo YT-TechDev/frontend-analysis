@@ -565,9 +565,15 @@ fn one_level_block_static_semantics_preserve_region_duplicate_domains() {
                 duplicate_binding,
             },
         ) => {
-            assert_eq!((first_binding.range().start(), first_binding.range().end()), (6, 7));
             assert_eq!(
-                (duplicate_binding.range().start(), duplicate_binding.range().end()),
+                (first_binding.range().start(), first_binding.range().end()),
+                (6, 7)
+            );
+            assert_eq!(
+                (
+                    duplicate_binding.range().start(),
+                    duplicate_binding.range().end()
+                ),
                 (15, 16)
             );
         }
@@ -582,9 +588,15 @@ fn one_level_block_static_semantics_preserve_region_duplicate_domains() {
                 duplicate_binding,
             },
         ) => {
-            assert_eq!((first_binding.range().start(), first_binding.range().end()), (4, 5));
             assert_eq!(
-                (duplicate_binding.range().start(), duplicate_binding.range().end()),
+                (first_binding.range().start(), first_binding.range().end()),
+                (4, 5)
+            );
+            assert_eq!(
+                (
+                    duplicate_binding.range().start(),
+                    duplicate_binding.range().end()
+                ),
                 (26, 27)
             );
         }
@@ -609,7 +621,10 @@ fn one_level_block_static_evidence_selection_is_local_then_block_then_script() {
                 duplicate_binding, ..
             },
         ) => assert_eq!(
-            (duplicate_binding.range().start(), duplicate_binding.range().end()),
+            (
+                duplicate_binding.range().start(),
+                duplicate_binding.range().end()
+            ),
             (15, 16)
         ),
         other => panic!("Block EE-14 duplicate must precede top-level EE-36 duplicate: {other:?}"),

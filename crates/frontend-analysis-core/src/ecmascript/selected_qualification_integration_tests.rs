@@ -913,7 +913,11 @@ fn one_level_block_static_rejections_preserve_region_owned_authored_subjects() {
             "{text}"
         );
         let evidence = outcome.rejection_evidence().expect("static evidence");
-        assert_eq!(evidence.family(), RejectionFamily::StaticSemantics, "{text}");
+        assert_eq!(
+            evidence.family(),
+            RejectionFamily::StaticSemantics,
+            "{text}"
+        );
         let anchor = evidence
             .subject()
             .authored_anchor()
