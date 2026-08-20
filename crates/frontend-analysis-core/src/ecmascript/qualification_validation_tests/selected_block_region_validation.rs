@@ -16,17 +16,13 @@ const THIS_SOURCE: &str = include_str!("selected_block_region_validation.rs");
 const HISTORICAL_FLAT_COMPLETION_SOURCE: &str = include_str!("selected_slice_completion.rs");
 const FROZEN_INVENTORY_SOURCE: &str = include_str!("inventory.rs");
 
-const SELECTED_GRAMMAR_FRONTIER: &str =
-    "Script items = LexicalDeclaration | one-level SelectedBlock; SelectedBlock body = LexicalDeclaration+";
+const SELECTED_GRAMMAR_FRONTIER: &str = "Script items = LexicalDeclaration | one-level SelectedBlock; SelectedBlock body = LexicalDeclaration+";
 const HISTORICAL_FLAT_GRAMMAR: &str = "LexicalDeclaration+";
 const EE14_R01: &str = "EE-14-R01";
 const EE14_R02: &str = "EE-14-R02";
-const EE14_R02_NON_TRIGGER: &str =
-    "selected Block body has no VarDeclaredNames contributor";
-const ANNEX_B_BLOCK_FUNCTION_NON_TRIGGER: &str =
-    "selected Block grammar has no FunctionDeclaration, so the Block-Level Function Declaration duplicate exception cannot trigger";
-const NO_MATCH_BOUNDARY: &str =
-    "NoSameSourceSelectedLexicalBinding != runtime unbound != ReferenceError != runtime ResolveBinding failure";
+const EE14_R02_NON_TRIGGER: &str = "selected Block body has no VarDeclaredNames contributor";
+const ANNEX_B_BLOCK_FUNCTION_NON_TRIGGER: &str = "selected Block grammar has no FunctionDeclaration, so the Block-Level Function Declaration duplicate exception cannot trigger";
+const NO_MATCH_BOUNDARY: &str = "NoSameSourceSelectedLexicalBinding != runtime unbound != ReferenceError != runtime ResolveBinding failure";
 const HISTORICAL_COMPLETION_BOUNDARY: &str =
     "historical flat #268 completion remains authoritative only for LexicalDeclaration+";
 
@@ -130,11 +126,7 @@ const INNER_SHADOW_REGIONS: &[ExpectedRegion] = &[
     ExpectedRegion {
         id: "block-1",
         parent: Some("script"),
-        authored_block: Some(ExpectedAnchor::new(
-            9,
-            30,
-            "{ let a=2; let x=a; }",
-        )),
+        authored_block: Some(ExpectedAnchor::new(9, 30, "{ let a=2; let x=a; }")),
     },
 ];
 const INNER_SHADOW_BINDINGS: &[ExpectedBinding] = &[
@@ -550,10 +542,18 @@ fn frozen_inventory_has_exactly_the_two_block_rule_units() {
     assert_eq!(block_rules.len(), 2);
     assert_eq!(block_rules[0].id, EE14_R01);
     assert_eq!(block_rules[0].kind, RuleUnitKind::NormativeRule);
-    assert!(block_rules[0].normative_locator.contains("duplicate LexicallyDeclaredNames"));
+    assert!(
+        block_rules[0]
+            .normative_locator
+            .contains("duplicate LexicallyDeclaredNames")
+    );
     assert_eq!(block_rules[1].id, EE14_R02);
     assert_eq!(block_rules[1].kind, RuleUnitKind::NormativeRule);
-    assert!(block_rules[1].normative_locator.contains("VarDeclaredNames"));
+    assert!(
+        block_rules[1]
+            .normative_locator
+            .contains("VarDeclaredNames")
+    );
 }
 
 #[test]
@@ -574,7 +574,11 @@ fn fixture_ids_sources_regions_and_authored_ranges_are_stable() {
     let mut sources = BTreeSet::new();
 
     for (index, fixture) in FIXTURES.iter().enumerate() {
-        assert!(ids.insert(fixture.id), "duplicate fixture id {}", fixture.id);
+        assert!(
+            ids.insert(fixture.id),
+            "duplicate fixture id {}",
+            fixture.id
+        );
         assert!(
             sources.insert(fixture.source),
             "duplicate fixture source {}",
@@ -685,7 +689,10 @@ fn block_duplicate_and_legal_shadowing_have_different_static_meaning() {
     assert_eq!(duplicate.bindings[1].region, "block-1");
 
     let legal = fixture("legal-outer-inner-shadow");
-    assert_eq!(legal.processing, ExpectedProcessing::SelectedFrontierAccepted);
+    assert_eq!(
+        legal.processing,
+        ExpectedProcessing::SelectedFrontierAccepted
+    );
     assert_eq!(legal.bindings[0].semantic_name, "a");
     assert_eq!(legal.bindings[1].semantic_name, "a");
     assert_ne!(legal.bindings[0].region, legal.bindings[1].region);
@@ -738,7 +745,10 @@ fn recursive_block_and_asi_before_brace_are_frontier_unsupported() {
 #[test]
 fn historical_flat_fixture_has_no_synthetic_block_region() {
     let flat = fixture("historical-flat");
-    assert_eq!(flat.processing, ExpectedProcessing::SelectedFrontierAccepted);
+    assert_eq!(
+        flat.processing,
+        ExpectedProcessing::SelectedFrontierAccepted
+    );
     assert_eq!(flat.regions.len(), 1);
     assert_eq!(flat.regions[0].id, "script");
     assert!(flat.regions[0].authored_block.is_none());
