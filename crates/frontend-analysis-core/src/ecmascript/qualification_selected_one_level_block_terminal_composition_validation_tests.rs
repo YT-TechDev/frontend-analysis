@@ -64,6 +64,19 @@ enum ExpectedOutcome {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct OutcomeFixture {
+    source: &'static str,
+    outcome: ExpectedOutcome,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct EvidencePoint {
+    rule_id: &'static str,
+    subject: ByteRange,
+    fragment: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct KeywordAdjacentFixture {
     source: &'static str,
     keyword: &'static str,
@@ -107,6 +120,7 @@ const KEYWORD_ADJACENT_FIXTURES: &[KeywordAdjacentFixture] = &[
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct EofCompositionFixture {
     source: &'static str,
+    block_close: ByteRange,
     final_declaration: ByteRange,
     trailing_trivia: ByteRange,
     automatic_semicolon_authored_range: Option<ByteRange>,
@@ -116,6 +130,7 @@ struct EofCompositionFixture {
 const EOF_COMPOSITION_FIXTURES: &[EofCompositionFixture] = &[
     EofCompositionFixture {
         source: "{ let a=1; } let b=2",
+        block_close: ByteRange::new(11, 12),
         final_declaration: ByteRange::new(13, 20),
         trailing_trivia: ByteRange::new(20, 20),
         automatic_semicolon_authored_range: None,
@@ -123,6 +138,7 @@ const EOF_COMPOSITION_FIXTURES: &[EofCompositionFixture] = &[
     },
     EofCompositionFixture {
         source: "{ let a=1; } const b",
+        block_close: ByteRange::new(11, 12),
         final_declaration: ByteRange::new(13, 20),
         trailing_trivia: ByteRange::new(20, 20),
         automatic_semicolon_authored_range: None,
@@ -134,6 +150,7 @@ const EOF_COMPOSITION_FIXTURES: &[EofCompositionFixture] = &[
     },
     EofCompositionFixture {
         source: "{ let a=1; } let b=2 \n",
+        block_close: ByteRange::new(11, 12),
         final_declaration: ByteRange::new(13, 20),
         trailing_trivia: ByteRange::new(20, 22),
         automatic_semicolon_authored_range: None,
@@ -141,25 +158,42 @@ const EOF_COMPOSITION_FIXTURES: &[EofCompositionFixture] = &[
     },
 ];
 
-const NON_EOF_ASI_FIXTURES: &[&str] = &["let a=1 { let b=2; }", "{ let a=1; } let b=2\nconst c=3"];
+const NON_EOF_ASI_FIXTURES: &[OutcomeFixture] = &[
+    OutcomeFixture {
+        source: "let a=1 { let b=2; }",
+        outcome: ExpectedOutcome::UnsupportedCoverage,
+    },
+    OutcomeFixture {
+        source: "{ let a=1; } let b=2\nconst c=3",
+        outcome: ExpectedOutcome::UnsupportedCoverage,
+    },
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct IncompleteBlockFixture {
     source: &'static str,
+    block_close: Option<ByteRange>,
+    outcome: ExpectedOutcome,
     prohibited_committed_rule: Option<&'static str>,
 }
 
 const INCOMPLETE_BLOCK_FIXTURES: &[IncompleteBlockFixture] = &[
     IncompleteBlockFixture {
         source: "{ let x=1;",
+        block_close: None,
+        outcome: ExpectedOutcome::UnsupportedCoverage,
         prohibited_committed_rule: None,
     },
     IncompleteBlockFixture {
         source: "{ const x",
+        block_close: None,
+        outcome: ExpectedOutcome::UnsupportedCoverage,
         prohibited_committed_rule: Some("EE-15-R03"),
     },
     IncompleteBlockFixture {
         source: "{ let a=1; let a=2;",
+        block_close: None,
+        outcome: ExpectedOutcome::UnsupportedCoverage,
         prohibited_committed_rule: Some("EE-14-R01"),
     },
 ];
@@ -176,6 +210,7 @@ struct IncompleteBlockGrammarFixture {
     source: &'static str,
     subject: ByteRange,
     fragment: &'static str,
+    block_close: Option<ByteRange>,
     decision: TerminalDecision,
     outcome: ExpectedOutcome,
 }
@@ -185,6 +220,7 @@ const INCOMPLETE_BLOCK_GRAMMAR_FIXTURES: &[IncompleteBlockGrammarFixture] = &[
         source: r"{ let \u{}",
         subject: ByteRange::new(6, 10),
         fragment: r"\u{}",
+        block_close: None,
         decision: TerminalDecision::StableAtSubjectEnd,
         outcome: ExpectedOutcome::Grammar {
             subject: ByteRange::new(6, 10),
@@ -195,6 +231,7 @@ const INCOMPLETE_BLOCK_GRAMMAR_FIXTURES: &[IncompleteBlockGrammarFixture] = &[
         source: r"{ let \u0;",
         subject: ByteRange::new(6, 9),
         fragment: r"\u0",
+        block_close: None,
         decision: TerminalDecision::RequiresSemicolonLookahead,
         outcome: ExpectedOutcome::Grammar {
             subject: ByteRange::new(6, 9),
@@ -205,6 +242,7 @@ const INCOMPLETE_BLOCK_GRAMMAR_FIXTURES: &[IncompleteBlockGrammarFixture] = &[
         source: r"{ let \u0",
         subject: ByteRange::new(6, 9),
         fragment: r"\u0",
+        block_close: None,
         decision: TerminalDecision::RequiresSemicolonLookahead,
         outcome: ExpectedOutcome::UnsupportedCoverage,
     },
@@ -212,6 +250,7 @@ const INCOMPLETE_BLOCK_GRAMMAR_FIXTURES: &[IncompleteBlockGrammarFixture] = &[
         source: r"{ let \u{61",
         subject: ByteRange::new(6, 11),
         fragment: r"\u{61",
+        block_close: None,
         decision: TerminalDecision::RequiresEof,
         outcome: ExpectedOutcome::Grammar {
             subject: ByteRange::new(6, 11),
@@ -221,43 +260,55 @@ const INCOMPLETE_BLOCK_GRAMMAR_FIXTURES: &[IncompleteBlockGrammarFixture] = &[
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct EvidencePoint {
-    rule_id: &'static str,
-    subject: ByteRange,
-    fragment: &'static str,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct IncompleteBlockCompetitionFixture {
     source: &'static str,
-    tentative_static: Option<EvidencePoint>,
-    grammar: ByteRange,
-    grammar_fragment: &'static str,
+    block_close: Option<ByteRange>,
+    uncommitted_static_candidate: EvidencePoint,
+    outcome: ExpectedOutcome,
 }
 
 const INCOMPLETE_BLOCK_COMPETITION_FIXTURES: &[IncompleteBlockCompetitionFixture] = &[
     IncompleteBlockCompetitionFixture {
         source: r"{ let a=1; let a=2; let \u{}",
-        tentative_static: None,
-        grammar: ByteRange::new(24, 28),
-        grammar_fragment: r"\u{}",
+        block_close: None,
+        uncommitted_static_candidate: EvidencePoint {
+            rule_id: "EE-14-R01",
+            subject: ByteRange::new(15, 16),
+            fragment: "a",
+        },
+        outcome: ExpectedOutcome::Grammar {
+            subject: ByteRange::new(24, 28),
+            fragment: r"\u{}",
+        },
     },
     IncompleteBlockCompetitionFixture {
         source: r"{ const x; let \u{}",
-        tentative_static: Some(EvidencePoint {
+        block_close: None,
+        uncommitted_static_candidate: EvidencePoint {
             rule_id: "EE-15-R03",
             subject: ByteRange::new(8, 9),
             fragment: "x",
-        }),
-        grammar: ByteRange::new(15, 19),
-        grammar_fragment: r"\u{}",
+        },
+        outcome: ExpectedOutcome::Grammar {
+            subject: ByteRange::new(15, 19),
+            fragment: r"\u{}",
+        },
     },
 ];
 
-const DEFERRED_EOF_AFTER_BLOCK: &[&str] = &[
-    r"{ let a=1; } let \u0",
-    r"{ let a=1; } let \u",
-    r"{ let a=1; } let \u{",
+const DEFERRED_EOF_AFTER_BLOCK: &[OutcomeFixture] = &[
+    OutcomeFixture {
+        source: r"{ let a=1; } let \u0",
+        outcome: ExpectedOutcome::UnsupportedCoverage,
+    },
+    OutcomeFixture {
+        source: r"{ let a=1; } let \u",
+        outcome: ExpectedOutcome::UnsupportedCoverage,
+    },
+    OutcomeFixture {
+        source: r"{ let a=1; } let \u{",
+        outcome: ExpectedOutcome::UnsupportedCoverage,
+    },
 ];
 
 fn assert_anchor(source: &str, range: ByteRange, expected: &str) {
@@ -286,13 +337,45 @@ fn assert_expected_outcome_source(source: &str, outcome: ExpectedOutcome) {
     }
 }
 
+fn source_section<'source>(
+    source: &'source str,
+    start_marker: &str,
+    end_marker: &str,
+) -> &'source str {
+    let start = source
+        .find(start_marker)
+        .unwrap_or_else(|| panic!("missing authority section start {start_marker}"));
+    let rest = &source[start..];
+    let end = rest
+        .find(end_marker)
+        .unwrap_or_else(|| panic!("missing authority section end {end_marker}"));
+    &rest[..end]
+}
+
 #[test]
 fn authority_chain_is_present_and_candidate_independent() {
-    assert!(GRAMMAR_EVIDENCE_ORACLE.contains("KEYWORD_BOUNDARY_EVIDENCE"));
+    let keyword_section = source_section(
+        GRAMMAR_EVIDENCE_ORACLE,
+        "const KEYWORD_BOUNDARY_EVIDENCE",
+        "const EARLY_DEFINITIVE_EVIDENCE",
+    );
+    assert_eq!(
+        keyword_section.matches("GrammarEvidenceFixture {").count(),
+        2
+    );
+    assert!(keyword_section.contains(r#"source: r"let\u{};""#));
+    assert!(keyword_section.contains(r#"source: r"let\u{110000};""#));
+    assert!(keyword_section.contains("EmptyBraced"));
+    assert!(keyword_section.contains("NonCodePointBraced"));
+    assert!(!keyword_section.contains("ShortFixed"));
+    assert!(!keyword_section.contains("UnclosedBraced"));
+    assert!(!keyword_section.contains("const"));
+
     assert!(GRAMMAR_EVIDENCE_ORACLE.contains("CandidateDefinitiveGrammarEvidence"));
     assert!(GRAMMAR_POLICY_ORACLE.contains("RequiresLookahead(\";\")"));
     assert!(GRAMMAR_POLICY_ORACLE.contains("RequiresEof"));
     assert!(EOF_ASI_ORACLE.contains("EOF_SELECTED_FIXTURES"));
+    assert!(EOF_ASI_ORACLE.contains("only_the_final_declaration_may_use_the_eof_only_policy"));
     assert!(EOF_ASI_ORACLE.contains("RequiresNonEofAsi"));
     assert!(EOF_ASI_ORACLE.contains("DeferredMalformedEscape"));
     assert!(BLOCK_ORACLE.contains("SELECTED_BLOCK_BODY"));
@@ -352,6 +435,7 @@ fn completed_block_can_precede_only_a_final_top_level_eof_asi_declaration() {
 
     for fixture in EOF_COMPOSITION_FIXTURES {
         assert!(fixture.source.starts_with("{ let a=1; } "));
+        assert_anchor(fixture.source, fixture.block_close, "}");
         assert_eq!(fixture.automatic_semicolon_authored_range, None);
         assert_eq!(
             fixture.final_declaration.fragment(fixture.source),
@@ -381,12 +465,13 @@ fn block_item_boundaries_do_not_authorize_non_eof_asi() {
     assert_eq!(NON_EOF_ASI_FIXTURES.len(), 2);
     assert!(EOF_ASI_ORACLE.contains("RequiresNonEofAsi"));
 
-    for source in NON_EOF_ASI_FIXTURES {
-        assert!(!source.is_empty());
+    for fixture in NON_EOF_ASI_FIXTURES {
+        assert_eq!(fixture.outcome, ExpectedOutcome::UnsupportedCoverage);
+        assert_expected_outcome_source(fixture.source, fixture.outcome);
     }
 
-    assert!(NON_EOF_ASI_FIXTURES[0].contains(" { "));
-    assert!(NON_EOF_ASI_FIXTURES[1].contains("\nconst "));
+    assert!(NON_EOF_ASI_FIXTURES[0].source.contains(" { "));
+    assert!(NON_EOF_ASI_FIXTURES[1].source.contains("\nconst "));
 }
 
 #[test]
@@ -395,7 +480,9 @@ fn incomplete_block_never_commits_positive_or_static_region_facts() {
 
     for fixture in INCOMPLETE_BLOCK_FIXTURES {
         assert!(fixture.source.starts_with('{'));
-        assert!(!fixture.source.ends_with('}'));
+        assert_eq!(fixture.block_close, None);
+        assert_eq!(fixture.outcome, ExpectedOutcome::UnsupportedCoverage);
+        assert_expected_outcome_source(fixture.source, fixture.outcome);
 
         if let Some(rule_id) = fixture.prohibited_committed_rule {
             assert!(matches!(rule_id, "EE-15-R03" | "EE-14-R01"));
@@ -412,6 +499,7 @@ fn incomplete_block_retains_only_already_owned_terminal_grammar_when_decision_is
 
     for fixture in INCOMPLETE_BLOCK_GRAMMAR_FIXTURES {
         assert!(fixture.source.starts_with("{ let "));
+        assert_eq!(fixture.block_close, None);
         assert_anchor(fixture.source, fixture.subject, fixture.fragment);
         assert_expected_outcome_source(fixture.source, fixture.outcome);
 
@@ -432,22 +520,44 @@ fn incomplete_block_retains_only_already_owned_terminal_grammar_when_decision_is
             }
         }
     }
+
+    assert_eq!(
+        INCOMPLETE_BLOCK_GRAMMAR_FIXTURES[0]
+            .subject
+            .fragment(INCOMPLETE_BLOCK_GRAMMAR_FIXTURES[0].source),
+        r"\u{}"
+    );
+    assert_eq!(
+        INCOMPLETE_BLOCK_GRAMMAR_FIXTURES[0].block_close,
+        None,
+        "the final `}` belongs to the malformed escape subject, not to a Block close"
+    );
 }
 
 #[test]
-fn definitive_grammar_remains_primary_over_tentative_facts_even_when_block_never_commits() {
+fn definitive_grammar_remains_primary_over_uncommitted_static_candidates() {
     assert_eq!(INCOMPLETE_BLOCK_COMPETITION_FIXTURES.len(), 2);
 
     for fixture in INCOMPLETE_BLOCK_COMPETITION_FIXTURES {
         assert!(fixture.source.starts_with('{'));
-        assert!(!fixture.source.ends_with('}'));
-        assert_anchor(fixture.source, fixture.grammar, fixture.grammar_fragment);
+        assert_eq!(fixture.block_close, None);
+        assert!(matches!(
+            fixture.uncommitted_static_candidate.rule_id,
+            "EE-14-R01" | "EE-15-R03"
+        ));
+        assert_anchor(
+            fixture.source,
+            fixture.uncommitted_static_candidate.subject,
+            fixture.uncommitted_static_candidate.fragment,
+        );
+        assert_expected_outcome_source(fixture.source, fixture.outcome);
 
-        if let Some(static_fact) = fixture.tentative_static {
-            assert_eq!(static_fact.rule_id, "EE-15-R03");
-            assert_anchor(fixture.source, static_fact.subject, static_fact.fragment);
-            assert_ne!(static_fact.subject, fixture.grammar);
-        }
+        let grammar_subject = match fixture.outcome {
+            ExpectedOutcome::Grammar { subject, .. } => subject,
+            _ => panic!("competition fixture must retain definitive Grammar as primary"),
+        };
+        assert_ne!(fixture.uncommitted_static_candidate.subject, grammar_subject);
+        assert!(fixture.uncommitted_static_candidate.subject.end <= grammar_subject.start);
     }
 
     assert!(
@@ -463,9 +573,11 @@ fn eof_asi_after_block_does_not_repair_deferred_malformed_binding_sources() {
     assert_eq!(DEFERRED_EOF_AFTER_BLOCK.len(), 3);
     assert!(EOF_ASI_ORACLE.contains("DeferredMalformedEscape"));
 
-    for source in DEFERRED_EOF_AFTER_BLOCK {
-        assert!(source.starts_with("{ let a=1; } let "));
-        assert!(!source.ends_with(';'));
+    for fixture in DEFERRED_EOF_AFTER_BLOCK {
+        assert!(fixture.source.starts_with("{ let a=1; } let "));
+        assert!(!fixture.source.ends_with(';'));
+        assert_eq!(fixture.outcome, ExpectedOutcome::UnsupportedCoverage);
+        assert_expected_outcome_source(fixture.source, fixture.outcome);
     }
 }
 
