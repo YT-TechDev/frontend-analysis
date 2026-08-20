@@ -247,7 +247,7 @@ fn analyze<'script>(
 }
 
 pub(super) fn analyze_selected_one_level_block_binding_scope<'script>(
-    accepted: &'script SelectedOneLevelBlockStaticSemanticsAccepted<'script>,
+    accepted: &SelectedOneLevelBlockStaticSemanticsAccepted<'script>,
 ) -> SelectedOneLevelBlockBindingScopeOutcome<'script> {
     match analyze(accepted.script()) {
         Ok(analysis) => SelectedOneLevelBlockBindingScopeOutcome::Complete(analysis),
