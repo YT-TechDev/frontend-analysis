@@ -190,6 +190,15 @@ fn accepted_precedence_matrix_is_declaration_source_order_then_local_rule_order(
                     duplicate_binding.range().end(),
                 ),
             ),
+            SelectedStaticSemanticsRejection::DuplicateBlockLexicalName {
+                duplicate_binding, ..
+            } => (
+                "EE14",
+                (
+                    duplicate_binding.range().start(),
+                    duplicate_binding.range().end(),
+                ),
+            ),
             SelectedStaticSemanticsRejection::InvalidEscapedIdentifierStart { escape } => {
                 ("EE01-R01", (escape.range().start(), escape.range().end()))
             }
@@ -444,6 +453,15 @@ fn escaped_binding_precedence_matches_all_twelve_candidate_independent_witnesses
                     duplicate_binding.range().end(),
                 ),
             ),
+            SelectedStaticSemanticsRejection::DuplicateBlockLexicalName {
+                duplicate_binding, ..
+            } => (
+                "EE14",
+                (
+                    duplicate_binding.range().start(),
+                    duplicate_binding.range().end(),
+                ),
+            ),
         };
         assert_eq!(rule, expected_rule, "{text:?}");
         assert_eq!(range, expected_range, "{text:?}");
@@ -477,6 +495,75 @@ fn same_binding_invalid_escape_primary_is_first_authored_occurrence() {
 }
 
 #[test]
+fn block_duplicate_uses_ee14_without_flattening_outer_or_sibling_regions() {
+    let (_, script) = recognized("{ let a=1; let a=2; }");
+    match evaluate_selected_static_semantics(&script) {
+        SelectedStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::DuplicateBlockLexicalName {
+                first_binding,
+                duplicate_binding,
+            },
+        ) => {
+            assert_eq!(
+                (first_binding.range().start(), first_binding.range().end()),
+                (6, 7)
+            );
+            assert_eq!(
+                (
+                    duplicate_binding.range().start(),
+                    duplicate_binding.range().end()
+                ),
+                (15, 16)
+            );
+        }
+        other => panic!("expected EE-14-R01 Block duplicate rejection, got {other:?}"),
+    }
+
+    accepted("let a=1; { let a=2; }");
+    accepted("{ let a=1; } { let a=2; }");
+}
+
+#[test]
+fn script_duplicate_domain_excludes_inner_block_bindings() {
+    let (_, script) = recognized("let a=1; { let a=2; } let a=3;");
+    match evaluate_selected_static_semantics(&script) {
+        SelectedStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::DuplicateLexicalName {
+                first_binding,
+                duplicate_binding,
+            },
+        ) => {
+            assert_eq!(
+                (first_binding.range().start(), first_binding.range().end()),
+                (4, 5)
+            );
+            assert_eq!(
+                (
+                    duplicate_binding.range().start(),
+                    duplicate_binding.range().end()
+                ),
+                (30, 31)
+            );
+        }
+        other => panic!("expected Script EE-36-R01 duplicate, got {other:?}"),
+    }
+}
+
+#[test]
+fn declaration_local_checks_across_regions_precede_region_duplicate_checks() {
+    let (_, script) = recognized("{ let a=1; let a=2; } const x;");
+    match evaluate_selected_static_semantics(&script) {
+        SelectedStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::ConstBindingMissingInitializer { binding },
+        ) => {
+            assert_eq!(binding.fragment(), "x");
+            assert_eq!((binding.range().start(), binding.range().end()), (30, 31));
+        }
+        other => panic!("expected declaration-local R03 before Block duplicate, got {other:?}"),
+    }
+}
+
+#[test]
 fn selected_rejections_map_to_static_semantics_rejected_with_authored_primary_evidence() {
     for (text, expected_fragment) in [
         ("const let;", "let"),
@@ -484,6 +571,7 @@ fn selected_rejections_map_to_static_semantics_rejected_with_authored_primary_ev
         ("const x;", "x"),
         ("let x, y; let y;", "y"),
         (r"const x = \u006Eull;", r"\u006Eull"),
+        ("{ let a=1; let a=2; }", "a"),
     ] {
         let (source, script) = recognized(text);
         let rejection = match evaluate_selected_static_semantics(&script) {
@@ -543,9 +631,12 @@ fn production_static_semantics_preserves_architecture_boundaries_in_source() {
         );
     }
 
-    assert_eq!(production.matches("HashMap<&str").count(), 2);
+    assert_eq!(production.matches("HashMap<").count(), 2);
     assert_eq!(production.matches("try_reserve(1)").count(), 2);
     assert!(production.contains("DuplicateDeclarationBinding"));
     assert!(production.contains("DuplicateLexicalName"));
+    assert!(production.contains("DuplicateBlockLexicalName"));
+    assert!(production.contains("DuplicateRegionOwner::Block"));
+    assert!(production.contains("SelectedLexicalItem::Block"));
     assert!(production.contains("EscapedReservedWordInitializer"));
 }
