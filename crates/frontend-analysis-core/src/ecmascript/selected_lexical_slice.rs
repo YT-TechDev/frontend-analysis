@@ -42,6 +42,44 @@ impl SelectedLexicalScript {
             .iter()
             .any(|item| matches!(item, SelectedLexicalItem::Block(_)))
     }
+
+    #[cfg(test)]
+    pub(super) fn declarations(&self) -> &Self {
+        assert!(
+            !self.contains_block(),
+            "historical flat declaration test view must not hide selected Block items"
+        );
+        self
+    }
+
+    #[cfg(test)]
+    pub(super) fn len(&self) -> usize {
+        self.items.len()
+    }
+
+    #[cfg(test)]
+    pub(super) fn iter(&self) -> impl Iterator<Item = &SelectedLexicalDeclaration> {
+        self.items.iter().map(|item| match item {
+            SelectedLexicalItem::Declaration(declaration) => declaration,
+            SelectedLexicalItem::Block(_) => {
+                panic!("historical flat declaration test iterator encountered selected Block")
+            }
+        })
+    }
+}
+
+#[cfg(test)]
+impl std::ops::Index<usize> for SelectedLexicalScript {
+    type Output = SelectedLexicalDeclaration;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        match &self.items[index] {
+            SelectedLexicalItem::Declaration(declaration) => declaration,
+            SelectedLexicalItem::Block(_) => {
+                panic!("historical flat declaration test index encountered selected Block")
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
