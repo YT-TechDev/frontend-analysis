@@ -34,7 +34,7 @@ impl ByteRange {
         Self { start, end }
     }
 
-    fn fragment<'source>(self, source: &'source str) -> &'source str {
+    fn fragment(self, source: &str) -> &str {
         assert!(self.start <= self.end);
         assert!(self.end <= source.len());
         assert!(source.is_char_boundary(self.start));
