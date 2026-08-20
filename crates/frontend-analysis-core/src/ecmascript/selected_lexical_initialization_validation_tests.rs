@@ -80,7 +80,7 @@ enum ExpectedTarget {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExpectedBindingOrder {
     TargetBindingBeforeContainingBinding,
-    TargetIsContainingBinding,
+    Same,
     TargetBindingAfterContainingBinding,
 }
 
@@ -161,7 +161,7 @@ const FIXTURES: &[InitializationFixture] = &[
             target: ExpectedTarget::SameSourceSelectedLexicalBinding(ExpectedAnchor::new(
                 4, 5, "x",
             )),
-            order: Some(ExpectedBindingOrder::TargetIsContainingBinding),
+            order: Some(ExpectedBindingOrder::Same),
             conditional_state: Some(
                 ExpectedConditionalInitializationState::UninitializedAtReference,
             ),
@@ -213,7 +213,7 @@ const FIXTURES: &[InitializationFixture] = &[
             target: ExpectedTarget::SameSourceSelectedLexicalBinding(ExpectedAnchor::new(
                 4, 5, "x",
             )),
-            order: Some(ExpectedBindingOrder::TargetIsContainingBinding),
+            order: Some(ExpectedBindingOrder::Same),
             conditional_state: Some(
                 ExpectedConditionalInitializationState::UninitializedAtReference,
             ),
@@ -440,10 +440,7 @@ fn backward_forward_and_self_use_binding_evaluation_order_not_raw_offsets() {
         panic!("self fixture must have a same-source target");
     };
     assert!(self_target.start < self_reference.reference.start);
-    assert_eq!(
-        self_reference.order,
-        Some(ExpectedBindingOrder::TargetIsContainingBinding)
-    );
+    assert_eq!(self_reference.order, Some(ExpectedBindingOrder::Same));
     assert_eq!(
         self_reference.conditional_state,
         Some(ExpectedConditionalInitializationState::UninitializedAtReference)
@@ -474,10 +471,7 @@ fn binding_list_order_and_prior_uninitialized_let_are_pinned() {
     );
 
     let self_reference = expected_reference("self-same-declaration");
-    assert_eq!(
-        self_reference.order,
-        Some(ExpectedBindingOrder::TargetIsContainingBinding)
-    );
+    assert_eq!(self_reference.order, Some(ExpectedBindingOrder::Same));
 
     let prior_let = expected_reference("prior-let-without-initializer");
     assert_eq!(
