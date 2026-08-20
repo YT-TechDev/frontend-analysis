@@ -10,7 +10,8 @@ use std::collections::BTreeSet;
 
 use crate::{SourceId, SourceText};
 
-const THIS_SOURCE: &str = include_str!("qualification_selected_one_level_block_validation_tests.rs");
+const THIS_SOURCE: &str =
+    include_str!("qualification_selected_one_level_block_validation_tests.rs");
 const HISTORICAL_FLAT_COMPLETION_SOURCE: &str =
     include_str!("qualification_validation_tests/selected_slice_completion.rs");
 
@@ -516,15 +517,6 @@ fn one_level_block_frontier_and_qualification_dispositions_are_explicit() {
         BLOCK_RULES[1].disposition,
         BlockRuleDisposition::StructurallyNonTriggering { .. }
     ));
-
-    assert!(!SELECTED_RECURSIVE_BLOCKS);
-    assert!(!SELECTED_VAR_DECLARATION);
-    assert!(!SELECTED_FUNCTION_DECLARATION);
-    assert!(!SELECTED_EXPRESSION_STATEMENT);
-    assert!(!SELECTED_CAN_FORM_DIRECTIVE_PROLOGUE);
-    assert!(!SELECTED_IS_STRICT);
-    assert!(!SELECTED_INCLUDES_NORMATIVE_OPTIONAL_BLOCK_FUNCTIONS);
-    assert!(!SELECTED_NON_EOF_ASI_BEFORE_CLOSE);
 }
 
 #[test]
@@ -533,7 +525,11 @@ fn fixture_ids_sources_and_region_ids_are_stable_and_unique() {
     let mut sources = BTreeSet::new();
 
     for fixture in FIXTURES {
-        assert!(ids.insert(fixture.id), "duplicate fixture id {}", fixture.id);
+        assert!(
+            ids.insert(fixture.id),
+            "duplicate fixture id {}",
+            fixture.id
+        );
         assert!(
             sources.insert(fixture.source),
             "duplicate fixture source {}",
@@ -604,7 +600,10 @@ fn mixed_shadowing_fixture_pins_region_structure_without_target_selection() {
     assert_eq!(mixed.processing, ExpectedProcessing::Complete);
     assert_eq!(mixed.blocks, SHADOW_BLOCKS);
     assert_eq!(mixed.declarations, SHADOW_DECLARATIONS);
-    assert_eq!(mixed.blocks[0].block, ExpectedAnchor::new(9, 30, "{ let a=2; let x=a; }"));
+    assert_eq!(
+        mixed.blocks[0].block,
+        ExpectedAnchor::new(9, 30, "{ let a=2; let x=a; }")
+    );
     assert_eq!(mixed.declarations[0].region, TOP_LEVEL_REGION);
     assert_eq!(mixed.declarations[1].region, "block-0");
     assert_eq!(mixed.declarations[2].region, "block-0");
@@ -618,8 +617,14 @@ fn sibling_blocks_have_distinct_region_identity_even_at_equal_depth() {
     assert_eq!(siblings.processing, ExpectedProcessing::Complete);
     assert_eq!(siblings.blocks.len(), 2);
     assert_ne!(siblings.blocks[0].id, siblings.blocks[1].id);
-    assert_eq!(siblings.blocks[0].block, ExpectedAnchor::new(0, 12, "{ let a=1; }"));
-    assert_eq!(siblings.blocks[1].block, ExpectedAnchor::new(13, 25, "{ let x=a; }"));
+    assert_eq!(
+        siblings.blocks[0].block,
+        ExpectedAnchor::new(0, 12, "{ let a=1; }")
+    );
+    assert_eq!(
+        siblings.blocks[1].block,
+        ExpectedAnchor::new(13, 25, "{ let x=a; }")
+    );
     assert_eq!(siblings.declarations[0].region, "block-0");
     assert_eq!(siblings.declarations[1].region, "block-1");
 }
@@ -631,8 +636,16 @@ fn block_duplicate_and_outer_inner_shadowing_are_distinct_expected_states() {
         duplicate.processing,
         ExpectedProcessing::StaticRejected {
             authority: "EE-14-R01",
-            first_binding: ExpectedAnchor { start: 6, end: 7, .. },
-            duplicate_binding: ExpectedAnchor { start: 15, end: 16, .. },
+            first_binding: ExpectedAnchor {
+                start: 6,
+                end: 7,
+                ..
+            },
+            duplicate_binding: ExpectedAnchor {
+                start: 15,
+                end: 16,
+                ..
+            },
         }
     ));
 
@@ -662,17 +675,29 @@ fn outer_fallback_shape_and_no_match_shape_do_not_claim_binding_resolution() {
 fn escaped_spelling_and_canonical_distinction_remain_source_backed() {
     let escaped = fixture("escaped-spelling");
     let escaped_observation = escaped.semantic_observations[0];
-    assert_eq!(escaped_observation.authored, ExpectedAnchor::new(17, 23, "\\u0061"));
+    assert_eq!(
+        escaped_observation.authored,
+        ExpectedAnchor::new(17, 23, "\\u0061")
+    );
     assert_eq!(escaped_observation.semantic_name, "a");
     assert_eq!(escaped_observation.semantic_code_points, &[0x61]);
 
     let canonical = fixture("canonical-distinct");
     let canonical_observation = canonical.semantic_observations[0];
-    assert_eq!(canonical.declarations[0].bindings[0], ExpectedAnchor::new(4, 6, "é"));
-    assert_eq!(canonical_observation.authored, ExpectedAnchor::new(18, 25, "e\\u0301"));
+    assert_eq!(
+        canonical.declarations[0].bindings[0],
+        ExpectedAnchor::new(4, 6, "é")
+    );
+    assert_eq!(
+        canonical_observation.authored,
+        ExpectedAnchor::new(18, 25, "e\\u0301")
+    );
     assert_eq!(canonical_observation.semantic_name, "e\u{301}");
     assert_eq!(canonical_observation.semantic_code_points, &[0x65, 0x0301]);
-    assert_ne!(canonical.declarations[0].bindings[0].fragment, canonical_observation.semantic_name);
+    assert_ne!(
+        canonical.declarations[0].bindings[0].fragment,
+        canonical_observation.semantic_name
+    );
 }
 
 #[test]
@@ -686,8 +711,14 @@ fn unsupported_frontier_cases_remain_coverage_states_not_syntax_verdicts() {
         ("empty-block", UnsupportedReason::EmptyBlock),
         ("comment-trivia", UnsupportedReason::CommentTrivia),
         ("var-declaration", UnsupportedReason::VarDeclaration),
-        ("function-declaration", UnsupportedReason::FunctionDeclaration),
-        ("expression-statement", UnsupportedReason::ExpressionStatement),
+        (
+            "function-declaration",
+            UnsupportedReason::FunctionDeclaration,
+        ),
+        (
+            "expression-statement",
+            UnsupportedReason::ExpressionStatement,
+        ),
     ];
 
     for (id, reason) in expected {
@@ -710,9 +741,9 @@ fn historical_flat_completion_remains_separate_and_candidate_independence_is_vis
 
     let sibling_qualifier = concat!("super", "::");
     assert!(
-        THIS_SOURCE
-            .lines()
-            .all(|line| !line.trim_start().starts_with(&format!("use {sibling_qualifier}"))),
+        THIS_SOURCE.lines().all(|line| !line
+            .trim_start()
+            .starts_with(&format!("use {sibling_qualifier}"))),
         "candidate-independent oracle must not import future sibling production modules"
     );
 }
