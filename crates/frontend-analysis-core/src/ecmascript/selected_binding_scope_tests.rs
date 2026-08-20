@@ -1,7 +1,8 @@
 use crate::{SourceId, SourceText};
 
 use super::selected_binding_scope::{
-    SelectedBindingScopeOutcome, SelectedBindingScopeTarget, analyze_selected_binding_scope,
+    SelectedBindingScopeOutcome, SelectedBindingScopeTarget, SelectedLexicalBindingOrder,
+    analyze_selected_binding_scope,
 };
 use super::selected_lexical_slice::{
     SelectedIdentifierReferenceNameState, SelectedLexicalScript, SelectedLexicalSliceOutcome,
@@ -12,11 +13,14 @@ use super::selected_static_semantics::{
     SelectedStaticSemanticsRejection, evaluate_selected_static_semantics,
 };
 
+const BINDING_SCOPE_SOURCE: &str = include_str!("selected_binding_scope.rs");
+
 #[derive(Debug, PartialEq, Eq)]
 struct RelationSnapshot {
+    containing_binding: (usize, usize, String),
     reference: (usize, usize, String),
     semantic_name: String,
-    target: Option<(usize, usize, String)>,
+    target: Option<(usize, usize, String, SelectedLexicalBindingOrder)>,
 }
 
 fn recognized(text: &str) -> SelectedLexicalScript {
@@ -46,16 +50,25 @@ fn relation_snapshots(text: &str) -> Vec<RelationSnapshot> {
         .relations()
         .iter()
         .map(|relation| {
+            let containing_binding = relation.containing_binding();
             let reference = relation.reference();
             let target = match relation.target() {
-                SelectedBindingScopeTarget::SameSourceSelectedLexicalBinding(binding) => Some((
-                    binding.range().start(),
-                    binding.range().end(),
-                    binding.fragment().to_owned(),
-                )),
+                SelectedBindingScopeTarget::SameSourceSelectedLexicalBinding { binding, order } => {
+                    Some((
+                        binding.range().start(),
+                        binding.range().end(),
+                        binding.fragment().to_owned(),
+                        order,
+                    ))
+                }
                 SelectedBindingScopeTarget::NoSameSourceSelectedLexicalBinding => None,
             };
             RelationSnapshot {
+                containing_binding: (
+                    containing_binding.range().start(),
+                    containing_binding.range().end(),
+                    containing_binding.fragment().to_owned(),
+                ),
                 reference: (
                     reference.range().start(),
                     reference.range().end(),
@@ -134,37 +147,58 @@ fn non_reference_atoms_do_not_retain_ordinary_reference_facts() {
 }
 
 #[test]
-fn backward_forward_self_and_no_match_match_the_candidate_independent_oracle() {
+fn backward_forward_self_and_no_match_match_the_candidate_independent_oracles() {
     assert_eq!(
         relation_snapshots("let a=1; let x=a;"),
         vec![RelationSnapshot {
+            containing_binding: (13, 14, "x".to_owned()),
             reference: (15, 16, "a".to_owned()),
             semantic_name: "a".to_owned(),
-            target: Some((4, 5, "a".to_owned())),
+            target: Some((
+                4,
+                5,
+                "a".to_owned(),
+                SelectedLexicalBindingOrder::Before,
+            )),
         }]
     );
 
     assert_eq!(
         relation_snapshots("let x=y; let y=1;"),
         vec![RelationSnapshot {
+            containing_binding: (4, 5, "x".to_owned()),
             reference: (6, 7, "y".to_owned()),
             semantic_name: "y".to_owned(),
-            target: Some((13, 14, "y".to_owned())),
+            target: Some((
+                13,
+                14,
+                "y".to_owned(),
+                SelectedLexicalBindingOrder::After,
+            )),
         }]
     );
 
+    let self_relation = relation_snapshots("let x=x;");
     assert_eq!(
-        relation_snapshots("let x=x;"),
+        self_relation,
         vec![RelationSnapshot {
+            containing_binding: (4, 5, "x".to_owned()),
             reference: (6, 7, "x".to_owned()),
             semantic_name: "x".to_owned(),
-            target: Some((4, 5, "x".to_owned())),
+            target: Some((4, 5, "x".to_owned(), SelectedLexicalBindingOrder::Same)),
         }]
     );
+    let self_target = self_relation[0]
+        .target
+        .as_ref()
+        .expect("self relation must have a same-source target");
+    assert!(self_target.0 < self_relation[0].reference.0);
+    assert_eq!(self_target.3, SelectedLexicalBindingOrder::Same);
 
     assert_eq!(
         relation_snapshots("let x=y;"),
         vec![RelationSnapshot {
+            containing_binding: (4, 5, "x".to_owned()),
             reference: (6, 7, "y".to_owned()),
             semantic_name: "y".to_owned(),
             target: None,
@@ -173,19 +207,84 @@ fn backward_forward_self_and_no_match_match_the_candidate_independent_oracle() {
 }
 
 #[test]
-fn escaped_direct_equality_and_non_normalization_match_the_oracle() {
+fn binding_list_order_and_prior_let_without_initializer_match_the_oracle() {
+    assert_eq!(
+        relation_snapshots("let a=1, x=a;"),
+        vec![RelationSnapshot {
+            containing_binding: (9, 10, "x".to_owned()),
+            reference: (11, 12, "a".to_owned()),
+            semantic_name: "a".to_owned(),
+            target: Some((
+                4,
+                5,
+                "a".to_owned(),
+                SelectedLexicalBindingOrder::Before,
+            )),
+        }]
+    );
+
+    assert_eq!(
+        relation_snapshots("let x=y, y=1;"),
+        vec![RelationSnapshot {
+            containing_binding: (4, 5, "x".to_owned()),
+            reference: (6, 7, "y".to_owned()),
+            semantic_name: "y".to_owned(),
+            target: Some((
+                9,
+                10,
+                "y".to_owned(),
+                SelectedLexicalBindingOrder::After,
+            )),
+        }]
+    );
+
+    assert_eq!(
+        relation_snapshots("let x=x, y=1;"),
+        vec![RelationSnapshot {
+            containing_binding: (4, 5, "x".to_owned()),
+            reference: (6, 7, "x".to_owned()),
+            semantic_name: "x".to_owned(),
+            target: Some((4, 5, "x".to_owned(), SelectedLexicalBindingOrder::Same)),
+        }]
+    );
+
+    assert_eq!(
+        relation_snapshots("let a; let x=a;"),
+        vec![RelationSnapshot {
+            containing_binding: (11, 12, "x".to_owned()),
+            reference: (13, 14, "a".to_owned()),
+            semantic_name: "a".to_owned(),
+            target: Some((
+                4,
+                5,
+                "a".to_owned(),
+                SelectedLexicalBindingOrder::Before,
+            )),
+        }]
+    );
+}
+
+#[test]
+fn escaped_direct_equality_and_non_normalization_match_the_oracles() {
     assert_eq!(
         relation_snapshots(r"let a=1; let x=\u0061;"),
         vec![RelationSnapshot {
+            containing_binding: (13, 14, "x".to_owned()),
             reference: (15, 21, r"\u0061".to_owned()),
             semantic_name: "a".to_owned(),
-            target: Some((4, 5, "a".to_owned())),
+            target: Some((
+                4,
+                5,
+                "a".to_owned(),
+                SelectedLexicalBindingOrder::Before,
+            )),
         }]
     );
 
     assert_eq!(
         relation_snapshots("let é=1; let x=e\\u0301;"),
         vec![RelationSnapshot {
+            containing_binding: (14, 15, "x".to_owned()),
             reference: (16, 23, r"e\u0301".to_owned()),
             semantic_name: "e\u{301}".to_owned(),
             target: None,
@@ -194,31 +293,58 @@ fn escaped_direct_equality_and_non_normalization_match_the_oracle() {
 }
 
 #[test]
-fn same_declaration_forward_and_multiple_relations_preserve_reference_source_order() {
-    assert_eq!(
-        relation_snapshots("let x=y, y=1;"),
-        vec![RelationSnapshot {
-            reference: (6, 7, "y".to_owned()),
-            semantic_name: "y".to_owned(),
-            target: Some((9, 10, "y".to_owned())),
-        }]
-    );
-
+fn multiple_relations_preserve_reference_source_order() {
     assert_eq!(
         relation_snapshots("let a=1,b=2; let x=a,y=b;"),
         vec![
             RelationSnapshot {
+                containing_binding: (17, 18, "x".to_owned()),
                 reference: (19, 20, "a".to_owned()),
                 semantic_name: "a".to_owned(),
-                target: Some((4, 5, "a".to_owned())),
+                target: Some((
+                    4,
+                    5,
+                    "a".to_owned(),
+                    SelectedLexicalBindingOrder::Before,
+                )),
             },
             RelationSnapshot {
+                containing_binding: (21, 22, "y".to_owned()),
                 reference: (23, 24, "b".to_owned()),
                 semantic_name: "b".to_owned(),
-                target: Some((8, 9, "b".to_owned())),
+                target: Some((
+                    8,
+                    9,
+                    "b".to_owned(),
+                    SelectedLexicalBindingOrder::Before,
+                )),
             },
         ]
     );
+}
+
+#[test]
+fn production_order_is_not_derived_from_source_offsets_or_pointer_identity() {
+    assert!(!BINDING_SCOPE_SOURCE.contains(".range().start()"));
+    assert!(!BINDING_SCOPE_SOURCE.contains("std::ptr"));
+    assert!(BINDING_SCOPE_SOURCE.contains("binding_position"));
+    assert!(BINDING_SCOPE_SOURCE.contains("containing_position"));
+}
+
+#[test]
+fn production_does_not_store_plain_conditional_runtime_state() {
+    let forbidden = [
+        concat!("Initialized", "AtReference"),
+        concat!("Uninitialized", "AtReference"),
+        concat!("ScriptDefinitelyThrows", "ReferenceError"),
+    ];
+
+    for term in forbidden {
+        assert!(
+            !BINDING_SCOPE_SOURCE.contains(term),
+            "source-only Binding / Scope result must not store premise-dependent runtime state: {term}"
+        );
+    }
 }
 
 #[test]
