@@ -869,7 +869,81 @@ fn aggregate_integration_source_preserves_incomplete_and_single_pass_boundaries(
             .count(),
         1
     );
+    assert_eq!(
+        production
+            .matches("evaluate_selected_one_level_block_static_semantics(&script)")
+            .count(),
+        1
+    );
     assert!(production.contains("SelectedAcceptedIncomplete"));
     assert!(production.contains("EvidenceSubject::authored(source, subject)"));
     assert!(production.contains("QualificationOutcome::syntax_rejected(subject)"));
+}
+
+#[test]
+fn one_level_block_accepted_sources_remain_selected_accepted_incomplete() {
+    for text in [
+        "{ let a=1; }",
+        "let a=1; { let a=2; }",
+        "{ let a=1; } { let a=2; }",
+        r"let a=1; { let x=\u0061; }",
+        r"let é=1; { let x=e\u0301; }",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn one_level_block_static_rejections_preserve_region_owned_authored_subjects() {
+    for (text, expected_range) in [
+        ("{ let a=1; let a=2; }", (15, 16)),
+        ("let a=1; { let a=2; } let a=3;", (26, 27)),
+    ] {
+        let outcome = qualification_outcome(text);
+        assert_eq!(outcome.processing(), ProcessingStatus::Complete, "{text}");
+        assert_eq!(
+            outcome.verdict(),
+            Some(QualificationVerdictKind::StaticSemanticsRejected),
+            "{text}"
+        );
+        let evidence = outcome.rejection_evidence().expect("static evidence");
+        assert_eq!(evidence.family(), RejectionFamily::StaticSemantics, "{text}");
+        let anchor = evidence
+            .subject()
+            .authored_anchor()
+            .expect("Block/static subject must remain authored");
+        assert_eq!(anchor.fragment(), "a", "{text}");
+        assert_eq!(
+            (anchor.range().start(), anchor.range().end()),
+            expected_range,
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn one_level_block_unsupported_neighbors_remain_unsupported_coverage() {
+    for text in [
+        "{}",
+        "{ let a=1 }",
+        "{ { let a=1; } }",
+        "{ let a=1; /*c*/ let x=a; }",
+        "{ var a=1; }",
+        "{ function f(){} }",
+        "{ 1; }",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::UnsupportedCoverage
+            ),
+            "{text:?}"
+        );
+    }
 }
