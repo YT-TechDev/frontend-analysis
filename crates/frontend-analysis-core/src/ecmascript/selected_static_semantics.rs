@@ -229,10 +229,7 @@ where
             };
 
             if let Some(first_binding) = first_by_name.get(name) {
-                return Ok(Some((
-                    (*first_binding).clone(),
-                    binding.binding().clone(),
-                )));
+                return Ok(Some(((*first_binding).clone(), binding.binding().clone())));
             }
 
             if first_by_name.try_reserve(1).is_err() {
@@ -273,17 +270,15 @@ pub(super) fn evaluate_selected_static_semantics<'script>(
 
     // EE-36-R01: only after all selected declaration-local checks pass.
     match first_duplicate_lexical_name(script.declarations()) {
-        Ok(Some((first_binding, duplicate_binding))) => {
-            SelectedStaticSemanticsOutcome::Rejected(
-                SelectedStaticSemanticsRejection::DuplicateLexicalName {
-                    first_binding,
-                    duplicate_binding,
-                },
-            )
+        Ok(Some((first_binding, duplicate_binding))) => SelectedStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::DuplicateLexicalName {
+                first_binding,
+                duplicate_binding,
+            },
+        ),
+        Ok(None) => {
+            SelectedStaticSemanticsOutcome::Accepted(SelectedStaticSemanticsAccepted { script })
         }
-        Ok(None) => SelectedStaticSemanticsOutcome::Accepted(SelectedStaticSemanticsAccepted {
-            script,
-        }),
         Err(SelectedDuplicateCheckFailure::ResourceLimited) => {
             SelectedStaticSemanticsOutcome::ResourceLimited
         }
@@ -325,7 +320,9 @@ pub(super) fn evaluate_selected_one_level_block_static_semantics<'script>(
                     match evaluate_selected_declaration_local_static_semantics(declaration) {
                         Ok(()) => {}
                         Err(SelectedDeclarationCheckFailure::Rejected(rejection)) => {
-                            return SelectedOneLevelBlockStaticSemanticsOutcome::Rejected(rejection);
+                            return SelectedOneLevelBlockStaticSemanticsOutcome::Rejected(
+                                rejection,
+                            );
                         }
                         Err(SelectedDeclarationCheckFailure::ResourceLimited) => {
                             return SelectedOneLevelBlockStaticSemanticsOutcome::ResourceLimited;
