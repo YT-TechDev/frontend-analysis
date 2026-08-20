@@ -125,7 +125,9 @@ fn fixed_envelope_and_accepted_authority_chain_are_present() {
     assert!(HISTORICAL_FLAT_COMPLETION.contains(
         "fn selected_slice_required_rule_set_is_exact_and_independently_evidence_backed()"
     ));
-    assert!(HISTORICAL_FLAT_COMPLETION.contains("assert_eq!(configured_rule_ids, expected_rule_ids);"));
+    assert!(
+        HISTORICAL_FLAT_COMPLETION.contains("assert_eq!(configured_rule_ids, expected_rule_ids);")
+    );
     for rule_id in HISTORICAL_REQUIRED_RULE_IDS {
         assert!(
             HISTORICAL_FLAT_COMPLETION.contains(rule_id),
@@ -135,9 +137,10 @@ fn fixed_envelope_and_accepted_authority_chain_are_present() {
     assert!(HISTORICAL_FLAT_COMPLETION.contains("assert_eq!(required.len(), 7);"));
     assert!(HISTORICAL_FLAT_COMPLETION.contains("(\"EE-14\", \"Block\")"));
     assert!(HISTORICAL_FLAT_COMPLETION.contains("validation-only local selected slice"));
-    assert!(HISTORICAL_FLAT_COMPLETION.contains(
-        "const FULL_FIRST_ENVELOPE_PROFILE_COMPLETION_PROVEN: bool = false;"
-    ));
+    assert!(
+        HISTORICAL_FLAT_COMPLETION
+            .contains("const FULL_FIRST_ENVELOPE_PROFILE_COMPLETION_PROVEN: bool = false;")
+    );
 
     assert!(BLOCK_ORACLE.contains("const SELECTED_BLOCK_BODY: &str = \"LexicalDeclaration+\";"));
     assert!(BLOCK_ORACLE.contains("id: \"mixed-shadowing\""));
@@ -356,8 +359,7 @@ fn selected_lifecycle_stays_incomplete_and_resource_failures_stay_distinct() {
     assert!(SELECTED_AGGREGATE_SOURCE.contains("selected_grammar_rejection_to_qualification"));
     assert!(SELECTED_AGGREGATE_SOURCE.contains("SelectedStaticSemanticsOutcome::Rejected"));
     assert!(
-        SELECTED_AGGREGATE_SOURCE
-            .contains("SelectedOneLevelBlockStaticSemanticsOutcome::Rejected")
+        SELECTED_AGGREGATE_SOURCE.contains("SelectedOneLevelBlockStaticSemanticsOutcome::Rejected")
     );
     assert!(SELECTED_AGGREGATE_SOURCE.contains("selected_rejection_to_qualification"));
     assert!(SELECTED_AGGREGATE_SOURCE.contains("QualificationOutcome::resource_limited()"));
@@ -372,7 +374,9 @@ fn selected_lifecycle_stays_incomplete_and_resource_failures_stay_distinct() {
     );
 
     assert!(QUALIFICATION_SOURCE.contains("struct CompleteQualificationWitness"));
-    assert!(QUALIFICATION_SOURCE.contains("No production constructor is exposed by this foundation."));
+    assert!(
+        QUALIFICATION_SOURCE.contains("No production constructor is exposed by this foundation.")
+    );
     assert!(QUALIFICATION_SOURCE.contains("#[cfg(test)]"));
     assert!(QUALIFICATION_SOURCE.contains("test_complete_qualification_witness"));
 }
