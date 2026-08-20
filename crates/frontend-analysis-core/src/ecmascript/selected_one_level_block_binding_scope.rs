@@ -106,9 +106,9 @@ fn insert_declaration_bindings<'script>(
     Ok(())
 }
 
-fn top_level_bindings<'script>(
-    script: &'script SelectedOneLevelBlockScript,
-) -> Result<HashMap<&'script str, &'script SourceAnchor>, AnalysisFailure> {
+fn top_level_bindings(
+    script: &SelectedOneLevelBlockScript,
+) -> Result<HashMap<&str, &SourceAnchor>, AnalysisFailure> {
     let mut bindings_by_name = HashMap::new();
 
     for item in script.items() {
@@ -121,9 +121,9 @@ fn top_level_bindings<'script>(
     Ok(bindings_by_name)
 }
 
-fn block_bindings<'script>(
-    block: &'script SelectedBlock,
-) -> Result<HashMap<&'script str, &'script SourceAnchor>, AnalysisFailure> {
+fn block_bindings(
+    block: &SelectedBlock,
+) -> Result<HashMap<&str, &SourceAnchor>, AnalysisFailure> {
     let mut bindings_by_name = HashMap::new();
     for declaration in block.declarations() {
         insert_declaration_bindings(declaration, &mut bindings_by_name)?;
@@ -144,13 +144,13 @@ fn target_for_name<'script>(
         };
     }
 
-    if let SelectedOneLevelBlockBindingScopeRegion::Block(_) = current_region {
-        if let Some(binding) = top_level_bindings.get(semantic_name).copied() {
-            return SelectedOneLevelBlockBindingScopeTarget::SelectedLexicalBinding {
-                binding,
-                region: SelectedOneLevelBlockBindingScopeRegion::TopLevel,
-            };
-        }
+    if let SelectedOneLevelBlockBindingScopeRegion::Block(_) = current_region
+        && let Some(binding) = top_level_bindings.get(semantic_name).copied()
+    {
+        return SelectedOneLevelBlockBindingScopeTarget::SelectedLexicalBinding {
+            binding,
+            region: SelectedOneLevelBlockBindingScopeRegion::TopLevel,
+        };
     }
 
     SelectedOneLevelBlockBindingScopeTarget::NoSelectedLexicalBindingTargetInCoveredRegions
