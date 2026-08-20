@@ -3,10 +3,12 @@ use crate::{SourceId, SourceText};
 use super::qualification::{ProcessingStatus, QualificationVerdictKind, RejectionFamily};
 use super::qualification_validation_tests::{gold_source, gold_subject_range};
 use super::selected_lexical_slice::{
-    SelectedLexicalScript, SelectedLexicalSliceOutcome, recognize_selected_lexical_slice,
+    SelectedLexicalScript, SelectedLexicalSliceOutcome, SelectedOneLevelBlockScript,
+    recognize_selected_lexical_slice,
 };
 use super::selected_static_semantics::{
-    SelectedStaticSemanticsOutcome, SelectedStaticSemanticsRejection,
+    SelectedOneLevelBlockStaticSemanticsOutcome, SelectedStaticSemanticsOutcome,
+    SelectedStaticSemanticsRejection, evaluate_selected_one_level_block_static_semantics,
     evaluate_selected_static_semantics, selected_rejection_to_qualification,
 };
 
@@ -19,6 +21,15 @@ fn recognized(text: &str) -> (SourceText, SelectedLexicalScript) {
     let script = match recognize_selected_lexical_slice(&source) {
         SelectedLexicalSliceOutcome::RecognizedSelectedSlice(script) => script,
         other => panic!("expected selected-slice recognition for {text:?}, got {other:?}"),
+    };
+    (source, script)
+}
+
+fn recognized_block(text: &str) -> (SourceText, SelectedOneLevelBlockScript) {
+    let source = source(text);
+    let script = match recognize_selected_lexical_slice(&source) {
+        SelectedLexicalSliceOutcome::RecognizedOneLevelBlockSlice(script) => script,
+        other => panic!("expected one-level Block recognition for {text:?}, got {other:?}"),
     };
     (source, script)
 }
@@ -180,6 +191,9 @@ fn accepted_precedence_matrix_is_declaration_source_order_then_local_rule_order(
             ),
             SelectedStaticSemanticsRejection::ConstBindingMissingInitializer { binding } => {
                 ("R03", (binding.range().start(), binding.range().end()))
+            }
+            SelectedStaticSemanticsRejection::DuplicateBlockLexicalName { .. } => {
+                panic!("flat fixture must not acquire Block duplicate evidence")
             }
             SelectedStaticSemanticsRejection::DuplicateLexicalName {
                 duplicate_binding, ..
@@ -435,6 +449,9 @@ fn escaped_binding_precedence_matches_all_twelve_candidate_independent_witnesses
             SelectedStaticSemanticsRejection::ConstBindingMissingInitializer { binding } => {
                 ("R03", (binding.range().start(), binding.range().end()))
             }
+            SelectedStaticSemanticsRejection::DuplicateBlockLexicalName { .. } => {
+                panic!("flat fixture must not acquire Block duplicate evidence")
+            }
             SelectedStaticSemanticsRejection::DuplicateLexicalName {
                 duplicate_binding, ..
             } => (
@@ -526,6 +543,80 @@ fn source_mismatch_fails_closed_without_a_verdict() {
 }
 
 #[test]
+fn one_level_block_static_semantics_preserve_region_duplicate_domains() {
+    let (_, script) = recognized_block("let a=1; { let a=2; }");
+    let accepted = match evaluate_selected_one_level_block_static_semantics(&script) {
+        SelectedOneLevelBlockStaticSemanticsOutcome::Accepted(accepted) => accepted,
+        other => panic!("legal outer/inner shadowing must be accepted, got {other:?}"),
+    };
+    assert_eq!(accepted.script().items().len(), 2);
+
+    let (_, script) = recognized_block("{ let a=1; } { let a=2; }");
+    assert!(matches!(
+        evaluate_selected_one_level_block_static_semantics(&script),
+        SelectedOneLevelBlockStaticSemanticsOutcome::Accepted(_)
+    ));
+
+    let (_, script) = recognized_block("{ let a=1; let a=2; }");
+    match evaluate_selected_one_level_block_static_semantics(&script) {
+        SelectedOneLevelBlockStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::DuplicateBlockLexicalName {
+                first_binding,
+                duplicate_binding,
+            },
+        ) => {
+            assert_eq!((first_binding.range().start(), first_binding.range().end()), (6, 7));
+            assert_eq!(
+                (duplicate_binding.range().start(), duplicate_binding.range().end()),
+                (15, 16)
+            );
+        }
+        other => panic!("expected EE-14 Block duplicate rejection, got {other:?}"),
+    }
+
+    let (_, script) = recognized_block("let a=1; { let a=2; } let a=3;");
+    match evaluate_selected_one_level_block_static_semantics(&script) {
+        SelectedOneLevelBlockStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::DuplicateLexicalName {
+                first_binding,
+                duplicate_binding,
+            },
+        ) => {
+            assert_eq!((first_binding.range().start(), first_binding.range().end()), (4, 5));
+            assert_eq!(
+                (duplicate_binding.range().start(), duplicate_binding.range().end()),
+                (26, 27)
+            );
+        }
+        other => panic!("expected top-level EE-36 duplicate rejection, got {other:?}"),
+    }
+}
+
+#[test]
+fn one_level_block_static_evidence_selection_is_local_then_block_then_script() {
+    let (_, script) = recognized_block("{ let a=1; let a=2; } const x;");
+    match evaluate_selected_one_level_block_static_semantics(&script) {
+        SelectedOneLevelBlockStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::ConstBindingMissingInitializer { binding },
+        ) => assert_eq!((binding.range().start(), binding.range().end()), (28, 29)),
+        other => panic!("declaration-local R03 must precede Block duplicate evidence: {other:?}"),
+    }
+
+    let (_, script) = recognized_block("{ let a=1; let a=2; } let z=1; let z=2;");
+    match evaluate_selected_one_level_block_static_semantics(&script) {
+        SelectedOneLevelBlockStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::DuplicateBlockLexicalName {
+                duplicate_binding, ..
+            },
+        ) => assert_eq!(
+            (duplicate_binding.range().start(), duplicate_binding.range().end()),
+            (15, 16)
+        ),
+        other => panic!("Block EE-14 duplicate must precede top-level EE-36 duplicate: {other:?}"),
+    }
+}
+
+#[test]
 fn production_static_semantics_preserves_architecture_boundaries_in_source() {
     let production = include_str!("selected_static_semantics.rs");
 
@@ -546,6 +637,8 @@ fn production_static_semantics_preserves_architecture_boundaries_in_source() {
     assert_eq!(production.matches("HashMap<&str").count(), 2);
     assert_eq!(production.matches("try_reserve(1)").count(), 2);
     assert!(production.contains("DuplicateDeclarationBinding"));
+    assert!(production.contains("DuplicateBlockLexicalName"));
     assert!(production.contains("DuplicateLexicalName"));
+    assert!(production.contains("SelectedOneLevelBlockStaticSemanticsAccepted"));
     assert!(production.contains("EscapedReservedWordInitializer"));
 }
