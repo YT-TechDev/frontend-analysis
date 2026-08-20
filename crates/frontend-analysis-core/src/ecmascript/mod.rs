@@ -44,11 +44,11 @@ mod selected_binding_scope_tests;
 #[cfg(test)]
 mod selected_binding_scope_validation_tests;
 #[cfg(test)]
-mod selected_one_level_block_binding_scope_validation_tests;
-#[cfg(test)]
 mod selected_lexical_initialization_validation_tests;
 #[cfg(test)]
 mod selected_lexical_slice_tests;
+#[cfg(test)]
+mod selected_one_level_block_binding_scope_validation_tests;
 #[cfg(test)]
 mod selected_qualification_integration_tests;
 #[cfg(test)]
