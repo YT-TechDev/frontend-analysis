@@ -649,7 +649,7 @@ fn production_static_semantics_preserves_architecture_boundaries_in_source() {
         );
     }
 
-    assert_eq!(production.matches("HashMap<&str").count(), 2);
+    assert_eq!(production.matches("first_by_name: HashMap<").count(), 2);
     assert_eq!(production.matches("try_reserve(1)").count(), 2);
     assert!(production.contains("DuplicateDeclarationBinding"));
     assert!(production.contains("DuplicateBlockLexicalName"));
