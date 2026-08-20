@@ -154,12 +154,7 @@ fn backward_forward_self_and_no_match_match_the_candidate_independent_oracles() 
             containing_binding: (13, 14, "x".to_owned()),
             reference: (15, 16, "a".to_owned()),
             semantic_name: "a".to_owned(),
-            target: Some((
-                4,
-                5,
-                "a".to_owned(),
-                SelectedLexicalBindingOrder::Before,
-            )),
+            target: Some((4, 5, "a".to_owned(), SelectedLexicalBindingOrder::Before,)),
         }]
     );
 
@@ -169,12 +164,7 @@ fn backward_forward_self_and_no_match_match_the_candidate_independent_oracles() 
             containing_binding: (4, 5, "x".to_owned()),
             reference: (6, 7, "y".to_owned()),
             semantic_name: "y".to_owned(),
-            target: Some((
-                13,
-                14,
-                "y".to_owned(),
-                SelectedLexicalBindingOrder::After,
-            )),
+            target: Some((13, 14, "y".to_owned(), SelectedLexicalBindingOrder::After,)),
         }]
     );
 
@@ -214,12 +204,7 @@ fn binding_list_order_and_prior_let_without_initializer_match_the_oracle() {
             containing_binding: (9, 10, "x".to_owned()),
             reference: (11, 12, "a".to_owned()),
             semantic_name: "a".to_owned(),
-            target: Some((
-                4,
-                5,
-                "a".to_owned(),
-                SelectedLexicalBindingOrder::Before,
-            )),
+            target: Some((4, 5, "a".to_owned(), SelectedLexicalBindingOrder::Before,)),
         }]
     );
 
@@ -229,12 +214,7 @@ fn binding_list_order_and_prior_let_without_initializer_match_the_oracle() {
             containing_binding: (4, 5, "x".to_owned()),
             reference: (6, 7, "y".to_owned()),
             semantic_name: "y".to_owned(),
-            target: Some((
-                9,
-                10,
-                "y".to_owned(),
-                SelectedLexicalBindingOrder::After,
-            )),
+            target: Some((9, 10, "y".to_owned(), SelectedLexicalBindingOrder::After,)),
         }]
     );
 
@@ -254,12 +234,7 @@ fn binding_list_order_and_prior_let_without_initializer_match_the_oracle() {
             containing_binding: (11, 12, "x".to_owned()),
             reference: (13, 14, "a".to_owned()),
             semantic_name: "a".to_owned(),
-            target: Some((
-                4,
-                5,
-                "a".to_owned(),
-                SelectedLexicalBindingOrder::Before,
-            )),
+            target: Some((4, 5, "a".to_owned(), SelectedLexicalBindingOrder::Before,)),
         }]
     );
 }
@@ -272,12 +247,7 @@ fn escaped_direct_equality_and_non_normalization_match_the_oracles() {
             containing_binding: (13, 14, "x".to_owned()),
             reference: (15, 21, r"\u0061".to_owned()),
             semantic_name: "a".to_owned(),
-            target: Some((
-                4,
-                5,
-                "a".to_owned(),
-                SelectedLexicalBindingOrder::Before,
-            )),
+            target: Some((4, 5, "a".to_owned(), SelectedLexicalBindingOrder::Before,)),
         }]
     );
 
@@ -301,23 +271,13 @@ fn multiple_relations_preserve_reference_source_order() {
                 containing_binding: (17, 18, "x".to_owned()),
                 reference: (19, 20, "a".to_owned()),
                 semantic_name: "a".to_owned(),
-                target: Some((
-                    4,
-                    5,
-                    "a".to_owned(),
-                    SelectedLexicalBindingOrder::Before,
-                )),
+                target: Some((4, 5, "a".to_owned(), SelectedLexicalBindingOrder::Before,)),
             },
             RelationSnapshot {
                 containing_binding: (21, 22, "y".to_owned()),
                 reference: (23, 24, "b".to_owned()),
                 semantic_name: "b".to_owned(),
-                target: Some((
-                    8,
-                    9,
-                    "b".to_owned(),
-                    SelectedLexicalBindingOrder::Before,
-                )),
+                target: Some((8, 9, "b".to_owned(), SelectedLexicalBindingOrder::Before,)),
             },
         ]
     );
