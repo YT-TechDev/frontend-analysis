@@ -191,7 +191,8 @@ fn accepted_precedence_matrix_is_declaration_source_order_then_local_rule_order(
                 ),
             ),
             SelectedStaticSemanticsRejection::DuplicateBlockLexicalName {
-                duplicate_binding, ..
+                duplicate_binding,
+                ..
             } => (
                 "EE14",
                 (
@@ -454,7 +455,8 @@ fn escaped_binding_precedence_matches_all_twelve_candidate_independent_witnesses
                 ),
             ),
             SelectedStaticSemanticsRejection::DuplicateBlockLexicalName {
-                duplicate_binding, ..
+                duplicate_binding,
+                ..
             } => (
                 "EE14",
                 (
