@@ -2,6 +2,7 @@ mod qualification;
 mod selected_binding_identifier;
 mod selected_binding_scope;
 mod selected_lexical_slice;
+mod selected_one_level_block_binding_scope;
 mod selected_qualification_integration;
 mod selected_static_semantics;
 mod unicode;
@@ -47,6 +48,8 @@ mod selected_binding_scope_validation_tests;
 mod selected_lexical_initialization_validation_tests;
 #[cfg(test)]
 mod selected_lexical_slice_tests;
+#[cfg(test)]
+mod selected_one_level_block_binding_scope_tests;
 #[cfg(test)]
 mod selected_one_level_block_binding_scope_validation_tests;
 #[cfg(test)]
