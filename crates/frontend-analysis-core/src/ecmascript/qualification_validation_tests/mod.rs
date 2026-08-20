@@ -5,6 +5,7 @@ mod focused;
 mod gold;
 mod inventory;
 mod model;
+mod selected_block_region_validation;
 mod selected_slice_completion;
 mod test262;
 
