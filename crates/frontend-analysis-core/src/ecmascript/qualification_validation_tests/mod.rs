@@ -5,6 +5,7 @@ mod focused;
 mod gold;
 mod inventory;
 mod model;
+mod selected_one_level_block_slice_completion;
 mod selected_slice_completion;
 mod test262;
 
