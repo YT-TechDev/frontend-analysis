@@ -13,8 +13,9 @@ const GRAMMAR_EVIDENCE_ORACLE: &str =
     include_str!("qualification_grammar_evidence_validation_tests.rs");
 const GRAMMAR_POLICY_ORACLE: &str =
     include_str!("qualification_grammar_rejection_policy_validation_tests.rs");
-const RHS_ORACLE: &str =
-    include_str!("qualification_selected_escaped_identifier_reference_initializer_validation_tests.rs");
+const RHS_ORACLE: &str = include_str!(
+    "qualification_selected_escaped_identifier_reference_initializer_validation_tests.rs"
+);
 const BLOCK_ORACLE: &str =
     include_str!("qualification_selected_one_level_block_validation_tests.rs");
 const HISTORICAL_COMPLETION_ORACLE: &str =
@@ -355,8 +356,9 @@ fn authority_chain_is_present_and_candidate_independent() {
     assert!(GRAMMAR_EVIDENCE_ORACLE.contains("CandidateDefinitiveGrammarEvidence"));
 
     assert!(
-        GRAMMAR_POLICY_ORACLE
-            .contains("grammar_primary_discards_tentative_selected_static_evidence_across_families")
+        GRAMMAR_POLICY_ORACLE.contains(
+            "grammar_primary_discards_tentative_selected_static_evidence_across_families"
+        )
     );
     assert!(GRAMMAR_POLICY_ORACLE.contains(r#"RequiresLookahead(";")"#));
     assert!(GRAMMAR_POLICY_ORACLE.contains("RequiresEof"));
@@ -374,10 +376,7 @@ fn authority_chain_is_present_and_candidate_independent() {
     for forbidden in [
         concat!("recognize_selected_", "lexical_slice("),
         concat!("evaluate_selected_", "static_semantics("),
-        concat!(
-            "evaluate_selected_one_level_block_",
-            "static_semantics("
-        ),
+        concat!("evaluate_selected_one_level_block_", "static_semantics("),
         concat!("attempt_selected_", "qualification("),
         concat!("analyze_selected_", "binding_scope("),
         concat!("QualificationOutcome::", "qualified"),
@@ -407,10 +406,7 @@ fn bounded_binding_grammar_subjects_relocate_truthfully_inside_block_context() {
                 assert_eq!(fixture.subject.start, 7);
             }
         }
-        assert!(matches!(
-            fixture.subject_fragment,
-            r"\u{}" | r"\u{110000}"
-        ));
+        assert!(matches!(fixture.subject_fragment, r"\u{}" | r"\u{110000}"));
     }
 }
 
@@ -457,8 +453,9 @@ fn grammar_primary_policy_composes_with_new_block_duplicate_evidence() {
     assert!(fixture.block_duplicate.subject.end <= fixture.grammar.start);
 
     assert!(
-        GRAMMAR_POLICY_ORACLE
-            .contains("grammar_primary_discards_tentative_selected_static_evidence_across_families"),
+        GRAMMAR_POLICY_ORACLE.contains(
+            "grammar_primary_discards_tentative_selected_static_evidence_across_families"
+        ),
         "#229 must remain the authority for Grammar over tentative static evidence"
     );
     assert!(
