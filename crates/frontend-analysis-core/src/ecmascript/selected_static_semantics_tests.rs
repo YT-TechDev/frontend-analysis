@@ -666,9 +666,9 @@ fn one_level_block_preserves_existing_malformed_binding_and_rhs_lifecycles() {
             assert_eq!(subject.fragment(), r"\u{}");
             assert_eq!((subject.range().start(), subject.range().end()), (6, 10));
         }
-        other => panic!(
-            "expected existing malformed BindingIdentifier grammar lifecycle, got {other:?}"
-        ),
+        other => {
+            panic!("expected existing malformed BindingIdentifier grammar lifecycle, got {other:?}")
+        }
     }
 
     let (_, script) = recognized_block(r"{ let \u0030; }");
@@ -679,9 +679,9 @@ fn one_level_block_preserves_existing_malformed_binding_and_rhs_lifecycles() {
             assert_eq!(escape.fragment(), r"\u0030");
             assert_eq!((escape.range().start(), escape.range().end()), (6, 12));
         }
-        other => panic!(
-            "expected existing formed-invalid BindingIdentifier static lifecycle, got {other:?}"
-        ),
+        other => {
+            panic!("expected existing formed-invalid BindingIdentifier static lifecycle, got {other:?}")
+        }
     }
 
     let source = source(r"{ const x = \u{}; }");
