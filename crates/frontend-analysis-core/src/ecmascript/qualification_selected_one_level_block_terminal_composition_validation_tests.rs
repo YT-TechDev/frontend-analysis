@@ -527,10 +527,7 @@ fn incomplete_block_retains_only_already_owned_terminal_grammar_when_decision_is
             .fragment(INCOMPLETE_BLOCK_GRAMMAR_FIXTURES[0].source),
         r"\u{}"
     );
-    assert_eq!(
-        INCOMPLETE_BLOCK_GRAMMAR_FIXTURES[0].block_close, None,
-        "the final `}` belongs to the malformed escape subject, not to a Block close"
-    );
+    assert_eq!(INCOMPLETE_BLOCK_GRAMMAR_FIXTURES[0].block_close, None);
 }
 
 #[test]
