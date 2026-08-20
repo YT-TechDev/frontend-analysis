@@ -631,7 +631,7 @@ fn short_fixed_grammar_evidence_does_not_silently_acquire_block_close_lookahead(
     assert!(GRAMMAR_POLICY_ORACLE.contains(r#"RequiresLookahead(";")"#));
     assert!(
         !GRAMMAR_POLICY_ORACLE.contains(r#"RequiresLookahead("}")"#),
-        "this validation must not fabricate new `}`-delimited short-fixed Grammar authority"
+        "this validation must not fabricate new Block-close-delimited short-fixed Grammar authority"
     );
 }
 
