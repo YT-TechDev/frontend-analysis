@@ -9,6 +9,7 @@ use std::collections::HashMap;
 
 use crate::SourceAnchor;
 
+use super::selected_lexical_slice::SelectedLexicalItem;
 use super::selected_static_semantics::SelectedStaticSemanticsAccepted;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,6 +68,7 @@ impl<'script> SelectedBindingScopeAnalysis<'script> {
 #[derive(Debug)]
 pub(super) enum SelectedBindingScopeOutcome<'script> {
     Complete(SelectedBindingScopeAnalysis<'script>),
+    UnsupportedCoverage,
     ResourceLimited,
     InternalFailure,
 }
@@ -75,10 +77,23 @@ pub(super) fn analyze_selected_binding_scope<'script>(
     accepted: &SelectedStaticSemanticsAccepted<'script>,
 ) -> SelectedBindingScopeOutcome<'script> {
     let script = accepted.script();
+
+    // The current Binding / Scope capability remains intentionally flat. Once
+    // source/static production can accept selected Blocks, reporting Complete
+    // while silently omitting inner lexical regions would be false. Fail closed
+    // until the separately staged hierarchical Binding / Scope capability owns
+    // nearest-region lookup.
+    if script.contains_block() {
+        return SelectedBindingScopeOutcome::UnsupportedCoverage;
+    }
+
     let mut binding_by_name: HashMap<&'script str, (&'script SourceAnchor, usize)> = HashMap::new();
     let mut binding_position = 0usize;
 
-    for declaration in script.declarations() {
+    for item in script.items() {
+        let SelectedLexicalItem::Declaration(declaration) = item else {
+            return SelectedBindingScopeOutcome::InternalFailure;
+        };
         for binding in declaration.bindings() {
             let Some(name) = binding.semantic_name() else {
                 return SelectedBindingScopeOutcome::InternalFailure;
@@ -103,7 +118,10 @@ pub(super) fn analyze_selected_binding_scope<'script>(
 
     let mut relations = Vec::new();
     let mut containing_position = 0usize;
-    for declaration in script.declarations() {
+    for item in script.items() {
+        let SelectedLexicalItem::Declaration(declaration) = item else {
+            return SelectedBindingScopeOutcome::InternalFailure;
+        };
         for binding in declaration.bindings() {
             if let Some(reference) = binding.identifier_reference_initializer() {
                 if relations.try_reserve(1).is_err() {
