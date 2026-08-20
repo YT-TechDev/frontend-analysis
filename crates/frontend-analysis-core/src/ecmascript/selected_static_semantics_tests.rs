@@ -660,8 +660,8 @@ fn production_static_semantics_preserves_architecture_boundaries_in_source() {
 
 #[test]
 fn one_level_block_preserves_existing_malformed_binding_and_rhs_lifecycles() {
-    let source = source(r"{ let \u{}; }");
-    match recognize_selected_lexical_slice(&source) {
+    let malformed_binding_source = source(r"{ let \u{}; }");
+    match recognize_selected_lexical_slice(&malformed_binding_source) {
         SelectedLexicalSliceOutcome::DefinitiveGrammarRejectionEvidence { subject } => {
             assert_eq!(subject.fragment(), r"\u{}");
             assert_eq!((subject.range().start(), subject.range().end()), (6, 10));
@@ -680,9 +680,9 @@ fn one_level_block_preserves_existing_malformed_binding_and_rhs_lifecycles() {
         other => panic!("unexpected Block static lifecycle: {other:?}"),
     }
 
-    let source = source(r"{ const x = \u{}; }");
+    let malformed_rhs_source = source(r"{ const x = \u{}; }");
     assert!(matches!(
-        recognize_selected_lexical_slice(&source),
+        recognize_selected_lexical_slice(&malformed_rhs_source),
         SelectedLexicalSliceOutcome::UnsupportedCoverage
     ));
 }
