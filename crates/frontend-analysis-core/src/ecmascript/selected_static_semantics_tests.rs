@@ -56,7 +56,7 @@ fn accepted_variable(text: &str) {
     let (_, script) = recognized_variable(text);
     assert!(matches!(
         evaluate_selected_variable_statement_static_semantics(&script),
-        SelectedVariableStatementStaticSemanticsOutcome::Accepted
+        SelectedVariableStatementStaticSemanticsOutcome::Accepted(_)
     ));
 }
 
