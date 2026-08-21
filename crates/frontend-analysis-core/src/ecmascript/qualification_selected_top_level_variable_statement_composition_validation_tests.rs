@@ -239,9 +239,10 @@ fn authority_and_candidate_independence_are_explicit() {
     assert!(TERMINAL_COMPOSITION_ORACLE.contains(r#"source: r"{ let\u{}; }""#));
     assert!(TERMINAL_COMPOSITION_ORACLE.contains(r#"source: r"{ const\u{}; }""#));
     assert!(TERMINAL_COMPOSITION_ORACLE.contains("EOF_COMPOSITION_FIXTURES"));
-    assert!(TERMINAL_COMPOSITION_ORACLE.contains(
-        "only_the_final_declaration_may_use_the_eof_only_policy"
-    ));
+    assert!(
+        TERMINAL_COMPOSITION_ORACLE
+            .contains("only_the_final_declaration_may_use_the_eof_only_policy")
+    );
 
     for (left, right) in [
         ("recognize_selected_lexical_", "slice("),
@@ -265,7 +266,10 @@ fn multi_collision_primary_is_first_collision_completed_in_authored_order() {
     for event in MULTI_COLLISION_EVENTS {
         assert_anchor(source, event.authored);
     }
-    assert_eq!(colliding_names(MULTI_COLLISION_EVENTS), BTreeSet::from(["x", "y"]));
+    assert_eq!(
+        colliding_names(MULTI_COLLISION_EVENTS),
+        BTreeSet::from(["x", "y"])
+    );
 
     let collision = first_completed_collision(MULTI_COLLISION_EVENTS)
         .expect("multi-collision fixture must contain a collision");
@@ -307,7 +311,10 @@ fn inverse_order_control_falsifies_always_lexical_or_hash_iteration_primary_sele
     for event in INVERSE_ORDER_EVENTS {
         assert_anchor(source, event.authored);
     }
-    assert_eq!(colliding_names(INVERSE_ORDER_EVENTS), BTreeSet::from(["x", "y"]));
+    assert_eq!(
+        colliding_names(INVERSE_ORDER_EVENTS),
+        BTreeSet::from(["x", "y"])
+    );
 
     let collision = first_completed_collision(INVERSE_ORDER_EVENTS)
         .expect("inverse-order fixture must contain a collision");
