@@ -28,6 +28,18 @@ const SELECTED_VARIABLE_DESTRUCTURING: bool = false;
 const SELECTED_VARIABLE_EOF_ASI: bool = false;
 const SELECTED_BLOCK_VAR: bool = false;
 
+const _: () = {
+    assert!(!SELECTED_IS_STRICT);
+    assert!(!SELECTED_YIELD);
+    assert!(!SELECTED_AWAIT);
+    assert!(SELECTED_VARIABLE_TOP_LEVEL_ONLY);
+    assert!(SELECTED_VARIABLE_SINGLE_BINDING_ONLY);
+    assert!(!SELECTED_VARIABLE_INITIALIZER);
+    assert!(!SELECTED_VARIABLE_DESTRUCTURING);
+    assert!(!SELECTED_VARIABLE_EOF_ASI);
+    assert!(!SELECTED_BLOCK_VAR);
+};
+
 const INVENTORY_SOURCE: &str = include_str!("qualification_validation_tests/inventory.rs");
 const CURRENT_COMPLETION_SOURCE: &str =
     include_str!("qualification_validation_tests/selected_one_level_block_slice_completion.rs");
@@ -535,19 +547,10 @@ fn fixed_authority_and_refined_research_frontier_are_explicit() {
     );
     assert_eq!(SELECTED_UNICODE_VERSION, "17.0.0");
     assert_eq!(SELECTED_PARSE_GOAL, "Script");
-    assert!(!SELECTED_IS_STRICT);
-    assert!(!SELECTED_YIELD);
-    assert!(!SELECTED_AWAIT);
     assert_eq!(
         SELECTED_VARIABLE_STATEMENT_GRAMMAR,
         "VariableStatement ::= var SelectedBindingIdentifier ;"
     );
-    assert!(SELECTED_VARIABLE_TOP_LEVEL_ONLY);
-    assert!(SELECTED_VARIABLE_SINGLE_BINDING_ONLY);
-    assert!(!SELECTED_VARIABLE_INITIALIZER);
-    assert!(!SELECTED_VARIABLE_DESTRUCTURING);
-    assert!(!SELECTED_VARIABLE_EOF_ASI);
-    assert!(!SELECTED_BLOCK_VAR);
 
     assert!(INVENTORY_SOURCE.contains("\"EE-36-R02\""));
     assert!(
@@ -865,15 +868,16 @@ fn oracle_source_is_candidate_independent_and_does_not_call_production() {
         );
     }
 
-    for forbidden_import in [
-        "use super::selected_lexical_slice",
-        "use super::selected_static_semantics",
-        "use super::selected_binding_scope",
-        "use super::selected_one_level_block_binding_scope",
-        "use super::selected_qualification_integration",
+    for (left, right) in [
+        ("use super::selected_lexical_", "slice"),
+        ("use super::selected_static_", "semantics"),
+        ("use super::selected_binding_", "scope"),
+        ("use super::selected_one_level_block_binding_", "scope"),
+        ("use super::selected_qualification_", "integration"),
     ] {
+        let forbidden_import = format!("{left}{right}");
         assert!(
-            !THIS_SOURCE.contains(forbidden_import),
+            !THIS_SOURCE.contains(&forbidden_import),
             "#306 expected results must stay fixture-owned: {forbidden_import}"
         );
     }
