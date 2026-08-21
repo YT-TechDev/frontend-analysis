@@ -747,7 +747,10 @@ fn ee_36_r02_preserves_exact_provenance_and_completing_primary() {
                 },
             ) => {
                 assert_eq!(
-                    (lexical_binding.range().start(), lexical_binding.range().end()),
+                    (
+                        lexical_binding.range().start(),
+                        lexical_binding.range().end()
+                    ),
                     lexical_range,
                     "{text}"
                 );
@@ -757,7 +760,10 @@ fn ee_36_r02_preserves_exact_provenance_and_completing_primary() {
                     "{text}"
                 );
                 assert_eq!(
-                    (primary_binding.range().start(), primary_binding.range().end()),
+                    (
+                        primary_binding.range().start(),
+                        primary_binding.range().end()
+                    ),
                     primary_range,
                     "{text}"
                 );
@@ -770,19 +776,9 @@ fn ee_36_r02_preserves_exact_provenance_and_completing_primary() {
 #[test]
 fn ee_36_r02_uses_authored_completion_order_and_first_var_provenance() {
     for (text, lexical_range, var_range, primary_range) in [
-        (
-            "var y; var x; let x; let y;",
-            (18, 19),
-            (11, 12),
-            (18, 19),
-        ),
+        ("var y; var x; let x; let y;", (18, 19), (11, 12), (18, 19)),
         ("var x; var x; let x;", (18, 19), (4, 5), (18, 19)),
-        (
-            "let y; var y; var x; let x;",
-            (4, 5),
-            (11, 12),
-            (11, 12),
-        ),
+        ("let y; var y; var x; let x;", (4, 5), (11, 12), (11, 12)),
     ] {
         let (_, script) = recognized_variable(text);
         match evaluate_selected_variable_statement_static_semantics(&script) {
@@ -794,7 +790,10 @@ fn ee_36_r02_uses_authored_completion_order_and_first_var_provenance() {
                 },
             ) => {
                 assert_eq!(
-                    (lexical_binding.range().start(), lexical_binding.range().end()),
+                    (
+                        lexical_binding.range().start(),
+                        lexical_binding.range().end()
+                    ),
                     lexical_range,
                     "{text}"
                 );
@@ -804,7 +803,10 @@ fn ee_36_r02_uses_authored_completion_order_and_first_var_provenance() {
                     "{text}"
                 );
                 assert_eq!(
-                    (primary_binding.range().start(), primary_binding.range().end()),
+                    (
+                        primary_binding.range().start(),
+                        primary_binding.range().end()
+                    ),
                     primary_range,
                     "{text}"
                 );
@@ -847,10 +849,7 @@ fn variable_static_semantics_preserves_tier_one_through_three_precedence() {
             other => panic!("expected precedence rejection for {text:?}, got {other:?}"),
         };
         match (expected, rejection) {
-            (
-                "local",
-                SelectedStaticSemanticsRejection::DuplicateDeclarationBinding { .. },
-            ) => {}
+            ("local", SelectedStaticSemanticsRejection::DuplicateDeclarationBinding { .. }) => {}
             ("script", SelectedStaticSemanticsRejection::DuplicateLexicalName { .. }) => {}
             (_, other) => panic!("wrong primary rejection for {text:?}: {other:?}"),
         }
