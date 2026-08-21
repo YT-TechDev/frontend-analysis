@@ -8,7 +8,6 @@ use super::selected_static_semantics::{
     evaluate_selected_variable_statement_static_semantics,
 };
 use super::selected_variable_statement_name_correspondence::{
-    SelectedVariableStatementNameCorrespondence,
     SelectedVariableStatementNameCorrespondenceAnalysis,
     SelectedVariableStatementNameCorrespondenceOutcome,
     SelectedVariableStatementNameCorrespondenceRegion,
@@ -46,9 +45,9 @@ fn range(anchor: &SourceAnchor) -> (usize, usize) {
     (anchor.range().start(), anchor.range().end())
 }
 
-fn one_relation(
-    analysis: &SelectedVariableStatementNameCorrespondenceAnalysis<'_>,
-) -> &super::selected_variable_statement_name_correspondence::SelectedVariableStatementNameCorrespondenceRelation<'_>
+fn one_relation<'analysis, 'script>(
+    analysis: &'analysis SelectedVariableStatementNameCorrespondenceAnalysis<'script>,
+) -> &'analysis super::selected_variable_statement_name_correspondence::SelectedVariableStatementNameCorrespondenceRelation<'script>
 {
     let [relation] = analysis.relations() else {
         panic!("expected exactly one correspondence relation");
