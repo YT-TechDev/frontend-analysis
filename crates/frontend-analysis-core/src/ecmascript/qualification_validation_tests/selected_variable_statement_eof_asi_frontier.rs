@@ -22,7 +22,8 @@ const HISTORICAL_VAR_COMPOSITION_ORACLE: &str = include_str!(
     "../qualification_selected_top_level_variable_statement_composition_validation_tests.rs"
 );
 const HISTORICAL_COMPLETION: &str = include_str!("selected_variable_statement_slice_completion.rs");
-const EOF_ASI_AUTHORITY: &str = include_str!("../qualification_selected_eof_asi_validation_tests.rs");
+const EOF_ASI_AUTHORITY: &str =
+    include_str!("../qualification_selected_eof_asi_validation_tests.rs");
 const THIS_SOURCE: &str = include_str!("selected_variable_statement_eof_asi_frontier.rs");
 
 const CURRENT_REQUIRED_RULE_IDS: &[&str] = &[
@@ -334,7 +335,9 @@ fn fixed_authority_chain_is_additive_and_historical_oracles_remain_immutable() {
     );
     assert_eq!(UNICODE_VERSION, "17.0.0");
 
-    assert!(EOF_ASI_AUTHORITY.contains("Candidate-independent EOF-only ASI validation for Issue #233"));
+    assert!(
+        EOF_ASI_AUTHORITY.contains("Candidate-independent EOF-only ASI validation for Issue #233")
+    );
     assert!(EOF_ASI_AUTHORITY.contains("authored_range: None"));
     assert!(EOF_ASI_AUTHORITY.contains("RequiresNonEofAsi"));
 
@@ -347,9 +350,10 @@ fn fixed_authority_chain_is_additive_and_historical_oracles_remain_immutable() {
         HISTORICAL_VAR_COMPOSITION_ORACLE
             .contains("authored_var_semicolon_does_not_widen_var_eof_asi")
     );
-    assert!(HISTORICAL_VAR_COMPOSITION_ORACLE.contains(
-        "authored-var-semicolon-composes-with-existing-final-lexical-eof-asi"
-    ));
+    assert!(
+        HISTORICAL_VAR_COMPOSITION_ORACLE
+            .contains("authored-var-semicolon-composes-with-existing-final-lexical-eof-asi")
+    );
 
     assert!(HISTORICAL_COMPLETION.contains("immutable historical completion authority"));
     assert!(HISTORICAL_COMPLETION.contains("assert_eq!(required.len(), 9);"));
@@ -360,7 +364,11 @@ fn fixed_authority_chain_is_additive_and_historical_oracles_remain_immutable() {
 #[test]
 fn eof_only_var_fixtures_preserve_authored_binding_and_synthetic_provenance() {
     for (index, fixture) in EOF_VAR_FIXTURES.iter().enumerate() {
-        assert_source_anchor(fixture.source, fixture.binding, ISSUE_ID * 100 + index as u64);
+        assert_source_anchor(
+            fixture.source,
+            fixture.binding,
+            ISSUE_ID * 100 + index as u64,
+        );
         assert_eq!(
             slice(fixture.source, fixture.binding),
             slice(
@@ -436,7 +444,10 @@ fn direct_and_escaped_semantic_names_match_without_source_normalization() {
         .expect("decomposed fixture");
 
     assert_eq!(direct.semantic_name, escaped.semantic_name);
-    assert_ne!(slice(direct.source, direct.binding), slice(escaped.source, escaped.binding));
+    assert_ne!(
+        slice(direct.source, direct.binding),
+        slice(escaped.source, escaped.binding)
+    );
     assert_ne!(precomposed.semantic_name, decomposed.semantic_name);
     assert_ne!(
         slice(precomposed.source, precomposed.binding),
@@ -451,10 +462,22 @@ fn eof_and_authored_semicolon_forms_preserve_binding_and_contributor_meaning() {
         .find(|fixture| fixture.id == "VAR-EOF-ASI-DIRECT-001")
         .expect("direct EOF fixture");
 
-    assert_eq!(slice(eof.source, eof.binding), slice(DIRECT_AUTHORED_CONTROL.source, DIRECT_AUTHORED_CONTROL.binding));
+    assert_eq!(
+        slice(eof.source, eof.binding),
+        slice(
+            DIRECT_AUTHORED_CONTROL.source,
+            DIRECT_AUTHORED_CONTROL.binding
+        )
+    );
     assert_eq!(eof.semantic_name, DIRECT_AUTHORED_CONTROL.semantic_name);
     assert_eq!(eof.contributors, DIRECT_AUTHORED_CONTROL.contributors);
-    assert_eq!(slice(DIRECT_AUTHORED_CONTROL.source, DIRECT_AUTHORED_CONTROL.semicolon), ";");
+    assert_eq!(
+        slice(
+            DIRECT_AUTHORED_CONTROL.source,
+            DIRECT_AUTHORED_CONTROL.semicolon
+        ),
+        ";"
+    );
     assert_eq!(eof.synthetic_semicolon.authored_range, None);
 }
 
@@ -494,7 +517,11 @@ fn non_eof_and_deferred_var_dimensions_remain_outside_successor_frontier() {
 #[test]
 fn eof_asi_cannot_launder_existing_static_rejections() {
     for (index, fixture) in STATIC_REJECTION_FIXTURES.iter().enumerate() {
-        assert_source_anchor(fixture.source, fixture.subject, ISSUE_ID * 1000 + index as u64);
+        assert_source_anchor(
+            fixture.source,
+            fixture.subject,
+            ISSUE_ID * 1000 + index as u64,
+        );
         match fixture.rule_id {
             "EE-36-R02" => {
                 assert!(HISTORICAL_VAR_ORACLE.contains("EE-36-R02"));
@@ -598,7 +625,10 @@ fn oracle_has_no_production_expected_result_dependency() {
         ("attempt_selected_", "qualification("),
         ("analyze_selected_binding_", "scope("),
         ("analyze_selected_one_level_block_binding_", "scope("),
-        ("analyze_selected_variable_statement_name_", "correspondence("),
+        (
+            "analyze_selected_variable_statement_name_",
+            "correspondence(",
+        ),
     ] {
         let forbidden = format!("{left}{right}");
         assert!(
