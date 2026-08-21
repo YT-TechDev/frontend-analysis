@@ -355,7 +355,8 @@ fn fixed_authority_chain_is_additive_and_historical_oracles_remain_immutable() {
             .contains("authored-var-semicolon-composes-with-existing-final-lexical-eof-asi")
     );
 
-    assert!(HISTORICAL_COMPLETION.contains("immutable historical completion authority"));
+    assert!(HISTORICAL_COMPLETION.contains("HISTORICAL_FLAT_COMPLETION"));
+    assert!(HISTORICAL_COMPLETION.contains("CURRENT_REQUIRED_RULE_IDS"));
     assert!(HISTORICAL_COMPLETION.contains("assert_eq!(required.len(), 9);"));
     assert!(HISTORICAL_COMPLETION.contains("assert_eq!(non_triggering.len(), 184);"));
     assert!(HISTORICAL_COMPLETION.contains("SelectedGrammarPositivePartition::VariableEnabled"));
@@ -611,8 +612,16 @@ fn zero_reference_var_source_has_no_relation_or_runtime_claim_in_successor_oracl
         .expect("direct zero-reference fixture");
 
     assert_eq!(fixture.contributors, DIRECT_A);
-    assert!(!THIS_SOURCE.contains("ResolveBinding target ="));
-    assert!(!THIS_SOURCE.contains("runtime binding identity ="));
+    for (left, right) in [
+        ("ResolveBinding ", "target ="),
+        ("runtime binding ", "identity ="),
+    ] {
+        let forbidden = format!("{left}{right}");
+        assert!(
+            !THIS_SOURCE.contains(&forbidden),
+            "successor oracle must not introduce runtime claim {forbidden}"
+        );
+    }
 }
 
 #[test]
