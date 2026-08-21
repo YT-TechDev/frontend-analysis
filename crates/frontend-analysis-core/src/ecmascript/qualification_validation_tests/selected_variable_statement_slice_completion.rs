@@ -384,9 +384,7 @@ fn fixed_envelope_and_immutable_authority_chain_are_present() {
     assert!(BLOCK_COMPLETION.contains("EE-14-R01"));
     assert!(BLOCK_COMPLETION.contains("EE-14-R02"));
 
-    assert!(VAR_ORACLE.contains(
-        "VariableStatement ::= var SelectedBindingIdentifier ;"
-    ));
+    assert!(VAR_ORACLE.contains("VariableStatement ::= var SelectedBindingIdentifier ;"));
     assert!(VAR_ORACLE.contains("SELECTED_VARIABLE_TOP_LEVEL_ONLY: bool = true"));
     assert!(VAR_ORACLE.contains("SELECTED_VARIABLE_SINGLE_BINDING_ONLY: bool = true"));
     assert!(VAR_ORACLE.contains("SELECTED_VARIABLE_INITIALIZER: bool = false"));
@@ -719,9 +717,9 @@ fn selected_lifecycle_stays_incomplete_and_binding_scope_stays_out_of_scope() {
     );
 
     for forbidden in [
-        "EnvironmentRecord",
-        "ResolveBinding",
-        "InitializedAtReference",
+        concat!("Environment", "Record"),
+        concat!("Resolve", "Binding"),
+        concat!("InitializedAt", "Reference"),
     ] {
         assert!(
             !THIS_SOURCE.contains(forbidden),
