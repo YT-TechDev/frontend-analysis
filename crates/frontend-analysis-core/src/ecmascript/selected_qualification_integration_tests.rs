@@ -875,6 +875,12 @@ fn aggregate_integration_source_preserves_incomplete_and_single_pass_boundaries(
             .count(),
         1
     );
+    assert_eq!(
+        production
+            .matches("evaluate_selected_variable_statement_static_semantics(&script)")
+            .count(),
+        1
+    );
     assert!(production.contains("SelectedAcceptedIncomplete"));
     assert!(production.contains("EvidenceSubject::authored(source, subject)"));
     assert!(production.contains("QualificationOutcome::syntax_rejected(subject)"));
@@ -942,6 +948,93 @@ fn one_level_block_unsupported_neighbors_remain_unsupported_coverage() {
         "{ function f(){} }",
         "{ 1; }",
     ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::UnsupportedCoverage
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn top_level_variable_statement_positive_sources_remain_selected_accepted_incomplete() {
+    for text in [
+        "var x;",
+        "var let;",
+        r"var \u006Cet;",
+        "let x; var y;",
+        "var x; var x;",
+        "{ let x; } var x;",
+        "let é; var e\u{301};",
+        "var x; let y",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn top_level_variable_statement_static_rejections_preserve_authored_primary_subject() {
+    for (text, expected_fragment, expected_range) in [
+        (r"var \u0069f;", r"\u0069f", (4, 11)),
+        ("let x; var x;", "x", (11, 12)),
+        ("var x; let x;", "x", (11, 12)),
+        ("var y; var x; let x; let y;", "x", (18, 19)),
+        ("var x; var x; let x;", "x", (18, 19)),
+        ("let y; var y; var x; let x;", "y", (11, 12)),
+        (r"let x,x; var \u0069f;", "x", (6, 7)),
+    ] {
+        let outcome = qualification_outcome(text);
+        assert_eq!(outcome.processing(), ProcessingStatus::Complete, "{text}");
+        assert_eq!(
+            outcome.verdict(),
+            Some(QualificationVerdictKind::StaticSemanticsRejected),
+            "{text}"
+        );
+        let evidence = outcome.rejection_evidence().expect("static evidence");
+        assert_eq!(
+            evidence.family(),
+            RejectionFamily::StaticSemantics,
+            "{text}"
+        );
+        let anchor = evidence
+            .subject()
+            .authored_anchor()
+            .expect("var/static primary must remain authored");
+        assert_eq!(anchor.fragment(), expected_fragment, "{text}");
+        assert_eq!(
+            (anchor.range().start(), anchor.range().end()),
+            expected_range,
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn top_level_variable_statement_grammar_and_deferred_boundaries_remain_distinct() {
+    let outcome = qualification_outcome(r"var \u{};");
+    assert_eq!(outcome.processing(), ProcessingStatus::Complete);
+    assert_eq!(
+        outcome.verdict(),
+        Some(QualificationVerdictKind::SyntaxRejected)
+    );
+    let evidence = outcome.rejection_evidence().expect("grammar evidence");
+    assert_eq!(evidence.family(), RejectionFamily::Grammar);
+    let anchor = evidence
+        .subject()
+        .authored_anchor()
+        .expect("var grammar subject must remain authored");
+    assert_eq!(anchor.fragment(), r"\u{}");
+    assert_eq!((anchor.range().start(), anchor.range().end()), (4, 8));
+
+    for text in [r"var\u{};", r"var\u0061;", "var x"] {
         assert!(
             matches!(
                 attempt(text),

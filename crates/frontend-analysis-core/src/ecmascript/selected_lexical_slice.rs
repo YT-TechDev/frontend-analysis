@@ -1,10 +1,11 @@
 //! Selected source-backed ECMAScript lexical declaration slice for Issue #218.
 //!
 //! This module recognizes only the bounded top-level Script subset accepted by
-//! #215/#218 and the additive one-level selected Block frontier accepted by
-//! #283/#291. Recognition is transactional for the whole authoritative
-//! `SourceText`: tentative declaration/binding/Block facts are returned only
-//! when the entire source is consumed by selected items plus selected trivia.
+//! #215/#218, the additive one-level selected Block frontier accepted by
+//! #283/#291, and the distinct top-level VariableStatement frontier fixed by
+//! #310. Recognition is transactional for the whole authoritative `SourceText`:
+//! tentative declaration/binding/Block/var facts are returned only when the
+//! entire source is consumed by selected items plus selected trivia.
 //!
 //! This is not aggregate ECMAScript qualification and cannot construct
 //! `QualificationOutcome::Qualified`.
@@ -22,6 +23,7 @@ use super::unicode::is_space_separator;
 pub(super) enum SelectedLexicalSliceOutcome {
     RecognizedSelectedSlice(SelectedLexicalScript),
     RecognizedOneLevelBlockSlice(SelectedOneLevelBlockScript),
+    RecognizedVariableStatementSlice(SelectedVariableStatementScript),
     UnsupportedCoverage,
     DefinitiveGrammarRejectionEvidence { subject: SourceAnchor },
     ResourceLimited,
@@ -54,6 +56,24 @@ impl SelectedOneLevelBlockScript {
 pub(super) enum SelectedTopLevelItem {
     LexicalDeclaration(SelectedLexicalDeclaration),
     Block(SelectedBlock),
+}
+
+#[derive(Debug)]
+pub(super) struct SelectedVariableStatementScript {
+    items: Vec<SelectedVariableTopLevelItem>,
+}
+
+impl SelectedVariableStatementScript {
+    pub(super) fn items(&self) -> &[SelectedVariableTopLevelItem] {
+        &self.items
+    }
+}
+
+#[derive(Debug)]
+pub(super) enum SelectedVariableTopLevelItem {
+    LexicalDeclaration(SelectedLexicalDeclaration),
+    Block(SelectedBlock),
+    VariableStatement(SelectedVariableStatement),
 }
 
 #[derive(Debug)]
@@ -173,6 +193,41 @@ impl SelectedLexicalBinding {
 }
 
 #[derive(Debug)]
+pub(super) struct SelectedVariableBinding {
+    binding: SourceAnchor,
+    name_state: SelectedBindingNameState,
+}
+
+impl SelectedVariableBinding {
+    pub(super) fn binding(&self) -> &SourceAnchor {
+        &self.binding
+    }
+
+    pub(super) fn name_state(&self) -> &SelectedBindingNameState {
+        &self.name_state
+    }
+
+    pub(super) fn semantic_name(&self) -> Option<&str> {
+        match &self.name_state {
+            SelectedBindingNameState::Unescaped => Some(self.binding.fragment()),
+            SelectedBindingNameState::EscapedValid { decoded } => Some(decoded.as_str()),
+            SelectedBindingNameState::InvalidEscapedPosition { .. } => None,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(super) struct SelectedVariableStatement {
+    binding: SelectedVariableBinding,
+}
+
+impl SelectedVariableStatement {
+    pub(super) fn binding(&self) -> &SelectedVariableBinding {
+        &self.binding
+    }
+}
+
+#[derive(Debug)]
 pub(super) enum SelectedDeclarationTerminator {
     AuthoredSemicolon(SourceAnchor),
     AutomaticAtEof,
@@ -208,6 +263,7 @@ impl SelectedLexicalDeclaration {
 enum SelectedScriptBuilder {
     Flat(Vec<SelectedLexicalDeclaration>),
     BlockEnabled(Vec<SelectedTopLevelItem>),
+    VariableEnabled(Vec<SelectedVariableTopLevelItem>),
 }
 
 impl SelectedScriptBuilder {
@@ -244,6 +300,87 @@ impl SelectedScriptBuilder {
                     .try_reserve(1)
                     .map_err(|_| ParseFailure::ResourceLimited)?;
                 items.push(item);
+                Ok(())
+            }
+            (
+                Self::VariableEnabled(items),
+                SelectedTopLevelItem::LexicalDeclaration(declaration),
+            ) => {
+                items
+                    .try_reserve(1)
+                    .map_err(|_| ParseFailure::ResourceLimited)?;
+                items.push(SelectedVariableTopLevelItem::LexicalDeclaration(
+                    declaration,
+                ));
+                Ok(())
+            }
+            (Self::VariableEnabled(items), SelectedTopLevelItem::Block(block)) => {
+                items
+                    .try_reserve(1)
+                    .map_err(|_| ParseFailure::ResourceLimited)?;
+                items.push(SelectedVariableTopLevelItem::Block(block));
+                Ok(())
+            }
+        }
+    }
+
+    fn push_variable_statement(
+        &mut self,
+        statement: SelectedVariableStatement,
+    ) -> Result<(), ParseFailure> {
+        match self {
+            builder @ Self::Flat(_) => {
+                let Self::Flat(declarations) = builder else {
+                    return Err(ParseFailure::InternalFailure);
+                };
+                let item_count = declarations
+                    .len()
+                    .checked_add(1)
+                    .ok_or(ParseFailure::InternalFailure)?;
+                let mut items = Vec::new();
+                items
+                    .try_reserve(item_count)
+                    .map_err(|_| ParseFailure::ResourceLimited)?;
+                for declaration in std::mem::take(declarations) {
+                    items.push(SelectedVariableTopLevelItem::LexicalDeclaration(
+                        declaration,
+                    ));
+                }
+                items.push(SelectedVariableTopLevelItem::VariableStatement(statement));
+                *builder = Self::VariableEnabled(items);
+                Ok(())
+            }
+            builder @ Self::BlockEnabled(_) => {
+                let Self::BlockEnabled(existing_items) = builder else {
+                    return Err(ParseFailure::InternalFailure);
+                };
+                let item_count = existing_items
+                    .len()
+                    .checked_add(1)
+                    .ok_or(ParseFailure::InternalFailure)?;
+                let mut items = Vec::new();
+                items
+                    .try_reserve(item_count)
+                    .map_err(|_| ParseFailure::ResourceLimited)?;
+                for item in std::mem::take(existing_items) {
+                    match item {
+                        SelectedTopLevelItem::LexicalDeclaration(declaration) => items.push(
+                            SelectedVariableTopLevelItem::LexicalDeclaration(declaration),
+                        ),
+                        SelectedTopLevelItem::Block(block) => {
+                            items.push(SelectedVariableTopLevelItem::Block(block));
+                        }
+                    }
+                }
+                items.push(SelectedVariableTopLevelItem::VariableStatement(statement));
+                *builder = Self::VariableEnabled(items);
+                Ok(())
+            }
+            Self::VariableEnabled(items) => {
+                items
+                    .try_reserve(1)
+                    .map_err(|_| ParseFailure::ResourceLimited)?;
+                items.push(SelectedVariableTopLevelItem::VariableStatement(statement));
                 Ok(())
             }
         }
@@ -348,6 +485,35 @@ impl<'source> Cursor<'source> {
         Ok(SelectedBlock {
             block,
             declarations,
+        })
+    }
+
+    fn parse_variable_statement(&mut self) -> Result<SelectedVariableStatement, ParseFailure> {
+        if !self.consume_keyword("var") {
+            return Err(ParseFailure::UnsupportedCoverage);
+        }
+
+        let after_keyword = self.offset;
+        self.skip_selected_trivia();
+        let grammar_context = if self.offset == after_keyword {
+            SelectedGrammarEvidenceContext::UnsupportedKeywordAdjacent
+        } else {
+            SelectedGrammarEvidenceContext::General
+        };
+        let (binding_start, binding_end, name_state) =
+            self.parse_selected_binding_identifier(grammar_context)?;
+        self.skip_selected_trivia();
+
+        if !self.consume_ascii(';') {
+            return Err(ParseFailure::UnsupportedCoverage);
+        }
+
+        let binding = self.anchor(binding_start, binding_end)?;
+        Ok(SelectedVariableStatement {
+            binding: SelectedVariableBinding {
+                binding,
+                name_state,
+            },
         })
     }
 
@@ -908,20 +1074,30 @@ pub(super) fn recognize_selected_lexical_slice(source: &SourceText) -> SelectedL
     let mut builder = SelectedScriptBuilder::Flat(Vec::new());
 
     loop {
-        let item = if cursor.peek_char() == Some('{') {
-            match cursor.parse_selected_block() {
-                Ok(block) => SelectedTopLevelItem::Block(block),
+        if cursor.remaining().starts_with("var") {
+            let statement = match cursor.parse_variable_statement() {
+                Ok(statement) => statement,
                 Err(failure) => return parse_failure_to_outcome(failure),
+            };
+            if let Err(failure) = builder.push_variable_statement(statement) {
+                return parse_failure_to_outcome(failure);
             }
         } else {
-            match cursor.parse_declaration() {
-                Ok(declaration) => SelectedTopLevelItem::LexicalDeclaration(declaration),
-                Err(failure) => return parse_failure_to_outcome(failure),
-            }
-        };
+            let item = if cursor.peek_char() == Some('{') {
+                match cursor.parse_selected_block() {
+                    Ok(block) => SelectedTopLevelItem::Block(block),
+                    Err(failure) => return parse_failure_to_outcome(failure),
+                }
+            } else {
+                match cursor.parse_declaration() {
+                    Ok(declaration) => SelectedTopLevelItem::LexicalDeclaration(declaration),
+                    Err(failure) => return parse_failure_to_outcome(failure),
+                }
+            };
 
-        if let Err(failure) = builder.push_item(item) {
-            return parse_failure_to_outcome(failure);
+            if let Err(failure) = builder.push_item(item) {
+                return parse_failure_to_outcome(failure);
+            }
         }
 
         cursor.skip_selected_trivia();
@@ -940,6 +1116,11 @@ pub(super) fn recognize_selected_lexical_slice(source: &SourceText) -> SelectedL
             SelectedLexicalSliceOutcome::RecognizedOneLevelBlockSlice(SelectedOneLevelBlockScript {
                 items,
             })
+        }
+        SelectedScriptBuilder::VariableEnabled(items) => {
+            SelectedLexicalSliceOutcome::RecognizedVariableStatementSlice(
+                SelectedVariableStatementScript { items },
+            )
         }
     }
 }
