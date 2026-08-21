@@ -12,8 +12,9 @@ use super::selected_lexical_slice::{
 };
 use super::selected_static_semantics::{
     SelectedOneLevelBlockStaticSemanticsOutcome, SelectedStaticSemanticsOutcome,
+    SelectedVariableStatementStaticSemanticsOutcome,
     evaluate_selected_one_level_block_static_semantics, evaluate_selected_static_semantics,
-    selected_rejection_to_qualification,
+    evaluate_selected_variable_statement_static_semantics, selected_rejection_to_qualification,
 };
 
 #[derive(Debug)]
@@ -69,6 +70,24 @@ pub(super) fn attempt_selected_qualification(source: &SourceText) -> SelectedQua
                     SelectedQualificationAttempt::Outcome(QualificationOutcome::resource_limited())
                 }
                 SelectedOneLevelBlockStaticSemanticsOutcome::InternalFailure => {
+                    SelectedQualificationAttempt::Outcome(QualificationOutcome::internal_failure())
+                }
+            }
+        }
+        SelectedLexicalSliceOutcome::RecognizedVariableStatementSlice(script) => {
+            match evaluate_selected_variable_statement_static_semantics(&script) {
+                SelectedVariableStatementStaticSemanticsOutcome::Accepted => {
+                    SelectedQualificationAttempt::SelectedAcceptedIncomplete
+                }
+                SelectedVariableStatementStaticSemanticsOutcome::Rejected(rejection) => {
+                    SelectedQualificationAttempt::Outcome(selected_rejection_to_qualification(
+                        source, &rejection,
+                    ))
+                }
+                SelectedVariableStatementStaticSemanticsOutcome::ResourceLimited => {
+                    SelectedQualificationAttempt::Outcome(QualificationOutcome::resource_limited())
+                }
+                SelectedVariableStatementStaticSemanticsOutcome::InternalFailure => {
                     SelectedQualificationAttempt::Outcome(QualificationOutcome::internal_failure())
                 }
             }
