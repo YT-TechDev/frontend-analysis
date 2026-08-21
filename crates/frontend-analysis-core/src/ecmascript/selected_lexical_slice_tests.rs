@@ -1962,7 +1962,10 @@ fn top_level_variable_statement_retains_minimal_source_backed_binding_fact() {
         assert_eq!(binding.binding().fragment(), fragment, "{text}");
         assert_eq!(binding.semantic_name(), Some(semantic_name), "{text}");
         assert_eq!(
-            (binding.binding().range().start(), binding.binding().range().end()),
+            (
+                binding.binding().range().start(),
+                binding.binding().range().end()
+            ),
             range,
             "{text}"
         );
