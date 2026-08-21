@@ -49,6 +49,12 @@ const CURRENT_SELECTED_BLOCK_BODY: &str = "LexicalDeclaration+";
 const CURRENT_SELECTED_VARIABLE_STATEMENT_GRAMMAR: &str =
     "VariableStatement ::= var SelectedBindingIdentifier ;";
 
+const _: () = {
+    assert!(!SELECTED_IS_STRICT);
+    assert!(!SELECTED_YIELD);
+    assert!(!SELECTED_AWAIT);
+};
+
 const HISTORICAL_REQUIRED_RULE_IDS: &[&str] = &[
     "EE-01-R01",
     "EE-01-R02",
@@ -373,9 +379,6 @@ fn fixed_envelope_and_immutable_authority_chain_are_present() {
     assert_eq!(SELECTED_SOURCE_AUTHORITY, "Core UTF-8 SourceText");
     assert_eq!(SELECTED_SOURCE_CONTEXT, "Independent Source Unit");
     assert_eq!(SELECTED_PARSE_GOAL, "Script");
-    assert!(!SELECTED_IS_STRICT);
-    assert!(!SELECTED_YIELD);
-    assert!(!SELECTED_AWAIT);
 
     assert!(HISTORICAL_FLAT_COMPLETION.contains("assert_eq!(required.len(), 7);"));
     assert!(HISTORICAL_FLAT_COMPLETION.contains("validation-only local selected slice"));
