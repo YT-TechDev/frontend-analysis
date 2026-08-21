@@ -531,7 +531,8 @@ pub(super) fn evaluate_selected_variable_statement_static_semantics(
                 }
             }
             SelectedVariableTopLevelItem::VariableStatement(statement) => {
-                match evaluate_selected_variable_binding_local_static_semantics(statement.binding()) {
+                match evaluate_selected_variable_binding_local_static_semantics(statement.binding())
+                {
                     Ok(()) => {}
                     Err(SelectedDeclarationCheckFailure::Rejected(rejection)) => {
                         return SelectedVariableStatementStaticSemanticsOutcome::Rejected(
@@ -601,9 +602,7 @@ pub(super) fn evaluate_selected_variable_statement_static_semantics(
 
     // Tier 4 / EE-36-R02: first collision completed in authored traversal order.
     match first_lexical_var_name_collision(script) {
-        Ok(Some(rejection)) => {
-            SelectedVariableStatementStaticSemanticsOutcome::Rejected(rejection)
-        }
+        Ok(Some(rejection)) => SelectedVariableStatementStaticSemanticsOutcome::Rejected(rejection),
         Ok(None) => SelectedVariableStatementStaticSemanticsOutcome::Accepted,
         Err(SelectedDuplicateCheckFailure::ResourceLimited) => {
             SelectedVariableStatementStaticSemanticsOutcome::ResourceLimited
