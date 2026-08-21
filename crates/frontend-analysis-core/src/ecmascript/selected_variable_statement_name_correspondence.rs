@@ -61,8 +61,9 @@ impl<'script> SelectedVariableStatementNameCorrespondence<'script> {
     pub(super) fn var_contributors(&self) -> Option<&[&'script SourceAnchor]> {
         match self {
             Self::SameSourceSelectedVarNameContributors { contributors } => Some(contributors),
-            Self::VisibleSelectedLexicalBinding { .. }
-            | Self::NoSelectedSameSourceContributor => None,
+            Self::VisibleSelectedLexicalBinding { .. } | Self::NoSelectedSameSourceContributor => {
+                None
+            }
         }
     }
 
@@ -99,9 +100,7 @@ impl<'script> SelectedVariableStatementNameCorrespondenceRelation<'script> {
         self.semantic_name
     }
 
-    pub(super) fn correspondence(
-        &self,
-    ) -> &SelectedVariableStatementNameCorrespondence<'script> {
+    pub(super) fn correspondence(&self) -> &SelectedVariableStatementNameCorrespondence<'script> {
         &self.correspondence
     }
 }
@@ -170,9 +169,7 @@ fn top_level_bindings(
     Ok(bindings_by_name)
 }
 
-fn block_bindings(
-    block: &SelectedBlock,
-) -> Result<LexicalBindingsByName<'_>, AnalysisFailure> {
+fn block_bindings(block: &SelectedBlock) -> Result<LexicalBindingsByName<'_>, AnalysisFailure> {
     let mut bindings_by_name = HashMap::new();
     for declaration in block.declarations() {
         insert_declaration_bindings(declaration, &mut bindings_by_name)?;
