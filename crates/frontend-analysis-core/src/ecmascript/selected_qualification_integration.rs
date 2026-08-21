@@ -76,7 +76,7 @@ pub(super) fn attempt_selected_qualification(source: &SourceText) -> SelectedQua
         }
         SelectedLexicalSliceOutcome::RecognizedVariableStatementSlice(script) => {
             match evaluate_selected_variable_statement_static_semantics(&script) {
-                SelectedVariableStatementStaticSemanticsOutcome::Accepted => {
+                SelectedVariableStatementStaticSemanticsOutcome::Accepted(_) => {
                     SelectedQualificationAttempt::SelectedAcceptedIncomplete
                 }
                 SelectedVariableStatementStaticSemanticsOutcome::Rejected(rejection) => {
