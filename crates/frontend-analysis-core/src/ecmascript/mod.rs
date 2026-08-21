@@ -5,6 +5,7 @@ mod selected_lexical_slice;
 mod selected_one_level_block_binding_scope;
 mod selected_qualification_integration;
 mod selected_static_semantics;
+mod selected_variable_statement_name_correspondence;
 mod unicode;
 mod unicode_generated;
 
@@ -60,5 +61,7 @@ mod selected_one_level_block_binding_scope_validation_tests;
 mod selected_qualification_integration_tests;
 #[cfg(test)]
 mod selected_static_semantics_tests;
+#[cfg(test)]
+mod selected_variable_statement_name_correspondence_tests;
 #[cfg(test)]
 mod selected_variable_statement_name_correspondence_validation_tests;
