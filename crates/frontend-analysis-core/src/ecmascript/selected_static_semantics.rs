@@ -40,6 +40,17 @@ impl<'script> SelectedOneLevelBlockStaticSemanticsAccepted<'script> {
 }
 
 #[derive(Debug)]
+pub(super) struct SelectedVariableStatementStaticSemanticsAccepted<'script> {
+    script: &'script SelectedVariableStatementScript,
+}
+
+impl<'script> SelectedVariableStatementStaticSemanticsAccepted<'script> {
+    pub(super) fn script(&self) -> &'script SelectedVariableStatementScript {
+        self.script
+    }
+}
+
+#[derive(Debug)]
 pub(super) enum SelectedStaticSemanticsOutcome<'script> {
     Accepted(SelectedStaticSemanticsAccepted<'script>),
     Rejected(SelectedStaticSemanticsRejection),
@@ -56,8 +67,8 @@ pub(super) enum SelectedOneLevelBlockStaticSemanticsOutcome<'script> {
 }
 
 #[derive(Debug)]
-pub(super) enum SelectedVariableStatementStaticSemanticsOutcome {
-    Accepted,
+pub(super) enum SelectedVariableStatementStaticSemanticsOutcome<'script> {
+    Accepted(SelectedVariableStatementStaticSemanticsAccepted<'script>),
     Rejected(SelectedStaticSemanticsRejection),
     ResourceLimited,
     InternalFailure,
@@ -489,9 +500,9 @@ pub(super) fn evaluate_selected_one_level_block_static_semantics<'script>(
 
 /// Evaluates the distinct top-level `VariableStatement` capability fixed by
 /// #310 without widening either historical selected acceptance witness.
-pub(super) fn evaluate_selected_variable_statement_static_semantics(
-    script: &SelectedVariableStatementScript,
-) -> SelectedVariableStatementStaticSemanticsOutcome {
+pub(super) fn evaluate_selected_variable_statement_static_semantics<'script>(
+    script: &'script SelectedVariableStatementScript,
+) -> SelectedVariableStatementStaticSemanticsOutcome<'script> {
     // Tier 1: declaration/binding-local checks in authored order. Variable
     // bindings consume only context-neutral BindingIdentifier checks.
     for item in script.items() {
@@ -603,7 +614,9 @@ pub(super) fn evaluate_selected_variable_statement_static_semantics(
     // Tier 4 / EE-36-R02: first collision completed in authored traversal order.
     match first_lexical_var_name_collision(script) {
         Ok(Some(rejection)) => SelectedVariableStatementStaticSemanticsOutcome::Rejected(rejection),
-        Ok(None) => SelectedVariableStatementStaticSemanticsOutcome::Accepted,
+        Ok(None) => SelectedVariableStatementStaticSemanticsOutcome::Accepted(
+            SelectedVariableStatementStaticSemanticsAccepted { script },
+        ),
         Err(SelectedDuplicateCheckFailure::ResourceLimited) => {
             SelectedVariableStatementStaticSemanticsOutcome::ResourceLimited
         }
