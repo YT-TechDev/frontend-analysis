@@ -31,6 +31,19 @@ const SELECTED_BLOCK_VAR: bool = false;
 const POSITIVE_AGGREGATE_LIFECYCLE: &str = "SelectedAcceptedIncomplete";
 const AGGREGATE_QUALIFIED_AVAILABLE: bool = false;
 
+const _: () = {
+    assert!(!SELECTED_IS_STRICT);
+    assert!(!SELECTED_YIELD);
+    assert!(!SELECTED_AWAIT);
+    assert!(SELECTED_VARIABLE_TOP_LEVEL_ONLY);
+    assert!(SELECTED_VARIABLE_SINGLE_BINDING_ONLY);
+    assert!(!SELECTED_VARIABLE_INITIALIZER);
+    assert!(!SELECTED_VARIABLE_DESTRUCTURING);
+    assert!(!SELECTED_VARIABLE_EOF_ASI);
+    assert!(!SELECTED_BLOCK_VAR);
+    assert!(!AGGREGATE_QUALIFIED_AVAILABLE);
+};
+
 const AUTHORED_VAR_BOUNDARY: &str =
     "authored VariableDeclaration provenance != unique runtime binding identity";
 const VAR_CORRESPONDENCE_BOUNDARY: &str =
@@ -573,21 +586,11 @@ fn fixed_envelope_and_negative_runtime_boundaries_are_explicit() {
     );
     assert_eq!(SELECTED_SOURCE_CONTEXT, "Independent Source Unit");
     assert_eq!(SELECTED_PARSE_GOAL, "Script");
-    assert!(!SELECTED_IS_STRICT);
-    assert!(!SELECTED_YIELD);
-    assert!(!SELECTED_AWAIT);
     assert_eq!(
         SELECTED_VARIABLE_STATEMENT_GRAMMAR,
         "VariableStatement ::= var SelectedBindingIdentifier ;"
     );
-    assert!(SELECTED_VARIABLE_TOP_LEVEL_ONLY);
-    assert!(SELECTED_VARIABLE_SINGLE_BINDING_ONLY);
-    assert!(!SELECTED_VARIABLE_INITIALIZER);
-    assert!(!SELECTED_VARIABLE_DESTRUCTURING);
-    assert!(!SELECTED_VARIABLE_EOF_ASI);
-    assert!(!SELECTED_BLOCK_VAR);
     assert_eq!(POSITIVE_AGGREGATE_LIFECYCLE, "SelectedAcceptedIncomplete");
-    assert!(!AGGREGATE_QUALIFIED_AVAILABLE);
 
     assert_eq!(
         AUTHORED_VAR_BOUNDARY,
