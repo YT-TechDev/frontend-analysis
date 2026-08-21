@@ -320,7 +320,7 @@ fn assert_source_anchor(source: &str, range: ByteRange, source_id: u64) {
     let source = SourceText::new(SourceId::new(source_id), source.to_owned());
     let anchor = source
         .anchor(range.start, range.end)
-        .unwrap_or_else(|| panic!("{range:?} must be a valid authored source range"));
+        .unwrap_or_else(|_| panic!("{range:?} must be a valid authored source range"));
     assert_eq!(anchor.range().start(), range.start);
     assert_eq!(anchor.range().end(), range.end);
 }
