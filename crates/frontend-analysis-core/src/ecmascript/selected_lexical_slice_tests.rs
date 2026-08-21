@@ -4,8 +4,9 @@ use super::qualification_validation_tests::{gold_source, gold_subject_range};
 use super::selected_lexical_slice::{
     SelectedBindingNameState, SelectedDeclarationTerminator, SelectedInitializerState,
     SelectedInvalidEscapePosition, SelectedLexicalDeclarationKind, SelectedLexicalScript,
-    SelectedLexicalSliceOutcome, SelectedVariableStatementScript, SelectedVariableStatementTerminator,
-    SelectedVariableTopLevelItem, recognize_selected_lexical_slice,
+    SelectedLexicalSliceOutcome, SelectedVariableStatementScript,
+    SelectedVariableStatementTerminator, SelectedVariableTopLevelItem,
+    recognize_selected_lexical_slice,
 };
 
 fn source(text: &str) -> SourceText {
@@ -2030,8 +2031,16 @@ fn variable_statement_eof_asi_retains_statement_owned_terminator_provenance() {
             panic!("expected exactly one selected VariableStatement for {text:?}");
         };
         assert_eq!(statement.terminator(), expected_terminator, "{text:?}");
-        assert_eq!(statement.binding().binding().fragment(), fragment, "{text:?}");
-        assert_eq!(statement.binding().semantic_name(), Some(semantic_name), "{text:?}");
+        assert_eq!(
+            statement.binding().binding().fragment(),
+            fragment,
+            "{text:?}"
+        );
+        assert_eq!(
+            statement.binding().semantic_name(),
+            Some(semantic_name),
+            "{text:?}"
+        );
         assert_eq!(
             (
                 statement.binding().binding().range().start(),
