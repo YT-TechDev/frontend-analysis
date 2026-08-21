@@ -353,11 +353,11 @@ fn classify_current_selected_rule(rule: &RuleUnit) -> Option<CurrentSelectedDisp
         "EE-14-R02" => Some(CurrentSelectedDisposition::StructurallyNonTriggering(
             NonTriggerReason::SelectedBlockHasNoLocalVarDeclaredNamesContributor,
         )),
-        id if CURRENT_STRUCTURALLY_NON_TRIGGERING_RULE_IDS.contains(&id) => Some(
-            CurrentSelectedDisposition::StructurallyNonTriggering(
+        id if CURRENT_STRUCTURALLY_NON_TRIGGERING_RULE_IDS.contains(&id) => {
+            Some(CurrentSelectedDisposition::StructurallyNonTriggering(
                 NonTriggerReason::ExplicitCurrentClassification,
-            ),
-        ),
+            ))
+        }
         _ => None,
     }
 }
@@ -396,7 +396,10 @@ fn fixed_envelope_and_immutable_authority_chain_are_present() {
     assert!(VAR_COMPOSITION_ORACLE.contains("REPEATED_VAR_EVENTS"));
     assert!(VAR_COMPOSITION_ORACLE.contains("INVERSE_ORDER_EVENTS"));
     assert!(VAR_COMPOSITION_ORACLE.contains("keyword-adjacent-malformed-var-remains-unsupported"));
-    assert!(VAR_COMPOSITION_ORACLE.contains("trivia-separated-malformed-binding-uses-general-grammar-evidence"));
+    assert!(
+        VAR_COMPOSITION_ORACLE
+            .contains("trivia-separated-malformed-binding-uses-general-grammar-evidence")
+    );
     assert!(VAR_COMPOSITION_ORACLE.contains("formed-escape-continues-maximal-identifier-name"));
     assert!(VAR_COMPOSITION_ORACLE.contains("var-eof-asi-remains-deferred"));
 }
@@ -423,13 +426,7 @@ fn current_selected_grammar_positive_source_space_is_exact_disjoint_union() {
             SelectedGrammarPositivePartition::BlockEnabledWithoutVar
         );
     }
-    for (block_count, var_count) in [
-        (0, 1),
-        (1, 1),
-        (3, 2),
-        (usize::MAX, 1),
-        (0, usize::MAX),
-    ] {
+    for (block_count, var_count) in [(0, 1), (1, 1), (3, 2), (usize::MAX, 1), (0, usize::MAX)] {
         assert_eq!(
             partition_selected_grammar_positive(block_count, var_count),
             SelectedGrammarPositivePartition::VariableEnabled
@@ -488,7 +485,11 @@ fn frozen_rule_universe_closes_as_exact_nine_plus_one_hundred_eighty_four() {
     let mut sentinels = 0usize;
 
     for rule in RULE_UNITS {
-        assert!(seen.insert(rule.id), "duplicate frozen rule unit {}", rule.id);
+        assert!(
+            seen.insert(rule.id),
+            "duplicate frozen rule unit {}",
+            rule.id
+        );
 
         match rule.kind {
             RuleUnitKind::NormativeRule => active += 1,
@@ -547,7 +548,10 @@ fn frozen_rule_universe_closes_as_exact_nine_plus_one_hundred_eighty_four() {
     assert_eq!(non_triggering, expected_non_triggering);
     assert_eq!(required.len(), 9);
     assert_eq!(non_triggering.len(), 184);
-    assert_eq!(required.len() + non_triggering.len(), independently_expected_total);
+    assert_eq!(
+        required.len() + non_triggering.len(),
+        independently_expected_total
+    );
     assert_eq!(historical_required, expected_historical);
     assert_eq!(historical_required.len(), 7);
     assert_eq!(post_inventory_block_required, BTreeSet::from(["EE-14-R01"]));
@@ -558,11 +562,8 @@ fn frozen_rule_universe_closes_as_exact_nine_plus_one_hundred_eighty_four() {
 fn ee36_r02_is_the_only_new_reachability_delta() {
     let historical: BTreeSet<_> = HISTORICAL_REQUIRED_RULE_IDS.iter().copied().collect();
     let current: BTreeSet<_> = CURRENT_REQUIRED_RULE_IDS.iter().copied().collect();
-    let historical_plus_block: BTreeSet<_> = historical
-        .iter()
-        .copied()
-        .chain(["EE-14-R01"])
-        .collect();
+    let historical_plus_block: BTreeSet<_> =
+        historical.iter().copied().chain(["EE-14-R01"]).collect();
     let delta: BTreeSet<_> = current
         .difference(&historical_plus_block)
         .copied()
@@ -575,12 +576,15 @@ fn ee36_r02_is_the_only_new_reachability_delta() {
     assert!(VAR_ORACLE.contains("ScriptVar"));
     assert!(VAR_ORACLE.contains("canonical-equivalence-does-not-normalize"));
     assert!(VAR_ORACLE.contains("repeated-var-alone-is-not-lexical-var-collision"));
-    assert!(VAR_COMPOSITION_ORACLE.contains(
-        "multi_collision_primary_is_first_collision_completed_in_authored_order"
-    ));
-    assert!(VAR_COMPOSITION_ORACLE.contains(
-        "repeated_var_preserves_first_var_provenance_until_lexical_collision_completes"
-    ));
+    assert!(
+        VAR_COMPOSITION_ORACLE
+            .contains("multi_collision_primary_is_first_collision_completed_in_authored_order")
+    );
+    assert!(
+        VAR_COMPOSITION_ORACLE.contains(
+            "repeated_var_preserves_first_var_provenance_until_lexical_collision_completes"
+        )
+    );
     assert!(VAR_COMPOSITION_ORACLE.contains(
         "inverse_order_control_falsifies_always_lexical_or_hash_iteration_primary_selection"
     ));
@@ -592,9 +596,7 @@ fn ee14_r02_remains_the_explicit_tenth_rule_counterexample() {
     assert!(BLOCK_ORACLE.contains("const SELECTED_BLOCK_BODY: &str = \"LexicalDeclaration+\";"));
     assert!(BLOCK_ORACLE.contains("const SELECTED_VAR_DECLARATION: bool = false;"));
     assert!(BLOCK_ORACLE.contains("EE-14-R02"));
-    assert!(
-        BLOCK_ORACLE.contains("selected Block contains no VarDeclaredNames contributor")
-    );
+    assert!(BLOCK_ORACLE.contains("selected Block contains no VarDeclaredNames contributor"));
     assert!(VAR_ORACLE.contains("SELECTED_BLOCK_VAR: bool = false"));
 
     for rule_id in [
@@ -634,7 +636,10 @@ fn var_fixture_authority_preserves_script_domains_ordering_and_no_normalization(
         "existing-declaration-duplicate-precedes-lexical-var-collision",
         "escaped-reserved-var-remains-ee04-owned",
     ] {
-        assert!(VAR_ORACLE.contains(marker), "#306/#307 authority must retain {marker}");
+        assert!(
+            VAR_ORACLE.contains(marker),
+            "#306/#307 authority must retain {marker}"
+        );
     }
 
     for marker in [
@@ -662,7 +667,10 @@ fn terminal_and_transactional_closure_remain_owned_by_prior_oracles() {
         "block-var",
         "var-eof-asi-deferred",
     ] {
-        assert!(VAR_ORACLE.contains(marker), "#306/#307 authority must retain {marker}");
+        assert!(
+            VAR_ORACLE.contains(marker),
+            "#306/#307 authority must retain {marker}"
+        );
     }
 
     for marker in [
