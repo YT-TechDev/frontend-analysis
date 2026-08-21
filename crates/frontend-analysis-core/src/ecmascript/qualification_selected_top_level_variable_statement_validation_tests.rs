@@ -45,6 +45,8 @@ const CURRENT_COMPLETION_SOURCE: &str =
     include_str!("qualification_validation_tests/selected_one_level_block_slice_completion.rs");
 const BLOCK_ORACLE_SOURCE: &str =
     include_str!("qualification_selected_one_level_block_validation_tests.rs");
+const IDENTIFIER_ORACLE_SOURCE: &str =
+    include_str!("qualification_selected_escaped_reserved_identifier_initializer_validation_tests.rs");
 const QUALIFICATION_SOURCE: &str = include_str!("selected_qualification_integration.rs");
 const FLAT_BINDING_SCOPE_SOURCE: &str = include_str!("selected_binding_scope.rs");
 const HIERARCHICAL_BINDING_SCOPE_SOURCE: &str =
@@ -55,6 +57,8 @@ const THIS_SOURCE: &str =
 const X: &[u32] = &[0x78];
 const Y: &[u32] = &[0x79];
 const A: &[u32] = &[0x61];
+const LET: &[u32] = &[0x6c, 0x65, 0x74];
+const IF: &[u32] = &[0x69, 0x66];
 const E_ACUTE: &[u32] = &[0x00e9];
 const E_COMBINING_ACUTE: &[u32] = &[0x65, 0x0301];
 
@@ -134,393 +138,338 @@ struct Fixture {
     processing: ExpectedProcessing,
 }
 
-const LET_X_VAR_X_NAMES: &[ExpectedName] = &[
-    ExpectedName {
-        domain: NameDomain::ScriptLexical,
-        authored: ExpectedAnchor::new(4, 5, "x"),
-        semantic_name: "x",
-        semantic_code_points: X,
-    },
-    ExpectedName {
-        domain: NameDomain::ScriptVar,
-        authored: ExpectedAnchor::new(11, 12, "x"),
-        semantic_name: "x",
-        semantic_code_points: X,
-    },
+const LET_X_VAR_X: &[ExpectedName] = &[
+    name(NameDomain::ScriptLexical, 4, 5, "x", "x", X),
+    name(NameDomain::ScriptVar, 11, 12, "x", "x", X),
 ];
+const VAR_X_LET_X: &[ExpectedName] = &[
+    name(NameDomain::ScriptVar, 4, 5, "x", "x", X),
+    name(NameDomain::ScriptLexical, 11, 12, "x", "x", X),
+];
+const LET_X_VAR_Y: &[ExpectedName] = &[
+    name(NameDomain::ScriptLexical, 4, 5, "x", "x", X),
+    name(NameDomain::ScriptVar, 11, 12, "y", "y", Y),
+];
+const REPEATED_VAR: &[ExpectedName] = &[
+    name(NameDomain::ScriptVar, 4, 5, "x", "x", X),
+    name(NameDomain::ScriptVar, 11, 12, "x", "x", X),
+];
+const LET_A_ESCAPED_VAR_A: &[ExpectedName] = &[
+    name(NameDomain::ScriptLexical, 4, 5, "a", "a", A),
+    name(NameDomain::ScriptVar, 11, 17, r"\u0061", "a", A),
+];
+const ESCAPED_VAR_A_LET_A: &[ExpectedName] = &[
+    name(NameDomain::ScriptVar, 4, 10, r"\u0061", "a", A),
+    name(NameDomain::ScriptLexical, 16, 17, "a", "a", A),
+];
+const NON_NORMALIZED: &[ExpectedName] = &[
+    name(NameDomain::ScriptLexical, 4, 6, "é", "é", E_ACUTE),
+    name(
+        NameDomain::ScriptVar,
+        12,
+        19,
+        r"e\u0301",
+        "e\u{301}",
+        E_COMBINING_ACUTE,
+    ),
+];
+const BLOCK_LOCAL_ONLY: &[ExpectedName] = &[
+    name(NameDomain::BlockLexical, 6, 7, "x", "x", X),
+    name(NameDomain::ScriptVar, 15, 16, "x", "x", X),
+];
+const TOP_AND_BLOCK: &[ExpectedName] = &[
+    name(NameDomain::ScriptLexical, 4, 5, "x", "x", X),
+    name(NameDomain::BlockLexical, 13, 14, "y", "y", Y),
+    name(NameDomain::ScriptVar, 22, 23, "x", "x", X),
+];
+const DUPLICATE_SCRIPT_LEXICAL: &[ExpectedName] = &[
+    name(NameDomain::ScriptLexical, 4, 5, "x", "x", X),
+    name(NameDomain::ScriptLexical, 11, 12, "x", "x", X),
+    name(NameDomain::ScriptVar, 18, 19, "x", "x", X),
+];
+const DUPLICATE_DECLARATION_BINDING: &[ExpectedName] = &[
+    name(NameDomain::ScriptLexical, 4, 5, "x", "x", X),
+    name(NameDomain::ScriptLexical, 6, 7, "x", "x", X),
+    name(NameDomain::ScriptVar, 13, 14, "x", "x", X),
+];
+const DIRECT_VAR_LET: &[ExpectedName] = &[name(
+    NameDomain::ScriptVar,
+    4,
+    7,
+    "let",
+    "let",
+    LET,
+)];
+const ESCAPED_VAR_LET: &[ExpectedName] = &[name(
+    NameDomain::ScriptVar,
+    4,
+    12,
+    r"\u006Cet",
+    "let",
+    LET,
+)];
+const ESCAPED_RESERVED_VAR_IF: &[ExpectedName] = &[name(
+    NameDomain::ScriptVar,
+    4,
+    11,
+    r"\u0069f",
+    "if",
+    IF,
+)];
 
-const VAR_X_LET_X_NAMES: &[ExpectedName] = &[
+const fn name(
+    domain: NameDomain,
+    start: usize,
+    end: usize,
+    fragment: &'static str,
+    semantic_name: &'static str,
+    semantic_code_points: &'static [u32],
+) -> ExpectedName {
     ExpectedName {
-        domain: NameDomain::ScriptVar,
-        authored: ExpectedAnchor::new(4, 5, "x"),
-        semantic_name: "x",
-        semantic_code_points: X,
-    },
-    ExpectedName {
-        domain: NameDomain::ScriptLexical,
-        authored: ExpectedAnchor::new(11, 12, "x"),
-        semantic_name: "x",
-        semantic_code_points: X,
-    },
-];
+        domain,
+        authored: ExpectedAnchor::new(start, end, fragment),
+        semantic_name,
+        semantic_code_points,
+    }
+}
 
-const LET_X_VAR_Y_NAMES: &[ExpectedName] = &[
-    ExpectedName {
-        domain: NameDomain::ScriptLexical,
-        authored: ExpectedAnchor::new(4, 5, "x"),
-        semantic_name: "x",
-        semantic_code_points: X,
-    },
-    ExpectedName {
-        domain: NameDomain::ScriptVar,
-        authored: ExpectedAnchor::new(11, 12, "y"),
-        semantic_name: "y",
-        semantic_code_points: Y,
-    },
-];
-
-const REPEATED_VAR_NAMES: &[ExpectedName] = &[
-    ExpectedName {
-        domain: NameDomain::ScriptVar,
-        authored: ExpectedAnchor::new(4, 5, "x"),
-        semantic_name: "x",
-        semantic_code_points: X,
-    },
-    ExpectedName {
-        domain: NameDomain::ScriptVar,
-        authored: ExpectedAnchor::new(11, 12, "x"),
-        semantic_name: "x",
-        semantic_code_points: X,
-    },
-];
-
-const LET_A_ESCAPED_VAR_A_NAMES: &[ExpectedName] = &[
-    ExpectedName {
-        domain: NameDomain::ScriptLexical,
-        authored: ExpectedAnchor::new(4, 5, "a"),
-        semantic_name: "a",
-        semantic_code_points: A,
-    },
-    ExpectedName {
-        domain: NameDomain::ScriptVar,
-        authored: ExpectedAnchor::new(11, 17, r"\u0061"),
-        semantic_name: "a",
-        semantic_code_points: A,
-    },
-];
-
-const ESCAPED_VAR_A_LET_A_NAMES: &[ExpectedName] = &[
-    ExpectedName {
-        domain: NameDomain::ScriptVar,
-        authored: ExpectedAnchor::new(4, 10, r"\u0061"),
-        semantic_name: "a",
-        semantic_code_points: A,
-    },
-    ExpectedName {
-        domain: NameDomain::ScriptLexical,
-        authored: ExpectedAnchor::new(16, 17, "a"),
-        semantic_name: "a",
-        semantic_code_points: A,
-    },
-];
-
-const NON_NORMALIZED_NAMES: &[ExpectedName] = &[
-    ExpectedName {
-        domain: NameDomain::ScriptLexical,
-        authored: ExpectedAnchor::new(4, 6, "é"),
-        semantic_name: "é",
-        semantic_code_points: E_ACUTE,
-    },
-    ExpectedName {
-        domain: NameDomain::ScriptVar,
-        authored: ExpectedAnchor::new(12, 19, r"e\u0301"),
-        semantic_name: "e\u{301}",
-        semantic_code_points: E_COMBINING_ACUTE,
-    },
-];
-
-const BLOCK_LOCAL_ONLY_NAMES: &[ExpectedName] = &[
-    ExpectedName {
-        domain: NameDomain::BlockLexical,
-        authored: ExpectedAnchor::new(6, 7, "x"),
-        semantic_name: "x",
-        semantic_code_points: X,
-    },
-    ExpectedName {
-        domain: NameDomain::ScriptVar,
-        authored: ExpectedAnchor::new(15, 16, "x"),
-        semantic_name: "x",
-        semantic_code_points: X,
-    },
-];
-
-const TOP_AND_BLOCK_NAMES: &[ExpectedName] = &[
-    ExpectedName {
-        domain: NameDomain::ScriptLexical,
-        authored: ExpectedAnchor::new(4, 5, "x"),
-        semantic_name: "x",
-        semantic_code_points: X,
-    },
-    ExpectedName {
-        domain: NameDomain::BlockLexical,
-        authored: ExpectedAnchor::new(13, 14, "y"),
-        semantic_name: "y",
-        semantic_code_points: Y,
-    },
-    ExpectedName {
-        domain: NameDomain::ScriptVar,
-        authored: ExpectedAnchor::new(22, 23, "x"),
-        semantic_name: "x",
-        semantic_code_points: X,
-    },
-];
-
-const DUPLICATE_SCRIPT_LEXICAL_NAMES: &[ExpectedName] = &[
-    ExpectedName {
-        domain: NameDomain::ScriptLexical,
-        authored: ExpectedAnchor::new(4, 5, "x"),
-        semantic_name: "x",
-        semantic_code_points: X,
-    },
-    ExpectedName {
-        domain: NameDomain::ScriptLexical,
-        authored: ExpectedAnchor::new(11, 12, "x"),
-        semantic_name: "x",
-        semantic_code_points: X,
-    },
-    ExpectedName {
-        domain: NameDomain::ScriptVar,
-        authored: ExpectedAnchor::new(18, 19, "x"),
-        semantic_name: "x",
-        semantic_code_points: X,
-    },
-];
-
-const DUPLICATE_DECLARATION_BINDING_NAMES: &[ExpectedName] = &[
-    ExpectedName {
-        domain: NameDomain::ScriptLexical,
-        authored: ExpectedAnchor::new(4, 5, "x"),
-        semantic_name: "x",
-        semantic_code_points: X,
-    },
-    ExpectedName {
-        domain: NameDomain::ScriptLexical,
-        authored: ExpectedAnchor::new(6, 7, "x"),
-        semantic_name: "x",
-        semantic_code_points: X,
-    },
-    ExpectedName {
-        domain: NameDomain::ScriptVar,
-        authored: ExpectedAnchor::new(13, 14, "x"),
-        semantic_name: "x",
-        semantic_code_points: X,
-    },
-];
+const fn collision(
+    lexical_binding: ExpectedAnchor,
+    var_binding: ExpectedAnchor,
+    semantic_name: &'static str,
+    completing_binding: ExpectedAnchor,
+) -> ExpectedCollision {
+    ExpectedCollision {
+        lexical_binding,
+        var_binding,
+        semantic_name,
+        completing_binding,
+    }
+}
 
 const FIXTURES: &[Fixture] = &[
     Fixture {
         id: "lexical-before-var-collision",
         source: "let x; var x;",
-        names: LET_X_VAR_X_NAMES,
+        names: LET_X_VAR_X,
         processing: ExpectedProcessing::Complete {
             primary: ExpectedPrimaryEvidence::Rule {
                 rule_id: "EE-36-R02",
                 subject: ExpectedAnchor::new(11, 12, "x"),
             },
-            ee36_r02_collision: Some(ExpectedCollision {
-                lexical_binding: ExpectedAnchor::new(4, 5, "x"),
-                var_binding: ExpectedAnchor::new(11, 12, "x"),
-                semantic_name: "x",
-                completing_binding: ExpectedAnchor::new(11, 12, "x"),
-            }),
+            ee36_r02_collision: Some(collision(
+                ExpectedAnchor::new(4, 5, "x"),
+                ExpectedAnchor::new(11, 12, "x"),
+                "x",
+                ExpectedAnchor::new(11, 12, "x"),
+            )),
         },
     },
     Fixture {
         id: "var-before-lexical-collision",
         source: "var x; let x;",
-        names: VAR_X_LET_X_NAMES,
+        names: VAR_X_LET_X,
         processing: ExpectedProcessing::Complete {
             primary: ExpectedPrimaryEvidence::Rule {
                 rule_id: "EE-36-R02",
                 subject: ExpectedAnchor::new(11, 12, "x"),
             },
-            ee36_r02_collision: Some(ExpectedCollision {
-                lexical_binding: ExpectedAnchor::new(11, 12, "x"),
-                var_binding: ExpectedAnchor::new(4, 5, "x"),
-                semantic_name: "x",
-                completing_binding: ExpectedAnchor::new(11, 12, "x"),
-            }),
+            ee36_r02_collision: Some(collision(
+                ExpectedAnchor::new(11, 12, "x"),
+                ExpectedAnchor::new(4, 5, "x"),
+                "x",
+                ExpectedAnchor::new(11, 12, "x"),
+            )),
         },
     },
     Fixture {
         id: "non-colliding-lexical-and-var",
         source: "let x; var y;",
-        names: LET_X_VAR_Y_NAMES,
-        processing: ExpectedProcessing::Complete {
-            primary: ExpectedPrimaryEvidence::None,
-            ee36_r02_collision: None,
-        },
+        names: LET_X_VAR_Y,
+        processing: complete_without_rejection(),
     },
     Fixture {
         id: "repeated-var-alone-is-not-lexical-var-collision",
         source: "var x; var x;",
-        names: REPEATED_VAR_NAMES,
-        processing: ExpectedProcessing::Complete {
-            primary: ExpectedPrimaryEvidence::None,
-            ee36_r02_collision: None,
-        },
+        names: REPEATED_VAR,
+        processing: complete_without_rejection(),
     },
     Fixture {
         id: "escaped-var-equals-direct-lexical",
         source: r"let a; var \u0061;",
-        names: LET_A_ESCAPED_VAR_A_NAMES,
+        names: LET_A_ESCAPED_VAR_A,
         processing: ExpectedProcessing::Complete {
             primary: ExpectedPrimaryEvidence::Rule {
                 rule_id: "EE-36-R02",
                 subject: ExpectedAnchor::new(11, 17, r"\u0061"),
             },
-            ee36_r02_collision: Some(ExpectedCollision {
-                lexical_binding: ExpectedAnchor::new(4, 5, "a"),
-                var_binding: ExpectedAnchor::new(11, 17, r"\u0061"),
-                semantic_name: "a",
-                completing_binding: ExpectedAnchor::new(11, 17, r"\u0061"),
-            }),
+            ee36_r02_collision: Some(collision(
+                ExpectedAnchor::new(4, 5, "a"),
+                ExpectedAnchor::new(11, 17, r"\u0061"),
+                "a",
+                ExpectedAnchor::new(11, 17, r"\u0061"),
+            )),
         },
     },
     Fixture {
         id: "escaped-var-before-direct-lexical",
         source: r"var \u0061; let a;",
-        names: ESCAPED_VAR_A_LET_A_NAMES,
+        names: ESCAPED_VAR_A_LET_A,
         processing: ExpectedProcessing::Complete {
             primary: ExpectedPrimaryEvidence::Rule {
                 rule_id: "EE-36-R02",
                 subject: ExpectedAnchor::new(16, 17, "a"),
             },
-            ee36_r02_collision: Some(ExpectedCollision {
-                lexical_binding: ExpectedAnchor::new(16, 17, "a"),
-                var_binding: ExpectedAnchor::new(4, 10, r"\u0061"),
-                semantic_name: "a",
-                completing_binding: ExpectedAnchor::new(16, 17, "a"),
-            }),
+            ee36_r02_collision: Some(collision(
+                ExpectedAnchor::new(16, 17, "a"),
+                ExpectedAnchor::new(4, 10, r"\u0061"),
+                "a",
+                ExpectedAnchor::new(16, 17, "a"),
+            )),
         },
     },
     Fixture {
         id: "canonical-equivalence-does-not-normalize",
         source: "let é; var e\\u0301;",
-        names: NON_NORMALIZED_NAMES,
-        processing: ExpectedProcessing::Complete {
-            primary: ExpectedPrimaryEvidence::None,
-            ee36_r02_collision: None,
-        },
+        names: NON_NORMALIZED,
+        processing: complete_without_rejection(),
     },
     Fixture {
         id: "block-local-lexical-does-not-enter-script-domain",
         source: "{ let x; } var x;",
-        names: BLOCK_LOCAL_ONLY_NAMES,
-        processing: ExpectedProcessing::Complete {
-            primary: ExpectedPrimaryEvidence::None,
-            ee36_r02_collision: None,
-        },
+        names: BLOCK_LOCAL_ONLY,
+        processing: complete_without_rejection(),
     },
     Fixture {
         id: "top-level-lexical-still-collides-across-block-item",
         source: "let x; { let y; } var x;",
-        names: TOP_AND_BLOCK_NAMES,
+        names: TOP_AND_BLOCK,
         processing: ExpectedProcessing::Complete {
             primary: ExpectedPrimaryEvidence::Rule {
                 rule_id: "EE-36-R02",
                 subject: ExpectedAnchor::new(22, 23, "x"),
             },
-            ee36_r02_collision: Some(ExpectedCollision {
-                lexical_binding: ExpectedAnchor::new(4, 5, "x"),
-                var_binding: ExpectedAnchor::new(22, 23, "x"),
-                semantic_name: "x",
-                completing_binding: ExpectedAnchor::new(22, 23, "x"),
-            }),
+            ee36_r02_collision: Some(collision(
+                ExpectedAnchor::new(4, 5, "x"),
+                ExpectedAnchor::new(22, 23, "x"),
+                "x",
+                ExpectedAnchor::new(22, 23, "x"),
+            )),
         },
     },
     Fixture {
         id: "existing-script-duplicate-precedes-lexical-var-collision",
         source: "let x; let x; var x;",
-        names: DUPLICATE_SCRIPT_LEXICAL_NAMES,
+        names: DUPLICATE_SCRIPT_LEXICAL,
         processing: ExpectedProcessing::Complete {
             primary: ExpectedPrimaryEvidence::Rule {
                 rule_id: "EE-36-R01",
                 subject: ExpectedAnchor::new(11, 12, "x"),
             },
-            ee36_r02_collision: Some(ExpectedCollision {
-                lexical_binding: ExpectedAnchor::new(4, 5, "x"),
-                var_binding: ExpectedAnchor::new(18, 19, "x"),
-                semantic_name: "x",
-                completing_binding: ExpectedAnchor::new(18, 19, "x"),
-            }),
+            ee36_r02_collision: Some(collision(
+                ExpectedAnchor::new(4, 5, "x"),
+                ExpectedAnchor::new(18, 19, "x"),
+                "x",
+                ExpectedAnchor::new(18, 19, "x"),
+            )),
         },
     },
     Fixture {
         id: "existing-declaration-duplicate-precedes-lexical-var-collision",
         source: "let x,x; var x;",
-        names: DUPLICATE_DECLARATION_BINDING_NAMES,
+        names: DUPLICATE_DECLARATION_BINDING,
         processing: ExpectedProcessing::Complete {
             primary: ExpectedPrimaryEvidence::Rule {
                 rule_id: "EE-15-R02",
                 subject: ExpectedAnchor::new(6, 7, "x"),
             },
-            ee36_r02_collision: Some(ExpectedCollision {
-                lexical_binding: ExpectedAnchor::new(4, 5, "x"),
-                var_binding: ExpectedAnchor::new(13, 14, "x"),
-                semantic_name: "x",
-                completing_binding: ExpectedAnchor::new(13, 14, "x"),
-            }),
+            ee36_r02_collision: Some(collision(
+                ExpectedAnchor::new(4, 5, "x"),
+                ExpectedAnchor::new(13, 14, "x"),
+                "x",
+                ExpectedAnchor::new(13, 14, "x"),
+            )),
+        },
+    },
+    Fixture {
+        id: "non-strict-var-let-is-not-lexical-binding-named-let",
+        source: "var let;",
+        names: DIRECT_VAR_LET,
+        processing: complete_without_rejection(),
+    },
+    Fixture {
+        id: "non-strict-escaped-var-let-remains-contextually-allowed",
+        source: r"var \u006Cet;",
+        names: ESCAPED_VAR_LET,
+        processing: complete_without_rejection(),
+    },
+    Fixture {
+        id: "escaped-reserved-var-remains-ee04-owned",
+        source: r"var \u0069f;",
+        names: ESCAPED_RESERVED_VAR_IF,
+        processing: ExpectedProcessing::Complete {
+            primary: ExpectedPrimaryEvidence::Rule {
+                rule_id: "EE-04-R08",
+                subject: ExpectedAnchor::new(4, 11, r"\u0069f"),
+            },
+            ee36_r02_collision: None,
         },
     },
 ];
 
+const fn complete_without_rejection() -> ExpectedProcessing {
+    ExpectedProcessing::Complete {
+        primary: ExpectedPrimaryEvidence::None,
+        ee36_r02_collision: None,
+    }
+}
+
 const UNSUPPORTED_FIXTURES: &[Fixture] = &[
-    Fixture {
-        id: "multiple-var-declarators",
-        source: "var x, y;",
-        names: &[],
-        processing: ExpectedProcessing::UnsupportedCoverage(
-            UnsupportedReason::MultipleVarDeclarators,
-        ),
-    },
-    Fixture {
-        id: "numeric-var-initializer",
-        source: "var x = 1;",
-        names: &[],
-        processing: ExpectedProcessing::UnsupportedCoverage(UnsupportedReason::VarInitializer),
-    },
-    Fixture {
-        id: "identifier-var-initializer",
-        source: "var x = y;",
-        names: &[],
-        processing: ExpectedProcessing::UnsupportedCoverage(UnsupportedReason::VarInitializer),
-    },
-    Fixture {
-        id: "var-destructuring",
-        source: "var {x} = y;",
-        names: &[],
-        processing: ExpectedProcessing::UnsupportedCoverage(UnsupportedReason::VarDestructuring),
-    },
-    Fixture {
-        id: "for-var",
-        source: "for (var x;;) {}",
-        names: &[],
-        processing: ExpectedProcessing::UnsupportedCoverage(UnsupportedReason::ForVar),
-    },
-    Fixture {
-        id: "block-var",
-        source: "{ var x; }",
-        names: &[],
-        processing: ExpectedProcessing::UnsupportedCoverage(UnsupportedReason::BlockVar),
-    },
-    Fixture {
-        id: "var-eof-asi-deferred",
-        source: "var x",
-        names: &[],
-        processing: ExpectedProcessing::UnsupportedCoverage(UnsupportedReason::EofAsiDeferred),
-    },
+    unsupported(
+        "multiple-var-declarators",
+        "var x, y;",
+        UnsupportedReason::MultipleVarDeclarators,
+    ),
+    unsupported(
+        "numeric-var-initializer",
+        "var x = 1;",
+        UnsupportedReason::VarInitializer,
+    ),
+    unsupported(
+        "identifier-var-initializer",
+        "var x = y;",
+        UnsupportedReason::VarInitializer,
+    ),
+    unsupported(
+        "var-destructuring",
+        "var {x} = y;",
+        UnsupportedReason::VarDestructuring,
+    ),
+    unsupported(
+        "for-var",
+        "for (var x;;) {}",
+        UnsupportedReason::ForVar,
+    ),
+    unsupported("block-var", "{ var x; }", UnsupportedReason::BlockVar),
+    unsupported(
+        "var-eof-asi-deferred",
+        "var x",
+        UnsupportedReason::EofAsiDeferred,
+    ),
 ];
+
+const fn unsupported(
+    id: &'static str,
+    source: &'static str,
+    reason: UnsupportedReason,
+) -> Fixture {
+    Fixture {
+        id,
+        source,
+        names: &[],
+        processing: ExpectedProcessing::UnsupportedCoverage(reason),
+    }
+}
 
 fn names_in_domain(fixture: &Fixture, domain: NameDomain) -> BTreeSet<&'static str> {
     fixture
@@ -535,6 +484,13 @@ fn script_lexical_var_intersection(fixture: &Fixture) -> BTreeSet<&'static str> 
     let lexical = names_in_domain(fixture, NameDomain::ScriptLexical);
     let vars = names_in_domain(fixture, NameDomain::ScriptVar);
     lexical.intersection(&vars).copied().collect()
+}
+
+fn fixture(id: &str) -> &'static Fixture {
+    FIXTURES
+        .iter()
+        .find(|fixture| fixture.id == id)
+        .unwrap_or_else(|| panic!("missing fixture {id}"))
 }
 
 #[test]
@@ -558,41 +514,33 @@ fn fixed_authority_and_refined_research_frontier_are_explicit() {
             .contains("Script : ScriptBody / LexicallyDeclaredNames intersects VarDeclaredNames")
     );
     assert!(INVENTORY_SOURCE.contains("&[\"LexicallyDeclaredNames\", \"VarDeclaredNames\"]"));
-
     assert!(CURRENT_COMPLETION_SOURCE.contains(
         "const CURRENT_SELECTED_TOP_LEVEL_ITEM_GRAMMAR: &str = \"LexicalDeclaration | SelectedBlock\";"
     ));
     assert!(CURRENT_COMPLETION_SOURCE.contains("assert_eq!(required.len(), 8);"));
     assert!(CURRENT_COMPLETION_SOURCE.contains("assert_eq!(structurally_non_triggering, 185);"));
-
     assert!(BLOCK_ORACLE_SOURCE.contains("const SELECTED_VAR_DECLARATION: bool = false;"));
     assert!(BLOCK_ORACLE_SOURCE.contains("EE-14-R02"));
     assert!(
         BLOCK_ORACLE_SOURCE.contains("selected Block contains no VarDeclaredNames contributor")
     );
+
+    assert!(IDENTIFIER_ORACLE_SOURCE.contains(r#"r"\u006Cet", "let", NonTriggerKind::StrictOnly"#));
+    assert!(IDENTIFIER_ORACLE_SOURCE.contains(r#"r"\u0069f""#));
+    assert!(IDENTIFIER_ORACLE_SOURCE.contains("\"if\""));
 }
 
 #[test]
 fn fixture_authored_ranges_and_semantic_code_points_are_exact_utf8() {
     for fixture in FIXTURES {
         let source = SourceText::new(SourceId::new(ISSUE_ID), fixture.source.to_owned());
-        assert_eq!(
-            source.as_str(),
-            fixture.source,
-            "{} exact source",
-            fixture.id
-        );
+        assert_eq!(source.as_str(), fixture.source, "{} exact source", fixture.id);
 
         for name in fixture.names {
             let anchor = source
                 .anchor(name.authored.start, name.authored.end)
                 .unwrap_or_else(|error| panic!("{} invalid anchor: {error}", fixture.id));
-            assert_eq!(
-                anchor.fragment(),
-                name.authored.fragment,
-                "{} fragment",
-                fixture.id
-            );
+            assert_eq!(anchor.fragment(), name.authored.fragment, "{} fragment", fixture.id);
             assert_eq!(anchor.range().start(), name.authored.start);
             assert_eq!(anchor.range().end(), name.authored.end);
 
@@ -616,7 +564,7 @@ fn ee36_r02_collision_matrix_uses_only_script_level_name_domains() {
             ee36_r02_collision, ..
         } = fixture.processing
         else {
-            panic!("positive fixture {} must be complete", fixture.id);
+            panic!("oracle fixture {} must be completely characterized", fixture.id);
         };
 
         match ee36_r02_collision {
@@ -676,7 +624,7 @@ fn ee36_r02_primary_subject_is_the_binding_that_completes_the_collision() {
 
 #[test]
 fn existing_static_evidence_remains_primary_when_it_precedes_ee36_r02() {
-    let expected = [
+    for (fixture_id, expected_rule, expected_subject) in [
         (
             "existing-script-duplicate-precedes-lexical-var-collision",
             "EE-36-R01",
@@ -687,13 +635,8 @@ fn existing_static_evidence_remains_primary_when_it_precedes_ee36_r02() {
             "EE-15-R02",
             ExpectedAnchor::new(6, 7, "x"),
         ),
-    ];
-
-    for (fixture_id, expected_rule, expected_subject) in expected {
-        let fixture = FIXTURES
-            .iter()
-            .find(|fixture| fixture.id == fixture_id)
-            .unwrap_or_else(|| panic!("missing fixture {fixture_id}"));
+    ] {
+        let fixture = fixture(fixture_id);
         let ExpectedProcessing::Complete {
             primary,
             ee36_r02_collision,
@@ -713,55 +656,57 @@ fn existing_static_evidence_remains_primary_when_it_precedes_ee36_r02() {
 }
 
 #[test]
+fn variable_binding_identifier_context_does_not_inherit_lexical_only_let_rejection() {
+    for fixture_id in [
+        "non-strict-var-let-is-not-lexical-binding-named-let",
+        "non-strict-escaped-var-let-remains-contextually-allowed",
+    ] {
+        let fixture = fixture(fixture_id);
+        assert_eq!(names_in_domain(fixture, NameDomain::ScriptVar), BTreeSet::from(["let"]));
+        assert!(names_in_domain(fixture, NameDomain::ScriptLexical).is_empty());
+        assert_eq!(fixture.processing, complete_without_rejection());
+    }
+
+    let reserved = fixture("escaped-reserved-var-remains-ee04-owned");
+    assert_eq!(names_in_domain(reserved, NameDomain::ScriptVar), BTreeSet::from(["if"]));
+    assert_eq!(
+        reserved.processing,
+        ExpectedProcessing::Complete {
+            primary: ExpectedPrimaryEvidence::Rule {
+                rule_id: "EE-04-R08",
+                subject: ExpectedAnchor::new(4, 11, r"\u0069f"),
+            },
+            ee36_r02_collision: None,
+        }
+    );
+}
+
+#[test]
 fn block_lexical_names_stay_outside_script_lexically_declared_names() {
-    let block_only = FIXTURES
-        .iter()
-        .find(|fixture| fixture.id == "block-local-lexical-does-not-enter-script-domain")
-        .expect("block-only control must exist");
+    let block_only = fixture("block-local-lexical-does-not-enter-script-domain");
     assert_eq!(
         names_in_domain(block_only, NameDomain::BlockLexical),
         BTreeSet::from(["x"])
     );
     assert!(names_in_domain(block_only, NameDomain::ScriptLexical).is_empty());
-    assert_eq!(
-        names_in_domain(block_only, NameDomain::ScriptVar),
-        BTreeSet::from(["x"])
-    );
+    assert_eq!(names_in_domain(block_only, NameDomain::ScriptVar), BTreeSet::from(["x"]));
     assert!(script_lexical_var_intersection(block_only).is_empty());
 
-    let top_and_block = FIXTURES
-        .iter()
-        .find(|fixture| fixture.id == "top-level-lexical-still-collides-across-block-item")
-        .expect("mixed top/block control must exist");
+    let top_and_block = fixture("top-level-lexical-still-collides-across-block-item");
     assert_eq!(
         names_in_domain(top_and_block, NameDomain::BlockLexical),
         BTreeSet::from(["y"])
     );
-    assert_eq!(
-        script_lexical_var_intersection(top_and_block),
-        BTreeSet::from(["x"])
-    );
+    assert_eq!(script_lexical_var_intersection(top_and_block), BTreeSet::from(["x"]));
 }
 
 #[test]
 fn repeated_var_names_alone_do_not_become_a_lexical_var_collision() {
-    let fixture = FIXTURES
-        .iter()
-        .find(|fixture| fixture.id == "repeated-var-alone-is-not-lexical-var-collision")
-        .expect("repeated-var control must exist");
-    assert!(names_in_domain(fixture, NameDomain::ScriptLexical).is_empty());
-    assert_eq!(
-        names_in_domain(fixture, NameDomain::ScriptVar),
-        BTreeSet::from(["x"])
-    );
-    assert!(script_lexical_var_intersection(fixture).is_empty());
-    assert_eq!(
-        fixture.processing,
-        ExpectedProcessing::Complete {
-            primary: ExpectedPrimaryEvidence::None,
-            ee36_r02_collision: None,
-        }
-    );
+    let repeated = fixture("repeated-var-alone-is-not-lexical-var-collision");
+    assert!(names_in_domain(repeated, NameDomain::ScriptLexical).is_empty());
+    assert_eq!(names_in_domain(repeated, NameDomain::ScriptVar), BTreeSet::from(["x"]));
+    assert!(script_lexical_var_intersection(repeated).is_empty());
+    assert_eq!(repeated.processing, complete_without_rejection());
 }
 
 #[test]
@@ -770,20 +715,13 @@ fn direct_escaped_equality_and_non_normalization_are_distinct_controls() {
         "escaped-var-equals-direct-lexical",
         "escaped-var-before-direct-lexical",
     ] {
-        let fixture = FIXTURES
-            .iter()
-            .find(|fixture| fixture.id == fixture_id)
-            .unwrap_or_else(|| panic!("missing fixture {fixture_id}"));
         assert_eq!(
-            script_lexical_var_intersection(fixture),
+            script_lexical_var_intersection(fixture(fixture_id)),
             BTreeSet::from(["a"])
         );
     }
 
-    let non_normalized = FIXTURES
-        .iter()
-        .find(|fixture| fixture.id == "canonical-equivalence-does-not-normalize")
-        .expect("non-normalization control must exist");
+    let non_normalized = fixture("canonical-equivalence-does-not-normalize");
     assert_eq!(
         names_in_domain(non_normalized, NameDomain::ScriptLexical),
         BTreeSet::from(["é"])
@@ -809,11 +747,7 @@ fn richer_var_forms_and_block_var_remain_explicit_unsupported_controls() {
     ];
 
     for (fixture, expected_reason) in UNSUPPORTED_FIXTURES.iter().zip(expected_reasons) {
-        assert!(
-            !fixture.source.is_empty(),
-            "{} source must be explicit",
-            fixture.id
-        );
+        assert!(!fixture.source.is_empty(), "{} source must be explicit", fixture.id);
         assert!(fixture.names.is_empty());
         assert_eq!(
             fixture.processing,
