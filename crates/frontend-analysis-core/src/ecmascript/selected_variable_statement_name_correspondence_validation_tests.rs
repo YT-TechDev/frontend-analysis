@@ -35,19 +35,18 @@ const AUTHORED_VAR_BOUNDARY: &str =
     "authored VariableDeclaration provenance != unique runtime binding identity";
 const VAR_CORRESPONDENCE_BOUNDARY: &str =
     "same-source selected var contributor != runtime ResolveBinding target";
-const LEXICAL_CORRESPONDENCE_BOUNDARY: &str =
-    "visible selected lexical binding != proof of runtime binding instantiation != proof of ResolveBinding success != proof that execution reached the reference";
+const LEXICAL_CORRESPONDENCE_BOUNDARY: &str = "visible selected lexical binding != proof of runtime binding instantiation != proof of ResolveBinding success != proof that execution reached the reference";
 const NO_CONTRIBUTOR_BOUNDARY: &str =
     "no selected same-source contributor != runtime unresolvable != ReferenceError";
-const VAR_ORDER_BOUNDARY: &str =
-    "selected var contributor authored order is declaration provenance only, not Before/Same/After, TDZ, initialization, hoisting, runtime creation order, or runtime lookup order";
+const VAR_ORDER_BOUNDARY: &str = "selected var contributor authored order is declaration provenance only, not Before/Same/After, TDZ, initialization, hoisting, runtime creation order, or runtime lookup order";
 
 const BLOCK_RELATION_ORACLE: &str =
     include_str!("selected_one_level_block_binding_scope_validation_tests.rs");
 const VAR_ORACLE: &str =
     include_str!("qualification_selected_top_level_variable_statement_validation_tests.rs");
-const VAR_COMPOSITION_ORACLE: &str =
-    include_str!("qualification_selected_top_level_variable_statement_composition_validation_tests.rs");
+const VAR_COMPOSITION_ORACLE: &str = include_str!(
+    "qualification_selected_top_level_variable_statement_composition_validation_tests.rs"
+);
 const CURRENT_COMPLETION_ORACLE: &str =
     include_str!("qualification_validation_tests/selected_variable_statement_slice_completion.rs");
 const THIS_SOURCE: &str =
@@ -533,11 +532,7 @@ fn validate_region(source: &SourceText, region: ExpectedRegion, blocks: &[Expect
     }
 }
 
-fn validate_relation(
-    source: &SourceText,
-    blocks: &[ExpectedAnchor],
-    relation: ExpectedRelation,
-) {
+fn validate_relation(source: &SourceText, blocks: &[ExpectedAnchor], relation: ExpectedRelation) {
     validate_anchor(source, relation.containing_binding);
     validate_region(source, relation.current_region, blocks);
     validate_anchor(source, relation.reference);
@@ -572,7 +567,10 @@ fn fixed_envelope_and_negative_runtime_boundaries_are_explicit() {
         "d89c03f2db8a597bc915b363a6518d0cc8acdbc0"
     );
     assert_eq!(SELECTED_UNICODE_VERSION, "17.0.0");
-    assert_eq!(SELECTED_SOURCE_AUTHORITY, "Core UTF-8 SourceText / SourceAnchor");
+    assert_eq!(
+        SELECTED_SOURCE_AUTHORITY,
+        "Core UTF-8 SourceText / SourceAnchor"
+    );
     assert_eq!(SELECTED_SOURCE_CONTEXT, "Independent Source Unit");
     assert_eq!(SELECTED_PARSE_GOAL, "Script");
     assert!(!SELECTED_IS_STRICT);
@@ -617,13 +615,16 @@ fn accepted_authority_chain_is_present_and_candidate_independent() {
     assert!(VAR_ORACLE.contains("block-local-lexical-does-not-enter-script-domain"));
 
     assert!(VAR_COMPOSITION_ORACLE.contains("REPEATED_VAR_EVENTS"));
-    assert!(VAR_COMPOSITION_ORACLE.contains(
-        "repeated_var_preserves_first_var_provenance_until_lexical_collision_completes"
-    ));
+    assert!(
+        VAR_COMPOSITION_ORACLE.contains(
+            "repeated_var_preserves_first_var_provenance_until_lexical_collision_completes"
+        )
+    );
 
-    assert!(CURRENT_COMPLETION_ORACLE.contains(
-        "LexicalDeclaration | SelectedBlock | SelectedVariableStatement"
-    ));
+    assert!(
+        CURRENT_COMPLETION_ORACLE
+            .contains("LexicalDeclaration | SelectedBlock | SelectedVariableStatement")
+    );
     assert!(CURRENT_COMPLETION_ORACLE.contains("EE-36-R02"));
 
     for (left, right) in [
@@ -653,7 +654,11 @@ fn exact_twenty_two_fixture_matrix_and_all_owned_ranges_are_valid() {
     let mut ids = BTreeSet::new();
 
     for fixture in FIXTURES {
-        assert!(ids.insert(fixture.id), "duplicate #314 fixture id {}", fixture.id);
+        assert!(
+            ids.insert(fixture.id),
+            "duplicate #314 fixture id {}",
+            fixture.id
+        );
         let source = SourceText::new(SourceId::new(ISSUE_ID), fixture.source.to_owned());
 
         for block in fixture.blocks {
@@ -791,9 +796,7 @@ fn lexical_shadowing_precedes_var_correspondence_on_the_covered_region_path() {
         panic!("self lexical must be visible");
     };
     assert_eq!(binding, relation.containing_binding);
-    assert!(
-        LEXICAL_CORRESPONDENCE_BOUNDARY.contains("!= proof of runtime binding instantiation")
-    );
+    assert!(LEXICAL_CORRESPONDENCE_BOUNDARY.contains("!= proof of runtime binding instantiation"));
 }
 
 #[test]
@@ -863,10 +866,7 @@ fn invalid_and_unsupported_prerequisites_never_acquire_correspondence_results() 
             "EE-36-R02",
         ),
         ("block-duplicate-prerequisite-unavailable", "EE-14-R01"),
-        (
-            "escaped-reserved-var-prerequisite-unavailable",
-            "EE-04-R08",
-        ),
+        ("escaped-reserved-var-prerequisite-unavailable", "EE-04-R08"),
     ] {
         let selected = fixture(id);
         let ExpectedProcessing::UpstreamPrerequisiteUnavailable(
