@@ -871,18 +871,6 @@ impl<'source> Cursor<'source> {
         }
     }
 
-    /// Recognizes exactly one direct-authored, escape-free `StringLiteral` in
-    /// the selected initializer position without retaining a `StringValue` or
-    /// widening into a generic Literal / PrimaryExpression / Expression owner.
-    ///
-    /// The matching authored quote terminates the selected atom. Reverse solidus,
-    /// raw LF, raw CR, or EOF before that matching quote causes this helper to
-    /// restore its starting cursor and decline. ES2026 direct LS / PS characters
-    /// remain ordinary direct string content as fixed by #257.
-    fn consume_selected_escape_free_string_literal_DUPLICATE_PLACEHOLDER(&mut self) -> bool {
-        unreachable!()
-    }
-
     /// Recognizes one selected `IdentifierReference` atom in the fixed
     /// non-strict Script envelope (`Yield=false`, `Await=false`).
     ///
