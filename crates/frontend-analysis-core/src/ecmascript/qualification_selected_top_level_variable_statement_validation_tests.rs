@@ -29,9 +29,8 @@ const SELECTED_VARIABLE_EOF_ASI: bool = false;
 const SELECTED_BLOCK_VAR: bool = false;
 
 const INVENTORY_SOURCE: &str = include_str!("qualification_validation_tests/inventory.rs");
-const CURRENT_COMPLETION_SOURCE: &str = include_str!(
-    "qualification_validation_tests/selected_one_level_block_slice_completion.rs"
-);
+const CURRENT_COMPLETION_SOURCE: &str =
+    include_str!("qualification_validation_tests/selected_one_level_block_slice_completion.rs");
 const BLOCK_ORACLE_SOURCE: &str =
     include_str!("qualification_selected_one_level_block_validation_tests.rs");
 const QUALIFICATION_SOURCE: &str = include_str!("selected_qualification_integration.rs");
@@ -551,9 +550,10 @@ fn fixed_authority_and_refined_research_frontier_are_explicit() {
     assert!(!SELECTED_BLOCK_VAR);
 
     assert!(INVENTORY_SOURCE.contains("\"EE-36-R02\""));
-    assert!(INVENTORY_SOURCE.contains(
-        "Script : ScriptBody / LexicallyDeclaredNames intersects VarDeclaredNames"
-    ));
+    assert!(
+        INVENTORY_SOURCE
+            .contains("Script : ScriptBody / LexicallyDeclaredNames intersects VarDeclaredNames")
+    );
     assert!(INVENTORY_SOURCE.contains("&[\"LexicallyDeclaredNames\", \"VarDeclaredNames\"]"));
 
     assert!(CURRENT_COMPLETION_SOURCE.contains(
@@ -564,20 +564,32 @@ fn fixed_authority_and_refined_research_frontier_are_explicit() {
 
     assert!(BLOCK_ORACLE_SOURCE.contains("const SELECTED_VAR_DECLARATION: bool = false;"));
     assert!(BLOCK_ORACLE_SOURCE.contains("EE-14-R02"));
-    assert!(BLOCK_ORACLE_SOURCE.contains("selected Block contains no VarDeclaredNames contributor"));
+    assert!(
+        BLOCK_ORACLE_SOURCE.contains("selected Block contains no VarDeclaredNames contributor")
+    );
 }
 
 #[test]
 fn fixture_authored_ranges_and_semantic_code_points_are_exact_utf8() {
     for fixture in FIXTURES {
         let source = SourceText::new(SourceId::new(ISSUE_ID), fixture.source.to_owned());
-        assert_eq!(source.as_str(), fixture.source, "{} exact source", fixture.id);
+        assert_eq!(
+            source.as_str(),
+            fixture.source,
+            "{} exact source",
+            fixture.id
+        );
 
         for name in fixture.names {
             let anchor = source
                 .anchor(name.authored.start, name.authored.end)
                 .unwrap_or_else(|error| panic!("{} invalid anchor: {error}", fixture.id));
-            assert_eq!(anchor.fragment(), name.authored.fragment, "{} fragment", fixture.id);
+            assert_eq!(
+                anchor.fragment(),
+                name.authored.fragment,
+                "{} fragment",
+                fixture.id
+            );
             assert_eq!(anchor.range().start(), name.authored.start);
             assert_eq!(anchor.range().end(), name.authored.end);
 
@@ -598,8 +610,7 @@ fn ee36_r02_collision_matrix_uses_only_script_level_name_domains() {
     for fixture in FIXTURES {
         let intersection = script_lexical_var_intersection(fixture);
         let ExpectedProcessing::Complete {
-            ee36_r02_collision,
-            ..
+            ee36_r02_collision, ..
         } = fixture.processing
         else {
             panic!("positive fixture {} must be complete", fixture.id);
@@ -795,7 +806,11 @@ fn richer_var_forms_and_block_var_remain_explicit_unsupported_controls() {
     ];
 
     for (fixture, expected_reason) in UNSUPPORTED_FIXTURES.iter().zip(expected_reasons) {
-        assert!(!fixture.source.is_empty(), "{} source must be explicit", fixture.id);
+        assert!(
+            !fixture.source.is_empty(),
+            "{} source must be explicit",
+            fixture.id
+        );
         assert!(fixture.names.is_empty());
         assert_eq!(
             fixture.processing,
@@ -820,14 +835,17 @@ fn frozen_completion_and_qualification_remain_fail_closed() {
 fn binding_scope_and_block_var_semantics_remain_external_to_this_oracle() {
     assert!(FLAT_BINDING_SCOPE_SOURCE.contains("NoSameSourceSelectedLexicalBinding"));
     assert!(FLAT_BINDING_SCOPE_SOURCE.contains("SelectedLexicalBindingOrder"));
-    assert!(HIERARCHICAL_BINDING_SCOPE_SOURCE.contains(
-        "NoSelectedLexicalBindingTargetInCoveredRegions"
-    ));
-    assert!(HIERARCHICAL_BINDING_SCOPE_SOURCE.contains(
-        "SelectedOneLevelBlockStaticSemanticsAccepted"
-    ));
+    assert!(
+        HIERARCHICAL_BINDING_SCOPE_SOURCE
+            .contains("NoSelectedLexicalBindingTargetInCoveredRegions")
+    );
+    assert!(
+        HIERARCHICAL_BINDING_SCOPE_SOURCE.contains("SelectedOneLevelBlockStaticSemanticsAccepted")
+    );
     assert!(BLOCK_ORACLE_SOURCE.contains("const SELECTED_VAR_DECLARATION: bool = false;"));
-    assert!(BLOCK_ORACLE_SOURCE.contains("selected Block contains no VarDeclaredNames contributor"));
+    assert!(
+        BLOCK_ORACLE_SOURCE.contains("selected Block contains no VarDeclaredNames contributor")
+    );
 }
 
 #[test]
