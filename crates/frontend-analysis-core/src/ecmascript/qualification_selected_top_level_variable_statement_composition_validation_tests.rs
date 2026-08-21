@@ -146,7 +146,9 @@ fn first_completed_collision(events: &[ExpectedNameEvent]) -> Option<ExpectedCol
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExpectedCompositionDisposition {
     UnsupportedCoverage,
-    DefinitiveGrammarRejection { subject: ExpectedAnchor },
+    DefinitiveGrammarRejection {
+        subject: ExpectedAnchor,
+    },
     AcceptedWithTrailingLexicalEofAsi {
         var_semicolon: ExpectedAnchor,
         trailing_lexical_binding: ExpectedAnchor,
