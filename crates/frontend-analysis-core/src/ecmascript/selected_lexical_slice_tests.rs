@@ -4,7 +4,8 @@ use super::qualification_validation_tests::{gold_source, gold_subject_range};
 use super::selected_lexical_slice::{
     SelectedBindingNameState, SelectedDeclarationTerminator, SelectedInitializerState,
     SelectedInvalidEscapePosition, SelectedLexicalDeclarationKind, SelectedLexicalScript,
-    SelectedLexicalSliceOutcome, recognize_selected_lexical_slice,
+    SelectedLexicalSliceOutcome, SelectedVariableStatementScript, SelectedVariableTopLevelItem,
+    recognize_selected_lexical_slice,
 };
 
 fn source(text: &str) -> SourceText {
@@ -16,6 +17,9 @@ fn recognized(text: &str) -> SelectedLexicalScript {
         SelectedLexicalSliceOutcome::RecognizedSelectedSlice(script) => script,
         SelectedLexicalSliceOutcome::RecognizedOneLevelBlockSlice(_) => {
             panic!("expected flat selected-slice recognition, got Block-enabled slice for {text:?}")
+        }
+        SelectedLexicalSliceOutcome::RecognizedVariableStatementSlice(_) => {
+            panic!("expected flat selected-slice recognition, got var-enabled slice for {text:?}")
         }
         SelectedLexicalSliceOutcome::UnsupportedCoverage => {
             panic!("expected selected-slice recognition, got unsupported coverage for {text:?}")
@@ -36,6 +40,13 @@ fn recognized_block(text: &str) -> super::selected_lexical_slice::SelectedOneLev
     match recognize_selected_lexical_slice(&source(text)) {
         SelectedLexicalSliceOutcome::RecognizedOneLevelBlockSlice(script) => script,
         other => panic!("expected one-level Block recognition for {text:?}, got {other:?}"),
+    }
+}
+
+fn recognized_variable(text: &str) -> SelectedVariableStatementScript {
+    match recognize_selected_lexical_slice(&source(text)) {
+        SelectedLexicalSliceOutcome::RecognizedVariableStatementSlice(script) => script,
+        other => panic!("expected var-enabled recognition for {text:?}, got {other:?}"),
     }
 }
 
@@ -1932,4 +1943,102 @@ fn one_level_block_frontier_does_not_widen_nested_empty_comment_statement_or_asi
         recognize_selected_lexical_slice(&source("let a=1; let x=a;")),
         SelectedLexicalSliceOutcome::RecognizedSelectedSlice(_)
     ));
+}
+
+#[test]
+fn top_level_variable_statement_retains_minimal_source_backed_binding_fact() {
+    for (text, fragment, semantic_name, range) in [
+        ("var x;", "x", "x", (4, 5)),
+        ("var let;", "let", "let", (4, 7)),
+        (r"var \u006Cet;", r"\u006Cet", "let", (4, 12)),
+        (r"var \u0069f;", r"\u0069f", "if", (4, 11)),
+    ] {
+        let script = recognized_variable(text);
+        assert_eq!(script.items().len(), 1, "{text}");
+        let SelectedVariableTopLevelItem::VariableStatement(statement) = &script.items()[0] else {
+            panic!("expected bounded VariableStatement for {text:?}");
+        };
+        let binding = statement.binding();
+        assert_eq!(binding.binding().fragment(), fragment, "{text}");
+        assert_eq!(binding.semantic_name(), Some(semantic_name), "{text}");
+        assert_eq!(
+            (binding.binding().range().start(), binding.binding().range().end()),
+            range,
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn variable_statement_promotes_only_var_bearing_sources_to_distinct_representation() {
+    let script = recognized_variable("let a; { let b; } var c; let d");
+    assert_eq!(script.items().len(), 4);
+    assert!(matches!(
+        script.items()[0],
+        SelectedVariableTopLevelItem::LexicalDeclaration(_)
+    ));
+    assert!(matches!(
+        script.items()[1],
+        SelectedVariableTopLevelItem::Block(_)
+    ));
+    assert!(matches!(
+        script.items()[2],
+        SelectedVariableTopLevelItem::VariableStatement(_)
+    ));
+    let SelectedVariableTopLevelItem::LexicalDeclaration(last) = &script.items()[3] else {
+        panic!("trailing lexical declaration must stay lexical");
+    };
+    assert!(matches!(
+        last.terminator(),
+        SelectedDeclarationTerminator::AutomaticAtEof
+    ));
+
+    assert!(matches!(
+        recognize_selected_lexical_slice(&source("let a; let b;")),
+        SelectedLexicalSliceOutcome::RecognizedSelectedSlice(_)
+    ));
+    assert!(matches!(
+        recognize_selected_lexical_slice(&source("let a; { let b; }")),
+        SelectedLexicalSliceOutcome::RecognizedOneLevelBlockSlice(_)
+    ));
+}
+
+#[test]
+fn variable_statement_frontier_requires_one_top_level_binding_and_authored_semicolon() {
+    for text in [
+        "var x",
+        "var x, y;",
+        "var x = 1;",
+        "var x = y;",
+        "var {x} = y;",
+        "for (var x;;) {}",
+        "{ var x; }",
+        r"var\u{};",
+        r"var\u0061;",
+    ] {
+        assert_unsupported(text);
+    }
+
+    let subject = grammar_rejection(r"var \u{};");
+    assert_eq!(subject.fragment(), r"\u{}");
+    assert_eq!((subject.range().start(), subject.range().end()), (4, 8));
+}
+
+#[test]
+fn variable_statement_authored_semicolon_composes_with_existing_trailing_lexical_eof_asi() {
+    let script = recognized_variable("var x; let y");
+    assert_eq!(script.items().len(), 2);
+    let SelectedVariableTopLevelItem::VariableStatement(statement) = &script.items()[0] else {
+        panic!("first item must be VariableStatement");
+    };
+    assert_eq!(statement.binding().binding().fragment(), "x");
+    let SelectedVariableTopLevelItem::LexicalDeclaration(declaration) = &script.items()[1] else {
+        panic!("second item must be lexical declaration");
+    };
+    assert!(matches!(
+        declaration.terminator(),
+        SelectedDeclarationTerminator::AutomaticAtEof
+    ));
+
+    assert_unsupported("var x");
 }
