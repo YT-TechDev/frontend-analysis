@@ -204,9 +204,11 @@ fn no_selected_same_source_contributor_and_zero_relation_are_complete_source_cla
             .is_no_selected_same_source_contributor()
     );
 
-    let (_, script) = recognized_variable("var a; var a;");
-    let analysis = accepted_analysis(&script);
-    assert!(analysis.relations().is_empty());
+    for text in ["var a; var a;", "var a; var a", "var a"] {
+        let (_, script) = recognized_variable(text);
+        let analysis = accepted_analysis(&script);
+        assert!(analysis.relations().is_empty(), "{text}");
+    }
 }
 
 #[test]
@@ -272,7 +274,6 @@ fn unsupported_and_incomplete_sources_never_reach_var_correspondence() {
     for text in [
         "var a=1; let x=a;",
         "var a; let x=(a);",
-        "var a",
         "var a; { let x=a;",
     ] {
         let source = source(text);
