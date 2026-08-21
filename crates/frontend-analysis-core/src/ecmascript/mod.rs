@@ -37,6 +37,7 @@ mod qualification_selected_one_level_block_validation_tests;
 #[cfg(test)]
 mod qualification_selected_this_expression_initializer_validation_tests;
 #[cfg(test)]
+#[allow(clippy::assertions_on_constants)]
 mod qualification_selected_top_level_variable_statement_validation_tests;
 #[cfg(test)]
 mod qualification_static_semantics_validation_tests;
