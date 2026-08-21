@@ -45,8 +45,9 @@ const CURRENT_COMPLETION_SOURCE: &str =
     include_str!("qualification_validation_tests/selected_one_level_block_slice_completion.rs");
 const BLOCK_ORACLE_SOURCE: &str =
     include_str!("qualification_selected_one_level_block_validation_tests.rs");
-const IDENTIFIER_ORACLE_SOURCE: &str =
-    include_str!("qualification_selected_escaped_reserved_identifier_initializer_validation_tests.rs");
+const IDENTIFIER_ORACLE_SOURCE: &str = include_str!(
+    "qualification_selected_escaped_reserved_identifier_initializer_validation_tests.rs"
+);
 const QUALIFICATION_SOURCE: &str = include_str!("selected_qualification_integration.rs");
 const FLAT_BINDING_SCOPE_SOURCE: &str = include_str!("selected_binding_scope.rs");
 const HIERARCHICAL_BINDING_SCOPE_SOURCE: &str =
@@ -192,30 +193,11 @@ const DUPLICATE_DECLARATION_BINDING: &[ExpectedName] = &[
     name(NameDomain::ScriptLexical, 6, 7, "x", "x", X),
     name(NameDomain::ScriptVar, 13, 14, "x", "x", X),
 ];
-const DIRECT_VAR_LET: &[ExpectedName] = &[name(
-    NameDomain::ScriptVar,
-    4,
-    7,
-    "let",
-    "let",
-    LET,
-)];
-const ESCAPED_VAR_LET: &[ExpectedName] = &[name(
-    NameDomain::ScriptVar,
-    4,
-    12,
-    r"\u006Cet",
-    "let",
-    LET,
-)];
-const ESCAPED_RESERVED_VAR_IF: &[ExpectedName] = &[name(
-    NameDomain::ScriptVar,
-    4,
-    11,
-    r"\u0069f",
-    "if",
-    IF,
-)];
+const DIRECT_VAR_LET: &[ExpectedName] = &[name(NameDomain::ScriptVar, 4, 7, "let", "let", LET)];
+const ESCAPED_VAR_LET: &[ExpectedName] =
+    &[name(NameDomain::ScriptVar, 4, 12, r"\u006Cet", "let", LET)];
+const ESCAPED_RESERVED_VAR_IF: &[ExpectedName] =
+    &[name(NameDomain::ScriptVar, 4, 11, r"\u0069f", "if", IF)];
 
 const fn name(
     domain: NameDomain,
@@ -445,11 +427,7 @@ const UNSUPPORTED_FIXTURES: &[Fixture] = &[
         "var {x} = y;",
         UnsupportedReason::VarDestructuring,
     ),
-    unsupported(
-        "for-var",
-        "for (var x;;) {}",
-        UnsupportedReason::ForVar,
-    ),
+    unsupported("for-var", "for (var x;;) {}", UnsupportedReason::ForVar),
     unsupported("block-var", "{ var x; }", UnsupportedReason::BlockVar),
     unsupported(
         "var-eof-asi-deferred",
@@ -458,11 +436,7 @@ const UNSUPPORTED_FIXTURES: &[Fixture] = &[
     ),
 ];
 
-const fn unsupported(
-    id: &'static str,
-    source: &'static str,
-    reason: UnsupportedReason,
-) -> Fixture {
+const fn unsupported(id: &'static str, source: &'static str, reason: UnsupportedReason) -> Fixture {
     Fixture {
         id,
         source,
@@ -534,13 +508,23 @@ fn fixed_authority_and_refined_research_frontier_are_explicit() {
 fn fixture_authored_ranges_and_semantic_code_points_are_exact_utf8() {
     for fixture in FIXTURES {
         let source = SourceText::new(SourceId::new(ISSUE_ID), fixture.source.to_owned());
-        assert_eq!(source.as_str(), fixture.source, "{} exact source", fixture.id);
+        assert_eq!(
+            source.as_str(),
+            fixture.source,
+            "{} exact source",
+            fixture.id
+        );
 
         for name in fixture.names {
             let anchor = source
                 .anchor(name.authored.start, name.authored.end)
                 .unwrap_or_else(|error| panic!("{} invalid anchor: {error}", fixture.id));
-            assert_eq!(anchor.fragment(), name.authored.fragment, "{} fragment", fixture.id);
+            assert_eq!(
+                anchor.fragment(),
+                name.authored.fragment,
+                "{} fragment",
+                fixture.id
+            );
             assert_eq!(anchor.range().start(), name.authored.start);
             assert_eq!(anchor.range().end(), name.authored.end);
 
@@ -564,7 +548,10 @@ fn ee36_r02_collision_matrix_uses_only_script_level_name_domains() {
             ee36_r02_collision, ..
         } = fixture.processing
         else {
-            panic!("oracle fixture {} must be completely characterized", fixture.id);
+            panic!(
+                "oracle fixture {} must be completely characterized",
+                fixture.id
+            );
         };
 
         match ee36_r02_collision {
@@ -662,13 +649,19 @@ fn variable_binding_identifier_context_does_not_inherit_lexical_only_let_rejecti
         "non-strict-escaped-var-let-remains-contextually-allowed",
     ] {
         let fixture = fixture(fixture_id);
-        assert_eq!(names_in_domain(fixture, NameDomain::ScriptVar), BTreeSet::from(["let"]));
+        assert_eq!(
+            names_in_domain(fixture, NameDomain::ScriptVar),
+            BTreeSet::from(["let"])
+        );
         assert!(names_in_domain(fixture, NameDomain::ScriptLexical).is_empty());
         assert_eq!(fixture.processing, complete_without_rejection());
     }
 
     let reserved = fixture("escaped-reserved-var-remains-ee04-owned");
-    assert_eq!(names_in_domain(reserved, NameDomain::ScriptVar), BTreeSet::from(["if"]));
+    assert_eq!(
+        names_in_domain(reserved, NameDomain::ScriptVar),
+        BTreeSet::from(["if"])
+    );
     assert_eq!(
         reserved.processing,
         ExpectedProcessing::Complete {
@@ -689,7 +682,10 @@ fn block_lexical_names_stay_outside_script_lexically_declared_names() {
         BTreeSet::from(["x"])
     );
     assert!(names_in_domain(block_only, NameDomain::ScriptLexical).is_empty());
-    assert_eq!(names_in_domain(block_only, NameDomain::ScriptVar), BTreeSet::from(["x"]));
+    assert_eq!(
+        names_in_domain(block_only, NameDomain::ScriptVar),
+        BTreeSet::from(["x"])
+    );
     assert!(script_lexical_var_intersection(block_only).is_empty());
 
     let top_and_block = fixture("top-level-lexical-still-collides-across-block-item");
@@ -697,14 +693,20 @@ fn block_lexical_names_stay_outside_script_lexically_declared_names() {
         names_in_domain(top_and_block, NameDomain::BlockLexical),
         BTreeSet::from(["y"])
     );
-    assert_eq!(script_lexical_var_intersection(top_and_block), BTreeSet::from(["x"]));
+    assert_eq!(
+        script_lexical_var_intersection(top_and_block),
+        BTreeSet::from(["x"])
+    );
 }
 
 #[test]
 fn repeated_var_names_alone_do_not_become_a_lexical_var_collision() {
     let repeated = fixture("repeated-var-alone-is-not-lexical-var-collision");
     assert!(names_in_domain(repeated, NameDomain::ScriptLexical).is_empty());
-    assert_eq!(names_in_domain(repeated, NameDomain::ScriptVar), BTreeSet::from(["x"]));
+    assert_eq!(
+        names_in_domain(repeated, NameDomain::ScriptVar),
+        BTreeSet::from(["x"])
+    );
     assert!(script_lexical_var_intersection(repeated).is_empty());
     assert_eq!(repeated.processing, complete_without_rejection());
 }
@@ -747,7 +749,11 @@ fn richer_var_forms_and_block_var_remain_explicit_unsupported_controls() {
     ];
 
     for (fixture, expected_reason) in UNSUPPORTED_FIXTURES.iter().zip(expected_reasons) {
-        assert!(!fixture.source.is_empty(), "{} source must be explicit", fixture.id);
+        assert!(
+            !fixture.source.is_empty(),
+            "{} source must be explicit",
+            fixture.id
+        );
         assert!(fixture.names.is_empty());
         assert_eq!(
             fixture.processing,
