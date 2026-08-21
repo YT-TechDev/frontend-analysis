@@ -60,3 +60,5 @@ mod selected_one_level_block_binding_scope_validation_tests;
 mod selected_qualification_integration_tests;
 #[cfg(test)]
 mod selected_static_semantics_tests;
+#[cfg(test)]
+mod selected_variable_statement_name_correspondence_validation_tests;
