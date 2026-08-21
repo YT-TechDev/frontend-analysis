@@ -6,7 +6,7 @@
 //! routing. It does not call production recognition, static semantics,
 //! qualification, or Binding / Scope analyzers to derive expected meaning.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{SourceId, SourceText};
 
@@ -102,6 +102,20 @@ const INVERSE_ORDER_EVENTS: &[ExpectedNameEvent] = &[
     event(NameDomain::ScriptVar, "x", 18, 19, "x"),
     event(NameDomain::ScriptLexical, "x", 25, 26, "x"),
 ];
+
+fn colliding_names(events: &[ExpectedNameEvent]) -> BTreeSet<&'static str> {
+    let lexical: BTreeSet<_> = events
+        .iter()
+        .filter(|event| event.domain == NameDomain::ScriptLexical)
+        .map(|event| event.semantic_name)
+        .collect();
+    let vars: BTreeSet<_> = events
+        .iter()
+        .filter(|event| event.domain == NameDomain::ScriptVar)
+        .map(|event| event.semantic_name)
+        .collect();
+    lexical.intersection(&vars).copied().collect()
+}
 
 fn first_completed_collision(events: &[ExpectedNameEvent]) -> Option<ExpectedCollision> {
     let mut first_lexical_by_name: BTreeMap<&str, ExpectedAnchor> = BTreeMap::new();
@@ -225,6 +239,9 @@ fn authority_and_candidate_independence_are_explicit() {
     assert!(TERMINAL_COMPOSITION_ORACLE.contains(r#"source: r"{ let\u{}; }""#));
     assert!(TERMINAL_COMPOSITION_ORACLE.contains(r#"source: r"{ const\u{}; }""#));
     assert!(TERMINAL_COMPOSITION_ORACLE.contains("EOF_COMPOSITION_FIXTURES"));
+    assert!(TERMINAL_COMPOSITION_ORACLE.contains(
+        "only_the_final_declaration_may_use_the_eof_only_policy"
+    ));
 
     for (left, right) in [
         ("recognize_selected_lexical_", "slice("),
@@ -248,6 +265,7 @@ fn multi_collision_primary_is_first_collision_completed_in_authored_order() {
     for event in MULTI_COLLISION_EVENTS {
         assert_anchor(source, event.authored);
     }
+    assert_eq!(colliding_names(MULTI_COLLISION_EVENTS), BTreeSet::from(["x", "y"]));
 
     let collision = first_completed_collision(MULTI_COLLISION_EVENTS)
         .expect("multi-collision fixture must contain a collision");
@@ -268,6 +286,7 @@ fn repeated_var_preserves_first_var_provenance_until_lexical_collision_completes
     for event in REPEATED_VAR_EVENTS {
         assert_anchor(source, event.authored);
     }
+    assert_eq!(colliding_names(REPEATED_VAR_EVENTS), BTreeSet::from(["x"]));
 
     let collision = first_completed_collision(REPEATED_VAR_EVENTS)
         .expect("repeated-var fixture must eventually contain a lexical/var collision");
@@ -288,6 +307,7 @@ fn inverse_order_control_falsifies_always_lexical_or_hash_iteration_primary_sele
     for event in INVERSE_ORDER_EVENTS {
         assert_anchor(source, event.authored);
     }
+    assert_eq!(colliding_names(INVERSE_ORDER_EVENTS), BTreeSet::from(["x", "y"]));
 
     let collision = first_completed_collision(INVERSE_ORDER_EVENTS)
         .expect("inverse-order fixture must contain a collision");
