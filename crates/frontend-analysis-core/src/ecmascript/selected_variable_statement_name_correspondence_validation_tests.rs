@@ -46,6 +46,7 @@ const _: () = {
 
 const AUTHORED_VAR_BOUNDARY: &str =
     "authored VariableDeclaration provenance != unique runtime binding identity";
+const GLOBAL_VAR_REUSE_BOUNDARY: &str = "one authored global var declaration may reuse a pre-existing global-object-backed binding/property and does not prove creation of a new runtime binding";
 const VAR_CORRESPONDENCE_BOUNDARY: &str =
     "same-source selected var contributor != runtime ResolveBinding target";
 const LEXICAL_CORRESPONDENCE_BOUNDARY: &str = "visible selected lexical binding != proof of runtime binding instantiation != proof of ResolveBinding success != proof that execution reached the reference";
@@ -596,6 +597,7 @@ fn fixed_envelope_and_negative_runtime_boundaries_are_explicit() {
         AUTHORED_VAR_BOUNDARY,
         "authored VariableDeclaration provenance != unique runtime binding identity"
     );
+    assert!(GLOBAL_VAR_REUSE_BOUNDARY.contains("does not prove creation of a new runtime binding"));
     assert_eq!(
         VAR_CORRESPONDENCE_BOUNDARY,
         "same-source selected var contributor != runtime ResolveBinding target"
