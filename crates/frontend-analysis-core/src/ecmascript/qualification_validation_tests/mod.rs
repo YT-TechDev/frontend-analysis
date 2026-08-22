@@ -7,6 +7,7 @@ mod inventory;
 mod model;
 mod selected_one_level_block_slice_completion;
 mod selected_slice_completion;
+mod selected_variable_statement_decimal_initializer_frontier;
 mod selected_variable_statement_eof_asi_frontier;
 mod selected_variable_statement_multi_declarator_frontier;
 mod selected_variable_statement_slice_completion;
