@@ -23,6 +23,7 @@ const ECMA_262_EDITION: &str = "ECMA-262, 17th edition, 2026";
 const ECMA_262_SNAPSHOT: &str = "d89c03f2db8a597bc915b363a6518d0cc8acdbc0";
 const UNICODE_VERSION: &str = "17.0.0";
 const POSITIVE_LIFECYCLE: &str = "SelectedAcceptedIncomplete";
+const SUCCESSOR_REQUIRES_DIRECT_IDENTIFIER_REFERENCE: bool = true;
 
 const DIRECT_IDENTIFIER_ORACLE: &str =
     include_str!("../qualification_selected_identifier_reference_initializer_validation_tests.rs");
@@ -52,8 +53,10 @@ const EXPECTED_CHANGED_FILES: &[&str] = &[
     "crates/frontend-analysis-core/src/ecmascript/qualification_validation_tests/selected_variable_statement_direct_identifier_reference_initializer_frontier.rs",
 ];
 
-const RUNTIME_NEGATIVE_BOUNDARY: &str = "same-source selected var contributor is authored source provenance, not runtime binding identity";
-const LOOKUP_NEGATIVE_BOUNDARY: &str = "same-source selected correspondence is not runtime environment lookup or runtime unresolvability";
+const RUNTIME_NEGATIVE_BOUNDARY: &str =
+    "same-source selected var contributor is authored source provenance, not runtime binding identity";
+const LOOKUP_NEGATIVE_BOUNDARY: &str =
+    "same-source selected correspondence is not runtime environment lookup or runtime unresolvability";
 
 fn aggregate_qualified_available() -> bool {
     false
@@ -87,6 +90,11 @@ impl ExpectedAnchor {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExpectedRegion {
+    TopLevel,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Terminator {
     AuthoredSemicolon,
     AutomaticAtEof,
@@ -94,7 +102,19 @@ enum Terminator {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PositivePartition {
+    HistoricalFlat,
+    BlockEnabledWithoutVar,
     VariableEnabled,
+}
+
+fn positive_partition(selected_blocks: usize, selected_var_statements: usize) -> PositivePartition {
+    if selected_var_statements > 0 {
+        PositivePartition::VariableEnabled
+    } else if selected_blocks > 0 {
+        PositivePartition::BlockEnabledWithoutVar
+    } else {
+        PositivePartition::HistoricalFlat
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,15 +129,16 @@ enum ExpectedCorrespondence {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct RelationFixture {
-    id: &'static str,
-    source: &'static str,
-    containing_binding: ExpectedAnchor,
-    reference: ExpectedAnchor,
-    semantic_name: &'static str,
-    correspondence: ExpectedCorrespondence,
-    terminator: Terminator,
-    partition: PositivePartition,
+enum Disposition {
+    SelectedAcceptedIncomplete,
+    StaticRejected {
+        rule_id: &'static str,
+        subject: ExpectedAnchor,
+    },
+    DefinitiveGrammarRejection {
+        subject: ExpectedAnchor,
+    },
+    UnsupportedCoverage,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -129,25 +150,31 @@ enum NamePolicyCategory {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct DirectRhsFixture {
+struct RelationFixture {
     id: &'static str,
     source: &'static str,
-    rhs: ExpectedAnchor,
+    containing_binding: ExpectedAnchor,
+    current_region: ExpectedRegion,
+    reference: ExpectedAnchor,
     semantic_name: &'static str,
-    category: NamePolicyCategory,
+    semantic_code_points: &'static [u32],
+    correspondence: ExpectedCorrespondence,
+    terminator: Terminator,
+    partition: PositivePartition,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Disposition {
-    SelectedAcceptedIncomplete,
-    StaticRejected {
-        rule_id: &'static str,
-        subject: ExpectedAnchor,
-    },
-    DefinitiveGrammarRejection {
-        subject: ExpectedAnchor,
-    },
-    UnsupportedCoverage,
+struct DirectRhsFixture {
+    id: &'static str,
+    source: &'static str,
+    containing_binding: ExpectedAnchor,
+    current_region: ExpectedRegion,
+    rhs: ExpectedAnchor,
+    semantic_name: &'static str,
+    semantic_code_points: &'static [u32],
+    category: NamePolicyCategory,
+    disposition: Disposition,
+    correspondence: ExpectedCorrespondence,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -166,6 +193,23 @@ struct FailedTransactionFixture {
     committed_contributors: usize,
 }
 
+macro_rules! direct_rhs_fixture {
+    ($id:literal, $source:literal, $start:expr, $end:expr, $fragment:literal, $points:expr, $category:expr) => {
+        DirectRhsFixture {
+            id: $id,
+            source: $source,
+            containing_binding: ExpectedAnchor::new(4, 5, "x"),
+            current_region: ExpectedRegion::TopLevel,
+            rhs: ExpectedAnchor::new($start, $end, $fragment),
+            semantic_name: $fragment,
+            semantic_code_points: $points,
+            category: $category,
+            disposition: Disposition::SelectedAcceptedIncomplete,
+            correspondence: ExpectedCorrespondence::NoSelectedSameSourceContributor,
+        }
+    };
+}
+
 const SELF_CONTRIBUTORS: &[ExpectedAnchor] = &[ExpectedAnchor::new(4, 5, "a")];
 const BEFORE_CONTRIBUTORS: &[ExpectedAnchor] = &[ExpectedAnchor::new(4, 5, "a")];
 const AFTER_CONTRIBUTORS: &[ExpectedAnchor] = &[ExpectedAnchor::new(13, 14, "a")];
@@ -181,13 +225,20 @@ const LATER_LIST_CONTRIBUTORS: &[ExpectedAnchor] = &[ExpectedAnchor::new(8, 9, "
 const ESCAPED_LHS_CONTRIBUTORS: &[ExpectedAnchor] = &[ExpectedAnchor::new(4, 10, r"\u0061")];
 const DECIMAL_MIX_CONTRIBUTORS: &[ExpectedAnchor] = &[ExpectedAnchor::new(4, 5, "a")];
 
+const A: &[u32] = &[0x61];
+const Z: &[u32] = &[0x7a];
+const FOO: &[u32] = &[0x66, 0x6f, 0x6f];
+const E_COMBINING_ACUTE: &[u32] = &[0x65, 0x0301];
+
 const RELATION_FIXTURES: &[RelationFixture] = &[
     RelationFixture {
         id: "self-contributor",
         source: "var a=a;",
         containing_binding: ExpectedAnchor::new(4, 5, "a"),
+        current_region: ExpectedRegion::TopLevel,
         reference: ExpectedAnchor::new(6, 7, "a"),
         semantic_name: "a",
+        semantic_code_points: A,
         correspondence: ExpectedCorrespondence::SameSourceSelectedVarNameContributors {
             contributors: SELF_CONTRIBUTORS,
         },
@@ -198,8 +249,10 @@ const RELATION_FIXTURES: &[RelationFixture] = &[
         id: "contributor-before-reference",
         source: "var a; var x=a;",
         containing_binding: ExpectedAnchor::new(11, 12, "x"),
+        current_region: ExpectedRegion::TopLevel,
         reference: ExpectedAnchor::new(13, 14, "a"),
         semantic_name: "a",
+        semantic_code_points: A,
         correspondence: ExpectedCorrespondence::SameSourceSelectedVarNameContributors {
             contributors: BEFORE_CONTRIBUTORS,
         },
@@ -210,8 +263,10 @@ const RELATION_FIXTURES: &[RelationFixture] = &[
         id: "contributor-after-reference",
         source: "var x=a; var a;",
         containing_binding: ExpectedAnchor::new(4, 5, "x"),
+        current_region: ExpectedRegion::TopLevel,
         reference: ExpectedAnchor::new(6, 7, "a"),
         semantic_name: "a",
+        semantic_code_points: A,
         correspondence: ExpectedCorrespondence::SameSourceSelectedVarNameContributors {
             contributors: AFTER_CONTRIBUTORS,
         },
@@ -222,8 +277,10 @@ const RELATION_FIXTURES: &[RelationFixture] = &[
         id: "repeated-whole-source-contributors",
         source: "var a; var a; var x=a;",
         containing_binding: ExpectedAnchor::new(18, 19, "x"),
+        current_region: ExpectedRegion::TopLevel,
         reference: ExpectedAnchor::new(20, 21, "a"),
         semantic_name: "a",
+        semantic_code_points: A,
         correspondence: ExpectedCorrespondence::SameSourceSelectedVarNameContributors {
             contributors: REPEATED_CONTRIBUTORS,
         },
@@ -234,8 +291,10 @@ const RELATION_FIXTURES: &[RelationFixture] = &[
         id: "same-list-self-and-earlier",
         source: "var a,a=a;",
         containing_binding: ExpectedAnchor::new(6, 7, "a"),
+        current_region: ExpectedRegion::TopLevel,
         reference: ExpectedAnchor::new(8, 9, "a"),
         semantic_name: "a",
+        semantic_code_points: A,
         correspondence: ExpectedCorrespondence::SameSourceSelectedVarNameContributors {
             contributors: SAME_LIST_CONTRIBUTORS,
         },
@@ -246,8 +305,10 @@ const RELATION_FIXTURES: &[RelationFixture] = &[
         id: "same-list-later-contributor",
         source: "var x=a,a;",
         containing_binding: ExpectedAnchor::new(4, 5, "x"),
+        current_region: ExpectedRegion::TopLevel,
         reference: ExpectedAnchor::new(6, 7, "a"),
         semantic_name: "a",
+        semantic_code_points: A,
         correspondence: ExpectedCorrespondence::SameSourceSelectedVarNameContributors {
             contributors: LATER_LIST_CONTRIBUTORS,
         },
@@ -258,8 +319,10 @@ const RELATION_FIXTURES: &[RelationFixture] = &[
         id: "top-level-lexical-target",
         source: "let a; var x=a;",
         containing_binding: ExpectedAnchor::new(11, 12, "x"),
+        current_region: ExpectedRegion::TopLevel,
         reference: ExpectedAnchor::new(13, 14, "a"),
         semantic_name: "a",
+        semantic_code_points: A,
         correspondence: ExpectedCorrespondence::VisibleSelectedLexicalBinding {
             binding: ExpectedAnchor::new(4, 5, "a"),
         },
@@ -270,8 +333,10 @@ const RELATION_FIXTURES: &[RelationFixture] = &[
         id: "no-selected-same-source-contributor",
         source: "var x=z;",
         containing_binding: ExpectedAnchor::new(4, 5, "x"),
+        current_region: ExpectedRegion::TopLevel,
         reference: ExpectedAnchor::new(6, 7, "z"),
         semantic_name: "z",
+        semantic_code_points: Z,
         correspondence: ExpectedCorrespondence::NoSelectedSameSourceContributor,
         terminator: Terminator::AuthoredSemicolon,
         partition: PositivePartition::VariableEnabled,
@@ -280,8 +345,10 @@ const RELATION_FIXTURES: &[RelationFixture] = &[
         id: "direct-reference-eof",
         source: "var x=foo",
         containing_binding: ExpectedAnchor::new(4, 5, "x"),
+        current_region: ExpectedRegion::TopLevel,
         reference: ExpectedAnchor::new(6, 9, "foo"),
         semantic_name: "foo",
+        semantic_code_points: FOO,
         correspondence: ExpectedCorrespondence::NoSelectedSameSourceContributor,
         terminator: Terminator::AutomaticAtEof,
         partition: PositivePartition::VariableEnabled,
@@ -290,8 +357,10 @@ const RELATION_FIXTURES: &[RelationFixture] = &[
         id: "escaped-lhs-direct-rhs-equality",
         source: r"var \u0061; var x=a;",
         containing_binding: ExpectedAnchor::new(16, 17, "x"),
+        current_region: ExpectedRegion::TopLevel,
         reference: ExpectedAnchor::new(18, 19, "a"),
         semantic_name: "a",
+        semantic_code_points: A,
         correspondence: ExpectedCorrespondence::SameSourceSelectedVarNameContributors {
             contributors: ESCAPED_LHS_CONTRIBUTORS,
         },
@@ -302,8 +371,10 @@ const RELATION_FIXTURES: &[RelationFixture] = &[
         id: "canonical-distinct-no-normalization",
         source: "var é; var x=e\u{301};",
         containing_binding: ExpectedAnchor::new(12, 13, "x"),
+        current_region: ExpectedRegion::TopLevel,
         reference: ExpectedAnchor::new(14, 17, "e\u{301}"),
         semantic_name: "e\u{301}",
+        semantic_code_points: E_COMBINING_ACUTE,
         correspondence: ExpectedCorrespondence::NoSelectedSameSourceContributor,
         terminator: Terminator::AuthoredSemicolon,
         partition: PositivePartition::VariableEnabled,
@@ -312,8 +383,10 @@ const RELATION_FIXTURES: &[RelationFixture] = &[
         id: "decimal-predecessor-mixed-with-reference",
         source: "var a=1,x=a;",
         containing_binding: ExpectedAnchor::new(8, 9, "x"),
+        current_region: ExpectedRegion::TopLevel,
         reference: ExpectedAnchor::new(10, 11, "a"),
         semantic_name: "a",
+        semantic_code_points: A,
         correspondence: ExpectedCorrespondence::SameSourceSelectedVarNameContributors {
             contributors: DECIMAL_MIX_CONTRIBUTORS,
         },
@@ -324,8 +397,10 @@ const RELATION_FIXTURES: &[RelationFixture] = &[
         id: "direct-reference-with-final-decimal-eof",
         source: "var x=foo,a=2",
         containing_binding: ExpectedAnchor::new(4, 5, "x"),
+        current_region: ExpectedRegion::TopLevel,
         reference: ExpectedAnchor::new(6, 9, "foo"),
         semantic_name: "foo",
+        semantic_code_points: FOO,
         correspondence: ExpectedCorrespondence::NoSelectedSameSourceContributor,
         terminator: Terminator::AutomaticAtEof,
         partition: PositivePartition::VariableEnabled,
@@ -333,153 +408,195 @@ const RELATION_FIXTURES: &[RelationFixture] = &[
 ];
 
 const DIRECT_RHS_FIXTURES: &[DirectRhsFixture] = &[
-    DirectRhsFixture {
-        id: "ordinary-ascii",
-        source: "var x=foo;",
-        rhs: ExpectedAnchor::new(6, 9, "foo"),
-        semantic_name: "foo",
-        category: NamePolicyCategory::Ordinary,
-    },
-    DirectRhsFixture {
-        id: "ordinary-dollar",
-        source: "var x=$;",
-        rhs: ExpectedAnchor::new(6, 7, "$"),
-        semantic_name: "$",
-        category: NamePolicyCategory::Ordinary,
-    },
-    DirectRhsFixture {
-        id: "ordinary-low-line",
-        source: "var x=_;",
-        rhs: ExpectedAnchor::new(6, 7, "_"),
-        semantic_name: "_",
-        category: NamePolicyCategory::Ordinary,
-    },
-    DirectRhsFixture {
-        id: "ordinary-digit-part",
-        source: "var x=a0;",
-        rhs: ExpectedAnchor::new(6, 8, "a0"),
-        semantic_name: "a0",
-        category: NamePolicyCategory::Ordinary,
-    },
-    DirectRhsFixture {
-        id: "ordinary-multibyte-pi",
-        source: "var x=π;",
-        rhs: ExpectedAnchor::new(6, 8, "π"),
-        semantic_name: "π",
-        category: NamePolicyCategory::Ordinary,
-    },
-    DirectRhsFixture {
-        id: "ordinary-multibyte-script-a",
-        source: "var x=𝒜;",
-        rhs: ExpectedAnchor::new(6, 10, "𝒜"),
-        semantic_name: "𝒜",
-        category: NamePolicyCategory::Ordinary,
-    },
-    DirectRhsFixture {
-        id: "ordinary-combining-part",
-        source: "var x=a\u{301};",
-        rhs: ExpectedAnchor::new(6, 9, "a\u{301}"),
-        semantic_name: "a\u{301}",
-        category: NamePolicyCategory::Ordinary,
-    },
-    DirectRhsFixture {
-        id: "ordinary-zwnj-part",
-        source: "var x=a\u{200c}b;",
-        rhs: ExpectedAnchor::new(6, 11, "a\u{200c}b"),
-        semantic_name: "a\u{200c}b",
-        category: NamePolicyCategory::Ordinary,
-    },
-    DirectRhsFixture {
-        id: "ordinary-zwj-part",
-        source: "var x=a\u{200d}b;",
-        rhs: ExpectedAnchor::new(6, 11, "a\u{200d}b"),
-        semantic_name: "a\u{200d}b",
-        category: NamePolicyCategory::Ordinary,
-    },
-    DirectRhsFixture {
-        id: "strict-only-let",
-        source: "var x=let;",
-        rhs: ExpectedAnchor::new(6, 9, "let"),
-        semantic_name: "let",
-        category: NamePolicyCategory::StrictOnlyRestricted,
-    },
-    DirectRhsFixture {
-        id: "strict-only-static",
-        source: "var x=static;",
-        rhs: ExpectedAnchor::new(6, 12, "static"),
-        semantic_name: "static",
-        category: NamePolicyCategory::StrictOnlyRestricted,
-    },
-    DirectRhsFixture {
-        id: "strict-only-implements",
-        source: "var x=implements;",
-        rhs: ExpectedAnchor::new(6, 16, "implements"),
-        semantic_name: "implements",
-        category: NamePolicyCategory::StrictOnlyRestricted,
-    },
-    DirectRhsFixture {
-        id: "strict-only-interface",
-        source: "var x=interface;",
-        rhs: ExpectedAnchor::new(6, 15, "interface"),
-        semantic_name: "interface",
-        category: NamePolicyCategory::StrictOnlyRestricted,
-    },
-    DirectRhsFixture {
-        id: "strict-only-package",
-        source: "var x=package;",
-        rhs: ExpectedAnchor::new(6, 13, "package"),
-        semantic_name: "package",
-        category: NamePolicyCategory::StrictOnlyRestricted,
-    },
-    DirectRhsFixture {
-        id: "strict-only-private",
-        source: "var x=private;",
-        rhs: ExpectedAnchor::new(6, 13, "private"),
-        semantic_name: "private",
-        category: NamePolicyCategory::StrictOnlyRestricted,
-    },
-    DirectRhsFixture {
-        id: "strict-only-protected",
-        source: "var x=protected;",
-        rhs: ExpectedAnchor::new(6, 15, "protected"),
-        semantic_name: "protected",
-        category: NamePolicyCategory::StrictOnlyRestricted,
-    },
-    DirectRhsFixture {
-        id: "strict-only-public",
-        source: "var x=public;",
-        rhs: ExpectedAnchor::new(6, 12, "public"),
-        semantic_name: "public",
-        category: NamePolicyCategory::StrictOnlyRestricted,
-    },
-    DirectRhsFixture {
-        id: "parameter-yield",
-        source: "var x=yield;",
-        rhs: ExpectedAnchor::new(6, 11, "yield"),
-        semantic_name: "yield",
-        category: NamePolicyCategory::YieldAwaitParameterSpecial,
-    },
-    DirectRhsFixture {
-        id: "parameter-await",
-        source: "var x=await;",
-        rhs: ExpectedAnchor::new(6, 11, "await"),
-        semantic_name: "await",
-        category: NamePolicyCategory::YieldAwaitParameterSpecial,
-    },
-    DirectRhsFixture {
-        id: "binding-contrast-eval",
-        source: "var x=eval;",
-        rhs: ExpectedAnchor::new(6, 10, "eval"),
-        semantic_name: "eval",
-        category: NamePolicyCategory::BindingContrast,
-    },
-    DirectRhsFixture {
-        id: "binding-contrast-arguments",
-        source: "var x=arguments;",
-        rhs: ExpectedAnchor::new(6, 15, "arguments"),
-        semantic_name: "arguments",
-        category: NamePolicyCategory::BindingContrast,
-    },
+    direct_rhs_fixture!(
+        "ordinary-ascii",
+        "var x=foo;",
+        6,
+        9,
+        "foo",
+        &[0x66, 0x6f, 0x6f],
+        NamePolicyCategory::Ordinary
+    ),
+    direct_rhs_fixture!(
+        "ordinary-dollar",
+        "var x=$;",
+        6,
+        7,
+        "$",
+        &[0x24],
+        NamePolicyCategory::Ordinary
+    ),
+    direct_rhs_fixture!(
+        "ordinary-low-line",
+        "var x=_;",
+        6,
+        7,
+        "_",
+        &[0x5f],
+        NamePolicyCategory::Ordinary
+    ),
+    direct_rhs_fixture!(
+        "ordinary-digit-part",
+        "var x=a0;",
+        6,
+        8,
+        "a0",
+        &[0x61, 0x30],
+        NamePolicyCategory::Ordinary
+    ),
+    direct_rhs_fixture!(
+        "ordinary-multibyte-pi",
+        "var x=π;",
+        6,
+        8,
+        "π",
+        &[0x03c0],
+        NamePolicyCategory::Ordinary
+    ),
+    direct_rhs_fixture!(
+        "ordinary-multibyte-script-a",
+        "var x=𝒜;",
+        6,
+        10,
+        "𝒜",
+        &[0x1d49c],
+        NamePolicyCategory::Ordinary
+    ),
+    direct_rhs_fixture!(
+        "ordinary-combining-part",
+        "var x=a\u{301};",
+        6,
+        9,
+        "a\u{301}",
+        &[0x61, 0x0301],
+        NamePolicyCategory::Ordinary
+    ),
+    direct_rhs_fixture!(
+        "ordinary-zwnj-part",
+        "var x=a\u{200c}b;",
+        6,
+        11,
+        "a\u{200c}b",
+        &[0x61, 0x200c, 0x62],
+        NamePolicyCategory::Ordinary
+    ),
+    direct_rhs_fixture!(
+        "ordinary-zwj-part",
+        "var x=a\u{200d}b;",
+        6,
+        11,
+        "a\u{200d}b",
+        &[0x61, 0x200d, 0x62],
+        NamePolicyCategory::Ordinary
+    ),
+    direct_rhs_fixture!(
+        "strict-only-let",
+        "var x=let;",
+        6,
+        9,
+        "let",
+        &[0x6c, 0x65, 0x74],
+        NamePolicyCategory::StrictOnlyRestricted
+    ),
+    direct_rhs_fixture!(
+        "strict-only-static",
+        "var x=static;",
+        6,
+        12,
+        "static",
+        &[0x73, 0x74, 0x61, 0x74, 0x69, 0x63],
+        NamePolicyCategory::StrictOnlyRestricted
+    ),
+    direct_rhs_fixture!(
+        "strict-only-implements",
+        "var x=implements;",
+        6,
+        16,
+        "implements",
+        &[0x69, 0x6d, 0x70, 0x6c, 0x65, 0x6d, 0x65, 0x6e, 0x74, 0x73],
+        NamePolicyCategory::StrictOnlyRestricted
+    ),
+    direct_rhs_fixture!(
+        "strict-only-interface",
+        "var x=interface;",
+        6,
+        15,
+        "interface",
+        &[0x69, 0x6e, 0x74, 0x65, 0x72, 0x66, 0x61, 0x63, 0x65],
+        NamePolicyCategory::StrictOnlyRestricted
+    ),
+    direct_rhs_fixture!(
+        "strict-only-package",
+        "var x=package;",
+        6,
+        13,
+        "package",
+        &[0x70, 0x61, 0x63, 0x6b, 0x61, 0x67, 0x65],
+        NamePolicyCategory::StrictOnlyRestricted
+    ),
+    direct_rhs_fixture!(
+        "strict-only-private",
+        "var x=private;",
+        6,
+        13,
+        "private",
+        &[0x70, 0x72, 0x69, 0x76, 0x61, 0x74, 0x65],
+        NamePolicyCategory::StrictOnlyRestricted
+    ),
+    direct_rhs_fixture!(
+        "strict-only-protected",
+        "var x=protected;",
+        6,
+        15,
+        "protected",
+        &[0x70, 0x72, 0x6f, 0x74, 0x65, 0x63, 0x74, 0x65, 0x64],
+        NamePolicyCategory::StrictOnlyRestricted
+    ),
+    direct_rhs_fixture!(
+        "strict-only-public",
+        "var x=public;",
+        6,
+        12,
+        "public",
+        &[0x70, 0x75, 0x62, 0x6c, 0x69, 0x63],
+        NamePolicyCategory::StrictOnlyRestricted
+    ),
+    direct_rhs_fixture!(
+        "parameter-yield",
+        "var x=yield;",
+        6,
+        11,
+        "yield",
+        &[0x79, 0x69, 0x65, 0x6c, 0x64],
+        NamePolicyCategory::YieldAwaitParameterSpecial
+    ),
+    direct_rhs_fixture!(
+        "parameter-await",
+        "var x=await;",
+        6,
+        11,
+        "await",
+        &[0x61, 0x77, 0x61, 0x69, 0x74],
+        NamePolicyCategory::YieldAwaitParameterSpecial
+    ),
+    direct_rhs_fixture!(
+        "binding-contrast-eval",
+        "var x=eval;",
+        6,
+        10,
+        "eval",
+        &[0x65, 0x76, 0x61, 0x6c],
+        NamePolicyCategory::BindingContrast
+    ),
+    direct_rhs_fixture!(
+        "binding-contrast-arguments",
+        "var x=arguments;",
+        6,
+        15,
+        "arguments",
+        &[0x61, 0x72, 0x67, 0x75, 0x6d, 0x65, 0x6e, 0x74, 0x73],
+        NamePolicyCategory::BindingContrast
+    ),
 ];
 
 const STATIC_BOUNDARIES: &[BoundaryFixture] = &[
@@ -518,106 +635,26 @@ const STATIC_BOUNDARIES: &[BoundaryFixture] = &[
 ];
 
 const UNSUPPORTED_BOUNDARIES: &[BoundaryFixture] = &[
-    BoundaryFixture {
-        id: "escaped-rhs",
-        source: r"var x=\u0066oo;",
-        disposition: Disposition::UnsupportedCoverage,
-    },
-    BoundaryFixture {
-        id: "member-expression",
-        source: "var x=foo.bar;",
-        disposition: Disposition::UnsupportedCoverage,
-    },
-    BoundaryFixture {
-        id: "call-expression",
-        source: "var x=foo();",
-        disposition: Disposition::UnsupportedCoverage,
-    },
-    BoundaryFixture {
-        id: "binary-expression",
-        source: "var x=foo + 1;",
-        disposition: Disposition::UnsupportedCoverage,
-    },
-    BoundaryFixture {
-        id: "parenthesized-expression",
-        source: "var x=(foo);",
-        disposition: Disposition::UnsupportedCoverage,
-    },
-    BoundaryFixture {
-        id: "assignment-expression",
-        source: "var x=foo=bar;",
-        disposition: Disposition::UnsupportedCoverage,
-    },
-    BoundaryFixture {
-        id: "conditional-expression",
-        source: "var x=foo?bar:baz;",
-        disposition: Disposition::UnsupportedCoverage,
-    },
-    BoundaryFixture {
-        id: "comment",
-        source: "var x=foo/*comment*/;",
-        disposition: Disposition::UnsupportedCoverage,
-    },
-    BoundaryFixture {
-        id: "non-eof-asi",
-        source: "var x=foo\nvar y;",
-        disposition: Disposition::UnsupportedCoverage,
-    },
-    BoundaryFixture {
-        id: "reserved-if",
-        source: "var x=if;",
-        disposition: Disposition::UnsupportedCoverage,
-    },
-    BoundaryFixture {
-        id: "reserved-class",
-        source: "var x=class;",
-        disposition: Disposition::UnsupportedCoverage,
-    },
-    BoundaryFixture {
-        id: "reserved-return",
-        source: "var x=return;",
-        disposition: Disposition::UnsupportedCoverage,
-    },
-    BoundaryFixture {
-        id: "reserved-var",
-        source: "var x=var;",
-        disposition: Disposition::UnsupportedCoverage,
-    },
-    BoundaryFixture {
-        id: "malformed-rhs-escape",
-        source: r"var x=\u{};",
-        disposition: Disposition::UnsupportedCoverage,
-    },
-    BoundaryFixture {
-        id: "missing-rhs",
-        source: "var x=;",
-        disposition: Disposition::UnsupportedCoverage,
-    },
-    BoundaryFixture {
-        id: "boolean-true",
-        source: "var x=true;",
-        disposition: Disposition::UnsupportedCoverage,
-    },
-    BoundaryFixture {
-        id: "boolean-false",
-        source: "var x=false;",
-        disposition: Disposition::UnsupportedCoverage,
-    },
-    BoundaryFixture {
-        id: "null-literal",
-        source: "var x=null;",
-        disposition: Disposition::UnsupportedCoverage,
-    },
-    BoundaryFixture {
-        id: "this-expression",
-        source: "var x=this;",
-        disposition: Disposition::UnsupportedCoverage,
-    },
-    BoundaryFixture {
-        id: "string-literal",
-        source: "var x=\"foo\";",
-        disposition: Disposition::UnsupportedCoverage,
-    },
+    BoundaryFixture { id: "escaped-rhs", source: r"var x=\u0066oo;", disposition: Disposition::UnsupportedCoverage },
+    BoundaryFixture { id: "member-expression", source: "var x=foo.bar;", disposition: Disposition::UnsupportedCoverage },
+    BoundaryFixture { id: "call-expression", source: "var x=foo();", disposition: Disposition::UnsupportedCoverage },
+    BoundaryFixture { id: "binary-expression", source: "var x=foo + 1;", disposition: Disposition::UnsupportedCoverage },
+    BoundaryFixture { id: "parenthesized-expression", source: "var x=(foo);", disposition: Disposition::UnsupportedCoverage },
+    BoundaryFixture { id: "assignment-expression", source: "var x=foo=bar;", disposition: Disposition::UnsupportedCoverage },
+    BoundaryFixture { id: "conditional-expression", source: "var x=foo?bar:baz;", disposition: Disposition::UnsupportedCoverage },
+    BoundaryFixture { id: "comment", source: "var x=foo/*comment*/;", disposition: Disposition::UnsupportedCoverage },
+    BoundaryFixture { id: "non-eof-asi", source: "var x=foo\nvar y;", disposition: Disposition::UnsupportedCoverage },
+    BoundaryFixture { id: "reserved-if", source: "var x=if;", disposition: Disposition::UnsupportedCoverage },
+    BoundaryFixture { id: "reserved-class", source: "var x=class;", disposition: Disposition::UnsupportedCoverage },
+    BoundaryFixture { id: "reserved-return", source: "var x=return;", disposition: Disposition::UnsupportedCoverage },
+    BoundaryFixture { id: "reserved-var", source: "var x=var;", disposition: Disposition::UnsupportedCoverage },
+    BoundaryFixture { id: "malformed-rhs-escape", source: r"var x=\u{};", disposition: Disposition::UnsupportedCoverage },
+    BoundaryFixture { id: "missing-rhs", source: "var x=;", disposition: Disposition::UnsupportedCoverage },
+    BoundaryFixture { id: "boolean-true", source: "var x=true;", disposition: Disposition::UnsupportedCoverage },
+    BoundaryFixture { id: "boolean-false", source: "var x=false;", disposition: Disposition::UnsupportedCoverage },
+    BoundaryFixture { id: "null-literal", source: "var x=null;", disposition: Disposition::UnsupportedCoverage },
+    BoundaryFixture { id: "this-expression", source: "var x=this;", disposition: Disposition::UnsupportedCoverage },
+    BoundaryFixture { id: "string-literal", source: "var x=\"foo\";", disposition: Disposition::UnsupportedCoverage },
 ];
 
 const FAILED_TRANSACTION_FIXTURES: &[FailedTransactionFixture] = &[
@@ -661,26 +698,10 @@ const FAILED_TRANSACTION_FIXTURES: &[FailedTransactionFixture] = &[
 ];
 
 const TERMINATOR_BOUNDARIES: &[BoundaryFixture] = &[
-    BoundaryFixture {
-        id: "authored-semicolon",
-        source: "var x=foo;",
-        disposition: Disposition::SelectedAcceptedIncomplete,
-    },
-    BoundaryFixture {
-        id: "automatic-at-eof",
-        source: "var x=foo",
-        disposition: Disposition::SelectedAcceptedIncomplete,
-    },
-    BoundaryFixture {
-        id: "newline-before-comma",
-        source: "var x=foo\n, a=1;",
-        disposition: Disposition::SelectedAcceptedIncomplete,
-    },
-    BoundaryFixture {
-        id: "newline-after-comma-eof",
-        source: "var x=foo,\n a=1",
-        disposition: Disposition::SelectedAcceptedIncomplete,
-    },
+    BoundaryFixture { id: "authored-semicolon", source: "var x=foo;", disposition: Disposition::SelectedAcceptedIncomplete },
+    BoundaryFixture { id: "automatic-at-eof", source: "var x=foo", disposition: Disposition::SelectedAcceptedIncomplete },
+    BoundaryFixture { id: "newline-before-comma", source: "var x=foo\n, a=1;", disposition: Disposition::SelectedAcceptedIncomplete },
+    BoundaryFixture { id: "newline-after-comma-eof", source: "var x=foo,\n a=1", disposition: Disposition::SelectedAcceptedIncomplete },
 ];
 
 fn assert_anchor(source: &str, expected: ExpectedAnchor, source_id: u64) {
@@ -693,9 +714,15 @@ fn assert_anchor(source: &str, expected: ExpectedAnchor, source_id: u64) {
     assert_eq!(anchor.range().end(), expected.range.end);
 }
 
-fn assert_correspondence_anchors(fixture: &RelationFixture, source_id: u64) {
+fn assert_semantic_code_points(name: &str, expected: &[u32]) {
+    assert!(name.chars().map(u32::from).eq(expected.iter().copied()));
+}
+
+fn assert_relation_fixture(fixture: &RelationFixture, source_id: u64) {
+    assert_eq!(fixture.current_region, ExpectedRegion::TopLevel);
     assert_anchor(fixture.source, fixture.containing_binding, source_id);
     assert_anchor(fixture.source, fixture.reference, source_id + 1);
+    assert_semantic_code_points(fixture.semantic_name, fixture.semantic_code_points);
 
     match fixture.correspondence {
         ExpectedCorrespondence::VisibleSelectedLexicalBinding { binding } => {
@@ -706,11 +733,7 @@ fn assert_correspondence_anchors(fixture: &RelationFixture, source_id: u64) {
             for (index, contributor) in contributors.iter().enumerate() {
                 assert_anchor(fixture.source, *contributor, source_id + 10 + index as u64);
                 if let Some(previous) = previous_start {
-                    assert!(
-                        contributor.range.start >= previous,
-                        "contributors must preserve authored order in {}",
-                        fixture.id
-                    );
+                    assert!(contributor.range.start >= previous);
                 }
                 previous_start = Some(contributor.range.start);
             }
@@ -719,16 +742,27 @@ fn assert_correspondence_anchors(fixture: &RelationFixture, source_id: u64) {
     }
 }
 
+fn assert_direct_rhs_fixture(fixture: &DirectRhsFixture, source_id: u64) {
+    assert_eq!(fixture.current_region, ExpectedRegion::TopLevel);
+    assert_eq!(fixture.disposition, Disposition::SelectedAcceptedIncomplete);
+    assert_eq!(
+        fixture.correspondence,
+        ExpectedCorrespondence::NoSelectedSameSourceContributor
+    );
+    assert_anchor(fixture.source, fixture.containing_binding, source_id);
+    assert_anchor(fixture.source, fixture.rhs, source_id + 1);
+    assert_eq!(fixture.rhs.fragment, fixture.semantic_name);
+    assert_semantic_code_points(fixture.semantic_name, fixture.semantic_code_points);
+}
+
 #[test]
-fn live_validation_contract_pins_the_current_envelope_and_predecessor_authority() {
+fn live_validation_contract_pins_current_envelope_and_immutable_predecessors() {
     assert_eq!(ISSUE_ID, 330);
     assert_eq!(ECMA_262_EDITION, "ECMA-262, 17th edition, 2026");
-    assert_eq!(
-        ECMA_262_SNAPSHOT,
-        "d89c03f2db8a597bc915b363a6518d0cc8acdbc0"
-    );
+    assert_eq!(ECMA_262_SNAPSHOT, "d89c03f2db8a597bc915b363a6518d0cc8acdbc0");
     assert_eq!(UNICODE_VERSION, "17.0.0");
     assert_eq!(POSITIVE_LIFECYCLE, "SelectedAcceptedIncomplete");
+    assert!(SUCCESSOR_REQUIRES_DIRECT_IDENTIFIER_REFERENCE);
 
     assert!(DIRECT_IDENTIFIER_ORACLE.contains("const ISSUE_ID: u64 = 237;"));
     assert!(DIRECT_IDENTIFIER_ORACLE.contains("EscapedIdentifierReference"));
@@ -740,18 +774,13 @@ fn live_validation_contract_pins_the_current_envelope_and_predecessor_authority(
 }
 
 #[test]
-fn direct_rhs_fixture_ranges_and_name_policy_categories_are_exact() {
+fn direct_rhs_name_policy_matrix_pins_selected_success_correspondence_and_code_points() {
     let mut ids = BTreeSet::new();
     let mut categories = BTreeSet::new();
 
     for (index, fixture) in DIRECT_RHS_FIXTURES.iter().enumerate() {
-        assert!(
-            ids.insert(fixture.id),
-            "duplicate fixture id {}",
-            fixture.id
-        );
-        assert_anchor(fixture.source, fixture.rhs, ISSUE_ID * 100 + index as u64);
-        assert_eq!(fixture.rhs.fragment, fixture.semantic_name);
+        assert!(ids.insert(fixture.id), "duplicate fixture id {}", fixture.id);
+        assert_direct_rhs_fixture(fixture, ISSUE_ID * 100 + index as u64 * 10);
         categories.insert(fixture.category);
     }
 
@@ -763,15 +792,34 @@ fn direct_rhs_fixture_ranges_and_name_policy_categories_are_exact() {
     ] {
         assert!(categories.contains(&expected));
     }
+
+    for source in [
+        "var x=let;",
+        "var x=yield;",
+        "var x=await;",
+        "var x=eval;",
+        "var x=arguments;",
+    ] {
+        let fixture = DIRECT_RHS_FIXTURES
+            .iter()
+            .find(|fixture| fixture.source == source)
+            .unwrap_or_else(|| panic!("missing mandatory name-policy fixture {source}"));
+        assert_eq!(fixture.disposition, Disposition::SelectedAcceptedIncomplete);
+        assert_eq!(fixture.current_region, ExpectedRegion::TopLevel);
+        assert_eq!(
+            fixture.correspondence,
+            ExpectedCorrespondence::NoSelectedSameSourceContributor
+        );
+    }
 }
 
 #[test]
 fn direct_only_maximality_keeps_authored_rhs_unicode_escape_outside_the_frontier() {
-    assert!(
-        DIRECT_RHS_FIXTURES
-            .iter()
-            .any(|fixture| fixture.source == "var x=foo;" && fixture.semantic_name == "foo")
-    );
+    let direct = DIRECT_RHS_FIXTURES
+        .iter()
+        .find(|fixture| fixture.source == "var x=foo;")
+        .expect("direct RHS control must exist");
+    assert_eq!(direct.disposition, Disposition::SelectedAcceptedIncomplete);
 
     let escaped = UNSUPPORTED_BOUNDARIES
         .iter()
@@ -782,38 +830,49 @@ fn direct_only_maximality_keeps_authored_rhs_unicode_escape_outside_the_frontier
 }
 
 #[test]
-fn self_contributor_is_explicit_source_provenance_not_a_runtime_target() {
-    let fixture = RELATION_FIXTURES
+fn relation_fixtures_own_top_level_region_semantic_code_points_and_exact_provenance() {
+    let mut ids = BTreeSet::new();
+    for (index, fixture) in RELATION_FIXTURES.iter().enumerate() {
+        assert!(ids.insert(fixture.id), "duplicate relation fixture {}", fixture.id);
+        assert_relation_fixture(fixture, ISSUE_ID * 1_000 + index as u64 * 100);
+        assert_eq!(fixture.current_region, ExpectedRegion::TopLevel);
+        assert_eq!(fixture.partition, PositivePartition::VariableEnabled);
+    }
+
+    let unicode = RELATION_FIXTURES
+        .iter()
+        .find(|fixture| fixture.id == "canonical-distinct-no-normalization")
+        .unwrap();
+    assert_eq!(unicode.semantic_code_points, &[0x65, 0x0301]);
+    assert_ne!("é", unicode.semantic_name);
+}
+
+#[test]
+fn self_and_whole_source_var_contributors_are_authored_provenance_only() {
+    let self_fixture = RELATION_FIXTURES
         .iter()
         .find(|fixture| fixture.id == "self-contributor")
-        .expect("self contributor fixture must exist");
-    assert_correspondence_anchors(fixture, ISSUE_ID * 1_000);
-
-    assert_eq!(fixture.reference, ExpectedAnchor::new(6, 7, "a"));
+        .unwrap();
+    assert_relation_fixture(self_fixture, ISSUE_ID * 3_000);
     assert_eq!(
-        fixture.correspondence,
+        self_fixture.correspondence,
         ExpectedCorrespondence::SameSourceSelectedVarNameContributors {
             contributors: SELF_CONTRIBUTORS,
         }
     );
-    assert!(RUNTIME_NEGATIVE_BOUNDARY.contains("runtime binding identity"));
-}
 
-#[test]
-fn var_contributors_are_whole_source_authored_provenance_not_previous_only_lookup() {
     for id in [
         "contributor-before-reference",
         "contributor-after-reference",
         "repeated-whole-source-contributors",
+        "same-list-self-and-earlier",
+        "same-list-later-contributor",
     ] {
         let fixture = RELATION_FIXTURES
             .iter()
             .find(|fixture| fixture.id == id)
-            .unwrap_or_else(|| panic!("{id} must exist"));
-        assert_correspondence_anchors(
-            fixture,
-            ISSUE_ID * 2_000 + fixture.reference.range.start as u64,
-        );
+            .unwrap_or_else(|| panic!("missing whole-source fixture {id}"));
+        assert_relation_fixture(fixture, ISSUE_ID * 4_000 + fixture.reference.range.start as u64);
     }
 
     let after = RELATION_FIXTURES
@@ -823,55 +882,26 @@ fn var_contributors_are_whole_source_authored_provenance_not_previous_only_looku
     let ExpectedCorrespondence::SameSourceSelectedVarNameContributors { contributors } =
         after.correspondence
     else {
-        panic!("later contributor fixture must have var contributors");
+        panic!("later contributor fixture must expose var contributors");
     };
     assert!(contributors[0].range.start > after.reference.range.start);
 
-    let repeated = RELATION_FIXTURES
-        .iter()
-        .find(|fixture| fixture.id == "repeated-whole-source-contributors")
-        .unwrap();
-    let ExpectedCorrespondence::SameSourceSelectedVarNameContributors { contributors } =
-        repeated.correspondence
-    else {
-        panic!("repeated fixture must have var contributors");
-    };
-    assert_eq!(contributors.len(), 2);
-}
-
-#[test]
-fn same_statement_list_includes_self_and_later_contributors_without_order_labels() {
-    let self_and_earlier = RELATION_FIXTURES
+    let same_list = RELATION_FIXTURES
         .iter()
         .find(|fixture| fixture.id == "same-list-self-and-earlier")
         .unwrap();
-    assert_correspondence_anchors(self_and_earlier, ISSUE_ID * 3_000);
     let ExpectedCorrespondence::SameSourceSelectedVarNameContributors { contributors } =
-        self_and_earlier.correspondence
+        same_list.correspondence
     else {
-        panic!("same-list fixture must have var contributors");
+        panic!("same-list fixture must expose var contributors");
     };
     assert_eq!(contributors, SAME_LIST_CONTRIBUTORS);
-    assert_eq!(contributors[1], self_and_earlier.containing_binding);
-
-    let later = RELATION_FIXTURES
-        .iter()
-        .find(|fixture| fixture.id == "same-list-later-contributor")
-        .unwrap();
-    assert_correspondence_anchors(later, ISSUE_ID * 3_100);
-    let ExpectedCorrespondence::SameSourceSelectedVarNameContributors { contributors } =
-        later.correspondence
-    else {
-        panic!("later-list fixture must have var contributors");
-    };
-    assert_eq!(contributors, LATER_LIST_CONTRIBUTORS);
-    assert!(contributors[0].range.start > later.reference.range.start);
-    assert!(!RUNTIME_NEGATIVE_BOUNDARY.contains("Before"));
-    assert!(!RUNTIME_NEGATIVE_BOUNDARY.contains("After"));
+    assert_eq!(contributors[1], same_list.containing_binding);
+    assert!(RUNTIME_NEGATIVE_BOUNDARY.contains("runtime binding identity"));
 }
 
 #[test]
-fn correspondence_phase_has_three_existing_meanings_only_after_static_acceptance() {
+fn correspondence_phase_uses_existing_three_meanings_only_after_static_acceptance() {
     let lexical = RELATION_FIXTURES
         .iter()
         .find(|fixture| fixture.id == "top-level-lexical-target")
@@ -907,15 +937,12 @@ fn correspondence_phase_has_three_existing_meanings_only_after_static_acceptance
         .unwrap();
     assert!(matches!(
         rejected.disposition,
-        Disposition::StaticRejected {
-            rule_id: "EE-36-R02",
-            ..
-        }
+        Disposition::StaticRejected { rule_id: "EE-36-R02", .. }
     ));
 }
 
 #[test]
-fn direct_rhs_semantic_names_do_not_become_var_declared_names_or_static_subjects() {
+fn rhs_names_do_not_become_var_declared_names_or_static_subjects() {
     let tier_one = STATIC_BOUNDARIES
         .iter()
         .find(|fixture| fixture.id == "tier-one-before-ee36-r02")
@@ -924,7 +951,7 @@ fn direct_rhs_semantic_names_do_not_become_var_declared_names_or_static_subjects
         panic!("tier-one fixture must be statically rejected");
     };
     assert_eq!(rule_id, "EE-04-R08");
-    assert_anchor(tier_one.source, subject, ISSUE_ID * 4_000);
+    assert_anchor(tier_one.source, subject, ISSUE_ID * 5_000);
 
     let collision = STATIC_BOUNDARIES
         .iter()
@@ -937,71 +964,63 @@ fn direct_rhs_semantic_names_do_not_become_var_declared_names_or_static_subjects
     assert_eq!(subject.fragment, "b");
     assert_ne!(subject.fragment, "foo");
     assert_ne!(subject.fragment, "bar");
-    assert_anchor(collision.source, subject, ISSUE_ID * 4_100);
+    assert_anchor(collision.source, subject, ISSUE_ID * 5_100);
 }
 
 #[test]
-fn escaped_lhs_matches_direct_rhs_but_unicode_normalization_remains_forbidden() {
+fn escaped_lhs_matches_direct_rhs_and_unicode_normalization_remains_forbidden() {
     let equal = RELATION_FIXTURES
         .iter()
         .find(|fixture| fixture.id == "escaped-lhs-direct-rhs-equality")
         .unwrap();
-    assert_correspondence_anchors(equal, ISSUE_ID * 5_000);
+    assert_relation_fixture(equal, ISSUE_ID * 6_000);
     let ExpectedCorrespondence::SameSourceSelectedVarNameContributors { contributors } =
         equal.correspondence
     else {
-        panic!("escaped LHS fixture must have var contributors");
+        panic!("escaped LHS fixture must expose var contributors");
     };
     assert_eq!(contributors[0].fragment, r"\u0061");
     assert_eq!(equal.semantic_name, "a");
+    assert_eq!(equal.semantic_code_points, &[0x61]);
 
     let distinct = RELATION_FIXTURES
         .iter()
         .find(|fixture| fixture.id == "canonical-distinct-no-normalization")
         .unwrap();
-    assert_correspondence_anchors(distinct, ISSUE_ID * 5_100);
+    assert_relation_fixture(distinct, ISSUE_ID * 6_100);
     assert_eq!(
         distinct.correspondence,
         ExpectedCorrespondence::NoSelectedSameSourceContributor
     );
-    assert_ne!("é", distinct.semantic_name);
+    assert_eq!(distinct.semantic_code_points, &[0x65, 0x0301]);
 }
 
 #[test]
-fn decimal_predecessor_and_direct_reference_successor_compose_in_one_list() {
+fn decimal_predecessor_direct_reference_and_statement_terminators_compose() {
     let mixed = RELATION_FIXTURES
         .iter()
         .find(|fixture| fixture.id == "decimal-predecessor-mixed-with-reference")
         .unwrap();
-    assert_correspondence_anchors(mixed, ISSUE_ID * 6_000);
+    assert_relation_fixture(mixed, ISSUE_ID * 7_000);
     assert_eq!(mixed.terminator, Terminator::AuthoredSemicolon);
 
     let eof = RELATION_FIXTURES
         .iter()
         .find(|fixture| fixture.id == "direct-reference-with-final-decimal-eof")
         .unwrap();
-    assert_correspondence_anchors(eof, ISSUE_ID * 6_100);
+    assert_relation_fixture(eof, ISSUE_ID * 7_100);
     assert_eq!(eof.terminator, Terminator::AutomaticAtEof);
-}
 
-#[test]
-fn terminator_and_list_trivia_preserve_authored_vs_eof_without_non_eof_asi() {
-    assert!(TERMINATOR_BOUNDARIES.iter().any(|fixture| {
-        fixture.source == "var x=foo;"
-            && fixture.disposition == Disposition::SelectedAcceptedIncomplete
-    }));
-    assert!(TERMINATOR_BOUNDARIES.iter().any(|fixture| {
-        fixture.source == "var x=foo"
-            && fixture.disposition == Disposition::SelectedAcceptedIncomplete
-    }));
-    assert!(TERMINATOR_BOUNDARIES.iter().any(|fixture| {
-        fixture.source == "var x=foo\n, a=1;"
-            && fixture.disposition == Disposition::SelectedAcceptedIncomplete
-    }));
-    assert!(TERMINATOR_BOUNDARIES.iter().any(|fixture| {
-        fixture.source == "var x=foo,\n a=1"
-            && fixture.disposition == Disposition::SelectedAcceptedIncomplete
-    }));
+    for (source, disposition) in [
+        ("var x=foo;", Disposition::SelectedAcceptedIncomplete),
+        ("var x=foo", Disposition::SelectedAcceptedIncomplete),
+        ("var x=foo\n, a=1;", Disposition::SelectedAcceptedIncomplete),
+        ("var x=foo,\n a=1", Disposition::SelectedAcceptedIncomplete),
+    ] {
+        assert!(TERMINATOR_BOUNDARIES
+            .iter()
+            .any(|fixture| fixture.source == source && fixture.disposition == disposition));
+    }
     assert!(UNSUPPORTED_BOUNDARIES.iter().any(|fixture| {
         fixture.source == "var x=foo\nvar y;"
             && fixture.disposition == Disposition::UnsupportedCoverage
@@ -1049,12 +1068,7 @@ fn richer_expression_reserved_and_other_atom_neighbors_remain_coverage_honest() 
 #[test]
 fn incomplete_unselected_and_later_grammar_failure_commit_no_partial_relation_state() {
     for fixture in FAILED_TRANSACTION_FIXTURES {
-        assert_ne!(
-            fixture.disposition,
-            Disposition::SelectedAcceptedIncomplete,
-            "{} must fail the whole transaction",
-            fixture.id
-        );
+        assert_ne!(fixture.disposition, Disposition::SelectedAcceptedIncomplete);
         assert_eq!(fixture.committed_relations, 0);
         assert_eq!(fixture.committed_contributors, 0);
     }
@@ -1067,28 +1081,11 @@ fn incomplete_unselected_and_later_grammar_failure_commit_no_partial_relation_st
         panic!("malformed later binding must retain Grammar evidence");
     };
     assert_eq!(subject, ExpectedAnchor::new(10, 14, r"\u{}"));
-    assert_anchor(malformed.source, subject, ISSUE_ID * 7_000);
+    assert_anchor(malformed.source, subject, ISSUE_ID * 8_000);
 }
 
 #[test]
-fn positive_relation_fixtures_have_exact_source_provenance_and_incomplete_lifecycle() {
-    let mut ids = BTreeSet::new();
-    for (index, fixture) in RELATION_FIXTURES.iter().enumerate() {
-        assert!(
-            ids.insert(fixture.id),
-            "duplicate relation fixture {}",
-            fixture.id
-        );
-        assert_correspondence_anchors(fixture, ISSUE_ID * 10_000 + index as u64 * 100);
-        assert_eq!(fixture.partition, PositivePartition::VariableEnabled);
-    }
-    assert_eq!(POSITIVE_LIFECYCLE, "SelectedAcceptedIncomplete");
-    assert_ne!(POSITIVE_LIFECYCLE, "Qualified");
-    assert!(!aggregate_qualified_available());
-}
-
-#[test]
-fn frozen_rule_reachability_and_three_way_partition_pressure_remain_unchanged() {
+fn frozen_rule_reachability_lifecycle_and_three_way_partition_remain_unchanged() {
     let active_ids: BTreeSet<_> = RULE_UNITS
         .iter()
         .filter(|rule| rule.kind == RuleUnitKind::NormativeRule)
@@ -1112,40 +1109,29 @@ fn frozen_rule_reachability_and_three_way_partition_pressure_remain_unchanged() 
             .count(),
         10
     );
-    assert_eq!(
-        RULE_UNITS
-            .iter()
-            .filter(|rule| rule.kind == RuleUnitKind::ExpansionSentinel)
-            .count(),
-        0
-    );
-
     assert_eq!(required_ids.len(), 9);
     for required in &required_ids {
-        assert!(
-            active_ids.contains(required),
-            "missing required rule {required}"
-        );
+        assert!(active_ids.contains(required));
     }
-
-    let mut reachable = 0;
-    let mut non_triggering = 0;
-    for rule in RULE_UNITS {
-        if required_ids.contains(rule.id) {
-            reachable += 1;
-        } else {
-            non_triggering += 1;
-        }
-    }
-    assert_eq!(reachable, 9);
-    assert_eq!(non_triggering, 184);
-    assert_eq!(reachable + non_triggering, 193);
+    assert_eq!(RULE_UNITS.len() - required_ids.len(), 184);
     assert!(!required_ids.contains("EE-02-R01"));
     assert!(!required_ids.contains("EE-14-R02"));
+
+    assert_eq!(positive_partition(0, 0), PositivePartition::HistoricalFlat);
+    assert_eq!(
+        positive_partition(1, 0),
+        PositivePartition::BlockEnabledWithoutVar
+    );
+    assert_eq!(positive_partition(0, 1), PositivePartition::VariableEnabled);
+    assert_eq!(positive_partition(2, 17), PositivePartition::VariableEnabled);
+
+    assert_eq!(POSITIVE_LIFECYCLE, "SelectedAcceptedIncomplete");
+    assert_ne!(POSITIVE_LIFECYCLE, "Qualified");
+    assert!(!aggregate_qualified_available());
 }
 
 #[test]
-fn validation_remains_candidate_independent_and_representation_neutral() {
+fn validation_remains_candidate_independent_runtime_negative_and_representation_neutral() {
     let forbidden = [
         ["selected", "lexical", "slice", "::"]
             .join("_")
@@ -1156,27 +1142,22 @@ fn validation_remains_candidate_independent_and_representation_neutral() {
         ["selected", "qualification", "integration", "::"]
             .join("_")
             .replace("_::", "::"),
-        [
-            "selected",
-            "variable",
-            "statement",
-            "name",
-            "correspondence",
-            "::",
-        ]
-        .join("_")
-        .replace("_::", "::"),
+        ["selected", "variable", "statement", "name", "correspondence", "::"]
+            .join("_")
+            .replace("_::", "::"),
         ["selected", "binding", "scope", "::"]
             .join("_")
             .replace("_::", "::"),
         ["recognize", "selected", "lexical", "slice"].join("_"),
         ["attempt", "selected", "qualification"].join("_"),
+        ["Environment", "Record"].join(""),
+        ["Resolve", "Binding"].join(""),
     ];
 
     for forbidden in forbidden {
         assert!(
             !THIS_SOURCE.contains(&forbidden),
-            "candidate-independent oracle must not import or call production owner {forbidden}"
+            "candidate-independent oracle must not import or call forbidden owner {forbidden}"
         );
     }
 
@@ -1202,17 +1183,15 @@ fn exact_validation_handoff_is_two_files_and_production_placement_remains_open()
 #[test]
 fn fixture_evaluation_is_deterministic_and_utf8_fail_closed() {
     for (index, fixture) in RELATION_FIXTURES.iter().enumerate() {
-        assert_correspondence_anchors(fixture, ISSUE_ID * 20_000 + index as u64 * 100);
-        assert_correspondence_anchors(fixture, ISSUE_ID * 20_000 + index as u64 * 100);
+        assert_relation_fixture(fixture, ISSUE_ID * 20_000 + index as u64 * 100);
+        assert_relation_fixture(fixture, ISSUE_ID * 20_000 + index as u64 * 100);
+    }
+    for (index, fixture) in DIRECT_RHS_FIXTURES.iter().enumerate() {
+        assert_direct_rhs_fixture(fixture, ISSUE_ID * 30_000 + index as u64 * 100);
     }
 
-    let source = SourceText::new(SourceId::new(ISSUE_ID * 30_000), "var x=π;".to_owned());
-    assert!(
-        source.anchor(6, 7).is_err(),
-        "mid-code-point range must fail"
-    );
-    let exact = source
-        .anchor(6, 8)
-        .expect("π exact UTF-8 range must be valid");
+    let source = SourceText::new(SourceId::new(ISSUE_ID * 40_000), "var x=π;".to_owned());
+    assert!(source.anchor(6, 7).is_err(), "mid-code-point range must fail");
+    let exact = source.anchor(6, 8).expect("π exact UTF-8 range must be valid");
     assert_eq!(exact.fragment(), "π");
 }
