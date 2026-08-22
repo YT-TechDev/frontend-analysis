@@ -45,6 +45,22 @@ const CURRENT_REQUIRED_RULE_IDS: &[&str] = &[
     "EE-36-R02",
 ];
 
+const VARIABLE_DECLARATION_LIST_BASE: &str =
+    "VariableDeclarationList : VariableDeclaration";
+const VARIABLE_DECLARATION_LIST_SUCCESSOR: &str =
+    "VariableDeclarationList : VariableDeclarationList , VariableDeclaration";
+const SELECTED_LIST_CARDINALITY: &str = "1..N";
+const SUCCESSOR_FRONTIER_CARDINALITY: &str = "2..N";
+const INDUCTIVE_INVARIANTS: &[&str] = &[
+    "each selected VariableDeclaration contributes one exact authored binding SourceAnchor",
+    "binding and contributor sequences preserve authored VariableDeclarationList order",
+    "semantic-name equality uses decoded code-point sequences without Unicode normalization",
+    "one VariableStatement owns one terminator independent of list cardinality",
+    "static evidence obeys tier priority then authored order within a tier",
+    "an incomplete VariableDeclarationList commits no partial selected-success state",
+    "rule reachability remains 9 of 193 and the positive source partition remains three-way",
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Range {
     start: usize,
@@ -112,6 +128,23 @@ const POSITIVE_FIXTURES: &[PositiveFixture] = &[
             },
         ],
         terminator: Terminator::AuthoredSemicolon,
+    },
+    PositiveFixture {
+        id: "two-declarators-eof",
+        source: "var a,b",
+        bindings: &[
+            Binding {
+                authored: Range::new(4, 5),
+                semantic_name: "a",
+                semantic_code_points: A,
+            },
+            Binding {
+                authored: Range::new(6, 7),
+                semantic_name: "b",
+                semantic_code_points: B,
+            },
+        ],
+        terminator: Terminator::AutomaticAtEof,
     },
     PositiveFixture {
         id: "three-declarators",
@@ -495,22 +528,31 @@ fn authority_chain_is_additive_and_historical_frontiers_stay_immutable() {
 
 #[test]
 fn variable_declaration_list_is_an_inductive_theorem_not_a_fixture_count() {
-    const BASE_DECLARATIONS: usize = 1;
-    const SUCCESSOR_ADDS: usize = 1;
-    let counts: Vec<_> = POSITIVE_FIXTURES
-        .iter()
-        .take(3)
-        .map(|fixture| fixture.bindings.len())
-        .collect();
-    assert_eq!(counts, [1, 2, 3]);
-    assert_eq!(counts[0], BASE_DECLARATIONS);
-    assert_eq!(counts[1], counts[0] + SUCCESSOR_ADDS);
-    assert_eq!(counts[2], counts[1] + SUCCESSOR_ADDS);
-    assert!(
-        POSITIVE_FIXTURES
-            .iter()
-            .all(|fixture| fixture.bindings.len() >= BASE_DECLARATIONS)
+    assert_eq!(
+        VARIABLE_DECLARATION_LIST_BASE,
+        "VariableDeclarationList : VariableDeclaration"
     );
+    assert_eq!(
+        VARIABLE_DECLARATION_LIST_SUCCESSOR,
+        "VariableDeclarationList : VariableDeclarationList , VariableDeclaration"
+    );
+    assert_eq!(SELECTED_LIST_CARDINALITY, "1..N");
+    assert_eq!(SUCCESSOR_FRONTIER_CARDINALITY, "2..N");
+    assert_eq!(INDUCTIVE_INVARIANTS.len(), 7);
+    assert!(INDUCTIVE_INVARIANTS.iter().all(|invariant| !invariant.is_empty()));
+
+    let boundary_counts: Vec<_> = ["historical-base", "two-declarators", "three-declarators"]
+        .iter()
+        .map(|id| {
+            POSITIVE_FIXTURES
+                .iter()
+                .find(|fixture| fixture.id == *id)
+                .expect("induction boundary fixture must exist")
+                .bindings
+                .len()
+        })
+        .collect();
+    assert_eq!(boundary_counts, [1, 2, 3]);
 }
 
 #[test]
@@ -651,6 +693,18 @@ fn incomplete_list_never_commits_partial_success() {
 
 #[test]
 fn terminator_and_asi_meaning_do_not_depend_on_list_cardinality() {
+    let authored = POSITIVE_FIXTURES
+        .iter()
+        .find(|fixture| fixture.id == "two-declarators")
+        .unwrap();
+    let automatic = POSITIVE_FIXTURES
+        .iter()
+        .find(|fixture| fixture.id == "two-declarators-eof")
+        .unwrap();
+    assert_eq!(authored.bindings, automatic.bindings);
+    assert_eq!(authored.terminator, Terminator::AuthoredSemicolon);
+    assert_eq!(automatic.terminator, Terminator::AutomaticAtEof);
+
     assert!(POSITIVE_FIXTURES.iter().any(|fixture| fixture.source == "var a\n, b;"
         && fixture.terminator == Terminator::AuthoredSemicolon));
     assert!(POSITIVE_FIXTURES.iter().any(|fixture| fixture.source == "var a,\n b"
@@ -673,6 +727,7 @@ fn frozen_rule_reachability_and_positive_partition_remain_unchanged() {
     }
     assert_eq!(CURRENT_REQUIRED_RULE_IDS.len(), 9);
     assert_eq!(RULE_UNITS.len(), 193);
+    assert_eq!(RULE_UNITS.len() - CURRENT_REQUIRED_RULE_IDS.len(), 184);
     assert_eq!(partition(0, 0), PositivePartition::HistoricalFlat);
     assert_eq!(partition(1, 0), PositivePartition::BlockEnabledWithoutVar);
     for count in [1, 2, 3, 17] {
