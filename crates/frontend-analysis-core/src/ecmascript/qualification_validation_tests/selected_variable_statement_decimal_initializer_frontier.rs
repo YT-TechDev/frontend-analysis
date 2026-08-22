@@ -152,6 +152,23 @@ const POSITIVE_FIXTURES: &[PositiveFixture] = &[
         terminator: Terminator::AuthoredSemicolon,
     },
     PositiveFixture {
+        id: "two-initialized-eof",
+        source: "var a=1,b=2",
+        declarators: &[
+            DeclaratorExpectation {
+                binding: Range::new(4, 5),
+                semantic_name: "a",
+                decimal_rhs: Some(Range::new(6, 7)),
+            },
+            DeclaratorExpectation {
+                binding: Range::new(8, 9),
+                semantic_name: "b",
+                decimal_rhs: Some(Range::new(10, 11)),
+            },
+        ],
+        terminator: Terminator::AutomaticAtEof,
+    },
+    PositiveFixture {
         id: "three-mixed",
         source: "var a=1,b,c=2;",
         declarators: &[
@@ -435,6 +452,49 @@ const OUT_OF_SCOPE_BOUNDARIES: &[BoundaryFixture] = &[
         disposition: Disposition::DefinitiveGrammarRejection {
             subject: Range::new(10, 14),
         },
+    },
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FailedTransactionFixture {
+    source: &'static str,
+    disposition: Disposition,
+    committed_bindings: &'static [Range],
+    committed_contributors: &'static [Range],
+}
+
+const FAILED_TRANSACTION_FIXTURES: &[FailedTransactionFixture] = &[
+    FailedTransactionFixture {
+        source: "var a=1,",
+        disposition: Disposition::UnsupportedCoverage,
+        committed_bindings: &[],
+        committed_contributors: &[],
+    },
+    FailedTransactionFixture {
+        source: "var a=1,b=",
+        disposition: Disposition::UnsupportedCoverage,
+        committed_bindings: &[],
+        committed_contributors: &[],
+    },
+    FailedTransactionFixture {
+        source: "var a=1,b=true;",
+        disposition: Disposition::UnsupportedCoverage,
+        committed_bindings: &[],
+        committed_contributors: &[],
+    },
+    FailedTransactionFixture {
+        source: "var a=1,b=1.0;",
+        disposition: Disposition::UnsupportedCoverage,
+        committed_bindings: &[],
+        committed_contributors: &[],
+    },
+    FailedTransactionFixture {
+        source: r"var a=1,b,\u{}=2;",
+        disposition: Disposition::DefinitiveGrammarRejection {
+            subject: Range::new(10, 14),
+        },
+        committed_bindings: &[],
+        committed_contributors: &[],
     },
 ];
 
@@ -805,7 +865,13 @@ fn incomplete_unselected_and_non_eof_boundaries_commit_no_selected_success() {
         assert_ne!(fixture.disposition, Disposition::SelectedAcceptedIncomplete);
     }
 
-    let malformed = OUT_OF_SCOPE_BOUNDARIES
+    for fixture in FAILED_TRANSACTION_FIXTURES {
+        assert_ne!(fixture.disposition, Disposition::SelectedAcceptedIncomplete);
+        assert!(fixture.committed_bindings.is_empty());
+        assert!(fixture.committed_contributors.is_empty());
+    }
+
+    let malformed = FAILED_TRANSACTION_FIXTURES
         .iter()
         .find(|fixture| fixture.source == r"var a=1,b,\u{}=2;")
         .unwrap();
@@ -820,6 +886,18 @@ fn incomplete_unselected_and_non_eof_boundaries_commit_no_selected_success() {
 
 #[test]
 fn terminator_semantics_remain_statement_owned() {
+    assert!(
+        POSITIVE_FIXTURES
+            .iter()
+            .any(|fixture| fixture.source == "var a=1,b=2;"
+                && fixture.terminator == Terminator::AuthoredSemicolon)
+    );
+    assert!(
+        POSITIVE_FIXTURES
+            .iter()
+            .any(|fixture| fixture.source == "var a=1,b=2"
+                && fixture.terminator == Terminator::AutomaticAtEof)
+    );
     assert!(
         POSITIVE_FIXTURES
             .iter()
