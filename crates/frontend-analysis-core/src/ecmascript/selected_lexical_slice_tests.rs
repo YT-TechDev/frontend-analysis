@@ -4,7 +4,7 @@ use super::qualification_validation_tests::{gold_source, gold_subject_range};
 use super::selected_lexical_slice::{
     SelectedBindingNameState, SelectedDeclarationTerminator, SelectedInitializerState,
     SelectedInvalidEscapePosition, SelectedLexicalDeclarationKind, SelectedLexicalScript,
-    SelectedLexicalSliceOutcome, SelectedVariableStatementScript,
+    SelectedLexicalSliceOutcome, SelectedVariableStatement, SelectedVariableStatementScript,
     SelectedVariableStatementTerminator, SelectedVariableTopLevelItem,
     recognize_selected_lexical_slice,
 };
@@ -63,6 +63,42 @@ fn assert_unsupported(text: &str) {
         recognize_selected_lexical_slice(&source(text)),
         SelectedLexicalSliceOutcome::UnsupportedCoverage
     ));
+}
+
+fn only_variable_statement(script: &SelectedVariableStatementScript) -> &SelectedVariableStatement {
+    let [SelectedVariableTopLevelItem::VariableStatement(statement)] = script.items() else {
+        panic!("expected exactly one selected VariableStatement item");
+    };
+    statement
+}
+
+fn binding_ranges(statement: &SelectedVariableStatement) -> Vec<(usize, usize)> {
+    statement
+        .bindings()
+        .iter()
+        .map(|binding| {
+            (
+                binding.binding().range().start(),
+                binding.binding().range().end(),
+            )
+        })
+        .collect()
+}
+
+fn binding_fragments(statement: &SelectedVariableStatement) -> Vec<&str> {
+    statement
+        .bindings()
+        .iter()
+        .map(|binding| binding.binding().fragment())
+        .collect()
+}
+
+fn binding_semantic_names(statement: &SelectedVariableStatement) -> Vec<Option<&str>> {
+    statement
+        .bindings()
+        .iter()
+        .map(|binding| binding.semantic_name())
+        .collect()
 }
 
 fn escaped_first_ascii_code_point(name: &str) -> String {
@@ -1959,7 +1995,9 @@ fn top_level_variable_statement_retains_minimal_source_backed_binding_fact() {
         let SelectedVariableTopLevelItem::VariableStatement(statement) = &script.items()[0] else {
             panic!("expected bounded VariableStatement for {text:?}");
         };
-        let binding = statement.binding();
+        let [binding] = statement.bindings() else {
+            panic!("expected exactly one selected declarator for {text:?}");
+        };
         assert_eq!(binding.binding().fragment(), fragment, "{text}");
         assert_eq!(binding.semantic_name(), Some(semantic_name), "{text}");
         assert_eq!(
@@ -2031,20 +2069,15 @@ fn variable_statement_eof_asi_retains_statement_owned_terminator_provenance() {
             panic!("expected exactly one selected VariableStatement for {text:?}");
         };
         assert_eq!(statement.terminator(), expected_terminator, "{text:?}");
-        assert_eq!(
-            statement.binding().binding().fragment(),
-            fragment,
-            "{text:?}"
-        );
-        assert_eq!(
-            statement.binding().semantic_name(),
-            Some(semantic_name),
-            "{text:?}"
-        );
+        let [binding] = statement.bindings() else {
+            panic!("expected exactly one selected declarator for {text:?}");
+        };
+        assert_eq!(binding.binding().fragment(), fragment, "{text:?}");
+        assert_eq!(binding.semantic_name(), Some(semantic_name), "{text:?}");
         assert_eq!(
             (
-                statement.binding().binding().range().start(),
-                statement.binding().binding().range().end()
+                binding.binding().range().start(),
+                binding.binding().range().end()
             ),
             expected_range,
             "{text:?}"
@@ -2067,20 +2100,8 @@ fn variable_statement_eof_asi_retains_statement_owned_terminator_provenance() {
         second.terminator(),
         SelectedVariableStatementTerminator::AutomaticAtEof
     );
-    assert_eq!(
-        (
-            first.binding().binding().range().start(),
-            first.binding().binding().range().end()
-        ),
-        (4, 5)
-    );
-    assert_eq!(
-        (
-            second.binding().binding().range().start(),
-            second.binding().binding().range().end()
-        ),
-        (11, 12)
-    );
+    assert_eq!(binding_ranges(first), [(4, 5)]);
+    assert_eq!(binding_ranges(second), [(11, 12)]);
 }
 
 #[test]
@@ -2121,7 +2142,6 @@ fn variable_statement_promotes_only_var_bearing_sources_to_distinct_representati
 fn variable_statement_frontier_keeps_non_eof_and_broader_var_grammar_unsupported() {
     for text in [
         "var x\nvar y;",
-        "var x, y;",
         "var x = 1;",
         "var x = y;",
         "var {x} = y;",
@@ -2146,7 +2166,7 @@ fn variable_statement_authored_semicolon_composes_with_existing_trailing_lexical
     let SelectedVariableTopLevelItem::VariableStatement(statement) = &script.items()[0] else {
         panic!("first item must be VariableStatement");
     };
-    assert_eq!(statement.binding().binding().fragment(), "x");
+    assert_eq!(binding_fragments(statement), ["x"]);
     assert_eq!(
         statement.terminator(),
         SelectedVariableStatementTerminator::AuthoredSemicolon
@@ -2158,4 +2178,175 @@ fn variable_statement_authored_semicolon_composes_with_existing_trailing_lexical
         declaration.terminator(),
         SelectedDeclarationTerminator::AutomaticAtEof
     ));
+}
+
+#[test]
+fn variable_declaration_list_retains_every_authored_declarator_in_list_order() {
+    let two = recognized_variable("var a,b;");
+    let two = only_variable_statement(&two);
+    assert_eq!(binding_ranges(two), [(4, 5), (6, 7)]);
+    assert_eq!(binding_fragments(two), ["a", "b"]);
+    assert_eq!(binding_semantic_names(two), [Some("a"), Some("b")]);
+    assert_eq!(
+        two.terminator(),
+        SelectedVariableStatementTerminator::AuthoredSemicolon
+    );
+
+    // The historical `"var x, y;"` negative control is now selected production
+    // coverage rather than unsupported coverage.
+    let migrated = recognized_variable("var x, y;");
+    let migrated = only_variable_statement(&migrated);
+    assert_eq!(binding_ranges(migrated), [(4, 5), (7, 8)]);
+    assert_eq!(binding_fragments(migrated), ["x", "y"]);
+
+    let three = recognized_variable("var a,b,c;");
+    let three = only_variable_statement(&three);
+    assert_eq!(binding_ranges(three), [(4, 5), (6, 7), (8, 9)]);
+    assert_eq!(binding_fragments(three), ["a", "b", "c"]);
+
+    let repeated = recognized_variable("var a,a;");
+    let repeated = only_variable_statement(&repeated);
+    assert_eq!(binding_ranges(repeated), [(4, 5), (6, 7)]);
+    assert_eq!(binding_semantic_names(repeated), [Some("a"), Some("a")]);
+
+    let mixed_spelling = recognized_variable(r"var a,\u0061;");
+    let mixed_spelling = only_variable_statement(&mixed_spelling);
+    assert_eq!(binding_ranges(mixed_spelling), [(4, 5), (6, 12)]);
+    assert_eq!(binding_fragments(mixed_spelling), ["a", r"\u0061"]);
+    assert_eq!(
+        binding_semantic_names(mixed_spelling),
+        [Some("a"), Some("a")]
+    );
+
+    let unnormalized = recognized_variable("var é,e\\u0301;");
+    let unnormalized = only_variable_statement(&unnormalized);
+    assert_eq!(binding_ranges(unnormalized), [(4, 6), (7, 14)]);
+    assert_eq!(
+        binding_semantic_names(unnormalized),
+        [Some("é"), Some("e\u{301}")]
+    );
+}
+
+#[test]
+fn one_statement_owned_terminator_is_independent_of_declarator_cardinality() {
+    for (text, expected_terminator, expected_ranges) in [
+        (
+            "var a,b;",
+            SelectedVariableStatementTerminator::AuthoredSemicolon,
+            &[(4, 5), (6, 7)][..],
+        ),
+        (
+            "var a,b",
+            SelectedVariableStatementTerminator::AutomaticAtEof,
+            &[(4, 5), (6, 7)][..],
+        ),
+        (
+            "var a,b,c   \t\n",
+            SelectedVariableStatementTerminator::AutomaticAtEof,
+            &[(4, 5), (6, 7), (8, 9)][..],
+        ),
+        (
+            "var a,\n b",
+            SelectedVariableStatementTerminator::AutomaticAtEof,
+            &[(4, 5), (8, 9)][..],
+        ),
+        (
+            "var a\n, b;",
+            SelectedVariableStatementTerminator::AuthoredSemicolon,
+            &[(4, 5), (8, 9)][..],
+        ),
+        (
+            "var a , b ;",
+            SelectedVariableStatementTerminator::AuthoredSemicolon,
+            &[(4, 5), (8, 9)][..],
+        ),
+    ] {
+        let script = recognized_variable(text);
+        let statement = only_variable_statement(&script);
+        assert_eq!(statement.terminator(), expected_terminator, "{text:?}");
+        assert_eq!(binding_ranges(statement), expected_ranges, "{text:?}");
+    }
+}
+
+#[test]
+fn later_declarators_reuse_the_general_binding_identifier_grammar_route() {
+    let subject = grammar_rejection(r"var a,\u{};");
+    assert_eq!(subject.fragment(), r"\u{}");
+    assert_eq!((subject.range().start(), subject.range().end()), (6, 10));
+
+    let subject = grammar_rejection(r"var a,b,\u{};");
+    assert_eq!(subject.fragment(), r"\u{}");
+    assert_eq!((subject.range().start(), subject.range().end()), (8, 12));
+
+    let subject = grammar_rejection(r"var a,\u0;");
+    assert_eq!(subject.fragment(), r"\u0");
+    assert_eq!((subject.range().start(), subject.range().end()), (6, 9));
+
+    // A later escaped ReservedWord stays a recognized selected binding and is
+    // routed to the existing static-semantics owner, not to grammar evidence.
+    let script = recognized_variable(r"var a, \u0069f;");
+    let statement = only_variable_statement(&script);
+    assert_eq!(binding_ranges(statement), [(4, 5), (7, 14)]);
+    assert_eq!(binding_semantic_names(statement), [Some("a"), Some("if")]);
+
+    // A later direct ReservedWord remains outside selected coverage, while a
+    // later `let` stays valid in the selected non-strict Script envelope.
+    assert_unsupported("var a, if;");
+    let script = recognized_variable("var a, let;");
+    let statement = only_variable_statement(&script);
+    assert_eq!(binding_ranges(statement), [(4, 5), (7, 10)]);
+    assert_eq!(binding_semantic_names(statement), [Some("a"), Some("let")]);
+}
+
+#[test]
+fn incomplete_or_widened_declarator_lists_commit_no_selected_statement() {
+    for text in [
+        "var a,",
+        "var a,b,",
+        "var ,a;",
+        "var a,,b;",
+        "var a,b = 1;",
+        "var a,{b}=c;",
+        "var a, /*comment*/ b;",
+        "var a,b\nvar c;",
+        "{ var a,b; }",
+        "for (var a,b;;) {}",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn multi_declarator_statements_compose_with_existing_selected_top_level_items() {
+    let script = recognized_variable("let a; { let b; } var c,d; var e; let f");
+    assert_eq!(script.items().len(), 5);
+    let SelectedVariableTopLevelItem::VariableStatement(first) = &script.items()[2] else {
+        panic!("third item must be the multi-declarator VariableStatement");
+    };
+    assert_eq!(binding_fragments(first), ["c", "d"]);
+    assert_eq!(binding_ranges(first), [(22, 23), (24, 25)]);
+    let SelectedVariableTopLevelItem::VariableStatement(second) = &script.items()[3] else {
+        panic!("fourth item must be the single-declarator VariableStatement");
+    };
+    assert_eq!(binding_fragments(second), ["e"]);
+    let SelectedVariableTopLevelItem::LexicalDeclaration(last) = &script.items()[4] else {
+        panic!("trailing lexical declaration must stay lexical");
+    };
+    assert!(matches!(
+        last.terminator(),
+        SelectedDeclarationTerminator::AutomaticAtEof
+    ));
+}
+
+#[test]
+fn failed_declaration_lists_commit_no_selected_binding_or_statement_state() {
+    for text in [r"var a,\u{};", r"var a,b,\u{};", "var a,b,", "var a,b = 1;"] {
+        match recognize_selected_lexical_slice(&source(text)) {
+            SelectedLexicalSliceOutcome::UnsupportedCoverage
+            | SelectedLexicalSliceOutcome::DefinitiveGrammarRejectionEvidence { .. } => {}
+            other => {
+                panic!("incomplete list must not commit selected state for {text:?}: {other:?}")
+            }
+        }
+    }
 }

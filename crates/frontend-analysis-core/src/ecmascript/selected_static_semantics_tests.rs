@@ -855,3 +855,152 @@ fn variable_static_semantics_preserves_tier_one_through_three_precedence() {
         }
     }
 }
+
+#[test]
+fn every_selected_var_declarator_runs_tier_one_binding_local_static_semantics() {
+    for text in [
+        "var a,b;",
+        "var a,a;",
+        "var a,b,c;",
+        "var a, let;",
+        "var let,a;",
+        r"var a,\u0061;",
+        r"var é,e\u0301;",
+        "let x; var a,b;",
+        "{ let x; } var a,b;",
+        "var a,b; var c;",
+    ] {
+        accepted_variable(text);
+    }
+
+    for (text, expected_fragment, expected_range) in [
+        (r"var a, \u0069f;", r"\u0069f", (7, 14)),
+        (r"var a,b,\u0069f;", r"\u0069f", (8, 15)),
+        (r"var a, \u0069f", r"\u0069f", (7, 14)),
+    ] {
+        let (_, script) = recognized_variable(text);
+        match evaluate_selected_variable_statement_static_semantics(&script) {
+            SelectedVariableStatementStaticSemanticsOutcome::Rejected(
+                SelectedStaticSemanticsRejection::EscapedReservedWord { binding },
+            ) => {
+                assert_eq!(binding.fragment(), expected_fragment, "{text}");
+                assert_eq!(
+                    (binding.range().start(), binding.range().end()),
+                    expected_range,
+                    "{text}"
+                );
+            }
+            other => panic!("expected later-declarator EE-04-R08 for {text:?}, got {other:?}"),
+        }
+    }
+
+    let (_, script) = recognized_variable(r"var a,\u0030;");
+    match evaluate_selected_variable_statement_static_semantics(&script) {
+        SelectedVariableStatementStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::InvalidEscapedIdentifierStart { escape },
+        ) => {
+            assert_eq!(escape.fragment(), r"\u0030");
+            assert_eq!((escape.range().start(), escape.range().end()), (6, 12));
+        }
+        other => panic!("expected later-declarator invalid escape start, got {other:?}"),
+    }
+}
+
+#[test]
+fn tier_one_var_declarator_evidence_outranks_lower_priority_collision() {
+    for (text, expected_range) in [
+        (r"let b; var a,b,\u0069f;", (15, 22)),
+        (r"let b; var \u0069f,b;", (11, 18)),
+    ] {
+        let (_, script) = recognized_variable(text);
+        match evaluate_selected_variable_statement_static_semantics(&script) {
+            SelectedVariableStatementStaticSemanticsOutcome::Rejected(
+                SelectedStaticSemanticsRejection::EscapedReservedWord { binding },
+            ) => {
+                assert_eq!(
+                    (binding.range().start(), binding.range().end()),
+                    expected_range,
+                    "{text}"
+                );
+            }
+            other => panic!("Tier 1 must precede EE-36-R02 for {text:?}, got {other:?}"),
+        }
+    }
+
+    let (_, script) = recognized_variable("let x,x; var a,x;");
+    assert!(matches!(
+        evaluate_selected_variable_statement_static_semantics(&script),
+        SelectedVariableStatementStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::DuplicateDeclarationBinding { .. }
+        )
+    ));
+}
+
+#[test]
+fn ee_36_r02_extends_authored_order_inside_the_declaration_list() {
+    for (text, lexical_range, var_range, primary_range) in [
+        ("let b; var a,b;", (4, 5), (13, 14), (13, 14)),
+        ("let a,b; var b,a;", (6, 7), (13, 14), (13, 14)),
+        ("var b,a; let a,b;", (13, 14), (6, 7), (13, 14)),
+        ("var a,a; let a;", (13, 14), (4, 5), (13, 14)),
+        ("var a,b; var a; let a;", (20, 21), (4, 5), (20, 21)),
+        (r"var a,\u0061; let a;", (18, 19), (4, 5), (18, 19)),
+    ] {
+        let (_, script) = recognized_variable(text);
+        match evaluate_selected_variable_statement_static_semantics(&script) {
+            SelectedVariableStatementStaticSemanticsOutcome::Rejected(
+                SelectedStaticSemanticsRejection::LexicalVarNameCollision {
+                    lexical_binding,
+                    var_binding,
+                    primary_binding,
+                },
+            ) => {
+                assert_eq!(
+                    (
+                        lexical_binding.range().start(),
+                        lexical_binding.range().end()
+                    ),
+                    lexical_range,
+                    "{text}"
+                );
+                assert_eq!(
+                    (var_binding.range().start(), var_binding.range().end()),
+                    var_range,
+                    "{text}"
+                );
+                assert_eq!(
+                    (
+                        primary_binding.range().start(),
+                        primary_binding.range().end()
+                    ),
+                    primary_range,
+                    "{text}"
+                );
+            }
+            other => panic!("expected list-order collision for {text:?}, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn repeated_var_declarator_names_stay_valid_and_semantic_equality_is_not_normalized() {
+    // No var-list duplicate-BoundNames rule exists; only a lexical name
+    // collides with a var name.
+    for text in [
+        "var a,a;",
+        "var a,a,a;",
+        r"var a,\u0061,a;",
+        r"var é,e\u0301;",
+        r"let e\u0301; var é,a;",
+    ] {
+        accepted_variable(text);
+    }
+
+    let (_, script) = recognized_variable(r"var a,\u0061; let a;");
+    assert!(matches!(
+        evaluate_selected_variable_statement_static_semantics(&script),
+        SelectedVariableStatementStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::LexicalVarNameCollision { .. }
+        )
+    ));
+}

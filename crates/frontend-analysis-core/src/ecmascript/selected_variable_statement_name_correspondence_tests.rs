@@ -338,3 +338,125 @@ fn capability_source_preserves_isolation_runtime_boundaries_and_complete_only_re
     assert!(production.contains("authored `VariableDeclaration`"));
     assert!(production.contains("not runtime unresolvability"));
 }
+
+#[test]
+fn declarators_of_one_statement_each_contribute_an_anchor_in_authored_order() {
+    for (text, expected_contributors) in [
+        ("var a,a; let x=a;", &[(4, 5), (6, 7)][..]),
+        ("var a,b,a; let x=a;", &[(4, 5), (8, 9)][..]),
+        ("var a,a,a; let x=a;", &[(4, 5), (6, 7), (8, 9)][..]),
+        ("var a,b; let x=b;", &[(6, 7)][..]),
+    ] {
+        let (_, script) = recognized_variable(text);
+        let analysis = accepted_analysis(&script);
+        let relation = one_relation(&analysis);
+        let contributors = relation
+            .correspondence()
+            .var_contributors()
+            .expect("within-statement var contributors");
+        assert_eq!(contributors.len(), expected_contributors.len(), "{text}");
+        for (actual, expected) in contributors.iter().zip(expected_contributors) {
+            assert_eq!(range(actual), *expected, "{text}");
+        }
+    }
+}
+
+#[test]
+fn escaped_and_direct_declarators_of_one_statement_keep_distinct_authored_anchors() {
+    let (_, script) = recognized_variable(r"var a,\u0061; let x=a;");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(relation.semantic_name(), "a");
+    let contributors = relation
+        .correspondence()
+        .var_contributors()
+        .expect("mixed-spelling var contributors");
+    assert_eq!(contributors.len(), 2);
+    assert_eq!(contributors[0].fragment(), "a");
+    assert_eq!(contributors[1].fragment(), r"\u0061");
+    assert_eq!(range(contributors[0]), (4, 5));
+    assert_eq!(range(contributors[1]), (6, 12));
+
+    let (_, script) = recognized_variable(r"var é,e\u0301; let x=é;");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(relation.semantic_name(), "é");
+    let contributors = relation
+        .correspondence()
+        .var_contributors()
+        .expect("non-normalized var contributors");
+    assert_eq!(contributors.len(), 1);
+    assert_eq!(range(contributors[0]), (4, 6));
+}
+
+#[test]
+fn within_statement_and_cross_statement_contributors_compose_in_authored_order() {
+    let (_, script) = recognized_variable("var a,b; var a; let x=a;");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    let contributors = relation
+        .correspondence()
+        .var_contributors()
+        .expect("composed var contributors");
+    assert_eq!(contributors.len(), 2);
+    assert_eq!(range(contributors[0]), (4, 5));
+    assert_eq!(range(contributors[1]), (13, 14));
+
+    let (_, script) = recognized_variable("var a; var b,a; let x=a;");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    let contributors = relation
+        .correspondence()
+        .var_contributors()
+        .expect("composed var contributors");
+    assert_eq!(contributors.len(), 2);
+    assert_eq!(range(contributors[0]), (4, 5));
+    assert_eq!(range(contributors[1]), (13, 14));
+}
+
+#[test]
+fn multi_declarator_statements_do_not_change_existing_relation_meanings() {
+    let (_, script) = recognized_variable("var a,a; { let x=a; }");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert!(matches!(
+        relation.current_region(),
+        SelectedVariableStatementNameCorrespondenceRegion::Block(_)
+    ));
+    let contributors = relation
+        .correspondence()
+        .var_contributors()
+        .expect("Block reference falls back to Script var contributors");
+    assert_eq!(contributors.len(), 2);
+    assert_eq!(range(contributors[0]), (4, 5));
+    assert_eq!(range(contributors[1]), (6, 7));
+
+    let (_, script) = recognized_variable("var a,a; { let a=1; let x=a; }");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    let (binding, region) = relation
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("current Block lexical binding must still win");
+    assert_eq!(range(binding), (15, 16));
+    assert!(matches!(
+        region,
+        SelectedVariableStatementNameCorrespondenceRegion::Block(_)
+    ));
+    assert!(relation.correspondence().var_contributors().is_none());
+
+    let (_, script) = recognized_variable("var a,b; let x=c;");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert!(
+        relation
+            .correspondence()
+            .is_no_selected_same_source_contributor()
+    );
+
+    for text in ["var a,b;", "var a,b", "var a,b; var c,d"] {
+        let (_, script) = recognized_variable(text);
+        let analysis = accepted_analysis(&script);
+        assert!(analysis.relations().is_empty(), "{text}");
+    }
+}

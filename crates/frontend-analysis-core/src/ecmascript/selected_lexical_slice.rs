@@ -3,7 +3,8 @@
 //! This module recognizes only the bounded top-level Script subset accepted by
 //! #215/#218, the additive one-level selected Block frontier accepted by
 //! #283/#291, and the distinct top-level VariableStatement frontier fixed by
-//! #310. Recognition is transactional for the whole authoritative `SourceText`:
+//! #310 and widened to `1..N` initializer-free declarators by #324.
+//! Recognition is transactional for the whole authoritative `SourceText`:
 //! tentative declaration/binding/Block/var facts are returned only when the
 //! entire source is consumed by selected items plus selected trivia.
 //!
@@ -222,15 +223,29 @@ pub(super) enum SelectedVariableStatementTerminator {
     AutomaticAtEof,
 }
 
+/// One selected top-level `VariableStatement` owning its authored
+/// `VariableDeclarationList` bindings and exactly one terminator.
+///
+/// `bindings` holds `1..N` selected initializer-free `VariableDeclaration :
+/// BindingIdentifier` facts in exact authored list order. Non-empty cardinality
+/// is a private recognizer construction invariant: `parse_variable_statement`
+/// pushes the first binding before any list continuation is considered and
+/// returns a `ParseFailure` instead of an empty list. `Vec` does not encode
+/// that invariant at the type level, and no generic non-empty collection is
+/// introduced for it.
+///
+/// The terminator is statement-owned and independent of list cardinality. No
+/// comma, `VariableDeclarationList`, or whole-`VariableStatement` extent is
+/// retained.
 #[derive(Debug)]
 pub(super) struct SelectedVariableStatement {
-    binding: SelectedVariableBinding,
+    bindings: Vec<SelectedVariableBinding>,
     terminator: SelectedVariableStatementTerminator,
 }
 
 impl SelectedVariableStatement {
-    pub(super) fn binding(&self) -> &SelectedVariableBinding {
-        &self.binding
+    pub(super) fn bindings(&self) -> &[SelectedVariableBinding] {
+        &self.bindings
     }
 
     pub(super) fn terminator(&self) -> SelectedVariableStatementTerminator {
@@ -499,6 +514,16 @@ impl<'source> Cursor<'source> {
         })
     }
 
+    /// Recognizes one selected top-level `VariableStatement` covering the
+    /// inductive `VariableDeclarationList` base and successor productions with
+    /// `1..N` initializer-free declarators.
+    ///
+    /// Only the keyword-adjacent first declarator keeps the existing restricted
+    /// grammar-evidence context; every later declarator uses the general
+    /// selected `BindingIdentifier` route, so no new grammar-evidence category
+    /// is introduced. Bindings stay local until the whole list plus its single
+    /// terminator are selected: any failure returns before the statement is
+    /// constructed and commits no partial selected-success state.
     fn parse_variable_statement(&mut self) -> Result<SelectedVariableStatement, ParseFailure> {
         if !self.consume_keyword("var") {
             return Err(ParseFailure::UnsupportedCoverage);
@@ -506,14 +531,32 @@ impl<'source> Cursor<'source> {
 
         let after_keyword = self.offset;
         self.skip_selected_trivia();
-        let grammar_context = if self.offset == after_keyword {
+        let mut grammar_context = if self.offset == after_keyword {
             SelectedGrammarEvidenceContext::UnsupportedKeywordAdjacent
         } else {
             SelectedGrammarEvidenceContext::General
         };
-        let (binding_start, binding_end, name_state) =
-            self.parse_selected_binding_identifier(grammar_context)?;
-        self.skip_selected_trivia();
+
+        let mut bindings = Vec::new();
+        loop {
+            let (binding_start, binding_end, name_state) =
+                self.parse_selected_binding_identifier(grammar_context)?;
+            let binding = self.anchor(binding_start, binding_end)?;
+            bindings
+                .try_reserve(1)
+                .map_err(|_| ParseFailure::ResourceLimited)?;
+            bindings.push(SelectedVariableBinding {
+                binding,
+                name_state,
+            });
+
+            self.skip_selected_trivia();
+            if !self.consume_ascii(',') {
+                break;
+            }
+            self.skip_selected_trivia();
+            grammar_context = SelectedGrammarEvidenceContext::General;
+        }
 
         let terminator = if self.consume_ascii(';') {
             SelectedVariableStatementTerminator::AuthoredSemicolon
@@ -523,12 +566,8 @@ impl<'source> Cursor<'source> {
             return Err(ParseFailure::UnsupportedCoverage);
         };
 
-        let binding = self.anchor(binding_start, binding_end)?;
         Ok(SelectedVariableStatement {
-            binding: SelectedVariableBinding {
-                binding,
-                name_state,
-            },
+            bindings,
             terminator,
         })
     }
