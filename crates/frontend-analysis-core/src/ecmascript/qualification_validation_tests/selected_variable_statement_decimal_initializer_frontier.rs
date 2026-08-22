@@ -744,9 +744,8 @@ fn tier_priority_remains_above_authored_order_across_initializer_bearing_var() {
         PRECEDENCE_FIXTURE.lower_priority.subject,
         ISSUE_ID + 1,
     );
-    assert!(
-        PRECEDENCE_FIXTURE.primary.subject.start > PRECEDENCE_FIXTURE.lower_priority.subject.start
-    );
+    assert_eq!(PRECEDENCE_FIXTURE.primary.subject.start, 16);
+    assert_eq!(PRECEDENCE_FIXTURE.lower_priority.subject.start, 11);
 }
 
 #[test]
@@ -879,7 +878,7 @@ fn rule_reachability_lifecycle_and_positive_partition_remain_unchanged() {
     assert_eq!(RULE_UNITS.len() - CURRENT_REQUIRED_RULE_IDS.len(), 184);
     assert_eq!(POSITIVE_LIFECYCLE, "SelectedAcceptedIncomplete");
     assert_ne!(POSITIVE_LIFECYCLE, "Qualified");
-    assert!(!AGGREGATE_QUALIFIED_AVAILABLE);
+    assert_eq!(AGGREGATE_QUALIFIED_AVAILABLE, false);
 
     assert_eq!(partition(0, 0), PositivePartition::HistoricalFlat);
     assert_eq!(partition(1, 0), PositivePartition::BlockEnabledWithoutVar);
