@@ -1004,3 +1004,81 @@ fn initializer_presence_and_malformed_syntax_remain_distinct_from_missing_initia
     assert_eq!(missing.subject, Some(GoldRange::new(6, 7)));
     assert!(missing.synthetic.is_empty());
 }
+
+#[test]
+fn widened_binding_shape_preserves_selected_ee04_non_trigger_context() {
+    for fixture_id in [
+        "JS-GOLD-LEXDECL-EE04-AWAIT-YIELD-001",
+        "JS-GOLD-LEXDECL-EE04-FUTURE-RESERVED-001",
+        "JS-GOLD-LEXDECL-EE04-EVAL-ARGUMENTS-001",
+    ] {
+        let fixture = fixtures()
+            .into_iter()
+            .find(|fixture| fixture.id == fixture_id)
+            .unwrap_or_else(|| panic!("{fixture_id} must exist"));
+        assert_eq!(
+            fixture.request_context,
+            RequestContext::ScriptIndependentSource
+        );
+        assert_eq!(
+            fixture.qualification,
+            Some(model::ExpectedQualification::Qualified)
+        );
+        assert_eq!(
+            fixture.implementation_coverage,
+            ImplementationCoverage::Pending
+        );
+        assert!(
+            fixture
+                .dimensions
+                .contains(&ValidationDimension::EarlyErrorRule)
+        );
+        assert!(
+            fixture
+                .dimensions
+                .contains(&ValidationDimension::ValidityDependency)
+        );
+    }
+}
+
+#[test]
+fn multi_binding_name_identity_does_not_normalize_unicode() {
+    let fixture = fixtures()
+        .into_iter()
+        .find(|fixture| fixture.id == "JS-GOLD-LEXDECL-MULTIBIND-CANONICAL-DISTINCT-001")
+        .expect("canonical-distinct multi-binding fixture must exist");
+    assert_eq!(
+        fixture.qualification,
+        Some(model::ExpectedQualification::Qualified)
+    );
+
+    let source = SourceText::new(SourceId::new(216), fixture.source.to_owned());
+    let composed = source.anchor(4, 6).expect("é occupies UTF-8 bytes 4..6");
+    let decomposed = source
+        .anchor(8, 11)
+        .expect("e + combining acute occupies UTF-8 bytes 8..11");
+    assert_eq!(composed.fragment(), "é");
+    assert_eq!(decomposed.fragment(), "é");
+    assert_ne!(composed.fragment(), decomposed.fragment());
+}
+
+#[test]
+fn validation_gold_source_does_not_import_ecmascript_production_contracts() {
+    for (name, source) in [
+        ("gold", include_str!("gold.rs")),
+        ("focused", include_str!("focused.rs")),
+    ] {
+        for forbidden in [
+            "frontend_analysis_core::ecmascript",
+            "crate::ecmascript",
+            "css::selector",
+            "SelectedStaticSemanticsOutcome",
+            "FirstLexicalSliceOutcome",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{name} validation authority must remain candidate-independent: found {forbidden}"
+            );
+        }
+    }
+}
