@@ -45,8 +45,7 @@ const CURRENT_REQUIRED_RULE_IDS: &[&str] = &[
     "EE-36-R02",
 ];
 
-const VARIABLE_DECLARATION_LIST_BASE: &str =
-    "VariableDeclarationList : VariableDeclaration";
+const VARIABLE_DECLARATION_LIST_BASE: &str = "VariableDeclarationList : VariableDeclaration";
 const VARIABLE_DECLARATION_LIST_SUCCESSOR: &str =
     "VariableDeclarationList : VariableDeclarationList , VariableDeclaration";
 const SELECTED_LIST_CARDINALITY: &str = "1..N";
@@ -296,8 +295,13 @@ const CONTRIBUTOR_FIXTURES: &[ContributorFixture] = &[
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Disposition {
     SelectedAcceptedIncomplete,
-    StaticRejected { rule_id: &'static str, subject: Range },
-    DefinitiveGrammarRejection { subject: Range },
+    StaticRejected {
+        rule_id: &'static str,
+        subject: Range,
+    },
+    DefinitiveGrammarRejection {
+        subject: Range,
+    },
     UnsupportedCoverage,
 }
 
@@ -512,17 +516,17 @@ fn authority_chain_is_additive_and_historical_frontiers_stay_immutable() {
         "d89c03f2db8a597bc915b363a6518d0cc8acdbc0"
     );
     assert_eq!(UNICODE_VERSION, "17.0.0");
-    assert!(
-        HISTORICAL_VAR_ORACLE.contains("SELECTED_VARIABLE_SINGLE_BINDING_ONLY: bool = true")
-    );
+    assert!(HISTORICAL_VAR_ORACLE.contains("SELECTED_VARIABLE_SINGLE_BINDING_ONLY: bool = true"));
     assert!(HISTORICAL_VAR_ORACLE.contains("UnsupportedReason::MultipleVarDeclarators"));
     assert!(HISTORICAL_VAR_COMPOSITION.contains("VariableStatement"));
     assert!(HISTORICAL_COMPLETION.contains("assert_eq!(required.len(), 9);"));
     assert!(HISTORICAL_COMPLETION.contains("assert_eq!(non_triggering.len(), 184);"));
     assert!(HISTORICAL_CORRESPONDENCE.contains("SameSourceSelectedVarNameContributors"));
     assert!(HISTORICAL_EOF_ASI.contains("UnsupportedReason::MultipleVarDeclarators"));
-    assert!(TIER_PRECEDENCE_AUTHORITY
-        .contains("declaration_local_precedence_matrix_defeats_global_rule_and_byte_ordering"));
+    assert!(
+        TIER_PRECEDENCE_AUTHORITY
+            .contains("declaration_local_precedence_matrix_defeats_global_rule_and_byte_ordering")
+    );
     assert!(GRAMMAR_EVIDENCE_AUTHORITY.contains("CandidateDefinitiveGrammarEvidence"));
 }
 
@@ -539,7 +543,11 @@ fn variable_declaration_list_is_an_inductive_theorem_not_a_fixture_count() {
     assert_eq!(SELECTED_LIST_CARDINALITY, "1..N");
     assert_eq!(SUCCESSOR_FRONTIER_CARDINALITY, "2..N");
     assert_eq!(INDUCTIVE_INVARIANTS.len(), 7);
-    assert!(INDUCTIVE_INVARIANTS.iter().all(|invariant| !invariant.is_empty()));
+    assert!(
+        INDUCTIVE_INVARIANTS
+            .iter()
+            .all(|invariant| !invariant.is_empty())
+    );
 
     let boundary_counts: Vec<_> = ["historical-base", "two-declarators", "three-declarators"]
         .iter()
@@ -576,7 +584,10 @@ fn positive_fixtures_pin_authored_order_semantic_identity_and_one_terminator() {
         .iter()
         .find(|fixture| fixture.id == "direct-escaped-equality")
         .unwrap();
-    assert_eq!(equal.bindings[0].semantic_name, equal.bindings[1].semantic_name);
+    assert_eq!(
+        equal.bindings[0].semantic_name,
+        equal.bindings[1].semantic_name
+    );
     assert_ne!(
         slice(equal.source, equal.bindings[0].authored),
         slice(equal.source, equal.bindings[1].authored)
@@ -597,11 +608,7 @@ fn correspondence_is_only_a_314_contributor_domain_successor() {
         assert!(fixture.contributors.len() >= 2);
         let mut previous_end = 0;
         for contributor in fixture.contributors {
-            assert_anchor(
-                fixture.source,
-                *contributor,
-                ISSUE_ID * 1000 + index as u64,
-            );
+            assert_anchor(fixture.source, *contributor, ISSUE_ID * 1000 + index as u64);
             assert!(contributor.start >= previous_end);
             previous_end = contributor.end;
         }
@@ -610,8 +617,10 @@ fn correspondence_is_only_a_314_contributor_domain_successor() {
         "same-source selected var contributor != runtime Resolve",
         "Binding target"
     )));
-    assert!(HISTORICAL_CORRESPONDENCE
-        .contains("authored VariableDeclaration provenance != unique runtime binding identity"));
+    assert!(
+        HISTORICAL_CORRESPONDENCE
+            .contains("authored VariableDeclaration provenance != unique runtime binding identity")
+    );
 }
 
 #[test]
@@ -638,8 +647,12 @@ fn later_declarator_grammar_and_static_routes_stay_distinct() {
             subject: Range::new(6, 10)
         }
     );
-    assert!(BOUNDARY_FIXTURES.iter().any(|fixture| fixture.source == "var a, if;"
-        && fixture.disposition == Disposition::UnsupportedCoverage));
+    assert!(
+        BOUNDARY_FIXTURES
+            .iter()
+            .any(|fixture| fixture.source == "var a, if;"
+                && fixture.disposition == Disposition::UnsupportedCoverage)
+    );
     assert!(
         POSITIVE_FIXTURES
             .iter()
@@ -705,14 +718,30 @@ fn terminator_and_asi_meaning_do_not_depend_on_list_cardinality() {
     assert_eq!(authored.terminator, Terminator::AuthoredSemicolon);
     assert_eq!(automatic.terminator, Terminator::AutomaticAtEof);
 
-    assert!(POSITIVE_FIXTURES.iter().any(|fixture| fixture.source == "var a\n, b;"
-        && fixture.terminator == Terminator::AuthoredSemicolon));
-    assert!(POSITIVE_FIXTURES.iter().any(|fixture| fixture.source == "var a,\n b"
-        && fixture.terminator == Terminator::AutomaticAtEof));
-    assert!(BOUNDARY_FIXTURES.iter().any(|fixture| fixture.source == "var a\nvar b;"
-        && fixture.disposition == Disposition::UnsupportedCoverage));
-    assert!(BOUNDARY_FIXTURES.iter().any(|fixture| fixture.source == "var a,"
-        && fixture.disposition == Disposition::UnsupportedCoverage));
+    assert!(
+        POSITIVE_FIXTURES
+            .iter()
+            .any(|fixture| fixture.source == "var a\n, b;"
+                && fixture.terminator == Terminator::AuthoredSemicolon)
+    );
+    assert!(
+        POSITIVE_FIXTURES
+            .iter()
+            .any(|fixture| fixture.source == "var a,\n b"
+                && fixture.terminator == Terminator::AutomaticAtEof)
+    );
+    assert!(
+        BOUNDARY_FIXTURES
+            .iter()
+            .any(|fixture| fixture.source == "var a\nvar b;"
+                && fixture.disposition == Disposition::UnsupportedCoverage)
+    );
+    assert!(
+        BOUNDARY_FIXTURES
+            .iter()
+            .any(|fixture| fixture.source == "var a,"
+                && fixture.disposition == Disposition::UnsupportedCoverage)
+    );
 }
 
 #[test]
