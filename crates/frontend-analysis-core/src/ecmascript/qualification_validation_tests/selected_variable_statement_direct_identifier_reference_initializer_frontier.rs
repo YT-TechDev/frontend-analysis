@@ -52,10 +52,8 @@ const EXPECTED_CHANGED_FILES: &[&str] = &[
     "crates/frontend-analysis-core/src/ecmascript/qualification_validation_tests/selected_variable_statement_direct_identifier_reference_initializer_frontier.rs",
 ];
 
-const RUNTIME_NEGATIVE_BOUNDARY: &str =
-    "same-source selected var contributor is authored source provenance, not runtime binding identity";
-const LOOKUP_NEGATIVE_BOUNDARY: &str =
-    "same-source selected correspondence is not runtime environment lookup or runtime unresolvability";
+const RUNTIME_NEGATIVE_BOUNDARY: &str = "same-source selected var contributor is authored source provenance, not runtime binding identity";
+const LOOKUP_NEGATIVE_BOUNDARY: &str = "same-source selected correspondence is not runtime environment lookup or runtime unresolvability";
 
 fn aggregate_qualified_available() -> bool {
     false
@@ -180,8 +178,7 @@ const SAME_LIST_CONTRIBUTORS: &[ExpectedAnchor] = &[
     ExpectedAnchor::new(6, 7, "a"),
 ];
 const LATER_LIST_CONTRIBUTORS: &[ExpectedAnchor] = &[ExpectedAnchor::new(8, 9, "a")];
-const ESCAPED_LHS_CONTRIBUTORS: &[ExpectedAnchor] =
-    &[ExpectedAnchor::new(4, 10, r"\u0061")];
+const ESCAPED_LHS_CONTRIBUTORS: &[ExpectedAnchor] = &[ExpectedAnchor::new(4, 10, r"\u0061")];
 const DECIMAL_MIX_CONTRIBUTORS: &[ExpectedAnchor] = &[ExpectedAnchor::new(4, 5, "a")];
 
 const RELATION_FIXTURES: &[RelationFixture] = &[
@@ -707,11 +704,7 @@ fn assert_correspondence_anchors(fixture: &RelationFixture, source_id: u64) {
         ExpectedCorrespondence::SameSourceSelectedVarNameContributors { contributors } => {
             let mut previous_start = None;
             for (index, contributor) in contributors.iter().enumerate() {
-                assert_anchor(
-                    fixture.source,
-                    *contributor,
-                    source_id + 10 + index as u64,
-                );
+                assert_anchor(fixture.source, *contributor, source_id + 10 + index as u64);
                 if let Some(previous) = previous_start {
                     assert!(
                         contributor.range.start >= previous,
@@ -752,7 +745,11 @@ fn direct_rhs_fixture_ranges_and_name_policy_categories_are_exact() {
     let mut categories = BTreeSet::new();
 
     for (index, fixture) in DIRECT_RHS_FIXTURES.iter().enumerate() {
-        assert!(ids.insert(fixture.id), "duplicate fixture id {}", fixture.id);
+        assert!(
+            ids.insert(fixture.id),
+            "duplicate fixture id {}",
+            fixture.id
+        );
         assert_anchor(fixture.source, fixture.rhs, ISSUE_ID * 100 + index as u64);
         assert_eq!(fixture.rhs.fragment, fixture.semantic_name);
         categories.insert(fixture.category);
@@ -813,7 +810,10 @@ fn var_contributors_are_whole_source_authored_provenance_not_previous_only_looku
             .iter()
             .find(|fixture| fixture.id == id)
             .unwrap_or_else(|| panic!("{id} must exist"));
-        assert_correspondence_anchors(fixture, ISSUE_ID * 2_000 + fixture.reference.range.start as u64);
+        assert_correspondence_anchors(
+            fixture,
+            ISSUE_ID * 2_000 + fixture.reference.range.start as u64,
+        );
     }
 
     let after = RELATION_FIXTURES
@@ -1074,7 +1074,11 @@ fn incomplete_unselected_and_later_grammar_failure_commit_no_partial_relation_st
 fn positive_relation_fixtures_have_exact_source_provenance_and_incomplete_lifecycle() {
     let mut ids = BTreeSet::new();
     for (index, fixture) in RELATION_FIXTURES.iter().enumerate() {
-        assert!(ids.insert(fixture.id), "duplicate relation fixture {}", fixture.id);
+        assert!(
+            ids.insert(fixture.id),
+            "duplicate relation fixture {}",
+            fixture.id
+        );
         assert_correspondence_anchors(fixture, ISSUE_ID * 10_000 + index as u64 * 100);
         assert_eq!(fixture.partition, PositivePartition::VariableEnabled);
     }
@@ -1118,7 +1122,10 @@ fn frozen_rule_reachability_and_three_way_partition_pressure_remain_unchanged() 
 
     assert_eq!(required_ids.len(), 9);
     for required in &required_ids {
-        assert!(active_ids.contains(required), "missing required rule {required}");
+        assert!(
+            active_ids.contains(required),
+            "missing required rule {required}"
+        );
     }
 
     let mut reachable = 0;
@@ -1140,15 +1147,28 @@ fn frozen_rule_reachability_and_three_way_partition_pressure_remain_unchanged() 
 #[test]
 fn validation_remains_candidate_independent_and_representation_neutral() {
     let forbidden = [
-        ["selected", "lexical", "slice", "::"].join("_").replace("_::", "::"),
-        ["selected", "static", "semantics", "::"].join("_").replace("_::", "::"),
+        ["selected", "lexical", "slice", "::"]
+            .join("_")
+            .replace("_::", "::"),
+        ["selected", "static", "semantics", "::"]
+            .join("_")
+            .replace("_::", "::"),
         ["selected", "qualification", "integration", "::"]
             .join("_")
             .replace("_::", "::"),
-        ["selected", "variable", "statement", "name", "correspondence", "::"]
+        [
+            "selected",
+            "variable",
+            "statement",
+            "name",
+            "correspondence",
+            "::",
+        ]
+        .join("_")
+        .replace("_::", "::"),
+        ["selected", "binding", "scope", "::"]
             .join("_")
             .replace("_::", "::"),
-        ["selected", "binding", "scope", "::"].join("_").replace("_::", "::"),
         ["recognize", "selected", "lexical", "slice"].join("_"),
         ["attempt", "selected", "qualification"].join("_"),
     ];
@@ -1174,10 +1194,9 @@ fn exact_validation_handoff_is_two_files_and_production_placement_remains_open()
         )
     }));
     assert!(EXPECTED_CHANGED_FILES[0].ends_with("mod.rs"));
-    assert!(
-        EXPECTED_CHANGED_FILES[1]
-            .ends_with("selected_variable_statement_direct_identifier_reference_initializer_frontier.rs")
-    );
+    assert!(EXPECTED_CHANGED_FILES[1].ends_with(
+        "selected_variable_statement_direct_identifier_reference_initializer_frontier.rs"
+    ));
 }
 
 #[test]
@@ -1188,7 +1207,12 @@ fn fixture_evaluation_is_deterministic_and_utf8_fail_closed() {
     }
 
     let source = SourceText::new(SourceId::new(ISSUE_ID * 30_000), "var x=π;".to_owned());
-    assert!(source.anchor(6, 7).is_err(), "mid-code-point range must fail");
-    let exact = source.anchor(6, 8).expect("π exact UTF-8 range must be valid");
+    assert!(
+        source.anchor(6, 7).is_err(),
+        "mid-code-point range must fail"
+    );
+    let exact = source
+        .anchor(6, 8)
+        .expect("π exact UTF-8 range must be valid");
     assert_eq!(exact.fragment(), "π");
 }
