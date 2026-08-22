@@ -61,6 +61,8 @@ fn top_level_var_correspondence_is_whole_script_and_preserves_every_authored_con
         ("var a; let x=a;", &[(4, 5)][..]),
         ("let x=a; var a;", &[(13, 14)][..]),
         ("var a; var a; let x=a;", &[(4, 5), (11, 12)][..]),
+        ("var a=1; let x=a;", &[(4, 5)][..]),
+        ("var a=1,a; let x=a;", &[(4, 5), (8, 9)][..]),
     ] {
         let (_, script) = recognized_variable(text);
         let analysis = accepted_analysis(&script);
@@ -89,6 +91,10 @@ fn escaped_and_direct_spellings_share_exact_semantic_name_without_normalization(
         (r"var \u0061; let x=a;", &[r"\u0061"][..]),
         (r"var a; let x=\u0061;", &["a"][..]),
         (r"var a; var \u0061; let x=a;", &["a", r"\u0061"][..]),
+        (
+            r"var a=1,\u0061=2; let x=a;",
+            &["a", r"\u0061"][..],
+        ),
     ] {
         let (_, script) = recognized_variable(text);
         let analysis = accepted_analysis(&script);
@@ -204,7 +210,7 @@ fn no_selected_same_source_contributor_and_zero_relation_are_complete_source_cla
             .is_no_selected_same_source_contributor()
     );
 
-    for text in ["var a; var a;", "var a; var a", "var a"] {
+    for text in ["var a; var a;", "var a; var a", "var a", "var a=1"] {
         let (_, script) = recognized_variable(text);
         let analysis = accepted_analysis(&script);
         assert!(analysis.relations().is_empty(), "{text}");
@@ -272,7 +278,7 @@ fn static_rejection_prevents_correspondence_witness_construction_and_partial_rel
 #[test]
 fn unsupported_and_incomplete_sources_never_reach_var_correspondence() {
     for text in [
-        "var a=1; let x=a;",
+        "var a=true; let x=a;",
         "var a; let x=(a);",
         "var a; { let x=a;",
     ] {
