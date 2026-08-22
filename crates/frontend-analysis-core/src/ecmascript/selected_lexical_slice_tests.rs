@@ -4,7 +4,8 @@ use super::qualification_validation_tests::{gold_source, gold_subject_range};
 use super::selected_lexical_slice::{
     SelectedBindingNameState, SelectedDeclarationTerminator, SelectedInitializerState,
     SelectedInvalidEscapePosition, SelectedLexicalDeclarationKind, SelectedLexicalScript,
-    SelectedLexicalSliceOutcome, SelectedVariableStatementScript, SelectedVariableTopLevelItem,
+    SelectedLexicalSliceOutcome, SelectedVariableStatementScript,
+    SelectedVariableStatementTerminator, SelectedVariableTopLevelItem,
     recognize_selected_lexical_slice,
 };
 
@@ -1973,6 +1974,116 @@ fn top_level_variable_statement_retains_minimal_source_backed_binding_fact() {
 }
 
 #[test]
+fn variable_statement_eof_asi_retains_statement_owned_terminator_provenance() {
+    for (text, expected_terminator, fragment, semantic_name, expected_range) in [
+        (
+            "var a;",
+            SelectedVariableStatementTerminator::AuthoredSemicolon,
+            "a",
+            "a",
+            (4, 5),
+        ),
+        (
+            "var a   ;",
+            SelectedVariableStatementTerminator::AuthoredSemicolon,
+            "a",
+            "a",
+            (4, 5),
+        ),
+        (
+            "var a",
+            SelectedVariableStatementTerminator::AutomaticAtEof,
+            "a",
+            "a",
+            (4, 5),
+        ),
+        (
+            "var a   \t\n",
+            SelectedVariableStatementTerminator::AutomaticAtEof,
+            "a",
+            "a",
+            (4, 5),
+        ),
+        (
+            r"var \u0061",
+            SelectedVariableStatementTerminator::AutomaticAtEof,
+            r"\u0061",
+            "a",
+            (4, 10),
+        ),
+        (
+            "var é",
+            SelectedVariableStatementTerminator::AutomaticAtEof,
+            "é",
+            "é",
+            (4, 6),
+        ),
+        (
+            r"var e\u0301",
+            SelectedVariableStatementTerminator::AutomaticAtEof,
+            r"e\u0301",
+            "e\u{301}",
+            (4, 11),
+        ),
+    ] {
+        let script = recognized_variable(text);
+        let [SelectedVariableTopLevelItem::VariableStatement(statement)] = script.items() else {
+            panic!("expected exactly one selected VariableStatement for {text:?}");
+        };
+        assert_eq!(statement.terminator(), expected_terminator, "{text:?}");
+        assert_eq!(
+            statement.binding().binding().fragment(),
+            fragment,
+            "{text:?}"
+        );
+        assert_eq!(
+            statement.binding().semantic_name(),
+            Some(semantic_name),
+            "{text:?}"
+        );
+        assert_eq!(
+            (
+                statement.binding().binding().range().start(),
+                statement.binding().binding().range().end()
+            ),
+            expected_range,
+            "{text:?}"
+        );
+    }
+
+    let script = recognized_variable("var a; var a");
+    let [
+        SelectedVariableTopLevelItem::VariableStatement(first),
+        SelectedVariableTopLevelItem::VariableStatement(second),
+    ] = script.items()
+    else {
+        panic!("repeated var fixture must retain two VariableStatement owners");
+    };
+    assert_eq!(
+        first.terminator(),
+        SelectedVariableStatementTerminator::AuthoredSemicolon
+    );
+    assert_eq!(
+        second.terminator(),
+        SelectedVariableStatementTerminator::AutomaticAtEof
+    );
+    assert_eq!(
+        (
+            first.binding().binding().range().start(),
+            first.binding().binding().range().end()
+        ),
+        (4, 5)
+    );
+    assert_eq!(
+        (
+            second.binding().binding().range().start(),
+            second.binding().binding().range().end()
+        ),
+        (11, 12)
+    );
+}
+
+#[test]
 fn variable_statement_promotes_only_var_bearing_sources_to_distinct_representation() {
     let script = recognized_variable("let a; { let b; } var c; let d");
     assert_eq!(script.items().len(), 4);
@@ -2007,15 +2118,16 @@ fn variable_statement_promotes_only_var_bearing_sources_to_distinct_representati
 }
 
 #[test]
-fn variable_statement_frontier_requires_one_top_level_binding_and_authored_semicolon() {
+fn variable_statement_frontier_keeps_non_eof_and_broader_var_grammar_unsupported() {
     for text in [
-        "var x",
+        "var x\nvar y;",
         "var x, y;",
         "var x = 1;",
         "var x = y;",
         "var {x} = y;",
         "for (var x;;) {}",
         "{ var x; }",
+        "var x/*comment*/",
         r"var\u{};",
         r"var\u0061;",
     ] {
@@ -2035,6 +2147,10 @@ fn variable_statement_authored_semicolon_composes_with_existing_trailing_lexical
         panic!("first item must be VariableStatement");
     };
     assert_eq!(statement.binding().binding().fragment(), "x");
+    assert_eq!(
+        statement.terminator(),
+        SelectedVariableStatementTerminator::AuthoredSemicolon
+    );
     let SelectedVariableTopLevelItem::LexicalDeclaration(declaration) = &script.items()[1] else {
         panic!("second item must be lexical declaration");
     };
@@ -2042,6 +2158,4 @@ fn variable_statement_authored_semicolon_composes_with_existing_trailing_lexical
         declaration.terminator(),
         SelectedDeclarationTerminator::AutomaticAtEof
     ));
-
-    assert_unsupported("var x");
 }

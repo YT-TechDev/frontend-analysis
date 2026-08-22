@@ -962,8 +962,11 @@ fn one_level_block_unsupported_neighbors_remain_unsupported_coverage() {
 fn top_level_variable_statement_positive_sources_remain_selected_accepted_incomplete() {
     for text in [
         "var x;",
+        "var x",
+        "var x   \t\n",
         "var let;",
         r"var \u006Cet;",
+        r"var \u006Cet",
         "let x; var y;",
         "var x; var x;",
         "{ let x; } var x;",
@@ -984,7 +987,9 @@ fn top_level_variable_statement_positive_sources_remain_selected_accepted_incomp
 fn top_level_variable_statement_static_rejections_preserve_authored_primary_subject() {
     for (text, expected_fragment, expected_range) in [
         (r"var \u0069f;", r"\u0069f", (4, 11)),
+        (r"var \u0069f", r"\u0069f", (4, 11)),
         ("let x; var x;", "x", (11, 12)),
+        ("let x; var x", "x", (11, 12)),
         ("var x; let x;", "x", (11, 12)),
         ("var y; var x; let x; let y;", "x", (18, 19)),
         ("var x; var x; let x;", "x", (18, 19)),
@@ -1034,7 +1039,7 @@ fn top_level_variable_statement_grammar_and_deferred_boundaries_remain_distinct(
     assert_eq!(anchor.fragment(), r"\u{}");
     assert_eq!((anchor.range().start(), anchor.range().end()), (4, 8));
 
-    for text in [r"var\u{};", r"var\u0061;", "var x"] {
+    for text in [r"var\u{};", r"var\u0061;", "var x\nvar y;"] {
         assert!(
             matches!(
                 attempt(text),

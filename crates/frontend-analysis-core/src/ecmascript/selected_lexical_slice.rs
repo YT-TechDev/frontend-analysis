@@ -216,14 +216,25 @@ impl SelectedVariableBinding {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SelectedVariableStatementTerminator {
+    AuthoredSemicolon,
+    AutomaticAtEof,
+}
+
 #[derive(Debug)]
 pub(super) struct SelectedVariableStatement {
     binding: SelectedVariableBinding,
+    terminator: SelectedVariableStatementTerminator,
 }
 
 impl SelectedVariableStatement {
     pub(super) fn binding(&self) -> &SelectedVariableBinding {
         &self.binding
+    }
+
+    pub(super) fn terminator(&self) -> SelectedVariableStatementTerminator {
+        self.terminator
     }
 }
 
@@ -504,9 +515,13 @@ impl<'source> Cursor<'source> {
             self.parse_selected_binding_identifier(grammar_context)?;
         self.skip_selected_trivia();
 
-        if !self.consume_ascii(';') {
+        let terminator = if self.consume_ascii(';') {
+            SelectedVariableStatementTerminator::AuthoredSemicolon
+        } else if self.is_eof() {
+            SelectedVariableStatementTerminator::AutomaticAtEof
+        } else {
             return Err(ParseFailure::UnsupportedCoverage);
-        }
+        };
 
         let binding = self.anchor(binding_start, binding_end)?;
         Ok(SelectedVariableStatement {
@@ -514,6 +529,7 @@ impl<'source> Cursor<'source> {
                 binding,
                 name_state,
             },
+            terminator,
         })
     }
 
