@@ -53,10 +53,8 @@ const EXPECTED_CHANGED_FILES: &[&str] = &[
     "crates/frontend-analysis-core/src/ecmascript/qualification_validation_tests/selected_variable_statement_direct_identifier_reference_initializer_frontier.rs",
 ];
 
-const RUNTIME_NEGATIVE_BOUNDARY: &str =
-    "same-source selected var contributor is authored source provenance, not runtime binding identity";
-const LOOKUP_NEGATIVE_BOUNDARY: &str =
-    "same-source selected correspondence is not runtime environment lookup or runtime unresolvability";
+const RUNTIME_NEGATIVE_BOUNDARY: &str = "same-source selected var contributor is authored source provenance, not runtime binding identity";
+const LOOKUP_NEGATIVE_BOUNDARY: &str = "same-source selected correspondence is not runtime environment lookup or runtime unresolvability";
 
 fn aggregate_qualified_available() -> bool {
     false
@@ -513,7 +511,9 @@ const DIRECT_RHS_FIXTURES: &[DirectRhsFixture] = &[
         6,
         16,
         "implements",
-        &[0x69, 0x6d, 0x70, 0x6c, 0x65, 0x6d, 0x65, 0x6e, 0x74, 0x73],
+        &[
+            0x69, 0x6d, 0x70, 0x6c, 0x65, 0x6d, 0x65, 0x6e, 0x74, 0x73,
+        ],
         NamePolicyCategory::StrictOnlyRestricted
     ),
     direct_rhs_fixture!(
@@ -635,26 +635,106 @@ const STATIC_BOUNDARIES: &[BoundaryFixture] = &[
 ];
 
 const UNSUPPORTED_BOUNDARIES: &[BoundaryFixture] = &[
-    BoundaryFixture { id: "escaped-rhs", source: r"var x=\u0066oo;", disposition: Disposition::UnsupportedCoverage },
-    BoundaryFixture { id: "member-expression", source: "var x=foo.bar;", disposition: Disposition::UnsupportedCoverage },
-    BoundaryFixture { id: "call-expression", source: "var x=foo();", disposition: Disposition::UnsupportedCoverage },
-    BoundaryFixture { id: "binary-expression", source: "var x=foo + 1;", disposition: Disposition::UnsupportedCoverage },
-    BoundaryFixture { id: "parenthesized-expression", source: "var x=(foo);", disposition: Disposition::UnsupportedCoverage },
-    BoundaryFixture { id: "assignment-expression", source: "var x=foo=bar;", disposition: Disposition::UnsupportedCoverage },
-    BoundaryFixture { id: "conditional-expression", source: "var x=foo?bar:baz;", disposition: Disposition::UnsupportedCoverage },
-    BoundaryFixture { id: "comment", source: "var x=foo/*comment*/;", disposition: Disposition::UnsupportedCoverage },
-    BoundaryFixture { id: "non-eof-asi", source: "var x=foo\nvar y;", disposition: Disposition::UnsupportedCoverage },
-    BoundaryFixture { id: "reserved-if", source: "var x=if;", disposition: Disposition::UnsupportedCoverage },
-    BoundaryFixture { id: "reserved-class", source: "var x=class;", disposition: Disposition::UnsupportedCoverage },
-    BoundaryFixture { id: "reserved-return", source: "var x=return;", disposition: Disposition::UnsupportedCoverage },
-    BoundaryFixture { id: "reserved-var", source: "var x=var;", disposition: Disposition::UnsupportedCoverage },
-    BoundaryFixture { id: "malformed-rhs-escape", source: r"var x=\u{};", disposition: Disposition::UnsupportedCoverage },
-    BoundaryFixture { id: "missing-rhs", source: "var x=;", disposition: Disposition::UnsupportedCoverage },
-    BoundaryFixture { id: "boolean-true", source: "var x=true;", disposition: Disposition::UnsupportedCoverage },
-    BoundaryFixture { id: "boolean-false", source: "var x=false;", disposition: Disposition::UnsupportedCoverage },
-    BoundaryFixture { id: "null-literal", source: "var x=null;", disposition: Disposition::UnsupportedCoverage },
-    BoundaryFixture { id: "this-expression", source: "var x=this;", disposition: Disposition::UnsupportedCoverage },
-    BoundaryFixture { id: "string-literal", source: "var x=\"foo\";", disposition: Disposition::UnsupportedCoverage },
+    BoundaryFixture {
+        id: "escaped-rhs",
+        source: r"var x=\u0066oo;",
+        disposition: Disposition::UnsupportedCoverage,
+    },
+    BoundaryFixture {
+        id: "member-expression",
+        source: "var x=foo.bar;",
+        disposition: Disposition::UnsupportedCoverage,
+    },
+    BoundaryFixture {
+        id: "call-expression",
+        source: "var x=foo();",
+        disposition: Disposition::UnsupportedCoverage,
+    },
+    BoundaryFixture {
+        id: "binary-expression",
+        source: "var x=foo + 1;",
+        disposition: Disposition::UnsupportedCoverage,
+    },
+    BoundaryFixture {
+        id: "parenthesized-expression",
+        source: "var x=(foo);",
+        disposition: Disposition::UnsupportedCoverage,
+    },
+    BoundaryFixture {
+        id: "assignment-expression",
+        source: "var x=foo=bar;",
+        disposition: Disposition::UnsupportedCoverage,
+    },
+    BoundaryFixture {
+        id: "conditional-expression",
+        source: "var x=foo?bar:baz;",
+        disposition: Disposition::UnsupportedCoverage,
+    },
+    BoundaryFixture {
+        id: "comment",
+        source: "var x=foo/*comment*/;",
+        disposition: Disposition::UnsupportedCoverage,
+    },
+    BoundaryFixture {
+        id: "non-eof-asi",
+        source: "var x=foo\nvar y;",
+        disposition: Disposition::UnsupportedCoverage,
+    },
+    BoundaryFixture {
+        id: "reserved-if",
+        source: "var x=if;",
+        disposition: Disposition::UnsupportedCoverage,
+    },
+    BoundaryFixture {
+        id: "reserved-class",
+        source: "var x=class;",
+        disposition: Disposition::UnsupportedCoverage,
+    },
+    BoundaryFixture {
+        id: "reserved-return",
+        source: "var x=return;",
+        disposition: Disposition::UnsupportedCoverage,
+    },
+    BoundaryFixture {
+        id: "reserved-var",
+        source: "var x=var;",
+        disposition: Disposition::UnsupportedCoverage,
+    },
+    BoundaryFixture {
+        id: "malformed-rhs-escape",
+        source: r"var x=\u{};",
+        disposition: Disposition::UnsupportedCoverage,
+    },
+    BoundaryFixture {
+        id: "missing-rhs",
+        source: "var x=;",
+        disposition: Disposition::UnsupportedCoverage,
+    },
+    BoundaryFixture {
+        id: "boolean-true",
+        source: "var x=true;",
+        disposition: Disposition::UnsupportedCoverage,
+    },
+    BoundaryFixture {
+        id: "boolean-false",
+        source: "var x=false;",
+        disposition: Disposition::UnsupportedCoverage,
+    },
+    BoundaryFixture {
+        id: "null-literal",
+        source: "var x=null;",
+        disposition: Disposition::UnsupportedCoverage,
+    },
+    BoundaryFixture {
+        id: "this-expression",
+        source: "var x=this;",
+        disposition: Disposition::UnsupportedCoverage,
+    },
+    BoundaryFixture {
+        id: "string-literal",
+        source: "var x=\"foo\";",
+        disposition: Disposition::UnsupportedCoverage,
+    },
 ];
 
 const FAILED_TRANSACTION_FIXTURES: &[FailedTransactionFixture] = &[
@@ -698,10 +778,26 @@ const FAILED_TRANSACTION_FIXTURES: &[FailedTransactionFixture] = &[
 ];
 
 const TERMINATOR_BOUNDARIES: &[BoundaryFixture] = &[
-    BoundaryFixture { id: "authored-semicolon", source: "var x=foo;", disposition: Disposition::SelectedAcceptedIncomplete },
-    BoundaryFixture { id: "automatic-at-eof", source: "var x=foo", disposition: Disposition::SelectedAcceptedIncomplete },
-    BoundaryFixture { id: "newline-before-comma", source: "var x=foo\n, a=1;", disposition: Disposition::SelectedAcceptedIncomplete },
-    BoundaryFixture { id: "newline-after-comma-eof", source: "var x=foo,\n a=1", disposition: Disposition::SelectedAcceptedIncomplete },
+    BoundaryFixture {
+        id: "authored-semicolon",
+        source: "var x=foo;",
+        disposition: Disposition::SelectedAcceptedIncomplete,
+    },
+    BoundaryFixture {
+        id: "automatic-at-eof",
+        source: "var x=foo",
+        disposition: Disposition::SelectedAcceptedIncomplete,
+    },
+    BoundaryFixture {
+        id: "newline-before-comma",
+        source: "var x=foo\n, a=1;",
+        disposition: Disposition::SelectedAcceptedIncomplete,
+    },
+    BoundaryFixture {
+        id: "newline-after-comma-eof",
+        source: "var x=foo,\n a=1",
+        disposition: Disposition::SelectedAcceptedIncomplete,
+    },
 ];
 
 fn assert_anchor(source: &str, expected: ExpectedAnchor, source_id: u64) {
@@ -759,7 +855,10 @@ fn assert_direct_rhs_fixture(fixture: &DirectRhsFixture, source_id: u64) {
 fn live_validation_contract_pins_current_envelope_and_immutable_predecessors() {
     assert_eq!(ISSUE_ID, 330);
     assert_eq!(ECMA_262_EDITION, "ECMA-262, 17th edition, 2026");
-    assert_eq!(ECMA_262_SNAPSHOT, "d89c03f2db8a597bc915b363a6518d0cc8acdbc0");
+    assert_eq!(
+        ECMA_262_SNAPSHOT,
+        "d89c03f2db8a597bc915b363a6518d0cc8acdbc0"
+    );
     assert_eq!(UNICODE_VERSION, "17.0.0");
     assert_eq!(POSITIVE_LIFECYCLE, "SelectedAcceptedIncomplete");
     assert!(SUCCESSOR_REQUIRES_DIRECT_IDENTIFIER_REFERENCE);
@@ -779,7 +878,11 @@ fn direct_rhs_name_policy_matrix_pins_selected_success_correspondence_and_code_p
     let mut categories = BTreeSet::new();
 
     for (index, fixture) in DIRECT_RHS_FIXTURES.iter().enumerate() {
-        assert!(ids.insert(fixture.id), "duplicate fixture id {}", fixture.id);
+        assert!(
+            ids.insert(fixture.id),
+            "duplicate fixture id {}",
+            fixture.id
+        );
         assert_direct_rhs_fixture(fixture, ISSUE_ID * 100 + index as u64 * 10);
         categories.insert(fixture.category);
     }
@@ -833,7 +936,11 @@ fn direct_only_maximality_keeps_authored_rhs_unicode_escape_outside_the_frontier
 fn relation_fixtures_own_top_level_region_semantic_code_points_and_exact_provenance() {
     let mut ids = BTreeSet::new();
     for (index, fixture) in RELATION_FIXTURES.iter().enumerate() {
-        assert!(ids.insert(fixture.id), "duplicate relation fixture {}", fixture.id);
+        assert!(
+            ids.insert(fixture.id),
+            "duplicate relation fixture {}",
+            fixture.id
+        );
         assert_relation_fixture(fixture, ISSUE_ID * 1_000 + index as u64 * 100);
         assert_eq!(fixture.current_region, ExpectedRegion::TopLevel);
         assert_eq!(fixture.partition, PositivePartition::VariableEnabled);
@@ -872,7 +979,10 @@ fn self_and_whole_source_var_contributors_are_authored_provenance_only() {
             .iter()
             .find(|fixture| fixture.id == id)
             .unwrap_or_else(|| panic!("missing whole-source fixture {id}"));
-        assert_relation_fixture(fixture, ISSUE_ID * 4_000 + fixture.reference.range.start as u64);
+        assert_relation_fixture(
+            fixture,
+            ISSUE_ID * 4_000 + fixture.reference.range.start as u64,
+        );
     }
 
     let after = RELATION_FIXTURES
@@ -937,7 +1047,10 @@ fn correspondence_phase_uses_existing_three_meanings_only_after_static_acceptanc
         .unwrap();
     assert!(matches!(
         rejected.disposition,
-        Disposition::StaticRejected { rule_id: "EE-36-R02", .. }
+        Disposition::StaticRejected {
+            rule_id: "EE-36-R02",
+            ..
+        }
     ));
 }
 
@@ -1017,9 +1130,11 @@ fn decimal_predecessor_direct_reference_and_statement_terminators_compose() {
         ("var x=foo\n, a=1;", Disposition::SelectedAcceptedIncomplete),
         ("var x=foo,\n a=1", Disposition::SelectedAcceptedIncomplete),
     ] {
-        assert!(TERMINATOR_BOUNDARIES
-            .iter()
-            .any(|fixture| fixture.source == source && fixture.disposition == disposition));
+        assert!(
+            TERMINATOR_BOUNDARIES
+                .iter()
+                .any(|fixture| fixture.source == source && fixture.disposition == disposition)
+        );
     }
     assert!(UNSUPPORTED_BOUNDARIES.iter().any(|fixture| {
         fixture.source == "var x=foo\nvar y;"
@@ -1123,7 +1238,10 @@ fn frozen_rule_reachability_lifecycle_and_three_way_partition_remain_unchanged()
         PositivePartition::BlockEnabledWithoutVar
     );
     assert_eq!(positive_partition(0, 1), PositivePartition::VariableEnabled);
-    assert_eq!(positive_partition(2, 17), PositivePartition::VariableEnabled);
+    assert_eq!(
+        positive_partition(2, 17),
+        PositivePartition::VariableEnabled
+    );
 
     assert_eq!(POSITIVE_LIFECYCLE, "SelectedAcceptedIncomplete");
     assert_ne!(POSITIVE_LIFECYCLE, "Qualified");
@@ -1142,9 +1260,16 @@ fn validation_remains_candidate_independent_runtime_negative_and_representation_
         ["selected", "qualification", "integration", "::"]
             .join("_")
             .replace("_::", "::"),
-        ["selected", "variable", "statement", "name", "correspondence", "::"]
-            .join("_")
-            .replace("_::", "::"),
+        [
+            "selected",
+            "variable",
+            "statement",
+            "name",
+            "correspondence",
+            "::",
+        ]
+        .join("_")
+        .replace("_::", "::"),
         ["selected", "binding", "scope", "::"]
             .join("_")
             .replace("_::", "::"),
@@ -1191,7 +1316,12 @@ fn fixture_evaluation_is_deterministic_and_utf8_fail_closed() {
     }
 
     let source = SourceText::new(SourceId::new(ISSUE_ID * 40_000), "var x=π;".to_owned());
-    assert!(source.anchor(6, 7).is_err(), "mid-code-point range must fail");
-    let exact = source.anchor(6, 8).expect("π exact UTF-8 range must be valid");
+    assert!(
+        source.anchor(6, 7).is_err(),
+        "mid-code-point range must fail"
+    );
+    let exact = source
+        .anchor(6, 8)
+        .expect("π exact UTF-8 range must be valid");
     assert_eq!(exact.fragment(), "π");
 }
