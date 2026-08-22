@@ -4,7 +4,8 @@
 //! acceptance witness. It derives source-backed correspondence over the current
 //! selected top-level / one-level-Block region path and preserves authored
 //! relation traversal order plus every authored same-name top-level `var`
-//! contributor in authored order.
+//! contributor in authored order. #324 widens only that contributor domain so
+//! several declarators of one `VariableStatement` each contribute an anchor.
 //!
 //! This is not runtime binding resolution. An authored `VariableDeclaration`
 //! contributor is not a unique runtime binding identity or a `ResolveBinding`
@@ -186,29 +187,35 @@ fn var_contributors(
         let SelectedVariableTopLevelItem::VariableStatement(statement) = item else {
             continue;
         };
-        let binding = statement.binding();
-        let Some(name) = binding.semantic_name() else {
-            return Err(AnalysisFailure::InternalFailure);
-        };
 
-        if let Some(contributors) = contributors_by_name.get_mut(name) {
+        // Each authored declarator of one `VariableStatement` contributes its
+        // own anchor, in authored `VariableDeclarationList` order, and composes
+        // with contributors from earlier statements. Repeated names are never
+        // deduplicated into a singular logical target.
+        for binding in statement.bindings() {
+            let Some(name) = binding.semantic_name() else {
+                return Err(AnalysisFailure::InternalFailure);
+            };
+
+            if let Some(contributors) = contributors_by_name.get_mut(name) {
+                contributors
+                    .try_reserve(1)
+                    .map_err(|_| AnalysisFailure::ResourceLimited)?;
+                contributors.push(binding.binding());
+                continue;
+            }
+
+            contributors_by_name
+                .try_reserve(1)
+                .map_err(|_| AnalysisFailure::ResourceLimited)?;
+            let mut contributors = Vec::new();
             contributors
                 .try_reserve(1)
                 .map_err(|_| AnalysisFailure::ResourceLimited)?;
             contributors.push(binding.binding());
-            continue;
+            let previous = contributors_by_name.insert(name, contributors);
+            debug_assert!(previous.is_none());
         }
-
-        contributors_by_name
-            .try_reserve(1)
-            .map_err(|_| AnalysisFailure::ResourceLimited)?;
-        let mut contributors = Vec::new();
-        contributors
-            .try_reserve(1)
-            .map_err(|_| AnalysisFailure::ResourceLimited)?;
-        contributors.push(binding.binding());
-        let previous = contributors_by_name.insert(name, contributors);
-        debug_assert!(previous.is_none());
     }
 
     Ok(contributors_by_name)

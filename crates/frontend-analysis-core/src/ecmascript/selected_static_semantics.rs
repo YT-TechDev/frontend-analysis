@@ -325,27 +325,32 @@ fn first_lexical_var_name_collision(
             }
             SelectedVariableTopLevelItem::Block(_) => {}
             SelectedVariableTopLevelItem::VariableStatement(statement) => {
-                let binding = statement.binding();
-                let Some(name) = binding.semantic_name() else {
-                    return Err(SelectedDuplicateCheckFailure::InternalFailure);
-                };
+                // Every selected declarator participates, in authored
+                // VariableDeclarationList order. Var provenance stays the
+                // first authored occurrence of a name, as already fixed for
+                // repeated VariableStatements.
+                for binding in statement.bindings() {
+                    let Some(name) = binding.semantic_name() else {
+                        return Err(SelectedDuplicateCheckFailure::InternalFailure);
+                    };
 
-                if let Some(lexical_binding) = first_lexical_by_name.get(name) {
-                    return Ok(Some(
-                        SelectedStaticSemanticsRejection::LexicalVarNameCollision {
-                            lexical_binding: (*lexical_binding).clone(),
-                            var_binding: binding.binding().clone(),
-                            primary_binding: binding.binding().clone(),
-                        },
-                    ));
-                }
-
-                if !first_var_by_name.contains_key(name) {
-                    if first_var_by_name.try_reserve(1).is_err() {
-                        return Err(SelectedDuplicateCheckFailure::ResourceLimited);
+                    if let Some(lexical_binding) = first_lexical_by_name.get(name) {
+                        return Ok(Some(
+                            SelectedStaticSemanticsRejection::LexicalVarNameCollision {
+                                lexical_binding: (*lexical_binding).clone(),
+                                var_binding: binding.binding().clone(),
+                                primary_binding: binding.binding().clone(),
+                            },
+                        ));
                     }
-                    let previous = first_var_by_name.insert(name, binding.binding());
-                    debug_assert!(previous.is_none());
+
+                    if !first_var_by_name.contains_key(name) {
+                        if first_var_by_name.try_reserve(1).is_err() {
+                            return Err(SelectedDuplicateCheckFailure::ResourceLimited);
+                        }
+                        let previous = first_var_by_name.insert(name, binding.binding());
+                        debug_assert!(previous.is_none());
+                    }
                 }
             }
         }
@@ -503,8 +508,10 @@ pub(super) fn evaluate_selected_one_level_block_static_semantics<'script>(
 pub(super) fn evaluate_selected_variable_statement_static_semantics<'script>(
     script: &'script SelectedVariableStatementScript,
 ) -> SelectedVariableStatementStaticSemanticsOutcome<'script> {
-    // Tier 1: declaration/binding-local checks in authored order. Variable
-    // bindings consume only context-neutral BindingIdentifier checks.
+    // Tier 1: declaration/binding-local checks in authored order. Every
+    // selected var declarator is evaluated in authored
+    // VariableDeclarationList order and consumes only context-neutral
+    // BindingIdentifier checks.
     for item in script.items() {
         match item {
             SelectedVariableTopLevelItem::LexicalDeclaration(declaration) => {
@@ -542,19 +549,20 @@ pub(super) fn evaluate_selected_variable_statement_static_semantics<'script>(
                 }
             }
             SelectedVariableTopLevelItem::VariableStatement(statement) => {
-                match evaluate_selected_variable_binding_local_static_semantics(statement.binding())
-                {
-                    Ok(()) => {}
-                    Err(SelectedDeclarationCheckFailure::Rejected(rejection)) => {
-                        return SelectedVariableStatementStaticSemanticsOutcome::Rejected(
-                            rejection,
-                        );
-                    }
-                    Err(SelectedDeclarationCheckFailure::ResourceLimited) => {
-                        return SelectedVariableStatementStaticSemanticsOutcome::ResourceLimited;
-                    }
-                    Err(SelectedDeclarationCheckFailure::InternalFailure) => {
-                        return SelectedVariableStatementStaticSemanticsOutcome::InternalFailure;
+                for binding in statement.bindings() {
+                    match evaluate_selected_variable_binding_local_static_semantics(binding) {
+                        Ok(()) => {}
+                        Err(SelectedDeclarationCheckFailure::Rejected(rejection)) => {
+                            return SelectedVariableStatementStaticSemanticsOutcome::Rejected(
+                                rejection,
+                            );
+                        }
+                        Err(SelectedDeclarationCheckFailure::ResourceLimited) => {
+                            return SelectedVariableStatementStaticSemanticsOutcome::ResourceLimited;
+                        }
+                        Err(SelectedDeclarationCheckFailure::InternalFailure) => {
+                            return SelectedVariableStatementStaticSemanticsOutcome::InternalFailure;
+                        }
                     }
                 }
             }

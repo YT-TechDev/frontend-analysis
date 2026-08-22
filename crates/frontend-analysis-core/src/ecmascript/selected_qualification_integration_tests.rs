@@ -1049,3 +1049,109 @@ fn top_level_variable_statement_grammar_and_deferred_boundaries_remain_distinct(
         );
     }
 }
+
+#[test]
+fn multi_declarator_variable_statements_remain_selected_accepted_incomplete() {
+    for text in [
+        "var a,b;",
+        "var a,b",
+        "var a,b,c;",
+        "var a,a;",
+        "var a, let;",
+        "var a,\n b",
+        "var a\n, b;",
+        r"var a,\u0061;",
+        r"var é,e\u0301;",
+        "let x; var a,b;",
+        "{ let x; } var a,b;",
+        "var a,b; var c; let d",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn multi_declarator_static_rejections_preserve_the_authored_primary_subject() {
+    for (text, expected_fragment, expected_range) in [
+        (r"var a, \u0069f;", r"\u0069f", (7, 14)),
+        (r"let b; var a,b,\u0069f;", r"\u0069f", (15, 22)),
+        ("let b; var a,b;", "b", (13, 14)),
+        ("var b,a; let a,b;", "a", (13, 14)),
+        ("var a,a; let a;", "a", (13, 14)),
+    ] {
+        let outcome = qualification_outcome(text);
+        assert_eq!(outcome.processing(), ProcessingStatus::Complete, "{text}");
+        assert_eq!(
+            outcome.verdict(),
+            Some(QualificationVerdictKind::StaticSemanticsRejected),
+            "{text}"
+        );
+        let evidence = outcome.rejection_evidence().expect("static evidence");
+        assert_eq!(
+            evidence.family(),
+            RejectionFamily::StaticSemantics,
+            "{text}"
+        );
+        let anchor = evidence
+            .subject()
+            .authored_anchor()
+            .expect("var/static primary must remain authored");
+        assert_eq!(anchor.fragment(), expected_fragment, "{text}");
+        assert_eq!(
+            (anchor.range().start(), anchor.range().end()),
+            expected_range,
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn multi_declarator_grammar_rejection_stays_distinct_from_deferred_coverage() {
+    for (text, expected_range) in [(r"var a,\u{};", (6, 10)), (r"var a,b,\u{};", (8, 12))] {
+        let outcome = qualification_outcome(text);
+        assert_eq!(outcome.processing(), ProcessingStatus::Complete, "{text}");
+        assert_eq!(
+            outcome.verdict(),
+            Some(QualificationVerdictKind::SyntaxRejected),
+            "{text}"
+        );
+        let evidence = outcome.rejection_evidence().expect("grammar evidence");
+        assert_eq!(evidence.family(), RejectionFamily::Grammar, "{text}");
+        let anchor = evidence
+            .subject()
+            .authored_anchor()
+            .expect("var grammar subject must remain authored");
+        assert_eq!(anchor.fragment(), r"\u{}", "{text}");
+        assert_eq!(
+            (anchor.range().start(), anchor.range().end()),
+            expected_range,
+            "{text}"
+        );
+    }
+
+    for text in [
+        "var a,",
+        "var a,b,",
+        "var a,b = 1;",
+        "var a,{b}=c;",
+        "var a, if;",
+        "var a, /*comment*/ b;",
+        "{ var a,b; }",
+        "for (var a,b;;) {}",
+        "var a,b\nvar c;",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::UnsupportedCoverage
+            ),
+            "{text:?}"
+        );
+    }
+}
