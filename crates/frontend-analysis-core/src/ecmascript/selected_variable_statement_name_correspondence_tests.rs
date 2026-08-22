@@ -91,10 +91,7 @@ fn escaped_and_direct_spellings_share_exact_semantic_name_without_normalization(
         (r"var \u0061; let x=a;", &[r"\u0061"][..]),
         (r"var a; let x=\u0061;", &["a"][..]),
         (r"var a; var \u0061; let x=a;", &["a", r"\u0061"][..]),
-        (
-            r"var a=1,\u0061=2; let x=a;",
-            &["a", r"\u0061"][..],
-        ),
+        (r"var a=1,\u0061=2; let x=a;", &["a", r"\u0061"][..]),
     ] {
         let (_, script) = recognized_variable(text);
         let analysis = accepted_analysis(&script);
