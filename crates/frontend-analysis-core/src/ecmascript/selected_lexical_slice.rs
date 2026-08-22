@@ -3,7 +3,8 @@
 //! This module recognizes only the bounded top-level Script subset accepted by
 //! #215/#218, the additive one-level selected Block frontier accepted by
 //! #283/#291, and the distinct top-level VariableStatement frontier fixed by
-//! #310 and widened to `1..N` initializer-free declarators by #324.
+//! #310, widened to `1..N` declarators by #324, and widened to optional selected
+//! decimal-integer initializers by #328.
 //! Recognition is transactional for the whole authoritative `SourceText`:
 //! tentative declaration/binding/Block/var facts are returned only when the
 //! entire source is consumed by selected items plus selected trivia.
@@ -226,8 +227,10 @@ pub(super) enum SelectedVariableStatementTerminator {
 /// One selected top-level `VariableStatement` owning its authored
 /// `VariableDeclarationList` bindings and exactly one terminator.
 ///
-/// `bindings` holds `1..N` selected initializer-free `VariableDeclaration :
-/// BindingIdentifier` facts in exact authored list order. Non-empty cardinality
+/// `bindings` holds `1..N` selected `VariableDeclaration` binding facts in exact
+/// authored list order. Each declarator may carry a parser-local selected
+/// decimal-integer initializer, but no initializer-specific fact is retained
+/// because no current downstream consumer requires one. Non-empty cardinality
 /// is a private recognizer construction invariant: `parse_variable_statement`
 /// pushes the first binding before any list continuation is considered and
 /// returns a `ParseFailure` instead of an empty list. `Vec` does not encode
@@ -235,8 +238,8 @@ pub(super) enum SelectedVariableStatementTerminator {
 /// introduced for it.
 ///
 /// The terminator is statement-owned and independent of list cardinality. No
-/// comma, `VariableDeclarationList`, or whole-`VariableStatement` extent is
-/// retained.
+/// comma, initializer, `VariableDeclarationList`, or whole-`VariableStatement`
+/// extent is retained.
 #[derive(Debug)]
 pub(super) struct SelectedVariableStatement {
     bindings: Vec<SelectedVariableBinding>,
@@ -516,7 +519,11 @@ impl<'source> Cursor<'source> {
 
     /// Recognizes one selected top-level `VariableStatement` covering the
     /// inductive `VariableDeclarationList` base and successor productions with
-    /// `1..N` initializer-free declarators.
+    /// `1..N` simple bindings and optional selected decimal-integer initializers.
+    ///
+    /// Initializer syntax is consumed inside this owning cursor lifecycle and
+    /// discarded after recognition. Only binding/name facts remain available to
+    /// downstream static, correspondence, and aggregate consumers.
     ///
     /// Only the keyword-adjacent first declarator keeps the existing restricted
     /// grammar-evidence context; every later declarator uses the general
@@ -541,6 +548,16 @@ impl<'source> Cursor<'source> {
         loop {
             let (binding_start, binding_end, name_state) =
                 self.parse_selected_binding_identifier(grammar_context)?;
+
+            self.skip_selected_trivia();
+            if self.consume_initializer_equals() {
+                self.skip_selected_trivia();
+                if !self.consume_selected_decimal_integer() {
+                    return Err(ParseFailure::UnsupportedCoverage);
+                }
+                self.skip_selected_trivia();
+            }
+
             let binding = self.anchor(binding_start, binding_end)?;
             bindings
                 .try_reserve(1)
@@ -550,7 +567,6 @@ impl<'source> Cursor<'source> {
                 name_state,
             });
 
-            self.skip_selected_trivia();
             if !self.consume_ascii(',') {
                 break;
             }
