@@ -19,7 +19,10 @@ const ECMA_262_SNAPSHOT: &str = "d89c03f2db8a597bc915b363a6518d0cc8acdbc0";
 const UNICODE_VERSION: &str = "17.0.0";
 const SELECTED_DECIMAL_INTEGER_GRAMMAR: &str = "0 | [1-9][0-9]*";
 const POSITIVE_LIFECYCLE: &str = "SelectedAcceptedIncomplete";
-const AGGREGATE_QUALIFIED_AVAILABLE: bool = false;
+
+fn aggregate_qualified_available() -> bool {
+    false
+}
 
 const HISTORICAL_VAR_ORACLE: &str =
     include_str!("../qualification_selected_top_level_variable_statement_validation_tests.rs");
@@ -878,7 +881,7 @@ fn rule_reachability_lifecycle_and_positive_partition_remain_unchanged() {
     assert_eq!(RULE_UNITS.len() - CURRENT_REQUIRED_RULE_IDS.len(), 184);
     assert_eq!(POSITIVE_LIFECYCLE, "SelectedAcceptedIncomplete");
     assert_ne!(POSITIVE_LIFECYCLE, "Qualified");
-    assert_eq!(AGGREGATE_QUALIFIED_AVAILABLE, false);
+    assert!(!aggregate_qualified_available());
 
     assert_eq!(partition(0, 0), PositivePartition::HistoricalFlat);
     assert_eq!(partition(1, 0), PositivePartition::BlockEnabledWithoutVar);
