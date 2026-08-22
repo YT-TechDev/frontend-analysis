@@ -662,7 +662,10 @@ fn semantic_identity_preserves_direct_escape_equality_without_unicode_normalizat
         .iter()
         .find(|fixture| fixture.id == "direct-escaped-equality")
         .unwrap();
-    assert_eq!(equal.declarators[0].semantic_name, equal.declarators[1].semantic_name);
+    assert_eq!(
+        equal.declarators[0].semantic_name,
+        equal.declarators[1].semantic_name
+    );
     assert_ne!(
         slice(equal.source, equal.declarators[0].binding),
         slice(equal.source, equal.declarators[1].binding)
@@ -754,11 +757,7 @@ fn ee36_collision_selection_ignores_initializer_content_and_preserves_authored_o
             fixture.lexical,
             ISSUE_ID * 10 + index as u64,
         );
-        assert_anchor(
-            fixture.source,
-            fixture.var,
-            ISSUE_ID * 100 + index as u64,
-        );
+        assert_anchor(fixture.source, fixture.var, ISSUE_ID * 100 + index as u64);
         assert_anchor(
             fixture.source,
             fixture.completing,
