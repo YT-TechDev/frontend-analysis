@@ -530,7 +530,7 @@ fn unsupported_rhs_and_broader_grammar_remain_unsupported_without_source_verdict
         "const x=foo/*comment*/;",
         "const x=foo unexpected;",
         "const x=/a/;",
-        "var x=1;",
+        "var x=true;",
         "let [x]=y;",
         "'use strict'; let x=1;",
     ] {
@@ -972,6 +972,8 @@ fn top_level_variable_statement_positive_sources_remain_selected_accepted_incomp
         "{ let x; } var x;",
         "let é; var e\u{301};",
         "var x; let y",
+        "var a=0;",
+        "var a = 1",
     ] {
         assert!(
             matches!(
@@ -988,6 +990,7 @@ fn top_level_variable_statement_static_rejections_preserve_authored_primary_subj
     for (text, expected_fragment, expected_range) in [
         (r"var \u0069f;", r"\u0069f", (4, 11)),
         (r"var \u0069f", r"\u0069f", (4, 11)),
+        (r"var \u0069f=1;", r"\u0069f", (4, 11)),
         ("let x; var x;", "x", (11, 12)),
         ("let x; var x", "x", (11, 12)),
         ("var x; let x;", "x", (11, 12)),
@@ -995,6 +998,7 @@ fn top_level_variable_statement_static_rejections_preserve_authored_primary_subj
         ("var x; var x; let x;", "x", (18, 19)),
         ("let y; var y; var x; let x;", "y", (11, 12)),
         (r"let x,x; var \u0069f;", "x", (6, 7)),
+        (r"let a; var a=1, \u0069f=2;", r"\u0069f", (16, 23)),
     ] {
         let outcome = qualification_outcome(text);
         assert_eq!(outcome.processing(), ProcessingStatus::Complete, "{text}");
@@ -1065,6 +1069,14 @@ fn multi_declarator_variable_statements_remain_selected_accepted_incomplete() {
         "let x; var a,b;",
         "{ let x; } var a,b;",
         "var a,b; var c; let d",
+        "var a=1,b;",
+        "var a,b=2;",
+        "var a=1,b=2;",
+        "var a=1,b,c=2;",
+        "var a=1,b=2,c=3",
+        "var a=1\n, b=2;",
+        "var a=1,\n b=2",
+        r"var a=1,\u0061=2;",
     ] {
         assert!(
             matches!(
@@ -1084,6 +1096,7 @@ fn multi_declarator_static_rejections_preserve_the_authored_primary_subject() {
         ("let b; var a,b;", "b", (13, 14)),
         ("var b,a; let a,b;", "a", (13, 14)),
         ("var a,a; let a;", "a", (13, 14)),
+        ("let b; var a=1,b=2;", "b", (15, 16)),
     ] {
         let outcome = qualification_outcome(text);
         assert_eq!(outcome.processing(), ProcessingStatus::Complete, "{text}");
@@ -1113,7 +1126,12 @@ fn multi_declarator_static_rejections_preserve_the_authored_primary_subject() {
 
 #[test]
 fn multi_declarator_grammar_rejection_stays_distinct_from_deferred_coverage() {
-    for (text, expected_range) in [(r"var a,\u{};", (6, 10)), (r"var a,b,\u{};", (8, 12))] {
+    for (text, expected_range) in [
+        (r"var a,\u{};", (6, 10)),
+        (r"var a,b,\u{};", (8, 12)),
+        (r"var a,\u{}=1;", (6, 10)),
+        (r"var a=1,b,\u{}=2;", (10, 14)),
+    ] {
         let outcome = qualification_outcome(text);
         assert_eq!(outcome.processing(), ProcessingStatus::Complete, "{text}");
         assert_eq!(
@@ -1138,13 +1156,28 @@ fn multi_declarator_grammar_rejection_stays_distinct_from_deferred_coverage() {
     for text in [
         "var a,",
         "var a,b,",
-        "var a,b = 1;",
+        "var a=1,",
+        "var a=1,b=",
+        "var a=1,b=true;",
+        "var a=1,b=1.0;",
+        "var a=01;",
+        "var a=1_0;",
+        "var a=1.0;",
+        "var a=1e2;",
+        "var a=1n;",
+        "var a=+1;",
+        "var a=-1;",
+        "var a=true;",
+        "var a=null;",
+        "var a=this;",
+        "var a=\"x\";",
+        "var a=foo;",
         "var a,{b}=c;",
         "var a, if;",
-        "var a, /*comment*/ b;",
+        "var a=1, /*comment*/ b;",
         "{ var a,b; }",
         "for (var a,b;;) {}",
-        "var a,b\nvar c;",
+        "var a=1\nvar c;",
     ] {
         assert!(
             matches!(
