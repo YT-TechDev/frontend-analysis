@@ -849,6 +849,7 @@ fn assert_direct_rhs_fixture(fixture: &DirectRhsFixture, source_id: u64) {
     assert_semantic_code_points(fixture.semantic_name, fixture.semantic_code_points);
 }
 
+#[allow(clippy::assertions_on_constants)]
 #[test]
 fn live_validation_contract_pins_current_envelope_and_immutable_predecessors() {
     assert_eq!(ISSUE_ID, 330);
