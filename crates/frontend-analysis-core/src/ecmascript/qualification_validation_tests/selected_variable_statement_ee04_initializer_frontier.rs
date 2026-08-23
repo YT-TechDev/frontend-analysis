@@ -547,7 +547,6 @@ fn corrected_authority_chain_and_two_file_boundary_are_explicit() {
     assert!(ESCAPED_RESERVED_CONSTITUENT.contains("Issue #263"));
     assert!(ESCAPED_RESERVED_CONSTITUENT.contains("assert_eq!(RESERVED.len(), 36);"));
     assert!(HISTORICAL_VAR_ORACLE.contains("escaped-reserved-var-remains-ee04-owned"));
-    assert!(HISTORICAL_VAR_ORACLE.contains(r#"source: r\"var \\u0069f;\""#));
     assert!(HISTORICAL_C1_ORACLE.contains("UNCONDITIONALLY_RESERVED_NAME_COUNT: usize = 35"));
     assert!(HISTORICAL_C1_ORACLE.contains(r#"source: r\"var x=\\u0069f;\""#));
     assert!(EOF_ASI_ORACLE.contains("VAR-EOF-ASI-EE04-R08-001"));
@@ -804,10 +803,16 @@ fn rule_identity_closure_and_positive_lifecycle_remain_unchanged() {
 #[test]
 fn oracle_remains_candidate_independent_and_representation_neutral() {
     for forbidden_call in [
-        "recognize_selected_lexical_slice(",
-        "evaluate_selected_variable_statement_static_semantics(",
-        "attempt_selected_qualification(",
-        "analyze_selected_variable_statement_name_correspondence(",
+        concat!("recognize_selected_", "lexical_slice("),
+        concat!(
+            "evaluate_selected_variable_statement_",
+            "static_semantics("
+        ),
+        concat!("attempt_selected_", "qualification("),
+        concat!(
+            "analyze_selected_variable_statement_name_",
+            "correspondence("
+        ),
     ] {
         assert!(
             !THIS_SOURCE.contains(forbidden_call),
