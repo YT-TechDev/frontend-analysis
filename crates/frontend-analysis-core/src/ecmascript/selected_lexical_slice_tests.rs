@@ -2011,6 +2011,7 @@ fn top_level_variable_statement_retains_minimal_source_backed_binding_fact() {
             range,
             "{text}"
         );
+        assert!(binding.direct_identifier_reference_initializer().is_none());
     }
 }
 
@@ -2159,13 +2160,17 @@ fn variable_statement_promotes_only_var_bearing_sources_to_distinct_representati
 fn variable_statement_frontier_keeps_non_eof_and_broader_var_grammar_unsupported() {
     for text in [
         "var x\nvar y;",
-        "var x = y;",
         "var {x} = y;",
         "for (var x;;) {}",
         "{ var x; }",
         "var x/*comment*/",
         r"var\u{};",
         r"var\u0061;",
+        r"var x=\u0066oo;",
+        "var x=foo.bar;",
+        "var x=foo();",
+        "var x=foo+1;",
+        "var x=(foo);",
     ] {
         assert_unsupported(text);
     }
@@ -2208,8 +2213,6 @@ fn variable_declaration_list_retains_every_authored_declarator_in_list_order() {
         SelectedVariableStatementTerminator::AuthoredSemicolon
     );
 
-    // The historical `"var x, y;"` negative control is now selected production
-    // coverage rather than unsupported coverage.
     let migrated = recognized_variable("var x, y;");
     let migrated = only_variable_statement(&migrated);
     assert_eq!(binding_ranges(migrated), [(4, 5), (7, 8)]);
@@ -2234,7 +2237,7 @@ fn variable_declaration_list_retains_every_authored_declarator_in_list_order() {
         [Some("a"), Some("a")]
     );
 
-    let unnormalized = recognized_variable("var é,e\\u0301;");
+    let unnormalized = recognized_variable(r"var é,e\u0301;");
     let unnormalized = only_variable_statement(&unnormalized);
     assert_eq!(binding_ranges(unnormalized), [(4, 6), (7, 14)]);
     assert_eq!(
@@ -2341,8 +2344,6 @@ fn later_declarators_reuse_the_general_binding_identifier_grammar_route() {
     assert_eq!(subject.fragment(), r"\u{}");
     assert_eq!((subject.range().start(), subject.range().end()), (6, 10));
 
-    // A later escaped ReservedWord stays a recognized selected binding and is
-    // routed to the existing static-semantics owner, not to grammar evidence.
     let script = recognized_variable(r"var a, \u0069f;");
     let statement = only_variable_statement(&script);
     assert_eq!(binding_ranges(statement), [(4, 5), (7, 14)]);
@@ -2353,8 +2354,6 @@ fn later_declarators_reuse_the_general_binding_identifier_grammar_route() {
     assert_eq!(binding_ranges(statement), [(4, 5), (6, 12)]);
     assert_eq!(binding_semantic_names(statement), [Some("a"), Some("a")]);
 
-    // A later direct ReservedWord remains outside selected coverage, while a
-    // later `let` stays valid in the selected non-strict Script envelope.
     assert_unsupported("var a, if;");
     let script = recognized_variable("var a, let;");
     let statement = only_variable_statement(&script);
@@ -2376,9 +2375,121 @@ fn selected_var_decimal_initializer_boundary_is_exact() {
         "var a=null;",
         "var a=this;",
         "var a=\"x\";",
-        "var a=foo;",
     ] {
         assert_unsupported(text);
+    }
+}
+
+#[test]
+fn direct_var_identifier_reference_initializer_retains_exact_source_anchor() {
+    for (text, expected_binding, expected_reference, expected_fragment) in [
+        ("var a=foo;", (4, 5), (6, 9), "foo"),
+        ("var x = y;", (4, 5), (8, 9), "y"),
+        ("var π=𝒜;", (4, 6), (7, 11), "𝒜"),
+        ("var x=$;", (4, 5), (6, 7), "$"),
+        ("var x=_;", (4, 5), (6, 7), "_"),
+        ("var x=a0;", (4, 5), (6, 8), "a0"),
+        ("var x=let;", (4, 5), (6, 9), "let"),
+        ("var x=yield;", (4, 5), (6, 11), "yield"),
+        ("var x=await;", (4, 5), (6, 11), "await"),
+        ("var x=eval;", (4, 5), (6, 10), "eval"),
+        ("var x=arguments;", (4, 5), (6, 15), "arguments"),
+    ] {
+        let script = recognized_variable(text);
+        let statement = only_variable_statement(&script);
+        let [binding] = statement.bindings() else {
+            panic!("expected one selected variable binding for {text:?}");
+        };
+        assert_eq!(
+            (
+                binding.binding().range().start(),
+                binding.binding().range().end()
+            ),
+            expected_binding,
+            "{text:?}"
+        );
+        let reference = binding
+            .direct_identifier_reference_initializer()
+            .expect("direct var RHS reference anchor");
+        assert_eq!(
+            (reference.range().start(), reference.range().end()),
+            expected_reference,
+            "{text:?}"
+        );
+        assert_eq!(reference.fragment(), expected_fragment, "{text:?}");
+    }
+}
+
+#[test]
+fn direct_var_identifier_reference_boundary_remains_direct_only() {
+    for text in [
+        r"var x=\u0066oo;",
+        r"var x=f\u006Fo;",
+        "var x=foo.bar;",
+        "var x=foo();",
+        "var x=foo+1;",
+        "var x=(foo);",
+        "var x=foo=bar;",
+        "var x=foo?bar:baz;",
+        "var x=foo/*comment*/;",
+        "var x=true;",
+        "var x=false;",
+        "var x=null;",
+        "var x=this;",
+        "var x=\"foo\";",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn direct_var_multi_reference_initializers_preserve_per_binding_association_and_order() {
+    for (text, expected_refs, expected_terminator) in [
+        (
+            "var x=foo,y=bar;",
+            &[Some((6, 9, "foo")), Some((12, 15, "bar"))][..],
+            SelectedVariableStatementTerminator::AuthoredSemicolon,
+        ),
+        (
+            "var x=foo,y=bar,z=baz",
+            &[
+                Some((6, 9, "foo")),
+                Some((12, 15, "bar")),
+                Some((18, 21, "baz")),
+            ][..],
+            SelectedVariableStatementTerminator::AutomaticAtEof,
+        ),
+        (
+            "var x=1,y=foo;",
+            &[None, Some((10, 13, "foo"))][..],
+            SelectedVariableStatementTerminator::AuthoredSemicolon,
+        ),
+        (
+            "var x=foo,y=2,z;",
+            &[Some((6, 9, "foo")), None, None][..],
+            SelectedVariableStatementTerminator::AuthoredSemicolon,
+        ),
+    ] {
+        let script = recognized_variable(text);
+        let statement = only_variable_statement(&script);
+        assert_eq!(statement.bindings().len(), expected_refs.len(), "{text:?}");
+        assert_eq!(statement.terminator(), expected_terminator, "{text:?}");
+        for (binding, expected) in statement.bindings().iter().zip(expected_refs) {
+            match (binding.direct_identifier_reference_initializer(), expected) {
+                (Some(reference), Some((start, end, fragment))) => {
+                    assert_eq!(
+                        (reference.range().start(), reference.range().end()),
+                        (*start, *end),
+                        "{text:?}"
+                    );
+                    assert_eq!(reference.fragment(), *fragment, "{text:?}");
+                }
+                (None, None) => {}
+                (actual, expected) => {
+                    panic!("wrong direct-reference association for {text:?}: {actual:?} vs {expected:?}")
+                }
+            }
+        }
     }
 }
 
@@ -2398,6 +2509,7 @@ fn incomplete_or_widened_declarator_lists_commit_no_selected_statement() {
         "var a=1, /*comment*/ b;",
         "var a,b\nvar c;",
         "var a=1\nvar c;",
+        "var x=foo,y=bar,z=",
         "{ var a,b; }",
         "for (var a,b;;) {}",
     ] {
@@ -2438,6 +2550,8 @@ fn failed_declaration_lists_commit_no_selected_binding_or_statement_state() {
         "var a=1,b=true;",
         "var a=1,b=1.0;",
         r"var a=1,b,\u{}=2;",
+        "var x=foo,y=bar,z=",
+        r"var x=foo,y=bar,\u{}=baz;",
     ] {
         match recognize_selected_lexical_slice(&source(text)) {
             SelectedLexicalSliceOutcome::UnsupportedCoverage
@@ -2451,4 +2565,8 @@ fn failed_declaration_lists_commit_no_selected_binding_or_statement_state() {
     let subject = grammar_rejection(r"var a=1,b,\u{}=2;");
     assert_eq!(subject.fragment(), r"\u{}");
     assert_eq!((subject.range().start(), subject.range().end()), (10, 14));
+
+    let subject = grammar_rejection(r"var x=foo,y=bar,\u{}=baz;");
+    assert_eq!(subject.fragment(), r"\u{}");
+    assert_eq!((subject.range().start(), subject.range().end()), (16, 20));
 }
