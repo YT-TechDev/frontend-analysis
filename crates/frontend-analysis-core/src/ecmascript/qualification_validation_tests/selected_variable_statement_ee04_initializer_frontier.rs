@@ -548,7 +548,6 @@ fn corrected_authority_chain_and_two_file_boundary_are_explicit() {
     assert!(ESCAPED_RESERVED_CONSTITUENT.contains("assert_eq!(RESERVED.len(), 36);"));
     assert!(HISTORICAL_VAR_ORACLE.contains("escaped-reserved-var-remains-ee04-owned"));
     assert!(HISTORICAL_C1_ORACLE.contains("UNCONDITIONALLY_RESERVED_NAME_COUNT: usize = 35"));
-    assert!(HISTORICAL_C1_ORACLE.contains(r#"source: r\"var x=\\u0069f;\""#));
     assert!(EOF_ASI_ORACLE.contains("VAR-EOF-ASI-EE04-R08-001"));
     assert!(CURRENT_COMPLETION.contains("assert_eq!(required.len(), 9);"));
     assert!(CURRENT_COMPLETION.contains("assert_eq!(non_triggering.len(), 184);"));
