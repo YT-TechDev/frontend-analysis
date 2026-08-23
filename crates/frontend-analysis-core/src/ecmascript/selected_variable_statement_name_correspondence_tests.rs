@@ -627,7 +627,11 @@ fn escaped_var_initializer_relations_use_decoded_identity_and_exact_authored_ref
         let (_, script) = recognized_variable(text);
         let analysis = accepted_analysis(&script);
         let relation = one_relation(&analysis);
-        assert_eq!(range(relation.containing_binding()), expected_binding, "{text}");
+        assert_eq!(
+            range(relation.containing_binding()),
+            expected_binding,
+            "{text}"
+        );
         assert_eq!(range(relation.reference()), expected_reference, "{text}");
         assert_eq!(relation.reference().fragment(), r"\u0061", "{text}");
         assert_eq!(relation.semantic_name(), "a", "{text}");
@@ -664,7 +668,11 @@ fn escaped_var_initializer_lexical_priority_no_match_and_non_normalization_are_u
     let relation = one_relation(&analysis);
     assert_eq!(relation.reference().fragment(), r"\u007A");
     assert_eq!(relation.semantic_name(), "z");
-    assert!(relation.correspondence().is_no_selected_same_source_contributor());
+    assert!(
+        relation
+            .correspondence()
+            .is_no_selected_same_source_contributor()
+    );
 
     let (_, script) = recognized_variable(r"var \u0061; var x=\u0061;");
     let analysis = accepted_analysis(&script);
@@ -682,7 +690,11 @@ fn escaped_var_initializer_lexical_priority_no_match_and_non_normalization_are_u
     let relation = one_relation(&analysis);
     assert_eq!(relation.reference().fragment(), r"e\u0301");
     assert_eq!(relation.semantic_name(), "e\u{301}");
-    assert!(relation.correspondence().is_no_selected_same_source_contributor());
+    assert!(
+        relation
+            .correspondence()
+            .is_no_selected_same_source_contributor()
+    );
 }
 
 #[test]
@@ -722,7 +734,11 @@ fn escaped_and_direct_var_initializer_relations_remain_distinct_and_authored_ord
         .expect("direct relation must preserve authored var b contributor");
     assert_eq!(contributors.len(), 1);
     assert_eq!(range(contributors[0]), (11, 12));
-    assert!(relations[2].correspondence().is_no_selected_same_source_contributor());
+    assert!(
+        relations[2]
+            .correspondence()
+            .is_no_selected_same_source_contributor()
+    );
 }
 
 #[test]
