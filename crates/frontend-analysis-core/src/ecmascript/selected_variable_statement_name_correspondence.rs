@@ -6,6 +6,8 @@
 //! relation traversal order plus every authored same-name top-level `var`
 //! contributor in authored order. #324 widens only that contributor domain so
 //! several declarators of one `VariableStatement` each contribute an anchor.
+//! #334 additionally makes each selected direct-authored var initializer
+//! `IdentifierReference` an independently ordered top-level correspondence input.
 //!
 //! This is not runtime binding resolution. An authored `VariableDeclaration`
 //! contributor is not a unique runtime binding identity or a `ResolveBinding`
@@ -22,7 +24,7 @@ use std::collections::HashMap;
 use crate::SourceAnchor;
 
 use super::selected_lexical_slice::{
-    SelectedBlock, SelectedLexicalBinding, SelectedLexicalDeclaration,
+    SelectedBlock, SelectedLexicalBinding, SelectedLexicalDeclaration, SelectedVariableBinding,
     SelectedVariableStatementScript, SelectedVariableTopLevelItem,
 };
 use super::selected_static_semantics::SelectedVariableStatementStaticSemanticsAccepted;
@@ -304,6 +306,39 @@ fn append_binding_relation<'script>(
     Ok(())
 }
 
+fn append_variable_binding_relation<'script>(
+    binding: &'script SelectedVariableBinding,
+    top_level_bindings: &LexicalBindingsByName<'script>,
+    var_contributors: &VarContributorsByName<'script>,
+    relations: &mut Vec<SelectedVariableStatementNameCorrespondenceRelation<'script>>,
+) -> Result<(), AnalysisFailure> {
+    let Some(reference) = binding.direct_identifier_reference_initializer() else {
+        return Ok(());
+    };
+    let semantic_name = reference.fragment();
+    let current_region = SelectedVariableStatementNameCorrespondenceRegion::TopLevel;
+    let correspondence = correspondence_for_name(
+        semantic_name,
+        current_region,
+        top_level_bindings,
+        top_level_bindings,
+        var_contributors,
+    )?;
+
+    relations
+        .try_reserve(1)
+        .map_err(|_| AnalysisFailure::ResourceLimited)?;
+    relations.push(SelectedVariableStatementNameCorrespondenceRelation {
+        containing_binding: binding.binding(),
+        current_region,
+        reference,
+        semantic_name,
+        correspondence,
+    });
+
+    Ok(())
+}
+
 fn append_declaration_relations<'script>(
     declaration: &'script SelectedLexicalDeclaration,
     current_region: SelectedVariableStatementNameCorrespondenceRegion<'script>,
@@ -359,7 +394,16 @@ fn analyze<'script>(
                     )?;
                 }
             }
-            SelectedVariableTopLevelItem::VariableStatement(_) => {}
+            SelectedVariableTopLevelItem::VariableStatement(statement) => {
+                for binding in statement.bindings() {
+                    append_variable_binding_relation(
+                        binding,
+                        &top_level_bindings,
+                        &var_contributors,
+                        &mut relations,
+                    )?;
+                }
+            }
         }
     }
 
