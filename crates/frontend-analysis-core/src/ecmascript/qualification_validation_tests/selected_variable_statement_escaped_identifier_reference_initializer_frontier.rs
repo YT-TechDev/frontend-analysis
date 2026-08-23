@@ -115,6 +115,14 @@ struct Fixture {
     committed_relations: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FailedWholeSourceCommitExpectation {
+    fixture_id: &'static str,
+    committed_selected_success_statements: usize,
+    committed_selected_success_references: usize,
+    committed_correspondence_relations: usize,
+}
+
 const FOO: &[u32] = &[0x66, 0x6f, 0x6f];
 const BAR: &[u32] = &[0x62, 0x61, 0x72];
 const A_NAME: &[u32] = &[0x61];
@@ -596,6 +604,20 @@ const FIXTURES: &[Fixture] = &[
 const M5_PRECOMPOSED_BINDING: A = A(4, 10, r"\u00E9");
 const M20_DECIMAL: A = A(25, 26, "1");
 const M20_ABSENT_BINDING: A = A(28, 29, "w");
+const FAILED_WHOLE_SOURCE_COMMIT_EXPECTATIONS: &[FailedWholeSourceCommitExpectation] = &[
+    FailedWholeSourceCommitExpectation {
+        fixture_id: "M22",
+        committed_selected_success_statements: 0,
+        committed_selected_success_references: 0,
+        committed_correspondence_relations: 0,
+    },
+    FailedWholeSourceCommitExpectation {
+        fixture_id: "M23",
+        committed_selected_success_statements: 0,
+        committed_selected_success_references: 0,
+        committed_correspondence_relations: 0,
+    },
+];
 
 fn fixture(id: &str) -> &'static Fixture {
     FIXTURES
@@ -941,6 +963,38 @@ fn whole_source_failure_and_static_rejection_suppress_all_correspondence_relatio
     assert_ne!(subject, m23.rhs[0].unwrap().rhs);
     assert_eq!(m23.committed_relations, 0);
     assert_eq!(m23.rhs[0].unwrap().correspondence, None);
+
+    assert_eq!(FAILED_WHOLE_SOURCE_COMMIT_EXPECTATIONS.len(), 2);
+    for expected in FAILED_WHOLE_SOURCE_COMMIT_EXPECTATIONS {
+        let failed = fixture(expected.fixture_id);
+        assert_ne!(
+            failed.disposition,
+            Disposition::SelectedAcceptedIncomplete,
+            "{}",
+            expected.fixture_id
+        );
+        assert_eq!(
+            expected.committed_selected_success_statements, 0,
+            "{}",
+            expected.fixture_id
+        );
+        assert_eq!(
+            expected.committed_selected_success_references, 0,
+            "{}",
+            expected.fixture_id
+        );
+        assert_eq!(
+            expected.committed_correspondence_relations, 0,
+            "{}",
+            expected.fixture_id
+        );
+        assert_eq!(
+            failed.committed_relations,
+            expected.committed_correspondence_relations,
+            "{}",
+            expected.fixture_id
+        );
+    }
 
     let source = source_for(m23, 23);
     assert_anchor(&source, subject);
