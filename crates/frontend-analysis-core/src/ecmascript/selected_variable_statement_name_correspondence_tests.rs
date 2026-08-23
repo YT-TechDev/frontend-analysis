@@ -482,7 +482,11 @@ fn direct_var_initializer_relations_preserve_whole_source_correspondence_meaning
         let (_, script) = recognized_variable(text);
         let analysis = accepted_analysis(&script);
         let relation = one_relation(&analysis);
-        assert_eq!(range(relation.containing_binding()), expected_binding, "{text}");
+        assert_eq!(
+            range(relation.containing_binding()),
+            expected_binding,
+            "{text}"
+        );
         assert_eq!(range(relation.reference()), expected_reference, "{text}");
         assert_eq!(relation.semantic_name(), "a", "{text}");
         assert!(matches!(
