@@ -2011,7 +2011,7 @@ fn top_level_variable_statement_retains_minimal_source_backed_binding_fact() {
             range,
             "{text}"
         );
-        assert!(binding.direct_identifier_reference_initializer().is_none());
+        assert!(binding.identifier_reference_initializer().is_none());
     }
 }
 
@@ -2166,7 +2166,6 @@ fn variable_statement_frontier_keeps_non_eof_and_broader_var_grammar_unsupported
         "var x/*comment*/",
         r"var\u{};",
         r"var\u0061;",
-        r"var x=\u0066oo;",
         "var x=foo.bar;",
         "var x=foo();",
         "var x=foo+1;",
@@ -2381,19 +2380,29 @@ fn selected_var_decimal_initializer_boundary_is_exact() {
 }
 
 #[test]
-fn direct_var_identifier_reference_initializer_retains_exact_source_anchor() {
-    for (text, expected_binding, expected_reference, expected_fragment) in [
-        ("var a=foo;", (4, 5), (6, 9), "foo"),
-        ("var x = y;", (4, 5), (8, 9), "y"),
-        ("var π=𝒜;", (4, 6), (7, 11), "𝒜"),
-        ("var x=$;", (4, 5), (6, 7), "$"),
-        ("var x=_;", (4, 5), (6, 7), "_"),
-        ("var x=a0;", (4, 5), (6, 8), "a0"),
-        ("var x=let;", (4, 5), (6, 9), "let"),
-        ("var x=yield;", (4, 5), (6, 11), "yield"),
-        ("var x=await;", (4, 5), (6, 11), "await"),
-        ("var x=eval;", (4, 5), (6, 10), "eval"),
-        ("var x=arguments;", (4, 5), (6, 15), "arguments"),
+fn var_identifier_reference_initializer_retains_exact_source_and_semantic_identity() {
+    for (text, expected_binding, expected_reference, expected_fragment, expected_semantic) in [
+        ("var a=foo;", (4, 5), (6, 9), "foo", "foo"),
+        ("var x = y;", (4, 5), (8, 9), "y", "y"),
+        ("var π=𝒜;", (4, 6), (7, 11), "𝒜", "𝒜"),
+        ("var x=$;", (4, 5), (6, 7), "$", "$"),
+        ("var x=_;", (4, 5), (6, 7), "_", "_"),
+        ("var x=a0;", (4, 5), (6, 8), "a0", "a0"),
+        ("var x=let;", (4, 5), (6, 9), "let", "let"),
+        ("var x=yield;", (4, 5), (6, 11), "yield", "yield"),
+        ("var x=await;", (4, 5), (6, 11), "await", "await"),
+        ("var x=eval;", (4, 5), (6, 10), "eval", "eval"),
+        (
+            "var x=arguments;",
+            (4, 5),
+            (6, 15),
+            "arguments",
+            "arguments",
+        ),
+        (r"var x=\u0066oo;", (4, 5), (6, 14), r"\u0066oo", "foo"),
+        (r"var x=f\u006Fo;", (4, 5), (6, 14), r"f\u006Fo", "foo"),
+        (r"var x=\u{1D49C};", (4, 5), (6, 15), r"\u{1D49C}", "𝒜"),
+        (r"var x=a\u0030;", (4, 5), (6, 13), r"a\u0030", "a0"),
     ] {
         let script = recognized_variable(text);
         let statement = only_variable_statement(&script);
@@ -2409,22 +2418,67 @@ fn direct_var_identifier_reference_initializer_retains_exact_source_anchor() {
             "{text:?}"
         );
         let reference = binding
-            .direct_identifier_reference_initializer()
-            .expect("direct var RHS reference anchor");
+            .identifier_reference_initializer()
+            .expect("selected var RHS reference fact");
         assert_eq!(
-            (reference.range().start(), reference.range().end()),
+            (
+                reference.reference().range().start(),
+                reference.reference().range().end()
+            ),
             expected_reference,
             "{text:?}"
         );
-        assert_eq!(reference.fragment(), expected_fragment, "{text:?}");
+        assert_eq!(
+            reference.reference().fragment(),
+            expected_fragment,
+            "{text:?}"
+        );
+        assert_eq!(reference.semantic_name(), expected_semantic, "{text:?}");
     }
 }
 
 #[test]
-fn direct_var_identifier_reference_boundary_remains_direct_only() {
+fn escaped_var_identifier_reference_name_policy_preserves_c1_c6_firewall() {
+    for (rhs, expected_semantic) in [
+        (r"\u006Cet", "let"),
+        (r"\u0073tatic", "static"),
+        (r"\u0069mplements", "implements"),
+        (r"\u0069nterface", "interface"),
+        (r"\u0070ackage", "package"),
+        (r"\u0070rivate", "private"),
+        (r"\u0070rotected", "protected"),
+        (r"\u0070ublic", "public"),
+        (r"\u0079ield", "yield"),
+        (r"a\u0077ait", "await"),
+        (r"\u0065val", "eval"),
+        (r"\u0061rguments", "arguments"),
+    ] {
+        let text = format!("var x={rhs};");
+        let script = recognized_variable(&text);
+        let statement = only_variable_statement(&script);
+        let reference = statement.bindings()[0]
+            .identifier_reference_initializer()
+            .expect("C1 escaped name-policy positive");
+        assert_eq!(reference.reference().fragment(), rhs, "{text}");
+        assert_eq!(reference.semantic_name(), expected_semantic, "{text}");
+    }
+
     for text in [
-        r"var x=\u0066oo;",
-        r"var x=f\u006Fo;",
+        r"var x=\u0069f;",
+        r"var x=\u0030;",
+        r"var x=a\u002Db;",
+        r"var x=\u{};",
+        r"var x=\u{110000};",
+        r"var x=\uD800;",
+        r"var x=\u{D800};",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn var_identifier_reference_boundary_keeps_richer_expression_and_literal_neighbors_unsupported() {
+    for text in [
         "var x=foo.bar;",
         "var x=foo();",
         "var x=foo+1;",
@@ -2432,6 +2486,10 @@ fn direct_var_identifier_reference_boundary_remains_direct_only() {
         "var x=foo=bar;",
         "var x=foo?bar:baz;",
         "var x=foo/*comment*/;",
+        r"var x=\u0066oo.bar;",
+        r"var x=\u0066oo();",
+        r"var x=\u0066oo+1;",
+        r"var x=\u0066oo/*comment*/;",
         "var x=true;",
         "var x=false;",
         "var x=null;",
@@ -2443,31 +2501,59 @@ fn direct_var_identifier_reference_boundary_remains_direct_only() {
 }
 
 #[test]
-fn direct_var_multi_reference_initializers_preserve_per_binding_association_and_order() {
+fn var_multi_reference_initializers_preserve_per_binding_association_order_and_semantics() {
     for (text, expected_refs, expected_terminator) in [
         (
             "var x=foo,y=bar;",
-            &[Some((6, 9, "foo")), Some((12, 15, "bar"))][..],
+            &[Some((6, 9, "foo", "foo")), Some((12, 15, "bar", "bar"))][..],
             SelectedVariableStatementTerminator::AuthoredSemicolon,
         ),
         (
-            "var x=foo,y=bar,z=baz",
+            r"var x=\u0066oo,y=\u0062ar;",
             &[
-                Some((6, 9, "foo")),
-                Some((12, 15, "bar")),
-                Some((18, 21, "baz")),
+                Some((6, 14, r"\u0066oo", "foo")),
+                Some((17, 25, r"\u0062ar", "bar")),
+            ][..],
+            SelectedVariableStatementTerminator::AuthoredSemicolon,
+        ),
+        (
+            r"var x=\u0066oo,y=bar;",
+            &[
+                Some((6, 14, r"\u0066oo", "foo")),
+                Some((17, 20, "bar", "bar")),
+            ][..],
+            SelectedVariableStatementTerminator::AuthoredSemicolon,
+        ),
+        (
+            r"var x=foo,y=\u0062ar;",
+            &[
+                Some((6, 9, "foo", "foo")),
+                Some((12, 20, r"\u0062ar", "bar")),
+            ][..],
+            SelectedVariableStatementTerminator::AuthoredSemicolon,
+        ),
+        (
+            r"var x=\u0066oo,y=2,z=bar;",
+            &[
+                Some((6, 14, r"\u0066oo", "foo")),
+                None,
+                Some((21, 24, "bar", "bar")),
+            ][..],
+            SelectedVariableStatementTerminator::AuthoredSemicolon,
+        ),
+        (
+            r"var x=\u0066oo,y;",
+            &[Some((6, 14, r"\u0066oo", "foo")), None][..],
+            SelectedVariableStatementTerminator::AuthoredSemicolon,
+        ),
+        (
+            r"var x=\u0066oo,y=\u0062ar,z=baz",
+            &[
+                Some((6, 14, r"\u0066oo", "foo")),
+                Some((17, 25, r"\u0062ar", "bar")),
+                Some((28, 31, "baz", "baz")),
             ][..],
             SelectedVariableStatementTerminator::AutomaticAtEof,
-        ),
-        (
-            "var x=1,y=foo;",
-            &[None, Some((10, 13, "foo"))][..],
-            SelectedVariableStatementTerminator::AuthoredSemicolon,
-        ),
-        (
-            "var x=foo,y=2,z;",
-            &[Some((6, 9, "foo")), None, None][..],
-            SelectedVariableStatementTerminator::AuthoredSemicolon,
         ),
     ] {
         let script = recognized_variable(text);
@@ -2475,19 +2561,23 @@ fn direct_var_multi_reference_initializers_preserve_per_binding_association_and_
         assert_eq!(statement.bindings().len(), expected_refs.len(), "{text:?}");
         assert_eq!(statement.terminator(), expected_terminator, "{text:?}");
         for (binding, expected) in statement.bindings().iter().zip(expected_refs) {
-            match (binding.direct_identifier_reference_initializer(), expected) {
-                (Some(reference), Some((start, end, fragment))) => {
+            match (binding.identifier_reference_initializer(), expected) {
+                (Some(reference), Some((start, end, fragment, semantic_name))) => {
                     assert_eq!(
-                        (reference.range().start(), reference.range().end()),
+                        (
+                            reference.reference().range().start(),
+                            reference.reference().range().end()
+                        ),
                         (*start, *end),
                         "{text:?}"
                     );
-                    assert_eq!(reference.fragment(), *fragment, "{text:?}");
+                    assert_eq!(reference.reference().fragment(), *fragment, "{text:?}");
+                    assert_eq!(reference.semantic_name(), *semantic_name, "{text:?}");
                 }
                 (None, None) => {}
                 (actual, expected) => {
                     panic!(
-                        "wrong direct-reference association for {text:?}: {actual:?} vs {expected:?}"
+                        "wrong var-reference association for {text:?}: {actual:?} vs {expected:?}"
                     )
                 }
             }
@@ -2512,6 +2602,7 @@ fn incomplete_or_widened_declarator_lists_commit_no_selected_statement() {
         "var a,b\nvar c;",
         "var a=1\nvar c;",
         "var x=foo,y=bar,z=",
+        r"var x=\u0066oo,y=\u0062ar,z=",
         "{ var a,b; }",
         "for (var a,b;;) {}",
     ] {
@@ -2554,6 +2645,8 @@ fn failed_declaration_lists_commit_no_selected_binding_or_statement_state() {
         r"var a=1,b,\u{}=2;",
         "var x=foo,y=bar,z=",
         r"var x=foo,y=bar,\u{}=baz;",
+        r"var x=\u0066oo,y=\u0062ar,z=",
+        r"var x=\u0066oo,y=bar,\u{}=baz;",
     ] {
         match recognize_selected_lexical_slice(&source(text)) {
             SelectedLexicalSliceOutcome::UnsupportedCoverage
@@ -2571,4 +2664,8 @@ fn failed_declaration_lists_commit_no_selected_binding_or_statement_state() {
     let subject = grammar_rejection(r"var x=foo,y=bar,\u{}=baz;");
     assert_eq!(subject.fragment(), r"\u{}");
     assert_eq!((subject.range().start(), subject.range().end()), (16, 20));
+
+    let subject = grammar_rejection(r"var x=\u0066oo,y=bar,\u{}=baz;");
+    assert_eq!(subject.fragment(), r"\u{}");
+    assert_eq!((subject.range().start(), subject.range().end()), (21, 25));
 }

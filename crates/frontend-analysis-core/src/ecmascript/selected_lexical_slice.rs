@@ -4,8 +4,9 @@
 //! #215/#218, the additive one-level selected Block frontier accepted by
 //! #283/#291, and the distinct top-level VariableStatement frontier fixed by
 //! #310, widened to `1..N` declarators by #324, widened to optional selected
-//! decimal-integer initializers by #328, and widened to direct-authored selected
-//! IdentifierReference initializers by #334.
+//! decimal-integer initializers by #328, widened to direct-authored selected
+//! IdentifierReference initializers by #334, and widened to selected escaped
+//! non-ReservedWord IdentifierReference initializers by #338.
 //! Recognition is transactional for the whole authoritative `SourceText`:
 //! tentative declaration/binding/Block/var facts are returned only when the
 //! entire source is consumed by selected items plus selected trivia.
@@ -199,7 +200,7 @@ impl SelectedLexicalBinding {
 pub(super) struct SelectedVariableBinding {
     binding: SourceAnchor,
     name_state: SelectedBindingNameState,
-    direct_identifier_reference_initializer: Option<SourceAnchor>,
+    identifier_reference_initializer: Option<SelectedIdentifierReferenceFact>,
 }
 
 impl SelectedVariableBinding {
@@ -219,8 +220,10 @@ impl SelectedVariableBinding {
         }
     }
 
-    pub(super) fn direct_identifier_reference_initializer(&self) -> Option<&SourceAnchor> {
-        self.direct_identifier_reference_initializer.as_ref()
+    pub(super) fn identifier_reference_initializer(
+        &self,
+    ) -> Option<&SelectedIdentifierReferenceFact> {
+        self.identifier_reference_initializer.as_ref()
     }
 }
 
@@ -236,13 +239,13 @@ pub(super) enum SelectedVariableStatementTerminator {
 /// `bindings` holds `1..N` selected `VariableDeclaration` binding facts in exact
 /// authored list order. Each declarator may carry a parser-local selected
 /// decimal-integer initializer, which retains no initializer-specific fact, or
-/// one direct-authored selected IdentifierReference initializer, which retains
-/// only its exact source anchor for the existing correspondence consumer.
-/// Non-empty cardinality is a private recognizer construction invariant:
-/// `parse_variable_statement` pushes the first binding before any list
-/// continuation is considered and returns a `ParseFailure` instead of an empty
-/// list. `Vec` does not encode that invariant at the type level, and no generic
-/// non-empty collection is introduced for it.
+/// one selected direct/escaped non-ReservedWord IdentifierReference initializer,
+/// which retains the existing exact source-backed reference fact for the source-
+/// name correspondence consumer. Non-empty cardinality is a private recognizer
+/// construction invariant: `parse_variable_statement` pushes the first binding
+/// before any list continuation is considered and returns a `ParseFailure`
+/// instead of an empty list. `Vec` does not encode that invariant at the type
+/// level, and no generic non-empty collection is introduced for it.
 ///
 /// The terminator is statement-owned and independent of list cardinality. No
 /// comma, initializer kind, `VariableDeclarationList`, or whole-`VariableStatement`
@@ -526,15 +529,15 @@ impl<'source> Cursor<'source> {
 
     /// Recognizes one selected top-level `VariableStatement` covering the
     /// inductive `VariableDeclarationList` base and successor productions with
-    /// `1..N` simple bindings and optional selected decimal-integer or direct
-    /// IdentifierReference initializers.
+    /// `1..N` simple bindings and optional selected decimal-integer or selected
+    /// direct/escaped non-ReservedWord IdentifierReference initializers.
     ///
     /// Decimal initializer syntax is consumed inside this owning cursor
-    /// lifecycle and discarded. A direct-authored IdentifierReference retains
-    /// only its exact source anchor on the containing binding for the existing
-    /// source-name correspondence consumer. The broader shared reference helper
-    /// also recognizes escaped spellings, so this call site explicitly rejects
-    /// those routes rather than widening the var frontier.
+    /// lifecycle and discarded. A selected IdentifierReference retains the
+    /// complete existing source-backed fact on the containing binding for the
+    /// source-name correspondence consumer. Escaped spellings that decode to an
+    /// unconditionally reserved word remain an explicitly rejected sibling
+    /// route rather than becoming selected static evidence for this frontier.
     ///
     /// Only the keyword-adjacent first declarator keeps the existing restricted
     /// grammar-evidence context; every later declarator uses the general
@@ -561,23 +564,14 @@ impl<'source> Cursor<'source> {
                 self.parse_selected_binding_identifier(grammar_context)?;
 
             self.skip_selected_trivia();
-            let direct_identifier_reference_initializer = if self.consume_initializer_equals() {
+            let identifier_reference_initializer = if self.consume_initializer_equals() {
                 self.skip_selected_trivia();
-                let direct_reference = if self.consume_selected_decimal_integer() {
+                let reference = if self.consume_selected_decimal_integer() {
                     None
                 } else {
                     match self.consume_selected_identifier_reference() {
                         SelectedIdentifierReferenceRecognition::Matched(reference) => {
-                            let SelectedIdentifierReferenceFact {
-                                reference,
-                                name_state,
-                            } = reference;
-                            match name_state {
-                                SelectedIdentifierReferenceNameState::Direct => Some(reference),
-                                SelectedIdentifierReferenceNameState::Escaped { .. } => {
-                                    return Err(ParseFailure::UnsupportedCoverage);
-                                }
-                            }
+                            Some(reference)
                         }
                         SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName {
                             ..
@@ -594,7 +588,7 @@ impl<'source> Cursor<'source> {
                     }
                 };
                 self.skip_selected_trivia();
-                direct_reference
+                reference
             } else {
                 None
             };
@@ -606,7 +600,7 @@ impl<'source> Cursor<'source> {
             bindings.push(SelectedVariableBinding {
                 binding,
                 name_state,
-                direct_identifier_reference_initializer,
+                identifier_reference_initializer,
             });
 
             if !self.consume_ascii(',') {

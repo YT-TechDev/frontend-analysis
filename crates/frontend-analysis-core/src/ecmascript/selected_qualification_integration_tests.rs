@@ -986,6 +986,14 @@ fn top_level_variable_statement_positive_sources_remain_selected_accepted_incomp
         "var x=await;",
         "var x=eval;",
         "var x=arguments;",
+        r"var x=\u0066oo;",
+        r"var x=f\u006Fo;",
+        r"var x=\u0066oo",
+        r"var x=\u006Cet;",
+        r"var x=\u0079ield;",
+        r"var x=a\u0077ait;",
+        r"var x=\u0065val;",
+        r"var x=\u0061rguments;",
     ] {
         assert!(
             matches!(
@@ -1013,6 +1021,7 @@ fn top_level_variable_statement_static_rejections_preserve_authored_primary_subj
         (r"let a; var a=1, \u0069f=2;", r"\u0069f", (16, 23)),
         (r"let a; var a=foo, \u0069f=bar;", r"\u0069f", (18, 25)),
         ("let b; var a=foo,b=bar;", "b", (17, 18)),
+        (r"let a; var a; var x=\u0061;", "a", (11, 12)),
     ] {
         let outcome = qualification_outcome(text);
         assert_eq!(outcome.processing(), ProcessingStatus::Complete, "{text}");
@@ -1061,7 +1070,11 @@ fn top_level_variable_statement_grammar_and_deferred_boundaries_remain_distinct(
         r"var\u{};",
         r"var\u0061;",
         "var x\nvar y;",
-        r"var x=\u0066oo;",
+        r"var x=\u0069f;",
+        r"var x=\u0030;",
+        r"var x=a\u002Db;",
+        r"var x=\u0066oo.bar;",
+        r"var x=\u0066oo();",
         "var x=foo.bar;",
         "var x=foo();",
         "var x=foo+1;",
@@ -1074,6 +1087,23 @@ fn top_level_variable_statement_grammar_and_deferred_boundaries_remain_distinct(
             "{text:?}"
         );
     }
+
+    let outcome = qualification_outcome(r"var x=\u0066oo; let \u{};");
+    assert_eq!(outcome.processing(), ProcessingStatus::Complete);
+    assert_eq!(
+        outcome.verdict(),
+        Some(QualificationVerdictKind::SyntaxRejected)
+    );
+    let evidence = outcome
+        .rejection_evidence()
+        .expect("later grammar evidence");
+    assert_eq!(evidence.family(), RejectionFamily::Grammar);
+    let anchor = evidence
+        .subject()
+        .authored_anchor()
+        .expect("authored later grammar subject");
+    assert_eq!(anchor.fragment(), r"\u{}");
+    assert_eq!((anchor.range().start(), anchor.range().end()), (20, 24));
 }
 
 #[test]
@@ -1106,6 +1136,13 @@ fn multi_declarator_variable_statements_remain_selected_accepted_incomplete() {
         "var x=foo,y=2,z;",
         "var x=foo,y=bar,z=baz",
         "let a; var b; var x=a,y=b,z=q;",
+        r"var x=\u0066oo,y;",
+        r"var x,y=\u0066oo;",
+        r"var x=\u0066oo,y=bar;",
+        r"var x=foo,y=\u0062ar;",
+        r"var x=1,y=\u0062ar;",
+        r"var x=\u0066oo,y=2,z;",
+        r"var x=\u0066oo,y=\u0062ar,z=baz",
     ] {
         assert!(
             matches!(
@@ -1201,7 +1238,9 @@ fn multi_declarator_grammar_rejection_stays_distinct_from_deferred_coverage() {
         "var a=null;",
         "var a=this;",
         "var a=\"x\";",
-        r"var a=\u0066oo;",
+        r"var a=\u0069f;",
+        r"var a=\u0030;",
+        r"var a=a\u002Db;",
         "var a=foo.bar;",
         "var a,{b}=c;",
         "var a, if;",
@@ -1210,6 +1249,7 @@ fn multi_declarator_grammar_rejection_stays_distinct_from_deferred_coverage() {
         "for (var a,b;;) {}",
         "var a=1\nvar c;",
         "var x=foo,y=bar,z=",
+        r"var x=\u0066oo,y=\u0062ar,z=",
     ] {
         assert!(
             matches!(
