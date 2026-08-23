@@ -1060,7 +1060,9 @@ fn var_escaped_reserved_initializer_preserves_same_declarator_and_tier_one_order
                 expected_range,
                 "{text}"
             ),
-            other => panic!("authored C6 ordering must select first reached RHS for {text:?}: {other:?}"),
+            other => {
+                panic!("authored C6 ordering must select first reached RHS for {text:?}: {other:?}")
+            }
         }
     }
 }
