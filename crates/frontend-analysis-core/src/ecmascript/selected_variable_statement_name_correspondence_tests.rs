@@ -609,3 +609,129 @@ fn direct_var_static_rejection_stops_before_correspondence() {
         )
     ));
 }
+
+#[test]
+fn escaped_var_initializer_relations_use_decoded_identity_and_exact_authored_reference() {
+    for (text, expected_binding, expected_reference, expected_contributors) in [
+        (r"var a; var x=\u0061;", (11, 12), (13, 19), &[(4, 5)][..]),
+        (r"var x=\u0061; var a;", (4, 5), (6, 12), &[(18, 19)][..]),
+        (r"var a=\u0061;", (4, 5), (6, 12), &[(4, 5)][..]),
+        (
+            r"var a; var a; var x=\u0061;",
+            (18, 19),
+            (20, 26),
+            &[(4, 5), (11, 12)][..],
+        ),
+        (r"var a,x=\u0061;", (6, 7), (8, 14), &[(4, 5)][..]),
+    ] {
+        let (_, script) = recognized_variable(text);
+        let analysis = accepted_analysis(&script);
+        let relation = one_relation(&analysis);
+        assert_eq!(range(relation.containing_binding()), expected_binding, "{text}");
+        assert_eq!(range(relation.reference()), expected_reference, "{text}");
+        assert_eq!(relation.reference().fragment(), r"\u0061", "{text}");
+        assert_eq!(relation.semantic_name(), "a", "{text}");
+        let contributors = relation
+            .correspondence()
+            .var_contributors()
+            .expect("escaped var RHS must preserve all authored same-name contributors");
+        assert_eq!(contributors.len(), expected_contributors.len(), "{text}");
+        for (actual, expected) in contributors.iter().zip(expected_contributors) {
+            assert_eq!(range(actual), *expected, "{text}");
+        }
+    }
+}
+
+#[test]
+fn escaped_var_initializer_lexical_priority_no_match_and_non_normalization_are_unchanged() {
+    let (_, script) = recognized_variable(r"let a; var x=\u0061;");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(relation.reference().fragment(), r"\u0061");
+    assert_eq!(relation.semantic_name(), "a");
+    let (binding, region) = relation
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("top-level lexical binding must win for escaped var RHS");
+    assert_eq!(range(binding), (4, 5));
+    assert!(matches!(
+        region,
+        SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+    ));
+
+    let (_, script) = recognized_variable(r"var x=\u007A;");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(relation.reference().fragment(), r"\u007A");
+    assert_eq!(relation.semantic_name(), "z");
+    assert!(relation.correspondence().is_no_selected_same_source_contributor());
+
+    let (_, script) = recognized_variable(r"var \u0061; var x=\u0061;");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(relation.semantic_name(), "a");
+    let contributors = relation
+        .correspondence()
+        .var_contributors()
+        .expect("equal decoded identity must match escaped contributor");
+    assert_eq!(contributors.len(), 1);
+    assert_eq!(contributors[0].fragment(), r"\u0061");
+
+    let (_, script) = recognized_variable("var é; var x=e\\u0301;");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(relation.reference().fragment(), r"e\u0301");
+    assert_eq!(relation.semantic_name(), "e\u{301}");
+    assert!(relation.correspondence().is_no_selected_same_source_contributor());
+}
+
+#[test]
+fn escaped_and_direct_var_initializer_relations_remain_distinct_and_authored_ordered() {
+    let (_, script) = recognized_variable(r"let a; var b; var x=\u0061,y=b,z=\u0071;");
+    let analysis = accepted_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(relations.len(), 3);
+    assert_eq!(
+        relations
+            .iter()
+            .map(|relation| relation.semantic_name())
+            .collect::<Vec<_>>(),
+        ["a", "b", "q"]
+    );
+    assert_eq!(range(relations[0].containing_binding()), (18, 19));
+    assert_eq!(range(relations[0].reference()), (20, 26));
+    assert_eq!(relations[0].reference().fragment(), r"\u0061");
+    assert_eq!(range(relations[1].containing_binding()), (27, 28));
+    assert_eq!(range(relations[1].reference()), (29, 30));
+    assert_eq!(range(relations[2].containing_binding()), (31, 32));
+    assert_eq!(range(relations[2].reference()), (33, 39));
+    assert_eq!(relations[2].reference().fragment(), r"\u0071");
+
+    let (lexical, region) = relations[0]
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("escaped relation must target top-level lexical a");
+    assert_eq!(range(lexical), (4, 5));
+    assert!(matches!(
+        region,
+        SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+    ));
+    let contributors = relations[1]
+        .correspondence()
+        .var_contributors()
+        .expect("direct relation must preserve authored var b contributor");
+    assert_eq!(contributors.len(), 1);
+    assert_eq!(range(contributors[0]), (11, 12));
+    assert!(relations[2].correspondence().is_no_selected_same_source_contributor());
+}
+
+#[test]
+fn escaped_var_static_rejection_still_stops_before_correspondence() {
+    let (_, script) = recognized_variable(r"let a; var a; var x=\u0061;");
+    assert!(matches!(
+        evaluate_selected_variable_statement_static_semantics(&script),
+        SelectedVariableStatementStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::LexicalVarNameCollision { .. }
+        )
+    ));
+}
