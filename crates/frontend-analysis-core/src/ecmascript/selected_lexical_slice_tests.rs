@@ -2486,7 +2486,9 @@ fn direct_var_multi_reference_initializers_preserve_per_binding_association_and_
                 }
                 (None, None) => {}
                 (actual, expected) => {
-                    panic!("wrong direct-reference association for {text:?}: {actual:?} vs {expected:?}")
+                    panic!(
+                        "wrong direct-reference association for {text:?}: {actual:?} vs {expected:?}"
+                    )
                 }
             }
         }
