@@ -2696,7 +2696,10 @@ fn var_escaped_reserved_initializer_retains_classification_only_exact_anchor() {
         let [binding] = statement.bindings() else {
             panic!("expected exactly one binding for {text:?}");
         };
-        assert!(binding.identifier_reference_initializer().is_none(), "{text}");
+        assert!(
+            binding.identifier_reference_initializer().is_none(),
+            "{text}"
+        );
         let identifier = binding
             .escaped_reserved_initializer_identifier()
             .expect("C6 initializer must retain classification-only authored evidence");
@@ -2715,12 +2718,20 @@ fn var_escaped_reserved_initializer_preserves_per_binding_cardinality_and_order(
     let script = recognized_variable(r"var a=1,b=\u0069f,c;");
     let statement = only_variable_statement(&script);
     assert_eq!(binding_fragments(statement), ["a", "b", "c"]);
-    assert!(statement.bindings()[0].escaped_reserved_initializer_identifier().is_none());
+    assert!(
+        statement.bindings()[0]
+            .escaped_reserved_initializer_identifier()
+            .is_none()
+    );
     let second = statement.bindings()[1]
         .escaped_reserved_initializer_identifier()
         .expect("second declarator C6 evidence");
     assert_eq!((second.range().start(), second.range().end()), (10, 17));
-    assert!(statement.bindings()[2].escaped_reserved_initializer_identifier().is_none());
+    assert!(
+        statement.bindings()[2]
+            .escaped_reserved_initializer_identifier()
+            .is_none()
+    );
 
     let script = recognized_variable(r"var a=\u0069f,b=\u0074his;");
     let statement = only_variable_statement(&script);
@@ -2738,13 +2749,24 @@ fn var_escaped_reserved_initializer_preserves_per_binding_cardinality_and_order(
     let c1 = statement.bindings()[0]
         .identifier_reference_initializer()
         .expect("first declarator must remain C1");
-    assert_eq!((c1.reference().range().start(), c1.reference().range().end()), (6, 14));
-    assert!(statement.bindings()[0].escaped_reserved_initializer_identifier().is_none());
+    assert_eq!(
+        (c1.reference().range().start(), c1.reference().range().end()),
+        (6, 14)
+    );
+    assert!(
+        statement.bindings()[0]
+            .escaped_reserved_initializer_identifier()
+            .is_none()
+    );
     let c6 = statement.bindings()[1]
         .escaped_reserved_initializer_identifier()
         .expect("second declarator must retain C6 evidence");
     assert_eq!((c6.range().start(), c6.range().end()), (17, 24));
-    assert!(statement.bindings()[1].identifier_reference_initializer().is_none());
+    assert!(
+        statement.bindings()[1]
+            .identifier_reference_initializer()
+            .is_none()
+    );
 }
 
 #[test]
