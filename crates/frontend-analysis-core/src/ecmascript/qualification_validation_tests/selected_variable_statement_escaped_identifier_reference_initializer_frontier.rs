@@ -989,8 +989,7 @@ fn whole_source_failure_and_static_rejection_suppress_all_correspondence_relatio
             expected.fixture_id
         );
         assert_eq!(
-            failed.committed_relations,
-            expected.committed_correspondence_relations,
+            failed.committed_relations, expected.committed_correspondence_relations,
             "{}",
             expected.fixture_id
         );
