@@ -6,8 +6,9 @@
 //! relation traversal order plus every authored same-name top-level `var`
 //! contributor in authored order. #324 widens only that contributor domain so
 //! several declarators of one `VariableStatement` each contribute an anchor.
-//! #334 additionally makes each selected direct-authored var initializer
-//! `IdentifierReference` an independently ordered top-level correspondence input.
+//! #334 makes each selected direct-authored var initializer `IdentifierReference`
+//! an independently ordered top-level correspondence input, and #338 composes
+//! the selected escaped non-ReservedWord spelling through the same retained fact.
 //!
 //! This is not runtime binding resolution. An authored `VariableDeclaration`
 //! contributor is not a unique runtime binding identity or a `ResolveBinding`
@@ -312,13 +313,12 @@ fn append_variable_binding_relation<'script>(
     var_contributors: &VarContributorsByName<'script>,
     relations: &mut Vec<SelectedVariableStatementNameCorrespondenceRelation<'script>>,
 ) -> Result<(), AnalysisFailure> {
-    let Some(reference) = binding.direct_identifier_reference_initializer() else {
+    let Some(reference) = binding.identifier_reference_initializer() else {
         return Ok(());
     };
-    let semantic_name = reference.fragment();
     let current_region = SelectedVariableStatementNameCorrespondenceRegion::TopLevel;
     let correspondence = correspondence_for_name(
-        semantic_name,
+        reference.semantic_name(),
         current_region,
         top_level_bindings,
         top_level_bindings,
@@ -331,8 +331,8 @@ fn append_variable_binding_relation<'script>(
     relations.push(SelectedVariableStatementNameCorrespondenceRelation {
         containing_binding: binding.binding(),
         current_region,
-        reference,
-        semantic_name,
+        reference: reference.reference(),
+        semantic_name: reference.semantic_name(),
         correspondence,
     });
 
