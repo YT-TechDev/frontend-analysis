@@ -1090,8 +1090,13 @@ fn top_level_variable_statement_grammar_and_deferred_boundaries_remain_distinct(
 
     let outcome = qualification_outcome(r"var x=\u0066oo; let \u{};");
     assert_eq!(outcome.processing(), ProcessingStatus::Complete);
-    assert_eq!(outcome.verdict(), Some(QualificationVerdictKind::SyntaxRejected));
-    let evidence = outcome.rejection_evidence().expect("later grammar evidence");
+    assert_eq!(
+        outcome.verdict(),
+        Some(QualificationVerdictKind::SyntaxRejected)
+    );
+    let evidence = outcome
+        .rejection_evidence()
+        .expect("later grammar evidence");
     assert_eq!(evidence.family(), RejectionFamily::Grammar);
     let anchor = evidence
         .subject()
