@@ -16,8 +16,8 @@ use std::collections::BTreeSet;
 
 use crate::{SourceId, SourceText};
 
-use super::inventory::{CONTAINERS, RULE_UNITS, RuleUnitKind};
 use super::super::unicode::{is_id_continue, is_id_start};
+use super::inventory::{CONTAINERS, RULE_UNITS, RuleUnitKind};
 
 const ISSUE_ID: u64 = 336;
 const ECMA_262_EDITION: &str = "ECMA-262, 17th edition, 2026";
@@ -27,14 +27,17 @@ const POSITIVE_LIFECYCLE: &str = "SelectedAcceptedIncomplete";
 const POSITIVE_PARTITION: &str = "VariableEnabled";
 const UNCONDITIONALLY_RESERVED_NAME_COUNT: usize = 35;
 
-const ESCAPED_IDENTIFIER_ORACLE: &str =
-    include_str!("../qualification_selected_escaped_identifier_reference_initializer_validation_tests.rs");
-const ESCAPED_RESERVED_ORACLE: &str =
-    include_str!("../qualification_selected_escaped_reserved_identifier_initializer_validation_tests.rs");
+const ESCAPED_IDENTIFIER_ORACLE: &str = include_str!(
+    "../qualification_selected_escaped_identifier_reference_initializer_validation_tests.rs"
+);
+const ESCAPED_RESERVED_ORACLE: &str = include_str!(
+    "../qualification_selected_escaped_reserved_identifier_initializer_validation_tests.rs"
+);
 const DIRECT_VAR_ORACLE: &str =
     include_str!("selected_variable_statement_direct_identifier_reference_initializer_frontier.rs");
-const MULTI_REFERENCE_ORACLE: &str =
-    include_str!("selected_variable_statement_direct_identifier_reference_multi_reference_composition.rs");
+const MULTI_REFERENCE_ORACLE: &str = include_str!(
+    "selected_variable_statement_direct_identifier_reference_multi_reference_composition.rs"
+);
 
 const EXPECTED_CHANGED_FILES: &[&str] = &[
     "crates/frontend-analysis-core/src/ecmascript/qualification_validation_tests/mod.rs",
@@ -56,10 +59,8 @@ const CURRENT_REQUIRED_RULE_IDS: &[&str] = &[
 const EE01_C1_RHS_ROUTE: &str = "absent; EE-01 remains LHS BindingIdentifier-route-only";
 const EE04_R08_C1_RHS_ROUTE: &str =
     "absent; decoded unconditionally-reserved var RHS remains frontier-scoped UnsupportedCoverage";
-const REPRESENTATION_POLICY: &str =
-    "candidate-independent authored provenance plus decoded semantic identity; production representation deferred";
-const RUNTIME_NEGATIVE_BOUNDARY: &str =
-    "same-source source-name correspondence is not runtime ResolveBinding or runtime target identity";
+const REPRESENTATION_POLICY: &str = "candidate-independent authored provenance plus decoded semantic identity; production representation deferred";
+const RUNTIME_NEGATIVE_BOUNDARY: &str = "same-source source-name correspondence is not runtime ResolveBinding or runtime target identity";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct A(usize, usize, &'static str);
@@ -101,10 +102,7 @@ struct RhsExpectation {
 enum Disposition {
     SelectedAcceptedIncomplete,
     UnsupportedCoverage,
-    StaticRejected {
-        rule_id: &'static str,
-        subject: A,
-    },
+    StaticRejected { rule_id: &'static str, subject: A },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -607,7 +605,10 @@ fn fixture(id: &str) -> &'static Fixture {
 }
 
 fn source_for(fixture: &Fixture, ordinal: u64) -> SourceText {
-    SourceText::new(SourceId::new(ISSUE_ID * 10_000 + ordinal), fixture.source.to_owned())
+    SourceText::new(
+        SourceId::new(ISSUE_ID * 10_000 + ordinal),
+        fixture.source.to_owned(),
+    )
 }
 
 fn assert_anchor(source: &SourceText, expected: A) {
@@ -628,9 +629,7 @@ fn assert_correspondence(source: &SourceText, correspondence: Correspondence) {
                 assert_anchor(source, *contributor);
             }
             assert!(
-                contributors
-                    .windows(2)
-                    .all(|pair| pair[0].0 <= pair[1].0),
+                contributors.windows(2).all(|pair| pair[0].0 <= pair[1].0),
                 "contributors must remain in authored order"
             );
         }
@@ -692,7 +691,11 @@ fn assert_fixture(fixture: &Fixture, ordinal: u64) {
         assert_anchor(&source, subject);
     }
 
-    assert_eq!(actual_relation_count, fixture.committed_relations, "{}", fixture.id);
+    assert_eq!(
+        actual_relation_count, fixture.committed_relations,
+        "{}",
+        fixture.id
+    );
 
     match fixture.disposition {
         Disposition::SelectedAcceptedIncomplete => {
@@ -741,9 +744,8 @@ fn all_twenty_four_mandatory_fixtures_are_present_unique_and_source_backed() {
 
     let ids: BTreeSet<_> = FIXTURES.iter().map(|fixture| fixture.id).collect();
     let expected: BTreeSet<_> = [
-        "M1", "M2", "M3", "M4", "M5", "M6", "M7", "M8", "M9", "M10", "M11", "M12",
-        "M13", "M14", "M15", "M16", "M17", "M18", "M19", "M20", "M21", "M22", "M23",
-        "M24",
+        "M1", "M2", "M3", "M4", "M5", "M6", "M7", "M8", "M9", "M10", "M11", "M12", "M13", "M14",
+        "M15", "M16", "M17", "M18", "M19", "M20", "M21", "M22", "M23", "M24",
     ]
     .into_iter()
     .collect();
