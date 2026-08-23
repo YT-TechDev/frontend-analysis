@@ -804,10 +804,7 @@ fn rule_identity_closure_and_positive_lifecycle_remain_unchanged() {
 fn oracle_remains_candidate_independent_and_representation_neutral() {
     for forbidden_call in [
         concat!("recognize_selected_", "lexical_slice("),
-        concat!(
-            "evaluate_selected_variable_statement_",
-            "static_semantics("
-        ),
+        concat!("evaluate_selected_variable_statement_", "static_semantics("),
         concat!("attempt_selected_", "qualification("),
         concat!(
             "analyze_selected_variable_statement_name_",
