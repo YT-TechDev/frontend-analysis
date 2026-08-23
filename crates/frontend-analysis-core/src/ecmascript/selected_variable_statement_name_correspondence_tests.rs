@@ -107,7 +107,7 @@ fn escaped_and_direct_spellings_share_exact_semantic_name_without_normalization(
         }
     }
 
-    let (_, script) = recognized_variable("var é; let x=e\\u0301;");
+    let (_, script) = recognized_variable("var é; let x=e\u{301};");
     let analysis = accepted_analysis(&script);
     let relation = one_relation(&analysis);
     assert_eq!(relation.semantic_name(), "e\u{301}");
@@ -462,4 +462,146 @@ fn multi_declarator_statements_do_not_change_existing_relation_meanings() {
         let analysis = accepted_analysis(&script);
         assert!(analysis.relations().is_empty(), "{text}");
     }
+}
+
+#[test]
+fn direct_var_initializer_relations_preserve_whole_source_correspondence_meanings() {
+    for (text, expected_binding, expected_reference, expected_contributors) in [
+        ("var a; var x=a;", (11, 12), (13, 14), &[(4, 5)][..]),
+        ("var x=a; var a;", (4, 5), (6, 7), &[(13, 14)][..]),
+        ("var a=a;", (4, 5), (6, 7), &[(4, 5)][..]),
+        (
+            "var a; var a; var x=a;",
+            (18, 19),
+            (20, 21),
+            &[(4, 5), (11, 12)][..],
+        ),
+        ("var a,a=a;", (6, 7), (8, 9), &[(4, 5), (6, 7)][..]),
+        ("var x=a,a;", (4, 5), (6, 7), &[(8, 9)][..]),
+    ] {
+        let (_, script) = recognized_variable(text);
+        let analysis = accepted_analysis(&script);
+        let relation = one_relation(&analysis);
+        assert_eq!(range(relation.containing_binding()), expected_binding, "{text}");
+        assert_eq!(range(relation.reference()), expected_reference, "{text}");
+        assert_eq!(relation.semantic_name(), "a", "{text}");
+        assert!(matches!(
+            relation.current_region(),
+            SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+        ));
+        let contributors = relation
+            .correspondence()
+            .var_contributors()
+            .expect("direct var RHS must retain all authored same-name contributors");
+        assert_eq!(contributors.len(), expected_contributors.len(), "{text}");
+        for (actual, expected) in contributors.iter().zip(expected_contributors) {
+            assert_eq!(range(actual), *expected, "{text}");
+        }
+    }
+}
+
+#[test]
+fn direct_var_initializer_lexical_and_no_contributor_meanings_are_unchanged() {
+    let (_, script) = recognized_variable("let a; var x=a;");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(range(relation.containing_binding()), (11, 12));
+    assert_eq!(range(relation.reference()), (13, 14));
+    let (binding, region) = relation
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("top-level lexical binding must win");
+    assert_eq!(range(binding), (4, 5));
+    assert!(matches!(
+        region,
+        SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+    ));
+
+    let (_, script) = recognized_variable("var x=z;");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(relation.semantic_name(), "z");
+    assert!(
+        relation
+            .correspondence()
+            .is_no_selected_same_source_contributor()
+    );
+}
+
+#[test]
+fn direct_var_initializer_semantic_identity_uses_exact_direct_source_without_normalization() {
+    let (_, script) = recognized_variable(r"var \u0061; var x=a;");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(relation.semantic_name(), "a");
+    assert_eq!(relation.reference().fragment(), "a");
+    let contributors = relation
+        .correspondence()
+        .var_contributors()
+        .expect("escaped LHS semantic name must match direct RHS");
+    assert_eq!(contributors.len(), 1);
+    assert_eq!(contributors[0].fragment(), r"\u0061");
+
+    let (_, script) = recognized_variable("var é; var x=e\u{301};");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(relation.semantic_name(), "e\u{301}");
+    assert!(
+        relation
+            .correspondence()
+            .is_no_selected_same_source_contributor()
+    );
+}
+
+#[test]
+fn direct_var_multi_reference_relations_remain_distinct_and_authored_ordered() {
+    let (_, script) = recognized_variable("let a; var b; var x=a,y=b,z=q;");
+    let analysis = accepted_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(relations.len(), 3);
+    assert_eq!(
+        relations
+            .iter()
+            .map(|relation| relation.semantic_name())
+            .collect::<Vec<_>>(),
+        ["a", "b", "q"]
+    );
+    assert_eq!(range(relations[0].containing_binding()), (18, 19));
+    assert_eq!(range(relations[0].reference()), (20, 21));
+    assert_eq!(range(relations[1].containing_binding()), (22, 23));
+    assert_eq!(range(relations[1].reference()), (24, 25));
+    assert_eq!(range(relations[2].containing_binding()), (26, 27));
+    assert_eq!(range(relations[2].reference()), (28, 29));
+
+    let (lexical, region) = relations[0]
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("first relation must target top-level lexical a");
+    assert_eq!(range(lexical), (4, 5));
+    assert!(matches!(
+        region,
+        SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+    ));
+    let contributors = relations[1]
+        .correspondence()
+        .var_contributors()
+        .expect("second relation must use authored var b contributor");
+    assert_eq!(contributors.len(), 1);
+    assert_eq!(range(contributors[0]), (11, 12));
+    assert!(
+        relations[2]
+            .correspondence()
+            .is_no_selected_same_source_contributor()
+    );
+}
+
+#[test]
+fn direct_var_static_rejection_stops_before_correspondence() {
+    let (_, script) = recognized_variable("let a; var a; var x=a;");
+    assert!(matches!(
+        evaluate_selected_variable_statement_static_semantics(&script),
+        SelectedVariableStatementStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::LexicalVarNameCollision { .. }
+        )
+    ));
 }
