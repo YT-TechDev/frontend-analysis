@@ -101,15 +101,9 @@ fn ee_15_r02_is_declaration_local_and_retains_first_duplicate_occurrences() {
                 duplicate_binding,
             },
         ) => {
+            assert_eq!((first_binding.range().start(), first_binding.range().end()), (4, 5));
             assert_eq!(
-                (first_binding.range().start(), first_binding.range().end()),
-                (4, 5)
-            );
-            assert_eq!(
-                (
-                    duplicate_binding.range().start(),
-                    duplicate_binding.range().end()
-                ),
+                (duplicate_binding.range().start(), duplicate_binding.range().end()),
                 expected
             );
         }
@@ -159,15 +153,9 @@ fn ee_36_runs_after_all_local_checks_and_flattens_binding_source_order() {
             },
         ) => {
             assert_eq!(first_binding.fragment(), "y");
+            assert_eq!((first_binding.range().start(), first_binding.range().end()), (7, 8));
             assert_eq!(
-                (first_binding.range().start(), first_binding.range().end()),
-                (7, 8)
-            );
-            assert_eq!(
-                (
-                    duplicate_binding.range().start(),
-                    duplicate_binding.range().end()
-                ),
+                (duplicate_binding.range().start(), duplicate_binding.range().end()),
                 expected
             );
         }
@@ -194,60 +182,30 @@ fn accepted_precedence_matrix_is_declaration_source_order_then_local_rule_order(
         };
 
         let (actual_rule, actual_range) = match rejection {
-            SelectedStaticSemanticsRejection::BindingNamedLet { binding } => {
-                ("R01", (binding.range().start(), binding.range().end()))
-            }
-            SelectedStaticSemanticsRejection::DuplicateDeclarationBinding {
-                duplicate_binding,
-                ..
-            } => (
-                "R02",
-                (
-                    duplicate_binding.range().start(),
-                    duplicate_binding.range().end(),
-                ),
-            ),
-            SelectedStaticSemanticsRejection::ConstBindingMissingInitializer { binding } => {
-                ("R03", (binding.range().start(), binding.range().end()))
-            }
-            SelectedStaticSemanticsRejection::DuplicateBlockLexicalName { .. } => {
-                panic!("flat fixture must not acquire Block duplicate evidence")
-            }
-            SelectedStaticSemanticsRejection::DuplicateLexicalName {
-                duplicate_binding, ..
-            } => (
-                "EE36",
-                (
-                    duplicate_binding.range().start(),
-                    duplicate_binding.range().end(),
-                ),
-            ),
-            SelectedStaticSemanticsRejection::LexicalVarNameCollision { .. } => {
-                panic!("flat fixture must not acquire var collision evidence")
-            }
-            SelectedStaticSemanticsRejection::InvalidEscapedIdentifierStart { escape } => {
-                ("EE01-R01", (escape.range().start(), escape.range().end()))
-            }
-            SelectedStaticSemanticsRejection::InvalidEscapedIdentifierPart { escape } => {
-                ("EE01-R02", (escape.range().start(), escape.range().end()))
-            }
-            SelectedStaticSemanticsRejection::EscapedReservedWord { binding } => {
-                ("EE04-R08", (binding.range().start(), binding.range().end()))
-            }
-            SelectedStaticSemanticsRejection::EscapedReservedWordInitializer { identifier } => (
-                "EE04-R08",
-                (identifier.range().start(), identifier.range().end()),
-            ),
+            SelectedStaticSemanticsRejection::BindingNamedLet { binding } =>
+                ("R01", (binding.range().start(), binding.range().end())),
+            SelectedStaticSemanticsRejection::DuplicateDeclarationBinding { duplicate_binding, .. } =>
+                ("R02", (duplicate_binding.range().start(), duplicate_binding.range().end())),
+            SelectedStaticSemanticsRejection::ConstBindingMissingInitializer { binding } =>
+                ("R03", (binding.range().start(), binding.range().end())),
+            SelectedStaticSemanticsRejection::DuplicateBlockLexicalName { .. } =>
+                panic!("flat fixture must not acquire Block duplicate evidence"),
+            SelectedStaticSemanticsRejection::DuplicateLexicalName { duplicate_binding, .. } =>
+                ("EE36", (duplicate_binding.range().start(), duplicate_binding.range().end())),
+            SelectedStaticSemanticsRejection::LexicalVarNameCollision { .. } =>
+                panic!("flat fixture must not acquire var collision evidence"),
+            SelectedStaticSemanticsRejection::InvalidEscapedIdentifierStart { escape } =>
+                ("EE01-R01", (escape.range().start(), escape.range().end())),
+            SelectedStaticSemanticsRejection::InvalidEscapedIdentifierPart { escape } =>
+                ("EE01-R02", (escape.range().start(), escape.range().end())),
+            SelectedStaticSemanticsRejection::EscapedReservedWord { binding } =>
+                ("EE04-R08", (binding.range().start(), binding.range().end())),
+            SelectedStaticSemanticsRejection::EscapedReservedWordInitializer { identifier } =>
+                ("EE04-R08", (identifier.range().start(), identifier.range().end())),
         };
 
-        assert_eq!(
-            actual_rule, expected_rule,
-            "wrong primary rule for {text:?}"
-        );
-        assert_eq!(
-            actual_range, expected_range,
-            "wrong primary range for {text:?}"
-        );
+        assert_eq!(actual_rule, expected_rule, "wrong primary rule for {text:?}");
+        assert_eq!(actual_range, expected_range, "wrong primary range for {text:?}");
     }
 }
 
@@ -281,18 +239,14 @@ fn escaped_ee01_and_ee04_preserve_exact_primary_authored_evidence() {
             other => panic!("expected rejection for {text:?}, got {other:?}"),
         };
         let (rule, range) = match rejection {
-            SelectedStaticSemanticsRejection::InvalidEscapedIdentifierStart { escape } => {
-                ("EE01-R01", (escape.range().start(), escape.range().end()))
-            }
-            SelectedStaticSemanticsRejection::InvalidEscapedIdentifierPart { escape } => {
-                ("EE01-R02", (escape.range().start(), escape.range().end()))
-            }
-            SelectedStaticSemanticsRejection::EscapedReservedWord { binding } => {
-                ("EE04-R08", (binding.range().start(), binding.range().end()))
-            }
-            SelectedStaticSemanticsRejection::BindingNamedLet { binding } => {
-                ("R01", (binding.range().start(), binding.range().end()))
-            }
+            SelectedStaticSemanticsRejection::InvalidEscapedIdentifierStart { escape } =>
+                ("EE01-R01", (escape.range().start(), escape.range().end())),
+            SelectedStaticSemanticsRejection::InvalidEscapedIdentifierPart { escape } =>
+                ("EE01-R02", (escape.range().start(), escape.range().end())),
+            SelectedStaticSemanticsRejection::EscapedReservedWord { binding } =>
+                ("EE04-R08", (binding.range().start(), binding.range().end())),
+            SelectedStaticSemanticsRejection::BindingNamedLet { binding } =>
+                ("R01", (binding.range().start(), binding.range().end())),
             other => panic!("unexpected rejection for {text:?}: {other:?}"),
         };
         assert_eq!(rule, expected_rule, "{text:?}");
@@ -317,11 +271,7 @@ fn escaped_reserved_initializer_ee04_preserves_exact_rhs_subject_and_precedence(
                 SelectedStaticSemanticsRejection::EscapedReservedWordInitializer { identifier },
             ) => {
                 assert_eq!(identifier.fragment(), expected_fragment, "{text}");
-                assert_eq!(
-                    (identifier.range().start(), identifier.range().end()),
-                    expected_range,
-                    "{text}"
-                );
+                assert_eq!((identifier.range().start(), identifier.range().end()), expected_range, "{text}");
             }
             other => panic!("expected RHS EE-04-R08 rejection for {text:?}, got {other:?}"),
         }
@@ -329,24 +279,9 @@ fn escaped_reserved_initializer_ee04_preserves_exact_rhs_subject_and_precedence(
 
     for (text, expected_rule, expected_fragment, expected_range) in [
         (r"let let = \u006Eull;", "R01", "let", (4, 7)),
-        (
-            r"let x = \u006Eull, x = foo;",
-            "EE04-R08-RHS",
-            r"\u006Eull",
-            (8, 17),
-        ),
-        (
-            r"const x = \u006Eull, y;",
-            "EE04-R08-RHS",
-            r"\u006Eull",
-            (10, 19),
-        ),
-        (
-            r"let x = foo; let x = \u006Eull;",
-            "EE04-R08-RHS",
-            r"\u006Eull",
-            (21, 30),
-        ),
+        (r"let x = \u006Eull, x = foo;", "EE04-R08-RHS", r"\u006Eull", (8, 17)),
+        (r"const x = \u006Eull, y;", "EE04-R08-RHS", r"\u006Eull", (10, 19)),
+        (r"let x = foo; let x = \u006Eull;", "EE04-R08-RHS", r"\u006Eull", (21, 30)),
     ] {
         let (_, script) = recognized(text);
         let rejection = match evaluate_selected_static_semantics(&script) {
@@ -355,36 +290,22 @@ fn escaped_reserved_initializer_ee04_preserves_exact_rhs_subject_and_precedence(
         };
         let (actual_rule, anchor) = match rejection {
             SelectedStaticSemanticsRejection::BindingNamedLet { binding } => ("R01", binding),
-            SelectedStaticSemanticsRejection::EscapedReservedWordInitializer { identifier } => {
-                ("EE04-R08-RHS", identifier)
-            }
+            SelectedStaticSemanticsRejection::EscapedReservedWordInitializer { identifier } =>
+                ("EE04-R08-RHS", identifier),
             other => panic!("unexpected precedence rejection for {text:?}: {other:?}"),
         };
         assert_eq!(actual_rule, expected_rule, "{text}");
         assert_eq!(anchor.fragment(), expected_fragment, "{text}");
-        assert_eq!(
-            (anchor.range().start(), anchor.range().end()),
-            expected_range,
-            "{text}"
-        );
+        assert_eq!((anchor.range().start(), anchor.range().end()), expected_range, "{text}");
     }
 }
 
 #[test]
 fn escaped_reserved_initializer_non_triggers_remain_accepted() {
     for rhs in [
-        r"\u0079ield",
-        r"a\u0077ait",
-        r"\u006Cet",
-        r"\u0073tatic",
-        r"\u0069mplements",
-        r"\u0069nterface",
-        r"\u0070ackage",
-        r"\u0070rivate",
-        r"\u0070rotected",
-        r"\u0070ublic",
-        r"\u0065val",
-        r"\u0061rguments",
+        r"\u0079ield", r"a\u0077ait", r"\u006Cet", r"\u0073tatic",
+        r"\u0069mplements", r"\u0069nterface", r"\u0070ackage", r"\u0070rivate",
+        r"\u0070rotected", r"\u0070ublic", r"\u0065val", r"\u0061rguments",
     ] {
         accepted(&format!("const x = {rhs};"));
     }
@@ -392,12 +313,7 @@ fn escaped_reserved_initializer_non_triggers_remain_accepted() {
 
 #[test]
 fn escaped_semantic_name_equality_is_exact_and_not_normalized() {
-    for text in [
-        r"let \u0061, a;",
-        r"let $, \u0024;",
-        r"let _, \u005F;",
-        "let \\u{1D49C}, 𝒜;",
-    ] {
+    for text in [r"let \u0061, a;", r"let $, \u0024;", r"let _, \u005F;", "let \\u{1D49C}, 𝒜;"] {
         let (_, script) = recognized(text);
         assert!(matches!(
             evaluate_selected_static_semantics(&script),
@@ -441,50 +357,26 @@ fn escaped_binding_precedence_matches_all_twelve_candidate_independent_witnesses
             other => panic!("expected rejection for {text:?}, got {other:?}"),
         };
         let (rule, range) = match rejection {
-            SelectedStaticSemanticsRejection::InvalidEscapedIdentifierStart { escape } => {
-                ("EE01-R01", (escape.range().start(), escape.range().end()))
-            }
-            SelectedStaticSemanticsRejection::InvalidEscapedIdentifierPart { escape } => {
-                ("EE01-R02", (escape.range().start(), escape.range().end()))
-            }
-            SelectedStaticSemanticsRejection::EscapedReservedWord { binding } => {
-                ("EE04-R08", (binding.range().start(), binding.range().end()))
-            }
-            SelectedStaticSemanticsRejection::EscapedReservedWordInitializer { identifier } => (
-                "EE04-R08",
-                (identifier.range().start(), identifier.range().end()),
-            ),
-            SelectedStaticSemanticsRejection::BindingNamedLet { binding } => {
-                ("R01", (binding.range().start(), binding.range().end()))
-            }
-            SelectedStaticSemanticsRejection::DuplicateDeclarationBinding {
-                duplicate_binding,
-                ..
-            } => (
-                "R02",
-                (
-                    duplicate_binding.range().start(),
-                    duplicate_binding.range().end(),
-                ),
-            ),
-            SelectedStaticSemanticsRejection::ConstBindingMissingInitializer { binding } => {
-                ("R03", (binding.range().start(), binding.range().end()))
-            }
-            SelectedStaticSemanticsRejection::DuplicateBlockLexicalName { .. } => {
-                panic!("flat fixture must not acquire Block duplicate evidence")
-            }
-            SelectedStaticSemanticsRejection::DuplicateLexicalName {
-                duplicate_binding, ..
-            } => (
-                "EE36",
-                (
-                    duplicate_binding.range().start(),
-                    duplicate_binding.range().end(),
-                ),
-            ),
-            SelectedStaticSemanticsRejection::LexicalVarNameCollision { .. } => {
-                panic!("flat fixture must not acquire var collision evidence")
-            }
+            SelectedStaticSemanticsRejection::InvalidEscapedIdentifierStart { escape } =>
+                ("EE01-R01", (escape.range().start(), escape.range().end())),
+            SelectedStaticSemanticsRejection::InvalidEscapedIdentifierPart { escape } =>
+                ("EE01-R02", (escape.range().start(), escape.range().end())),
+            SelectedStaticSemanticsRejection::EscapedReservedWord { binding } =>
+                ("EE04-R08", (binding.range().start(), binding.range().end())),
+            SelectedStaticSemanticsRejection::EscapedReservedWordInitializer { identifier } =>
+                ("EE04-R08", (identifier.range().start(), identifier.range().end())),
+            SelectedStaticSemanticsRejection::BindingNamedLet { binding } =>
+                ("R01", (binding.range().start(), binding.range().end())),
+            SelectedStaticSemanticsRejection::DuplicateDeclarationBinding { duplicate_binding, .. } =>
+                ("R02", (duplicate_binding.range().start(), duplicate_binding.range().end())),
+            SelectedStaticSemanticsRejection::ConstBindingMissingInitializer { binding } =>
+                ("R03", (binding.range().start(), binding.range().end())),
+            SelectedStaticSemanticsRejection::DuplicateBlockLexicalName { .. } =>
+                panic!("flat fixture must not acquire Block duplicate evidence"),
+            SelectedStaticSemanticsRejection::DuplicateLexicalName { duplicate_binding, .. } =>
+                ("EE36", (duplicate_binding.range().start(), duplicate_binding.range().end())),
+            SelectedStaticSemanticsRejection::LexicalVarNameCollision { .. } =>
+                panic!("flat fixture must not acquire var collision evidence"),
         };
         assert_eq!(rule, expected_rule, "{text:?}");
         assert_eq!(range, expected_range, "{text:?}");
@@ -504,12 +396,10 @@ fn same_binding_invalid_escape_primary_is_first_authored_occurrence() {
             other => panic!("expected EE-01 rejection for {text:?}, got {other:?}"),
         };
         let (rule, range) = match rejection {
-            SelectedStaticSemanticsRejection::InvalidEscapedIdentifierStart { escape } => {
-                ("EE01-R01", (escape.range().start(), escape.range().end()))
-            }
-            SelectedStaticSemanticsRejection::InvalidEscapedIdentifierPart { escape } => {
-                ("EE01-R02", (escape.range().start(), escape.range().end()))
-            }
+            SelectedStaticSemanticsRejection::InvalidEscapedIdentifierStart { escape } =>
+                ("EE01-R01", (escape.range().start(), escape.range().end())),
+            SelectedStaticSemanticsRejection::InvalidEscapedIdentifierPart { escape } =>
+                ("EE01-R02", (escape.range().start(), escape.range().end())),
             other => panic!("unexpected rejection for {text:?}: {other:?}"),
         };
         assert_eq!(rule, expected_rule);
@@ -531,21 +421,13 @@ fn selected_rejections_map_to_static_semantics_rejected_with_authored_primary_ev
             SelectedStaticSemanticsOutcome::Rejected(rejection) => rejection,
             other => panic!("expected selected rejection for {text:?}, got {other:?}"),
         };
-
         let outcome = selected_rejection_to_qualification(&source, &rejection);
         assert_eq!(outcome.processing(), ProcessingStatus::Complete);
-        assert_eq!(
-            outcome.verdict(),
-            Some(QualificationVerdictKind::StaticSemanticsRejected)
-        );
+        assert_eq!(outcome.verdict(), Some(QualificationVerdictKind::StaticSemanticsRejected));
         let evidence = outcome.rejection_evidence().expect("rejection evidence");
         assert_eq!(evidence.family(), RejectionFamily::StaticSemantics);
         assert_eq!(
-            evidence
-                .subject()
-                .authored_anchor()
-                .expect("authored primary evidence")
-                .fragment(),
+            evidence.subject().authored_anchor().expect("authored primary evidence").fragment(),
             expected_fragment
         );
     }
@@ -559,7 +441,6 @@ fn source_mismatch_fails_closed_without_a_verdict() {
         other => panic!("expected selected rejection, got {other:?}"),
     };
     let unrelated = SourceText::new(SourceId::new(218), "const y;".to_owned());
-
     let outcome = selected_rejection_to_qualification(&unrelated, &rejection);
     assert_eq!(outcome.processing(), ProcessingStatus::InternalFailure);
     assert_eq!(outcome.verdict(), None);
@@ -584,22 +465,10 @@ fn one_level_block_static_semantics_preserve_region_duplicate_domains() {
     let (_, script) = recognized_block("{ let a=1; let a=2; }");
     match evaluate_selected_one_level_block_static_semantics(&script) {
         SelectedOneLevelBlockStaticSemanticsOutcome::Rejected(
-            SelectedStaticSemanticsRejection::DuplicateBlockLexicalName {
-                first_binding,
-                duplicate_binding,
-            },
+            SelectedStaticSemanticsRejection::DuplicateBlockLexicalName { first_binding, duplicate_binding },
         ) => {
-            assert_eq!(
-                (first_binding.range().start(), first_binding.range().end()),
-                (6, 7)
-            );
-            assert_eq!(
-                (
-                    duplicate_binding.range().start(),
-                    duplicate_binding.range().end()
-                ),
-                (15, 16)
-            );
+            assert_eq!((first_binding.range().start(), first_binding.range().end()), (6, 7));
+            assert_eq!((duplicate_binding.range().start(), duplicate_binding.range().end()), (15, 16));
         }
         other => panic!("expected EE-14 Block duplicate rejection, got {other:?}"),
     }
@@ -607,22 +476,10 @@ fn one_level_block_static_semantics_preserve_region_duplicate_domains() {
     let (_, script) = recognized_block("let a=1; { let a=2; } let a=3;");
     match evaluate_selected_one_level_block_static_semantics(&script) {
         SelectedOneLevelBlockStaticSemanticsOutcome::Rejected(
-            SelectedStaticSemanticsRejection::DuplicateLexicalName {
-                first_binding,
-                duplicate_binding,
-            },
+            SelectedStaticSemanticsRejection::DuplicateLexicalName { first_binding, duplicate_binding },
         ) => {
-            assert_eq!(
-                (first_binding.range().start(), first_binding.range().end()),
-                (4, 5)
-            );
-            assert_eq!(
-                (
-                    duplicate_binding.range().start(),
-                    duplicate_binding.range().end()
-                ),
-                (26, 27)
-            );
+            assert_eq!((first_binding.range().start(), first_binding.range().end()), (4, 5));
+            assert_eq!((duplicate_binding.range().start(), duplicate_binding.range().end()), (26, 27));
         }
         other => panic!("expected top-level EE-36 duplicate rejection, got {other:?}"),
     }
@@ -641,16 +498,8 @@ fn one_level_block_static_evidence_selection_is_local_then_block_then_script() {
     let (_, script) = recognized_block("{ let a=1; let a=2; } let z=1; let z=2;");
     match evaluate_selected_one_level_block_static_semantics(&script) {
         SelectedOneLevelBlockStaticSemanticsOutcome::Rejected(
-            SelectedStaticSemanticsRejection::DuplicateBlockLexicalName {
-                duplicate_binding, ..
-            },
-        ) => assert_eq!(
-            (
-                duplicate_binding.range().start(),
-                duplicate_binding.range().end()
-            ),
-            (15, 16)
-        ),
+            SelectedStaticSemanticsRejection::DuplicateBlockLexicalName { duplicate_binding, .. },
+        ) => assert_eq!((duplicate_binding.range().start(), duplicate_binding.range().end()), (15, 16)),
         other => panic!("Block EE-14 duplicate must precede top-level EE-36 duplicate: {other:?}"),
     }
 }
@@ -658,7 +507,6 @@ fn one_level_block_static_evidence_selection_is_local_then_block_then_script() {
 #[test]
 fn production_static_semantics_preserves_architecture_boundaries_in_source() {
     let production = include_str!("selected_static_semantics.rs");
-
     for forbidden in [
         concat!("recognize_", "selected_lexical_slice"),
         concat!("source.", "as_str()"),
@@ -667,12 +515,8 @@ fn production_static_semantics_preserves_architecture_boundaries_in_source() {
         concat!("unicode_", "normalization"),
         concat!("qualification_validation", "_tests"),
     ] {
-        assert!(
-            !production.contains(forbidden),
-            "selected static semantics must preserve its architecture boundary: found {forbidden}"
-        );
+        assert!(!production.contains(forbidden), "selected static semantics must preserve its architecture boundary: found {forbidden}");
     }
-
     assert_eq!(production.matches("first_by_name: HashMap<").count(), 2);
     assert_eq!(production.matches("try_reserve(1)").count(), 4);
     assert!(production.contains("DuplicateDeclarationBinding"));
@@ -693,7 +537,6 @@ fn one_level_block_preserves_existing_malformed_binding_and_rhs_lifecycles() {
         }
         other => panic!("unexpected Block grammar lifecycle: {other:?}"),
     }
-
     let (_, script) = recognized_block(r"{ let \u0030; }");
     match evaluate_selected_one_level_block_static_semantics(&script) {
         SelectedOneLevelBlockStaticSemanticsOutcome::Rejected(
@@ -704,19 +547,14 @@ fn one_level_block_preserves_existing_malformed_binding_and_rhs_lifecycles() {
         }
         other => panic!("unexpected Block static lifecycle: {other:?}"),
     }
-
     let malformed_rhs_source = source(r"{ const x = \u{}; }");
-    assert!(matches!(
-        recognize_selected_lexical_slice(&malformed_rhs_source),
-        SelectedLexicalSliceOutcome::UnsupportedCoverage
-    ));
+    assert!(matches!(recognize_selected_lexical_slice(&malformed_rhs_source), SelectedLexicalSliceOutcome::UnsupportedCoverage));
 }
 
 #[test]
 fn variable_binding_context_keeps_let_valid_and_reserved_escape_rejected() {
     accepted_variable("var let;");
     accepted_variable(r"var \u006Cet;");
-
     let (_, script) = recognized_variable(r"var \u0069f;");
     match evaluate_selected_variable_statement_static_semantics(&script) {
         SelectedVariableStatementStaticSemanticsOutcome::Rejected(
@@ -740,33 +578,11 @@ fn ee_36_r02_preserves_exact_provenance_and_completing_primary() {
         let (_, script) = recognized_variable(text);
         match evaluate_selected_variable_statement_static_semantics(&script) {
             SelectedVariableStatementStaticSemanticsOutcome::Rejected(
-                SelectedStaticSemanticsRejection::LexicalVarNameCollision {
-                    lexical_binding,
-                    var_binding,
-                    primary_binding,
-                },
+                SelectedStaticSemanticsRejection::LexicalVarNameCollision { lexical_binding, var_binding, primary_binding },
             ) => {
-                assert_eq!(
-                    (
-                        lexical_binding.range().start(),
-                        lexical_binding.range().end()
-                    ),
-                    lexical_range,
-                    "{text}"
-                );
-                assert_eq!(
-                    (var_binding.range().start(), var_binding.range().end()),
-                    var_range,
-                    "{text}"
-                );
-                assert_eq!(
-                    (
-                        primary_binding.range().start(),
-                        primary_binding.range().end()
-                    ),
-                    primary_range,
-                    "{text}"
-                );
+                assert_eq!((lexical_binding.range().start(), lexical_binding.range().end()), lexical_range, "{text}");
+                assert_eq!((var_binding.range().start(), var_binding.range().end()), var_range, "{text}");
+                assert_eq!((primary_binding.range().start(), primary_binding.range().end()), primary_range, "{text}");
             }
             other => panic!("expected lexical/var collision for {text:?}, got {other:?}"),
         }
@@ -783,33 +599,11 @@ fn ee_36_r02_uses_authored_completion_order_and_first_var_provenance() {
         let (_, script) = recognized_variable(text);
         match evaluate_selected_variable_statement_static_semantics(&script) {
             SelectedVariableStatementStaticSemanticsOutcome::Rejected(
-                SelectedStaticSemanticsRejection::LexicalVarNameCollision {
-                    lexical_binding,
-                    var_binding,
-                    primary_binding,
-                },
+                SelectedStaticSemanticsRejection::LexicalVarNameCollision { lexical_binding, var_binding, primary_binding },
             ) => {
-                assert_eq!(
-                    (
-                        lexical_binding.range().start(),
-                        lexical_binding.range().end()
-                    ),
-                    lexical_range,
-                    "{text}"
-                );
-                assert_eq!(
-                    (var_binding.range().start(), var_binding.range().end()),
-                    var_range,
-                    "{text}"
-                );
-                assert_eq!(
-                    (
-                        primary_binding.range().start(),
-                        primary_binding.range().end()
-                    ),
-                    primary_range,
-                    "{text}"
-                );
+                assert_eq!((lexical_binding.range().start(), lexical_binding.range().end()), lexical_range, "{text}");
+                assert_eq!((var_binding.range().start(), var_binding.range().end()), var_range, "{text}");
+                assert_eq!((primary_binding.range().start(), primary_binding.range().end()), primary_range, "{text}");
             }
             other => panic!("wrong multi-collision result for {text:?}: {other:?}"),
         }
@@ -818,15 +612,9 @@ fn ee_36_r02_uses_authored_completion_order_and_first_var_provenance() {
 
 #[test]
 fn variable_static_semantics_excludes_block_names_and_preserves_non_normalization() {
-    for text in [
-        "let x; var y;",
-        "var x; var x;",
-        "{ let x; } var x;",
-        "let é; var e\u{301};",
-    ] {
+    for text in ["let x; var y;", "var x; var x;", "{ let x; } var x;", "let é; var e\u{301};"] {
         accepted_variable(text);
     }
-
     let (_, script) = recognized_variable("let x; { let y; } var x;");
     assert!(matches!(
         evaluate_selected_variable_statement_static_semantics(&script),
@@ -859,20 +647,11 @@ fn variable_static_semantics_preserves_tier_one_through_three_precedence() {
 #[test]
 fn every_selected_var_declarator_runs_tier_one_binding_local_static_semantics() {
     for text in [
-        "var a,b;",
-        "var a,a;",
-        "var a,b,c;",
-        "var a, let;",
-        "var let,a;",
-        r"var a,\u0061;",
-        r"var é,e\u0301;",
-        "let x; var a,b;",
-        "{ let x; } var a,b;",
-        "var a,b; var c;",
+        "var a,b;", "var a,a;", "var a,b,c;", "var a, let;", "var let,a;",
+        r"var a,\u0061;", r"var é,e\u0301;", "let x; var a,b;", "{ let x; } var a,b;", "var a,b; var c;",
     ] {
         accepted_variable(text);
     }
-
     for (text, expected_fragment, expected_range) in [
         (r"var a, \u0069f;", r"\u0069f", (7, 14)),
         (r"var a,b,\u0069f;", r"\u0069f", (8, 15)),
@@ -884,16 +663,11 @@ fn every_selected_var_declarator_runs_tier_one_binding_local_static_semantics() 
                 SelectedStaticSemanticsRejection::EscapedReservedWord { binding },
             ) => {
                 assert_eq!(binding.fragment(), expected_fragment, "{text}");
-                assert_eq!(
-                    (binding.range().start(), binding.range().end()),
-                    expected_range,
-                    "{text}"
-                );
+                assert_eq!((binding.range().start(), binding.range().end()), expected_range, "{text}");
             }
             other => panic!("expected later-declarator EE-04-R08 for {text:?}, got {other:?}"),
         }
     }
-
     let (_, script) = recognized_variable(r"var a,\u0030;");
     match evaluate_selected_variable_statement_static_semantics(&script) {
         SelectedVariableStatementStaticSemanticsOutcome::Rejected(
@@ -916,17 +690,10 @@ fn tier_one_var_declarator_evidence_outranks_lower_priority_collision() {
         match evaluate_selected_variable_statement_static_semantics(&script) {
             SelectedVariableStatementStaticSemanticsOutcome::Rejected(
                 SelectedStaticSemanticsRejection::EscapedReservedWord { binding },
-            ) => {
-                assert_eq!(
-                    (binding.range().start(), binding.range().end()),
-                    expected_range,
-                    "{text}"
-                );
-            }
+            ) => assert_eq!((binding.range().start(), binding.range().end()), expected_range, "{text}"),
             other => panic!("Tier 1 must precede EE-36-R02 for {text:?}, got {other:?}"),
         }
     }
-
     let (_, script) = recognized_variable("let x,x; var a,x;");
     assert!(matches!(
         evaluate_selected_variable_statement_static_semantics(&script),
@@ -949,33 +716,11 @@ fn ee_36_r02_extends_authored_order_inside_the_declaration_list() {
         let (_, script) = recognized_variable(text);
         match evaluate_selected_variable_statement_static_semantics(&script) {
             SelectedVariableStatementStaticSemanticsOutcome::Rejected(
-                SelectedStaticSemanticsRejection::LexicalVarNameCollision {
-                    lexical_binding,
-                    var_binding,
-                    primary_binding,
-                },
+                SelectedStaticSemanticsRejection::LexicalVarNameCollision { lexical_binding, var_binding, primary_binding },
             ) => {
-                assert_eq!(
-                    (
-                        lexical_binding.range().start(),
-                        lexical_binding.range().end()
-                    ),
-                    lexical_range,
-                    "{text}"
-                );
-                assert_eq!(
-                    (var_binding.range().start(), var_binding.range().end()),
-                    var_range,
-                    "{text}"
-                );
-                assert_eq!(
-                    (
-                        primary_binding.range().start(),
-                        primary_binding.range().end()
-                    ),
-                    primary_range,
-                    "{text}"
-                );
+                assert_eq!((lexical_binding.range().start(), lexical_binding.range().end()), lexical_range, "{text}");
+                assert_eq!((var_binding.range().start(), var_binding.range().end()), var_range, "{text}");
+                assert_eq!((primary_binding.range().start(), primary_binding.range().end()), primary_range, "{text}");
             }
             other => panic!("expected list-order collision for {text:?}, got {other:?}"),
         }
@@ -984,18 +729,9 @@ fn ee_36_r02_extends_authored_order_inside_the_declaration_list() {
 
 #[test]
 fn repeated_var_declarator_names_stay_valid_and_semantic_equality_is_not_normalized() {
-    // No var-list duplicate-BoundNames rule exists; only a lexical name
-    // collides with a var name.
-    for text in [
-        "var a,a;",
-        "var a,a,a;",
-        r"var a,\u0061,a;",
-        r"var é,e\u0301;",
-        r"let e\u0301; var é,a;",
-    ] {
+    for text in ["var a,a;", "var a,a,a;", r"var a,\u0061,a;", r"var é,e\u0301;", r"let e\u0301; var é,a;"] {
         accepted_variable(text);
     }
-
     let (_, script) = recognized_variable(r"var a,\u0061; let a;");
     assert!(matches!(
         evaluate_selected_variable_statement_static_semantics(&script),
@@ -1003,4 +739,73 @@ fn repeated_var_declarator_names_stay_valid_and_semantic_equality_is_not_normali
             SelectedStaticSemanticsRejection::LexicalVarNameCollision { .. }
         )
     ));
+}
+
+#[test]
+fn var_escaped_reserved_initializer_reuses_ee04_rhs_rejection_with_exact_evidence() {
+    for (text, expected_fragment, expected_range) in [
+        (r"var x=\u0069f;", r"\u0069f", (6, 13)),
+        (r"var x=n\u0075ll;", r"n\u0075ll", (6, 15)),
+        (r"var x=\u0069f", r"\u0069f", (6, 13)),
+    ] {
+        let (_, script) = recognized_variable(text);
+        match evaluate_selected_variable_statement_static_semantics(&script) {
+            SelectedVariableStatementStaticSemanticsOutcome::Rejected(
+                SelectedStaticSemanticsRejection::EscapedReservedWordInitializer { identifier },
+            ) => {
+                assert_eq!(identifier.fragment(), expected_fragment, "{text}");
+                assert_eq!((identifier.range().start(), identifier.range().end()), expected_range, "{text}");
+            }
+            other => panic!("expected var RHS EE-04-R08 rejection for {text:?}, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn var_escaped_reserved_initializer_preserves_same_declarator_and_tier_one_order() {
+    let (_, script) = recognized_variable(r"var \u0069f=\u0074his;");
+    match evaluate_selected_variable_statement_static_semantics(&script) {
+        SelectedVariableStatementStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::EscapedReservedWord { binding },
+        ) => assert_eq!((binding.range().start(), binding.range().end()), (4, 11)),
+        other => panic!("LHS EE-04-R08 must precede same-declarator RHS C6: {other:?}"),
+    }
+
+    let (_, script) = recognized_variable(r"let let; var x=\u0069f;");
+    match evaluate_selected_variable_statement_static_semantics(&script) {
+        SelectedVariableStatementStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::BindingNamedLet { binding },
+        ) => assert_eq!((binding.range().start(), binding.range().end()), (4, 7)),
+        other => panic!("earlier Tier-1 local rejection must precede later C6: {other:?}"),
+    }
+
+    for (text, expected_range) in [
+        (r"var x=\u0069f; let let;", (6, 13)),
+        (r"var a=\u0069f,b=\u0074his;", (6, 13)),
+    ] {
+        let (_, script) = recognized_variable(text);
+        match evaluate_selected_variable_statement_static_semantics(&script) {
+            SelectedVariableStatementStaticSemanticsOutcome::Rejected(
+                SelectedStaticSemanticsRejection::EscapedReservedWordInitializer { identifier },
+            ) => assert_eq!((identifier.range().start(), identifier.range().end()), expected_range, "{text}"),
+            other => panic!("authored C6 ordering must select first reached RHS for {text:?}: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn var_escaped_reserved_initializer_precedes_lower_tiers() {
+    for (text, expected_range) in [
+        (r"{ let a; let a; } var x=\u0069f;", (24, 31)),
+        (r"let a; let a; var x=\u0069f;", (20, 27)),
+        (r"let a; var a,x=\u0069f;", (15, 22)),
+    ] {
+        let (_, script) = recognized_variable(text);
+        match evaluate_selected_variable_statement_static_semantics(&script) {
+            SelectedVariableStatementStaticSemanticsOutcome::Rejected(
+                SelectedStaticSemanticsRejection::EscapedReservedWordInitializer { identifier },
+            ) => assert_eq!((identifier.range().start(), identifier.range().end()), expected_range, "{text}"),
+            other => panic!("C6 Tier-1 rejection must precede lower tiers for {text:?}: {other:?}"),
+        }
+    }
 }
