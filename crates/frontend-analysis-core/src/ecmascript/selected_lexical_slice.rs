@@ -5,8 +5,9 @@
 //! #283/#291, and the distinct top-level VariableStatement frontier fixed by
 //! #310, widened to `1..N` declarators by #324, widened to optional selected
 //! decimal-integer initializers by #328, widened to direct-authored selected
-//! IdentifierReference initializers by #334, and widened to selected escaped
-//! non-ReservedWord IdentifierReference initializers by #338.
+//! IdentifierReference initializers by #334, widened to selected escaped
+//! non-ReservedWord IdentifierReference initializers by #338, and widened to
+//! retain escaped ReservedWord initializer evidence for EE-04-R08 by #342.
 //! Recognition is transactional for the whole authoritative `SourceText`:
 //! tentative declaration/binding/Block/var facts are returned only when the
 //! entire source is consumed by selected items plus selected trivia.
@@ -201,6 +202,7 @@ pub(super) struct SelectedVariableBinding {
     binding: SourceAnchor,
     name_state: SelectedBindingNameState,
     identifier_reference_initializer: Option<SelectedIdentifierReferenceFact>,
+    escaped_reserved_initializer_identifier: Option<SourceAnchor>,
 }
 
 impl SelectedVariableBinding {
@@ -225,6 +227,10 @@ impl SelectedVariableBinding {
     ) -> Option<&SelectedIdentifierReferenceFact> {
         self.identifier_reference_initializer.as_ref()
     }
+
+    pub(super) fn escaped_reserved_initializer_identifier(&self) -> Option<&SourceAnchor> {
+        self.escaped_reserved_initializer_identifier.as_ref()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -238,14 +244,16 @@ pub(super) enum SelectedVariableStatementTerminator {
 ///
 /// `bindings` holds `1..N` selected `VariableDeclaration` binding facts in exact
 /// authored list order. Each declarator may carry a parser-local selected
-/// decimal-integer initializer, which retains no initializer-specific fact, or
-/// one selected direct/escaped non-ReservedWord IdentifierReference initializer,
+/// decimal-integer initializer, which retains no initializer-specific fact; one
+/// selected direct/escaped non-ReservedWord IdentifierReference initializer,
 /// which retains the existing exact source-backed reference fact for the source-
-/// name correspondence consumer. Non-empty cardinality is a private recognizer
-/// construction invariant: `parse_variable_statement` pushes the first binding
-/// before any list continuation is considered and returns a `ParseFailure`
-/// instead of an empty list. `Vec` does not encode that invariant at the type
-/// level, and no generic non-empty collection is introduced for it.
+/// name correspondence consumer; or one classification-only exact authored
+/// escaped-ReservedWord initializer anchor for the later EE-04-R08 Tier-1
+/// consumer. Non-empty cardinality is a private recognizer construction
+/// invariant: `parse_variable_statement` pushes the first binding before any
+/// list continuation is considered and returns a `ParseFailure` instead of an
+/// empty list. `Vec` does not encode that invariant at the type level, and no
+/// generic non-empty collection is introduced for it.
 ///
 /// The terminator is statement-owned and independent of list cardinality. No
 /// comma, initializer kind, `VariableDeclarationList`, or whole-`VariableStatement`
@@ -529,15 +537,17 @@ impl<'source> Cursor<'source> {
 
     /// Recognizes one selected top-level `VariableStatement` covering the
     /// inductive `VariableDeclarationList` base and successor productions with
-    /// `1..N` simple bindings and optional selected decimal-integer or selected
-    /// direct/escaped non-ReservedWord IdentifierReference initializers.
+    /// `1..N` simple bindings and optional selected decimal-integer, selected
+    /// direct/escaped non-ReservedWord IdentifierReference, or selected escaped
+    /// ReservedWord initializer source positions.
     ///
     /// Decimal initializer syntax is consumed inside this owning cursor
     /// lifecycle and discarded. A selected IdentifierReference retains the
     /// complete existing source-backed fact on the containing binding for the
-    /// source-name correspondence consumer. Escaped spellings that decode to an
-    /// unconditionally reserved word remain an explicitly rejected sibling
-    /// route rather than becoming selected static evidence for this frontier.
+    /// source-name correspondence consumer. An escaped spelling already
+    /// classified by the shared IdentifierName recognizer as a ReservedWord
+    /// retains only its exact authored anchor on the containing binding for the
+    /// later EE-04-R08 Tier-1 consumer; decoded identity is not persisted.
     ///
     /// Only the keyword-adjacent first declarator keeps the existing restricted
     /// grammar-evidence context; every later declarator uses the general
@@ -564,34 +574,35 @@ impl<'source> Cursor<'source> {
                 self.parse_selected_binding_identifier(grammar_context)?;
 
             self.skip_selected_trivia();
-            let identifier_reference_initializer = if self.consume_initializer_equals() {
-                self.skip_selected_trivia();
-                let reference = if self.consume_selected_decimal_integer() {
-                    None
+            let (identifier_reference_initializer, escaped_reserved_initializer_identifier) =
+                if self.consume_initializer_equals() {
+                    self.skip_selected_trivia();
+                    let facts = if self.consume_selected_decimal_integer() {
+                        (None, None)
+                    } else {
+                        match self.consume_selected_identifier_reference() {
+                            SelectedIdentifierReferenceRecognition::Matched(reference) => {
+                                (Some(reference), None)
+                            }
+                            SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName {
+                                identifier,
+                            } => (None, Some(identifier)),
+                            SelectedIdentifierReferenceRecognition::NotSelected => {
+                                return Err(ParseFailure::UnsupportedCoverage);
+                            }
+                            SelectedIdentifierReferenceRecognition::ResourceLimited => {
+                                return Err(ParseFailure::ResourceLimited);
+                            }
+                            SelectedIdentifierReferenceRecognition::InternalFailure => {
+                                return Err(ParseFailure::InternalFailure);
+                            }
+                        }
+                    };
+                    self.skip_selected_trivia();
+                    facts
                 } else {
-                    match self.consume_selected_identifier_reference() {
-                        SelectedIdentifierReferenceRecognition::Matched(reference) => {
-                            Some(reference)
-                        }
-                        SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName {
-                            ..
-                        }
-                        | SelectedIdentifierReferenceRecognition::NotSelected => {
-                            return Err(ParseFailure::UnsupportedCoverage);
-                        }
-                        SelectedIdentifierReferenceRecognition::ResourceLimited => {
-                            return Err(ParseFailure::ResourceLimited);
-                        }
-                        SelectedIdentifierReferenceRecognition::InternalFailure => {
-                            return Err(ParseFailure::InternalFailure);
-                        }
-                    }
+                    (None, None)
                 };
-                self.skip_selected_trivia();
-                reference
-            } else {
-                None
-            };
 
             let binding = self.anchor(binding_start, binding_end)?;
             bindings
@@ -601,6 +612,7 @@ impl<'source> Cursor<'source> {
                 binding,
                 name_state,
                 identifier_reference_initializer,
+                escaped_reserved_initializer_identifier,
             });
 
             if !self.consume_ascii(',') {
