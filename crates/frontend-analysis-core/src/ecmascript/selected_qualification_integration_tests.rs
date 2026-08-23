@@ -974,6 +974,18 @@ fn top_level_variable_statement_positive_sources_remain_selected_accepted_incomp
         "var x; let y",
         "var a=0;",
         "var a = 1",
+        "var a=foo;",
+        "var x = y;",
+        "var x=foo",
+        "var π=𝒜;",
+        "var x=$;",
+        "var x=_;",
+        "var x=a0;",
+        "var x=let;",
+        "var x=yield;",
+        "var x=await;",
+        "var x=eval;",
+        "var x=arguments;",
     ] {
         assert!(
             matches!(
@@ -999,6 +1011,8 @@ fn top_level_variable_statement_static_rejections_preserve_authored_primary_subj
         ("let y; var y; var x; let x;", "y", (11, 12)),
         (r"let x,x; var \u0069f;", "x", (6, 7)),
         (r"let a; var a=1, \u0069f=2;", r"\u0069f", (16, 23)),
+        (r"let a; var a=foo, \u0069f=bar;", r"\u0069f", (18, 25)),
+        ("let b; var a=foo,b=bar;", "b", (17, 18)),
     ] {
         let outcome = qualification_outcome(text);
         assert_eq!(outcome.processing(), ProcessingStatus::Complete, "{text}");
@@ -1043,7 +1057,15 @@ fn top_level_variable_statement_grammar_and_deferred_boundaries_remain_distinct(
     assert_eq!(anchor.fragment(), r"\u{}");
     assert_eq!((anchor.range().start(), anchor.range().end()), (4, 8));
 
-    for text in [r"var\u{};", r"var\u0061;", "var x\nvar y;"] {
+    for text in [
+        r"var\u{};",
+        r"var\u0061;",
+        "var x\nvar y;",
+        r"var x=\u0066oo;",
+        "var x=foo.bar;",
+        "var x=foo();",
+        "var x=foo+1;",
+    ] {
         assert!(
             matches!(
                 attempt(text),
@@ -1077,6 +1099,13 @@ fn multi_declarator_variable_statements_remain_selected_accepted_incomplete() {
         "var a=1\n, b=2;",
         "var a=1,\n b=2",
         r"var a=1,\u0061=2;",
+        "var x=foo,y;",
+        "var x,y=foo;",
+        "var x=foo,y=bar;",
+        "var x=1,y=foo;",
+        "var x=foo,y=2,z;",
+        "var x=foo,y=bar,z=baz",
+        "let a; var b; var x=a,y=b,z=q;",
     ] {
         assert!(
             matches!(
@@ -1131,6 +1160,7 @@ fn multi_declarator_grammar_rejection_stays_distinct_from_deferred_coverage() {
         (r"var a,b,\u{};", (8, 12)),
         (r"var a,\u{}=1;", (6, 10)),
         (r"var a=1,b,\u{}=2;", (10, 14)),
+        (r"var x=foo,y=bar,\u{}=baz;", (16, 20)),
     ] {
         let outcome = qualification_outcome(text);
         assert_eq!(outcome.processing(), ProcessingStatus::Complete, "{text}");
@@ -1171,13 +1201,15 @@ fn multi_declarator_grammar_rejection_stays_distinct_from_deferred_coverage() {
         "var a=null;",
         "var a=this;",
         "var a=\"x\";",
-        "var a=foo;",
+        r"var a=\u0066oo;",
+        "var a=foo.bar;",
         "var a,{b}=c;",
         "var a, if;",
         "var a=1, /*comment*/ b;",
         "{ var a,b; }",
         "for (var a,b;;) {}",
         "var a=1\nvar c;",
+        "var x=foo,y=bar,z=",
     ] {
         assert!(
             matches!(

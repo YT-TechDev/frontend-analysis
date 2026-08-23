@@ -3,8 +3,9 @@
 //! This module recognizes only the bounded top-level Script subset accepted by
 //! #215/#218, the additive one-level selected Block frontier accepted by
 //! #283/#291, and the distinct top-level VariableStatement frontier fixed by
-//! #310, widened to `1..N` declarators by #324, and widened to optional selected
-//! decimal-integer initializers by #328.
+//! #310, widened to `1..N` declarators by #324, widened to optional selected
+//! decimal-integer initializers by #328, and widened to direct-authored selected
+//! IdentifierReference initializers by #334.
 //! Recognition is transactional for the whole authoritative `SourceText`:
 //! tentative declaration/binding/Block/var facts are returned only when the
 //! entire source is consumed by selected items plus selected trivia.
@@ -198,6 +199,7 @@ impl SelectedLexicalBinding {
 pub(super) struct SelectedVariableBinding {
     binding: SourceAnchor,
     name_state: SelectedBindingNameState,
+    direct_identifier_reference_initializer: Option<SourceAnchor>,
 }
 
 impl SelectedVariableBinding {
@@ -216,6 +218,10 @@ impl SelectedVariableBinding {
             SelectedBindingNameState::InvalidEscapedPosition { .. } => None,
         }
     }
+
+    pub(super) fn direct_identifier_reference_initializer(&self) -> Option<&SourceAnchor> {
+        self.direct_identifier_reference_initializer.as_ref()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -229,16 +235,17 @@ pub(super) enum SelectedVariableStatementTerminator {
 ///
 /// `bindings` holds `1..N` selected `VariableDeclaration` binding facts in exact
 /// authored list order. Each declarator may carry a parser-local selected
-/// decimal-integer initializer, but no initializer-specific fact is retained
-/// because no current downstream consumer requires one. Non-empty cardinality
-/// is a private recognizer construction invariant: `parse_variable_statement`
-/// pushes the first binding before any list continuation is considered and
-/// returns a `ParseFailure` instead of an empty list. `Vec` does not encode
-/// that invariant at the type level, and no generic non-empty collection is
-/// introduced for it.
+/// decimal-integer initializer, which retains no initializer-specific fact, or
+/// one direct-authored selected IdentifierReference initializer, which retains
+/// only its exact source anchor for the existing correspondence consumer.
+/// Non-empty cardinality is a private recognizer construction invariant:
+/// `parse_variable_statement` pushes the first binding before any list
+/// continuation is considered and returns a `ParseFailure` instead of an empty
+/// list. `Vec` does not encode that invariant at the type level, and no generic
+/// non-empty collection is introduced for it.
 ///
 /// The terminator is statement-owned and independent of list cardinality. No
-/// comma, initializer, `VariableDeclarationList`, or whole-`VariableStatement`
+/// comma, initializer kind, `VariableDeclarationList`, or whole-`VariableStatement`
 /// extent is retained.
 #[derive(Debug)]
 pub(super) struct SelectedVariableStatement {
@@ -519,11 +526,15 @@ impl<'source> Cursor<'source> {
 
     /// Recognizes one selected top-level `VariableStatement` covering the
     /// inductive `VariableDeclarationList` base and successor productions with
-    /// `1..N` simple bindings and optional selected decimal-integer initializers.
+    /// `1..N` simple bindings and optional selected decimal-integer or direct
+    /// IdentifierReference initializers.
     ///
-    /// Initializer syntax is consumed inside this owning cursor lifecycle and
-    /// discarded after recognition. Only binding/name facts remain available to
-    /// downstream static, correspondence, and aggregate consumers.
+    /// Decimal initializer syntax is consumed inside this owning cursor
+    /// lifecycle and discarded. A direct-authored IdentifierReference retains
+    /// only its exact source anchor on the containing binding for the existing
+    /// source-name correspondence consumer. The broader shared reference helper
+    /// also recognizes escaped spellings, so this call site explicitly rejects
+    /// those routes rather than widening the var frontier.
     ///
     /// Only the keyword-adjacent first declarator keeps the existing restricted
     /// grammar-evidence context; every later declarator uses the general
@@ -550,13 +561,43 @@ impl<'source> Cursor<'source> {
                 self.parse_selected_binding_identifier(grammar_context)?;
 
             self.skip_selected_trivia();
-            if self.consume_initializer_equals() {
+            let direct_identifier_reference_initializer = if self.consume_initializer_equals() {
                 self.skip_selected_trivia();
-                if !self.consume_selected_decimal_integer() {
-                    return Err(ParseFailure::UnsupportedCoverage);
-                }
+                let direct_reference = if self.consume_selected_decimal_integer() {
+                    None
+                } else {
+                    match self.consume_selected_identifier_reference() {
+                        SelectedIdentifierReferenceRecognition::Matched(reference) => {
+                            let SelectedIdentifierReferenceFact {
+                                reference,
+                                name_state,
+                            } = reference;
+                            match name_state {
+                                SelectedIdentifierReferenceNameState::Direct => Some(reference),
+                                SelectedIdentifierReferenceNameState::Escaped { .. } => {
+                                    return Err(ParseFailure::UnsupportedCoverage);
+                                }
+                            }
+                        }
+                        SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName {
+                            ..
+                        }
+                        | SelectedIdentifierReferenceRecognition::NotSelected => {
+                            return Err(ParseFailure::UnsupportedCoverage);
+                        }
+                        SelectedIdentifierReferenceRecognition::ResourceLimited => {
+                            return Err(ParseFailure::ResourceLimited);
+                        }
+                        SelectedIdentifierReferenceRecognition::InternalFailure => {
+                            return Err(ParseFailure::InternalFailure);
+                        }
+                    }
+                };
                 self.skip_selected_trivia();
-            }
+                direct_reference
+            } else {
+                None
+            };
 
             let binding = self.anchor(binding_start, binding_end)?;
             bindings
@@ -565,6 +606,7 @@ impl<'source> Cursor<'source> {
             bindings.push(SelectedVariableBinding {
                 binding,
                 name_state,
+                direct_identifier_reference_initializer,
             });
 
             if !self.consume_ascii(',') {
@@ -894,7 +936,7 @@ impl<'source> Cursor<'source> {
     }
 
     /// Recognizes exactly one direct-authored `PrimaryExpression : this` in the
-    /// selected initializer position without widening into a generic
+    /// initializer position without widening into a generic
     /// `PrimaryExpression` or `Expression` owner.
     ///
     /// The shared keyword boundary preserves maximal IdentifierName routing for
