@@ -1854,7 +1854,7 @@ fn one_level_block_retains_ordered_items_and_exact_source_provenance() {
     );
 
     let SelectedTopLevelItem::Block(block) = &script.items()[1] else {
-        panic!("second selected item must be the one-level Block item");
+        panic!("second selected item must be the one-level Block");
     };
     assert_eq!(block.block().fragment(), "{ let a=2; let x=a; }");
     assert_eq!(
@@ -2392,7 +2392,13 @@ fn var_identifier_reference_initializer_retains_exact_source_and_semantic_identi
         ("var x=yield;", (4, 5), (6, 11), "yield", "yield"),
         ("var x=await;", (4, 5), (6, 11), "await", "await"),
         ("var x=eval;", (4, 5), (6, 10), "eval", "eval"),
-        ("var x=arguments;", (4, 5), (6, 15), "arguments", "arguments"),
+        (
+            "var x=arguments;",
+            (4, 5),
+            (6, 15),
+            "arguments",
+            "arguments",
+        ),
         (r"var x=\u0066oo;", (4, 5), (6, 14), r"\u0066oo", "foo"),
         (r"var x=f\u006Fo;", (4, 5), (6, 14), r"f\u006Fo", "foo"),
         (r"var x=\u{1D49C};", (4, 5), (6, 15), r"\u{1D49C}", "𝒜"),
@@ -2422,7 +2428,11 @@ fn var_identifier_reference_initializer_retains_exact_source_and_semantic_identi
             expected_reference,
             "{text:?}"
         );
-        assert_eq!(reference.reference().fragment(), expected_fragment, "{text:?}");
+        assert_eq!(
+            reference.reference().fragment(),
+            expected_fragment,
+            "{text:?}"
+        );
         assert_eq!(reference.semantic_name(), expected_semantic, "{text:?}");
     }
 }
@@ -2508,17 +2518,27 @@ fn var_multi_reference_initializers_preserve_per_binding_association_order_and_s
         ),
         (
             r"var x=\u0066oo,y=bar;",
-            &[Some((6, 14, r"\u0066oo", "foo")), Some((17, 20, "bar", "bar"))][..],
+            &[
+                Some((6, 14, r"\u0066oo", "foo")),
+                Some((17, 20, "bar", "bar")),
+            ][..],
             SelectedVariableStatementTerminator::AuthoredSemicolon,
         ),
         (
             r"var x=foo,y=\u0062ar;",
-            &[Some((6, 9, "foo", "foo")), Some((12, 20, r"\u0062ar", "bar"))][..],
+            &[
+                Some((6, 9, "foo", "foo")),
+                Some((12, 20, r"\u0062ar", "bar")),
+            ][..],
             SelectedVariableStatementTerminator::AuthoredSemicolon,
         ),
         (
             r"var x=\u0066oo,y=2,z=bar;",
-            &[Some((6, 14, r"\u0066oo", "foo")), None, Some((21, 24, "bar", "bar"))][..],
+            &[
+                Some((6, 14, r"\u0066oo", "foo")),
+                None,
+                Some((21, 24, "bar", "bar")),
+            ][..],
             SelectedVariableStatementTerminator::AuthoredSemicolon,
         ),
         (
