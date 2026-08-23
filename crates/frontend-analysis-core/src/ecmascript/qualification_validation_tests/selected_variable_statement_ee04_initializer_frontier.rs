@@ -29,8 +29,9 @@ const ESCAPED_RESERVED_CONSTITUENT: &str = include_str!(
 );
 const HISTORICAL_VAR_ORACLE: &str =
     include_str!("../qualification_selected_top_level_variable_statement_validation_tests.rs");
-const HISTORICAL_C1_ORACLE: &str =
-    include_str!("selected_variable_statement_escaped_identifier_reference_initializer_frontier.rs");
+const HISTORICAL_C1_ORACLE: &str = include_str!(
+    "selected_variable_statement_escaped_identifier_reference_initializer_frontier.rs"
+);
 const EOF_ASI_ORACLE: &str = include_str!("selected_variable_statement_eof_asi_frontier.rs");
 const CURRENT_COMPLETION: &str = include_str!("selected_variable_statement_slice_completion.rs");
 const THIS_SOURCE: &str = include_str!("selected_variable_statement_ee04_initializer_frontier.rs");
@@ -537,7 +538,10 @@ fn corrected_authority_chain_and_two_file_boundary_are_explicit() {
     assert_eq!(EXPECTED_POST_VALIDATION_MATURITY, "V3");
     assert_eq!(EXPECTED_CHANGED_FILES.len(), 2);
     assert!(EXPECTED_CHANGED_FILES[0].ends_with("qualification_validation_tests/mod.rs"));
-    assert!(EXPECTED_CHANGED_FILES[1].ends_with("selected_variable_statement_ee04_initializer_frontier.rs"));
+    assert!(
+        EXPECTED_CHANGED_FILES[1]
+            .ends_with("selected_variable_statement_ee04_initializer_frontier.rs")
+    );
     assert!(REPRESENTATION_POLICY.contains("production representation deferred"));
 
     assert!(ESCAPED_RESERVED_CONSTITUENT.contains("Issue #263"));
@@ -555,13 +559,18 @@ fn corrected_authority_chain_and_two_file_boundary_are_explicit() {
 fn explicit_c6_membership_is_closed_at_36_and_disjoint_from_c1_controls() {
     assert_eq!(C6_RESERVED.len(), 36);
     let reserved: BTreeSet<_> = C6_RESERVED.iter().copied().collect();
-    assert_eq!(reserved.len(), 36, "C6 membership must not contain duplicates");
+    assert_eq!(
+        reserved.len(),
+        36,
+        "C6 membership must not contain duplicates"
+    );
 
     for name in C6_RESERVED {
         let mut chars = name.chars();
         let first = chars.next().expect("reserved word must not be empty");
         let authored = format!("\\u{:04X}{}", first as u32, chars.as_str());
-        let decoded = decode_identifier(&authored).expect("C6 member must form an escaped IdentifierName");
+        let decoded =
+            decode_identifier(&authored).expect("C6 member must form an escaped IdentifierName");
         assert_eq!(decoded.string_value, *name, "{name}");
         assert!(reserved.contains(name));
     }
@@ -574,7 +583,8 @@ fn explicit_c6_membership_is_closed_at_36_and_disjoint_from_c1_controls() {
         let mut chars = name.chars();
         let first = chars.next().expect("control name must not be empty");
         let authored = format!("\\u{:04X}{}", first as u32, chars.as_str());
-        let decoded = decode_identifier(&authored).expect("C1 control must form an escaped IdentifierName");
+        let decoded =
+            decode_identifier(&authored).expect("C1 control must form an escaped IdentifierName");
         assert_eq!(decoded.string_value, *name, "{name}");
         assert!(!reserved.contains(name), "{name} must remain outside C6");
     }
@@ -599,9 +609,14 @@ fn every_c6_candidate_preserves_exact_authored_range_and_decoded_identity() {
                 ISSUE_ID * 100 + (fixture_index * 2 + candidate_index) as u64,
             );
             let authored = fragment(fixture.source, candidate.range);
-            assert!(authored.contains("\\u"), "{} must retain an authored escape", fixture.id);
-            let decoded = decode_identifier(authored)
-                .unwrap_or_else(|failure| panic!("{} candidate decode failed: {failure:?}", fixture.id));
+            assert!(
+                authored.contains("\\u"),
+                "{} must retain an authored escape",
+                fixture.id
+            );
+            let decoded = decode_identifier(authored).unwrap_or_else(|failure| {
+                panic!("{} candidate decode failed: {failure:?}", fixture.id)
+            });
             assert_eq!(decoded.string_value, candidate.decoded, "{}", fixture.id);
             assert!(
                 reserved.contains(candidate.decoded),
@@ -643,10 +658,13 @@ fn tier1_authored_order_and_lower_tier_precedence_are_closed() {
             subject: ByteRange::new(4, 11),
         }
     );
-    assert_ne!(f3.primary, ExpectedPrimary::Static {
-        rule_id: RULE_ID,
-        subject: f3.c6_candidates[0].expect("F3 C6 candidate").range,
-    });
+    assert_ne!(
+        f3.primary,
+        ExpectedPrimary::Static {
+            rule_id: RULE_ID,
+            subject: f3.c6_candidates[0].expect("F3 C6 candidate").range,
+        }
+    );
 
     let f4 = fixture("F4-earlier-tier1-local-precedes-later-c6");
     assert_eq!(
@@ -713,7 +731,10 @@ fn parser_transaction_failure_and_static_rejection_are_distinct_transactions() {
 
     let unsupported = fixture("F15-richer-expression-does-not-commit-c6-prefix");
     assert_eq!(unsupported.primary, ExpectedPrimary::None);
-    assert_eq!(fragment(unsupported.source, ByteRange::new(6, 13)), r"\u0069f");
+    assert_eq!(
+        fragment(unsupported.source, ByteRange::new(6, 13)),
+        r"\u0069f"
+    );
     assert_eq!(&unsupported.source[13..], ".foo;");
 }
 
@@ -731,7 +752,10 @@ fn complete_static_rejection_suppresses_all_correspondence_relations() {
     let streaming_falsifier = fixture("F10-static-rejection-suppresses-earlier-relation");
     assert_eq!(streaming_falsifier.pre_rejection_relation_candidates, 1);
     assert_eq!(streaming_falsifier.committed_relations, 0);
-    assert_eq!(fragment(streaming_falsifier.source, ByteRange::new(6, 14)), r"\u0066oo");
+    assert_eq!(
+        fragment(streaming_falsifier.source, ByteRange::new(6, 14)),
+        r"\u0066oo"
+    );
 }
 
 #[test]
@@ -770,7 +794,10 @@ fn rule_identity_closure_and_positive_lifecycle_remain_unchanged() {
         .find(|rule| rule.id == RULE_ID)
         .expect("EE-04-R08 must remain inventoried");
     assert_eq!(rule.kind, RuleUnitKind::NormativeRule);
-    assert!(rule.normative_locator.contains("escaped ReservedWord StringValue rejection"));
+    assert!(
+        rule.normative_locator
+            .contains("escaped ReservedWord StringValue rejection")
+    );
     assert_eq!(POSITIVE_LIFECYCLE, "SelectedAcceptedIncomplete");
 }
 
