@@ -786,7 +786,7 @@ fn authored_provenance_and_decoded_identity_are_independent() {
 
     let m4 = fixture("M4");
     assert_eq!(m4.rhs[0].unwrap().decoded_code_points, &[0x1d49c]);
-    assert!(is_id_start('𝒜'));
+    assert!(is_id_start('𝒜' as u32));
 
     let m5 = fixture("M5");
     let source = source_for(m5, 5);
@@ -867,8 +867,8 @@ fn position_invalid_and_invalid_scalar_rhs_never_gain_lhs_ee01_ownership() {
     let m16 = fixture("M16");
     assert_eq!(m16.disposition, Disposition::UnsupportedCoverage);
     assert_eq!(m16.rhs[0].unwrap().route, RhsRoute::EscapedInvalidStart);
-    assert!(!is_id_start('0'));
-    assert!(is_id_continue('0'));
+    assert!(!is_id_start('0' as u32));
+    assert!(is_id_continue('0' as u32));
 
     let m17 = fixture("M17");
     assert_eq!(m17.disposition, Disposition::UnsupportedCoverage);
@@ -876,7 +876,7 @@ fn position_invalid_and_invalid_scalar_rhs_never_gain_lhs_ee01_ownership() {
     assert_eq!(rhs.route, RhsRoute::EscapedInvalidPart);
     assert_eq!(rhs.rhs, A(6, 14, r"a\u002Db"));
     assert!(rhs.rhs.2.starts_with('a'));
-    assert!(!is_id_continue('-'));
+    assert!(!is_id_continue('-' as u32));
 
     let m18 = fixture("M18");
     assert_eq!(m18.disposition, Disposition::UnsupportedCoverage);
