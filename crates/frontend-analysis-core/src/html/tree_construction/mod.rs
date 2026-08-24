@@ -46,4 +46,6 @@ pub(crate) mod result;
 pub(crate) mod session;
 
 #[cfg(test)]
+mod after_body_successor_validation;
+#[cfg(test)]
 mod validation;
