@@ -8,6 +8,8 @@
 //! qualification integration, Binding / Scope, source-name correspondence, or
 //! runtime code to derive expected completion meaning.
 
+#![allow(clippy::assertions_on_constants)]
+
 use std::collections::BTreeSet;
 
 use super::inventory::{RULE_UNITS, RuleUnitKind};
