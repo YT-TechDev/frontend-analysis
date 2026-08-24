@@ -18,6 +18,15 @@ revision of the accepted JavaScript architecture. Representation remains
 intentionally **OPEN**. See the
 [post-v1.1 research wave closure](2026-08-post-v1.1-research-wave-closure.md).
 
+A later bounded selected-qualification research/implementation wave is tracked
+separately from that architecture-research closure. Its current durable candidate
+checkpoint is the
+[post-#343 selected ECMAScript research checkpoint](2026-08-post-343-selected-ecmascript-research-checkpoint.md).
+That record is non-normative supporting research evidence for the current selected
+qualification source envelope, its `9 / 184` frozen-inventory closure, evidence
+lineage, and deferred-frontier boundaries. It does not rewrite the earlier frozen
+research-wave records or authorize a production frontier by itself.
+
 The remainder of this record preserves the earlier evidence state that led to
 Architecture Model consolidation; it is not rewritten as though the later
 post-v1.1 conclusions existed before architecture acceptance.
