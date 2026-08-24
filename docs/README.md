@@ -178,7 +178,7 @@ Authority follows topic ownership and specificity, not a single global ranking:
 9. The [ADR Process](decisions/README.md) governs ADR mechanics. ADRs do not
    override specialized normative contracts.
 10. Templates collect information but do not create approval. Guides and
-    examples cannot override normative contracts.
+   examples cannot override normative contracts.
 11. The [Issue Model](development/ISSUE_MODEL.md) governs Issue hierarchy and
     slicing mechanics. An active Leaf owns task-specific acceptance criteria and
     required checks but cannot override specialized requirements. [Validation
@@ -211,7 +211,7 @@ compatibility and governance. For cross-domain work:
   satisfied;
 - ambiguity requires escalation; and
 - maintainers must record the resolution and update every affected
-authoritative document.
+  authoritative document.
 
 Security does not automatically own all architecture, and architecture does
 not automatically own all security decisions.
