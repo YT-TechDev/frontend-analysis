@@ -362,7 +362,9 @@ fn fixed_envelope_and_checkpoint_lineage_are_exact() {
     assert!(!aggregate_qualified_available());
 
     assert!(HISTORICAL_VAR_COMPLETION.contains("Issue #312"));
-    assert!(HISTORICAL_VAR_COMPLETION.contains("VariableStatement ::= var SelectedBindingIdentifier ;"));
+    assert!(
+        HISTORICAL_VAR_COMPLETION.contains("VariableStatement ::= var SelectedBindingIdentifier ;")
+    );
     assert!(RESEARCH_CHECKPOINT.contains("# Post-#343 Selected ECMAScript Research Checkpoint"));
     assert!(RESEARCH_CHECKPOINT.contains("CURRENT SELECTED SEMANTIC CLOSURE: PASS"));
     assert!(
