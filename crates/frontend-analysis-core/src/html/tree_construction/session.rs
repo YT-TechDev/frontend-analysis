@@ -396,6 +396,11 @@ fn classify(
             } => Err(HtmlTreeCapability::UnprovedShellEndTagPosition),
             AdmittedToken::EndOfFile { .. } => Ok(ModeStep::Stop),
         },
+        // Reached by the proved `</body>` cell. End of file here stops the
+        // bounded document parse, which is what the accepted G4, G6, and G7
+        // cases require; the other `after body` rules the HTML Standard defines
+        // (whitespace, comments, reprocessing anything else back in `in body`)
+        // are not proved by TC-S1 and stay refused.
         InsertionMode::AfterBody => match token {
             AdmittedToken::EndTag {
                 name: HtmlShellElementName::Html,
@@ -404,11 +409,24 @@ fn classify(
                 effect: Some(Effect::AcknowledgeShellEndTag(HtmlShellElementName::Html)),
                 next: Some(InsertionMode::AfterAfterBody),
             }),
-            _ => Err(unproved_position(token)),
+            AdmittedToken::EndOfFile { .. } => Ok(ModeStep::Stop),
+            AdmittedToken::Characters { .. } => {
+                Err(HtmlTreeCapability::UnprovedCharacterDataPosition)
+            }
+            AdmittedToken::StartTag { .. } => {
+                Err(HtmlTreeCapability::UnprovedShellStartTagPosition)
+            }
+            AdmittedToken::EndTag { .. } => Err(HtmlTreeCapability::UnprovedShellEndTagPosition),
         },
         InsertionMode::AfterAfterBody => match token {
             AdmittedToken::EndOfFile { .. } => Ok(ModeStep::Stop),
-            _ => Err(unproved_position(token)),
+            AdmittedToken::Characters { .. } => {
+                Err(HtmlTreeCapability::UnprovedCharacterDataPosition)
+            }
+            AdmittedToken::StartTag { .. } => {
+                Err(HtmlTreeCapability::UnprovedShellStartTagPosition)
+            }
+            AdmittedToken::EndTag { .. } => Err(HtmlTreeCapability::UnprovedShellEndTagPosition),
         },
     }
 }
@@ -423,15 +441,6 @@ fn reject_whitespace_sensitive_characters(
             Err(HtmlTreeCapability::WhitespaceSensitiveCharacterData)
         }
         _ => Ok(()),
-    }
-}
-
-fn unproved_position(token: &AdmittedToken<'_>) -> HtmlTreeCapability {
-    match token {
-        AdmittedToken::Characters { .. } => HtmlTreeCapability::UnprovedCharacterDataPosition,
-        AdmittedToken::StartTag { .. } => HtmlTreeCapability::UnprovedShellStartTagPosition,
-        AdmittedToken::EndTag { .. } => HtmlTreeCapability::UnprovedShellEndTagPosition,
-        AdmittedToken::EndOfFile { .. } => HtmlTreeCapability::UnprovedEndOfFilePosition,
     }
 }
 

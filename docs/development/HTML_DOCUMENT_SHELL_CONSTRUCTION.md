@@ -132,12 +132,19 @@ and end of file are always admitted.
 | In body | `</body>` | acknowledged end tag, → *after body* |
 | In body | end of file | stop parsing |
 | After body | `</html>` | acknowledged end tag, → *after after body* |
+| After body | end of file | stop parsing |
 | After after body | end of file | stop parsing |
 
 No cell is admitted merely because a tag happens to be named `html`, `head`, or
 `body`. A shell name reached in a document position the GOLD does not prove —
-`<html>` in *in body*, `<head>` in *after head*, `</head>` in *after head*, end
-of file in *after body* — is refused exactly like `<p>`.
+`<html>` in *in body*, `<head>` in *after head*, `</head>` in *after head* — is
+refused exactly like `<p>`.
+
+*After body* is supported only for the two cells the accepted GOLD proves: the
+`</html>` end tag and end of file. The remaining `after body` rules the HTML
+Standard defines — whitespace handling, comments, and reprocessing anything else
+back in *in body* — are not proved by TC-S1 and stay refused. Supporting the
+proved end-of-file cell is not a claim that *after body* is implemented.
 
 Outside *in body*, the HTML Standard treats whitespace characters differently
 from other characters, and the project-owned tokenizer emits contiguous Data
@@ -299,11 +306,11 @@ Test-only, all inside the nine-file envelope:
 | G1 | `` (empty) | `R → H(Hd, B)`; all synthesized, no origins; end-of-file trigger; 1 diagnostic; Complete |
 | G2 | `hello` | `R → H(Hd, B(T:"hello"))`; text origin `[0,5)`; shell synthesized; 1 diagnostic; Complete |
 | G3 | `<html><head></head><body></body></html>` | authored H `[0,6)`/`[1,5)`, Hd `[6,12)`/`[7,11)`, B `[19,25)`/`[20,24)`; end tags action-only; 1 diagnostic; Complete |
-| G4 | `<body>` | H/Hd synthesized; authored B `[0,6)`/`[1,5)`; 1 diagnostic; Complete |
-| G5 | `<head>` | H/B synthesized; authored Hd `[0,6)`/`[1,5)`; end of file triggers B; 1 diagnostic; Complete |
-| G6 | `<body>x` | authored B `[0,6)` and text `[6,7)`; H/Hd synthesized; 1 diagnostic; Complete |
-| G7 | `<body><body>` | exactly one B, authored by the first `[0,6)`; the second `[6,12)` is duplicate-body action with no node; 2 diagnostics; Complete |
-| Auxiliary | `<head><head>` | exactly one authored Hd from the first `[0,6)`; the second `[6,12)` ignored with no node; H/B synthesized; 2 diagnostics; Complete |
+| G4 | `<body></body>` | H/Hd synthesized; authored B `[0,6)`/`[1,5)`; the body end tag is action-only; 1 diagnostic; Complete |
+| G5 | `<head></head>` | H/B synthesized; authored Hd `[0,6)`/`[1,5)`; the head end tag closes the authored head; end of file triggers B; 1 diagnostic; Complete |
+| G6 | `<body>x</body>` | authored B `[0,6)` and text `[6,7)`; H/Hd synthesized; the body end tag is action-only; 1 diagnostic; Complete |
+| G7 | `<body><body></body>` | exactly one B, authored by the first `[0,6)`; the second `[6,12)` is duplicate-body action with no node; the body end tag is action-only; 2 diagnostics; Complete |
+| Auxiliary | `<head><head></head>` | exactly one authored Hd from the first `[0,6)`; the second `[6,12)` ignored with no node; the head end tag closes the authored head; H/B synthesized; 2 diagnostics; Complete |
 | G8 | `<body><p>` | frozen `R → H(Hd, B)`; B authored `[0,6)`; no `p` node and no `p` identity; exact `<p>` `[6,9)` unsupported; tree commit `[0,6)`; 1 diagnostic; Incomplete(UnsupportedCapability) |
 | G9 | repeat G1–G8 | identical semantic creation correspondence, tree, order, origins, actions, diagnostics, completion, and checkpoint; no raw identity encoding asserted |
 | G10 | no fabricated input or limit | structural boundedness and lower-layer resource propagation only |
@@ -382,6 +389,10 @@ tags; whitespace-sensitive character handling outside *in body*; document-mode
 result exposure; runtime DOM correlation; arbitrary partial snapshots, resume,
 rollback, or cancellation; a public Rust API or serialization; or WASM runtime
 behavior.
+
+It also does not implement *after body* or *after after body* generally: only
+the `</html>` and end-of-file cells the accepted GOLD proves are supported
+there, and every other rule in those modes is refused.
 
 Adjacent HTML Standard behavior that TC-S1 does not prove remains explicitly
 unsupported rather than approximated. Extending any of it requires its own

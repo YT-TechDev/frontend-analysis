@@ -179,7 +179,7 @@ fn gold_cases() -> Vec<GoldCase> {
         },
         GoldCase {
             id: "G4",
-            source: "<body>",
+            source: "<body></body>",
             tree: GoldNode::Document(vec![synthesized_element(
                 "html",
                 vec![
@@ -189,11 +189,11 @@ fn gold_cases() -> Vec<GoldCase> {
             )]),
             diagnostics: &[GoldDiagnostic::MissingDoctype],
             completion: GoldCompletion::Complete,
-            committed_prefix_end: 6,
+            committed_prefix_end: 13,
         },
         GoldCase {
             id: "G5",
-            source: "<head>",
+            source: "<head></head>",
             tree: GoldNode::Document(vec![synthesized_element(
                 "html",
                 vec![
@@ -203,11 +203,11 @@ fn gold_cases() -> Vec<GoldCase> {
             )]),
             diagnostics: &[GoldDiagnostic::MissingDoctype],
             completion: GoldCompletion::Complete,
-            committed_prefix_end: 6,
+            committed_prefix_end: 13,
         },
         GoldCase {
             id: "G6",
-            source: "<body>x",
+            source: "<body>x</body>",
             tree: GoldNode::Document(vec![synthesized_element(
                 "html",
                 vec![
@@ -225,11 +225,11 @@ fn gold_cases() -> Vec<GoldCase> {
             )]),
             diagnostics: &[GoldDiagnostic::MissingDoctype],
             completion: GoldCompletion::Complete,
-            committed_prefix_end: 7,
+            committed_prefix_end: 14,
         },
         GoldCase {
             id: "G7",
-            source: "<body><body>",
+            source: "<body><body></body>",
             tree: GoldNode::Document(vec![synthesized_element(
                 "html",
                 vec![
@@ -242,11 +242,11 @@ fn gold_cases() -> Vec<GoldCase> {
                 GoldDiagnostic::DuplicateBody,
             ],
             completion: GoldCompletion::Complete,
-            committed_prefix_end: 12,
+            committed_prefix_end: 19,
         },
         GoldCase {
             id: "AUX-ignored-head",
-            source: "<head><head>",
+            source: "<head><head></head>",
             tree: GoldNode::Document(vec![synthesized_element(
                 "html",
                 vec![
@@ -259,7 +259,7 @@ fn gold_cases() -> Vec<GoldCase> {
                 GoldDiagnostic::DuplicateHead,
             ],
             completion: GoldCompletion::Complete,
-            committed_prefix_end: 12,
+            committed_prefix_end: 19,
         },
         GoldCase {
             id: "G8",
@@ -521,7 +521,7 @@ fn gold_cases_match_exactly() {
 
 #[test]
 fn g7_creates_exactly_one_body_and_the_auxiliary_case_exactly_one_head() {
-    let duplicate_body = analyze("<body><body>");
+    let duplicate_body = analyze("<body><body></body>");
     assert_eq!(
         shell_element_count(&duplicate_body, HtmlShellElementName::Body),
         1
@@ -533,7 +533,7 @@ fn g7_creates_exactly_one_body_and_the_auxiliary_case_exactly_one_head() {
         }
     )));
 
-    let duplicate_head = analyze("<head><head>");
+    let duplicate_head = analyze("<head><head></head>");
     assert_eq!(
         shell_element_count(&duplicate_head, HtmlShellElementName::Head),
         1
@@ -559,6 +559,91 @@ fn shell_element_count(analysis: &HtmlDocumentShellAnalysis, name: HtmlShellElem
             matches!(node.kind(), HtmlTreeNodeKind::Element(element) if element.name() == name)
         })
         .count()
+}
+
+/// Names the exact accepted source of every case, then states its required
+/// effective completion directly, so a future edit that shortens an
+/// authoritative input around the current state machine fails here even if the
+/// `gold_cases()` table itself were changed to match.
+#[test]
+fn accepted_gold_sources_reach_their_required_completion() {
+    let expected: [(&str, bool); 9] = [
+        ("", true),
+        ("hello", true),
+        ("<html><head></head><body></body></html>", true),
+        ("<body></body>", true),
+        ("<head></head>", true),
+        ("<body>x</body>", true),
+        ("<body><body></body>", true),
+        ("<head><head></head>", true),
+        ("<body><p>", false),
+    ];
+    for (source, complete) in expected {
+        let analysis = analyze(source);
+        assert_eq!(
+            analysis.is_complete(),
+            complete,
+            "{source:?}: effective completion does not match the accepted case"
+        );
+    }
+
+    // Every accepted case is also present verbatim in the authoritative table.
+    let table: Vec<&str> = gold_cases().iter().map(|case| case.source).collect();
+    for (source, _) in expected {
+        assert!(
+            table.contains(&source),
+            "{source:?}: the authoritative gold table no longer uses the accepted source"
+        );
+    }
+    assert_eq!(table.len(), expected.len());
+}
+
+/// The authored end tags in the accepted G4-G7 and auxiliary sources are
+/// closure or acknowledgement evidence only: they create no node and are never
+/// an authored origin.
+#[test]
+fn accepted_end_tags_are_closure_or_acknowledgement_evidence_only() {
+    for (source, name, closes) in [
+        ("<body></body>", HtmlShellElementName::Body, false),
+        ("<body>x</body>", HtmlShellElementName::Body, false),
+        ("<body><body></body>", HtmlShellElementName::Body, false),
+        ("<head></head>", HtmlShellElementName::Head, true),
+        ("<head><head></head>", HtmlShellElementName::Head, true),
+    ] {
+        let analysis = analyze(source);
+        let recorded = analysis.actions().iter().any(|action| match action.kind() {
+            HtmlTreeActionKind::ClosedShellElement {
+                name: recorded,
+                closure: HtmlShellClosure::AuthoredEndTag,
+                ..
+            } => closes && *recorded == name,
+            HtmlTreeActionKind::AcknowledgedShellEndTag { name: recorded } => {
+                !closes && *recorded == name
+            }
+            _ => false,
+        });
+        assert!(
+            recorded,
+            "{source:?}: the authored end tag is not recorded as closure or acknowledgement evidence"
+        );
+
+        // The end tag created no node and is no node's authored origin.
+        assert_eq!(
+            analysis.node_count(),
+            if source == "<body>x</body>" { 5 } else { 4 },
+            "{source:?}: an end tag created a node"
+        );
+        let end_tag_start = source.rfind("</").expect("an authored end tag");
+        for node in analysis.nodes_in_creation_order() {
+            if let Some(HtmlAuthoredSource::StartTag { complete, .. }) = node.authored_source() {
+                assert_ne!(
+                    complete.range().start(),
+                    end_tag_start,
+                    "{source:?}: an end tag became an authored origin"
+                );
+            }
+        }
+    }
 }
 
 #[test]
@@ -594,7 +679,7 @@ fn eof_triggers_implied_structure_without_becoming_its_origin() {
     // G1 and G5 both synthesize structure at end of file. The end-of-file
     // trigger has no authored extent at all, so it cannot masquerade as an
     // authored origin even by accident.
-    for source in ["", "<head>"] {
+    for source in ["", "<head></head>"] {
         let analysis = analyze(source);
         let synthesized_at_eof = analysis.actions().iter().any(|action| {
             matches!(
@@ -1045,8 +1130,8 @@ fn open_shell_element_state_stays_bounded_to_the_admitted_shell() {
         "",
         "hello",
         "<html><head></head><body></body></html>",
-        "<body><body>",
-        "<head><head>",
+        "<body><body></body>",
+        "<head><head></head>",
         "<body>a<body>b",
     ] {
         let source_text = SourceText::new(SourceId::new(1), source.to_owned());
@@ -1132,7 +1217,7 @@ fn private_document_mode_and_frameset_ok_transition_without_reaching_the_result(
 
 #[test]
 fn duplicate_body_start_tag_clears_frameset_ok_without_creating_a_node() {
-    let source = SourceText::new(SourceId::new(1), "<body><body>".to_owned());
+    let source = SourceText::new(SourceId::new(1), "<body><body></body>".to_owned());
     let run = crate::html::tokenizer::producer::tokenize(&source, generous_limits());
     let mut session = HtmlTreeSession::new().expect("session start");
     for (token_index, token) in run.tokens().iter().enumerate().take(2) {
@@ -1200,10 +1285,6 @@ fn unproved_shell_positions_remain_explicit_tree_unsupported() {
         (
             "<body></html>",
             HtmlTreeCapability::UnprovedShellEndTagPosition,
-        ),
-        (
-            "<body></body>",
-            HtmlTreeCapability::UnprovedEndOfFilePosition,
         ),
         (
             "<body></body></html>x",

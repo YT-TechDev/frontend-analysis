@@ -597,8 +597,6 @@ pub(crate) enum HtmlTreeCapability {
     UnprovedShellStartTagPosition,
     /// A shell end tag reached in a document position TC-S1 does not prove.
     UnprovedShellEndTagPosition,
-    /// End of file reached in a document position TC-S1 does not prove.
-    UnprovedEndOfFilePosition,
 }
 
 /// The exact typed evidence for a TC-S1 unsupported stop.
