@@ -12,6 +12,14 @@ not redefine tokenizer contracts owned by
 owned by [HTML Analysis Parser](HTML_ANALYSIS_PARSER.md). It does not claim
 complete HTML parsing, tree construction, or DOM behavior.
 
+Issue #116 is complete. This document remains the implementation guide for that
+historical/current explicit-start-tag sibling capability. Future HTML
+tree-construction architecture is now owned by
+[ADR 0010](../decisions/0010-html-tree-construction-architecture.md) and the
+specialized normative
+[HTML Tree-Construction Architecture](../architecture/HTML_TREE_CONSTRUCTION.md).
+Those records do not retroactively change this bounded operation.
+
 ## Capability
 
 The operation connects retained `SourceText` through the project-owned HTML
@@ -63,6 +71,10 @@ execution configuration. No `HtmlAnalysisLimits`, `HtmlAnalysisBudget`,
 Core-integrated capability adds no independently unbounded parser or
 integration state.
 
+These tokenizer limits remain specific to this capability. ADR 0010 and
+`HTML_TREE_CONSTRUCTION.md` do not reinterpret them as tree-construction limits
+or normative HTML constants.
+
 ## Internal Stages
 
 Tokenization (`html::tokenizer::producer::tokenize`) and analysis parsing
@@ -70,6 +82,10 @@ Tokenization (`html::tokenizer::producer::tokenize`) and analysis parsing
 stages. The callable Core boundary exposes neither tokenizer state machines,
 mutable parser internals, token-builder state, nor an external parser
 abstraction.
+
+The future tree-construction architecture may use coordinated/resumable token
+production where its own theorem requires it. That does not make the completed
+batch-tokenizer boundary incorrect for this bounded sibling capability.
 
 ## Result Ownership
 
@@ -79,6 +95,10 @@ continues to own the validated `HtmlTokenizerRunResult` by value and the
 deterministic explicit authored start-tag occurrence vector. Tokenizer
 completion, diagnostics, coverage, unsupported evidence, and resource evidence
 are not duplicated into a second Core result hierarchy.
+
+The authored occurrence domain is not a constructed-node domain. `SourceId`,
+authored ranges, and `origin_token_index` from this result must not be promoted
+to constructed-node identity merely because later tree work needs node IDs.
 
 ## Core Source-Evidence Validation
 
@@ -145,11 +165,19 @@ Zero projected occurrences from an incomplete tokenizer result remain
 incomplete; they are never represented as clean absence. No duplicate Core
 completion enum or diagnostic vocabulary is introduced.
 
+Future tree construction is governed by the same monotonicity principle but has
+its own specialized rule that supported recovery and diagnostics may coexist
+with a complete tree result. That later rule does not change this operation's
+existing tokenizer lifecycle semantics.
+
 ## Abort and Cancellation
 
 No independent cancellation or abort state is introduced. Caller-driven
 cancellation is not applicable to this synchronous operation.
 `InternalInvariantFailure` is not reinterpreted as cancellation.
+
+ADR 0010 does not add cancellation to this capability. Any future tree
+cancellation/abort mechanism remains separately scoped.
 
 ## Determinism
 
@@ -158,6 +186,9 @@ analysis capability, and implementation revision produce equivalent analysis
 meaning: occurrence count, order, `origin_token_index`, complete and raw-name
 ranges, raw spelling, tokenizer completion, diagnostics, coverage, and
 resource/usage evidence.
+
+This deterministic authored-occurrence meaning is not a promise of future
+constructed-node identity encoding or cross-result node stability.
 
 ## Native Demonstration Boundary
 
@@ -187,10 +218,16 @@ never from production output. This is an additional validation layer on top
 of the existing direct parser gate (`parser_gate.rs`), not a replacement for
 it.
 
+The later TC-S1 candidate-independent validation is a separate architecture
+record under #117. It does not alter these tests or convert architecture GOLD
+into production implementation.
+
 ## WASM Compile-Only Status
 
 No `wasm-bindgen`, JavaScript binding, serialization, or product wrapper is
 introduced. Runtime WASM behavior is not claimed by a compile-only check.
+
+The new tree-construction architecture likewise creates no WASM runtime promise.
 
 ## Public Visibility
 
@@ -205,6 +242,9 @@ public-export delta: 0
 No public HTML parser or analysis API, serialization contract, ABI
 commitment, or JavaScript binding is introduced by this capability.
 
+ADR 0010 and the specialized tree-construction contract also create no public
+API merely by being accepted.
+
 ## Limitations
 
 This capability answers only the explicit authored start-tag occurrence
@@ -212,10 +252,24 @@ question. It does not build an open-element stack, match start and end tags,
 infer parent/child relationships or nesting depth, or synthesize implied
 structure from token order.
 
+The approved tree-construction architecture does not broaden this result or
+claim that TC-S1 has been implemented.
+
 ## #117 Tree-Construction Boundary
 
-Matching, nesting, open-element stacks, implied structure, foster parenting,
-adoption-agency behavior, foreign-content tree semantics, and synthesized
-provenance remain exclusively owned by the later tree-construction work in
-#117, which remains blocked until this integration completes and records
-lessons from the vertical slice.
+Historically, matching, nesting, open-element stacks, implied structure, foster
+parenting, adoption-agency behavior, foreign-content tree semantics, and
+synthesized provenance were deferred to #117 while #116 finished the first
+vertical slice. #116 is now complete, and the later #348/#117 research,
+validation, and maintainer decision have resolved the durable architecture
+boundary.
+
+Future HTML tree construction is now governed by:
+
+- [ADR 0010 — Define HTML Tree-Construction Architecture](../decisions/0010-html-tree-construction-architecture.md), which records why Candidate C was selected; and
+- [HTML Tree-Construction Architecture](../architecture/HTML_TREE_CONSTRUCTION.md), which defines the specialized normative invariants.
+
+TC-S1 — Disabled-Scripting Document Shell Construction — is the first approved
+bounded production candidate, but production placement and implementation remain
+separate gates. This document continues to own only the implemented first
+explicit-start-tag Core slice.
