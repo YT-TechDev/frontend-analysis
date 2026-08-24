@@ -330,6 +330,7 @@ does not confer authority.
 | [0007](0007-own-lossless-source-parsers.md) | Own Lossless Source Parsers | Accepted | 2026-08-06 | None |
 | [0008](0008-browser-runtime-evidence-normalization-and-core-import.md) | Define Browser Runtime Evidence Normalization and Core Import Ownership | Accepted | 2026-08-09 | None |
 | [0009](0009-javascript-semantic-analysis-architecture.md) | Define JavaScript Semantic Analysis Architecture | Accepted | 2026-08-12 | None |
+| [0010](0010-html-tree-construction-architecture.md) | Define HTML Tree-Construction Architecture | Accepted | 2026-08-24 | None |
 
 ## Representative Classifications
 
