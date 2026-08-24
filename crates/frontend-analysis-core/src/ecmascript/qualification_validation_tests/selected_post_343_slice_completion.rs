@@ -107,7 +107,7 @@ const POST_313_GRAMMAR_DELTAS: &[GrammarDelta] = &[
         id: "eof-only-asi",
         authority: EOF_ASI_ORACLE,
         authority_issue_marker: "Issue #318",
-        semantic_marker: "AutomaticAtEof",
+        semantic_marker: "SyntheticSemicolonExpectation",
         newly_reachable_outside_required: false,
     },
     GrammarDelta {
@@ -509,7 +509,7 @@ fn six_post_313_grammar_deltas_are_bounded_successors() {
         );
     }
 
-    assert!(EOF_ASI_ORACLE.contains("AutomaticAtEof"));
+    assert!(EOF_ASI_ORACLE.contains("SyntheticSemicolonExpectation"));
     assert!(MULTI_DECLARATOR_ORACLE.contains("1..N"));
     assert!(DECIMAL_INITIALIZER_ORACLE.contains("EE-02-R01"));
     assert!(DIRECT_IDENTIFIER_REFERENCE_ORACLE.contains("direct-only"));
