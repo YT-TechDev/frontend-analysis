@@ -14,15 +14,13 @@ use super::inventory::{RULE_UNITS, RuleUnitKind};
 
 const HISTORICAL_VAR_COMPLETION: &str =
     include_str!("selected_variable_statement_slice_completion.rs");
-const EOF_ASI_ORACLE: &str =
-    include_str!("selected_variable_statement_eof_asi_frontier.rs");
+const EOF_ASI_ORACLE: &str = include_str!("selected_variable_statement_eof_asi_frontier.rs");
 const MULTI_DECLARATOR_ORACLE: &str =
     include_str!("selected_variable_statement_multi_declarator_frontier.rs");
 const DECIMAL_INITIALIZER_ORACLE: &str =
     include_str!("selected_variable_statement_decimal_initializer_frontier.rs");
-const DIRECT_IDENTIFIER_REFERENCE_ORACLE: &str = include_str!(
-    "selected_variable_statement_direct_identifier_reference_initializer_frontier.rs"
-);
+const DIRECT_IDENTIFIER_REFERENCE_ORACLE: &str =
+    include_str!("selected_variable_statement_direct_identifier_reference_initializer_frontier.rs");
 const MULTI_REFERENCE_COMPOSITION_ORACLE: &str = include_str!(
     "selected_variable_statement_direct_identifier_reference_multi_reference_composition.rs"
 );
@@ -71,10 +69,8 @@ const EE14_R02_NON_TRIGGER_REASON: &str =
 
 const UNSUPPORTED_COVERAGE_BOUNDARY: &str =
     "UnsupportedCoverage is not evidence that source is invalid ECMAScript";
-const QUALIFIED_BOUNDARY: &str =
-    "SelectedAcceptedIncomplete is not aggregate Qualified";
-const CORRESPONDENCE_RUNTIME_BOUNDARY: &str =
-    "same-source correspondence is not ResolveBinding";
+const QUALIFIED_BOUNDARY: &str = "SelectedAcceptedIncomplete is not aggregate Qualified";
+const CORRESPONDENCE_RUNTIME_BOUNDARY: &str = "same-source correspondence is not ResolveBinding";
 const VAR_CONTRIBUTOR_RUNTIME_BOUNDARY: &str =
     "same-source selected var contributor is authored provenance, not runtime binding identity";
 
@@ -366,18 +362,13 @@ fn fixed_envelope_and_checkpoint_lineage_are_exact() {
     assert!(!aggregate_qualified_available());
 
     assert!(HISTORICAL_VAR_COMPLETION.contains("Issue #312"));
-    assert!(
-        HISTORICAL_VAR_COMPLETION
-            .contains("VariableStatement ::= var SelectedBindingIdentifier ;")
-    );
+    assert!(HISTORICAL_VAR_COMPLETION.contains("VariableStatement ::= var SelectedBindingIdentifier ;"));
+    assert!(RESEARCH_CHECKPOINT.contains("# Post-#343 Selected ECMAScript Research Checkpoint"));
+    assert!(RESEARCH_CHECKPOINT.contains("CURRENT SELECTED SEMANTIC CLOSURE: PASS"));
     assert!(
         RESEARCH_CHECKPOINT
-            .contains("# Post-#343 Selected ECMAScript Research Checkpoint")
+            .contains("CURRENT AGGREGATE EXECUTABLE COMPLETION AUTHORITY: STALE / NEEDS SUCCESSOR")
     );
-    assert!(
-        RESEARCH_CHECKPOINT.contains("CURRENT SELECTED SEMANTIC CLOSURE: PASS")
-    );
-    assert!(RESEARCH_CHECKPOINT.contains("CURRENT AGGREGATE EXECUTABLE COMPLETION AUTHORITY: STALE / NEEDS SUCCESSOR"));
 }
 
 #[test]
@@ -410,14 +401,8 @@ fn post_343_selected_source_envelope_is_checkpoint_specific() {
         positive_partition(1, 0),
         PositivePartition::BlockEnabledWithoutVar
     );
-    assert_eq!(
-        positive_partition(0, 1),
-        PositivePartition::VariableEnabled
-    );
-    assert_eq!(
-        positive_partition(2, 3),
-        PositivePartition::VariableEnabled
-    );
+    assert_eq!(positive_partition(0, 1), PositivePartition::VariableEnabled);
+    assert_eq!(positive_partition(2, 3), PositivePartition::VariableEnabled);
 
     assert!(!BLOCK_LOCAL_VAR_DECLARED_NAMES_CONTRIBUTOR);
     assert!(EE14_R02_NON_TRIGGER_REASON.contains("no local VarDeclaredNames contributor"));
@@ -473,7 +458,10 @@ fn literal_post_343_partition_covers_every_frozen_rule_identity_exactly_once() {
     assert_eq!(complement_active, 174);
     assert_eq!(complement_inactive, 10);
     assert_eq!(sentinels, 0);
-    assert_eq!(required_active + complement_active + complement_inactive, 193);
+    assert_eq!(
+        required_active + complement_active + complement_inactive,
+        193
+    );
 
     assert!(complement.contains("EE-14-R02"));
     let ee14_r02 = RULE_UNITS
@@ -521,10 +509,7 @@ fn six_post_313_grammar_deltas_are_bounded_successors() {
     assert!(MULTI_DECLARATOR_ORACLE.contains("1..N"));
     assert!(DECIMAL_INITIALIZER_ORACLE.contains("EE-02-R01"));
     assert!(DIRECT_IDENTIFIER_REFERENCE_ORACLE.contains("direct-only"));
-    assert!(
-        ESCAPED_IDENTIFIER_REFERENCE_ORACLE
-            .contains("frontier-scoped UnsupportedCoverage")
-    );
+    assert!(ESCAPED_IDENTIFIER_REFERENCE_ORACLE.contains("frontier-scoped UnsupportedCoverage"));
     assert!(EE04_INITIALIZER_ORACLE.contains("EE-04-R08"));
     assert!(EE04_INITIALIZER_ORACLE.contains("C6_RESERVED"));
 }
@@ -556,7 +541,10 @@ fn successor_source_is_candidate_independent_and_does_not_call_production_owners
         concat!("attempt_selected_", "qualification("),
         concat!("analyze_selected_binding_", "scope("),
         concat!("analyze_selected_one_level_block_binding_", "scope("),
-        concat!("analyze_selected_variable_statement_name_", "correspondence("),
+        concat!(
+            "analyze_selected_variable_statement_name_",
+            "correspondence("
+        ),
     ] {
         assert!(
             !THIS_SOURCE.contains(forbidden),
