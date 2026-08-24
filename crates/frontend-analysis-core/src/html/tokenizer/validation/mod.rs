@@ -14,6 +14,8 @@ mod observe;
 #[cfg(test)]
 mod parser_gate;
 mod policy;
+#[cfg(test)]
+mod tree_construction_gate;
 
 #[cfg(test)]
 mod tests;

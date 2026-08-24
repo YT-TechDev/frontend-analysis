@@ -4,6 +4,7 @@ pub(crate) mod analysis;
 pub(crate) mod parser;
 pub(crate) mod token;
 pub(crate) mod tokenizer;
+pub(crate) mod tree_construction;
 
 #[cfg(test)]
 mod token_contract_matrix_tests;
