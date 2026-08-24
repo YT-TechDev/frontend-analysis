@@ -47,6 +47,7 @@ record must still satisfy the
 | Architecture layers | [Architecture Layers and Boundaries](architecture/LAYERS.md) | Normative architecture contract | Layer responsibilities, exclusions, allowed dependencies, boundary crossings, and cross-cutting capability ownership. |
 | Rust Core contracts | [Rust Core Contracts](architecture/RUST_CORE_CONTRACTS.md) | Normative Rust architecture contract | Ownership, borrowing, mutation, domain types, errors, concurrency, async boundaries, visibility, compatibility, and Rust-specific unsafe implementation constraints. |
 | Source parser ownership | [Source Parser Ownership](architecture/SOURCE_PARSER_OWNERSHIP.md) | Normative architecture contract | Project-owned HTML, CSS, and ECMAScript parser authority; retained-source provenance; capability and result integrity; third-party parser policy; implementation sequencing; validation; and parser-specific security boundaries. |
+| HTML tree-construction architecture | [HTML Tree-Construction Architecture](architecture/HTML_TREE_CONSTRUCTION.md) | Normative architecture contract | Browser-independent tokenizer/tree coordination, private construction-session lifecycle, immutable tree-analysis results, constructed identity/provenance distinctions, completion/resource semantics, runtime-DOM authority separation, and capability-extension rules. |
 | JavaScript / ECMAScript semantic architecture | [JavaScript / ECMAScript Architecture](architecture/JAVASCRIPT_ARCHITECTURE.md) | Normative architecture contract | ECMAScript Standard Qualification, semantic capability ownership, qualified host/runtime evidence consumption, scoped lifecycle, qualified result/provenance semantics, and representation-neutral JavaScript analysis boundaries. |
 | Validated Source Anchors Guide | [Validated Source Anchors Guide](architecture/VALIDATED_SOURCE_ANCHORS.md) | Guide | Contributor guidance for current source-anchor semantics, layer consumption, accepted and rejected responsibilities, and review triggers. |
 | Raw Source Coordinates Guide | [Raw Source Coordinates Guide](architecture/RAW_SOURCE_COORDINATES.md) | Guide | Explanatory contributor guidance for the accepted raw coordinate projection, units, layer conversions, and review triggers. |
@@ -62,7 +63,8 @@ production member exists: `crates/frontend-analysis-core`, whose private
 The root `Cargo.lock` is committed. The crate has zero third-party dependencies
 and currently owns Validated Source Anchors and Raw Source Line Coordinates; it
 is not a generic utility layer. Project-owned source parser architecture is
-approved, but no parser implementation or public parser API is complete yet.
+approved; current HTML tokenizer/parser/Core slices remain crate-private and no
+public parser API is complete.
 
 Accepted [ADR 0001](decisions/0001-repository-topology-and-workspace-ownership.md)
 owns topology and extraction review, [ADR 0002](decisions/0002-rust-bootstrap-toolchain-and-validation-policy.md)
@@ -73,9 +75,13 @@ owns raw source-coordinate semantics, accepted
 [ADR 0007](decisions/0007-own-lossless-source-parsers.md) owns the project-owned
 lossless source-parser strategy and language sequencing, accepted
 [ADR 0008](decisions/0008-browser-runtime-evidence-normalization-and-core-import.md)
-owns browser-runtime evidence normalization/import ownership, and accepted
+owns browser-runtime evidence normalization/import ownership, accepted
 [ADR 0009](decisions/0009-javascript-semantic-analysis-architecture.md) owns the
-JavaScript semantic architecture decision recorded by the specialized contract.
+JavaScript semantic architecture decision recorded by its specialized contract,
+and accepted [ADR 0010](decisions/0010-html-tree-construction-architecture.md)
+owns the HTML tree-construction architecture rationale recorded operationally by
+the specialized [HTML Tree-Construction Architecture](architecture/HTML_TREE_CONSTRUCTION.md)
+contract.
 
 ### Contributor Setup and Validation
 
@@ -116,7 +122,7 @@ status is owned by [Validation and Completion Evidence](development/VALIDATION.m
 | --- | --- |
 | New domains and additional crates | Focused domain Issue/ADR |
 | Dependencies and features | Focused dependency Issue |
-| Source-parser algorithms, module or crate placement, capability slices, and public APIs | Focused parser work under #106, #107, and #108 |
+| Source-parser algorithms, module or crate placement, capability slices, and public APIs | Focused parser work under #106, #107, and #108 and specialized contracts such as `HTML_TREE_CONSTRUCTION.md` where applicable |
 | Browser protocols and Browser Adapters | Focused dependency and boundary Issue/ADR |
 | Retained line indexes, reverse coordinate mapping, parser/protocol conversion, and source maps | Focused domain or boundary Issue/ADR |
 | Serialization | Focused compatibility Issue/ADR |
@@ -161,15 +167,18 @@ Authority follows topic ownership and specificity, not a single global ranking:
    Contracts](architecture/RUST_CORE_CONTRACTS.md) governs Rust-specific Core
    design constraints; [Source Parser Ownership](architecture/SOURCE_PARSER_OWNERSHIP.md)
    governs project-owned language-parser authority, provenance, capability,
-   third-party comparison boundaries, sequencing, and parser validation; and
-   [JavaScript / ECMAScript Architecture](architecture/JAVASCRIPT_ARCHITECTURE.md)
+   third-party comparison boundaries, sequencing, and parser validation;
+   [HTML Tree-Construction Architecture](architecture/HTML_TREE_CONSTRUCTION.md)
+   governs specialized HTML tokenizer/tree coordination, private construction,
+   immutable tree-result, constructed identity/provenance, completion/resource,
+   and runtime-authority rules; and [JavaScript / ECMAScript Architecture](architecture/JAVASCRIPT_ARCHITECTURE.md)
    governs specialized JavaScript qualification, semantic-capability,
    host/runtime-evidence-consumption, lifecycle, provenance, and
    representation-neutrality rules.
 9. The [ADR Process](decisions/README.md) governs ADR mechanics. ADRs do not
    override specialized normative contracts.
 10. Templates collect information but do not create approval. Guides and
-   examples cannot override normative contracts.
+    examples cannot override normative contracts.
 11. The [Issue Model](development/ISSUE_MODEL.md) governs Issue hierarchy and
     slicing mechanics. An active Leaf owns task-specific acceptance criteria and
     required checks but cannot override specialized requirements. [Validation
@@ -202,7 +211,7 @@ compatibility and governance. For cross-domain work:
   satisfied;
 - ambiguity requires escalation; and
 - maintainers must record the resolution and update every affected
-  authoritative document.
+authoritative document.
 
 Security does not automatically own all architecture, and architecture does
 not automatically own all security decisions.
