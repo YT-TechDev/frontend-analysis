@@ -46,7 +46,7 @@ Language research follows these rules:
 
 | Domain | Current evidence state | Record |
 | --- | --- | --- |
-| HTML | First browser-independent tokenizer → analysis-parser → Core vertical slice completed and independently validated; tree construction remains a separate future domain. | [HTML evidence](html/README.md) |
+| HTML | First browser-independent tokenizer → analysis-parser → Core slice remains complete; #348 R1–R10 research is closed and Candidate C / TC-S1 tree-construction architecture is maintainer-approved and recorded by ADR 0010 plus the specialized HTML tree-construction contract, while TC-S1 production placement remains a separate gate. | [HTML evidence](html/README.md) · [ADR 0010](../decisions/0010-html-tree-construction-architecture.md) · [HTML tree-construction contract](../architecture/HTML_TREE_CONSTRUCTION.md) |
 | CSS | Semantic Foundation Freeze completed on `main`; source, tokenizer, structural parser, context, declaration, and bounded selector-qualification foundations are frozen while broader CSS semantics remain research work. | [CSS evidence](css/README.md) |
 | JavaScript / ECMAScript | Architecture Model v1.1 is accepted; the subsequent adversarial research wave is closed/frozen with no architecture-breaking contradiction found, while production representation and implementation remain intentionally open. | [JavaScript evidence](javascript/README.md) · [Post-v1.1 closure](javascript/2026-08-post-v1.1-research-wave-closure.md) |
 
@@ -77,7 +77,9 @@ should share one parser architecture or one internal representation.
 Relevant durable repository sources include:
 
 - [ADR 0007 — own lossless source parsers](../decisions/0007-own-lossless-source-parsers.md)
+- [ADR 0010 — define HTML tree-construction architecture](../decisions/0010-html-tree-construction-architecture.md)
 - [Source Parser Ownership](../architecture/SOURCE_PARSER_OWNERSHIP.md)
+- [HTML Tree-Construction Architecture](../architecture/HTML_TREE_CONSTRUCTION.md)
 - [Architecture Principles](../architecture/PRINCIPLES.md)
 - [Architecture Layers and Boundaries](../architecture/LAYERS.md)
 - [Rust Core Contracts](../architecture/RUST_CORE_CONTRACTS.md)
