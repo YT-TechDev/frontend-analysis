@@ -6,6 +6,7 @@ mod gold;
 mod inventory;
 mod model;
 mod selected_one_level_block_slice_completion;
+mod selected_post_343_slice_completion;
 mod selected_slice_completion;
 mod selected_variable_statement_decimal_initializer_frontier;
 mod selected_variable_statement_direct_identifier_reference_initializer_frontier;
