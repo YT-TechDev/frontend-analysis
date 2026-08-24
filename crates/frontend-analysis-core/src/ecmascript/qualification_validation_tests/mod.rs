@@ -6,6 +6,7 @@ mod gold;
 mod inventory;
 mod model;
 mod selected_one_level_block_slice_completion;
+mod selected_post_343_slice_completion;
 mod selected_slice_completion;
 mod selected_variable_statement_decimal_initializer_frontier;
 mod selected_variable_statement_direct_identifier_reference_initializer_frontier;
@@ -1056,7 +1057,7 @@ fn multi_binding_name_identity_does_not_normalize_unicode() {
     );
 
     let source = SourceText::new(SourceId::new(216), fixture.source.to_owned());
-    let composed = source.anchor(4, 6).expect("é occupies UTF-8 bytes 4..6");
+    let composed = source.anchor(4, 6).expect("π occupies UTF-8 bytes 4..6");
     let decomposed = source
         .anchor(8, 11)
         .expect("e + combining acute occupies UTF-8 bytes 8..11");
