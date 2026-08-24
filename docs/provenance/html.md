@@ -13,19 +13,26 @@ status.
 
 - **Source:** HTML Standard
 - **Source class:** Normative specification
-- **Authority / version:** WHATWG Living Standard; no immutable snapshot is
-  currently pinned by the high-level HTML evidence record
-- **URL or stable identifier:** <https://html.spec.whatwg.org/multipage/>
-- **Accessed / reviewed date:** 2026-08-20 (provenance review)
-- **Used for:** Normative external authority for HTML parsing and authored-source
-  behavior relevant to the project-owned HTML source-analysis workstream.
+- **Authority / version:** WHATWG HTML pinned commit
+  `508a037333d8a1806504303aeb489d931fabbef6`; source blob
+  `68dbcb98bbe1001c6ae2531be2368c608fbafddd`
+- **URL or stable identifier:**
+  <https://github.com/whatwg/html/commit/508a037333d8a1806504303aeb489d931fabbef6>
+- **Accessed / reviewed date:** 2026-08-24 (post-vertical-slice HTML research and
+  architecture review)
+- **Used for:** Normative external authority for HTML parsing, tree-construction,
+  recovery, parse-context, and authored/non-authored provenance conclusions used
+  by the #348 research program and #117 architecture work.
 - **Evidence role:** `normative`
 - **Related research / architecture:**
   [HTML evidence](../evidence/html/README.md),
-  [Source Parser Ownership](../architecture/SOURCE_PARSER_OWNERSHIP.md)
-- **Notes:** Browser or third-party parser behavior remains comparison evidence,
-  not the semantic authority for Core contracts. Future capability work should
-  pin a snapshot or commit when version drift would affect the evidence envelope.
+  [HTML tree-construction architecture](../architecture/HTML_TREE_CONSTRUCTION.md),
+  [Source Parser Ownership](../architecture/SOURCE_PARSER_OWNERSHIP.md),
+  [Issue #348](https://github.com/YT-TechDev/frontend-analysis/issues/348)
+- **Notes:** The immutable git source is the reproducible authority for
+  latest-sensitive findings recorded by the #348 checkpoint. Browser or
+  third-party parser behavior remains comparison/challenge evidence, not the
+  semantic authority for Core source or tree-construction provenance.
 
 ### WHATWG Infra Standard
 

@@ -1,14 +1,14 @@
 # HTML Research Evidence
 
-Status date: 2026-08-12
+Status date: 2026-08-24
 
 Classification: task and evidence record; non-normative.
 
 ## Current Status
 
-The first browser-independent HTML source-analysis vertical slice is complete.
-Issue [#116](https://github.com/YT-TechDev/frontend-analysis/issues/116) was
-completed through Pull Request
+The first browser-independent HTML source-analysis vertical slice remains
+complete. Issue [#116](https://github.com/YT-TechDev/frontend-analysis/issues/116)
+was completed through Pull Request
 [#131](https://github.com/YT-TechDev/frontend-analysis/pull/131) and squash-merged
 to `main` as:
 
@@ -34,8 +34,29 @@ HtmlExplicitStartTagAnalysis
 ```
 
 This proves one narrow authored-source capability. It does **not** prove complete
-HTML Standard parsing, tree construction, DOM compatibility, or public API
-readiness.
+HTML Standard parsing, production tree construction, DOM compatibility, or public
+API readiness.
+
+A later research/architecture program has now completed the evidence foundation
+for future tree construction without changing that production capability:
+
+- [#348](https://github.com/YT-TechDev/frontend-analysis/issues/348) completed the
+  post-vertical-slice R1–R10 / Wave 1E HTML research program. Its durable
+  Research Completion Checkpoint is
+  [`issuecomment-5392711890`](https://github.com/YT-TechDev/frontend-analysis/issues/348#issuecomment-5392711890).
+- [#117](https://github.com/YT-TechDev/frontend-analysis/issues/117) completed a
+  fresh architecture reassessment, candidate-independent TC-S1 validation, and
+  explicit maintainer approval of Candidate C / TC-S1. The maintainer decision is
+  [`issuecomment-5393598385`](https://github.com/YT-TechDev/frontend-analysis/issues/117#issuecomment-5393598385).
+- [ADR 0010](../../decisions/0010-html-tree-construction-architecture.md)
+  records the approved architecture rationale.
+- [HTML Tree-Construction Architecture](../../architecture/HTML_TREE_CONSTRUCTION.md)
+  owns the active specialized normative invariants when this documentation PR is
+  accepted.
+
+Architecture approval and production implementation are separate states. TC-S1
+remains a bounded production candidate and requires its own production-placement
+gate before implementation.
 
 ## Authoritative Evidence Sources
 
@@ -46,12 +67,19 @@ Repository evidence:
 - [#109–#116 — first HTML tokenizer/parser/Core slice](https://github.com/YT-TechDev/frontend-analysis/issues/116)
 - [#112 — candidate-independent validation foundation](https://github.com/YT-TechDev/frontend-analysis/issues/112)
 - [#114 — first source-backed HTML analysis-parser model](https://github.com/YT-TechDev/frontend-analysis/issues/114)
-- [#117 — tree-construction architecture boundary](https://github.com/YT-TechDev/frontend-analysis/issues/117)
+- [#117 — tree-construction architecture](https://github.com/YT-TechDev/frontend-analysis/issues/117)
+- [#348 — post-vertical-slice HTML research foundation](https://github.com/YT-TechDev/frontend-analysis/issues/348)
+- [#349 — ADR 0010 / normative-contract documentation Leaf](https://github.com/YT-TechDev/frontend-analysis/issues/349)
 - [PR #131 — completed first Core integration](https://github.com/YT-TechDev/frontend-analysis/pull/131)
 
-Normative external authority for HTML behavior remains the WHATWG HTML Standard
-and its referenced Infra/Encoding specifications. Browser or third-party parser
-behavior is comparison evidence only.
+Normative external authority for the #348 tree-construction research is pinned in
+[HTML research provenance](../../provenance/html.md), including WHATWG HTML commit
+`508a037333d8a1806504303aeb489d931fabbef6` and source blob
+`68dbcb98bbe1001c6ae2531be2368c608fbafddd`.
+
+Browser or third-party parser behavior is comparison/challenge evidence only.
+Current WPT and html5lib tree-construction corpora must not be counted as two
+independent confirmations without accounting for their shared lineage.
 
 ## Proven Architecture Evidence
 
@@ -83,24 +111,26 @@ success merely because useful occurrences were projected.
 
 ### H3 — Capability-specific analysis can precede generic syntax models
 
-The first result answers one explicit source question: recognized authored start
--tag occurrences with exact source evidence. The architecture did not require a
-universal HTML AST, DOM model, cross-language event protocol, or generic
-`AnalysisResult` foundation first.
+The first result answers one explicit source question: recognized authored
+start-tag occurrences with exact source evidence. The architecture did not
+require a universal HTML AST, DOM model, cross-language event protocol, or
+generic `AnalysisResult` foundation first.
 
 This remains an evidence-backed preference for bounded capabilities, not a claim
 that HTML will never need a richer tree or syntax representation.
 
 ### H4 — Authored syntax and synthesized structure are different domains
 
-The first slice intentionally stops before HTML tree construction. Matching,
-nesting, implied elements, foster parenting, formatting-element reconstruction,
-foreign-content integration, and synthesized-node provenance remain owned by the
-separate tree-construction architecture in #117.
+The first production slice intentionally stops before HTML tree construction.
+The #348/#117 research and architecture work subsequently established the
+specialized future tree-construction boundary without changing the existing
+operation.
 
-A synthesized node must not claim an authored range that does not exist.
-Runtime browser DOM observations are also separate evidence from project-owned
-source parsing.
+Authored source origin, constructed-node identity, final placement, synthesis
+cause, recovery/action evidence, token disposition, and runtime correlation are
+not interchangeable domains. A synthesized node must not claim an authored range
+that does not exist. Runtime browser DOM observations remain separate evidence
+from project-owned source parsing.
 
 ### H5 — Crate-private vertical slices reduce premature compatibility commitments
 
@@ -117,8 +147,38 @@ The same independent evidence foundation was exercised through tokenizer,
 analysis parser, and Core integration. Production output did not generate its
 own expected oracle.
 
-This supports reusing specification/project-owned gold across layers while
-keeping each layer's responsibility independently testable.
+The TC-S1 architecture-validation gate applied the same discipline to expected
+document-shell tree/provenance meaning before production placement. This supports
+reusing specification/project-owned gold across layers while keeping each
+layer's responsibility independently testable.
+
+## #348 / #117 Tree-Construction Evidence Closure
+
+The #348 research program closed the broad pre-architecture evidence gap and
+falsified the following shortcuts for general HTML tree construction:
+
+- universal completed-token-vector → later-tree architecture;
+- context-independent tokenization/tree semantics for equal source bytes;
+- source/token order as final tree parentage;
+- one authored start tag as exactly one final constructed node;
+- an exact authored range for every final node;
+- simple tag matching/nesting as general HTML tree semantics;
+- fragment parsing as document parsing minus implied outer elements;
+- foreign content as namespace decoration after ordinary HTML parsing;
+- diagnostics-only recovery; and
+- browser/runtime DOM as the same authority as project-owned source parsing.
+
+Material corrections were preserved rather than silently overwritten. In
+particular, the adoption-agency outer loop has a normative cap of eight, while
+`innerLoopCounter > 3` is a state-reduction threshold rather than a hard
+three-iteration inner-loop cap. Browser implementation limits such as a fixed
+tree depth are not promoted to HTML Standard constants.
+
+The resulting architecture direction approved in #117 is a Core-private
+coordinated parser driver with private mutable construction state, validated
+freeze, immutable query-oriented tree analysis, and selective provenance/recovery
+relations. The architecture does not require a browser-compatible DOM or full
+construction-event sourcing.
 
 ## Validation Evidence
 
@@ -143,6 +203,18 @@ The #116 completion audit recorded:
 These numbers describe the completed bounded slice and are not permanent
 repository-wide compatibility promises.
 
+The later TC-S1 candidate-independent architecture-validation gate recorded:
+
+- Candidate C survived all scoped TC-S1 falsification tests;
+- constructed-node identity requirements were validated without selecting a
+  concrete encoding;
+- independently derived document-shell/provenance GOLD was corroborated rather
+  than defined by WPT; and
+- concrete tree resource constants remained intentionally OPEN.
+
+That validation is architecture evidence. It is not a production test result and
+does not authorize TC-S1 implementation.
+
 ## Rejected or Unsupported Strong Claims
 
 The current evidence rejects or does not justify the following shortcuts:
@@ -152,9 +224,13 @@ The current evidence rejects or does not justify the following shortcuts:
 - `recovered or synthesized structure may reuse a convenient authored range`;
 - `parser-native source positions are automatically trusted Core anchors`;
 - `higher layers may upgrade incomplete tokenizer evidence`;
+- `source/token identity == constructed-node identity`;
+- `recovery implies incomplete parsing`;
+- `browser agreement establishes Core source/tree provenance`;
+- `WPT + current html5lib tree data == two independent semantic votes`;
 - `a generic AST/event model must be fixed before a useful analysis capability`;
-- `agreement with one parser/browser is sufficient correctness evidence`; and
-- `the first start-tag slice implies complete HTML Standard support`.
+- `a full DOM-compatible result is required for tree analysis`; and
+- `the first start-tag slice or TC-S1 implies complete HTML Standard support`.
 
 ## Reusable Lessons for Other Languages
 
@@ -167,31 +243,60 @@ internals:
 4. monotonic completion/evidence propagation;
 5. candidate-independent fixtures before or alongside implementation;
 6. deterministic bounded generated validation;
-7. crate-private architecture validation before public API commitment; and
-8. separate ownership for authored and synthesized meaning.
+7. crate-private architecture validation before public API commitment;
+8. separate ownership for authored and synthesized meaning; and
+9. architecture alternatives should be falsified before private implementation
+   details become durable contracts.
 
-CSS and ECMAScript must independently prove where these principles apply.
-HTML tokenizer states, token types, parser events, and tree semantics must not be
+CSS and ECMAScript must independently prove where these principles apply. HTML
+tokenizer states, token types, parser events, and tree semantics must not be
 copied across languages by analogy.
 
-## OPEN Research / Architecture
+## OPEN Research / Architecture / Production Decisions
 
-The following remain intentionally open or separately owned:
+Broad pre-architecture HTML research under #348 is complete. The following
+remain intentionally open, deferred, or separately owned:
 
-- complete HTML tokenizer coverage;
-- HTML tree construction under #117;
-- authored/implied/synthesized/reconstructed/foster-parented node identity;
-- fragment parsing configuration;
-- browser-runtime DOM correlation;
+- concrete constructed-node identity encoding;
+- exact immutable tree storage layout;
+- detailed recovery-trace and text-coalescing provenance representation;
+- durable token identity for future provenance edges;
+- tree-specific resource dimensions and numeric project limits;
+- partial-result rollback/checkpoint implementation mechanism;
+- cancellation/abort API;
+- fragment-context production contract;
+- script execution and reentrant parsing implementation;
+- runtime DOM correlation contract;
 - public HTML API and compatibility commitments;
 - serialization/wire formats;
 - incremental/streaming parsing;
 - browser protocol integration;
 - product-facing HTML analysis surfaces; and
-- future WASM delivery contracts.
+- future WASM delivery/runtime contracts.
+
+These OPEN items do not invalidate the approved Candidate C architecture. They
+remain subject to focused work when a production capability or named consumer
+requires them.
+
+## Production State
+
+At this documentation change:
+
+```text
+Architecture direction: APPROVED
+TC-S1 candidate-independent validation: ACCEPTED
+ADR 0010 / specialized normative contract: being recorded by #349 / PR #350
+TC-S1 production placement: BLOCKED until the documentation PR lands
+Production tree-construction implementation: NO
+```
 
 ## Evidence-to-Architecture Boundary
 
-This document records what the current HTML evidence supports. Any promotion of
-these findings into new normative architecture, public API, crate layout, or
-compatibility policy requires the normal maintainer/ADR process.
+This document records what the HTML evidence supports. Normative requirements
+are owned by [HTML Tree-Construction Architecture](../../architecture/HTML_TREE_CONSTRUCTION.md)
+and the broader architecture contracts it specializes. ADR 0010 preserves the
+rationale for that decision.
+
+Future evidence may falsify an invariant, but task/evidence records do not
+silently override accepted architecture. A material contradiction must use the
+normal maintainer/ADR conflict process.
