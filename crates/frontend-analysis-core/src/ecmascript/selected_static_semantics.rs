@@ -257,6 +257,15 @@ fn evaluate_selected_variable_binding_local_static_semantics(
 ) -> Result<(), SelectedDeclarationCheckFailure> {
     let _ =
         evaluate_selected_binding_name_static_semantics(binding.binding(), binding.name_state())?;
+
+    if let Some(identifier) = binding.escaped_reserved_initializer_identifier() {
+        return Err(SelectedDeclarationCheckFailure::Rejected(
+            SelectedStaticSemanticsRejection::EscapedReservedWordInitializer {
+                identifier: identifier.clone(),
+            },
+        ));
+    }
+
     Ok(())
 }
 

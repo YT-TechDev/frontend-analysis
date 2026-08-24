@@ -784,6 +784,7 @@ fn grammar_primary_discards_tentative_static_evidence_and_is_terminal() {
         r"let \u{}; var x;",
         r"const x = foo; let \u{};",
         r"const x = \u006Eull; let \u{};",
+        r"var x=\u0069f; let \u{};",
     ] {
         let outcome = qualification_outcome(text);
         assert_eq!(
@@ -1011,6 +1012,9 @@ fn top_level_variable_statement_static_rejections_preserve_authored_primary_subj
         (r"var \u0069f;", r"\u0069f", (4, 11)),
         (r"var \u0069f", r"\u0069f", (4, 11)),
         (r"var \u0069f=1;", r"\u0069f", (4, 11)),
+        (r"var x=\u0069f;", r"\u0069f", (6, 13)),
+        (r"var x=n\u0075ll;", r"n\u0075ll", (6, 15)),
+        (r"var x=\u0069f", r"\u0069f", (6, 13)),
         ("let x; var x;", "x", (11, 12)),
         ("let x; var x", "x", (11, 12)),
         ("var x; let x;", "x", (11, 12)),
@@ -1070,7 +1074,6 @@ fn top_level_variable_statement_grammar_and_deferred_boundaries_remain_distinct(
         r"var\u{};",
         r"var\u0061;",
         "var x\nvar y;",
-        r"var x=\u0069f;",
         r"var x=\u0030;",
         r"var x=a\u002Db;",
         r"var x=\u0066oo.bar;",
@@ -1104,6 +1107,23 @@ fn top_level_variable_statement_grammar_and_deferred_boundaries_remain_distinct(
         .expect("authored later grammar subject");
     assert_eq!(anchor.fragment(), r"\u{}");
     assert_eq!((anchor.range().start(), anchor.range().end()), (20, 24));
+
+    let outcome = qualification_outcome(r"var x=\u0069f; let \u{};");
+    assert_eq!(outcome.processing(), ProcessingStatus::Complete);
+    assert_eq!(
+        outcome.verdict(),
+        Some(QualificationVerdictKind::SyntaxRejected)
+    );
+    let evidence = outcome
+        .rejection_evidence()
+        .expect("later grammar evidence must discard tentative C6 static evidence");
+    assert_eq!(evidence.family(), RejectionFamily::Grammar);
+    let anchor = evidence
+        .subject()
+        .authored_anchor()
+        .expect("authored later grammar subject");
+    assert_eq!(anchor.fragment(), r"\u{}");
+    assert_eq!((anchor.range().start(), anchor.range().end()), (19, 23));
 }
 
 #[test]
@@ -1159,6 +1179,7 @@ fn multi_declarator_static_rejections_preserve_the_authored_primary_subject() {
     for (text, expected_fragment, expected_range) in [
         (r"var a, \u0069f;", r"\u0069f", (7, 14)),
         (r"let b; var a,b,\u0069f;", r"\u0069f", (15, 22)),
+        (r"var a=1,b=\u0069f,c;", r"\u0069f", (10, 17)),
         ("let b; var a,b;", "b", (13, 14)),
         ("var b,a; let a,b;", "a", (13, 14)),
         ("var a,a; let a;", "a", (13, 14)),
@@ -1238,7 +1259,6 @@ fn multi_declarator_grammar_rejection_stays_distinct_from_deferred_coverage() {
         "var a=null;",
         "var a=this;",
         "var a=\"x\";",
-        r"var a=\u0069f;",
         r"var a=\u0030;",
         r"var a=a\u002Db;",
         "var a=foo.bar;",

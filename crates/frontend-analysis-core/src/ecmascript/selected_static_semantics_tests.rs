@@ -1004,3 +1004,86 @@ fn repeated_var_declarator_names_stay_valid_and_semantic_equality_is_not_normali
         )
     ));
 }
+
+#[test]
+fn var_escaped_reserved_initializer_reuses_ee04_rhs_rejection_with_exact_evidence() {
+    for (text, expected_fragment, expected_range) in [
+        (r"var x=\u0069f;", r"\u0069f", (6, 13)),
+        (r"var x=n\u0075ll;", r"n\u0075ll", (6, 15)),
+        (r"var x=\u0069f", r"\u0069f", (6, 13)),
+    ] {
+        let (_, script) = recognized_variable(text);
+        match evaluate_selected_variable_statement_static_semantics(&script) {
+            SelectedVariableStatementStaticSemanticsOutcome::Rejected(
+                SelectedStaticSemanticsRejection::EscapedReservedWordInitializer { identifier },
+            ) => {
+                assert_eq!(identifier.fragment(), expected_fragment, "{text}");
+                assert_eq!(
+                    (identifier.range().start(), identifier.range().end()),
+                    expected_range,
+                    "{text}"
+                );
+            }
+            other => panic!("expected var RHS EE-04-R08 rejection for {text:?}, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn var_escaped_reserved_initializer_preserves_same_declarator_and_tier_one_order() {
+    let (_, script) = recognized_variable(r"var \u0069f=\u0074his;");
+    match evaluate_selected_variable_statement_static_semantics(&script) {
+        SelectedVariableStatementStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::EscapedReservedWord { binding },
+        ) => assert_eq!((binding.range().start(), binding.range().end()), (4, 11)),
+        other => panic!("LHS EE-04-R08 must precede same-declarator RHS C6: {other:?}"),
+    }
+
+    let (_, script) = recognized_variable(r"let let; var x=\u0069f;");
+    match evaluate_selected_variable_statement_static_semantics(&script) {
+        SelectedVariableStatementStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::BindingNamedLet { binding },
+        ) => assert_eq!((binding.range().start(), binding.range().end()), (4, 7)),
+        other => panic!("earlier Tier-1 local rejection must precede later C6: {other:?}"),
+    }
+
+    for (text, expected_range) in [
+        (r"var x=\u0069f; let let;", (6, 13)),
+        (r"var a=\u0069f,b=\u0074his;", (6, 13)),
+    ] {
+        let (_, script) = recognized_variable(text);
+        match evaluate_selected_variable_statement_static_semantics(&script) {
+            SelectedVariableStatementStaticSemanticsOutcome::Rejected(
+                SelectedStaticSemanticsRejection::EscapedReservedWordInitializer { identifier },
+            ) => assert_eq!(
+                (identifier.range().start(), identifier.range().end()),
+                expected_range,
+                "{text}"
+            ),
+            other => {
+                panic!("authored C6 ordering must select first reached RHS for {text:?}: {other:?}")
+            }
+        }
+    }
+}
+
+#[test]
+fn var_escaped_reserved_initializer_precedes_lower_tiers() {
+    for (text, expected_range) in [
+        (r"{ let a; let a; } var x=\u0069f;", (24, 31)),
+        (r"let a; let a; var x=\u0069f;", (20, 27)),
+        (r"let a; var a,x=\u0069f;", (15, 22)),
+    ] {
+        let (_, script) = recognized_variable(text);
+        match evaluate_selected_variable_statement_static_semantics(&script) {
+            SelectedVariableStatementStaticSemanticsOutcome::Rejected(
+                SelectedStaticSemanticsRejection::EscapedReservedWordInitializer { identifier },
+            ) => assert_eq!(
+                (identifier.range().start(), identifier.range().end()),
+                expected_range,
+                "{text}"
+            ),
+            other => panic!("C6 Tier-1 rejection must precede lower tiers for {text:?}: {other:?}"),
+        }
+    }
+}
