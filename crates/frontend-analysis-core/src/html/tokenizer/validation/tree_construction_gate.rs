@@ -30,8 +30,9 @@
 
 use crate::html::tree_construction::driver::construct_html_document_shell;
 use crate::html::tree_construction::result::{
-    HtmlAuthoredSource, HtmlDocumentShellAnalysis, HtmlShellElementName, HtmlTreeCompletion,
-    HtmlTreeIncompleteCause, HtmlTreeNode, HtmlTreeNodeKind,
+    HtmlAuthoredSource, HtmlDocumentShellAnalysis, HtmlElement, HtmlSelectedOrdinaryElementName,
+    HtmlShellElementName, HtmlTreeCompletion, HtmlTreeIncompleteCause, HtmlTreeNode,
+    HtmlTreeNodeKind,
 };
 use crate::{SourceId, SourceText};
 
@@ -115,10 +116,15 @@ fn render_node(
     match node.kind() {
         HtmlTreeNodeKind::Document => rendered.push_str("#document"),
         HtmlTreeNodeKind::Element(element) => {
-            rendered.push_str(match element.name() {
-                HtmlShellElementName::Html => "html",
-                HtmlShellElementName::Head => "head",
-                HtmlShellElementName::Body => "body",
+            rendered.push_str(match element {
+                HtmlElement::Shell(shell) => match shell.name() {
+                    HtmlShellElementName::Html => "html",
+                    HtmlShellElementName::Head => "head",
+                    HtmlShellElementName::Body => "body",
+                },
+                HtmlElement::SelectedOrdinary(selected) => match selected.name() {
+                    HtmlSelectedOrdinaryElementName::Div => "div",
+                },
             });
             match node.authored_source() {
                 Some(HtmlAuthoredSource::StartTag { complete, raw_name }) => {
@@ -327,12 +333,16 @@ fn check_completion_honesty(
     }
 }
 
+/// Whether the frozen tree contains the complete `html`/`head`/`body` shell.
+///
+/// Deliberately shell-only: a selected ordinary element never contributes to
+/// document-shell completeness, so it is filtered out rather than counted.
 fn has_complete_shell(analysis: &HtmlDocumentShellAnalysis) -> bool {
     let names: Vec<HtmlShellElementName> = analysis
         .nodes_in_creation_order()
         .iter()
         .filter_map(|node| match node.kind() {
-            HtmlTreeNodeKind::Element(element) => Some(element.name()),
+            HtmlTreeNodeKind::Element(HtmlElement::Shell(shell)) => Some(shell.name()),
             _ => None,
         })
         .collect();
