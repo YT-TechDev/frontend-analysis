@@ -35,10 +35,6 @@ use super::super::tokenizer::result::HtmlTokenizerRunResult;
 const PINNED_WHATWG_COMMIT: &str = "508a037333d8a1806504303aeb489d931fabbef6";
 const PINNED_WHATWG_SOURCE_BLOB: &str = "68dbcb98bbe1001c6ae2531be2368c608fbafddd";
 
-// ---------------------------------------------------------------------------
-// Canonical DV1-DV14 byte authority
-// ---------------------------------------------------------------------------
-
 struct CandidateFixture {
     id: &'static str,
     bytes: &'static [u8],
@@ -259,8 +255,8 @@ const CANDIDATE_FIXTURES: &[CandidateFixture] = &[
 ];
 
 const CANDIDATE_IDS: [&str; 15] = [
-    "DV1", "DV2", "DV3", "DV4", "DV5", "DV6", "DV7", "DV8a", "DV8b", "DV9", "DV10",
-    "DV11", "DV12", "DV13", "DV14",
+    "DV1", "DV2", "DV3", "DV4", "DV5", "DV6", "DV7", "DV8a", "DV8b", "DV9", "DV10", "DV11", "DV12",
+    "DV13", "DV14",
 ];
 
 fn fixture(id: &str) -> &'static CandidateFixture {
@@ -275,10 +271,6 @@ impl CandidateFixture {
         std::str::from_utf8(self.bytes).expect("canonical fixture bytes are valid UTF-8")
     }
 }
-
-// ---------------------------------------------------------------------------
-// Candidate domain
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CandidateEvidence {
@@ -535,10 +527,6 @@ struct CandidateObservation {
     tokens: Vec<CandidateTokenRecord>,
 }
 
-// ---------------------------------------------------------------------------
-// Lower-layer token normalization
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum CandidateTokenShape<'run> {
     Characters {
@@ -655,10 +643,6 @@ fn is_html_whitespace(character: char) -> bool {
     matches!(character, '\t' | '\n' | '\u{000c}' | '\r' | ' ')
 }
 
-// ---------------------------------------------------------------------------
-// Independent candidate rule table
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CandidateEffect {
     MissingDoctype,
@@ -703,9 +687,7 @@ fn reject_whitespace_sensitive(
     Ok(())
 }
 
-fn expect_shell_walk_trigger(
-    shape: &CandidateTokenShape<'_>,
-) -> Result<(), CandidateUnsupported> {
+fn expect_shell_walk_trigger(shape: &CandidateTokenShape<'_>) -> Result<(), CandidateUnsupported> {
     if shape.is_div_tag() {
         return Err(CandidateUnsupported::DivTagOutsideInBody);
     }
@@ -835,10 +817,6 @@ fn select(
         },
     }
 }
-
-// ---------------------------------------------------------------------------
-// Candidate machine with semantic identities independent of storage slots
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
 enum CandidateArenaKind {
@@ -1358,10 +1336,6 @@ impl CandidateSession {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Execution
-// ---------------------------------------------------------------------------
-
 fn generous_limits() -> HtmlTokenizerLimits {
     HtmlTokenizerLimits::new(1_024, 8_192, 1_024, 1_024, 256, 4_096, 1_024)
 }
@@ -1468,10 +1442,6 @@ fn observe_fixture(id: &str, source_id: u64) -> CandidateObservation {
     observe(&run_for(id, source_id))
 }
 
-// ---------------------------------------------------------------------------
-// Hand-authored semantic GOLD
-// ---------------------------------------------------------------------------
-
 fn node_id(value: usize) -> CandidateNodeId {
     CandidateNodeId(value)
 }
@@ -1522,11 +1492,7 @@ fn text(
     }
 }
 
-fn shell(
-    source_id: u64,
-    authored_body: bool,
-    body_children: Vec<CandidateTree>,
-) -> CandidateTree {
+fn shell(source_id: u64, authored_body: bool, body_children: Vec<CandidateTree>) -> CandidateTree {
     CandidateTree::Document {
         id: node_id(0),
         children: vec![element(
@@ -1562,11 +1528,7 @@ fn authored_trigger(source_id: u64, index: usize, range: (usize, usize)) -> Cand
     }
 }
 
-fn missing_doctype(
-    source_id: u64,
-    index: usize,
-    range: (usize, usize),
-) -> CandidateDiagnostic {
+fn missing_doctype(source_id: u64, index: usize, range: (usize, usize)) -> CandidateDiagnostic {
     CandidateDiagnostic {
         code: CandidateDiagnosticCode::MissingDoctype,
         trigger: authored_trigger(source_id, index, range),
@@ -1889,15 +1851,16 @@ fn candidate_gold(id: &str, source_id: u64) -> CandidateSemanticObservation {
             diagnostics: vec![missing_body()],
             closures: vec![closure(source_id, 4, 2, (11, 17))],
             identity_count: 5,
-            checkpoint: checkpoint(CandidateMode::AfterBody, 0, 24, CandidateCompletion::Complete),
+            checkpoint: checkpoint(
+                CandidateMode::AfterBody,
+                0,
+                24,
+                CandidateCompletion::Complete,
+            ),
         },
         other => panic!("no candidate GOLD for {other}"),
     }
 }
-
-// ---------------------------------------------------------------------------
-// Test helpers
-// ---------------------------------------------------------------------------
 
 fn node_count(tree: &CandidateTree) -> usize {
     match tree {
@@ -1957,7 +1920,10 @@ fn text_nodes(tree: &CandidateTree, into: &mut Vec<(String, Vec<(usize, usize)>)
             ..
         } => into.push((
             interpreted.clone(),
-            contributions.iter().map(|evidence| evidence.range).collect(),
+            contributions
+                .iter()
+                .map(|evidence| evidence.range)
+                .collect(),
         )),
     }
 }
@@ -2023,11 +1989,7 @@ fn observed_token(token: &HtmlToken) -> ExpectedToken {
     }
 }
 
-fn start(
-    complete: (usize, usize),
-    interpreted: &str,
-    raw_name: (usize, usize),
-) -> ExpectedToken {
+fn start(complete: (usize, usize), interpreted: &str, raw_name: (usize, usize)) -> ExpectedToken {
     ExpectedToken::Start {
         complete,
         interpreted: interpreted.to_owned(),
@@ -2037,11 +1999,7 @@ fn start(
     }
 }
 
-fn end(
-    complete: (usize, usize),
-    interpreted: &str,
-    raw_name: (usize, usize),
-) -> ExpectedToken {
+fn end(complete: (usize, usize), interpreted: &str, raw_name: (usize, usize)) -> ExpectedToken {
     ExpectedToken::End {
         complete,
         interpreted: interpreted.to_owned(),
@@ -2059,10 +2017,6 @@ fn characters(range: (usize, usize), interpreted: &str) -> ExpectedToken {
 fn eof(at: usize) -> ExpectedToken {
     ExpectedToken::EndOfFile { at }
 }
-
-// ---------------------------------------------------------------------------
-// Validation tests
-// ---------------------------------------------------------------------------
 
 #[test]
 fn canonical_fixture_bytes_match_issue_357_authority() {
@@ -2436,10 +2390,7 @@ fn character_data_keeps_parent_sensitive_contributions_and_coalescing_identity()
     let coalesced = observe(&tokenize_text("<body>a</div>b", 1, generous_limits()));
     let mut texts = Vec::new();
     text_nodes(&coalesced.semantic.tree, &mut texts);
-    assert_eq!(
-        texts,
-        vec![("ab".to_owned(), vec![(6, 7), (13, 14)])]
-    );
+    assert_eq!(texts, vec![("ab".to_owned(), vec![(6, 7), (13, 14)])]);
     assert_eq!(
         coalesced.semantic.identity_count,
         node_count(&coalesced.semantic.tree)
@@ -2780,8 +2731,7 @@ fn generated_sequences_uphold_stack_closure_identity_and_completion_theorems() {
         }
 
         assert_eq!(
-            observed.semantic.checkpoint.open_div_depth,
-            expected_depth,
+            observed.semantic.checkpoint.open_div_depth, expected_depth,
             "{source:?}"
         );
         assert_eq!(
