@@ -2054,10 +2054,15 @@ fn pinned_authority_and_candidate_independence_are_explicit() {
         "68dbcb98bbe1001c6ae2531be2368c608fbafddd"
     );
     let source = include_str!("in_body_div_successor_validation.rs");
-    assert!(!source.contains("use super::driver"));
-    assert!(!source.contains("use super::session"));
-    assert!(!source.contains("use super::result"));
-    assert!(!source.contains("construct_html_document_shell("));
+    let forbidden = [
+        ["use super::", "driver"].concat(),
+        ["use super::", "session"].concat(),
+        ["use super::", "result"].concat(),
+        ["construct_html_document_", "shell("].concat(),
+    ];
+    for pattern in forbidden {
+        assert!(!source.contains(pattern.as_str()), "{pattern}");
+    }
 }
 
 #[test]
