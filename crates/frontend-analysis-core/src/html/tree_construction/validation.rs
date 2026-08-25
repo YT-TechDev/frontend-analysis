@@ -39,11 +39,12 @@ use super::driver::{
 };
 use super::result::{
     HtmlAuthoredSource, HtmlConstructedIdentityCounter, HtmlConstructedNodeId,
-    HtmlDocumentShellAnalysis, HtmlDocumentShellParts, HtmlShellClosure, HtmlShellElement,
-    HtmlShellElementName, HtmlShellElementOrigin, HtmlSynthesisCause, HtmlTextContribution,
-    HtmlTextNode, HtmlTreeAction, HtmlTreeActionKind, HtmlTreeCapability, HtmlTreeCompletion,
-    HtmlTreeCompletionUpgrade, HtmlTreeDiagnostic, HtmlTreeDiagnosticCode, HtmlTreeEvidenceRole,
-    HtmlTreeFreezeError, HtmlTreeIncompleteCause, HtmlTreeNode, HtmlTreeNodeKind, HtmlTreeRecovery,
+    HtmlDocumentShellAnalysis, HtmlDocumentShellParts, HtmlElement,
+    HtmlSelectedOrdinaryElementName, HtmlShellClosure, HtmlShellElement, HtmlShellElementName,
+    HtmlShellElementOrigin, HtmlSynthesisCause, HtmlTextContribution, HtmlTextNode, HtmlTreeAction,
+    HtmlTreeActionKind, HtmlTreeCapability, HtmlTreeCompletion, HtmlTreeCompletionUpgrade,
+    HtmlTreeDiagnostic, HtmlTreeDiagnosticCode, HtmlTreeEvidenceRole, HtmlTreeFreezeError,
+    HtmlTreeIncompleteCause, HtmlTreeNode, HtmlTreeNodeKind, HtmlTreeRecovery,
     HtmlTreeTokenTrigger, HtmlTreeUnsupportedCapability, freeze,
 };
 use super::session::{
@@ -293,13 +294,13 @@ fn project_tree(analysis: &HtmlDocumentShellAnalysis, id: HtmlConstructedNodeId)
         .collect();
     match node.kind() {
         HtmlTreeNodeKind::Document => GoldNode::Document(children),
-        HtmlTreeNodeKind::Element(element) => GoldNode::Element {
-            name: match element.name() {
+        HtmlTreeNodeKind::Element(HtmlElement::Shell(shell)) => GoldNode::Element {
+            name: match shell.name() {
                 HtmlShellElementName::Html => "html",
                 HtmlShellElementName::Head => "head",
                 HtmlShellElementName::Body => "body",
             },
-            origin: match element.origin() {
+            origin: match shell.origin() {
                 HtmlShellElementOrigin::Authored { complete, raw_name } => GoldOrigin::Authored(
                     (complete.range().start(), complete.range().end()),
                     (raw_name.range().start(), raw_name.range().end()),
@@ -308,6 +309,26 @@ fn project_tree(analysis: &HtmlDocumentShellAnalysis, id: HtmlConstructedNodeId)
                     HtmlSynthesisCause::ImpliedByDocumentStructure,
                 ) => GoldOrigin::None,
             },
+            children,
+        },
+        // Kept total so this projection has no unreachable arm, but no TC-S1
+        // GOLD case constructs a selected ordinary element: the TC-S3
+        // successor has its own independent GOLD and its own production
+        // correspondence test.
+        HtmlTreeNodeKind::Element(HtmlElement::SelectedOrdinary(selected)) => GoldNode::Element {
+            name: match selected.name() {
+                HtmlSelectedOrdinaryElementName::Div => "div",
+            },
+            origin: GoldOrigin::Authored(
+                (
+                    selected.complete().range().start(),
+                    selected.complete().range().end(),
+                ),
+                (
+                    selected.raw_name().range().start(),
+                    selected.raw_name().range().end(),
+                ),
+            ),
             children,
         },
         HtmlTreeNodeKind::Text(text) => GoldNode::Text {
@@ -414,6 +435,12 @@ fn project_diagnostics(analysis: &HtmlDocumentShellAnalysis) -> Vec<GoldDiagnost
             HtmlTreeDiagnosticCode::DuplicateBodyStartTag => GoldDiagnostic::DuplicateBody,
             HtmlTreeDiagnosticCode::AfterBodyCharacterData => {
                 panic!("the TC-S1 predecessor GOLD never produces the TC-S2 after-body diagnostic")
+            }
+            HtmlTreeDiagnosticCode::UnmatchedSelectedOrdinaryEndTag
+            | HtmlTreeDiagnosticCode::OpenSelectedOrdinaryElementAtEndOfFile => {
+                panic!(
+                    "the TC-S1 predecessor GOLD never produces a TC-S3 selected ordinary diagnostic"
+                )
             }
         })
         .collect()
@@ -561,7 +588,10 @@ fn shell_element_count(analysis: &HtmlDocumentShellAnalysis, name: HtmlShellElem
         .nodes_in_creation_order()
         .iter()
         .filter(|node| {
-            matches!(node.kind(), HtmlTreeNodeKind::Element(element) if element.name() == name)
+            matches!(
+                node.kind(),
+                HtmlTreeNodeKind::Element(HtmlElement::Shell(shell)) if shell.name() == name
+            )
         })
         .count()
 }
@@ -714,7 +744,10 @@ fn synthesized_and_root_nodes_carry_no_authored_source() {
                     "{}: the document root has no authored source",
                     case.id
                 ),
-                HtmlTreeNodeKind::Element(element) => match element.origin() {
+                HtmlTreeNodeKind::Element(HtmlElement::SelectedOrdinary(_)) => {
+                    unreachable!("no TC-S1 GOLD case constructs a selected ordinary element")
+                }
+                HtmlTreeNodeKind::Element(HtmlElement::Shell(shell)) => match shell.origin() {
                     HtmlShellElementOrigin::Synthesized(_) => assert!(
                         node.authored_source().is_none(),
                         "{}: a synthesized element has no authored source",
@@ -1239,8 +1272,16 @@ fn duplicate_body_start_tag_clears_frameset_ok_without_creating_a_node() {
 fn unproved_token_shapes_remain_explicit_tree_unsupported() {
     for (source, expected) in [
         ("<body><p>", HtmlTreeCapability::NonShellElementTag),
-        ("<div>", HtmlTreeCapability::NonShellElementTag),
         ("</p>", HtmlTreeCapability::NonShellElementTag),
+        // `div` is admitted lexically by the TC-S3 successor, so a `div` in a
+        // document position that successor does not prove now carries its own
+        // wrong-mode refusal rather than the unproved-name one. It is still
+        // explicit tree-unsupported evidence that committed nothing, and the
+        // unproved-name meaning above is unchanged for every other name.
+        (
+            "<div>",
+            HtmlTreeCapability::SelectedOrdinaryTagOutsideInBody,
+        ),
         ("<body a>", HtmlTreeCapability::ShellTagAttribute),
         ("<html lang=en>", HtmlTreeCapability::ShellTagAttribute),
         ("<body/>", HtmlTreeCapability::SelfClosingShellTag),
@@ -1390,8 +1431,8 @@ fn retained_evidence_outlives_the_caller_source_handle() {
         .nodes_in_creation_order()
         .into_iter()
         .find(|node| {
-            matches!(node.kind(), HtmlTreeNodeKind::Element(element)
-                if element.name() == HtmlShellElementName::Body)
+            matches!(node.kind(), HtmlTreeNodeKind::Element(HtmlElement::Shell(shell))
+                if shell.name() == HtmlShellElementName::Body)
         })
         .expect("body element");
     let Some(HtmlAuthoredSource::StartTag { complete, raw_name }) = body.authored_source() else {
@@ -1466,35 +1507,35 @@ fn valid_parts(fixture: &FreezeFixture) -> HtmlDocumentShellParts {
                 html,
                 Some(root),
                 vec![head, body],
-                HtmlTreeNodeKind::Element(HtmlShellElement::new(
+                HtmlTreeNodeKind::Element(HtmlElement::Shell(HtmlShellElement::new(
                     HtmlShellElementName::Html,
                     HtmlShellElementOrigin::Synthesized(
                         HtmlSynthesisCause::ImpliedByDocumentStructure,
                     ),
-                )),
+                ))),
             ),
             HtmlTreeNode::new(
                 head,
                 Some(html),
                 vec![],
-                HtmlTreeNodeKind::Element(HtmlShellElement::new(
+                HtmlTreeNodeKind::Element(HtmlElement::Shell(HtmlShellElement::new(
                     HtmlShellElementName::Head,
                     HtmlShellElementOrigin::Synthesized(
                         HtmlSynthesisCause::ImpliedByDocumentStructure,
                     ),
-                )),
+                ))),
             ),
             HtmlTreeNode::new(
                 body,
                 Some(html),
                 vec![],
-                HtmlTreeNodeKind::Element(HtmlShellElement::new(
+                HtmlTreeNodeKind::Element(HtmlElement::Shell(HtmlShellElement::new(
                     HtmlShellElementName::Body,
                     HtmlShellElementOrigin::Authored {
                         complete: fixture.source.anchor(0, 6).expect("valid range"),
                         raw_name: fixture.source.anchor(1, 5).expect("valid range"),
                     },
-                )),
+                ))),
             ),
         ],
         root,
@@ -1514,6 +1555,8 @@ fn valid_parts(fixture: &FreezeFixture) -> HtmlDocumentShellParts {
         processed_tokens: 1,
         committed_prefix_end: 6,
         completion: HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete),
+        // TC-S1 shell parts open no selected ordinary element.
+        final_open_selected_ordinary: Vec::new(),
     }
 }
 
@@ -1695,13 +1738,13 @@ fn freeze_rejects_fabricated_and_foreign_source_evidence() {
         parts.nodes[2].id(),
         parts.nodes[2].parent(),
         vec![],
-        HtmlTreeNodeKind::Element(HtmlShellElement::new(
+        HtmlTreeNodeKind::Element(HtmlElement::Shell(HtmlShellElement::new(
             HtmlShellElementName::Head,
             HtmlShellElementOrigin::Authored {
                 complete: foreign.anchor(0, 6).expect("valid range"),
                 raw_name: foreign.anchor(1, 5).expect("valid range"),
             },
-        )),
+        ))),
     );
     assert!(matches!(
         freeze_parts(&fixture, parts),
@@ -1715,13 +1758,13 @@ fn freeze_rejects_fabricated_and_foreign_source_evidence() {
         parts.nodes[3].id(),
         parts.nodes[3].parent(),
         vec![],
-        HtmlTreeNodeKind::Element(HtmlShellElement::new(
+        HtmlTreeNodeKind::Element(HtmlElement::Shell(HtmlShellElement::new(
             HtmlShellElementName::Body,
             HtmlShellElementOrigin::Authored {
                 complete: impostor.anchor(0, 6).expect("valid range"),
                 raw_name: impostor.anchor(1, 5).expect("valid range"),
             },
-        )),
+        ))),
     );
     assert!(matches!(
         freeze_parts(&fixture, parts),
@@ -1734,13 +1777,13 @@ fn freeze_rejects_fabricated_and_foreign_source_evidence() {
         parts.nodes[3].id(),
         parts.nodes[3].parent(),
         vec![],
-        HtmlTreeNodeKind::Element(HtmlShellElement::new(
+        HtmlTreeNodeKind::Element(HtmlElement::Shell(HtmlShellElement::new(
             HtmlShellElementName::Body,
             HtmlShellElementOrigin::Authored {
                 complete: fixture.source.anchor(0, 6).expect("valid range"),
                 raw_name: fixture.source.anchor(6, 7).expect("valid range"),
             },
-        )),
+        ))),
     );
     assert!(matches!(
         freeze_parts(&fixture, parts),

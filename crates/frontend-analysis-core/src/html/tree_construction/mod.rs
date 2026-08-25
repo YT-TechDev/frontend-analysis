@@ -1,5 +1,6 @@
 //! TC-S1 — Disabled-Scripting Document Shell Construction, plus the accepted
-//! TC-S2 — Selected After-Body Uniform Character-Run Handling successor.
+//! TC-S2 — Selected After-Body Uniform Character-Run Handling and TC-S3 —
+//! Selected In-Body No-Attribute `div` Construction successors.
 //!
 //! The first Core-private HTML tree-construction capability, implemented on
 //! the architecture approved under Issue #117 and recorded by ADR 0010
@@ -9,6 +10,10 @@
 //! `docs/development/HTML_DOCUMENT_SHELL_CONSTRUCTION.md`. TC-S2's accepted
 //! `AfterBody -> InBody` recovery back-edge (Issue #355) is layered onto the
 //! same driver/session/result split without moving any of its boundaries.
+//! TC-S3's accepted selected `div` construction (Issue #359) is layered on the
+//! same way: it adds a closed private selected ordinary HTML-element domain
+//! inside the existing session/result ownership, leaving the tokenizer
+//! tree-unaware and the driver tag-name agnostic. Shell types stay shell-only.
 //!
 //! ```text
 //! &SourceText + HtmlTokenizerLimits
@@ -54,6 +59,8 @@ pub(crate) mod session;
 mod after_body_successor_production;
 #[cfg(test)]
 mod after_body_successor_validation;
+#[cfg(test)]
+mod in_body_div_successor_production;
 #[cfg(test)]
 mod in_body_div_successor_validation;
 #[cfg(test)]

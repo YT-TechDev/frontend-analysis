@@ -1,4 +1,5 @@
-//! Immutable, validated TC-S1 result meaning.
+//! Immutable, validated result meaning for TC-S1 and its accepted TC-S2 and
+//! TC-S3 successors.
 //!
 //! This module owns the durable half of the accepted Candidate C model: the
 //! frozen tree, constructed identity, authored/synthesized provenance,
@@ -34,6 +35,7 @@ use std::fmt;
 
 use crate::{SourceAnchor, SourceId, SourceRangeError, SourceText};
 
+use super::super::token::{HtmlTagKind, HtmlToken};
 use super::super::tokenizer::result::{HtmlTokenizerCompletion, HtmlTokenizerRunResult};
 
 /// A result-scoped constructed-node identity.
@@ -178,6 +180,141 @@ impl HtmlShellElement {
     }
 }
 
+/// The closed selected ordinary HTML-element name domain the accepted TC-S3
+/// theorem proves.
+///
+/// Deliberately separate from [`HtmlShellElementName`], which stays
+/// `html`/`head`/`body` only: neither domain may be stretched to carry the
+/// other's meaning. This domain is closed at `div`, and it is not an
+/// arbitrary-name, generic ordinary-element, or namespace-switching
+/// representation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HtmlSelectedOrdinaryElementName {
+    Div,
+}
+
+impl HtmlSelectedOrdinaryElementName {
+    /// The interpreted tag name this closed domain member is spelled with.
+    ///
+    /// Used only to correlate a recorded closure against the retained emitted
+    /// end-tag token. It is not a parser table and performs no source lookup.
+    const fn interpreted(self) -> &'static str {
+        match self {
+            Self::Div => "div",
+        }
+    }
+}
+
+/// A selected ordinary HTML element observation.
+///
+/// The HTML namespace is a type invariant here rather than a stored field:
+/// TC-S3 proves no namespace switching and no foreign content, so no generic
+/// namespace enum is introduced to record a value that cannot vary.
+///
+/// A selected ordinary element is authored-only. The accepted theorem creates
+/// one exactly from its own authored start tag, so there is no synthesized
+/// variant and no synthesis cause: its matching end tag is closure evidence
+/// recorded separately as [`HtmlTreeActionKind::ClosedSelectedOrdinaryElement`]
+/// and is never this node's origin.
+#[derive(Clone)]
+pub(crate) struct HtmlSelectedOrdinaryElement {
+    name: HtmlSelectedOrdinaryElementName,
+    complete: SourceAnchor,
+    raw_name: SourceAnchor,
+}
+
+impl HtmlSelectedOrdinaryElement {
+    pub(super) fn new(
+        name: HtmlSelectedOrdinaryElementName,
+        complete: SourceAnchor,
+        raw_name: SourceAnchor,
+    ) -> Self {
+        Self {
+            name,
+            complete,
+            raw_name,
+        }
+    }
+
+    pub(crate) fn name(&self) -> HtmlSelectedOrdinaryElementName {
+        self.name
+    }
+
+    /// The exact retained complete authored start tag, propagated unchanged
+    /// from the validated start-tag token.
+    pub(crate) fn complete(&self) -> &SourceAnchor {
+        &self.complete
+    }
+
+    /// The exact retained raw tag-name spelling. A mixed-case `<DiV>` keeps
+    /// its exact authored spelling here while the interpreted name stays
+    /// [`HtmlSelectedOrdinaryElementName::Div`].
+    pub(crate) fn raw_name(&self) -> &SourceAnchor {
+        &self.raw_name
+    }
+}
+
+impl fmt::Debug for HtmlSelectedOrdinaryElement {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("HtmlSelectedOrdinaryElement")
+            .field("name", &self.name)
+            .field("source_id", &self.complete.source_id())
+            .field("complete_range", &self.complete.range())
+            .field("raw_name_range", &self.raw_name.range())
+            .finish()
+    }
+}
+
+/// The interpreted name of a constructed element, in whichever closed domain
+/// owns it.
+///
+/// This is a projection for reading an element's name without first knowing
+/// which domain it belongs to. It never merges the two domains: each arm
+/// stays exactly its own closed enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HtmlElementName {
+    Shell(HtmlShellElementName),
+    SelectedOrdinary(HtmlSelectedOrdinaryElementName),
+}
+
+/// What kind of element a constructed element node is.
+///
+/// Shell meaning and selected ordinary meaning are kept in separate closed
+/// domains so neither can be made semantically false by the other. A shell
+/// element may be authored or synthesized; a selected ordinary element is
+/// always authored.
+#[derive(Debug, Clone)]
+pub(crate) enum HtmlElement {
+    Shell(HtmlShellElement),
+    SelectedOrdinary(HtmlSelectedOrdinaryElement),
+}
+
+impl HtmlElement {
+    pub(crate) fn name(&self) -> HtmlElementName {
+        match self {
+            Self::Shell(element) => HtmlElementName::Shell(element.name()),
+            Self::SelectedOrdinary(element) => HtmlElementName::SelectedOrdinary(element.name()),
+        }
+    }
+
+    /// The shell element this is, when it is one.
+    pub(crate) fn shell(&self) -> Option<&HtmlShellElement> {
+        match self {
+            Self::Shell(element) => Some(element),
+            Self::SelectedOrdinary(_) => None,
+        }
+    }
+
+    /// The selected ordinary element this is, when it is one.
+    pub(crate) fn selected_ordinary(&self) -> Option<&HtmlSelectedOrdinaryElement> {
+        match self {
+            Self::SelectedOrdinary(element) => Some(element),
+            Self::Shell(_) => None,
+        }
+    }
+}
+
 /// One exact ordered authored character contribution to a text node.
 ///
 /// The retained anchor is the originating validated character token's own
@@ -266,7 +403,7 @@ pub(crate) enum HtmlTreeNodeKind {
     /// The document root. It has no authored source and no synthesis cause:
     /// the root is the parse result's container, not an implied element.
     Document,
-    Element(HtmlShellElement),
+    Element(HtmlElement),
     Text(HtmlTextNode),
 }
 
@@ -334,12 +471,20 @@ impl HtmlTreeNode {
     pub(crate) fn authored_source(&self) -> Option<HtmlAuthoredSource<'_>> {
         match &self.kind {
             HtmlTreeNodeKind::Document => None,
-            HtmlTreeNodeKind::Element(element) => match element.origin() {
+            HtmlTreeNodeKind::Element(HtmlElement::Shell(shell)) => match shell.origin() {
                 HtmlShellElementOrigin::Authored { complete, raw_name } => {
                     Some(HtmlAuthoredSource::StartTag { complete, raw_name })
                 }
                 HtmlShellElementOrigin::Synthesized(_) => None,
             },
+            // A selected ordinary element is authored-only: its origin is its
+            // own exact start tag, never the matching end tag that closed it.
+            HtmlTreeNodeKind::Element(HtmlElement::SelectedOrdinary(selected)) => {
+                Some(HtmlAuthoredSource::StartTag {
+                    complete: selected.complete(),
+                    raw_name: selected.raw_name(),
+                })
+            }
             HtmlTreeNodeKind::Text(text) => {
                 Some(HtmlAuthoredSource::Characters(text.contributions()))
             }
@@ -432,7 +577,7 @@ pub(crate) enum HtmlShellClosure {
     ImpliedByToken,
 }
 
-/// One committed TC-S1 action, with the token that triggered it.
+/// One committed action, with the token that triggered it.
 #[derive(Debug, Clone)]
 pub(crate) struct HtmlTreeAction {
     kind: HtmlTreeActionKind,
@@ -453,11 +598,12 @@ impl HtmlTreeAction {
     }
 }
 
-/// The selective committed-action vocabulary TC-S1 proves.
+/// The selective committed-action vocabulary this subsystem proves.
 ///
 /// This is deliberately not a complete construction event log: it records only
-/// what a supported TC-S1 query needs in order to explain a durable
-/// observation.
+/// what a supported query needs in order to explain a durable observation.
+/// TC-S3 extended it with the selected ordinary insertion, closure, and
+/// ignored-end variants and nothing else.
 #[derive(Debug, Clone)]
 pub(crate) enum HtmlTreeActionKind {
     /// A shell element node was created from the trigger token's own authored
@@ -480,6 +626,28 @@ pub(crate) enum HtmlTreeActionKind {
     /// The trigger token's characters were appended to the adjacent text node
     /// that already exists at the insertion position.
     AppendedToTextNode { node: HtmlConstructedNodeId },
+    /// A selected ordinary element node was created from the trigger token's
+    /// own authored start tag. Here, as for an authored shell element, the
+    /// trigger is also the node's authored origin.
+    InsertedAuthoredSelectedOrdinaryElement {
+        node: HtmlConstructedNodeId,
+        name: HtmlSelectedOrdinaryElementName,
+    },
+    /// An open selected ordinary element was closed by its own exact authored
+    /// end tag, which this action's trigger retains. No node was created, and
+    /// the end tag is closure evidence only: it is never the closed node's
+    /// authored origin.
+    ClosedSelectedOrdinaryElement {
+        node: HtmlConstructedNodeId,
+        name: HtmlSelectedOrdinaryElementName,
+    },
+    /// A selected ordinary end tag with no matching open element was ignored.
+    /// No node was created, closed, or otherwise mutated, and no constructed
+    /// identity was admitted. The accompanying parse diagnostic is separate
+    /// evidence with its own meaning.
+    IgnoredUnmatchedSelectedOrdinaryEndTag {
+        name: HtmlSelectedOrdinaryElementName,
+    },
     /// An open shell element was closed. No node was created.
     ClosedShellElement {
         node: HtmlConstructedNodeId,
@@ -510,8 +678,11 @@ impl HtmlTreeActionKind {
             | Self::InsertedSynthesizedShellElement { node, .. }
             | Self::InsertedTextNode { node }
             | Self::AppendedToTextNode { node }
+            | Self::InsertedAuthoredSelectedOrdinaryElement { node, .. }
+            | Self::ClosedSelectedOrdinaryElement { node, .. }
             | Self::ClosedShellElement { node, .. } => Some(*node),
-            Self::AcknowledgedShellEndTag { .. }
+            Self::IgnoredUnmatchedSelectedOrdinaryEndTag { .. }
+            | Self::AcknowledgedShellEndTag { .. }
             | Self::DuplicateShellStartTagCreatedNoNode { .. }
             | Self::ReprocessedToken
             | Self::StoppedParsing => None,
@@ -519,11 +690,12 @@ impl HtmlTreeActionKind {
     }
 }
 
-/// A supported TC-S1 parse diagnostic.
+/// A supported parse diagnostic.
 ///
 /// Tree diagnostics are authored-input evidence. They are independent of
-/// effective completion: a `Complete` TC-S1 result normally carries at least
-/// the missing-DOCTYPE diagnostic. They are also independent of the retained
+/// effective completion: a `Complete` result normally carries at least the
+/// missing-DOCTYPE diagnostic, and neither TC-S3 diagnostic forces
+/// incompleteness either. They are also independent of the retained
 /// tokenizer run's own diagnostics, which are never copied here.
 #[derive(Debug, Clone)]
 pub(crate) struct HtmlTreeDiagnostic {
@@ -569,6 +741,12 @@ pub(crate) enum HtmlTreeDiagnosticCode {
     /// A non-whitespace character run appeared while `AfterBody` was the
     /// actual insertion mode.
     AfterBodyCharacterData,
+    /// A selected ordinary end tag appeared with no matching selected ordinary
+    /// element in the bounded selected-element scope.
+    UnmatchedSelectedOrdinaryEndTag,
+    /// Document parsing reached end of file while a selected ordinary element
+    /// was still open.
+    OpenSelectedOrdinaryElementAtEndOfFile,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -580,16 +758,33 @@ pub(crate) enum HtmlTreeRecovery {
     /// The actual insertion mode changed from `AfterBody` to `InBody` and the
     /// same admitted token was reprocessed there.
     SwitchedToInBodyAndReprocessedSameToken,
+    /// The token was ignored. The constructed tree, the open elements, the
+    /// actual insertion mode, constructed identity, and closure evidence were
+    /// all left exactly as they were.
+    IgnoredToken,
+    /// Document parsing stopped normally with the selected ordinary element
+    /// still open. Nothing was popped, synthesized, or closed, and no closure
+    /// evidence was fabricated for the end-of-file token.
+    StoppedParsingWithOpenSelectedOrdinaryElements,
 }
 
-/// A TC-S1 capability boundary reached by admitted input.
+/// A capability boundary reached by admitted input.
 ///
 /// Unsupported coverage is *not* evidence that the source is invalid HTML,
-/// and it is not a tokenizer condition. It records that TC-S1's proved action
-/// set does not contain the reached rule.
+/// and it is not a tokenizer condition. It records that this subsystem's
+/// proved action set does not contain the reached rule.
+///
+/// Variants are frozen evidence: a successor adds its own rather than
+/// widening or renaming an existing one, so predecessor results keep saying
+/// exactly what they always said.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HtmlTreeCapability {
     /// A tag naming an element outside the proved `html`/`head`/`body` shell.
+    ///
+    /// This is frozen predecessor meaning and keeps it exactly: it is reported
+    /// for a name in neither closed admitted domain. A selected ordinary tag
+    /// never reaches it, and TC-S3 added its own variants below rather than
+    /// widening this one.
     NonShellElementTag,
     /// Attribute evidence on a shell tag. TC-S1 proves no attribute
     /// semantics, including attribute merging on duplicate shell tags.
@@ -606,9 +801,26 @@ pub(crate) enum HtmlTreeCapability {
     UnprovedShellStartTagPosition,
     /// A shell end tag reached in a document position TC-S1 does not prove.
     UnprovedShellEndTagPosition,
+    /// A selected ordinary tag reached an actual insertion mode other than
+    /// `in body`. TC-S3 proves the selected `div` rules only there, so the
+    /// tag is refused before any shell walk, recovery, missing-DOCTYPE, mode,
+    /// action, coverage, or identity effect.
+    SelectedOrdinaryTagOutsideInBody,
+    /// A shell tag reached `in body` while a selected ordinary element was
+    /// still open. TC-S3 proves no shell interaction over an open selected
+    /// ordinary element, so the tag is refused before any partial mutation.
+    ShellTagWithOpenSelectedOrdinaryElement,
+    /// Attribute evidence on a selected ordinary tag. TC-S3 proves no
+    /// attribute semantics for the selected ordinary domain, and deliberately
+    /// does not report the shell-specific
+    /// [`Self::ShellTagAttribute`], which would be false about a `div`.
+    SelectedOrdinaryTagAttribute,
+    /// A self-closing solidus on a selected ordinary tag. Kept distinct from
+    /// [`Self::SelfClosingShellTag`] for the same reason.
+    SelfClosingSelectedOrdinaryTag,
 }
 
-/// The exact typed evidence for a TC-S1 unsupported stop.
+/// The exact typed evidence for an unsupported stop.
 #[derive(Debug, Clone)]
 pub(crate) struct HtmlTreeUnsupportedCapability {
     capability: HtmlTreeCapability,
@@ -826,6 +1038,16 @@ pub(super) struct HtmlDocumentShellParts {
     pub(super) processed_tokens: usize,
     pub(super) committed_prefix_end: usize,
     pub(super) completion: HtmlTreeCompletion,
+    /// The semantic identities of the selected ordinary elements that were
+    /// still open on the private session's own open-element stack when the run
+    /// finished, innermost last.
+    ///
+    /// This is an immutable snapshot taken at hand-off, not the mutable stack:
+    /// it exists so [`freeze`] can check the committed action stream against
+    /// the state it actually describes, and it is consumed and discarded here.
+    /// It never reaches [`HtmlDocumentShellAnalysis`] and no consumer can
+    /// observe it or the parser stack behind it.
+    pub(super) final_open_selected_ordinary: Vec<HtmlConstructedNodeId>,
 }
 
 /// Which retained evidence a source-validation freeze error concerns.
@@ -851,7 +1073,7 @@ pub(crate) enum HtmlTreeCompletionUpgrade {
     DocumentShellIsIncomplete,
 }
 
-/// A TC-S1 freeze/boundary invariant failure.
+/// A freeze/boundary invariant failure.
 ///
 /// This vocabulary is deliberately separate from HTML parse diagnostics and
 /// from [`HtmlTreeCapability`]: a freeze failure means the construction
@@ -945,6 +1167,45 @@ pub(crate) enum HtmlTreeFreezeError {
     /// A node's authored origin is the same authored range as the unsupported
     /// trigger, which would leak identity for input that committed nothing.
     UnsupportedTriggerLeakedAsAuthoredOrigin(HtmlConstructedNodeId),
+    /// A recorded selected ordinary closure names a node that is not a
+    /// selected ordinary element of the recorded name.
+    ClosureSubjectIsNotTheSelectedOrdinaryElement {
+        node: HtmlConstructedNodeId,
+        name: HtmlSelectedOrdinaryElementName,
+    },
+    /// A selected ordinary closure was recorded without the exact authored
+    /// end-tag trigger that is its only permitted evidence. End of file
+    /// fabricates no closure.
+    FabricatedSelectedOrdinaryClosure(HtmlConstructedNodeId),
+    /// A selected ordinary closure was recorded for an element that was not
+    /// the innermost open selected ordinary element at that point, or that
+    /// was never inserted or was already closed. Closure is unique and
+    /// stack-consistent for the selected slice.
+    NonLifoSelectedOrdinaryClosure(HtmlConstructedNodeId),
+    /// A selected ordinary closure trigger does not resolve, in the retained
+    /// tokenizer run, to the exact emitted matching end tag for that element.
+    ///
+    /// This is what makes closure evidence *matching* end-tag evidence rather
+    /// than merely some valid authored anchor: a start tag, an unrelated
+    /// authored token, a differently-named end tag, or an anchor that is not
+    /// the retained token's own complete-tag evidence all land here.
+    ClosureTriggerIsNotTheMatchingEndTag {
+        node: HtmlConstructedNodeId,
+        token_index: usize,
+    },
+    /// The same selected ordinary semantic identity was inserted more than
+    /// once by the committed action stream.
+    DuplicateSelectedOrdinaryInsertion(HtmlConstructedNodeId),
+    /// A recorded final open selected ordinary identity does not resolve to a
+    /// stored selected ordinary element.
+    FinalOpenSelectedOrdinaryIsNotASelectedElement(HtmlConstructedNodeId),
+    /// The selected ordinary elements left open by the committed action stream
+    /// are not exactly, and in the same order as, the session's actual final
+    /// open selected ordinary elements.
+    FinalOpenSelectedOrdinaryStateMismatch {
+        replayed: Vec<HtmlConstructedNodeId>,
+        actual: Vec<HtmlConstructedNodeId>,
+    },
 }
 
 impl fmt::Display for HtmlTreeFreezeError {
@@ -962,8 +1223,8 @@ impl Error for HtmlTreeFreezeError {}
 /// immutable [`HtmlDocumentShellAnalysis`].
 ///
 /// This is the only way an [`HtmlDocumentShellAnalysis`] is created. Every
-/// durable invariant TC-S1 promises is checked here rather than assumed from
-/// how the session happens to be written.
+/// durable invariant this subsystem promises is checked here rather than
+/// assumed from how the session happens to be written.
 pub(super) fn freeze(
     source: &SourceText,
     tokenizer_run: HtmlTokenizerRunResult,
@@ -978,12 +1239,19 @@ pub(super) fn freeze(
         processed_tokens,
         committed_prefix_end,
         completion,
+        final_open_selected_ordinary,
     } = parts;
 
     validate_identity_inventory(&nodes, admitted_creation_events)?;
     validate_structure(&nodes, root)?;
     validate_node_evidence(source, &nodes)?;
     validate_action_evidence(source, &nodes, &actions, tokenizer_run.tokens().len())?;
+    validate_selected_ordinary_closures(
+        &nodes,
+        &actions,
+        &tokenizer_run,
+        &final_open_selected_ordinary,
+    )?;
     validate_diagnostic_evidence(source, &diagnostics, tokenizer_run.tokens().len())?;
     validate_completion(
         source,
@@ -1152,8 +1420,19 @@ fn validate_node_evidence(
     for node in nodes {
         match node.kind() {
             HtmlTreeNodeKind::Document => {}
-            HtmlTreeNodeKind::Element(element) => match element.origin() {
-                HtmlShellElementOrigin::Authored { complete, raw_name } => {
+            HtmlTreeNodeKind::Element(element) => {
+                let authored = match element {
+                    HtmlElement::Shell(shell) => match shell.origin() {
+                        HtmlShellElementOrigin::Authored { complete, raw_name } => {
+                            Some((complete, raw_name))
+                        }
+                        HtmlShellElementOrigin::Synthesized(_) => None,
+                    },
+                    HtmlElement::SelectedOrdinary(selected) => {
+                        Some((selected.complete(), selected.raw_name()))
+                    }
+                };
+                if let Some((complete, raw_name)) = authored {
                     validate_evidence(source, HtmlTreeEvidenceRole::AuthoredCompleteTag, complete)?;
                     validate_evidence(source, HtmlTreeEvidenceRole::AuthoredRawName, raw_name)?;
                     if complete.range().start() > raw_name.range().start()
@@ -1164,8 +1443,7 @@ fn validate_node_evidence(
                         ));
                     }
                 }
-                HtmlShellElementOrigin::Synthesized(_) => {}
-            },
+            }
             HtmlTreeNodeKind::Text(text) => {
                 if text.contributions().is_empty() {
                     return Err(HtmlTreeFreezeError::InvalidTextContributions(node.id()));
@@ -1222,6 +1500,147 @@ fn validate_action_evidence(
         }
     }
     Ok(())
+}
+
+/// Validates the selected ordinary closure-evidence theorem.
+///
+/// Replays the committed selected ordinary insertion and closure actions in
+/// committed order over a private stack of semantic constructed identities,
+/// correlating each closure against the retained tokenizer run and finally
+/// against the session's own actual final open selected state. Together that
+/// proves every part of the theorem:
+///
+/// - every insertion and closure subject resolves to a stored selected
+///   ordinary element of the recorded name;
+/// - a selected ordinary identity is inserted at most once, so the replay
+///   stack cannot be padded with a repeated identity;
+/// - a closure trigger resolves, in the retained run, to the exact emitted
+///   matching end tag for that element — not merely to some valid authored
+///   anchor — so a start tag, an unrelated token, or end of file can never
+///   stand in as closure evidence;
+/// - closure order is stack-consistent (LIFO) for the selected slice, and
+///   each element is closed at most once, because closing pops it; and
+/// - the identities still open after the replay are exactly, and in the same
+///   order as, the session's actual final open selected ordinary elements.
+///
+/// That last comparison is what makes this validation of construction output
+/// rather than trust in how the session happens to be written: a session that
+/// popped a selected element without recording its closure would otherwise be
+/// indistinguishable from the valid end-of-file-open case.
+fn validate_selected_ordinary_closures(
+    nodes: &[HtmlTreeNode],
+    actions: &[HtmlTreeAction],
+    tokenizer_run: &HtmlTokenizerRunResult,
+    final_open_selected_ordinary: &[HtmlConstructedNodeId],
+) -> Result<(), HtmlTreeFreezeError> {
+    let mut open: Vec<HtmlConstructedNodeId> = Vec::new();
+    let mut inserted: Vec<HtmlConstructedNodeId> = Vec::new();
+    for action in actions {
+        match action.kind() {
+            HtmlTreeActionKind::InsertedAuthoredSelectedOrdinaryElement { node, name } => {
+                expect_selected_ordinary(nodes, *node, *name)?;
+                if inserted.contains(node) {
+                    return Err(HtmlTreeFreezeError::DuplicateSelectedOrdinaryInsertion(
+                        *node,
+                    ));
+                }
+                inserted.push(*node);
+                open.push(*node);
+            }
+            HtmlTreeActionKind::ClosedSelectedOrdinaryElement { node, name } => {
+                expect_selected_ordinary(nodes, *node, *name)?;
+                validate_closure_trigger(*node, *name, action.trigger(), tokenizer_run)?;
+                if open.last() != Some(node) {
+                    return Err(HtmlTreeFreezeError::NonLifoSelectedOrdinaryClosure(*node));
+                }
+                open.pop();
+            }
+            _ => {}
+        }
+    }
+
+    for id in final_open_selected_ordinary {
+        let resolves = find(nodes, *id).is_some_and(|node| {
+            matches!(
+                node.kind(),
+                HtmlTreeNodeKind::Element(HtmlElement::SelectedOrdinary(_))
+            )
+        });
+        if !resolves {
+            return Err(HtmlTreeFreezeError::FinalOpenSelectedOrdinaryIsNotASelectedElement(*id));
+        }
+    }
+    if open != final_open_selected_ordinary {
+        return Err(
+            HtmlTreeFreezeError::FinalOpenSelectedOrdinaryStateMismatch {
+                replayed: open,
+                actual: final_open_selected_ordinary.to_vec(),
+            },
+        );
+    }
+    Ok(())
+}
+
+/// Proves a recorded closure trigger is the exact emitted matching end tag.
+///
+/// Reads the retained emitted token at the trigger's own index and compares it
+/// against the recorded evidence. This is correlation of retained evidence, not
+/// source discovery: no source search, rescan, or retokenization occurs, and
+/// the tokenizer is neither consulted nor re-run.
+fn validate_closure_trigger(
+    node: HtmlConstructedNodeId,
+    name: HtmlSelectedOrdinaryElementName,
+    trigger: &HtmlTreeTokenTrigger,
+    tokenizer_run: &HtmlTokenizerRunResult,
+) -> Result<(), HtmlTreeFreezeError> {
+    // End of file has no authored extent and may never close anything.
+    let Some(boundary) = trigger.authored_boundary() else {
+        return Err(HtmlTreeFreezeError::FabricatedSelectedOrdinaryClosure(node));
+    };
+    let mismatch = || HtmlTreeFreezeError::ClosureTriggerIsNotTheMatchingEndTag {
+        node,
+        token_index: trigger.token_index(),
+    };
+
+    let Some(HtmlToken::Tag(tag)) = tokenizer_run.tokens().get(trigger.token_index()) else {
+        return Err(mismatch());
+    };
+    if !matches!(tag.kind(), HtmlTagKind::End) {
+        return Err(mismatch());
+    }
+    if tag.name().interpreted() != name.interpreted() {
+        return Err(mismatch());
+    }
+    // The recorded anchor must be that token's own complete-tag evidence, not
+    // merely an anchor that happens to revalidate.
+    let complete = tag.complete();
+    if boundary.source_id() != complete.source_id()
+        || boundary.range() != complete.range()
+        || boundary.fragment() != complete.fragment()
+    {
+        return Err(mismatch());
+    }
+    Ok(())
+}
+
+/// Resolves a recorded selected ordinary subject by semantic constructed
+/// identity and checks that it really is that element.
+fn expect_selected_ordinary(
+    nodes: &[HtmlTreeNode],
+    id: HtmlConstructedNodeId,
+    name: HtmlSelectedOrdinaryElementName,
+) -> Result<(), HtmlTreeFreezeError> {
+    let node = find(nodes, id).ok_or(HtmlTreeFreezeError::UnresolvedActionSubject(id))?;
+    let matches_name = matches!(
+        node.kind(),
+        HtmlTreeNodeKind::Element(HtmlElement::SelectedOrdinary(selected))
+            if selected.name() == name
+    );
+    if matches_name {
+        Ok(())
+    } else {
+        Err(HtmlTreeFreezeError::ClosureSubjectIsNotTheSelectedOrdinaryElement { node: id, name })
+    }
 }
 
 fn validate_diagnostic_evidence(
@@ -1355,7 +1774,10 @@ fn is_complete_document_shell(nodes: &[HtmlTreeNode], root: HtmlConstructedNodeI
 }
 
 fn is_shell_element(node: &HtmlTreeNode, name: HtmlShellElementName) -> bool {
-    matches!(node.kind(), HtmlTreeNodeKind::Element(element) if element.name() == name)
+    matches!(
+        node.kind(),
+        HtmlTreeNodeKind::Element(HtmlElement::Shell(shell)) if shell.name() == name
+    )
 }
 
 /// Validates already-retained evidence against the exact supplied
