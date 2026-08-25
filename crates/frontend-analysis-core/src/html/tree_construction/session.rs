@@ -1,5 +1,5 @@
-//! The private TC-S1 tree-construction session, with its accepted TC-S2 and
-//! TC-S3 successors.
+//! The private TC-S1 tree-construction session, with its accepted TC-S2,
+//! TC-S3, and TC-S4 successors.
 //!
 //! The session exclusively owns every piece of mutable tree-construction
 //! state for exactly one run: the insertion mode, the open elements — the
@@ -30,10 +30,18 @@
 //!    exact evidence. Unsupported tag syntax — an unproved name, attributes, a
 //!    self-closing solidus — is refused here.
 //! 2. [`classify`] is *read-only selection*. It is a free function of the
-//!    actual insertion mode, the already-read count of open selected ordinary
-//!    elements, and the admitted token: it takes no `&self`, performs no
-//!    mutation, and returns either the step to apply or the
+//!    actual insertion mode, the already-read ordered names of the open
+//!    selected ordinary elements, and the admitted token: it takes no `&self`,
+//!    performs no mutation, and returns either the step to apply or the
 //!    [`HtmlTreeCapability`] this subsystem does not prove.
+//!
+//! TC-S4 adds a third separation inside the mutating half. A supported
+//! selected ordinary end tag first resolves a complete
+//! [`SelectedOrdinaryEndPlan`] from read-only state — nearest same-name
+//! target, the complete intervening suffix, and the bounded implied-end no-op
+//! invariant — and only then commits, in one stack mutation followed by the
+//! ordered evidence. There is no partial pop, no rollback, and no state to
+//! reconstruct after a refusal.
 //!
 //! An unsupported cell therefore cannot mutate anything, and the session is a
 //! valid semantic construction checkpoint at every instant — no rollback,
@@ -51,6 +59,13 @@
 //! TC-S2's validated `AfterBody -> InBody` recovery back-edge to coexist with
 //! finite per-token work: the bound comes from the finite [`InsertionMode`]
 //! domain, not from a strictly-forward order or a numeric budget.
+//!
+//! TC-S4's recovery adds no work dimension either, and no budget stands behind
+//! it. Termination stays structural: the nearest-target lookup and the suffix
+//! plan each traverse the finite open-element stack once, a committed selected
+//! end removes at least its own target from that stack, and the number of
+//! recovery relations is exactly the number of elements removed above it. No
+//! same-token redispatch, tokenizer feedback, or retry is introduced.
 
 use crate::SourceAnchor;
 
@@ -253,6 +268,9 @@ fn admitted_element_name(interpreted: &str) -> Option<AdmittedElementName> {
         "div" => Some(AdmittedElementName::SelectedOrdinary(
             HtmlSelectedOrdinaryElementName::Div,
         )),
+        "section" => Some(AdmittedElementName::SelectedOrdinary(
+            HtmlSelectedOrdinaryElementName::Section,
+        )),
         _ => None,
     }
 }
@@ -332,6 +350,7 @@ enum Effect {
     RecordAfterBodyCharacterData,
     InsertSelectedOrdinaryElement(HtmlSelectedOrdinaryElementName),
     CloseSelectedOrdinaryElement(HtmlSelectedOrdinaryElementName),
+    RecoverInterveningSelectedOrdinaryElementsAndCloseTarget(HtmlSelectedOrdinaryElementName),
     RecordUnmatchedSelectedOrdinaryEndTag(HtmlSelectedOrdinaryElementName),
     RecordOpenSelectedOrdinaryElementAtEndOfFile,
 }
@@ -384,14 +403,20 @@ fn selected_in_body_character_step() -> ModeStep {
 /// document position the GOLD does not prove is refused like any other.
 ///
 /// This is the second of the two gates. It is deliberately read-only: it
-/// borrows nothing mutable, takes the caller's already-read
-/// `open_selected_ordinary_elements` depth by value, and mutates nothing, so
-/// an unsupported result is structurally guaranteed to stop before mutation.
-/// The depth is the only construction state it needs, because the accepted
-/// represented state is exactly `[html, body] ++ [div]^k`.
+/// borrows nothing mutable, reads the caller's already-taken ordered
+/// selected-name projection, and mutates nothing, so an unsupported result is
+/// structurally guaranteed to stop before mutation.
+///
+/// TC-S3 needed only the selected depth here, because its represented state
+/// was `[html, body] ++ [div]^k` and every selected end tag therefore matched
+/// the current node or nothing. TC-S4's represented state is `[html, body] ++
+/// W` with `W ∈ {Div, Section}*`, so selecting between the matching, the
+/// heterogeneous recovery, and the ignored cells needs the ordered names —
+/// and nothing more. The projection carries no constructed identity, so no
+/// relationship meaning can leak into rule selection.
 fn classify(
     mode: InsertionMode,
-    open_selected_ordinary_elements: usize,
+    open_selected_ordinary: &[HtmlSelectedOrdinaryElementName],
     token: &AdmittedToken<'_>,
 ) -> Result<ModeStep, HtmlTreeCapability> {
     // A selected ordinary tag is proved only in the actual `in body` mode.
@@ -531,7 +556,7 @@ fn classify(
             // No shell interaction over an open selected ordinary element is
             // proved. Refusing before the token match keeps `</body>` with an
             // open `div` from committing any part of the body close.
-            if open_selected_ordinary_elements > 0 && token.is_shell_tag() {
+            if !open_selected_ordinary.is_empty() && token.is_shell_tag() {
                 return Err(HtmlTreeCapability::ShellTagWithOpenSelectedOrdinaryElement);
             }
             match token {
@@ -543,25 +568,37 @@ fn classify(
                     effect: Some(Effect::InsertSelectedOrdinaryElement(*name)),
                     next: None,
                 }),
-                // The matching end tag closes the innermost open selected
-                // ordinary element. It is closure/trigger evidence only and
-                // never becomes that element's authored origin.
-                AdmittedToken::EndTag {
-                    name: AdmittedElementName::SelectedOrdinary(name),
-                    ..
-                } if open_selected_ordinary_elements > 0 => Ok(ModeStep::Consume {
-                    effect: Some(Effect::CloseSelectedOrdinaryElement(*name)),
-                    next: None,
-                }),
-                // A stray selected ordinary end tag is a parse error that
-                // ignores the token: one diagnostic, one ignored disposition,
-                // and committed progress, with the tree, the open elements,
-                // the mode, identity, and closure all unchanged.
+                // A supported selected ordinary end tag selects its nearest
+                // same-name open target, and which of the three cells applies
+                // is decided entirely by where that target is.
                 AdmittedToken::EndTag {
                     name: AdmittedElementName::SelectedOrdinary(name),
                     ..
                 } => Ok(ModeStep::Consume {
-                    effect: Some(Effect::RecordUnmatchedSelectedOrdinaryEndTag(*name)),
+                    effect: Some(match selected_end_target(open_selected_ordinary, *name) {
+                        // No same-name target is open. A stray selected
+                        // ordinary end tag is a parse error that ignores the
+                        // token: one diagnostic, one ignored disposition, and
+                        // committed progress, with the tree, the open
+                        // elements, the mode, identity, closure, and recovery
+                        // evidence all unchanged.
+                        SelectedEndTarget::Absent => {
+                            Effect::RecordUnmatchedSelectedOrdinaryEndTag(*name)
+                        }
+                        // The nearest same-name target is the current node.
+                        // This is the accepted TC-S3 cell, unchanged: the end
+                        // tag closes exactly that element, nothing is
+                        // recovered, and no misnested diagnostic is recorded.
+                        SelectedEndTarget::Current => Effect::CloseSelectedOrdinaryElement(*name),
+                        // The nearest same-name target is open below one or
+                        // more differently-nested selected ordinary elements.
+                        // Those are recovery-popped, current-first, and the
+                        // target is then closed by this same authored end tag
+                        // — one misnested diagnostic, however many pops.
+                        SelectedEndTarget::NonCurrent => {
+                            Effect::RecoverInterveningSelectedOrdinaryElementsAndCloseTarget(*name)
+                        }
+                    }),
                     next: None,
                 }),
                 AdmittedToken::StartTag {
@@ -598,7 +635,7 @@ fn classify(
                 // evidence is fabricated for a token that has no authored
                 // extent.
                 AdmittedToken::EndOfFile { .. } => Ok(ModeStep::Stop {
-                    effect: (open_selected_ordinary_elements > 0)
+                    effect: (!open_selected_ordinary.is_empty())
                         .then_some(Effect::RecordOpenSelectedOrdinaryElementAtEndOfFile),
                 }),
             }
@@ -652,18 +689,67 @@ fn classify(
     }
 }
 
+/// Where a supported selected ordinary end tag's nearest same-name target
+/// lies, relative to the current node.
+///
+/// This is a read-only classification of the ordered selected-name projection
+/// alone. It carries no constructed identity: which identities the resolved
+/// cell then acts on is the session's own transaction to resolve, before it
+/// mutates anything.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SelectedEndTarget {
+    /// No selected ordinary element of that name is open.
+    Absent,
+    /// The nearest same-name selected ordinary element is the current node.
+    Current,
+    /// The nearest same-name selected ordinary element is open below at least
+    /// one other selected ordinary element.
+    NonCurrent,
+}
+
+/// Classifies a supported selected ordinary end tag against the ordered
+/// selected-name projection, innermost last.
+///
+/// The bounded represented state is `[html, body] ++ W` with
+/// `W ∈ {Div, Section}*`, so the whole selected slice sits above `body` and a
+/// reverse scan of `W` is exactly the bounded selected-element scope walk.
+/// This is deliberately not general WHATWG scope coverage and claims none.
+fn selected_end_target(
+    open_selected_ordinary: &[HtmlSelectedOrdinaryElementName],
+    name: HtmlSelectedOrdinaryElementName,
+) -> SelectedEndTarget {
+    match open_selected_ordinary
+        .iter()
+        .rposition(|open| *open == name)
+    {
+        None => SelectedEndTarget::Absent,
+        Some(position) if position + 1 == open_selected_ordinary.len() => {
+            SelectedEndTarget::Current
+        }
+        Some(_) => SelectedEndTarget::NonCurrent,
+    }
+}
+
 /// Whether an element in the represented state would be popped by the HTML
 /// Standard's "generate implied end tags" step.
 ///
 /// Written as a total function over the closed represented element domain
 /// rather than as a generalized implied-end generator. Neither the shell
-/// elements nor the selected ordinary `div` is an implied-end element, so the
-/// step is a no-op over every state this subsystem can reach — which is
-/// exactly the bounded invariant the accepted end-tag branch relies on, and
-/// exactly the decision a future domain extension would have to revisit here.
-const fn is_implied_end_element(element: &HtmlElement) -> bool {
+/// elements nor the selected ordinary `div` and `section` is an implied-end
+/// element, so the step is a no-op over every state this subsystem can reach —
+/// which is exactly the bounded invariant the accepted end-tag branches rely
+/// on. The selected arm matches each closed name rather than the domain as a
+/// whole, so growing that domain again forces this question to be answered for
+/// the new member instead of being silently inherited. `p`, which *is* an
+/// implied-end element, is outside both closed domains and stays unsupported.
+fn is_implied_end_element(element: &HtmlElement) -> bool {
     match element {
-        HtmlElement::Shell(_) | HtmlElement::SelectedOrdinary(_) => false,
+        HtmlElement::Shell(_) => false,
+        HtmlElement::SelectedOrdinary(selected) => match selected.name() {
+            HtmlSelectedOrdinaryElementName::Div | HtmlSelectedOrdinaryElementName::Section => {
+                false
+            }
+        },
     }
 }
 
@@ -750,8 +836,18 @@ pub(crate) enum HtmlTreeSessionError {
     /// Implied-end-tag generation would not have been a no-op over the
     /// represented state. This is the bounded invariant that stands in for a
     /// generalized implied-end generator; it is never expected to fire while
-    /// the represented state is `[html, body] ++ [div]^k`.
+    /// the represented state is `[html, body] ++ W` with
+    /// `W ∈ {Div, Section}*`.
     ImpliedEndGenerationIsNotABoundedNoOp,
+    /// A heterogeneous selected ordinary recovery was requested while the
+    /// nearest same-name target was in fact the current node, which is the
+    /// matching-closure cell rather than the recovery cell.
+    SelectedOrdinaryRecoveryTargetIsCurrent(HtmlSelectedOrdinaryElementName),
+    /// The open elements above a resolved selected ordinary target are not all
+    /// selected ordinary elements, so the bounded suffix the recovery cell
+    /// requires does not exist. It is never expected to fire while the
+    /// represented state is `[html, body] ++ W`.
+    SelectedOrdinaryRecoverySuffixIsNotSelected(HtmlConstructedNodeId),
     /// An unmatched selected ordinary end tag was recorded while an element of
     /// that name was in fact in the bounded selected-element scope.
     UnmatchedSelectedOrdinaryEndTagWithElementInScope(HtmlSelectedOrdinaryElementName),
@@ -770,6 +866,31 @@ impl std::fmt::Display for HtmlTreeSessionError {
 }
 
 impl std::error::Error for HtmlTreeSessionError {}
+
+/// One supported selected ordinary end tag's complete pre-resolved decision.
+///
+/// Built entirely from read-only session state before the transaction
+/// mutates anything, and dropped when the transaction ends. It is never
+/// stored on the session, never reaches the freeze boundary, and never
+/// escapes to a consumer.
+///
+/// `target_open_element` is a private, ephemeral open-element stack
+/// coordinate that exists only so the commit can be one `truncate`. It is
+/// deliberately *not* semantic identity, is never recorded in any action,
+/// diagnostic, or node, and is meaningless the moment the stack changes.
+/// Only `target` and `intervening_current_first` carry durable meaning, and
+/// both are [`HtmlConstructedNodeId`] semantic creation-event identities.
+struct SelectedOrdinaryEndPlan {
+    /// The nearest same-name open selected ordinary element the end tag
+    /// selects. This one is closed by its own matching end tag.
+    target: HtmlConstructedNodeId,
+    /// Where the target sits on the private open-element stack.
+    target_open_element: usize,
+    /// The complete open selected ordinary suffix above the target, ordered
+    /// current node first and target-ward last. Empty exactly when the target
+    /// is already the current node.
+    intervening_current_first: Vec<HtmlConstructedNodeId>,
+}
 
 /// The exclusive owner of one run's mutable tree-construction state.
 pub(super) struct HtmlTreeSession {
@@ -831,8 +952,8 @@ impl HtmlTreeSession {
         // Both gates run before anything can change: the token was already
         // admitted lexically, and this reads the private selected-element
         // state without borrowing it mutably.
-        let open_selected_ordinary_elements = self.open_selected_ordinary_elements();
-        let step = match classify(self.mode, open_selected_ordinary_elements, token) {
+        let open_selected_ordinary = self.open_selected_ordinary_names();
+        let step = match classify(self.mode, &open_selected_ordinary, token) {
             Ok(step) => step,
             Err(capability) => return Ok(DispatchOutcome::Unsupported(capability)),
         };
@@ -976,12 +1097,15 @@ impl HtmlTreeSession {
             Effect::CloseSelectedOrdinaryElement(name) => {
                 self.close_selected_ordinary_element(name, trigger)
             }
+            Effect::RecoverInterveningSelectedOrdinaryElementsAndCloseTarget(name) => {
+                self.recover_selected_ordinary_suffix_and_close_target(name, trigger)
+            }
             Effect::RecordUnmatchedSelectedOrdinaryEndTag(name) => {
                 // The bounded not-in-scope condition is what makes this the
                 // ignored-end cell rather than the closing cell, so it is
                 // proved before either the diagnostic or the disposition is
                 // recorded.
-                if self.selected_element_in_scope(name) {
+                if self.nearest_open_selected_ordinary(name).is_some() {
                     return Err(
                         HtmlTreeSessionError::UnmatchedSelectedOrdinaryEndTagWithElementInScope(
                             name,
@@ -1000,7 +1124,7 @@ impl HtmlTreeSession {
                 Ok(())
             }
             Effect::RecordOpenSelectedOrdinaryElementAtEndOfFile => {
-                if self.open_selected_ordinary_elements() == 0 {
+                if self.open_selected_ordinary_ids().is_empty() {
                     return Err(HtmlTreeSessionError::NoOpenSelectedOrdinaryElementAtEndOfFile);
                 }
                 self.record_diagnostic(
@@ -1149,45 +1273,127 @@ impl HtmlTreeSession {
         Ok(())
     }
 
-    /// Closes the innermost open selected ordinary element for its own exact
-    /// authored end tag.
+    /// Closes the nearest same-name open selected ordinary element for its own
+    /// exact authored end tag, when that element is already the current node.
     ///
-    /// The accepted end-tag branch is proved in order and entirely before the
-    /// pop: the bounded selected-element-in-scope condition, then the bounded
-    /// implied-end no-op invariant, then current-node identity. Only then is
-    /// exactly that identity popped and the closure recorded, relating the
-    /// semantic node identity to the trigger's exact authored end tag. No
-    /// identity is admitted, and the end tag never becomes the node's origin.
+    /// The accepted TC-S3 branch is proved in order and entirely before the
+    /// pop, and stays exactly what it was: the bounded
+    /// selected-element-in-scope condition and the bounded implied-end no-op
+    /// invariant are resolved by [`Self::plan_selected_ordinary_end`], and
+    /// this cell additionally requires the resolved target to be current — a
+    /// non-empty intervening suffix here is the heterogeneous recovery cell,
+    /// not this one. Only then is exactly that identity popped and the closure
+    /// recorded, relating the semantic node identity to the trigger's exact
+    /// authored end tag. No identity is admitted, no recovery relation is
+    /// recorded, no misnested diagnostic is emitted, and the end tag never
+    /// becomes the node's origin.
     fn close_selected_ordinary_element(
         &mut self,
         name: HtmlSelectedOrdinaryElementName,
         trigger: &HtmlTreeTokenTrigger,
     ) -> Result<(), HtmlTreeSessionError> {
-        if !self.selected_element_in_scope(name) {
-            return Err(HtmlTreeSessionError::SelectedOrdinaryElementIsNotInScope(
-                name,
-            ));
-        }
-        if !self.implied_end_generation_is_a_no_op() {
-            return Err(HtmlTreeSessionError::ImpliedEndGenerationIsNotABoundedNoOp);
-        }
-        let current = *self.open_elements.last().ok_or(
-            HtmlTreeSessionError::SelectedOrdinaryElementIsNotCurrent(name),
-        )?;
-        if !self.is_selected_ordinary(current, name) {
+        let plan = self.plan_selected_ordinary_end(name)?;
+        if !plan.intervening_current_first.is_empty() {
             return Err(HtmlTreeSessionError::SelectedOrdinaryElementIsNotCurrent(
                 name,
             ));
         }
-        self.open_elements.pop();
+        self.open_elements.truncate(plan.target_open_element);
         self.record_action(
             HtmlTreeActionKind::ClosedSelectedOrdinaryElement {
-                node: current,
+                node: plan.target,
                 name,
             },
             trigger,
         );
         Ok(())
+    }
+
+    /// Recovers a heterogeneous open selected ordinary suffix and closes the
+    /// nearest same-name target, all for one exact authored end tag.
+    ///
+    /// The complete decision — nearest same-name target, the complete
+    /// intervening suffix in current-first order, the bounded implied-end
+    /// no-op invariant, and the requirement that the target is not already
+    /// current — is resolved by [`Self::plan_selected_ordinary_end`] before
+    /// anything mutates. The commit is then one coherent stack mutation
+    /// followed by the ordered evidence, so there is no partial pop, no
+    /// rollback, and no state to reconstruct after a refusal.
+    ///
+    /// The two relations stay distinct on purpose. Each intervening element
+    /// gets one recovery-pop relation naming the target that caused it, and
+    /// never a fabricated matching closure: no end tag of its own name exists
+    /// anywhere in the source. The target alone gets the matching closure. All
+    /// of them, and the single misnested diagnostic, carry the same exact
+    /// authored end tag as trigger evidence, and it is the authored origin of
+    /// none of them. No identity is admitted.
+    fn recover_selected_ordinary_suffix_and_close_target(
+        &mut self,
+        name: HtmlSelectedOrdinaryElementName,
+        trigger: &HtmlTreeTokenTrigger,
+    ) -> Result<(), HtmlTreeSessionError> {
+        let plan = self.plan_selected_ordinary_end(name)?;
+        if plan.intervening_current_first.is_empty() {
+            return Err(HtmlTreeSessionError::SelectedOrdinaryRecoveryTargetIsCurrent(name));
+        }
+
+        self.open_elements.truncate(plan.target_open_element);
+        self.record_diagnostic(
+            HtmlTreeDiagnosticCode::MisnestedSelectedOrdinaryEndTag,
+            trigger,
+            HtmlTreeRecovery::PoppedInterveningSelectedOrdinaryElementsAndClosedTarget,
+        );
+        for node in plan.intervening_current_first {
+            self.record_action(
+                HtmlTreeActionKind::PoppedSelectedOrdinaryElementByAncestorEndTag {
+                    node,
+                    target: plan.target,
+                },
+                trigger,
+            );
+        }
+        self.record_action(
+            HtmlTreeActionKind::ClosedSelectedOrdinaryElement {
+                node: plan.target,
+                name,
+            },
+            trigger,
+        );
+        Ok(())
+    }
+
+    /// Resolves the complete meaning of a supported selected ordinary end tag
+    /// before any mutation.
+    ///
+    /// Read-only by construction: it borrows `&self`, so nothing it inspects
+    /// can already have been changed by the decision it is making. Every
+    /// fallible and precondition-sensitive part of the transaction lives here
+    /// — nearest same-name target lookup, the bounded implied-end no-op
+    /// invariant, and proof that the complete suffix above the target really
+    /// is the bounded selected suffix the accepted cells describe. The caller
+    /// then classifies the plan and commits in one step.
+    fn plan_selected_ordinary_end(
+        &self,
+        name: HtmlSelectedOrdinaryElementName,
+    ) -> Result<SelectedOrdinaryEndPlan, HtmlTreeSessionError> {
+        let target_open_element = self.nearest_open_selected_ordinary(name).ok_or(
+            HtmlTreeSessionError::SelectedOrdinaryElementIsNotInScope(name),
+        )?;
+        if !self.implied_end_generation_is_a_no_op() {
+            return Err(HtmlTreeSessionError::ImpliedEndGenerationIsNotABoundedNoOp);
+        }
+        let mut intervening_current_first = Vec::new();
+        for id in self.open_elements[target_open_element + 1..].iter().rev() {
+            if !self.is_open_selected_ordinary(*id) {
+                return Err(HtmlTreeSessionError::SelectedOrdinaryRecoverySuffixIsNotSelected(*id));
+            }
+            intervening_current_first.push(*id);
+        }
+        Ok(SelectedOrdinaryEndPlan {
+            target: self.open_elements[target_open_element],
+            target_open_element,
+            intervening_current_first,
+        })
     }
 
     /// Inserts the trigger token's characters at the current insertion
@@ -1385,17 +1591,37 @@ impl HtmlTreeSession {
             .collect()
     }
 
-    /// How many selected ordinary elements are currently open.
-    ///
-    /// This is the `k` of the represented state `S(k) = [html, body] ++
-    /// [div]^k`. It is read-only construction state, not a budget: nothing
-    /// compares it against a maximum.
-    fn open_selected_ordinary_elements(&self) -> usize {
-        self.open_selected_ordinary_ids().len()
+    /// Whether an open-element entry is a selected ordinary element at all.
+    fn is_open_selected_ordinary(&self, id: HtmlConstructedNodeId) -> bool {
+        matches!(
+            self.node(id).map(HtmlTreeNode::kind),
+            Some(HtmlTreeNodeKind::Element(HtmlElement::SelectedOrdinary(_)))
+        )
     }
 
-    /// The bounded selected-element-in-scope condition the accepted end-tag
-    /// branch requires.
+    /// The closed selected names of the currently open selected ordinary
+    /// elements, in open-element stack order with the innermost last.
+    ///
+    /// This is the `W` of the represented state `[html, body] ++ W`, and it is
+    /// the only construction state the read-only [`classify`] gate needs. It
+    /// carries no constructed identity, so rule selection cannot come to
+    /// depend on a relationship the transaction has not resolved yet. It is
+    /// read-only construction state, not a budget: nothing compares its length
+    /// against a maximum.
+    fn open_selected_ordinary_names(&self) -> Vec<HtmlSelectedOrdinaryElementName> {
+        self.open_elements
+            .iter()
+            .filter_map(|id| match self.node(*id).map(HtmlTreeNode::kind) {
+                Some(HtmlTreeNodeKind::Element(HtmlElement::SelectedOrdinary(selected))) => {
+                    Some(selected.name())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The nearest same-name open selected ordinary element, as a private
+    /// open-element stack position.
     ///
     /// Walks the private open-element stack by semantic constructed identity,
     /// from the current node outwards, and stops at the represented HTML
@@ -1403,23 +1629,30 @@ impl HtmlTreeSession {
     /// and claims none: the represented state contains only `html`, `body`,
     /// and selected ordinary elements, so `html` is the only boundary element
     /// that can occur in it.
-    fn selected_element_in_scope(&self, name: HtmlSelectedOrdinaryElementName) -> bool {
-        for id in self.open_elements.iter().rev() {
+    ///
+    /// The returned position is ephemeral and private. It is a coordinate for
+    /// the commit that immediately follows, never semantic identity, and it is
+    /// never recorded anywhere durable.
+    fn nearest_open_selected_ordinary(
+        &self,
+        name: HtmlSelectedOrdinaryElementName,
+    ) -> Option<usize> {
+        for (position, id) in self.open_elements.iter().enumerate().rev() {
             match self.node(*id).map(HtmlTreeNode::kind) {
                 Some(HtmlTreeNodeKind::Element(HtmlElement::SelectedOrdinary(selected)))
                     if selected.name() == name =>
                 {
-                    return true;
+                    return Some(position);
                 }
                 Some(HtmlTreeNodeKind::Element(HtmlElement::Shell(shell)))
                     if shell.name() == HtmlShellElementName::Html =>
                 {
-                    return false;
+                    return None;
                 }
                 _ => {}
             }
         }
-        false
+        None
     }
 
     /// Whether the HTML Standard's implied-end-tag generation would pop

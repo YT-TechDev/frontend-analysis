@@ -1,5 +1,5 @@
-//! Immutable, validated result meaning for TC-S1 and its accepted TC-S2 and
-//! TC-S3 successors.
+//! Immutable, validated result meaning for TC-S1 and its accepted TC-S2,
+//! TC-S3, and TC-S4 successors.
 //!
 //! This module owns the durable half of the accepted Candidate C model: the
 //! frozen tree, constructed identity, authored/synthesized provenance,
@@ -7,6 +7,19 @@
 //! effective completion. It owns no mutable construction state and never
 //! observes the tokenizer or the private
 //! [`session`](super::session).
+//!
+//! # Two distinct relations, never one generic fact
+//!
+//! A selected ordinary element leaves the open-element state in exactly one of
+//! two ways, and the difference is durable meaning rather than presentation.
+//! [`HtmlTreeActionKind::ClosedSelectedOrdinaryElement`] means the element's
+//! *own* exact authored end tag closed it.
+//! [`HtmlTreeActionKind::PoppedSelectedOrdinaryElementByAncestorEndTag`] means
+//! the element has no end tag anywhere in the source and was popped because an
+//! enclosing element's end tag needed it out of the way. Collapsing the two
+//! into one "closed by this token" fact would fabricate authored evidence, so
+//! [`freeze`] proves them separately and proves that no element receives
+//! both.
 //!
 //! Everything here is crate-private. No item is `pub`, serialized, or
 //! promised across results, runs, source edits, or implementation revisions.
@@ -180,27 +193,35 @@ impl HtmlShellElement {
     }
 }
 
-/// The closed selected ordinary HTML-element name domain the accepted TC-S3
+/// The closed selected ordinary HTML-element name domain the accepted TC-S4
 /// theorem proves.
 ///
 /// Deliberately separate from [`HtmlShellElementName`], which stays
 /// `html`/`head`/`body` only: neither domain may be stretched to carry the
-/// other's meaning. This domain is closed at `div`, and it is not an
-/// arbitrary-name, generic ordinary-element, or namespace-switching
-/// representation.
+/// other's meaning. TC-S3 closed this domain at `div`; TC-S4 extends it to
+/// exactly `div` and `section` and no further. It is still not an
+/// arbitrary-name, generic ordinary-element, generic block-element, or
+/// namespace-switching representation, and membership is decided by type
+/// rather than by a stored string.
+///
+/// Equality on this type is what makes an end tag *matching*: two selected
+/// ordinary elements correspond exactly when this closed name is equal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HtmlSelectedOrdinaryElementName {
     Div,
+    Section,
 }
 
 impl HtmlSelectedOrdinaryElementName {
     /// The interpreted tag name this closed domain member is spelled with.
     ///
-    /// Used only to correlate a recorded closure against the retained emitted
-    /// end-tag token. It is not a parser table and performs no source lookup.
+    /// Used only to correlate a recorded closure or recovery against the
+    /// retained emitted end-tag token. It is not a parser table and performs
+    /// no source lookup.
     const fn interpreted(self) -> &'static str {
         match self {
             Self::Div => "div",
+            Self::Section => "section",
         }
     }
 }
@@ -246,9 +267,10 @@ impl HtmlSelectedOrdinaryElement {
         &self.complete
     }
 
-    /// The exact retained raw tag-name spelling. A mixed-case `<DiV>` keeps
-    /// its exact authored spelling here while the interpreted name stays
-    /// [`HtmlSelectedOrdinaryElementName::Div`].
+    /// The exact retained raw tag-name spelling. A mixed-case `<DiV>` or
+    /// `<SeCtIoN>` keeps its exact authored spelling here while the
+    /// interpreted name stays [`HtmlSelectedOrdinaryElementName::Div`] or
+    /// [`HtmlSelectedOrdinaryElementName::Section`].
     pub(crate) fn raw_name(&self) -> &SourceAnchor {
         &self.raw_name
     }
@@ -641,6 +663,29 @@ pub(crate) enum HtmlTreeActionKind {
         node: HtmlConstructedNodeId,
         name: HtmlSelectedOrdinaryElementName,
     },
+    /// An open selected ordinary element was popped, without being closed by
+    /// an end tag of its own name, because the trigger token is the exact
+    /// authored end tag of a *different* selected ordinary element further
+    /// out on the open-element stack.
+    ///
+    /// This is deliberately **not**
+    /// [`Self::ClosedSelectedOrdinaryElement`]: `node` has no matching end
+    /// tag anywhere in the source, so recording one would fabricate authored
+    /// evidence that does not exist. `node` is the intervening element that
+    /// was actually popped and `target` is the nearest same-name selected
+    /// ordinary element whose end tag caused the pop; both are semantic
+    /// creation-event identities, never storage positions, and they are
+    /// always distinct. The trigger this action carries is that same exact
+    /// authored end tag, which is also the trigger of the target's own
+    /// matching closure — one authored end tag legitimately participates in
+    /// several ordered recovery relations plus exactly one closure, and is
+    /// the authored origin of none of them.
+    ///
+    /// No node was created and no constructed identity was admitted.
+    PoppedSelectedOrdinaryElementByAncestorEndTag {
+        node: HtmlConstructedNodeId,
+        target: HtmlConstructedNodeId,
+    },
     /// A selected ordinary end tag with no matching open element was ignored.
     /// No node was created, closed, or otherwise mutated, and no constructed
     /// identity was admitted. The accompanying parse diagnostic is separate
@@ -680,6 +725,7 @@ impl HtmlTreeActionKind {
             | Self::AppendedToTextNode { node }
             | Self::InsertedAuthoredSelectedOrdinaryElement { node, .. }
             | Self::ClosedSelectedOrdinaryElement { node, .. }
+            | Self::PoppedSelectedOrdinaryElementByAncestorEndTag { node, .. }
             | Self::ClosedShellElement { node, .. } => Some(*node),
             Self::IgnoredUnmatchedSelectedOrdinaryEndTag { .. }
             | Self::AcknowledgedShellEndTag { .. }
@@ -744,6 +790,17 @@ pub(crate) enum HtmlTreeDiagnosticCode {
     /// A selected ordinary end tag appeared with no matching selected ordinary
     /// element in the bounded selected-element scope.
     UnmatchedSelectedOrdinaryEndTag,
+    /// A selected ordinary end tag appeared while its nearest same-name
+    /// selected ordinary element was open but was not the current node, so
+    /// one or more differently-nested selected ordinary elements had to be
+    /// popped before it could be closed.
+    ///
+    /// Exactly one of these is recorded per misnested end tag, however many
+    /// intervening elements the recovery popped. Which elements were popped,
+    /// and which target they were popped for, is recorded once each as
+    /// [`HtmlTreeActionKind::PoppedSelectedOrdinaryElementByAncestorEndTag`]
+    /// rather than duplicated here.
+    MisnestedSelectedOrdinaryEndTag,
     /// Document parsing reached end of file while a selected ordinary element
     /// was still open.
     OpenSelectedOrdinaryElementAtEndOfFile,
@@ -762,6 +819,11 @@ pub(crate) enum HtmlTreeRecovery {
     /// actual insertion mode, constructed identity, and closure evidence were
     /// all left exactly as they were.
     IgnoredToken,
+    /// The intervening open selected ordinary elements were popped in
+    /// current-first order and the nearest same-name target was then closed
+    /// by its own exact authored end tag. No end tag was synthesized for a
+    /// popped element and no node was created.
+    PoppedInterveningSelectedOrdinaryElementsAndClosedTarget,
     /// Document parsing stopped normally with the selected ordinary element
     /// still open. Nothing was popped, synthesized, or closed, and no closure
     /// evidence was fabricated for the end-of-file token.
@@ -1206,6 +1268,60 @@ pub(crate) enum HtmlTreeFreezeError {
         replayed: Vec<HtmlConstructedNodeId>,
         actual: Vec<HtmlConstructedNodeId>,
     },
+    /// A recorded heterogeneous recovery pop names a subject that is not a
+    /// stored selected ordinary element.
+    RecoverySubjectIsNotSelectedOrdinaryElement(HtmlConstructedNodeId),
+    /// A recorded heterogeneous recovery pop names a target that is not a
+    /// stored selected ordinary element.
+    RecoveryTargetIsNotSelectedOrdinaryElement(HtmlConstructedNodeId),
+    /// A recorded heterogeneous recovery pop names the same identity as both
+    /// the popped element and the target it was popped for. The target is
+    /// closed by its own matching end tag and is never recovery-popped.
+    SelfTargetingSelectedOrdinaryRecovery(HtmlConstructedNodeId),
+    /// A recorded heterogeneous recovery pop does not resolve, in the
+    /// retained tokenizer run, to the exact emitted matching end tag of its
+    /// target. End of file, a start tag, a character run, an unrelated end
+    /// tag, a differently-named end tag, and an anchor that is not the
+    /// retained token's own complete-tag evidence all land here.
+    RecoveryTriggerIsNotMatchingTargetEndTag {
+        node: HtmlConstructedNodeId,
+        token_index: usize,
+    },
+    /// A recorded heterogeneous recovery names a target that was not open, or
+    /// was not the nearest currently-open selected ordinary element of its own
+    /// name, at the point the recovery was committed.
+    RecoveryTargetIsNotNearestMatchingSelectedOrdinary(HtmlConstructedNodeId),
+    /// A recorded heterogeneous recovery pop names an element that was not the
+    /// current selected ordinary element at that point: the suffix was
+    /// popped out of order, an intervening element was skipped, the same
+    /// element was popped twice, or the element had already left the open
+    /// state.
+    NonLifoSelectedOrdinaryRecovery(HtmlConstructedNodeId),
+    /// A committed recovery group was never terminated by its target's own
+    /// matching closure: the action stream ended, or an unrelated action was
+    /// committed, while the group was still open.
+    UnterminatedSelectedOrdinaryRecovery(HtmlConstructedNodeId),
+    /// A committed recovery group is terminated by a closure that is not its
+    /// target's, or by a closure whose trigger token is not the recovery
+    /// group's own trigger token.
+    SelectedOrdinaryRecoveryClosureMismatch {
+        target: HtmlConstructedNodeId,
+        closed: HtmlConstructedNodeId,
+    },
+    /// The misnested selected ordinary end-tag diagnostics are not exactly
+    /// one per committed recovery group, with the group's own trigger token
+    /// and the accepted recovery summary.
+    SelectedOrdinaryRecoveryDiagnosticMismatch {
+        recovery_groups: Vec<usize>,
+        misnested_diagnostics: Vec<usize>,
+    },
+    /// The ignored unmatched selected ordinary end-tag actions and the
+    /// unmatched selected ordinary end-tag diagnostics do not name exactly
+    /// the same trigger tokens.
+    UnmatchedSelectedOrdinaryEndTagDiagnosticMismatch {
+        actions: Vec<usize>,
+        diagnostics: Vec<usize>,
+    },
 }
 
 impl fmt::Display for HtmlTreeFreezeError {
@@ -1246,9 +1362,10 @@ pub(super) fn freeze(
     validate_structure(&nodes, root)?;
     validate_node_evidence(source, &nodes)?;
     validate_action_evidence(source, &nodes, &actions, tokenizer_run.tokens().len())?;
-    validate_selected_ordinary_closures(
+    validate_selected_ordinary_lifecycle(
         &nodes,
         &actions,
+        &diagnostics,
         &tokenizer_run,
         &final_open_selected_ordinary,
     )?;
@@ -1502,42 +1619,73 @@ fn validate_action_evidence(
     Ok(())
 }
 
-/// Validates the selected ordinary closure-evidence theorem.
+/// Validates the complete selected ordinary lifecycle-evidence theorem.
 ///
-/// Replays the committed selected ordinary insertion and closure actions in
-/// committed order over a private stack of semantic constructed identities,
-/// correlating each closure against the retained tokenizer run and finally
-/// against the session's own actual final open selected state. Together that
-/// proves every part of the theorem:
+/// Replays the committed selected ordinary insertion, heterogeneous
+/// recovery-pop, and matching-closure actions in committed order over a
+/// private stack of semantic constructed identities, correlating each
+/// recovery and closure against the retained tokenizer run, then against the
+/// committed diagnostics, and finally against the session's own actual final
+/// open selected state. Together that proves every part of the theorem:
 ///
-/// - every insertion and closure subject resolves to a stored selected
-///   ordinary element of the recorded name;
+/// - every insertion, recovery, and closure endpoint resolves to a stored
+///   selected ordinary element, and every closure subject carries the
+///   recorded name;
 /// - a selected ordinary identity is inserted at most once, so the replay
 ///   stack cannot be padded with a repeated identity;
 /// - a closure trigger resolves, in the retained run, to the exact emitted
 ///   matching end tag for that element — not merely to some valid authored
 ///   anchor — so a start tag, an unrelated token, or end of file can never
 ///   stand in as closure evidence;
-/// - closure order is stack-consistent (LIFO) for the selected slice, and
-///   each element is closed at most once, because closing pops it; and
+/// - a recovery trigger resolves the same way to the exact emitted matching
+///   end tag of the recovery's own *target*, which is what keeps one authored
+///   end tag able to cause several ordered pops plus one closure without
+///   becoming any of those nodes' authored origin;
+/// - a recorded recovery target really is the nearest currently-open selected
+///   ordinary element of its own name, recomputed here from the replayed
+///   stack rather than trusted from the recorded field;
+/// - recovery and closure order is stack-consistent (LIFO) for the selected
+///   slice, so a skipped intervening element, a reversed suffix, a duplicate
+///   or extra pop, a pop after the element already left the open state, and a
+///   non-current target closed without its required recovery are all
+///   rejected;
+/// - a recovery group is contiguous and is terminated by exactly its own
+///   target's closure under exactly its own trigger token, so an intervening
+///   element can never receive a fabricated matching closure and the target
+///   can never be recovery-popped instead of closed;
+/// - the misnested diagnostics are exactly one per committed recovery group,
+///   with that group's own exact authored end tag — recorrelated against the
+///   retained run, not merely against the recorded token index — and the
+///   accepted recovery summary,
+///   and the ignored unmatched end-tag actions and diagnostics name exactly
+///   the same trigger tokens; and
 /// - the identities still open after the replay are exactly, and in the same
 ///   order as, the session's actual final open selected ordinary elements.
 ///
 /// That last comparison is what makes this validation of construction output
 /// rather than trust in how the session happens to be written: a session that
-/// popped a selected element without recording its closure would otherwise be
-/// indistinguishable from the valid end-of-file-open case.
-fn validate_selected_ordinary_closures(
+/// popped a selected element without recording its recovery or closure would
+/// otherwise be indistinguishable from the valid end-of-file-open case.
+fn validate_selected_ordinary_lifecycle(
     nodes: &[HtmlTreeNode],
     actions: &[HtmlTreeAction],
+    diagnostics: &[HtmlTreeDiagnostic],
     tokenizer_run: &HtmlTokenizerRunResult,
     final_open_selected_ordinary: &[HtmlConstructedNodeId],
 ) -> Result<(), HtmlTreeFreezeError> {
     let mut open: Vec<HtmlConstructedNodeId> = Vec::new();
     let mut inserted: Vec<HtmlConstructedNodeId> = Vec::new();
+    // The recovery group currently awaiting its target's own matching
+    // closure, as `(target, trigger token index)`. A group is opened by its
+    // first recovery pop and must be closed before any other action commits.
+    let mut pending: Option<(HtmlConstructedNodeId, usize)> = None;
+    let mut recovery_groups: Vec<ReplayedRecoveryGroup> = Vec::new();
+    let mut ignored_unmatched: Vec<usize> = Vec::new();
+
     for action in actions {
         match action.kind() {
             HtmlTreeActionKind::InsertedAuthoredSelectedOrdinaryElement { node, name } => {
+                reject_interleaved_recovery(pending)?;
                 expect_selected_ordinary(nodes, *node, *name)?;
                 if inserted.contains(node) {
                     return Err(HtmlTreeFreezeError::DuplicateSelectedOrdinaryInsertion(
@@ -1547,26 +1695,103 @@ fn validate_selected_ordinary_closures(
                 inserted.push(*node);
                 open.push(*node);
             }
+            HtmlTreeActionKind::PoppedSelectedOrdinaryElementByAncestorEndTag { node, target } => {
+                if selected_ordinary_name(nodes, *node).is_none() {
+                    return Err(
+                        HtmlTreeFreezeError::RecoverySubjectIsNotSelectedOrdinaryElement(*node),
+                    );
+                }
+                let Some(target_name) = selected_ordinary_name(nodes, *target) else {
+                    return Err(
+                        HtmlTreeFreezeError::RecoveryTargetIsNotSelectedOrdinaryElement(*target),
+                    );
+                };
+                if node == target {
+                    return Err(HtmlTreeFreezeError::SelfTargetingSelectedOrdinaryRecovery(
+                        *node,
+                    ));
+                }
+                if !is_matching_end_tag_trigger(target_name, action.trigger(), tokenizer_run) {
+                    return Err(
+                        HtmlTreeFreezeError::RecoveryTriggerIsNotMatchingTargetEndTag {
+                            node: *node,
+                            token_index: action.trigger().token_index(),
+                        },
+                    );
+                }
+                match pending {
+                    Some((pending_target, pending_token)) => {
+                        // A recovery group belongs to exactly one target under
+                        // exactly one authored end tag.
+                        if pending_target != *target
+                            || pending_token != action.trigger().token_index()
+                        {
+                            return Err(HtmlTreeFreezeError::UnterminatedSelectedOrdinaryRecovery(
+                                pending_target,
+                            ));
+                        }
+                    }
+                    None => {
+                        // Recomputed from the replayed stack, so a recorded
+                        // target that merely looks plausible is still rejected.
+                        if nearest_open_selected_ordinary(nodes, &open, target_name)
+                            != Some(*target)
+                        {
+                            return Err(
+                                HtmlTreeFreezeError::RecoveryTargetIsNotNearestMatchingSelectedOrdinary(
+                                    *target,
+                                ),
+                            );
+                        }
+                        pending = Some((*target, action.trigger().token_index()));
+                    }
+                }
+                if open.last() != Some(node) {
+                    return Err(HtmlTreeFreezeError::NonLifoSelectedOrdinaryRecovery(*node));
+                }
+                open.pop();
+            }
             HtmlTreeActionKind::ClosedSelectedOrdinaryElement { node, name } => {
                 expect_selected_ordinary(nodes, *node, *name)?;
                 validate_closure_trigger(*node, *name, action.trigger(), tokenizer_run)?;
+                if let Some((target, token)) = pending {
+                    if target != *node || token != action.trigger().token_index() {
+                        return Err(
+                            HtmlTreeFreezeError::SelectedOrdinaryRecoveryClosureMismatch {
+                                target,
+                                closed: *node,
+                            },
+                        );
+                    }
+                    recovery_groups.push(ReplayedRecoveryGroup {
+                        trigger_token: token,
+                        target_name: *name,
+                    });
+                    pending = None;
+                }
                 if open.last() != Some(node) {
                     return Err(HtmlTreeFreezeError::NonLifoSelectedOrdinaryClosure(*node));
                 }
                 open.pop();
             }
-            _ => {}
+            HtmlTreeActionKind::IgnoredUnmatchedSelectedOrdinaryEndTag { .. } => {
+                reject_interleaved_recovery(pending)?;
+                ignored_unmatched.push(action.trigger().token_index());
+            }
+            _ => reject_interleaved_recovery(pending)?,
         }
     }
+    reject_interleaved_recovery(pending)?;
+
+    validate_selected_ordinary_diagnostics(
+        diagnostics,
+        &recovery_groups,
+        &ignored_unmatched,
+        tokenizer_run,
+    )?;
 
     for id in final_open_selected_ordinary {
-        let resolves = find(nodes, *id).is_some_and(|node| {
-            matches!(
-                node.kind(),
-                HtmlTreeNodeKind::Element(HtmlElement::SelectedOrdinary(_))
-            )
-        });
-        if !resolves {
+        if selected_ordinary_name(nodes, *id).is_none() {
             return Err(HtmlTreeFreezeError::FinalOpenSelectedOrdinaryIsNotASelectedElement(*id));
         }
     }
@@ -1579,6 +1804,126 @@ fn validate_selected_ordinary_closures(
         );
     }
     Ok(())
+}
+
+/// One committed heterogeneous recovery group, as the freeze replay
+/// reconstructed it rather than as the session described it.
+struct ReplayedRecoveryGroup {
+    /// The retained-run index of the one authored end tag the whole group
+    /// shares.
+    trigger_token: usize,
+    /// The closed selected name of the group's target, which is also the name
+    /// its authored end tag must be spelled with.
+    target_name: HtmlSelectedOrdinaryElementName,
+}
+
+/// Rejects an open recovery group that something other than its own target's
+/// matching closure reached.
+const fn reject_interleaved_recovery(
+    pending: Option<(HtmlConstructedNodeId, usize)>,
+) -> Result<(), HtmlTreeFreezeError> {
+    match pending {
+        Some((target, _)) => Err(HtmlTreeFreezeError::UnterminatedSelectedOrdinaryRecovery(
+            target,
+        )),
+        None => Ok(()),
+    }
+}
+
+/// Correlates the selected ordinary diagnostics against the replayed action
+/// stream.
+///
+/// One misnested diagnostic per committed recovery group, carrying that
+/// group's own exact authored end tag and the accepted recovery summary; and
+/// exactly the ignored unmatched end-tag actions' trigger tokens as unmatched
+/// diagnostics. A missing, duplicated, wrongly-triggered, wrongly-summarized,
+/// or recovery-free misnested diagnostic all fail here — including one whose
+/// recorded token index is right but whose recorded boundary is not that
+/// token's own complete authored evidence.
+fn validate_selected_ordinary_diagnostics(
+    diagnostics: &[HtmlTreeDiagnostic],
+    recovery_groups: &[ReplayedRecoveryGroup],
+    ignored_unmatched: &[usize],
+    tokenizer_run: &HtmlTokenizerRunResult,
+) -> Result<(), HtmlTreeFreezeError> {
+    let misnested: Vec<&HtmlTreeDiagnostic> = diagnostics
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.code() == HtmlTreeDiagnosticCode::MisnestedSelectedOrdinaryEndTag
+        })
+        .collect();
+    let group_tokens: Vec<usize> = recovery_groups
+        .iter()
+        .map(|group| group.trigger_token)
+        .collect();
+    let misnested_tokens: Vec<usize> = misnested
+        .iter()
+        .map(|diagnostic| diagnostic.trigger().token_index())
+        .collect();
+    // One per group, in the same order, carrying the accepted recovery
+    // summary and — checked against the retained run rather than against the
+    // recorded token index alone — that group's own exact authored end tag.
+    let paired =
+        group_tokens == misnested_tokens
+            && recovery_groups
+                .iter()
+                .zip(&misnested)
+                .all(|(group, found)| {
+                    found.recovery()
+                == HtmlTreeRecovery::PoppedInterveningSelectedOrdinaryElementsAndClosedTarget
+                && is_matching_end_tag_trigger(group.target_name, found.trigger(), tokenizer_run)
+                });
+    if !paired {
+        return Err(
+            HtmlTreeFreezeError::SelectedOrdinaryRecoveryDiagnosticMismatch {
+                recovery_groups: group_tokens,
+                misnested_diagnostics: misnested_tokens,
+            },
+        );
+    }
+
+    let unmatched: Vec<usize> = diagnostics
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.code() == HtmlTreeDiagnosticCode::UnmatchedSelectedOrdinaryEndTag
+        })
+        .map(|diagnostic| diagnostic.trigger().token_index())
+        .collect();
+    if unmatched != ignored_unmatched {
+        return Err(
+            HtmlTreeFreezeError::UnmatchedSelectedOrdinaryEndTagDiagnosticMismatch {
+                actions: ignored_unmatched.to_vec(),
+                diagnostics: unmatched,
+            },
+        );
+    }
+    Ok(())
+}
+
+/// The closed selected ordinary name of a stored node, when it is one.
+fn selected_ordinary_name(
+    nodes: &[HtmlTreeNode],
+    id: HtmlConstructedNodeId,
+) -> Option<HtmlSelectedOrdinaryElementName> {
+    match find(nodes, id)?.kind() {
+        HtmlTreeNodeKind::Element(HtmlElement::SelectedOrdinary(selected)) => Some(selected.name()),
+        HtmlTreeNodeKind::Document
+        | HtmlTreeNodeKind::Element(HtmlElement::Shell(_))
+        | HtmlTreeNodeKind::Text(_) => None,
+    }
+}
+
+/// The nearest currently-open selected ordinary element of `name`, innermost
+/// first, over the replayed selected stack.
+fn nearest_open_selected_ordinary(
+    nodes: &[HtmlTreeNode],
+    open: &[HtmlConstructedNodeId],
+    name: HtmlSelectedOrdinaryElementName,
+) -> Option<HtmlConstructedNodeId> {
+    open.iter()
+        .rev()
+        .copied()
+        .find(|id| selected_ordinary_name(nodes, *id) == Some(name))
 }
 
 /// Proves a recorded closure trigger is the exact emitted matching end tag.
@@ -1594,33 +1939,51 @@ fn validate_closure_trigger(
     tokenizer_run: &HtmlTokenizerRunResult,
 ) -> Result<(), HtmlTreeFreezeError> {
     // End of file has no authored extent and may never close anything.
-    let Some(boundary) = trigger.authored_boundary() else {
+    if trigger.authored_boundary().is_none() {
         return Err(HtmlTreeFreezeError::FabricatedSelectedOrdinaryClosure(node));
-    };
-    let mismatch = || HtmlTreeFreezeError::ClosureTriggerIsNotTheMatchingEndTag {
-        node,
-        token_index: trigger.token_index(),
-    };
+    }
+    if is_matching_end_tag_trigger(name, trigger, tokenizer_run) {
+        Ok(())
+    } else {
+        Err(HtmlTreeFreezeError::ClosureTriggerIsNotTheMatchingEndTag {
+            node,
+            token_index: trigger.token_index(),
+        })
+    }
+}
 
+/// Whether a recorded trigger is the retained run's own emitted end tag for
+/// `name`.
+///
+/// Shared by matching-closure and heterogeneous recovery validation so the two
+/// relations are proved against exactly the same authored evidence, which is
+/// what lets one authored end tag legitimately trigger several ordered
+/// recovery pops plus exactly one closure. Reads the retained emitted token at
+/// the trigger's own index: this is correlation of retained evidence, not
+/// source discovery, and no source search, rescan, or retokenization occurs.
+fn is_matching_end_tag_trigger(
+    name: HtmlSelectedOrdinaryElementName,
+    trigger: &HtmlTreeTokenTrigger,
+    tokenizer_run: &HtmlTokenizerRunResult,
+) -> bool {
+    let Some(boundary) = trigger.authored_boundary() else {
+        return false;
+    };
     let Some(HtmlToken::Tag(tag)) = tokenizer_run.tokens().get(trigger.token_index()) else {
-        return Err(mismatch());
+        return false;
     };
     if !matches!(tag.kind(), HtmlTagKind::End) {
-        return Err(mismatch());
+        return false;
     }
     if tag.name().interpreted() != name.interpreted() {
-        return Err(mismatch());
+        return false;
     }
     // The recorded anchor must be that token's own complete-tag evidence, not
     // merely an anchor that happens to revalidate.
     let complete = tag.complete();
-    if boundary.source_id() != complete.source_id()
-        || boundary.range() != complete.range()
-        || boundary.fragment() != complete.fragment()
-    {
-        return Err(mismatch());
-    }
-    Ok(())
+    boundary.source_id() == complete.source_id()
+        && boundary.range() == complete.range()
+        && boundary.fragment() == complete.fragment()
 }
 
 /// Resolves a recorded selected ordinary subject by semantic constructed
@@ -1630,13 +1993,10 @@ fn expect_selected_ordinary(
     id: HtmlConstructedNodeId,
     name: HtmlSelectedOrdinaryElementName,
 ) -> Result<(), HtmlTreeFreezeError> {
-    let node = find(nodes, id).ok_or(HtmlTreeFreezeError::UnresolvedActionSubject(id))?;
-    let matches_name = matches!(
-        node.kind(),
-        HtmlTreeNodeKind::Element(HtmlElement::SelectedOrdinary(selected))
-            if selected.name() == name
-    );
-    if matches_name {
+    if find(nodes, id).is_none() {
+        return Err(HtmlTreeFreezeError::UnresolvedActionSubject(id));
+    }
+    if selected_ordinary_name(nodes, id) == Some(name) {
         Ok(())
     } else {
         Err(HtmlTreeFreezeError::ClosureSubjectIsNotTheSelectedOrdinaryElement { node: id, name })

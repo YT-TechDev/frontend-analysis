@@ -122,8 +122,14 @@ fn render_node(
                     HtmlShellElementName::Head => "head",
                     HtmlShellElementName::Body => "body",
                 },
+                // The accepted production selected ordinary frontier is
+                // exactly `{div, section}`. This projection names both so the
+                // rendering stays total and honest; it claims no generalized
+                // HTML element coverage, and the tokenizer production it
+                // gates is unchanged.
                 HtmlElement::SelectedOrdinary(selected) => match selected.name() {
                     HtmlSelectedOrdinaryElementName::Div => "div",
+                    HtmlSelectedOrdinaryElementName::Section => "section",
                 },
             });
             match node.authored_source() {

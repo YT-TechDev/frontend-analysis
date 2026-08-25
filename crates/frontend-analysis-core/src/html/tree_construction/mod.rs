@@ -1,6 +1,7 @@
 //! TC-S1 — Disabled-Scripting Document Shell Construction, plus the accepted
-//! TC-S2 — Selected After-Body Uniform Character-Run Handling and TC-S3 —
-//! Selected In-Body No-Attribute `div` Construction successors.
+//! TC-S2 — Selected After-Body Uniform Character-Run Handling, TC-S3 —
+//! Selected In-Body No-Attribute `div` Construction, and TC-S4 — Selected
+//! In-Body Heterogeneous `div`/`section` Block Closure Recovery successors.
 //!
 //! The first Core-private HTML tree-construction capability, implemented on
 //! the architecture approved under Issue #117 and recorded by ADR 0010
@@ -13,7 +14,13 @@
 //! TC-S3's accepted selected `div` construction (Issue #359) is layered on the
 //! same way: it adds a closed private selected ordinary HTML-element domain
 //! inside the existing session/result ownership, leaving the tokenizer
-//! tree-unaware and the driver tag-name agnostic. Shell types stay shell-only.
+//! tree-unaware and the driver tag-name agnostic. TC-S4's accepted
+//! heterogeneous closure recovery (Issue #363) is layered on that in turn: it
+//! grows the same closed domain from `div` to exactly `div | section` and adds
+//! one narrow recovery relation, so a selected end tag whose nearest same-name
+//! target is not the current node pops the intervening selected elements
+//! before closing that target. It moves no boundary, adds no driver semantics,
+//! and changes no tokenizer production. Shell types stay shell-only.
 //!
 //! ```text
 //! &SourceText + HtmlTokenizerLimits
@@ -59,6 +66,8 @@ pub(crate) mod session;
 mod after_body_successor_production;
 #[cfg(test)]
 mod after_body_successor_validation;
+#[cfg(test)]
+mod in_body_div_section_successor_production;
 #[cfg(test)]
 mod in_body_div_section_successor_validation;
 #[cfg(test)]
