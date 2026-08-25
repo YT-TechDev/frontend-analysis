@@ -452,6 +452,7 @@ fn ab7_after_after_body_character_data_remains_unsupported() {
     assert!(
         diagnostic_evidence(&analysis, HtmlTreeDiagnosticCode::AfterBodyCharacterData).is_empty()
     );
+    assert!(reprocess_trigger_ranges_for_token(&analysis, 3).is_empty());
 
     let (session, _) = drive_tokens("<body></body></html>x");
     assert_eq!(session.insertion_mode(), InsertionMode::AfterAfterBody);
