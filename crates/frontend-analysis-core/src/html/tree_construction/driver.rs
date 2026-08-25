@@ -7,6 +7,11 @@
 //! orchestration, and performs the consuming finalization that turns the
 //! session into an immutable, validated result.
 //!
+//! The driver also owns same-token redispatch: [`drive_token`] retains one
+//! admitted token and its trigger across every session dispatch that token
+//! needs, so the session itself performs only one insertion-mode rule
+//! evaluation per call.
+//!
 //! # Fixed configuration
 //!
 //! TC-S1 is fixed to ordinary document parsing, parser scripting mode
@@ -50,9 +55,12 @@ use super::super::tokenizer::producer::tokenize;
 use super::super::tokenizer::resource::HtmlTokenizerLimits;
 use super::result::{
     HtmlDocumentShellAnalysis, HtmlTreeCompletion, HtmlTreeFreezeError, HtmlTreeIncompleteCause,
-    HtmlTreeUnsupportedCapability, freeze,
+    HtmlTreeTokenTrigger, HtmlTreeUnsupportedCapability, freeze,
 };
-use super::session::{HtmlTreeSession, HtmlTreeSessionError, TokenOutcome, admit, token_trigger};
+use super::session::{
+    AdmittedToken, DispatchOutcome, HtmlTreeSession, HtmlTreeSessionError, InsertionMode,
+    TokenOutcome, admit, token_trigger,
+};
 
 /// A TC-S1 operation/boundary failure.
 ///
@@ -129,7 +137,7 @@ pub(crate) fn construct_html_document_shell(
                 break;
             }
         };
-        match session.process(&admitted, trigger.clone())? {
+        match drive_token(&mut session, &admitted, &trigger)? {
             TokenOutcome::Consumed => {}
             TokenOutcome::StoppedParsing => {
                 stop = Some(Stop::Parsing {
@@ -149,6 +157,43 @@ pub(crate) fn construct_html_document_shell(
     let completion = effective_completion(&stop, &tokenizer_run);
     let parts = session.finish(completion);
     Ok(freeze(source, tokenizer_run, parts)?)
+}
+
+/// Drives one admitted token to a terminal [`TokenOutcome`].
+///
+/// The driver owns same-token redispatch here: it retains the same admitted
+/// token and trigger across every [`DispatchOutcome::ReprocessSameToken`]
+/// result, never re-admitting the token or reconstructing the trigger, and
+/// never advancing the outer tokenizer-token cursor until this returns.
+///
+/// Per-token termination is structural rather than a numeric budget: this
+/// tracks, in `evaluated_modes`, which insertion modes have already been
+/// evaluated while processing this one token, and treats evaluating any of
+/// them again as an internal construction-boundary invariant failure. Because
+/// [`InsertionMode`] is a small finite domain, the check is a proof that one
+/// token's processing cannot cycle — not a resource limit, and nothing here
+/// counts dispatches against a fixed maximum.
+pub(super) fn drive_token(
+    session: &mut HtmlTreeSession,
+    admitted: &AdmittedToken<'_>,
+    trigger: &HtmlTreeTokenTrigger,
+) -> Result<TokenOutcome, HtmlTreeSessionError> {
+    let mut evaluated_modes: Vec<InsertionMode> = Vec::new();
+    loop {
+        let mode = session.insertion_mode();
+        if evaluated_modes.contains(&mode) {
+            return Err(HtmlTreeSessionError::RepeatedInsertionModeEvaluation);
+        }
+        evaluated_modes.push(mode);
+        match session.dispatch(admitted, trigger)? {
+            DispatchOutcome::Consumed => return Ok(TokenOutcome::Consumed),
+            DispatchOutcome::ReprocessSameToken => {}
+            DispatchOutcome::StoppedParsing => return Ok(TokenOutcome::StoppedParsing),
+            DispatchOutcome::Unsupported(capability) => {
+                return Ok(TokenOutcome::Unsupported(capability));
+            }
+        }
+    }
 }
 
 /// Resolves effective completion from the tree's own stop and the retained
