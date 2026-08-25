@@ -27,7 +27,7 @@
 
 use crate::{SourceId, SourceText};
 
-use super::super::token::{HtmlTagKind, HtmlTagToken, HtmlToken};
+use super::super::token::{HtmlTagKind, HtmlToken};
 use super::super::tokenizer::producer::tokenize;
 use super::super::tokenizer::resource::HtmlTokenizerLimits;
 use super::super::tokenizer::result::HtmlTokenizerRunResult;
@@ -541,7 +541,6 @@ enum CandidateTokenShape<'run> {
     EndTag {
         name: CandidateElementName,
         complete: CandidateEvidence,
-        raw_name: CandidateEvidence,
     },
     EndOfFile {
         at: usize,
@@ -629,7 +628,6 @@ fn candidate_shape(token: &HtmlToken) -> Result<CandidateTokenShape<'_>, Candida
                 HtmlTagKind::End => Ok(CandidateTokenShape::EndTag {
                     name,
                     complete: evidence(tag.complete()),
-                    raw_name: evidence(tag.name().source()),
                 }),
             }
         }
@@ -1416,16 +1414,17 @@ fn observe_with_layout(
         }
         None => CandidateCompletion::IncompleteLowerLayer,
     };
+    let open_div_depth = session.open_div_depth();
 
     CandidateObservation {
         semantic: CandidateSemanticObservation {
             tree: session.tree(),
-            diagnostics: session.diagnostics,
-            closures: session.closures,
+            diagnostics: session.diagnostics.clone(),
+            closures: session.closures.clone(),
             identity_count: session.identity_count,
             checkpoint: CandidateCheckpoint {
                 mode: session.mode,
-                open_div_depth: session.open_div_depth(),
+                open_div_depth,
                 committed_prefix_end: session.committed_prefix_end,
                 completion,
             },
@@ -2286,6 +2285,8 @@ fn candidate_configuration_and_pinned_branch_projections_are_exact() {
     for name in ["p", "span", "section", "DIV", "divx"] {
         assert_eq!(candidate_element_name(name), None);
     }
+    assert_eq!(observe_fixture("DV1", 1).semantic.checkpoint.mode, CandidateMode::InBody);
+    assert_eq!(observe_fixture("DV14", 1).semantic.checkpoint.mode, CandidateMode::AfterBody);
 }
 
 #[test]
@@ -2371,6 +2372,7 @@ fn stray_div_end_is_diagnosed_ignored_and_creates_no_closure_or_identity() {
         observed.semantic.diagnostics[1].trigger,
         authored_trigger(1, 1, (6, 12))
     );
+    assert_eq!(observed.semantic.diagnostics[1].recovery, CandidateRecovery::IgnoredToken);
 }
 
 #[test]
@@ -2421,6 +2423,10 @@ fn open_div_at_eof_diagnoses_once_without_fabricated_closure() {
         observed.semantic.diagnostics[1].trigger,
         CandidateTrigger::EndOfFile { index: 3 }
     ));
+    assert_eq!(
+        observed.semantic.diagnostics[1].recovery,
+        CandidateRecovery::StoppedParsingWithOpenElements
+    );
 }
 
 #[test]
@@ -2490,10 +2496,37 @@ fn dv_refusals_are_transactional_and_pin_exact_trigger_evidence() {
     }
 }
 
+fn assert_tree_element_contract(tree: &CandidateTree) {
+    match tree {
+        CandidateTree::Document { children, .. } => {
+            for child in children {
+                assert_tree_element_contract(child);
+            }
+        }
+        CandidateTree::Element {
+            name,
+            namespace,
+            origin,
+            children,
+            ..
+        } => {
+            assert_eq!(*namespace, CandidateNamespace::Html);
+            if *name == CandidateElementName::Div {
+                assert!(matches!(origin, CandidateOrigin::Authored { .. }));
+            }
+            for child in children {
+                assert_tree_element_contract(child);
+            }
+        }
+        CandidateTree::Text { .. } => {}
+    }
+}
+
 #[test]
 fn candidate_provenance_retains_source_identity_and_keeps_domains_distinct() {
     for id in CANDIDATE_IDS {
         let observed = observe_fixture(id, 73);
+        assert_tree_element_contract(&observed.semantic.tree);
         let mut authored = Vec::new();
         collect_tree_evidence(&observed.semantic.tree, &mut authored);
         for diagnostic in &observed.semantic.diagnostics {
