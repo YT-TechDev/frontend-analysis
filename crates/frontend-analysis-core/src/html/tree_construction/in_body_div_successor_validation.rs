@@ -2285,8 +2285,14 @@ fn candidate_configuration_and_pinned_branch_projections_are_exact() {
     for name in ["p", "span", "section", "DIV", "divx"] {
         assert_eq!(candidate_element_name(name), None);
     }
-    assert_eq!(observe_fixture("DV1", 1).semantic.checkpoint.mode, CandidateMode::InBody);
-    assert_eq!(observe_fixture("DV14", 1).semantic.checkpoint.mode, CandidateMode::AfterBody);
+    assert_eq!(
+        observe_fixture("DV1", 1).semantic.checkpoint.mode,
+        CandidateMode::InBody
+    );
+    assert_eq!(
+        observe_fixture("DV14", 1).semantic.checkpoint.mode,
+        CandidateMode::AfterBody
+    );
 }
 
 #[test]
@@ -2372,7 +2378,10 @@ fn stray_div_end_is_diagnosed_ignored_and_creates_no_closure_or_identity() {
         observed.semantic.diagnostics[1].trigger,
         authored_trigger(1, 1, (6, 12))
     );
-    assert_eq!(observed.semantic.diagnostics[1].recovery, CandidateRecovery::IgnoredToken);
+    assert_eq!(
+        observed.semantic.diagnostics[1].recovery,
+        CandidateRecovery::IgnoredToken
+    );
 }
 
 #[test]
