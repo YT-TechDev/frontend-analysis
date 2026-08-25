@@ -188,10 +188,10 @@ impl AdmittedToken<'_> {
     }
 }
 
-/// Normalizes one validated emitted token into the TC-S1 admitted shapes.
+/// Normalizes one validated emitted token into the admitted shapes.
 ///
 /// Pure and mutation-free. Refuses, with exact typed capability evidence,
-/// every token shape TC-S1 does not prove.
+/// every token shape this subsystem does not prove.
 pub(super) fn admit(token: &HtmlToken) -> Result<AdmittedToken<'_>, HtmlTreeCapability> {
     match token {
         HtmlToken::Character(character) => Ok(AdmittedToken::Characters {
@@ -199,14 +199,28 @@ pub(super) fn admit(token: &HtmlToken) -> Result<AdmittedToken<'_>, HtmlTreeCapa
             interpreted: character.interpreted(),
         }),
         HtmlToken::Tag(tag) => {
+            // Resolve the closed name domain first, so each syntax refusal can
+            // report the capability that belongs to that domain. The frozen
+            // predecessor variants keep exactly their old meaning, and a
+            // selected ordinary tag never reports a shell-specific one.
             let Some(name) = admitted_element_name(tag.name().interpreted()) else {
-                return Err(HtmlTreeCapability::UnprovedElementTag);
+                return Err(HtmlTreeCapability::NonShellElementTag);
             };
             if !tag.attributes().is_empty() {
-                return Err(HtmlTreeCapability::AdmittedTagAttribute);
+                return Err(match name {
+                    AdmittedElementName::Shell(_) => HtmlTreeCapability::ShellTagAttribute,
+                    AdmittedElementName::SelectedOrdinary(_) => {
+                        HtmlTreeCapability::SelectedOrdinaryTagAttribute
+                    }
+                });
             }
             if tag.self_closing_solidus().is_some() {
-                return Err(HtmlTreeCapability::SelfClosingAdmittedTag);
+                return Err(match name {
+                    AdmittedElementName::Shell(_) => HtmlTreeCapability::SelfClosingShellTag,
+                    AdmittedElementName::SelectedOrdinary(_) => {
+                        HtmlTreeCapability::SelfClosingSelectedOrdinaryTag
+                    }
+                });
             }
             match tag.kind() {
                 HtmlTagKind::Start => Ok(AdmittedToken::StartTag {
@@ -303,7 +317,7 @@ enum ElementProvenance {
     Synthesized,
 }
 
-/// One committed effect of a TC-S1 insertion-mode rule.
+/// One committed effect of an insertion-mode rule.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Effect {
     RecordMissingDoctype,
@@ -696,7 +710,7 @@ pub(super) enum DispatchOutcome {
     Unsupported(HtmlTreeCapability),
 }
 
-/// A TC-S1 construction-session invariant failure.
+/// A construction-session invariant failure.
 ///
 /// This is an operation/boundary error, never an HTML parse diagnostic and
 /// never unsupported input. Every variant carries only structural evidence;
@@ -857,6 +871,11 @@ impl HtmlTreeSession {
     /// The session itself never escapes, and nothing mutable travels in the
     /// returned parts.
     pub(super) fn finish(self, completion: HtmlTreeCompletion) -> HtmlDocumentShellParts {
+        // Snapshot the actual final open selected state before the mutable
+        // stack is dropped, so the freeze boundary can validate the committed
+        // action stream against it instead of trusting this session. Only the
+        // semantic identities travel; the stack itself does not.
+        let final_open_selected_ordinary = self.open_selected_ordinary_ids();
         HtmlDocumentShellParts {
             nodes: self.nodes,
             root: self.root,
@@ -866,6 +885,7 @@ impl HtmlTreeSession {
             processed_tokens: self.processed_tokens,
             committed_prefix_end: self.committed_prefix_end,
             completion,
+            final_open_selected_ordinary,
         }
     }
 
@@ -1347,21 +1367,31 @@ impl HtmlTreeSession {
         )
     }
 
+    /// The semantic identities of the currently open selected ordinary
+    /// elements, in open-element stack order with the innermost last.
+    ///
+    /// Semantic identities only: no storage position, and no borrow of the
+    /// private stack itself, escapes through this.
+    fn open_selected_ordinary_ids(&self) -> Vec<HtmlConstructedNodeId> {
+        self.open_elements
+            .iter()
+            .copied()
+            .filter(|id| {
+                matches!(
+                    self.node(*id).map(HtmlTreeNode::kind),
+                    Some(HtmlTreeNodeKind::Element(HtmlElement::SelectedOrdinary(_)))
+                )
+            })
+            .collect()
+    }
+
     /// How many selected ordinary elements are currently open.
     ///
     /// This is the `k` of the represented state `S(k) = [html, body] ++
     /// [div]^k`. It is read-only construction state, not a budget: nothing
     /// compares it against a maximum.
     fn open_selected_ordinary_elements(&self) -> usize {
-        self.open_elements
-            .iter()
-            .filter(|id| {
-                matches!(
-                    self.node(**id).map(HtmlTreeNode::kind),
-                    Some(HtmlTreeNodeKind::Element(HtmlElement::SelectedOrdinary(_)))
-                )
-            })
-            .count()
+        self.open_selected_ordinary_ids().len()
     }
 
     /// The bounded selected-element-in-scope condition the accepted end-tag

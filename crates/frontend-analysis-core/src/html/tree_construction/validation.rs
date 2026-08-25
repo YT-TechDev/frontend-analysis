@@ -893,7 +893,7 @@ fn g8_freezes_the_terminal_checkpoint_and_leaks_no_unsupported_identity() {
     };
     assert_eq!(
         unsupported.capability(),
-        HtmlTreeCapability::UnprovedElementTag
+        HtmlTreeCapability::NonShellElementTag
     );
     let trigger = unsupported
         .trigger()
@@ -1271,20 +1271,20 @@ fn duplicate_body_start_tag_clears_frameset_ok_without_creating_a_node() {
 #[test]
 fn unproved_token_shapes_remain_explicit_tree_unsupported() {
     for (source, expected) in [
-        ("<body><p>", HtmlTreeCapability::UnprovedElementTag),
-        ("</p>", HtmlTreeCapability::UnprovedElementTag),
-        ("<span>", HtmlTreeCapability::UnprovedElementTag),
+        ("<body><p>", HtmlTreeCapability::NonShellElementTag),
+        ("</p>", HtmlTreeCapability::NonShellElementTag),
         // `div` is admitted lexically by the TC-S3 successor, so a `div` in a
-        // document position that successor does not prove now carries its
-        // more precise refusal instead of the unproved-name one. It is still
-        // explicit tree-unsupported evidence that committed nothing.
+        // document position that successor does not prove now carries its own
+        // wrong-mode refusal rather than the unproved-name one. It is still
+        // explicit tree-unsupported evidence that committed nothing, and the
+        // unproved-name meaning above is unchanged for every other name.
         (
             "<div>",
             HtmlTreeCapability::SelectedOrdinaryTagOutsideInBody,
         ),
-        ("<body a>", HtmlTreeCapability::AdmittedTagAttribute),
-        ("<html lang=en>", HtmlTreeCapability::AdmittedTagAttribute),
-        ("<body/>", HtmlTreeCapability::SelfClosingAdmittedTag),
+        ("<body a>", HtmlTreeCapability::ShellTagAttribute),
+        ("<html lang=en>", HtmlTreeCapability::ShellTagAttribute),
+        ("<body/>", HtmlTreeCapability::SelfClosingShellTag),
     ] {
         let analysis = analyze(source);
         assert_eq!(
@@ -1555,6 +1555,8 @@ fn valid_parts(fixture: &FreezeFixture) -> HtmlDocumentShellParts {
         processed_tokens: 1,
         committed_prefix_end: 6,
         completion: HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete),
+        // TC-S1 shell parts open no selected ordinary element.
+        final_open_selected_ordinary: Vec::new(),
     }
 }
 
@@ -1917,7 +1919,7 @@ fn freeze_rejects_a_leaked_unsupported_node_identity() {
     // origin, which would mean the refused token authored a committed node.
     parts.completion = HtmlTreeCompletion::Incomplete(
         HtmlTreeIncompleteCause::UnsupportedCapability(HtmlTreeUnsupportedCapability::new(
-            HtmlTreeCapability::UnprovedElementTag,
+            HtmlTreeCapability::NonShellElementTag,
             HtmlTreeTokenTrigger::authored(0, fixture.source.anchor(0, 6).expect("valid range")),
         )),
     );
@@ -2003,9 +2005,9 @@ fn admission_refuses_unproved_token_shapes_before_any_mode_runs() {
     let source = SourceText::new(SourceId::new(1), "<p><body a><body/>".to_owned());
     let run = crate::html::tokenizer::producer::tokenize(&source, generous_limits());
     let expected = [
-        HtmlTreeCapability::UnprovedElementTag,
-        HtmlTreeCapability::AdmittedTagAttribute,
-        HtmlTreeCapability::SelfClosingAdmittedTag,
+        HtmlTreeCapability::NonShellElementTag,
+        HtmlTreeCapability::ShellTagAttribute,
+        HtmlTreeCapability::SelfClosingShellTag,
     ];
     for (token, expected) in run.tokens().iter().zip(expected) {
         assert_eq!(admit(token).err(), Some(expected));

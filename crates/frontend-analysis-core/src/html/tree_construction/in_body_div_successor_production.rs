@@ -920,7 +920,7 @@ fn dv8a_an_attributed_selected_start_tag_refuses_transactionally() {
         committed_end: 6,
         processed_tokens: 1,
         completion: ExpectedCompletion::Unsupported {
-            capability: HtmlTreeCapability::AdmittedTagAttribute,
+            capability: HtmlTreeCapability::SelectedOrdinaryTagAttribute,
             token: 1,
             trigger: Some((6, 16)),
         },
@@ -942,7 +942,7 @@ fn dv8b_a_self_closing_selected_start_tag_refuses_transactionally() {
         committed_end: 6,
         processed_tokens: 1,
         completion: ExpectedCompletion::Unsupported {
-            capability: HtmlTreeCapability::SelfClosingAdmittedTag,
+            capability: HtmlTreeCapability::SelfClosingSelectedOrdinaryTag,
             token: 1,
             trigger: Some((6, 12)),
         },
@@ -1059,7 +1059,7 @@ fn dv11_p_remains_unsupported() {
         committed_end: 6,
         processed_tokens: 1,
         completion: ExpectedCompletion::Unsupported {
-            capability: HtmlTreeCapability::UnprovedElementTag,
+            capability: HtmlTreeCapability::NonShellElementTag,
             token: 1,
             trigger: Some((6, 9)),
         },
@@ -1442,11 +1442,17 @@ fn selected_support_appears_only_in_the_proved_cells() {
             HtmlTreeCapability::SelectedOrdinaryTagOutsideInBody,
         ),
         // Unsupported selected syntax.
-        ("<body><div id=x>", HtmlTreeCapability::AdmittedTagAttribute),
-        ("<body><div/>", HtmlTreeCapability::SelfClosingAdmittedTag),
+        (
+            "<body><div id=x>",
+            HtmlTreeCapability::SelectedOrdinaryTagAttribute,
+        ),
+        (
+            "<body><div/>",
+            HtmlTreeCapability::SelfClosingSelectedOrdinaryTag,
+        ),
         (
             "<body><div></div id=x>",
-            HtmlTreeCapability::AdmittedTagAttribute,
+            HtmlTreeCapability::SelectedOrdinaryTagAttribute,
         ),
         // Shell interaction over an open selected element.
         (
@@ -1462,9 +1468,9 @@ fn selected_support_appears_only_in_the_proved_cells() {
             HtmlTreeCapability::ShellTagWithOpenSelectedOrdinaryElement,
         ),
         // Names outside both closed domains stay unproved.
-        ("<body><p>", HtmlTreeCapability::UnprovedElementTag),
-        ("<body><div><p>", HtmlTreeCapability::UnprovedElementTag),
-        ("<body><span>", HtmlTreeCapability::UnprovedElementTag),
+        ("<body><p>", HtmlTreeCapability::NonShellElementTag),
+        ("<body><div><p>", HtmlTreeCapability::NonShellElementTag),
+        ("<body><span>", HtmlTreeCapability::NonShellElementTag),
     ] {
         let analysis = analyze(source_text);
         let ExpectedCompletion::Unsupported {
@@ -1699,6 +1705,8 @@ fn closure_parts(fixture: &ClosureFixture) -> HtmlDocumentShellParts {
         processed_tokens: 3,
         committed_prefix_end: 17,
         completion: HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete),
+        // The single `div` is closed, so nothing is open at hand-off.
+        final_open_selected_ordinary: Vec::new(),
     }
 }
 
@@ -1891,6 +1899,7 @@ fn freeze_rejects_a_closure_that_is_not_stack_consistent() {
         processed_tokens: 5,
         committed_prefix_end: 28,
         completion: HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete),
+        final_open_selected_ordinary: Vec::new(),
     };
 
     assert_eq!(
@@ -1907,7 +1916,506 @@ fn freeze_accepts_a_valid_end_of_file_open_selected_state() {
     let fixture = closure_fixture();
     let mut parts = closure_parts(&fixture);
     parts.actions.pop();
+    parts.final_open_selected_ordinary = vec![fixture.ids[4]];
     let analysis = freeze_closure_parts(&fixture, parts).expect("an open selected state freezes");
     assert_eq!(analysis.node_count(), 5);
     assert!(project_closures(&analysis).is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// The closure trigger must be the exact retained matching end tag
+// ---------------------------------------------------------------------------
+
+/// Rebuilds the fixture's single closure action with a different trigger.
+///
+/// The replacement triggers below are all *valid* authored evidence for some
+/// retained token, which is the point: proving they are rejected is what
+/// separates "matching end-tag evidence" from "any anchor that revalidates".
+fn closure_parts_with_trigger(
+    fixture: &ClosureFixture,
+    trigger: HtmlTreeTokenTrigger,
+) -> HtmlDocumentShellParts {
+    let mut parts = closure_parts(fixture);
+    let selected = fixture.ids[4];
+    parts.actions[1] = HtmlTreeAction::new(
+        HtmlTreeActionKind::ClosedSelectedOrdinaryElement {
+            node: selected,
+            name: HtmlSelectedOrdinaryElementName::Div,
+        },
+        trigger,
+    );
+    parts
+}
+
+#[test]
+fn freeze_rejects_a_closure_triggered_by_the_selected_start_tag() {
+    // `<body><div></div>`: token 1 is the `div` **start** tag. Its complete
+    // anchor is real authored evidence for a real retained token, and the
+    // token ordering stays valid — but a start tag never closes anything.
+    let fixture = closure_fixture();
+    let anchor = fixture.source.anchor(6, 11).expect("valid range");
+    let parts = closure_parts_with_trigger(&fixture, HtmlTreeTokenTrigger::authored(1, anchor));
+    assert_eq!(
+        freeze_closure_parts(&fixture, parts).expect_err("freeze must reject this"),
+        HtmlTreeFreezeError::ClosureTriggerIsNotTheMatchingEndTag {
+            node: fixture.ids[4],
+            token_index: 1,
+        }
+    );
+}
+
+#[test]
+fn freeze_rejects_a_closure_triggered_by_an_unrelated_non_tag_token() {
+    // `<body><div></div>x`: token 3 is a character run. It is real retained
+    // evidence, its anchor revalidates, and using it keeps token ordering
+    // non-decreasing — so the pre-existing progression check passes and the
+    // new matching-end-tag correlation is what rejects it.
+    let source = SourceText::new(SourceId::new(1), "<body><div></div>x".to_owned());
+    let run = tokenize(&source, generous_limits());
+    let mut counter = HtmlConstructedIdentityCounter::new();
+    let ids: Vec<HtmlConstructedNodeId> = (0..5)
+        .map(|_| {
+            let reserved = counter.reserve().expect("identity headroom");
+            counter.commit(reserved);
+            reserved
+        })
+        .collect();
+    let [root, html, head, body, selected] = ids[..] else {
+        panic!("five minted identities")
+    };
+    let anchor = |start: usize, end: usize| source.anchor(start, end).expect("valid range");
+    let synthesized_shell = |name| {
+        HtmlTreeNodeKind::Element(HtmlElement::Shell(HtmlShellElement::new(
+            name,
+            HtmlShellElementOrigin::Synthesized(HtmlSynthesisCause::ImpliedByDocumentStructure),
+        )))
+    };
+    let parts = HtmlDocumentShellParts {
+        nodes: vec![
+            HtmlTreeNode::new(root, None, vec![html], HtmlTreeNodeKind::Document),
+            HtmlTreeNode::new(
+                html,
+                Some(root),
+                vec![head, body],
+                synthesized_shell(HtmlShellElementName::Html),
+            ),
+            HtmlTreeNode::new(
+                head,
+                Some(html),
+                vec![],
+                synthesized_shell(HtmlShellElementName::Head),
+            ),
+            HtmlTreeNode::new(
+                body,
+                Some(html),
+                vec![selected],
+                HtmlTreeNodeKind::Element(HtmlElement::Shell(HtmlShellElement::new(
+                    HtmlShellElementName::Body,
+                    HtmlShellElementOrigin::Authored {
+                        complete: anchor(0, 6),
+                        raw_name: anchor(1, 5),
+                    },
+                ))),
+            ),
+            HtmlTreeNode::new(
+                selected,
+                Some(body),
+                vec![],
+                HtmlTreeNodeKind::Element(HtmlElement::SelectedOrdinary(
+                    HtmlSelectedOrdinaryElement::new(
+                        HtmlSelectedOrdinaryElementName::Div,
+                        anchor(6, 11),
+                        anchor(7, 10),
+                    ),
+                )),
+            ),
+        ],
+        root,
+        admitted_creation_events: 5,
+        diagnostics: vec![],
+        actions: vec![
+            HtmlTreeAction::new(
+                HtmlTreeActionKind::InsertedAuthoredSelectedOrdinaryElement {
+                    node: selected,
+                    name: HtmlSelectedOrdinaryElementName::Div,
+                },
+                HtmlTreeTokenTrigger::authored(1, anchor(6, 11)),
+            ),
+            HtmlTreeAction::new(
+                HtmlTreeActionKind::ClosedSelectedOrdinaryElement {
+                    node: selected,
+                    name: HtmlSelectedOrdinaryElementName::Div,
+                },
+                HtmlTreeTokenTrigger::authored(3, anchor(17, 18)),
+            ),
+        ],
+        processed_tokens: 4,
+        committed_prefix_end: 18,
+        completion: HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete),
+        final_open_selected_ordinary: Vec::new(),
+    };
+    assert_eq!(
+        freeze(&source, run, parts).expect_err("freeze must reject this"),
+        HtmlTreeFreezeError::ClosureTriggerIsNotTheMatchingEndTag {
+            node: selected,
+            token_index: 3,
+        }
+    );
+}
+
+#[test]
+fn freeze_rejects_a_closure_whose_anchor_is_not_the_retained_end_tag_evidence() {
+    // The right token index, but an anchor that is a sub-range of the retained
+    // `</div>` rather than that token's own complete-tag evidence.
+    let fixture = closure_fixture();
+    let anchor = fixture.source.anchor(13, 16).expect("valid range");
+    let parts = closure_parts_with_trigger(&fixture, HtmlTreeTokenTrigger::authored(2, anchor));
+    assert_eq!(
+        freeze_closure_parts(&fixture, parts).expect_err("freeze must reject this"),
+        HtmlTreeFreezeError::ClosureTriggerIsNotTheMatchingEndTag {
+            node: fixture.ids[4],
+            token_index: 2,
+        }
+    );
+}
+
+#[test]
+fn freeze_rejects_a_closure_triggered_by_a_differently_named_end_tag() {
+    // `<body><div></body>`: token 2 is a real, retained, authored **end** tag
+    // whose interpreted name is `body`, not the selected ordinary name.
+    let source = SourceText::new(SourceId::new(1), "<body><div></body>".to_owned());
+    let run = tokenize(&source, generous_limits());
+    let mut counter = HtmlConstructedIdentityCounter::new();
+    let ids: Vec<HtmlConstructedNodeId> = (0..5)
+        .map(|_| {
+            let reserved = counter.reserve().expect("identity headroom");
+            counter.commit(reserved);
+            reserved
+        })
+        .collect();
+    let [root, html, head, body, selected] = ids[..] else {
+        panic!("five minted identities")
+    };
+    let anchor = |start: usize, end: usize| source.anchor(start, end).expect("valid range");
+    let synthesized_shell = |name| {
+        HtmlTreeNodeKind::Element(HtmlElement::Shell(HtmlShellElement::new(
+            name,
+            HtmlShellElementOrigin::Synthesized(HtmlSynthesisCause::ImpliedByDocumentStructure),
+        )))
+    };
+    let parts = HtmlDocumentShellParts {
+        nodes: vec![
+            HtmlTreeNode::new(root, None, vec![html], HtmlTreeNodeKind::Document),
+            HtmlTreeNode::new(
+                html,
+                Some(root),
+                vec![head, body],
+                synthesized_shell(HtmlShellElementName::Html),
+            ),
+            HtmlTreeNode::new(
+                head,
+                Some(html),
+                vec![],
+                synthesized_shell(HtmlShellElementName::Head),
+            ),
+            HtmlTreeNode::new(
+                body,
+                Some(html),
+                vec![selected],
+                HtmlTreeNodeKind::Element(HtmlElement::Shell(HtmlShellElement::new(
+                    HtmlShellElementName::Body,
+                    HtmlShellElementOrigin::Authored {
+                        complete: anchor(0, 6),
+                        raw_name: anchor(1, 5),
+                    },
+                ))),
+            ),
+            HtmlTreeNode::new(
+                selected,
+                Some(body),
+                vec![],
+                HtmlTreeNodeKind::Element(HtmlElement::SelectedOrdinary(
+                    HtmlSelectedOrdinaryElement::new(
+                        HtmlSelectedOrdinaryElementName::Div,
+                        anchor(6, 11),
+                        anchor(7, 10),
+                    ),
+                )),
+            ),
+        ],
+        root,
+        admitted_creation_events: 5,
+        diagnostics: vec![],
+        actions: vec![
+            HtmlTreeAction::new(
+                HtmlTreeActionKind::InsertedAuthoredSelectedOrdinaryElement {
+                    node: selected,
+                    name: HtmlSelectedOrdinaryElementName::Div,
+                },
+                HtmlTreeTokenTrigger::authored(1, anchor(6, 11)),
+            ),
+            HtmlTreeAction::new(
+                HtmlTreeActionKind::ClosedSelectedOrdinaryElement {
+                    node: selected,
+                    name: HtmlSelectedOrdinaryElementName::Div,
+                },
+                HtmlTreeTokenTrigger::authored(2, anchor(11, 18)),
+            ),
+        ],
+        processed_tokens: 3,
+        committed_prefix_end: 18,
+        completion: HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete),
+        final_open_selected_ordinary: Vec::new(),
+    };
+    assert_eq!(
+        freeze(&source, run, parts).expect_err("freeze must reject this"),
+        HtmlTreeFreezeError::ClosureTriggerIsNotTheMatchingEndTag {
+            node: selected,
+            token_index: 2,
+        }
+    );
+}
+
+#[test]
+fn freeze_rejects_a_duplicate_selected_insertion_for_one_semantic_node() {
+    // The replay stack must not be paddable: inserting the same semantic node
+    // twice and closing it twice would otherwise defeat closure uniqueness.
+    let fixture = closure_fixture();
+    let mut parts = closure_parts(&fixture);
+    let insertion = parts.actions[0].clone();
+    let closing = parts.actions[1].clone();
+    parts.actions = vec![insertion.clone(), insertion, closing.clone(), closing];
+    assert_eq!(
+        freeze_closure_parts(&fixture, parts).expect_err("freeze must reject this"),
+        HtmlTreeFreezeError::DuplicateSelectedOrdinaryInsertion(fixture.ids[4])
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Freeze compares the replayed open state with the session's actual final state
+// ---------------------------------------------------------------------------
+
+#[test]
+fn freeze_rejects_a_replayed_open_element_the_session_reports_closed() {
+    // A session bug that popped the element without recording its closure:
+    // the action replay leaves it open, but the actual final state says it is
+    // not. Before this check the two were indistinguishable from a valid
+    // end-of-file-open run.
+    let fixture = closure_fixture();
+    let mut parts = closure_parts(&fixture);
+    parts.actions.pop();
+    parts.final_open_selected_ordinary = Vec::new();
+    assert_eq!(
+        freeze_closure_parts(&fixture, parts).expect_err("freeze must reject this"),
+        HtmlTreeFreezeError::FinalOpenSelectedOrdinaryStateMismatch {
+            replayed: vec![fixture.ids[4]],
+            actual: Vec::new(),
+        }
+    );
+}
+
+#[test]
+fn freeze_rejects_a_final_open_element_the_action_stream_reports_closed() {
+    // The mirror image: the action stream closed the element, but the actual
+    // final state still lists it as open.
+    let fixture = closure_fixture();
+    let mut parts = closure_parts(&fixture);
+    parts.final_open_selected_ordinary = vec![fixture.ids[4]];
+    assert_eq!(
+        freeze_closure_parts(&fixture, parts).expect_err("freeze must reject this"),
+        HtmlTreeFreezeError::FinalOpenSelectedOrdinaryStateMismatch {
+            replayed: Vec::new(),
+            actual: vec![fixture.ids[4]],
+        }
+    );
+}
+
+#[test]
+fn freeze_rejects_a_final_open_element_that_is_not_a_selected_element() {
+    // The shell `body` node is stored and resolves, but it is not a selected
+    // ordinary element and may never appear in this snapshot.
+    let fixture = closure_fixture();
+    let mut parts = closure_parts(&fixture);
+    parts.final_open_selected_ordinary = vec![fixture.ids[3]];
+    assert_eq!(
+        freeze_closure_parts(&fixture, parts).expect_err("freeze must reject this"),
+        HtmlTreeFreezeError::FinalOpenSelectedOrdinaryIsNotASelectedElement(fixture.ids[3])
+    );
+}
+
+#[test]
+fn freeze_checks_final_open_ordering_and_accepts_valid_nested_open_state() {
+    // `<body><div><div>`: both elements stay open, outermost first.
+    let source = SourceText::new(SourceId::new(1), "<body><div><div>".to_owned());
+    let run = tokenize(&source, generous_limits());
+    let mut counter = HtmlConstructedIdentityCounter::new();
+    let ids: Vec<HtmlConstructedNodeId> = (0..6)
+        .map(|_| {
+            let reserved = counter.reserve().expect("identity headroom");
+            counter.commit(reserved);
+            reserved
+        })
+        .collect();
+    let [root, html, head, body, outer, inner] = ids[..] else {
+        panic!("six minted identities")
+    };
+    let anchor = |start: usize, end: usize| source.anchor(start, end).expect("valid range");
+    let synthesized_shell = |name| {
+        HtmlTreeNodeKind::Element(HtmlElement::Shell(HtmlShellElement::new(
+            name,
+            HtmlShellElementOrigin::Synthesized(HtmlSynthesisCause::ImpliedByDocumentStructure),
+        )))
+    };
+    let selected_element = |complete: (usize, usize), raw: (usize, usize)| {
+        HtmlTreeNodeKind::Element(HtmlElement::SelectedOrdinary(
+            HtmlSelectedOrdinaryElement::new(
+                HtmlSelectedOrdinaryElementName::Div,
+                anchor(complete.0, complete.1),
+                anchor(raw.0, raw.1),
+            ),
+        ))
+    };
+    let insertion = |node, token, complete: (usize, usize)| {
+        HtmlTreeAction::new(
+            HtmlTreeActionKind::InsertedAuthoredSelectedOrdinaryElement {
+                node,
+                name: HtmlSelectedOrdinaryElementName::Div,
+            },
+            HtmlTreeTokenTrigger::authored(token, anchor(complete.0, complete.1)),
+        )
+    };
+    let nodes = vec![
+        HtmlTreeNode::new(root, None, vec![html], HtmlTreeNodeKind::Document),
+        HtmlTreeNode::new(
+            html,
+            Some(root),
+            vec![head, body],
+            synthesized_shell(HtmlShellElementName::Html),
+        ),
+        HtmlTreeNode::new(
+            head,
+            Some(html),
+            vec![],
+            synthesized_shell(HtmlShellElementName::Head),
+        ),
+        HtmlTreeNode::new(
+            body,
+            Some(html),
+            vec![outer],
+            HtmlTreeNodeKind::Element(HtmlElement::Shell(HtmlShellElement::new(
+                HtmlShellElementName::Body,
+                HtmlShellElementOrigin::Authored {
+                    complete: anchor(0, 6),
+                    raw_name: anchor(1, 5),
+                },
+            ))),
+        ),
+        HtmlTreeNode::new(
+            outer,
+            Some(body),
+            vec![inner],
+            selected_element((6, 11), (7, 10)),
+        ),
+        HtmlTreeNode::new(
+            inner,
+            Some(outer),
+            vec![],
+            selected_element((11, 16), (12, 15)),
+        ),
+    ];
+    let build = |final_open: Vec<HtmlConstructedNodeId>| HtmlDocumentShellParts {
+        nodes: nodes.clone(),
+        root,
+        admitted_creation_events: 6,
+        diagnostics: vec![],
+        actions: vec![insertion(outer, 1, (6, 11)), insertion(inner, 2, (11, 16))],
+        processed_tokens: 3,
+        committed_prefix_end: 16,
+        completion: HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete),
+        final_open_selected_ordinary: final_open,
+    };
+
+    // Reversed ordering is rejected even though the set is identical.
+    assert_eq!(
+        freeze(&source, run.clone(), build(vec![inner, outer]))
+            .expect_err("freeze must reject this"),
+        HtmlTreeFreezeError::FinalOpenSelectedOrdinaryStateMismatch {
+            replayed: vec![outer, inner],
+            actual: vec![inner, outer],
+        }
+    );
+
+    // The correct outermost-first ordering freezes, with no closure invented.
+    let analysis = freeze(&source, run, build(vec![outer, inner]))
+        .expect("a valid multiple-open end-of-file state freezes");
+    assert_eq!(analysis.node_count(), 6);
+    assert!(project_closures(&analysis).is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// The predecessor capability vocabulary is intact
+// ---------------------------------------------------------------------------
+
+#[test]
+fn predecessor_capability_meanings_are_unchanged_and_selected_ones_are_distinct() {
+    // The frozen predecessor variants keep their exact meaning, and the
+    // selected ordinary syntax boundary reports its own variants instead of
+    // borrowing a shell-specific one.
+    for (source_text, expected) in [
+        // Frozen predecessor meanings.
+        ("<body><p>", HtmlTreeCapability::NonShellElementTag),
+        ("</p>", HtmlTreeCapability::NonShellElementTag),
+        ("<body a>", HtmlTreeCapability::ShellTagAttribute),
+        ("<html lang=en>", HtmlTreeCapability::ShellTagAttribute),
+        ("<body/>", HtmlTreeCapability::SelfClosingShellTag),
+        ("<html/>", HtmlTreeCapability::SelfClosingShellTag),
+        // New selected-ordinary-specific meanings.
+        (
+            "<body><div id=x>",
+            HtmlTreeCapability::SelectedOrdinaryTagAttribute,
+        ),
+        (
+            "<body><div/>",
+            HtmlTreeCapability::SelfClosingSelectedOrdinaryTag,
+        ),
+        (
+            "<body><div></div id=x>",
+            HtmlTreeCapability::SelectedOrdinaryTagAttribute,
+        ),
+    ] {
+        let analysis = analyze(source_text);
+        let ExpectedCompletion::Unsupported { capability, .. } = project_completion(&analysis)
+        else {
+            panic!("{source_text:?}: expected an explicit unsupported stop")
+        };
+        assert_eq!(capability, expected, "{source_text:?}");
+
+        // Every one of these remains a transactional refusal: the refused
+        // token committed nothing, so it is no node's authored origin and
+        // committed coverage stops exactly where it begins.
+        let ExpectedCompletion::Unsupported {
+            trigger: Some(trigger),
+            ..
+        } = project_completion(&analysis)
+        else {
+            panic!("{source_text:?}: a refused tag always has an authored extent")
+        };
+        assert_eq!(
+            analysis.coverage().committed_end(),
+            trigger.0,
+            "{source_text:?}: coverage stops at the refused token"
+        );
+        assert!(
+            analysis
+                .nodes_in_creation_order()
+                .into_iter()
+                .all(|node| !matches!(
+                    node.authored_source(),
+                    Some(HtmlAuthoredSource::StartTag { complete, .. })
+                        if span(complete) == trigger
+                )),
+            "{source_text:?}: the refused trigger leaked as an authored origin"
+        );
+        assert!(!analysis.is_complete(), "{source_text:?}");
+    }
 }
