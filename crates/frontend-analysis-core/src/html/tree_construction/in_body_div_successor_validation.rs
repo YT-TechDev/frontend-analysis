@@ -677,10 +677,10 @@ enum CandidateStep {
 fn reject_whitespace_sensitive(
     shape: &CandidateTokenShape<'_>,
 ) -> Result<(), CandidateUnsupported> {
-    if let CandidateTokenShape::Characters { interpreted, .. } = shape {
-        if interpreted.chars().any(is_html_whitespace) {
-            return Err(CandidateUnsupported::WhitespaceSensitiveCharacterData);
-        }
+    if let CandidateTokenShape::Characters { interpreted, .. } = shape
+        && interpreted.chars().any(is_html_whitespace)
+    {
+        return Err(CandidateUnsupported::WhitespaceSensitiveCharacterData);
     }
     Ok(())
 }
