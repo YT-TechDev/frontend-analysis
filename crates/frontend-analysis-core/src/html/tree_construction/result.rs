@@ -492,8 +492,11 @@ pub(crate) enum HtmlTreeActionKind {
     /// A duplicate shell start tag created no node and admitted no
     /// constructed identity.
     DuplicateShellStartTagCreatedNoNode { name: HtmlShellElementName },
-    /// The trigger token was handed to a later insertion mode without being
-    /// consumed. Reprocessing keeps one token as one observation.
+    /// The trigger token was handed to a different actual insertion mode
+    /// without being consumed. TC-S2's accepted `AfterBody -> InBody`
+    /// recovery makes this a same-token move to a mode that is not
+    /// necessarily later; reprocessing still keeps one token as one
+    /// observation.
     ReprocessedToken,
     /// Document parsing stopped at the trigger token.
     StoppedParsing,
@@ -563,6 +566,9 @@ pub(crate) enum HtmlTreeDiagnosticCode {
     DuplicateHeadStartTag,
     /// A `body` start tag appeared while a body element was already open.
     DuplicateBodyStartTag,
+    /// A non-whitespace character run appeared while `AfterBody` was the
+    /// actual insertion mode.
+    AfterBodyCharacterData,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -571,6 +577,9 @@ pub(crate) enum HtmlTreeRecovery {
     ContinuedInQuirksDocumentMode,
     /// The duplicate shell start tag produced no node and no identity.
     DuplicateShellStartTagProducedNoNode,
+    /// The actual insertion mode changed from `AfterBody` to `InBody` and the
+    /// same admitted token was reprocessed there.
+    SwitchedToInBodyAndReprocessedSameToken,
 }
 
 /// A TC-S1 capability boundary reached by admitted input.

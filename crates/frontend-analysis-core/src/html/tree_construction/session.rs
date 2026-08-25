@@ -28,12 +28,15 @@
 //!
 //! # Termination without a work limit
 //!
-//! TC-S1 introduces no tree resource dimension, limit, or work constant.
-//! Per-token termination is structural: reprocessing is only ever expressed
-//! as a transition to a *strictly later* insertion mode in the total order of
-//! [`InsertionMode`], and [`HtmlTreeSession::switch_mode`] rejects any
-//! transition that is not strictly forward. A finite strictly increasing walk
-//! over a finite ordered enum cannot loop, and TC-S1 contains no recursion.
+//! This subsystem introduces no tree resource dimension, limit, or work
+//! constant. The session performs exactly one insertion-mode rule evaluation
+//! per [`HtmlTreeSession::dispatch`] call and never loops internally; per-token
+//! termination is instead a structural property [`super::driver`] proves by
+//! tracking, for one emitted token, which insertion modes have already been
+//! evaluated and refusing to evaluate any of them twice. That is what allows
+//! TC-S2's validated `AfterBody -> InBody` recovery back-edge to coexist with
+//! finite per-token work: the bound comes from the finite [`InsertionMode`]
+//! domain, not from a strictly-forward order or a numeric budget.
 
 use crate::SourceAnchor;
 
@@ -46,12 +49,13 @@ use super::result::{
     HtmlTreeNode, HtmlTreeNodeKind, HtmlTreeRecovery, HtmlTreeTokenTrigger,
 };
 
-/// The TC-S1 insertion modes, in the total order document construction walks.
+/// The document-construction insertion modes.
 ///
-/// The order is load-bearing: every TC-S1 mode transition, whether it consumes
-/// the token or reprocesses it, moves strictly forward, which is what bounds
-/// per-token work without any numeric limit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+/// TC-S2 introduces a validated `AfterBody -> InBody` recovery back-edge, so
+/// this type deliberately derives no ordering: per-token termination is
+/// proved structurally by [`super::driver`] rather than by a strictly forward
+/// walk through a total order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum InsertionMode {
     Initial,
     BeforeHtml,
@@ -188,6 +192,41 @@ fn contains_html_whitespace(interpreted: &str) -> bool {
         .any(|character| matches!(character, '\t' | '\n' | '\u{000c}' | '\r' | ' '))
 }
 
+/// The TC-S2 partition of one tokenizer-emitted aggregate interpreted
+/// character run.
+///
+/// Classification inspects the existing interpreted string as one scan; it
+/// never accesses `SourceText`, never calls the tokenizer, and never creates a
+/// substring or fabricated sub-range. The run stays exactly one observation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CharacterRunClass {
+    AllHtmlWhitespace,
+    AllNonHtmlWhitespace,
+    Mixed,
+}
+
+/// Classifies an interpreted character run by the same HTML whitespace set
+/// [`contains_html_whitespace`] uses.
+fn classify_character_run(interpreted: &str) -> CharacterRunClass {
+    let mut any_whitespace = false;
+    let mut any_non_whitespace = false;
+    for character in interpreted.chars() {
+        if matches!(character, '\t' | '\n' | '\u{000c}' | '\r' | ' ') {
+            any_whitespace = true;
+        } else {
+            any_non_whitespace = true;
+        }
+    }
+    match (any_whitespace, any_non_whitespace) {
+        (true, true) => CharacterRunClass::Mixed,
+        (false, true) => CharacterRunClass::AllNonHtmlWhitespace,
+        // An admitted character token is never empty, so `(false, false)`
+        // cannot occur; treating it as whitespace here fabricates nothing
+        // because no such run reaches this function.
+        (true, false) | (false, false) => CharacterRunClass::AllHtmlWhitespace,
+    }
+}
+
 /// Where a shell element node's existence comes from, as selected by the
 /// insertion-mode rule that inserts it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -211,6 +250,7 @@ enum Effect {
     RecordDuplicateBodyStartTag,
     CloseHeadElement(HtmlShellClosure),
     AcknowledgeShellEndTag(HtmlShellElementName),
+    RecordAfterBodyCharacterData,
 }
 
 /// What an insertion-mode rule does with the current token.
@@ -230,6 +270,20 @@ enum ModeStep {
     },
     /// Stop document parsing at this token.
     Stop,
+}
+
+/// The selected `in body` character step: insert the token's characters and
+/// leave the actual insertion mode unchanged.
+///
+/// Shared between ordinary `InBody` character handling and TC-S2's
+/// `AfterBody + AllHtmlWhitespace` delegation, so the two never duplicate
+/// [`HtmlTreeSession::insert_characters`]. `next: None` is what keeps the
+/// delegating call's actual mode exactly where it was.
+fn selected_in_body_character_step() -> ModeStep {
+    ModeStep::Consume {
+        effect: Some(Effect::InsertCharacters),
+        next: None,
+    }
 }
 
 /// Selects the TC-S1 rule for one (insertion mode, admitted token) cell.
@@ -368,10 +422,7 @@ fn classify(
         // inserted identically, so a contiguous Data run needs no splitting
         // and needs no whitespace refusal.
         InsertionMode::InBody => match token {
-            AdmittedToken::Characters { .. } => Ok(ModeStep::Consume {
-                effect: Some(Effect::InsertCharacters),
-                next: None,
-            }),
+            AdmittedToken::Characters { .. } => Ok(selected_in_body_character_step()),
             AdmittedToken::StartTag {
                 name: HtmlShellElementName::Body,
                 ..
@@ -398,9 +449,14 @@ fn classify(
         },
         // Reached by the proved `</body>` cell. End of file here stops the
         // bounded document parse, which is what the accepted G4, G6, and G7
-        // cases require; the other `after body` rules the HTML Standard defines
-        // (whitespace, comments, reprocessing anything else back in `in body`)
-        // are not proved by TC-S1 and stay refused.
+        // cases require. TC-S2 additionally proves the uniform aggregate
+        // character run: an all-whitespace run delegates to the selected
+        // `in body` text step without changing the actual mode; an
+        // all-non-whitespace run records one diagnostic and reprocesses into
+        // `InBody`; a mixed run is refused whole, before any mutation. The
+        // other `after body` rules the HTML Standard defines (comments,
+        // reprocessing other token shapes back in `in body`) remain
+        // unproved and stay refused.
         InsertionMode::AfterBody => match token {
             AdmittedToken::EndTag {
                 name: HtmlShellElementName::Html,
@@ -410,8 +466,17 @@ fn classify(
                 next: Some(InsertionMode::AfterAfterBody),
             }),
             AdmittedToken::EndOfFile { .. } => Ok(ModeStep::Stop),
-            AdmittedToken::Characters { .. } => {
-                Err(HtmlTreeCapability::UnprovedCharacterDataPosition)
+            AdmittedToken::Characters { interpreted, .. } => {
+                match classify_character_run(interpreted) {
+                    CharacterRunClass::AllHtmlWhitespace => Ok(selected_in_body_character_step()),
+                    CharacterRunClass::AllNonHtmlWhitespace => Ok(ModeStep::Reprocess {
+                        effect: Some(Effect::RecordAfterBodyCharacterData),
+                        next: InsertionMode::InBody,
+                    }),
+                    CharacterRunClass::Mixed => {
+                        Err(HtmlTreeCapability::WhitespaceSensitiveCharacterData)
+                    }
+                }
             }
             AdmittedToken::StartTag { .. } => {
                 Err(HtmlTreeCapability::UnprovedShellStartTagPosition)
@@ -444,14 +509,33 @@ fn reject_whitespace_sensitive_characters(
     }
 }
 
-/// What processing one admitted token concluded.
+/// What processing one admitted token concluded, once [`super::driver`] has
+/// driven it to a terminal disposition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum TokenOutcome {
     /// The token was completely processed by supported actions.
     Consumed,
     /// The token stopped document parsing normally.
     StoppedParsing,
-    /// TC-S1 does not prove this cell. Nothing was mutated for it.
+    /// This subsystem does not prove this cell. Nothing was mutated for it.
+    Unsupported(HtmlTreeCapability),
+}
+
+/// What one [`HtmlTreeSession::dispatch`] call — exactly one insertion-mode
+/// rule evaluation — concluded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum DispatchOutcome {
+    /// The token was completely processed by this rule.
+    Consumed,
+    /// The rule reprocessed the same token into a new actual insertion mode.
+    /// The session committed nothing for the token: no coverage, no
+    /// processed-token count. [`super::driver`] redispatches the same
+    /// admitted token and trigger without re-admitting or reconstructing
+    /// either.
+    ReprocessSameToken,
+    /// The token stopped document parsing normally.
+    StoppedParsing,
+    /// This subsystem does not prove this cell. Nothing was mutated for it.
     Unsupported(HtmlTreeCapability),
 }
 
@@ -479,9 +563,11 @@ pub(crate) enum HtmlTreeSessionError {
     MissingCharacterInsertionTarget,
     /// Character insertion found a coalescing target that is not a text node.
     InvalidCharacterCoalescingTarget(HtmlConstructedNodeId),
-    /// An insertion-mode transition did not move strictly forward through the
-    /// TC-S1 order.
-    NonMonotonicInsertionModeTransition,
+    /// While processing one emitted token, the driver observed the same
+    /// insertion mode evaluated twice. This is the structural per-token
+    /// termination proof: it is never expected to fire for a proved cell and
+    /// carries no numeric budget.
+    RepeatedInsertionModeEvaluation,
     /// Committed tree coverage moved backwards.
     NonMonotonicCommittedCoverage,
 }
@@ -541,45 +627,46 @@ impl HtmlTreeSession {
         })
     }
 
-    /// Processes one admitted token to completion.
+    /// Performs exactly one insertion-mode rule evaluation for the given
+    /// admitted token.
     ///
-    /// Terminates because every iteration of the reprocessing loop moves the
-    /// insertion mode strictly forward through the finite [`InsertionMode`]
-    /// order, and [`Self::switch_mode`] refuses anything else. There is no
-    /// recursion and no independent tree loop.
-    pub(super) fn process(
+    /// This is the session's complete unit of work per call: it never loops
+    /// and never itself redispatches. [`super::driver`] owns same-token
+    /// redispatch orchestration and calls this once per dispatch, retaining
+    /// the same admitted token and trigger across a
+    /// [`DispatchOutcome::ReprocessSameToken`] result.
+    pub(super) fn dispatch(
         &mut self,
         token: &AdmittedToken<'_>,
-        trigger: HtmlTreeTokenTrigger,
-    ) -> Result<TokenOutcome, HtmlTreeSessionError> {
-        loop {
-            let step = match classify(self.mode, token) {
-                Ok(step) => step,
-                Err(capability) => return Ok(TokenOutcome::Unsupported(capability)),
-            };
-            match step {
-                ModeStep::Stop => {
-                    self.record_action(HtmlTreeActionKind::StoppedParsing, &trigger);
-                    self.commit_token(token)?;
-                    return Ok(TokenOutcome::StoppedParsing);
+        trigger: &HtmlTreeTokenTrigger,
+    ) -> Result<DispatchOutcome, HtmlTreeSessionError> {
+        let step = match classify(self.mode, token) {
+            Ok(step) => step,
+            Err(capability) => return Ok(DispatchOutcome::Unsupported(capability)),
+        };
+        match step {
+            ModeStep::Stop => {
+                self.record_action(HtmlTreeActionKind::StoppedParsing, trigger);
+                self.commit_token(token)?;
+                Ok(DispatchOutcome::StoppedParsing)
+            }
+            ModeStep::Consume { effect, next } => {
+                if let Some(effect) = effect {
+                    self.apply(effect, trigger, token)?;
                 }
-                ModeStep::Consume { effect, next } => {
-                    if let Some(effect) = effect {
-                        self.apply(effect, &trigger, token)?;
-                    }
-                    if let Some(next) = next {
-                        self.switch_mode(next)?;
-                    }
-                    self.commit_token(token)?;
-                    return Ok(TokenOutcome::Consumed);
+                if let Some(next) = next {
+                    self.switch_mode(next);
                 }
-                ModeStep::Reprocess { effect, next } => {
-                    if let Some(effect) = effect {
-                        self.apply(effect, &trigger, token)?;
-                    }
-                    self.switch_mode(next)?;
-                    self.record_action(HtmlTreeActionKind::ReprocessedToken, &trigger);
+                self.commit_token(token)?;
+                Ok(DispatchOutcome::Consumed)
+            }
+            ModeStep::Reprocess { effect, next } => {
+                if let Some(effect) = effect {
+                    self.apply(effect, trigger, token)?;
                 }
+                self.switch_mode(next);
+                self.record_action(HtmlTreeActionKind::ReprocessedToken, trigger);
+                Ok(DispatchOutcome::ReprocessSameToken)
             }
         }
     }
@@ -671,6 +758,14 @@ impl HtmlTreeSession {
                 self.record_action(
                     HtmlTreeActionKind::AcknowledgedShellEndTag { name },
                     trigger,
+                );
+                Ok(())
+            }
+            Effect::RecordAfterBodyCharacterData => {
+                self.record_diagnostic(
+                    HtmlTreeDiagnosticCode::AfterBodyCharacterData,
+                    trigger,
+                    HtmlTreeRecovery::SwitchedToInBodyAndReprocessedSameToken,
                 );
                 Ok(())
             }
@@ -850,16 +945,15 @@ impl HtmlTreeSession {
         Ok(())
     }
 
-    /// Moves the insertion mode strictly forward.
+    /// Moves the actual insertion mode to `next`.
     ///
-    /// Refusing any non-forward transition is what makes per-token
-    /// termination structural instead of a work budget.
-    fn switch_mode(&mut self, next: InsertionMode) -> Result<(), HtmlTreeSessionError> {
-        if next <= self.mode {
-            return Err(HtmlTreeSessionError::NonMonotonicInsertionModeTransition);
-        }
+    /// This subsystem's per-token termination proof lives in
+    /// [`super::driver`], which tracks already-evaluated modes across
+    /// [`Self::dispatch`] calls for one token; the session itself no longer
+    /// restricts which mode a proved rule may select next, which is what
+    /// admits TC-S2's validated `AfterBody -> InBody` recovery back-edge.
+    fn switch_mode(&mut self, next: InsertionMode) {
         self.mode = next;
-        Ok(())
     }
 
     fn commit_token(&mut self, token: &AdmittedToken<'_>) -> Result<(), HtmlTreeSessionError> {
@@ -918,7 +1012,10 @@ impl HtmlTreeSession {
         })
     }
 
-    #[cfg(test)]
+    /// The actual insertion mode.
+    ///
+    /// [`super::driver`] reads this to build and check its per-token
+    /// evaluated-mode history; it is also used by tests.
     pub(super) fn insertion_mode(&self) -> InsertionMode {
         self.mode
     }

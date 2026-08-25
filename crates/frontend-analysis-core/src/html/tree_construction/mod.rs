@@ -1,22 +1,27 @@
-//! TC-S1 — Disabled-Scripting Document Shell Construction.
+//! TC-S1 — Disabled-Scripting Document Shell Construction, plus the accepted
+//! TC-S2 — Selected After-Body Uniform Character-Run Handling successor.
 //!
 //! The first Core-private HTML tree-construction capability, implemented on
 //! the architecture approved under Issue #117 and recorded by ADR 0010
 //! (`docs/decisions/0010-html-tree-construction-architecture.md`) and the
 //! specialized normative contract
 //! `docs/architecture/HTML_TREE_CONSTRUCTION.md`. The implementation guide is
-//! `docs/development/HTML_DOCUMENT_SHELL_CONSTRUCTION.md`.
+//! `docs/development/HTML_DOCUMENT_SHELL_CONSTRUCTION.md`. TC-S2's accepted
+//! `AfterBody -> InBody` recovery back-edge (Issue #355) is layered onto the
+//! same driver/session/result split without moving any of its boundaries.
 //!
 //! ```text
 //! &SourceText + HtmlTokenizerLimits
 //!         ↓
-//! driver — Core-owned TC-S1 coordination and effective completion
+//! driver — Core-owned coordination, same-token redispatch, and effective
+//!          completion
 //!         ↓
 //! existing batch tokenizer (unchanged)
 //!         ↓
 //! validated HtmlTokenizerRunResult
 //!         ↓
-//! session — private, exclusively mutable single-run construction state
+//! session — private, exclusively mutable single-run construction state;
+//!           one insertion-mode dispatch per driver call
 //!         ↓
 //! validated freeze
 //!         ↓
@@ -45,6 +50,8 @@ pub(crate) mod driver;
 pub(crate) mod result;
 pub(crate) mod session;
 
+#[cfg(test)]
+mod after_body_successor_production;
 #[cfg(test)]
 mod after_body_successor_validation;
 #[cfg(test)]

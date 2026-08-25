@@ -34,7 +34,9 @@ use super::super::tokenizer::resource::{HtmlTokenizerLimits, HtmlTokenizerResour
 use super::super::tokenizer::result::{
     HtmlTokenizerCompletion, HtmlTokenizerIncompleteCause, HtmlTokenizerRunResult,
 };
-use super::driver::{HtmlDocumentShellConstructionError, construct_html_document_shell};
+use super::driver::{
+    HtmlDocumentShellConstructionError, construct_html_document_shell, drive_token,
+};
 use super::result::{
     HtmlAuthoredSource, HtmlConstructedIdentityCounter, HtmlConstructedNodeId,
     HtmlDocumentShellAnalysis, HtmlDocumentShellParts, HtmlShellClosure, HtmlShellElement,
@@ -410,6 +412,9 @@ fn project_diagnostics(analysis: &HtmlDocumentShellAnalysis) -> Vec<GoldDiagnost
             HtmlTreeDiagnosticCode::MissingDoctype => GoldDiagnostic::MissingDoctype,
             HtmlTreeDiagnosticCode::DuplicateHeadStartTag => GoldDiagnostic::DuplicateHead,
             HtmlTreeDiagnosticCode::DuplicateBodyStartTag => GoldDiagnostic::DuplicateBody,
+            HtmlTreeDiagnosticCode::AfterBodyCharacterData => {
+                panic!("the TC-S1 predecessor GOLD never produces the TC-S2 after-body diagnostic")
+            }
         })
         .collect()
 }
@@ -1141,9 +1146,8 @@ fn open_shell_element_state_stays_bounded_to_the_admitted_shell() {
         for (token_index, token) in run.tokens().iter().enumerate() {
             let trigger = token_trigger(token, token_index);
             let Ok(admitted) = admit(token) else { break };
-            let outcome = session
-                .process(&admitted, trigger)
-                .expect("no invariant failure");
+            let outcome =
+                drive_token(&mut session, &admitted, &trigger).expect("no invariant failure");
             peak = peak.max(session.open_element_count());
             if !matches!(outcome, TokenOutcome::Consumed) {
                 break;
@@ -1158,10 +1162,13 @@ fn open_shell_element_state_stays_bounded_to_the_admitted_shell() {
 }
 
 #[test]
-fn insertion_mode_transitions_are_strictly_forward() {
-    // The strictly forward requirement is what bounds per-token work without a
-    // work constant, so a backwards transition must be refused rather than
-    // silently allowed.
+fn insertion_mode_transitions_terminate_without_repeating_a_mode_for_one_token() {
+    // TC-S1's local strictly-forward order is no longer the implementation's
+    // termination proof: the accepted TC-S2 successor requires a validated
+    // `AfterBody -> InBody` back-edge, which a strictly forward order would
+    // refuse. The replacement structural theorem is that no insertion mode is
+    // evaluated twice while processing one emitted token; `drive_token`
+    // enforces it and would return `Err` here if it were violated.
     let mut session = HtmlTreeSession::new().expect("session start");
     assert_eq!(session.insertion_mode(), InsertionMode::Initial);
     let analysis = analyze("<body>");
@@ -1172,16 +1179,11 @@ fn insertion_mode_transitions_are_strictly_forward() {
     for (token_index, token) in run.tokens().iter().enumerate() {
         let trigger = token_trigger(token, token_index);
         let admitted = admit(token).expect("admitted");
-        session.process(&admitted, trigger).expect("processed");
+        drive_token(&mut session, &admitted, &trigger).expect("processed without repeating a mode");
     }
+    // The single `<body>` start tag token walks every mode from `Initial`
+    // through `InBody` in one call, which is TC-S1's accepted G4 behavior.
     assert_eq!(session.insertion_mode(), InsertionMode::InBody);
-    assert!(InsertionMode::Initial < InsertionMode::BeforeHtml);
-    assert!(InsertionMode::BeforeHtml < InsertionMode::BeforeHead);
-    assert!(InsertionMode::BeforeHead < InsertionMode::InHead);
-    assert!(InsertionMode::InHead < InsertionMode::AfterHead);
-    assert!(InsertionMode::AfterHead < InsertionMode::InBody);
-    assert!(InsertionMode::InBody < InsertionMode::AfterBody);
-    assert!(InsertionMode::AfterBody < InsertionMode::AfterAfterBody);
 }
 
 // ---------------------------------------------------------------------------
@@ -1200,7 +1202,7 @@ fn private_document_mode_and_frameset_ok_transition_without_reaching_the_result(
     let (index, token) = tokens.next().expect("start tag token");
     let trigger = token_trigger(token, index);
     let admitted = admit(token).expect("admitted");
-    session.process(&admitted, trigger).expect("processed");
+    drive_token(&mut session, &admitted, &trigger).expect("processed");
 
     // The missing DOCTYPE moved the private document mode to quirks and the
     // body insertion cleared frameset-ok.
@@ -1223,7 +1225,7 @@ fn duplicate_body_start_tag_clears_frameset_ok_without_creating_a_node() {
     for (token_index, token) in run.tokens().iter().enumerate().take(2) {
         let trigger = token_trigger(token, token_index);
         let admitted = admit(token).expect("admitted");
-        session.process(&admitted, trigger).expect("processed");
+        drive_token(&mut session, &admitted, &trigger).expect("processed");
     }
     assert!(!session.frameset_ok());
     assert_eq!(session.node_count(), TC_S1_SHELL_NODES);
@@ -1940,17 +1942,14 @@ fn session_refuses_to_reopen_an_already_open_shell_element() {
 
     let first = &run.tokens()[0];
     let admitted = admit(first).expect("admitted");
-    session
-        .process(&admitted, token_trigger(first, 0))
-        .expect("first html start tag");
+    drive_token(&mut session, &admitted, &token_trigger(first, 0)).expect("first html start tag");
 
     // The second `html` start tag is refused by the mode machine before it can
     // reach the session's own duplicate-open guard.
     let second = &run.tokens()[1];
     let admitted = admit(second).expect("admitted");
     assert!(matches!(
-        session
-            .process(&admitted, token_trigger(second, 1))
+        drive_token(&mut session, &admitted, &token_trigger(second, 1))
             .expect("no invariant failure"),
         TokenOutcome::Unsupported(HtmlTreeCapability::UnprovedShellStartTagPosition)
     ));
