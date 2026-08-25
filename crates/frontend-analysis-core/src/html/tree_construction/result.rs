@@ -492,8 +492,11 @@ pub(crate) enum HtmlTreeActionKind {
     /// A duplicate shell start tag created no node and admitted no
     /// constructed identity.
     DuplicateShellStartTagCreatedNoNode { name: HtmlShellElementName },
-    /// The trigger token was handed to a later insertion mode without being
-    /// consumed. Reprocessing keeps one token as one observation.
+    /// The trigger token was handed to a different actual insertion mode
+    /// without being consumed. TC-S2's accepted `AfterBody -> InBody`
+    /// recovery makes this a same-token move to a mode that is not
+    /// necessarily later; reprocessing still keeps one token as one
+    /// observation.
     ReprocessedToken,
     /// Document parsing stopped at the trigger token.
     StoppedParsing,

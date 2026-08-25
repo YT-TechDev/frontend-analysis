@@ -20,9 +20,13 @@ use super::super::tokenizer::resource::HtmlTokenizerLimits;
 use super::driver::{construct_html_document_shell, drive_token};
 use super::result::{
     HtmlDocumentShellAnalysis, HtmlTreeActionKind, HtmlTreeCapability, HtmlTreeCompletion,
-    HtmlTreeDiagnosticCode, HtmlTreeIncompleteCause, HtmlTreeNodeKind,
+    HtmlTreeDiagnosticCode, HtmlTreeIncompleteCause, HtmlTreeNodeKind, HtmlTreeRecovery,
 };
 use super::session::{HtmlTreeSession, InsertionMode, TokenOutcome, admit, token_trigger};
+
+/// A trigger's token index and its exact authored boundary range, when it has
+/// one.
+type TriggerEvidence = (usize, Option<(usize, usize)>);
 
 fn generous_limits() -> HtmlTokenizerLimits {
     HtmlTokenizerLimits::new(1_024, 8_192, 1_024, 1_024, 256, 4_096, 1_024)
@@ -64,11 +68,26 @@ fn drive_tokens(source_text: &str) -> (HtmlTreeSession, Vec<TokenOutcome>) {
     (session, outcomes)
 }
 
-fn unsupported_capability(analysis: &HtmlDocumentShellAnalysis) -> Option<HtmlTreeCapability> {
+/// The exact unsupported evidence: capability, trigger token index, and
+/// trigger range. A refusal's whole-token trigger is load-bearing for the
+/// no-splitting/refuse-before-mutate theorem, so callers must not settle for
+/// the capability alone.
+fn unsupported_evidence(
+    analysis: &HtmlDocumentShellAnalysis,
+) -> Option<(HtmlTreeCapability, TriggerEvidence)> {
     match analysis.completion() {
         HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::UnsupportedCapability(
             unsupported,
-        )) => Some(unsupported.capability()),
+        )) => Some((
+            unsupported.capability(),
+            (
+                unsupported.trigger().token_index(),
+                unsupported
+                    .trigger()
+                    .authored_boundary()
+                    .map(|anchor| (anchor.range().start(), anchor.range().end())),
+            ),
+        )),
         _ => None,
     }
 }
@@ -102,29 +121,34 @@ fn text_node_count(analysis: &HtmlDocumentShellAnalysis) -> usize {
         .count()
 }
 
-fn diagnostic_triggers(
+/// Exact diagnostic evidence for one code: trigger token index, trigger
+/// range, and the recorded recovery. #355 requires diagnostic code, recovery,
+/// token index, and exact trigger range together — a wrong recovery value
+/// must not pass by checking only the code and the trigger.
+fn diagnostic_evidence(
     analysis: &HtmlDocumentShellAnalysis,
     code: HtmlTreeDiagnosticCode,
-) -> Vec<(usize, Option<(usize, usize)>)> {
+) -> Vec<(TriggerEvidence, HtmlTreeRecovery)> {
     analysis
         .diagnostics()
         .iter()
         .filter(|diagnostic| diagnostic.code() == code)
         .map(|diagnostic| {
             (
-                diagnostic.trigger().token_index(),
-                diagnostic
-                    .trigger()
-                    .authored_boundary()
-                    .map(|anchor| (anchor.range().start(), anchor.range().end())),
+                (
+                    diagnostic.trigger().token_index(),
+                    diagnostic
+                        .trigger()
+                        .authored_boundary()
+                        .map(|anchor| (anchor.range().start(), anchor.range().end())),
+                ),
+                diagnostic.recovery(),
             )
         })
         .collect()
 }
 
-fn reprocess_triggers(
-    analysis: &HtmlDocumentShellAnalysis,
-) -> Vec<(usize, Option<(usize, usize)>)> {
+fn reprocess_triggers(analysis: &HtmlDocumentShellAnalysis) -> Vec<TriggerEvidence> {
     analysis
         .actions()
         .iter()
@@ -141,11 +165,19 @@ fn reprocess_triggers(
         .collect()
 }
 
-fn reprocess_count_for_token(analysis: &HtmlDocumentShellAnalysis, token_index: usize) -> usize {
+/// The exact ordered `ReprocessedToken` trigger ranges recorded for one
+/// token. #355 requires exact reprocess-action trigger indexes/ranges, not
+/// only a cardinality count, so an empty or wrong-range action must not pass
+/// a count-only check.
+fn reprocess_trigger_ranges_for_token(
+    analysis: &HtmlDocumentShellAnalysis,
+    token_index: usize,
+) -> Vec<Option<(usize, usize)>> {
     reprocess_triggers(analysis)
         .into_iter()
         .filter(|(index, _)| *index == token_index)
-        .count()
+        .map(|(_, range)| range)
+        .collect()
 }
 
 fn character_token_shape(
@@ -192,9 +224,9 @@ fn ab1_all_html_whitespace_after_body_delegates_without_mode_change_or_reprocess
         Some((" ".to_owned(), vec![(13, 14)]))
     );
     assert!(
-        diagnostic_triggers(&analysis, HtmlTreeDiagnosticCode::AfterBodyCharacterData).is_empty()
+        diagnostic_evidence(&analysis, HtmlTreeDiagnosticCode::AfterBodyCharacterData).is_empty()
     );
-    assert_eq!(reprocess_count_for_token(&analysis, 2), 0);
+    assert!(reprocess_trigger_ranges_for_token(&analysis, 2).is_empty());
     assert!(analysis.is_complete());
     assert_eq!(analysis.coverage().committed_end(), 14);
     // The shell (4) plus exactly one text node: no extra identity admitted.
@@ -223,13 +255,29 @@ fn ab2_all_non_html_whitespace_after_body_recovers_into_in_body() {
         Some(("x".to_owned(), vec![(13, 14)]))
     );
     assert_eq!(
-        diagnostic_triggers(&analysis, HtmlTreeDiagnosticCode::AfterBodyCharacterData),
-        vec![(2, Some((13, 14)))]
+        diagnostic_evidence(&analysis, HtmlTreeDiagnosticCode::AfterBodyCharacterData),
+        vec![(
+            (2, Some((13, 14))),
+            HtmlTreeRecovery::SwitchedToInBodyAndReprocessedSameToken
+        )]
     );
-    assert_eq!(reprocess_count_for_token(&analysis, 2), 1);
+    assert_eq!(
+        reprocess_trigger_ranges_for_token(&analysis, 2),
+        vec![Some((13, 14))]
+    );
     assert!(analysis.is_complete());
     assert_eq!(analysis.coverage().committed_end(), 14);
     assert_eq!(analysis.node_count(), 5);
+
+    // The accepted recovery transition itself: the actual insertion mode
+    // moves `AfterBody -> InBody` for this token, which a frozen analysis
+    // never exposes.
+    let (session, outcomes) = drive_tokens("<body></body>x");
+    assert!(matches!(
+        outcomes.last(),
+        Some(TokenOutcome::StoppedParsing)
+    ));
+    assert_eq!(session.insertion_mode(), InsertionMode::InBody);
 }
 
 // ---------------------------------------------------------------------------
@@ -246,10 +294,16 @@ fn ab3_recovered_text_coalesces_across_an_action_only_end_tag() {
     );
     assert_eq!(text_node_count(&analysis), 1);
     assert_eq!(
-        diagnostic_triggers(&analysis, HtmlTreeDiagnosticCode::AfterBodyCharacterData),
-        vec![(3, Some((14, 15)))]
+        diagnostic_evidence(&analysis, HtmlTreeDiagnosticCode::AfterBodyCharacterData),
+        vec![(
+            (3, Some((14, 15))),
+            HtmlTreeRecovery::SwitchedToInBodyAndReprocessedSameToken
+        )]
     );
-    assert_eq!(reprocess_count_for_token(&analysis, 3), 1);
+    assert_eq!(
+        reprocess_trigger_ranges_for_token(&analysis, 3),
+        vec![Some((14, 15))]
+    );
     assert!(analysis.is_complete());
     assert_eq!(analysis.coverage().committed_end(), 15);
     // Shell (4) plus exactly one text node identity, even though the text
@@ -271,13 +325,28 @@ fn ab4_two_distinct_character_tokens_each_recover_without_a_same_token_cycle() {
     );
     assert_eq!(text_node_count(&analysis), 1);
     assert_eq!(
-        diagnostic_triggers(&analysis, HtmlTreeDiagnosticCode::AfterBodyCharacterData),
-        vec![(2, Some((13, 14))), (4, Some((21, 22)))]
+        diagnostic_evidence(&analysis, HtmlTreeDiagnosticCode::AfterBodyCharacterData),
+        vec![
+            (
+                (2, Some((13, 14))),
+                HtmlTreeRecovery::SwitchedToInBodyAndReprocessedSameToken
+            ),
+            (
+                (4, Some((21, 22))),
+                HtmlTreeRecovery::SwitchedToInBodyAndReprocessedSameToken
+            )
+        ]
     );
-    // Each recovery belongs to its own token: exactly one reprocess per
-    // token, never two for the same token.
-    assert_eq!(reprocess_count_for_token(&analysis, 2), 1);
-    assert_eq!(reprocess_count_for_token(&analysis, 4), 1);
+    // Each recovery belongs to its own token: exactly one reprocess, at the
+    // exact expected trigger range, per token, never two for the same token.
+    assert_eq!(
+        reprocess_trigger_ranges_for_token(&analysis, 2),
+        vec![Some((13, 14))]
+    );
+    assert_eq!(
+        reprocess_trigger_ranges_for_token(&analysis, 4),
+        vec![Some((21, 22))]
+    );
     assert!(analysis.is_complete());
     assert_eq!(analysis.coverage().committed_end(), 22);
     assert_eq!(analysis.node_count(), 5);
@@ -302,9 +371,9 @@ fn ab5_aggregate_whitespace_run_delegates_as_one_observation() {
         Some((" \t".to_owned(), vec![(13, 15)]))
     );
     assert!(
-        diagnostic_triggers(&analysis, HtmlTreeDiagnosticCode::AfterBodyCharacterData).is_empty()
+        diagnostic_evidence(&analysis, HtmlTreeDiagnosticCode::AfterBodyCharacterData).is_empty()
     );
-    assert_eq!(reprocess_count_for_token(&analysis, 2), 0);
+    assert!(reprocess_trigger_ranges_for_token(&analysis, 2).is_empty());
     assert!(analysis.is_complete());
     assert_eq!(analysis.coverage().committed_end(), 15);
     assert_eq!(analysis.node_count(), 5);
@@ -325,9 +394,14 @@ fn ab6_mixed_aggregate_run_is_refused_whole_before_mutation() {
         (" x".to_owned(), (13, 15))
     );
 
+    // The unsupported trigger is the whole aggregate token: token index 2,
+    // range [13,15) — never a split prefix or a fabricated sub-anchor.
     assert_eq!(
-        unsupported_capability(&analysis),
-        Some(HtmlTreeCapability::WhitespaceSensitiveCharacterData)
+        unsupported_evidence(&analysis),
+        Some((
+            HtmlTreeCapability::WhitespaceSensitiveCharacterData,
+            (2, Some((13, 15)))
+        ))
     );
     assert!(!analysis.is_complete());
     // Refused before mutation: no text, no contribution, no identity beyond
@@ -336,9 +410,9 @@ fn ab6_mixed_aggregate_run_is_refused_whole_before_mutation() {
     assert_eq!(analysis.node_count(), 4);
     assert_eq!(analysis.coverage().committed_end(), 13);
     assert!(
-        diagnostic_triggers(&analysis, HtmlTreeDiagnosticCode::AfterBodyCharacterData).is_empty()
+        diagnostic_evidence(&analysis, HtmlTreeDiagnosticCode::AfterBodyCharacterData).is_empty()
     );
-    assert_eq!(reprocess_count_for_token(&analysis, 2), 0);
+    assert!(reprocess_trigger_ranges_for_token(&analysis, 2).is_empty());
 
     // The actual insertion mode never changed: the refusal happened before
     // any mutation, including the mode.
@@ -365,15 +439,18 @@ fn ab7_after_after_body_character_data_remains_unsupported() {
         ("x".to_owned(), (20, 21))
     );
     assert_eq!(
-        unsupported_capability(&analysis),
-        Some(HtmlTreeCapability::UnprovedCharacterDataPosition)
+        unsupported_evidence(&analysis),
+        Some((
+            HtmlTreeCapability::UnprovedCharacterDataPosition,
+            (3, Some((20, 21)))
+        ))
     );
     assert!(!analysis.is_complete());
     assert!(text_node_data(&analysis).is_none());
     assert_eq!(analysis.node_count(), 4);
     assert_eq!(analysis.coverage().committed_end(), 20);
     assert!(
-        diagnostic_triggers(&analysis, HtmlTreeDiagnosticCode::AfterBodyCharacterData).is_empty()
+        diagnostic_evidence(&analysis, HtmlTreeDiagnosticCode::AfterBodyCharacterData).is_empty()
     );
 
     let (session, _) = drive_tokens("<body></body></html>x");
@@ -399,10 +476,16 @@ fn ab8_aggregate_non_whitespace_run_is_one_recovery_unit_not_per_character() {
     // Exactly one diagnostic and one reprocess for the whole two-character
     // run: no per-character multiplication.
     assert_eq!(
-        diagnostic_triggers(&analysis, HtmlTreeDiagnosticCode::AfterBodyCharacterData),
-        vec![(2, Some((13, 15)))]
+        diagnostic_evidence(&analysis, HtmlTreeDiagnosticCode::AfterBodyCharacterData),
+        vec![(
+            (2, Some((13, 15))),
+            HtmlTreeRecovery::SwitchedToInBodyAndReprocessedSameToken
+        )]
     );
-    assert_eq!(reprocess_count_for_token(&analysis, 2), 1);
+    assert_eq!(
+        reprocess_trigger_ranges_for_token(&analysis, 2),
+        vec![Some((13, 15))]
+    );
     assert!(analysis.is_complete());
     assert_eq!(analysis.coverage().committed_end(), 15);
     assert_eq!(analysis.node_count(), 5);
