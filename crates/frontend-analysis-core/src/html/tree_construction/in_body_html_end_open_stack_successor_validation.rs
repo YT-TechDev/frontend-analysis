@@ -1345,7 +1345,11 @@ fn h30_generated_bounded_stacks_match_independent_closed_form_oracle() {
                     .expect("generated html end token");
                 let mut prefix = Machine::new(StorageLayout::COMPACT);
                 for (token_index, token) in run.tokens()[..candidate_index].iter().enumerate() {
-                    assert_eq!(prefix.step(token_index, token), Ok(Step::Consumed), "{source}");
+                    assert_eq!(
+                        prefix.step(token_index, token),
+                        Ok(Step::Consumed),
+                        "{source}"
+                    );
                     prefix.commit(token);
                 }
                 let pre_candidate_stack = prefix.open.clone();
