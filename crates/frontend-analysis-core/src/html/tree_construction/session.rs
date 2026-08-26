@@ -1969,8 +1969,8 @@ impl HtmlTreeSession {
     ///
     /// Together with the mode machine this bounds the shell part of the
     /// open-element state without any depth limit: a shell name can be pushed
-    /// only while it is not already open. Selected ordinary elements are a
-    /// separate domain and are deliberately not counted here.
+    /// only while it is not already open. Selected ordinary elements and
+    /// Paragraph are separate domains and are deliberately not counted here.
     fn is_open(&self, name: HtmlShellElementName) -> bool {
         self.open_elements.iter().any(|id| {
             matches!(

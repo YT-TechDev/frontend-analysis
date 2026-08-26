@@ -65,7 +65,7 @@ use super::super::tokenizer::result::{HtmlTokenizerCompletion, HtmlTokenizerRunR
 /// A result-scoped constructed-node identity.
 ///
 /// The semantic meaning is the order in which the complete semantic
-/// node-creation action committed during one TC-S1 run. The counter that
+/// node-creation action committed during one tree-construction run. The counter that
 /// admits these identities advances only after a creation action has fully
 /// committed, so a refused or unsupported action consumes no identity.
 ///
@@ -962,12 +962,13 @@ pub(crate) enum HtmlTreeRecovery {
 /// shell and selected-ordinary variants exact.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HtmlTreeCapability {
-    /// A tag naming an element outside the proved `html`/`head`/`body` shell.
+    /// A tag whose interpreted name belongs to none of the three closed
+    /// admitted domains: shell, selected ordinary, or Paragraph.
     ///
-    /// This is frozen predecessor meaning and keeps it exactly: it is reported
-    /// for a name in neither closed admitted domain. A selected ordinary tag
-    /// never reaches it, and TC-S3 added its own variants below rather than
-    /// widening this one.
+    /// This is frozen predecessor meaning and keeps it exactly: selected
+    /// ordinary and Paragraph tags never reach it, because those domains own
+    /// their own shape and placement capabilities rather than widening this
+    /// generic unproved-name boundary.
     NonShellElementTag,
     /// Attribute evidence on a shell tag. TC-S1 proves no attribute
     /// semantics, including attribute merging on duplicate shell tags.
@@ -985,9 +986,9 @@ pub(crate) enum HtmlTreeCapability {
     /// A shell end tag reached in a document position TC-S1 does not prove.
     UnprovedShellEndTagPosition,
     /// A selected ordinary tag reached an actual insertion mode other than
-    /// `in body`. TC-S3 proves the selected `div` rules only there, so the
-    /// tag is refused before any shell walk, recovery, missing-DOCTYPE, mode,
-    /// action, coverage, or identity effect.
+    /// `in body`. The accepted TC-S3/TC-S4 selected `Div | Section` rules are
+    /// proved only there, so the tag is refused before any shell walk, recovery,
+    /// missing-DOCTYPE, mode, action, coverage, or identity effect.
     SelectedOrdinaryTagOutsideInBody,
     /// A shell tag reached `in body` while a selected ordinary element was
     /// still open. TC-S3 proves no shell interaction over an open selected
@@ -1044,11 +1045,11 @@ impl HtmlTreeUnsupportedCapability {
     }
 }
 
-/// Why an effective TC-S1 result is not `Complete`.
+/// Why an effective tree-construction result is not `Complete`.
 #[derive(Debug, Clone)]
 pub(crate) enum HtmlTreeIncompleteCause {
-    /// TC-S1 processed every emitted token it was given, but the retained
-    /// tokenizer run is itself incomplete.
+    /// Tree construction processed every emitted token it was given, but the
+    /// retained tokenizer run is itself incomplete.
     ///
     /// The exact lower-layer meaning — `UnsupportedCapability`,
     /// `ResourceLimit`, `InvalidConfiguration`, or
@@ -1056,14 +1057,14 @@ pub(crate) enum HtmlTreeIncompleteCause {
     /// [`HtmlDocumentShellAnalysis::tokenizer_run`] and is deliberately not
     /// duplicated, re-encoded, or lossily summarized here.
     LowerLayerIncomplete,
-    /// TC-S1 stopped before mutation at input outside its proved envelope.
+    /// Tree construction stopped before mutation at input outside its proved envelope.
     ///
     /// The retained tokenizer run's own completion remains separately
     /// authoritative and may additionally be incomplete.
     UnsupportedCapability(HtmlTreeUnsupportedCapability),
 }
 
-/// Effective TC-S1 completion.
+/// Effective tree-construction completion.
 ///
 /// `Complete` requires all three of: tokenizer completion `Complete`, every
 /// emitted token processed through end of file by supported actions, and a
@@ -1085,8 +1086,8 @@ impl HtmlTreeCompletion {
 /// Byte coverage alone is not treated as sufficient progress evidence: the
 /// processed-token count is recorded explicitly beside it. Committed tree
 /// coverage is a different measurement from the retained tokenizer run's own
-/// coverage and the two must not be conflated. TC-S1 may commit strictly less
-/// than the tokenizer processed.
+/// coverage and the two must not be conflated. Tree construction may commit
+/// strictly less than the tokenizer processed.
 #[derive(Clone)]
 pub(crate) struct HtmlTreeCommittedCoverage {
     committed_prefix: SourceAnchor,
@@ -1095,7 +1096,7 @@ pub(crate) struct HtmlTreeCommittedCoverage {
 
 impl HtmlTreeCommittedCoverage {
     /// The retained-source prefix whose emitted tokens were completely
-    /// processed by committed TC-S1 actions.
+    /// processed by committed tree-construction actions.
     pub(crate) fn committed_prefix(&self) -> &SourceAnchor {
         &self.committed_prefix
     }
@@ -1122,7 +1123,8 @@ impl fmt::Debug for HtmlTreeCommittedCoverage {
     }
 }
 
-/// The immutable, validated TC-S1 analysis.
+/// The immutable, validated HTML tree-construction analysis for the currently
+/// accepted bounded production frontier.
 ///
 /// Retains the validated [`HtmlTokenizerRunResult`] by value so tokenizer
 /// tokens, diagnostics, coverage, completion, limits, and usage remain
@@ -1171,7 +1173,7 @@ impl HtmlDocumentShellAnalysis {
         ordered
     }
 
-    /// Supported TC-S1 parse diagnostics, in committed order.
+    /// Supported tree-construction parse diagnostics, in committed order.
     pub(crate) fn diagnostics(&self) -> &[HtmlTreeDiagnostic] {
         &self.diagnostics
     }
