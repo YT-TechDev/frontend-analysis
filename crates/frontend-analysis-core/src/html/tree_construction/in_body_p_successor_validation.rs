@@ -825,15 +825,16 @@ fn authority_and_hand_authored_gold_matrix_are_frozen() {
 #[test]
 fn validation_module_does_not_import_production_tree_semantics() {
     let source = include_str!("in_body_p_successor_validation.rs");
-    for forbidden in [
-        "use super::driver",
-        "use super::session",
-        "use super::result",
-        "tree_construction::driver",
-        "tree_construction::session",
-        "tree_construction::result",
-    ] {
-        assert!(!source.contains(forbidden), "forbidden oracle: {forbidden}");
+    let forbidden = [
+        ["use super::", "driver"].concat(),
+        ["use super::", "session"].concat(),
+        ["use super::", "result"].concat(),
+        ["tree_construction", "::driver"].concat(),
+        ["tree_construction", "::session"].concat(),
+        ["tree_construction", "::result"].concat(),
+    ];
+    for forbidden in forbidden {
+        assert!(!source.contains(&forbidden), "forbidden oracle: {forbidden}");
     }
 }
 
