@@ -312,12 +312,13 @@ fn project_tree(analysis: &HtmlDocumentShellAnalysis, id: HtmlConstructedNodeId)
             children,
         },
         // Kept total so this projection has no unreachable arm, but no TC-S1
-        // GOLD case constructs a selected ordinary element: the TC-S3
-        // successor has its own independent GOLD and its own production
-        // correspondence test.
+        // GOLD case constructs a selected ordinary element: the TC-S3 and
+        // TC-S4 successors have their own independent GOLD and their own
+        // production correspondence tests.
         HtmlTreeNodeKind::Element(HtmlElement::SelectedOrdinary(selected)) => GoldNode::Element {
             name: match selected.name() {
                 HtmlSelectedOrdinaryElementName::Div => "div",
+                HtmlSelectedOrdinaryElementName::Section => "section",
             },
             origin: GoldOrigin::Authored(
                 (
@@ -437,10 +438,9 @@ fn project_diagnostics(analysis: &HtmlDocumentShellAnalysis) -> Vec<GoldDiagnost
                 panic!("the TC-S1 predecessor GOLD never produces the TC-S2 after-body diagnostic")
             }
             HtmlTreeDiagnosticCode::UnmatchedSelectedOrdinaryEndTag
-            | HtmlTreeDiagnosticCode::OpenSelectedOrdinaryElementAtEndOfFile => {
-                panic!(
-                    "the TC-S1 predecessor GOLD never produces a TC-S3 selected ordinary diagnostic"
-                )
+            | HtmlTreeDiagnosticCode::OpenSelectedOrdinaryElementAtEndOfFile
+            | HtmlTreeDiagnosticCode::MisnestedSelectedOrdinaryEndTag => {
+                panic!("the TC-S1 predecessor GOLD never produces a selected ordinary diagnostic")
             }
         })
         .collect()

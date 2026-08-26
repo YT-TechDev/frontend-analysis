@@ -80,6 +80,10 @@ enum ExpectedAction {
     DuplicateShellStartTagCreatedNoNode(&'static str),
     InsertedAuthoredSelectedOrdinary(&'static str),
     ClosedSelectedOrdinary(&'static str),
+    /// The TC-S4 heterogeneous recovery relation. It exists here only so this
+    /// projection stays total over the production action vocabulary; no DV
+    /// expectation contains one, which is itself asserted below.
+    RecoveryPoppedSelectedOrdinary,
     IgnoredUnmatchedSelectedOrdinaryEndTag(&'static str),
     Reprocessed,
     Stopped,
@@ -165,9 +169,15 @@ fn shell_name(name: HtmlShellElementName) -> &'static str {
     }
 }
 
+/// Kept total over the production selected ordinary domain, which the TC-S4
+/// successor grew to `{div, section}`. No DV expectation below names
+/// `"section"`: the TC-S3 sources contain none, and
+/// [`tc_s3_sources_carry_no_tc_s4_heterogeneous_recovery_semantics`] asserts
+/// that explicitly rather than leaving it to the absence of an arm.
 fn selected_name(name: HtmlSelectedOrdinaryElementName) -> &'static str {
     match name {
         HtmlSelectedOrdinaryElementName::Div => "div",
+        HtmlSelectedOrdinaryElementName::Section => "section",
     }
 }
 
@@ -245,6 +255,9 @@ fn project_actions(analysis: &HtmlDocumentShellAnalysis) -> Vec<(ExpectedAction,
                 }
                 HtmlTreeActionKind::ClosedSelectedOrdinaryElement { name, .. } => {
                     ExpectedAction::ClosedSelectedOrdinary(selected_name(*name))
+                }
+                HtmlTreeActionKind::PoppedSelectedOrdinaryElementByAncestorEndTag { .. } => {
+                    ExpectedAction::RecoveryPoppedSelectedOrdinary
                 }
                 HtmlTreeActionKind::IgnoredUnmatchedSelectedOrdinaryEndTag { name } => {
                     ExpectedAction::IgnoredUnmatchedSelectedOrdinaryEndTag(selected_name(*name))
@@ -1517,6 +1530,66 @@ fn selected_support_appears_only_in_the_proved_cells() {
 // ---------------------------------------------------------------------------
 // Predecessor behaviour is unchanged
 // ---------------------------------------------------------------------------
+
+/// Every DV source this module pins, so the TC-S4 protection assertion below
+/// can be stated over all of them at once.
+fn dv_sources() -> [&'static str; 15] {
+    [
+        "<body><div></div>",
+        "<body><DiV>x</dIv>",
+        "<body><div><div>x</div></div>",
+        "<body><div></div><div></div>",
+        "<body></div>",
+        "<body><div>x",
+        "<body><div>a<div>b</div>c</div>",
+        "<body><div id=x>",
+        "<body><div/>",
+        "<body></body><div>",
+        "<body><div></body>",
+        "<body><p>",
+        "<body><div>&amp;",
+        "x<div></div>",
+        "<body><div></div></body>",
+    ]
+}
+
+#[test]
+fn tc_s3_sources_carry_no_tc_s4_heterogeneous_recovery_semantics() {
+    // The accepted TC-S3 domain is homogeneous, so every selected end tag in
+    // these sources either matches the current node or matches nothing. The
+    // TC-S4 successor grew the closed selected domain and added the
+    // heterogeneous recovery relation; none of that may reach a DV source.
+    for source in dv_sources() {
+        let analysis = analyze(source);
+        for action in analysis.actions() {
+            assert!(
+                !matches!(
+                    action.kind(),
+                    HtmlTreeActionKind::PoppedSelectedOrdinaryElementByAncestorEndTag { .. }
+                ),
+                "{source:?}: a TC-S3 source recovers nothing"
+            );
+        }
+        for diagnostic in analysis.diagnostics() {
+            assert_ne!(
+                diagnostic.code(),
+                HtmlTreeDiagnosticCode::MisnestedSelectedOrdinaryEndTag,
+                "{source:?}: a TC-S3 source has no misnested selected end tag"
+            );
+        }
+        // And no DV source constructs anything outside the accepted `div`.
+        for node in analysis.nodes_in_creation_order() {
+            if let HtmlTreeNodeKind::Element(HtmlElement::SelectedOrdinary(selected)) = node.kind()
+            {
+                assert_eq!(
+                    selected.name(),
+                    HtmlSelectedOrdinaryElementName::Div,
+                    "{source:?}: TC-S3 GOLD stays `div`-only"
+                );
+            }
+        }
+    }
+}
 
 #[test]
 fn tc_s1_and_tc_s2_predecessor_behaviour_is_unchanged() {
