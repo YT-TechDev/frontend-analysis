@@ -61,6 +61,12 @@ jobs:
           if text.count(old) < 3:
               raise SystemExit(f"expected at least three event arm tails, found {text.count(old)}")
           text = text.replace(old, new, 3)
+
+          old = """        token_trigger(&run.tokens()[1], 1),\n    );\n    assert!(matches!(\n        freeze(&source, run, parts),\n        Err(HtmlTreeFreezeError::ParagraphClosureTriggerMismatch {\n            node: rejected,\n            token_index: 1,\n        }) if rejected == node\n    ));\n"""
+          new = """        token_trigger(&run.tokens()[2], 2),\n    );\n    assert!(matches!(\n        freeze(&source, run, parts),\n        Err(HtmlTreeFreezeError::ParagraphClosureTriggerMismatch {\n            node: rejected,\n            token_index: 2,\n        }) if rejected == node\n    ));\n"""
+          if text.count(old) != 1:
+              raise SystemExit(f"expected one wrong-trigger adversarial case, found {text.count(old)}")
+          text = text.replace(old, new, 1)
           path.write_text(text)
           PY
           git diff --name-only | sort > /tmp/actual-paths
