@@ -104,6 +104,10 @@ enum ExpectedDiagnostic {
     OpenSelectedOrdinaryElementAtEndOfFile {
         token: usize,
     },
+    BodyEndTagWithOpenSelectedOrdinaryElements {
+        token: usize,
+        trigger: Span,
+    },
 }
 
 /// One closure, named by the closed element's own authored start tag and the
@@ -312,6 +316,21 @@ fn project_diagnostics(analysis: &HtmlDocumentShellAnalysis) -> Vec<ExpectedDiag
                         "the end-of-file trigger must carry no authored extent"
                     );
                     ExpectedDiagnostic::OpenSelectedOrdinaryElementAtEndOfFile { token }
+                }
+                HtmlTreeDiagnosticCode::BodyEndTagWithOpenSelectedOrdinaryElements => {
+                    assert_eq!(
+                        diagnostic.recovery(),
+                        HtmlTreeRecovery::SwitchedToAfterBodyPreservingOpenElements,
+                    );
+                    ExpectedDiagnostic::BodyEndTagWithOpenSelectedOrdinaryElements {
+                        token,
+                        trigger: span(
+                            diagnostic
+                                .trigger()
+                                .authored_boundary()
+                                .expect("authored body-end trigger"),
+                        ),
+                    }
                 }
                 other => panic!("unexpected diagnostic {other:?} for a TC-S3 source"),
             }
@@ -1036,29 +1055,35 @@ fn a_selected_tag_before_the_shell_walk_refuses_before_any_effect() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn dv10_body_close_with_an_open_selected_element_commits_no_partial_mutation() {
+fn dv10_body_close_with_an_open_selected_element_advances_only_the_tc_s7_cell() {
     // `<body><div></body>`
     //  0     6    11      18
     let mut actions = shell_prelude_actions();
-    actions.push((ExpectedAction::InsertedAuthoredSelectedOrdinary("div"), 1));
+    actions.extend([
+        (ExpectedAction::InsertedAuthoredSelectedOrdinary("div"), 1),
+        (ExpectedAction::AcknowledgedShellEndTag("body"), 2),
+        (ExpectedAction::Stopped, 3),
+    ]);
     check(&ExpectedRun {
         id: "DV10",
         source: "<body><div></body>",
-        // The `div` created before the refused token stays exactly as it was.
+        // The `div` created before the body-end token stays exactly as it was.
         tree: shell_with_authored_body(vec![div((6, 11), (7, 10), vec![])]),
         actions,
-        diagnostics: vec![missing_doctype_at(0, (0, 6))],
-        // No closure, and no acknowledged body end tag: the refused `</body>`
-        // committed no part of the body close.
+        diagnostics: vec![
+            missing_doctype_at(0, (0, 6)),
+            ExpectedDiagnostic::BodyEndTagWithOpenSelectedOrdinaryElements {
+                token: 2,
+                trigger: (11, 18),
+            },
+        ],
+        // The existing body acknowledgement is the transition relation; the
+        // retained div receives no closure or recovery relation.
         closures: vec![],
         node_count: 5,
-        committed_end: 11,
-        processed_tokens: 2,
-        completion: ExpectedCompletion::Unsupported {
-            capability: HtmlTreeCapability::ShellTagWithOpenSelectedOrdinaryElement,
-            token: 2,
-            trigger: Some((11, 18)),
-        },
+        committed_end: 18,
+        processed_tokens: 4,
+        completion: ExpectedCompletion::Complete,
     });
 }
 
@@ -1500,10 +1525,6 @@ fn selected_support_appears_only_in_the_proved_cells() {
             HtmlTreeCapability::SelectedOrdinaryTagAttribute,
         ),
         // Shell interaction over an open selected element.
-        (
-            "<body><div></body>",
-            HtmlTreeCapability::ShellTagWithOpenSelectedOrdinaryElement,
-        ),
         (
             "<body><div><body>",
             HtmlTreeCapability::ShellTagWithOpenSelectedOrdinaryElement,

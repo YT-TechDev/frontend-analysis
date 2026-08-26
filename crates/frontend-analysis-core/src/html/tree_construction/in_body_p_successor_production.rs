@@ -796,7 +796,7 @@ fn p12_p13_block_end_over_open_p_advance_to_tc_s6_support() {
 }
 
 #[test]
-fn p14_p15_p16_p17_p21_shape_and_crossing_refusals_are_transactional() {
+fn p14_p15_p16_p21_shape_and_crossing_refusals_are_transactional() {
     assert_unsupported(
         fixture("P14").source,
         HtmlTreeCapability::ParagraphTagAttribute,
@@ -825,15 +825,6 @@ fn p14_p15_p16_p17_p21_shape_and_crossing_refusals_are_transactional() {
         4,
     );
     assert_unsupported(
-        fixture("P17").source,
-        HtmlTreeCapability::ShellTagWithOpenParagraphElement,
-        2,
-        (9, 16),
-        9,
-        2,
-        5,
-    );
-    assert_unsupported(
         fixture("P21").source,
         HtmlTreeCapability::ParagraphTagAttribute,
         2,
@@ -842,6 +833,37 @@ fn p14_p15_p16_p17_p21_shape_and_crossing_refusals_are_transactional() {
         2,
         5,
     );
+}
+
+#[test]
+fn p17_body_end_preserves_the_current_p_without_a_selected_open_diagnostic() {
+    let analysis = analyze(fixture("P17").source);
+    assert!(analysis.is_complete());
+    assert_eq!(analysis.node_count(), 5);
+    assert_eq!(analysis.coverage().committed_end(), 16);
+    assert_eq!(analysis.coverage().processed_tokens(), 4);
+    assert_eq!(
+        diagnostic_count(
+            &analysis,
+            HtmlTreeDiagnosticCode::BodyEndTagWithOpenSelectedOrdinaryElements,
+        ),
+        0,
+        "P alone is allowed by the bounded body-end stack check"
+    );
+    assert!(analysis.actions().iter().any(|action| matches!(
+        action.kind(),
+        HtmlTreeActionKind::AcknowledgedShellEndTag {
+            name: HtmlShellElementName::Body,
+        } if action.trigger().token_index() == 2
+    )));
+    assert!(analysis.actions().iter().all(|action| {
+        action.trigger().token_index() != 2
+            || !matches!(
+                action.kind(),
+                HtmlTreeActionKind::ClosedParagraphElement { .. }
+                    | HtmlTreeActionKind::PoppedParagraphElementBySelectedOrdinaryEndTag { .. }
+            )
+    }));
 }
 
 #[test]
