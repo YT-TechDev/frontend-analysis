@@ -982,7 +982,9 @@ fn h1_h8_closed_stack_audit_cardinality_stack_identity_and_p_distinction() {
 #[test]
 fn h3_h9_h25_exact_mixed_case_evidence_one_token_two_modes_one_reprocess() {
     let source = "<body><div>x</HtMl>";
-    let observation = observe_with(source, 77, StorageLayout::COMPACT, limits());
+    let source_text = SourceText::new(SourceId::new(77), source.to_owned());
+    let run = tokenize(&source_text, limits());
+    let observation = observe_run(&run, StorageLayout::COMPACT);
     assert_eq!(observation.completion, Completion::Complete);
     let token_index = candidate_token_index(&observation);
     let actions = candidate_actions(&observation);
@@ -1066,8 +1068,6 @@ fn h3_h9_h25_exact_mixed_case_evidence_one_token_two_modes_one_reprocess() {
     assert_eq!(triggers[0].source_id, SourceId::new(77));
     assert_eq!(triggers[0].range, (12, 19));
 
-    let source_text = SourceText::new(SourceId::new(77), source.to_owned());
-    let run = tokenize(&source_text, limits());
     let candidate_token = &run.tokens()[token_index];
     let HtmlToken::Tag(candidate_tag) = candidate_token else {
         panic!("candidate token must be the retained authored html end tag")
@@ -1337,8 +1337,7 @@ fn h30_generated_bounded_stacks_match_independent_closed_form_oracle() {
                 );
 
                 let token_index = candidate_token_index(&observation);
-                let candidate_identity_baseline =
-                    2 + blocks.len() + if p { 2 } else { 0 };
+                let candidate_identity_baseline = 2 + blocks.len() + if p { 2 } else { 0 };
                 let identity_allocation = observation
                     .next_id
                     .checked_sub(candidate_identity_baseline)
@@ -1353,14 +1352,10 @@ fn h30_generated_bounded_stacks_match_independent_closed_form_oracle() {
                 );
                 let lifecycle_mutations = candidate_actions(&observation)
                     .into_iter()
-                    .map(|action| {
-                        if matches!(action, Action::Insert { .. } | Action::TextInsert { .. }) {
-                            1usize
-                        } else {
-                            0usize
-                        }
+                    .filter(|action| {
+                        matches!(action, Action::Insert { .. } | Action::TextInsert { .. })
                     })
-                    .sum::<usize>();
+                    .count();
                 assert_eq!(
                     lifecycle_mutations, oracle.lifecycle_mutations,
                     "{source}"
