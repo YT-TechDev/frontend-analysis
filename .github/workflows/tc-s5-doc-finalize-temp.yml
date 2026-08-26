@@ -1,0 +1,209 @@
+name: TC-S5 Documentation Finalize Candidate
+
+on:
+  push:
+    branches:
+      - tooling/tc-s5-test-diagnostics
+
+permissions:
+  contents: write
+
+jobs:
+  finalize-candidate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact documentation candidate
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: tooling/tc-s5-doc-restore-candidate
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Guard exact candidate head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "c913c4ea2c09350b8419b5cfc00b5d2a6999a2d7"
+          test "$(git status --porcelain)" = ""
+
+      - name: Restore and update load-bearing architecture comments only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          RESULT = Path("crates/frontend-analysis-core/src/html/tree_construction/result.rs")
+          SESSION = Path("crates/frontend-analysis-core/src/html/tree_construction/session.rs")
+
+          def is_code(line: str) -> bool:
+              stripped = line.strip()
+              return bool(stripped) and not stripped.startswith("//")
+
+          def skeleton(text: str) -> list[str]:
+              return [" ".join(line.strip().split()) for line in text.splitlines() if is_code(line)]
+
+          def replace(path: Path, old: str, new: str) -> None:
+              text = path.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one exact documentation match, found {count}\n--- old ---\n{old}")
+              path.write_text(text.replace(old, new, 1))
+
+          before_result = RESULT.read_text()
+          before_session = SESSION.read_text()
+
+          replace(
+              RESULT,
+              """    /// An open selected ordinary element was closed by its own exact authored\n    /// end tag, which this action's trigger retains.\n    ClosedSelectedOrdinaryElement {\n""",
+              """    /// An open selected ordinary element was closed by its own exact authored\n    /// end tag, which this action's trigger retains. No node was created, and\n    /// the end tag is closure evidence only: it is never the closed node's\n    /// authored origin.\n    ClosedSelectedOrdinaryElement {\n""",
+          )
+          replace(
+              RESULT,
+              """    /// An open selected ordinary element was popped because the trigger is the\n    /// exact end tag of a different selected ordinary ancestor.\n    PoppedSelectedOrdinaryElementByAncestorEndTag {\n""",
+              """    /// An open selected ordinary element was popped, without being closed by\n    /// an end tag of its own name, because the trigger token is the exact\n    /// authored end tag of a *different* selected ordinary element further\n    /// out on the open-element stack.\n    ///\n    /// This is deliberately **not** [`Self::ClosedSelectedOrdinaryElement`]:\n    /// no matching end tag caused this pop, so recording a closure for it\n    /// would fabricate authored evidence. A later authored end tag of the\n    /// popped element's own name is therefore unmatched if it appears after\n    /// this recovery. `node` is the intervening element actually popped and\n    /// `target` is the nearest same-name selected ordinary element whose end\n    /// tag caused the pop. Both are semantic creation-event identities, never\n    /// storage positions. One authored target end tag may legitimately carry\n    /// several ordered recovery relations plus exactly one target closure,\n    /// while remaining the authored origin of none of those nodes. No new\n    /// constructed identity is admitted by this relation.\n    PoppedSelectedOrdinaryElementByAncestorEndTag {\n""",
+          )
+          replace(
+              RESULT,
+              """    /// A selected ordinary end tag with no matching open element was ignored.\n    IgnoredUnmatchedSelectedOrdinaryEndTag {\n""",
+              """    /// A selected ordinary end tag with no matching open element was ignored.\n    /// No node was created, closed, or otherwise mutated, and no constructed\n    /// identity was admitted. The accompanying parse diagnostic is separate\n    /// evidence with its own meaning.\n    IgnoredUnmatchedSelectedOrdinaryEndTag {\n""",
+          )
+          replace(
+              RESULT,
+              """    /// The trigger token was handed to a different actual insertion mode\n    /// without being consumed.\n    ReprocessedToken,\n""",
+              """    /// The trigger token was handed to a different actual insertion mode\n    /// without being consumed. TC-S2's accepted `AfterBody -> InBody`\n    /// recovery makes this a same-token move to a mode that is not\n    /// necessarily later; reprocessing still keeps one emitted token as one\n    /// semantic observation.\n    ReprocessedToken,\n""",
+          )
+          replace(
+              RESULT,
+              """/// A supported parse diagnostic.\n///\n/// Tree diagnostics are authored-input evidence. They are independent of\n/// effective completion and of the retained tokenizer run's own diagnostics.\n""",
+              """/// A supported parse diagnostic.\n///\n/// Tree diagnostics are authored-input evidence and are orthogonal to\n/// effective completion: a supported run may be `Complete` while carrying\n/// parse diagnostics and recovery evidence. They are also independent of the\n/// retained tokenizer run's diagnostics, which remain authoritative in the\n/// tokenizer result and are never copied into this vocabulary.\n""",
+          )
+          replace(
+              RESULT,
+              """/// A capability boundary reached by admitted input.\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub(crate) enum HtmlTreeCapability {\n""",
+              """/// A capability boundary reached by admitted input.\n///\n/// Unsupported coverage is *not* evidence that the authored source is invalid\n/// HTML, and it is not a tokenizer condition. It says only that this\n/// tree-construction subsystem has reached a rule outside its proved action\n/// set. Variants are durable semantic evidence: a successor adds a new variant\n/// for a new boundary rather than silently widening or renaming predecessor\n/// meanings. TC-S5 therefore adds Paragraph-specific variants while keeping\n/// shell and selected-ordinary variants exact.\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub(crate) enum HtmlTreeCapability {\n""",
+          )
+          replace(
+              RESULT,
+              """    SelfClosingSelectedOrdinaryTag,\n    ParagraphTagOutsideInBody,\n    ParagraphTagAttribute,\n    SelfClosingParagraphTag,\n    SelectedOrdinaryEndTagWithOpenParagraphElement,\n    ShellTagWithOpenParagraphElement,\n""",
+              """    SelfClosingSelectedOrdinaryTag,\n    /// A Paragraph tag reached an actual insertion mode other than `in body`.\n    ParagraphTagOutsideInBody,\n    /// Attribute evidence on a Paragraph tag is outside TC-S5's plain-P shape.\n    ParagraphTagAttribute,\n    /// A self-closing solidus on a Paragraph tag is outside TC-S5.\n    SelfClosingParagraphTag,\n    /// A selected `div`/`section` end tag was reached while P is current. The\n    /// Standard's implied-end step is materially non-noop there, so TC-S5\n    /// refuses before mutation rather than pretending the predecessor rule\n    /// still applies.\n    SelectedOrdinaryEndTagWithOpenParagraphElement,\n    /// A shell tag was reached while P is current; shell/P crossing is outside\n    /// the bounded TC-S5 theorem and is refused before any partial shell effect.\n    ShellTagWithOpenParagraphElement,\n""",
+          )
+          replace(
+              RESULT,
+              """/// A freeze/boundary invariant failure.\n///\n/// This vocabulary is deliberately separate from HTML parse diagnostics and\n/// from [`HtmlTreeCapability`]. Existing TC-S1–TC-S4 variants retain their\n/// exact meaning; TC-S5 adds only Paragraph-specific boundary failures.\n""",
+              """/// A freeze/boundary invariant failure.\n///\n/// This vocabulary is deliberately separate from HTML parse diagnostics and\n/// from [`HtmlTreeCapability`]: a freeze failure means the construction\n/// boundary produced something it must never publish, not that authored HTML\n/// is invalid or that capability coverage is missing. Existing TC-S1–TC-S4\n/// variants retain their exact meaning; TC-S5 adds only Paragraph-specific\n/// failures. Every variant carries structural/provenance evidence only;\n/// `Debug` and `Display` never expose arbitrary authored source content.\n""",
+          )
+          replace(
+              RESULT,
+              """/// Validates private construction output and freezes it into immutable result\n/// meaning. Existing TC-S1–TC-S4 checks remain intact; TC-S5 adds an\n/// independent Paragraph lifecycle replay beside the selected-ordinary replay.\npub(super) fn freeze(\n""",
+              """/// Validates private construction output and freezes it into immutable result\n/// meaning. This is the only constructor of [`HtmlDocumentShellAnalysis`]:\n/// durable invariants are checked at this ownership boundary rather than\n/// trusted because the private session happens to produce them today. Existing\n/// TC-S1–TC-S4 checks remain intact; TC-S5 adds an independent Paragraph\n/// lifecycle replay beside the selected-ordinary replay.\npub(super) fn freeze(\n""",
+          )
+          replace(
+              RESULT,
+              """/// Validates the selected ordinary lifecycle-evidence theorem. TC-S5 leaves\n/// this relation intact; a separate Paragraph replay below checks mixed-stack\n/// interactions that this selected-only projection deliberately does not own.\nfn validate_selected_ordinary_lifecycle(\n""",
+              """/// Validates the complete selected-ordinary lifecycle-evidence theorem.\n///\n/// TC-S5 leaves this relation intact; a separate Paragraph replay below checks\n/// the mixed-stack interactions this selected-only projection deliberately does\n/// not own. This replay independently proves that:\n///\n/// - every selected insertion, recovery, and closure endpoint resolves by\n///   semantic constructed identity to the expected stored selected element;\n/// - each selected identity is inserted at most once, so action evidence cannot\n///   pad the replay stack with a repeated node;\n/// - matching closures and recovery groups correlate to the retained emitted\n///   end tag itself, not merely to any revalidating source anchor;\n/// - a heterogeneous recovery target is recomputed as the nearest currently\n///   open selected element of its name, and the intervening suffix is popped in\n///   strict current-first order before exactly that target is closed;\n/// - an intervening recovery-popped element never receives a fabricated matching\n///   closure, while the target's authored end tag may legitimately explain\n///   several ordered pops plus its one closure;\n/// - one retained selected end token spends exactly one terminal selected-end\n///   decision: current closure, recovery-target closure, or ignored-unmatched\n///   disposition;\n/// - misnested and unmatched diagnostics pair one-for-one with the replayed\n///   recovery/disposition groups and retain the group's exact trigger evidence;\n///   and\n/// - the identities still open after replay are exactly, and in the same order\n///   as, the session's immutable final-open selected snapshot.\n///\n/// The final comparison is what makes this validation of construction output\n/// rather than trust in session implementation: an unrecorded pop or closure\n/// cannot masquerade as a legitimate end-of-file-open state. No source search,\n/// rescan, or retokenization participates in any of these checks.\nfn validate_selected_ordinary_lifecycle(\n""",
+          )
+
+          replace(
+              SESSION,
+              """/// The closed domain an interpreted tag name belongs to, if it is proved.\nfn admitted_element_name(interpreted: &str) -> Option<AdmittedElementName> {\n""",
+              """/// The closed domain an interpreted tag name belongs to, if it is proved.\n///\n/// Shell, selected ordinary (`Div | Section`), and Paragraph are three\n/// deliberately separate closed categories. A name is never admitted merely\n/// because it looks element-like, and this helper introduces no arbitrary-name,\n/// namespace-switching, or browser-specific path. Keeping P separate prevents\n/// its synthesized-origin semantics from contaminating the authored-only\n/// selected-ordinary contract.\nfn admitted_element_name(interpreted: &str) -> Option<AdmittedElementName> {\n""",
+          )
+          replace(
+              SESSION,
+              """/// Read-only rule selection over the accepted bounded state.\nfn classify(\n""",
+              """/// Selects the proved action for one bounded construction-state/token cell.\n///\n/// This is the second gate after lexical [`admit`], and it is deliberately a\n/// free, read-only function. Its complete construction-state input is the\n/// actual insertion mode, the ordered `Div | Section` semantic-name projection,\n/// and one separate `paragraph_is_current` fact. It receives no mutable session\n/// reference and no constructed identity, so an unsupported result is decided\n/// before mutation and rule selection cannot accidentally depend on storage or\n/// on a relationship the transaction has not yet resolved.\n///\n/// TC-S4's selected projection remains a bounded `W ∈ {Div, Section}*`; TC-S5\n/// does not widen W with P. Instead the dedicated P bit selects the few new\n/// Paragraph cells and explicitly refuses selected-end/shell crossings where\n/// the predecessor reduction would cease to be sound. This is an exhaustive\n/// statement of the currently proved action set, not general WHATWG scope or\n/// tree-construction coverage.\nfn classify(\n""",
+          )
+          replace(
+              SESSION,
+              """/// Classifies a supported selected ordinary end tag against the ordered\n/// selected-name projection, innermost last.\n///\n/// The bounded represented state is `[html, body] ++ W` with\n/// `W ∈ {Div, Section}*`, so the whole selected slice sits above `body` and a\n/// reverse scan of `W` is exactly the bounded selected-element scope walk.\n/// This is deliberately not general WHATWG scope coverage and claims none.\nfn selected_end_target(\n""",
+              """/// Classifies a supported selected ordinary end tag against the ordered\n/// selected-name projection, innermost last.\n///\n/// This helper is reached only after [`classify`] has ruled out a current P.\n/// In that cell the relevant bounded suffix is `[html, body] ++ W`, with\n/// `W ∈ {Div, Section}*`, so a reverse scan of W is exactly the selected-slice\n/// scope reduction. The separate Paragraph firewall is load-bearing: with P\n/// current, implied-end handling becomes materially non-noop and the end tag is\n/// refused instead of being sent through this reduction. This helper therefore\n/// remains explicitly narrower than general WHATWG scope.\nfn selected_end_target(\n""",
+          )
+          replace(
+              SESSION,
+              """/// Total over the expanded closed represented element domain. P is the one\n/// member that *is* an implied-end element; selected-end cells over an open P\n/// are therefore refused before this predecessor safety check can be called.\nfn is_implied_end_element(element: &HtmlElement) -> bool {\n""",
+              """/// Whether one represented element belongs to the Standard's implied-end set.\n///\n/// This is a total function over the closed element domain, not a generalized\n/// implied-end generator. Shell and selected ordinary elements are false; P is\n/// deliberately true. Consequently any future domain growth forces this\n/// question to be answered explicitly, and TC-S5's selected-end-over-P firewall\n/// prevents the predecessor `generate implied end tags` no-op theorem from\n/// being applied where it is no longer true.\nfn is_implied_end_element(element: &HtmlElement) -> bool {\n""",
+          )
+          replace(
+              SESSION,
+              """    /// Implied-end-tag generation would not have been a no-op over the\n    /// represented state. This is the bounded invariant that stands in for a\n    /// generalized implied-end generator; it is never expected to fire while\n    /// the represented state is `[html, body] ++ W` with\n    /// `W ∈ {Div, Section}*`.\n    ImpliedEndGenerationIsNotABoundedNoOp,\n""",
+              """    /// Implied-end-tag generation would not have been a no-op in a predecessor\n    /// selected-end cell. TC-S5 reaches that predecessor transaction only after\n    /// the Paragraph-current firewall has ruled P out, so the expected local\n    /// state is still `[html, body] ++ W` with `W ∈ {Div, Section}*`.\n    ImpliedEndGenerationIsNotABoundedNoOp,\n""",
+          )
+          replace(
+              SESSION,
+              """    NoOpenSelectedOrdinaryElementAtEndOfFile,\n    ParagraphIsNotCurrent(HtmlConstructedNodeId),\n    MultipleOpenParagraphElements,\n    ParagraphElementIsNotCurrent,\n    ParagraphElementAlreadyOpen,\n""",
+              """    NoOpenSelectedOrdinaryElementAtEndOfFile,\n    /// A Paragraph exists on the private open stack but is not the current node,\n    /// violating TC-S5's `P?`-is-current invariant.\n    ParagraphIsNotCurrent(HtmlConstructedNodeId),\n    /// More than one Paragraph is open, which the bounded TC-S5 lifecycle never\n    /// permits.\n    MultipleOpenParagraphElements,\n    /// A Paragraph close was requested when no current Paragraph exists.\n    ParagraphElementIsNotCurrent,\n    /// A Paragraph insertion/synthesis path was entered while a Paragraph was\n    /// already open instead of using the explicit close-then-insert cell.\n    ParagraphElementAlreadyOpen,\n""",
+          )
+          replace(
+              SESSION,
+              """        // Both gates run before anything can change: the token was already\n        // admitted lexically, and this reads the private selected-element\n        // state without borrowing it mutably.\n        let open_selected_ordinary = self.open_selected_ordinary_names();\n""",
+              """        // Both gates run before anything can change: the token was already\n        // admitted lexically, and this snapshots only the read-only selected\n        // semantic-name projection plus the independent Paragraph-current fact.\n        // Neither projection exposes mutable state, storage coordinates, or a\n        // constructed relationship to rule selection.\n        let open_selected_ordinary = self.open_selected_ordinary_names();\n""",
+          )
+          replace(
+              SESSION,
+              """        // Snapshot the actual final open selected state before the mutable\n        // stack is dropped, so the freeze boundary can validate the committed\n        // action stream against it instead of trusting this session. Only the\n        // semantic identities travel; the stack itself does not.\n        let final_open_selected_ordinary = self.open_selected_ordinary_ids();\n""",
+              """        // Snapshot the actual final open selected state and the independent\n        // final-open Paragraph fact before the mutable stack is dropped. Freeze\n        // validates both committed action replays against these semantic\n        // identities instead of trusting this session. The stack itself and all\n        // storage coordinates remain private.\n        let final_open_selected_ordinary = self.open_selected_ordinary_ids();\n""",
+          )
+          replace(
+              SESSION,
+              """    fn open_selected_ordinary_names(&self) -> Vec<HtmlSelectedOrdinaryElementName> {\n""",
+              """    /// The closed selected names currently open, in stack order with the\n    /// innermost last. This is a semantic-name projection only: no constructed\n    /// identity or storage coordinate escapes to [`classify`]. TC-S5 supplies\n    /// Paragraph presence separately rather than widening this projection.\n    fn open_selected_ordinary_names(&self) -> Vec<HtmlSelectedOrdinaryElementName> {\n""",
+          )
+          replace(
+              SESSION,
+              """    fn nearest_open_selected_ordinary(\n        &self,\n        name: HtmlSelectedOrdinaryElementName,\n    ) -> Option<usize> {\n""",
+              """    /// Finds the nearest same-name selected ordinary element as a private,\n    /// ephemeral open-stack coordinate. This is used only in selected-end cells\n    /// for which the Paragraph-current firewall has already succeeded, so the\n    /// reverse scan is the bounded selected-slice reduction, not general WHATWG\n    /// scope. The returned coordinate is consumed immediately by the transaction\n    /// and is never recorded as durable identity.\n    fn nearest_open_selected_ordinary(\n        &self,\n        name: HtmlSelectedOrdinaryElementName,\n    ) -> Option<usize> {\n""",
+          )
+          replace(
+              SESSION,
+              """    /// Whether the HTML Standard's implied-end-tag generation would pop\n    /// nothing over the current represented state.\n    ///\n    /// No generalized implied-end generator is introduced. Instead\n    /// [`is_implied_end_element`] is a total function over the closed\n    /// represented element domain, so this invariant is validated rather than\n    /// assumed — and growing that domain forces the question to be answered\n    /// again rather than silently skipped.\n    fn implied_end_generation_is_a_no_op(&self) -> bool {\n""",
+              """    /// Whether the Standard's implied-end step would pop nothing over the\n    /// current private stack. No generalized generator is introduced: the\n    /// total [`is_implied_end_element`] classifier validates the no-op theorem\n    /// directly. TC-S5 calls this only from predecessor selected-end\n    /// transactions after P-current has already been ruled out, so a Paragraph\n    /// cannot silently make the old theorem false.\n    fn implied_end_generation_is_a_no_op(&self) -> bool {\n""",
+          )
+
+          after_result = RESULT.read_text()
+          after_session = SESSION.read_text()
+          if skeleton(after_result) != skeleton(before_result):
+              raise SystemExit("result.rs architecture documentation update changed Rust code skeleton")
+          if skeleton(after_session) != skeleton(before_session):
+              raise SystemExit("session.rs architecture documentation update changed Rust code skeleton")
+          print("documentation-only skeleton guards passed")
+          PY
+
+          git diff --name-only | sort > /tmp/actual-paths
+          printf '%s\n' \
+            crates/frontend-analysis-core/src/html/tree_construction/result.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/session.rs \
+            | sort > /tmp/expected-paths
+          diff -u /tmp/expected-paths /tmp/actual-paths
+
+      - name: Install accepted Rust toolchain
+        run: rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
+
+      - name: Validate format and code skeleton
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all
+          cargo fmt --all -- --check
+          state="$(python3 .github/scripts/validate-rust-workspace-state.py .)"
+          test "$state" = production
+          git diff --name-only | sort > /tmp/actual-paths
+          diff -u /tmp/expected-paths /tmp/actual-paths
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Full tests
+        run: cargo test --workspace --all-targets --all-features
+
+      - name: Commit candidate only after green validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Yuto"
+          git config user.email "msc_prop@proton.me"
+          git add \
+            crates/frontend-analysis-core/src/html/tree_construction/result.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/session.rs
+          git commit -m "docs(html): preserve TC-S5 predecessor invariants and boundaries"
+          git push origin HEAD:tooling/tc-s5-doc-restore-candidate
