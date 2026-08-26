@@ -37,16 +37,31 @@ jobs:
           from pathlib import Path
           path = Path("crates/frontend-analysis-core/src/html/tree_construction/in_body_p_successor_production.rs")
           text = path.read_text()
+
           old = """            let kind = match action.kind() {\n"""
           new = """            match action.kind() {\n"""
           if text.count(old) != 1:
               raise SystemExit("expected one let-and-return helper head")
           text = text.replace(old, new, 1)
+
           old = """            };\n            kind\n        })\n"""
           new = """            }\n        })\n"""
           if text.count(old) != 1:
               raise SystemExit("expected one let-and-return helper tail")
-          path.write_text(text.replace(old, new, 1))
+          text = text.replace(old, new, 1)
+
+          old = """                    return Some(ParagraphEvent {\n"""
+          new = """                    Some(ParagraphEvent {\n"""
+          if text.count(old) != 3:
+              raise SystemExit(f"expected three needless returns, found {text.count(old)}")
+          text = text.replace(old, new)
+
+          old = """                    });\n                }\n"""
+          new = """                    })\n                }\n"""
+          if text.count(old) < 3:
+              raise SystemExit(f"expected at least three event arm tails, found {text.count(old)}")
+          text = text.replace(old, new, 3)
+          path.write_text(text)
           PY
           git diff --name-only | sort > /tmp/actual-paths
           printf '%s\n' "$target" > /tmp/expected-paths
