@@ -1215,9 +1215,7 @@ impl HtmlTreeSession {
                 // body acknowledgement, without touching the open stack,
                 // nodes, closures, or identity counter.
                 if self.open_selected_ordinary_ids().is_empty() {
-                    return Err(
-                        HtmlTreeSessionError::NoOpenSelectedOrdinaryElementAtBodyEnd,
-                    );
+                    return Err(HtmlTreeSessionError::NoOpenSelectedOrdinaryElementAtBodyEnd);
                 }
                 self.record_diagnostic(
                     HtmlTreeDiagnosticCode::BodyEndTagWithOpenSelectedOrdinaryElements,

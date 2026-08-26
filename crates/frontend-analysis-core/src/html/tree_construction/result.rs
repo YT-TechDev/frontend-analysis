@@ -2764,10 +2764,7 @@ fn validate_body_end_open_stack_transitions(
                 open_content.push(*node);
             }
             HtmlTreeActionKind::ClosedParagraphElement { node, .. }
-            | HtmlTreeActionKind::PoppedParagraphElementBySelectedOrdinaryEndTag {
-                node,
-                ..
-            } => {
+            | HtmlTreeActionKind::PoppedParagraphElementBySelectedOrdinaryEndTag { node, .. } => {
                 if open_content.last() != Some(node) {
                     return Err(HtmlTreeFreezeError::BodyEndOpenContentReplayMismatch {
                         token_index,
@@ -2809,13 +2806,11 @@ fn validate_body_end_open_stack_transitions(
                     .collect();
                 let expected = usize::from(selected_open != 0);
                 if body_diagnostics.len() != expected {
-                    return Err(
-                        HtmlTreeFreezeError::BodyEndDiagnosticCardinalityMismatch {
-                            token_index,
-                            selected_open,
-                            diagnostics: body_diagnostics.len(),
-                        },
-                    );
+                    return Err(HtmlTreeFreezeError::BodyEndDiagnosticCardinalityMismatch {
+                        token_index,
+                        selected_open,
+                        diagnostics: body_diagnostics.len(),
+                    });
                 }
                 if let [(diagnostic_index, diagnostic)] = body_diagnostics.as_slice() {
                     if diagnostic.recovery()
@@ -2865,15 +2860,11 @@ fn validate_body_end_open_stack_transitions(
                             | HtmlTreeActionKind::AppendedToTextNode { .. }
                             | HtmlTreeActionKind::InsertedAuthoredSelectedOrdinaryElement { .. }
                             | HtmlTreeActionKind::ClosedSelectedOrdinaryElement { .. }
-                            | HtmlTreeActionKind::PoppedSelectedOrdinaryElementByAncestorEndTag {
-                                ..
-                            }
+                            | HtmlTreeActionKind::PoppedSelectedOrdinaryElementByAncestorEndTag { .. }
                             | HtmlTreeActionKind::InsertedAuthoredParagraphElement { .. }
                             | HtmlTreeActionKind::InsertedSynthesizedParagraphElement { .. }
                             | HtmlTreeActionKind::ClosedParagraphElement { .. }
-                            | HtmlTreeActionKind::PoppedParagraphElementBySelectedOrdinaryEndTag {
-                                ..
-                            }
+                            | HtmlTreeActionKind::PoppedParagraphElementBySelectedOrdinaryEndTag { .. }
                     );
                     if forbidden_anywhere || other_index > action_index {
                         return Err(HtmlTreeFreezeError::BodyEndSameTriggerMutation {
@@ -3007,9 +2998,7 @@ fn validate_body_end_open_stack_transitions(
             HtmlTreeActionKind::StoppedParsing
                 if matches!(
                     position,
-                    Some(
-                        ReplayedBodyPosition::AfterBody | ReplayedBodyPosition::AfterAfterBody
-                    )
+                    Some(ReplayedBodyPosition::AfterBody | ReplayedBodyPosition::AfterAfterBody)
                 ) =>
             {
                 if !is_end_of_file_trigger(action.trigger(), tokenizer_run) {
@@ -3026,11 +3015,9 @@ fn validate_body_end_open_stack_transitions(
                         && diagnostic.trigger().token_index() == token_index
                 });
                 if selected_is_open && fabricated {
-                    return Err(
-                        HtmlTreeFreezeError::BodyEndAfterBodyEofDiagnosticMismatch {
-                            token_index,
-                        },
-                    );
+                    return Err(HtmlTreeFreezeError::BodyEndAfterBodyEofDiagnosticMismatch {
+                        token_index,
+                    });
                 }
             }
             _ => {}
@@ -3038,13 +3025,10 @@ fn validate_body_end_open_stack_transitions(
     }
 
     if let Some((token_index, _)) = pending_reprocessed_text {
-        return Err(HtmlTreeFreezeError::BodyEndAfterBodySuccessorMismatch {
-            token_index,
-        });
+        return Err(HtmlTreeFreezeError::BodyEndAfterBodySuccessorMismatch { token_index });
     }
     for (diagnostic_index, diagnostic) in diagnostics.iter().enumerate() {
-        if diagnostic.code()
-            == HtmlTreeDiagnosticCode::BodyEndTagWithOpenSelectedOrdinaryElements
+        if diagnostic.code() == HtmlTreeDiagnosticCode::BodyEndTagWithOpenSelectedOrdinaryElements
             && !matched_body_diagnostics.contains(&diagnostic_index)
         {
             return Err(HtmlTreeFreezeError::OrphanBodyEndDiagnostic {
@@ -3102,8 +3086,7 @@ fn replayed_body_character_class(
     trigger: &HtmlTreeTokenTrigger,
     tokenizer_run: &HtmlTokenizerRunResult,
 ) -> Option<ReplayedBodyCharacterClass> {
-    let Some(HtmlToken::Character(character)) =
-        tokenizer_run.tokens().get(trigger.token_index())
+    let Some(HtmlToken::Character(character)) = tokenizer_run.tokens().get(trigger.token_index())
     else {
         return None;
     };

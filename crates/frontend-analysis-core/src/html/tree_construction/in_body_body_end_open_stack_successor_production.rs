@@ -16,15 +16,13 @@ use super::super::tokenizer::result::HtmlTokenizerRunResult;
 use super::driver::{construct_html_document_shell, drive_token};
 use super::result::{
     HtmlConstructedNodeId, HtmlDocumentShellAnalysis, HtmlDocumentShellParts, HtmlElementName,
-    HtmlParagraphClosure, HtmlParagraphSynthesisCause,
-    HtmlSelectedOrdinaryElementName, HtmlShellElementName, HtmlTreeAction, HtmlTreeActionKind,
-    HtmlTreeCapability, HtmlTreeCompletion, HtmlTreeDiagnostic, HtmlTreeDiagnosticCode,
-    HtmlTreeFreezeError, HtmlTreeIncompleteCause, HtmlTreeNode, HtmlTreeNodeKind, HtmlTreeRecovery,
+    HtmlParagraphClosure, HtmlParagraphSynthesisCause, HtmlSelectedOrdinaryElementName,
+    HtmlShellElementName, HtmlTreeAction, HtmlTreeActionKind, HtmlTreeCapability,
+    HtmlTreeCompletion, HtmlTreeDiagnostic, HtmlTreeDiagnosticCode, HtmlTreeFreezeError,
+    HtmlTreeIncompleteCause, HtmlTreeNode, HtmlTreeNodeKind, HtmlTreeRecovery,
     HtmlTreeTokenTrigger, freeze,
 };
-use super::session::{
-    HtmlTreeSession, InsertionMode, TokenOutcome, admit, token_trigger,
-};
+use super::session::{HtmlTreeSession, InsertionMode, TokenOutcome, admit, token_trigger};
 
 type Span = (usize, usize);
 type DiagnosticEvidence = (usize, SourceId, Span, HtmlTreeRecovery);
@@ -60,8 +58,8 @@ fn drive_session(source_text: &str) -> (HtmlTreeSession, Vec<TokenOutcome>) {
                 break;
             }
         };
-        let outcome = drive_token(&mut session, &admitted, &trigger)
-            .expect("production dispatch invariant");
+        let outcome =
+            drive_token(&mut session, &admitted, &trigger).expect("production dispatch invariant");
         outcomes.push(outcome);
         if !matches!(outcome, TokenOutcome::Consumed) {
             break;
@@ -93,10 +91,7 @@ fn diagnostic_evidence(
         .collect()
 }
 
-fn diagnostic_count(
-    analysis: &HtmlDocumentShellAnalysis,
-    code: HtmlTreeDiagnosticCode,
-) -> usize {
+fn diagnostic_count(analysis: &HtmlDocumentShellAnalysis, code: HtmlTreeDiagnosticCode) -> usize {
     analysis
         .diagnostics()
         .iter()
@@ -104,9 +99,7 @@ fn diagnostic_count(
         .count()
 }
 
-fn body_acknowledgements(
-    analysis: &HtmlDocumentShellAnalysis,
-) -> Vec<(usize, SourceId, Span)> {
+fn body_acknowledgements(analysis: &HtmlDocumentShellAnalysis) -> Vec<(usize, SourceId, Span)> {
     analysis
         .actions()
         .iter()
@@ -139,7 +132,11 @@ fn reprocess_count(analysis: &HtmlDocumentShellAnalysis) -> usize {
 
 fn selected_insertions(
     analysis: &HtmlDocumentShellAnalysis,
-) -> Vec<(HtmlConstructedNodeId, HtmlSelectedOrdinaryElementName, usize)> {
+) -> Vec<(
+    HtmlConstructedNodeId,
+    HtmlSelectedOrdinaryElementName,
+    usize,
+)> {
     analysis
         .actions()
         .iter()
@@ -175,10 +172,7 @@ fn text_nodes(analysis: &HtmlDocumentShellAnalysis) -> Vec<&HtmlTreeNode> {
         .collect()
 }
 
-fn parent_name(
-    analysis: &HtmlDocumentShellAnalysis,
-    node: &HtmlTreeNode,
-) -> HtmlElementName {
+fn parent_name(analysis: &HtmlDocumentShellAnalysis, node: &HtmlTreeNode) -> HtmlElementName {
     let parent = analysis
         .node(node.parent().expect("text parent identity"))
         .expect("text parent resolves");
@@ -383,7 +377,11 @@ fn p_only_div_section_and_heterogeneous_body_end_have_exact_cardinality_and_zero
         let analysis = analyze(source);
         assert!(analysis.is_complete(), "{source}");
         assert_eq!(analysis.node_count(), expected_nodes, "{source}");
-        assert_eq!(analysis.coverage().committed_end(), source.len(), "{source}");
+        assert_eq!(
+            analysis.coverage().committed_end(),
+            source.len(),
+            "{source}"
+        );
         assert_eq!(
             diagnostic_count(
                 &analysis,
@@ -398,7 +396,11 @@ fn p_only_div_section_and_heterogeneous_body_end_have_exact_cardinality_and_zero
             body_token,
             "{source}"
         );
-        assert_eq!(forbidden_body_end_actions(&analysis, body_token), 0, "{source}");
+        assert_eq!(
+            forbidden_body_end_actions(&analysis, body_token),
+            0,
+            "{source}"
+        );
         assert!(analysis.actions().iter().all(|action| {
             action.trigger().token_index() != body_token
                 || !matches!(
@@ -417,10 +419,7 @@ fn body_end_preserves_exact_ordered_open_identities_and_creation_inventory() {
     for (without_end, with_end) in [
         ("<body><p>", "<body><p></body>"),
         ("<body><div>", "<body><div></body>"),
-        (
-            "<body><div><section><p>",
-            "<body><div><section><p></body>",
-        ),
+        ("<body><div><section><p>", "<body><div><section><p></body>"),
     ] {
         let control = FreezeFixture::new(without_end);
         let candidate = FreezeFixture::new(with_end);
@@ -432,13 +431,11 @@ fn body_end_preserves_exact_ordered_open_identities_and_creation_inventory() {
             "{with_end}: exact selected identities and order"
         );
         assert_eq!(
-            control_parts.final_open_paragraph,
-            candidate_parts.final_open_paragraph,
+            control_parts.final_open_paragraph, candidate_parts.final_open_paragraph,
             "{with_end}: exact P identity"
         );
         assert_eq!(
-            control_parts.admitted_creation_events,
-            candidate_parts.admitted_creation_events,
+            control_parts.admitted_creation_events, candidate_parts.admitted_creation_events,
             "{with_end}: body end admits no identity"
         );
         assert_eq!(
@@ -498,15 +495,26 @@ fn after_body_eof_keeps_selected_and_p_open_without_in_body_selected_eof_diagnos
             "{source}"
         );
         let (session, outcomes) = drive_session(source);
-        assert_eq!(session.insertion_mode(), InsertionMode::AfterBody, "{source}");
-        assert!(matches!(outcomes.last(), Some(TokenOutcome::StoppedParsing)));
+        assert_eq!(
+            session.insertion_mode(),
+            InsertionMode::AfterBody,
+            "{source}"
+        );
+        assert!(matches!(
+            outcomes.last(),
+            Some(TokenOutcome::StoppedParsing)
+        ));
     }
 }
 
 #[test]
 fn whitespace_after_body_uses_retained_current_parent_and_keeps_after_body_mode() {
     let cases = [
-        ("<body></body> ", HtmlElementName::Shell(HtmlShellElementName::Body), " "),
+        (
+            "<body></body> ",
+            HtmlElementName::Shell(HtmlShellElementName::Body),
+            " ",
+        ),
         (
             "<body><div></body> ",
             HtmlElementName::SelectedOrdinary(HtmlSelectedOrdinaryElementName::Div),
@@ -518,11 +526,7 @@ fn whitespace_after_body_uses_retained_current_parent_and_keeps_after_body_mode(
             " \t",
         ),
         ("<body><p></body> ", HtmlElementName::Paragraph, " "),
-        (
-            "<body><div><p></body> ",
-            HtmlElementName::Paragraph,
-            " ",
-        ),
+        ("<body><div><p></body> ", HtmlElementName::Paragraph, " "),
     ];
     for (source, expected_parent, expected_text) in cases {
         let analysis = analyze(source);
@@ -541,7 +545,11 @@ fn whitespace_after_body_uses_retained_current_parent_and_keeps_after_body_mode(
         assert_eq!(text.interpreted(), expected_text, "{source:?}");
         assert_eq!(text.contributions().len(), 1, "one aggregate contribution");
         let (session, _) = drive_session(source);
-        assert_eq!(session.insertion_mode(), InsertionMode::AfterBody, "{source:?}");
+        assert_eq!(
+            session.insertion_mode(),
+            InsertionMode::AfterBody,
+            "{source:?}"
+        );
     }
 }
 
@@ -584,15 +592,19 @@ fn non_whitespace_after_body_records_then_reprocesses_once_under_retained_parent
         let text_position = analysis
             .actions()
             .iter()
-            .position(|action| matches!(
-                action.kind(),
-                HtmlTreeActionKind::InsertedTextNode { .. }
-                    | HtmlTreeActionKind::AppendedToTextNode { .. }
-            ))
+            .position(|action| {
+                matches!(
+                    action.kind(),
+                    HtmlTreeActionKind::InsertedTextNode { .. }
+                        | HtmlTreeActionKind::AppendedToTextNode { .. }
+                )
+            })
             .expect("text action");
         assert!(reprocess_position < text_position, "{source}");
         assert_eq!(
-            analysis.actions()[reprocess_position].trigger().token_index(),
+            analysis.actions()[reprocess_position]
+                .trigger()
+                .token_index(),
             after_body.trigger().token_index(),
             "same retained aggregate"
         );
@@ -785,10 +797,7 @@ fn committed_coverage_processed_tokens_and_identity_non_allocation_are_exact() {
     for (without_end, with_end) in [
         ("<body><p>", "<body><p></body>"),
         ("<body><div>", "<body><div></body>"),
-        (
-            "<body><div><section><p>",
-            "<body><div><section><p></body>",
-        ),
+        ("<body><div><section><p>", "<body><div><section><p></body>"),
     ] {
         let control = analyze(without_end);
         let candidate = analyze(with_end);
@@ -816,7 +825,9 @@ fn committed_coverage_processed_tokens_and_identity_non_allocation_are_exact() {
 fn freeze_rejects_body_end_diagnostic_absence_presence_and_duplicate_corruption() {
     let p_only = FreezeFixture::new("<body><p></body>");
     let mut parts = valid_parts(&p_only);
-    parts.diagnostics.push(body_diagnostic(p_only.tag_trigger(2)));
+    parts
+        .diagnostics
+        .push(body_diagnostic(p_only.tag_trigger(2)));
     assert!(matches!(
         freeze_parts(&p_only, parts),
         Err(HtmlTreeFreezeError::BodyEndDiagnosticCardinalityMismatch {
@@ -829,8 +840,7 @@ fn freeze_rejects_body_end_diagnostic_absence_presence_and_duplicate_corruption(
     let selected = FreezeFixture::new("<body><div></body>");
     let mut parts = valid_parts(&selected);
     parts.diagnostics.retain(|diagnostic| {
-        diagnostic.code()
-            != HtmlTreeDiagnosticCode::BodyEndTagWithOpenSelectedOrdinaryElements
+        diagnostic.code() != HtmlTreeDiagnosticCode::BodyEndTagWithOpenSelectedOrdinaryElements
     });
     assert!(matches!(
         freeze_parts(&selected, parts),
@@ -864,46 +874,32 @@ fn freeze_rejects_body_end_diagnostic_token_source_range_recovery_and_phase_corr
         .diagnostics
         .iter()
         .position(|diagnostic| {
-            diagnostic.code()
-                == HtmlTreeDiagnosticCode::BodyEndTagWithOpenSelectedOrdinaryElements
+            diagnostic.code() == HtmlTreeDiagnosticCode::BodyEndTagWithOpenSelectedOrdinaryElements
         })
         .expect("TC-S7 diagnostic");
     wrong_token.diagnostics[diagnostic_index] = body_diagnostic(fixture.tag_trigger(1));
     assert!(matches!(
         freeze_parts(&fixture, wrong_token),
-        Err(HtmlTreeFreezeError::BodyEndDiagnosticCardinalityMismatch {
-            token_index: 2,
-            ..
-        })
+        Err(HtmlTreeFreezeError::BodyEndDiagnosticCardinalityMismatch { token_index: 2, .. })
     ));
 
     let mut wrong_range = valid_parts(&fixture);
-    wrong_range.diagnostics[diagnostic_index] = body_diagnostic(
-        HtmlTreeTokenTrigger::authored(2, fixture.anchor(12, 18)),
-    );
+    wrong_range.diagnostics[diagnostic_index] =
+        body_diagnostic(HtmlTreeTokenTrigger::authored(2, fixture.anchor(12, 18)));
     assert!(matches!(
         freeze_parts(&fixture, wrong_range),
-        Err(HtmlTreeFreezeError::BodyEndDiagnosticTriggerOrRecoveryMismatch {
-            token_index: 2,
-        })
+        Err(HtmlTreeFreezeError::BodyEndDiagnosticTriggerOrRecoveryMismatch { token_index: 2 })
     ));
 
-    let foreign_source = SourceText::new(
-        SourceId::new(74),
-        "<body><div></body>".to_owned(),
-    );
+    let foreign_source = SourceText::new(SourceId::new(74), "<body><div></body>".to_owned());
     let mut wrong_source = valid_parts(&fixture);
-    wrong_source.diagnostics[diagnostic_index] = body_diagnostic(
-        HtmlTreeTokenTrigger::authored(
-            2,
-            foreign_source.anchor(11, 18).expect("foreign body end"),
-        ),
-    );
+    wrong_source.diagnostics[diagnostic_index] = body_diagnostic(HtmlTreeTokenTrigger::authored(
+        2,
+        foreign_source.anchor(11, 18).expect("foreign body end"),
+    ));
     assert!(matches!(
         freeze_parts(&fixture, wrong_source),
-        Err(HtmlTreeFreezeError::BodyEndDiagnosticTriggerOrRecoveryMismatch {
-            token_index: 2,
-        })
+        Err(HtmlTreeFreezeError::BodyEndDiagnosticTriggerOrRecoveryMismatch { token_index: 2 })
     ));
 
     let mut wrong_recovery = valid_parts(&fixture);
@@ -914,9 +910,7 @@ fn freeze_rejects_body_end_diagnostic_token_source_range_recovery_and_phase_corr
     );
     assert!(matches!(
         freeze_parts(&fixture, wrong_recovery),
-        Err(HtmlTreeFreezeError::BodyEndDiagnosticTriggerOrRecoveryMismatch {
-            token_index: 2,
-        })
+        Err(HtmlTreeFreezeError::BodyEndDiagnosticTriggerOrRecoveryMismatch { token_index: 2 })
     ));
 
     // No later diagnostic may claim the already-consumed body-end phase.
@@ -928,9 +922,7 @@ fn freeze_rejects_body_end_diagnostic_token_source_range_recovery_and_phase_corr
     ));
     assert!(matches!(
         freeze_parts(&fixture, wrong_phase),
-        Err(HtmlTreeFreezeError::BodyEndDiagnosticTriggerOrRecoveryMismatch {
-            token_index: 2,
-        })
+        Err(HtmlTreeFreezeError::BodyEndDiagnosticTriggerOrRecoveryMismatch { token_index: 2 })
     ));
 }
 
@@ -947,9 +939,7 @@ fn freeze_rejects_non_body_and_duplicate_body_acknowledgement_corruption() {
     );
     assert!(matches!(
         freeze_parts(&fixture, non_body),
-        Err(HtmlTreeFreezeError::BodyEndAcknowledgementTriggerMismatch {
-            token_index: 1,
-        })
+        Err(HtmlTreeFreezeError::BodyEndAcknowledgementTriggerMismatch { token_index: 1 })
     ));
 
     let mut duplicate = valid_parts(&fixture);
@@ -965,9 +955,7 @@ fn freeze_rejects_non_body_and_duplicate_body_acknowledgement_corruption() {
     );
     assert!(matches!(
         freeze_parts(&fixture, duplicate),
-        Err(HtmlTreeFreezeError::DuplicateBodyEndAcknowledgement {
-            token_index: 2,
-        })
+        Err(HtmlTreeFreezeError::DuplicateBodyEndAcknowledgement { token_index: 2 })
     ));
 }
 
@@ -1040,9 +1028,7 @@ fn freeze_rejects_after_body_eof_selected_diagnostic_and_final_open_checkpoint_c
     ));
     assert!(matches!(
         freeze_parts(&selected_fixture, eof_diagnostic),
-        Err(HtmlTreeFreezeError::BodyEndAfterBodyEofDiagnosticMismatch {
-            token_index: 3,
-        })
+        Err(HtmlTreeFreezeError::BodyEndAfterBodyEofDiagnosticMismatch { token_index: 3 })
     ));
 
     let mut selected_checkpoint = valid_parts(&selected_fixture);
@@ -1063,10 +1049,7 @@ fn freeze_rejects_after_body_eof_selected_diagnostic_and_final_open_checkpoint_c
 
 #[test]
 fn lower_layer_incompleteness_is_never_upgraded() {
-    let source = SourceText::new(
-        SourceId::new(1),
-        "<body><div><p></body>x".to_owned(),
-    );
+    let source = SourceText::new(SourceId::new(1), "<body><div><p></body>x".to_owned());
     let analysis = construct_html_document_shell(
         &source,
         HtmlTokenizerLimits::new(1_024, 8_192, 4, 1_024, 256, 4_096, 1_024),
@@ -1092,7 +1075,11 @@ fn private_storage_permutation_preserves_tc_s7_semantic_identity_and_evidence() 
     ] {
         let baseline = analyze_with(source, 42);
         let permuted = baseline.clone().with_reversed_storage();
-        assert_eq!(semantic_signature(&baseline), semantic_signature(&permuted), "{source}");
+        assert_eq!(
+            semantic_signature(&baseline),
+            semantic_signature(&permuted),
+            "{source}"
+        );
         assert_eq!(
             format!("{:?}", baseline.actions()),
             format!("{:?}", permuted.actions()),
@@ -1103,8 +1090,14 @@ fn private_storage_permutation_preserves_tc_s7_semantic_identity_and_evidence() 
             format!("{:?}", permuted.diagnostics()),
             "{source}"
         );
-        assert_eq!(baseline.coverage().committed_end(), permuted.coverage().committed_end());
-        assert_eq!(baseline.coverage().processed_tokens(), permuted.coverage().processed_tokens());
+        assert_eq!(
+            baseline.coverage().committed_end(),
+            permuted.coverage().committed_end()
+        );
+        assert_eq!(
+            baseline.coverage().processed_tokens(),
+            permuted.coverage().processed_tokens()
+        );
         assert_eq!(baseline.is_complete(), permuted.is_complete());
     }
 }
@@ -1164,10 +1157,7 @@ fn generated_source(
     source
 }
 
-fn generated_expected_parent(
-    blocks: &[GeneratedBlock],
-    paragraph: bool,
-) -> HtmlElementName {
+fn generated_expected_parent(blocks: &[GeneratedBlock], paragraph: bool) -> HtmlElementName {
     if paragraph {
         HtmlElementName::Paragraph
     } else {
@@ -1214,7 +1204,11 @@ fn generated_bounded_stack_successors_match_an_independent_closed_form_model() {
                 let source = generated_source(&blocks, paragraph, successor);
                 let analysis = analyze_with(&source, 9);
                 assert!(analysis.is_complete(), "{source}");
-                assert_eq!(analysis.coverage().committed_end(), source.len(), "{source}");
+                assert_eq!(
+                    analysis.coverage().committed_end(),
+                    source.len(),
+                    "{source}"
+                );
                 assert_eq!(
                     analysis.coverage().processed_tokens(),
                     analysis.tokenizer_run().tokens().len(),
@@ -1242,7 +1236,11 @@ fn generated_bounded_stack_successors_match_an_independent_closed_form_model() {
                 );
                 assert_eq!(body_acknowledgements(&analysis).len(), 1, "{source}");
                 let body_token = body_acknowledgements(&analysis)[0].0;
-                assert_eq!(forbidden_body_end_actions(&analysis, body_token), 0, "{source}");
+                assert_eq!(
+                    forbidden_body_end_actions(&analysis, body_token),
+                    0,
+                    "{source}"
+                );
 
                 if has_text {
                     let text = *text_nodes(&analysis).last().expect("generated text");
