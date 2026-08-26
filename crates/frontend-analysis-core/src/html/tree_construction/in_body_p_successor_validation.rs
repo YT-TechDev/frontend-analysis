@@ -460,9 +460,8 @@ impl Machine {
             .filter(|node| node.parent == Some(parent))
             .max_by_key(|node| node.id)
             .map(|node| node.id);
-        let adjacent = last_direct_child.filter(|id| {
-            matches!(self.node(*id).kind, NodeKind::Text { .. })
-        });
+        let adjacent =
+            last_direct_child.filter(|id| matches!(self.node(*id).kind, NodeKind::Text { .. }));
 
         if let Some(id) = adjacent {
             if let NodeKind::Text {
