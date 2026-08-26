@@ -113,7 +113,6 @@ enum DiagnosticKind {
     MissingDoctype,
     BodyEndWithDisallowedOpenElements,
     AfterBodyCharacterData,
-    UnmatchedParagraphEnd,
     UnmatchedBlockEnd,
     MisnestedBlockEnd,
     OpenBlockAtEof,
@@ -660,17 +659,16 @@ impl Machine {
                         Ok(false)
                     }
                     (HtmlTagKind::End, Name::P) => {
-                        if self.current_is_p() {
-                            self.close_p(evidence(tag.complete()));
-                        } else {
-                            self.push_diagnostic(
-                                DiagnosticKind::UnmatchedParagraphEnd,
-                                Some(evidence(tag.complete())),
-                            );
+                        if !self.current_is_p() {
+                            return Err(Unsupported::OutsideCandidate);
                         }
+                        self.close_p(evidence(tag.complete()));
                         Ok(false)
                     }
                     (HtmlTagKind::End, name) if name.is_block() => {
+                        if self.current_is_p() {
+                            return Err(Unsupported::OutsideCandidate);
+                        }
                         self.close_block(name, evidence(tag.complete()));
                         Ok(false)
                     }
@@ -1181,6 +1179,15 @@ fn s7_19_to_s7_22_later_in_body_actions_prove_original_nodes_remained_open() {
             .filter(|action| matches!(action, Action::BodyEndTransition { .. }))
             .count(),
         2
+    );
+}
+
+#[test]
+fn unmodelled_predecessor_cells_are_refused_instead_of_reimplemented_incompletely() {
+    assert_refusal("<body></body>x</p>", Unsupported::OutsideCandidate);
+    assert_refusal(
+        "<body><div><p></body>x</div>",
+        Unsupported::OutsideCandidate,
     );
 }
 
