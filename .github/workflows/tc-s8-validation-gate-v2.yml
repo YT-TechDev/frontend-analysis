@@ -1,0 +1,76 @@
+name: TC-S8 validation gate v2
+
+on:
+  push:
+    branches:
+      - tooling/tc-s8-validation-gate-v2
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout feature
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: test/380-tc-s8-validation
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Guard exact feature head
+        run: |
+          test "$(git rev-parse HEAD)" = "ad81b430eae921b11cacb3ff4ddfeb7ffa84ce4b"
+          test "$(git merge-base 024e0e62520d1c7e298605eb4539434ef6c8d5e7 HEAD)" = "024e0e62520d1c7e298605eb4539434ef6c8d5e7"
+
+      - name: Apply lint-only corrections
+        run: |
+          file=crates/frontend-analysis-core/src/html/tree_construction/in_body_html_end_open_stack_successor_validation.rs
+          python3 -c 'from pathlib import Path; p=Path("crates/frontend-analysis-core/src/html/tree_construction/in_body_html_end_open_stack_successor_validation.rs"); s=p.read_text(); a="#[derive(Debug, Clone, Copy, PartialEq, Eq)]\nenum Phase {"; b="#[allow(clippy::enum_variant_names)]\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\nenum Phase {"; assert a in s; s=s.replace(a,b,1); a="        .last()\n        .expect(\"direct after body html dispatch\");"; b="        .next_back()\n        .expect(\"direct after body html dispatch\");"; assert a in s; p.write_text(s.replace(a,b,1))'
+          test -n "$(git diff -- "$file")"
+
+      - name: Install Rust 1.97.1
+        run: rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
+
+      - name: Format
+        run: cargo +1.97.1 fmt --all
+
+      - name: Exact two-path theorem
+        run: |
+          actual="$(git diff --name-only 024e0e62520d1c7e298605eb4539434ef6c8d5e7 | sort)"
+          expected="$(printf '%s\n' crates/frontend-analysis-core/src/html/tree_construction/in_body_html_end_open_stack_successor_validation.rs crates/frontend-analysis-core/src/html/tree_construction/mod.rs | sort)"
+          test "$actual" = "$expected"
+
+      - name: Workspace policy
+        run: test "$(python3 .github/scripts/validate-rust-workspace-state.py .)" = production
+
+      - name: Rustfmt check
+        run: cargo +1.97.1 fmt --all -- --check
+
+      - name: Clippy
+        run: cargo +1.97.1 clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Focused validation
+        run: cargo +1.97.1 test -p frontend-analysis-core html::tree_construction::in_body_html_end_open_stack_successor_validation
+
+      - name: Tree-construction validation
+        run: cargo +1.97.1 test -p frontend-analysis-core html::tree_construction
+
+      - name: Full workspace
+        run: cargo +1.97.1 test --workspace --all-targets --all-features
+
+      - name: Locked metadata
+        run: cargo +1.97.1 metadata --offline --format-version 1 --locked
+
+      - name: Diff hygiene
+        run: git diff --check
+
+      - name: Publish only after green
+        run: |
+          git config user.name "YT-TechDev"
+          git config user.email "msc_prop@proton.me"
+          git add crates/frontend-analysis-core/src/html/tree_construction/in_body_html_end_open_stack_successor_validation.rs
+          git commit -m "test(html): fix TC-S8 validation lint gate"
+          git push origin HEAD:test/380-tc-s8-validation
