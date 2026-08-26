@@ -986,7 +986,9 @@ fn h3_h9_h25_exact_mixed_case_evidence_one_token_two_modes_one_reprocess() {
     let run = tokenize(&source_text, limits());
     let observation = observe_run(&run, StorageLayout::COMPACT);
     assert_eq!(observation.completion, Completion::Complete);
+    const EXPECTED_CANDIDATE_TOKEN_INDEX: usize = 3;
     let token_index = candidate_token_index(&observation);
+    assert_eq!(token_index, EXPECTED_CANDIDATE_TOKEN_INDEX);
     let actions = candidate_actions(&observation);
 
     let expected_kinds: Vec<&str> = actions
