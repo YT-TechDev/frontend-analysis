@@ -296,12 +296,26 @@ fn admitted_element_name(interpreted: &str) -> Option<AdmittedElementName> {
     }
 }
 
+/// Whether the interpreted characters contain any HTML whitespace character.
+///
+/// Outside the `in body` insertion mode, the HTML Standard treats whitespace
+/// characters differently from other characters, and the project-owned
+/// tokenizer emits contiguous Data runs rather than one token per character.
+/// TC-S1 proves no whitespace-sensitive character handling and no
+/// character-run splitting, so a run whose handling would depend on that
+/// distinction is refused rather than guessed at.
 fn contains_html_whitespace(interpreted: &str) -> bool {
     interpreted
         .chars()
         .any(|character| matches!(character, '\t' | '\n' | '\u{000c}' | '\r' | ' '))
 }
 
+/// The TC-S2 partition of one tokenizer-emitted aggregate interpreted
+/// character run.
+///
+/// Classification inspects the existing interpreted string as one scan; it
+/// never accesses `SourceText`, never calls the tokenizer, and never creates a
+/// substring or fabricated sub-range. The run stays exactly one observation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CharacterRunClass {
     AllHtmlWhitespace,
@@ -309,6 +323,8 @@ enum CharacterRunClass {
     Mixed,
 }
 
+/// Classifies an interpreted character run by the same HTML whitespace set
+/// [`contains_html_whitespace`] uses.
 fn classify_character_run(interpreted: &str) -> CharacterRunClass {
     let mut any_whitespace = false;
     let mut any_non_whitespace = false;
@@ -322,13 +338,21 @@ fn classify_character_run(interpreted: &str) -> CharacterRunClass {
     match (any_whitespace, any_non_whitespace) {
         (true, true) => CharacterRunClass::Mixed,
         (false, true) => CharacterRunClass::AllNonHtmlWhitespace,
+        // An admitted character token is never empty, so `(false, false)`
+        // cannot occur; treating it as whitespace here fabricates nothing
+        // because no such run reaches this function.
         (true, false) | (false, false) => CharacterRunClass::AllHtmlWhitespace,
     }
 }
 
+/// Where a shell element node's existence comes from, as selected by the
+/// insertion-mode rule that inserts it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ElementProvenance {
+    /// The trigger token's own authored start tag is this node's origin.
     AuthoredByTriggerToken,
+    /// The node has no authored source. The trigger token made it necessary
+    /// but is not its origin.
     Synthesized,
 }
 
@@ -361,12 +385,17 @@ enum Effect {
     SynthesizeAndCloseParagraphForUnmatchedEnd,
 }
 
+/// What an insertion-mode rule does with the current token.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ModeStep {
+    /// Apply the effect if present, optionally move to `next`, then consume
+    /// the token.
     Consume {
         effect: Option<Effect>,
         next: Option<InsertionMode>,
     },
+    /// Apply the effect if present, move to `next`, then hand the same token
+    /// to that mode. One token stays one observation.
     Reprocess {
         effect: Option<Effect>,
         next: InsertionMode,
@@ -376,6 +405,13 @@ enum ModeStep {
     },
 }
 
+/// The selected `in body` character step: insert the token's characters and
+/// leave the actual insertion mode unchanged.
+///
+/// Shared between ordinary `InBody` character handling and TC-S2's
+/// `AfterBody + AllHtmlWhitespace` delegation, so the two never duplicate
+/// [`HtmlTreeSession::insert_characters`]. `next: None` is what keeps the
+/// delegating call's actual mode exactly where it was.
 fn selected_in_body_character_step() -> ModeStep {
     ModeStep::Consume {
         effect: Some(Effect::InsertCharacters),
@@ -390,6 +426,10 @@ fn classify(
     paragraph_is_current: bool,
     token: &AdmittedToken<'_>,
 ) -> Result<ModeStep, HtmlTreeCapability> {
+    // A selected ordinary tag is proved only in the actual `in body` mode.
+    // Refusing here, before the mode match, is what keeps a selected `div`
+    // outside `in body` from reaching the shell walk, the missing-DOCTYPE
+    // recovery, a mode change, an action, coverage, or an identity.
     if !matches!(mode, InsertionMode::InBody) && token.is_selected_ordinary_tag() {
         return Err(HtmlTreeCapability::SelectedOrdinaryTagOutsideInBody);
     }
@@ -397,6 +437,9 @@ fn classify(
         return Err(HtmlTreeCapability::ParagraphTagOutsideInBody);
     }
     match mode {
+        // Every admitted token is content, and no DOCTYPE can reach TC-S1:
+        // the project-owned tokenizer reports markup declarations as its own
+        // unsupported capability, so a DOCTYPE token never exists here.
         InsertionMode::Initial => {
             reject_whitespace_sensitive_characters(token)?;
             Ok(ModeStep::Reprocess {
@@ -416,6 +459,10 @@ fn classify(
                     )),
                     next: Some(InsertionMode::BeforeHead),
                 }),
+                // The HTML Standard routes `head`, `body`, `html`, and `br`
+                // end tags here through the same "anything else" entry as
+                // characters, other start tags, and end of file, so the
+                // uniform implied-`html` step covers every admitted token.
                 _ => Ok(ModeStep::Reprocess {
                     effect: Some(Effect::InsertHtmlElement(ElementProvenance::Synthesized)),
                     next: InsertionMode::BeforeHead,
@@ -434,6 +481,8 @@ fn classify(
                     )),
                     next: Some(InsertionMode::InHead),
                 }),
+                // An `html` start tag here is processed by the `in body`
+                // rules, which TC-S1 does not prove.
                 AdmittedToken::StartTag {
                     name: AdmittedElementName::Shell(HtmlShellElementName::Html),
                     ..
@@ -465,6 +514,9 @@ fn classify(
                     name: AdmittedElementName::Shell(HtmlShellElementName::Html),
                     ..
                 } => Err(HtmlTreeCapability::UnprovedShellStartTagPosition),
+                // `body` and `html` end tags are routed to the same "anything
+                // else" entry as other start tags, characters, and end of
+                // file.
                 _ => Ok(ModeStep::Reprocess {
                     effect: Some(Effect::CloseHeadElement(HtmlShellClosure::ImpliedByToken)),
                     next: InsertionMode::AfterHead,
@@ -483,6 +535,10 @@ fn classify(
                     )),
                     next: Some(InsertionMode::InBody),
                 }),
+                // A `head` start tag is a parse error that ignores the token,
+                // an `html` start tag is processed by the `in body` rules,
+                // and a `head` end tag is an "any other end tag" parse error
+                // that ignores the token. None of the three is proved.
                 AdmittedToken::StartTag {
                     name:
                         AdmittedElementName::Shell(
@@ -553,15 +609,33 @@ fn classify(
                     }),
                     next: None,
                 }),
+                // A supported selected ordinary end tag selects its nearest
+                // same-name open target, and which of the three cells applies
+                // is decided entirely by where that target is.
                 AdmittedToken::EndTag {
                     name: AdmittedElementName::SelectedOrdinary(name),
                     ..
                 } => Ok(ModeStep::Consume {
                     effect: Some(match selected_end_target(open_selected_ordinary, *name) {
+                        // No same-name target is open. A stray selected
+                        // ordinary end tag is a parse error that ignores the
+                        // token: one diagnostic, one ignored disposition, and
+                        // committed progress, with the tree, the open
+                        // elements, the mode, identity, closure, and recovery
+                        // evidence all unchanged.
                         SelectedEndTarget::Absent => {
                             Effect::RecordUnmatchedSelectedOrdinaryEndTag(*name)
                         }
+                        // The nearest same-name target is the current node.
+                        // This is the accepted TC-S3 cell, unchanged: the end
+                        // tag closes exactly that element, nothing is
+                        // recovered, and no misnested diagnostic is recorded.
                         SelectedEndTarget::Current => Effect::CloseSelectedOrdinaryElement(*name),
+                        // The nearest same-name target is open below one or
+                        // more differently-nested selected ordinary elements.
+                        // Those are recovery-popped, current-first, and the
+                        // target is then closed by this same authored end tag
+                        // — one misnested diagnostic, however many pops.
                         SelectedEndTarget::NonCurrent => {
                             Effect::RecoverInterveningSelectedOrdinaryElementsAndCloseTarget(*name)
                         }
@@ -596,6 +670,11 @@ fn classify(
                         ),
                     ..
                 } => Err(HtmlTreeCapability::UnprovedShellEndTagPosition),
+                // End of file with a selected ordinary element still open is
+                // one diagnostic plus the ordinary stop: nothing is popped, no
+                // close is synthesized, and no end-tag anchor or closure
+                // evidence is fabricated for a token that has no authored
+                // extent.
                 AdmittedToken::EndOfFile { .. } => Ok(ModeStep::Stop {
                     // P itself is an allowed stack member at EOF. A selected
                     // Div/Section ancestor retains the predecessor diagnostic.
@@ -604,6 +683,16 @@ fn classify(
                 }),
             }
         }
+        // Reached by the proved `</body>` cell. End of file here stops the
+        // bounded document parse, which is what the accepted G4, G6, and G7
+        // cases require. TC-S2 additionally proves the uniform aggregate
+        // character run: an all-whitespace run delegates to the selected
+        // `in body` text step without changing the actual mode; an
+        // all-non-whitespace run records one diagnostic and reprocesses into
+        // `InBody`; a mixed run is refused whole, before any mutation. The
+        // other `after body` rules the HTML Standard defines (comments,
+        // reprocessing other token shapes back in `in body`) remain
+        // unproved and stay refused.
         InsertionMode::AfterBody => match token {
             AdmittedToken::EndTag {
                 name: AdmittedElementName::Shell(HtmlShellElementName::Html),
@@ -643,13 +732,31 @@ fn classify(
     }
 }
 
+/// Where a supported selected ordinary end tag's nearest same-name target
+/// lies, relative to the current node.
+///
+/// This is a read-only classification of the ordered selected-name projection
+/// alone. It carries no constructed identity: which identities the resolved
+/// cell then acts on is the session's own transaction to resolve, before it
+/// mutates anything.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SelectedEndTarget {
+    /// No selected ordinary element of that name is open.
     Absent,
+    /// The nearest same-name selected ordinary element is the current node.
     Current,
+    /// The nearest same-name selected ordinary element is open below at least
+    /// one other selected ordinary element.
     NonCurrent,
 }
 
+/// Classifies a supported selected ordinary end tag against the ordered
+/// selected-name projection, innermost last.
+///
+/// The bounded represented state is `[html, body] ++ W` with
+/// `W ∈ {Div, Section}*`, so the whole selected slice sits above `body` and a
+/// reverse scan of `W` is exactly the bounded selected-element scope walk.
+/// This is deliberately not general WHATWG scope coverage and claims none.
 fn selected_end_target(
     open_selected_ordinary: &[HtmlSelectedOrdinaryElementName],
     name: HtmlSelectedOrdinaryElementName,
@@ -681,6 +788,8 @@ fn is_implied_end_element(element: &HtmlElement) -> bool {
     }
 }
 
+/// Refuses a character run whose handling in the current mode would depend on
+/// the whitespace/non-whitespace distinction TC-S1 does not prove.
 fn reject_whitespace_sensitive_characters(
     token: &AdmittedToken<'_>,
 ) -> Result<(), HtmlTreeCapability> {
@@ -692,39 +801,93 @@ fn reject_whitespace_sensitive_characters(
     }
 }
 
+/// What processing one admitted token concluded, once [`super::driver`] has
+/// driven it to a terminal disposition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum TokenOutcome {
+    /// The token was completely processed by supported actions.
     Consumed,
+    /// The token stopped document parsing normally.
     StoppedParsing,
+    /// This subsystem does not prove this cell. Nothing was mutated for it.
     Unsupported(HtmlTreeCapability),
 }
 
+/// What one [`HtmlTreeSession::dispatch`] call — exactly one insertion-mode
+/// rule evaluation — concluded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum DispatchOutcome {
+    /// The token was completely processed by this rule.
     Consumed,
+    /// The rule reprocessed the same token into a new actual insertion mode.
+    /// The session committed nothing for the token: no coverage, no
+    /// processed-token count. [`super::driver`] redispatches the same
+    /// admitted token and trigger without re-admitting or reconstructing
+    /// either.
     ReprocessSameToken,
+    /// The token stopped document parsing normally.
     StoppedParsing,
+    /// This subsystem does not prove this cell. Nothing was mutated for it.
     Unsupported(HtmlTreeCapability),
 }
 
+/// A construction-session invariant failure.
+///
+/// This is an operation/boundary error, never an HTML parse diagnostic and
+/// never unsupported input. Every variant carries only structural evidence;
+/// `Debug` and `Display` never expose authored source content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HtmlTreeSessionError {
+    /// The committed semantic creation-event counter is exhausted.
     ConstructedIdentityExhausted,
+    /// A shell element insertion found no recorded insertion parent.
     MissingInsertionParent,
+    /// An authored insertion was requested for a token that is not a start
+    /// tag.
     AuthoredInsertionWithoutStartTag,
+    /// A shell element name was opened while already open.
     DuplicateOpenShellElement(HtmlShellElementName),
+    /// A shell element was closed while it was not the open element.
     ClosedShellElementIsNotOpen(HtmlShellElementName),
+    /// A relationship named a node the session does not hold.
     UnknownConstructedNode(HtmlConstructedNodeId),
+    /// Character insertion found no open insertion target.
     MissingCharacterInsertionTarget,
+    /// Character insertion found a coalescing target that is not a text node.
     InvalidCharacterCoalescingTarget(HtmlConstructedNodeId),
+    /// While processing one emitted token, the driver observed the same
+    /// insertion mode evaluated twice. This is the structural per-token
+    /// termination proof: it is never expected to fire for a proved cell and
+    /// carries no numeric budget.
     RepeatedInsertionModeEvaluation,
+    /// Committed tree coverage moved backwards.
     NonMonotonicCommittedCoverage,
+    /// A selected ordinary close was requested while no element of that name
+    /// was in the bounded selected-element scope.
     SelectedOrdinaryElementIsNotInScope(HtmlSelectedOrdinaryElementName),
+    /// A selected ordinary close was requested while the current node was not
+    /// that element.
     SelectedOrdinaryElementIsNotCurrent(HtmlSelectedOrdinaryElementName),
+    /// Implied-end-tag generation would not have been a no-op over the
+    /// represented state. This is the bounded invariant that stands in for a
+    /// generalized implied-end generator; it is never expected to fire while
+    /// the represented state is `[html, body] ++ W` with
+    /// `W ∈ {Div, Section}*`.
     ImpliedEndGenerationIsNotABoundedNoOp,
+    /// A heterogeneous selected ordinary recovery was requested while the
+    /// nearest same-name target was in fact the current node, which is the
+    /// matching-closure cell rather than the recovery cell.
     SelectedOrdinaryRecoveryTargetIsCurrent(HtmlSelectedOrdinaryElementName),
+    /// The open elements above a resolved selected ordinary target are not all
+    /// selected ordinary elements, so the bounded suffix the recovery cell
+    /// requires does not exist. It is never expected to fire while the
+    /// represented state is `[html, body] ++ W`.
     SelectedOrdinaryRecoverySuffixIsNotSelected(HtmlConstructedNodeId),
+    /// An unmatched selected ordinary end tag was recorded while an element of
+    /// that name was in fact in the bounded selected-element scope.
     UnmatchedSelectedOrdinaryEndTagWithElementInScope(HtmlSelectedOrdinaryElementName),
+    /// The open-selected-element end-of-file diagnostic was recorded while no
+    /// selected ordinary element was open.
     NoOpenSelectedOrdinaryElementAtEndOfFile,
     ParagraphIsNotCurrent(HtmlConstructedNodeId),
     MultipleOpenParagraphElements,
@@ -743,9 +906,28 @@ impl std::fmt::Display for HtmlTreeSessionError {
 
 impl std::error::Error for HtmlTreeSessionError {}
 
+/// One supported selected ordinary end tag's complete pre-resolved decision.
+///
+/// Built entirely from read-only session state before the transaction
+/// mutates anything, and dropped when the transaction ends. It is never
+/// stored on the session, never reaches the freeze boundary, and never
+/// escapes to a consumer.
+///
+/// `target_open_element` is a private, ephemeral open-element stack
+/// coordinate that exists only so the commit can be one `truncate`. It is
+/// deliberately *not* semantic identity, is never recorded in any action,
+/// diagnostic, or node, and is meaningless the moment the stack changes.
+/// Only `target` and `intervening_current_first` carry durable meaning, and
+/// both are [`HtmlConstructedNodeId`] semantic creation-event identities.
 struct SelectedOrdinaryEndPlan {
+    /// The nearest same-name open selected ordinary element the end tag
+    /// selects. This one is closed by its own matching end tag.
     target: HtmlConstructedNodeId,
+    /// Where the target sits on the private open-element stack.
     target_open_element: usize,
+    /// The complete open selected ordinary suffix above the target, ordered
+    /// current node first and target-ward last. Empty exactly when the target
+    /// is already the current node.
     intervening_current_first: Vec<HtmlConstructedNodeId>,
 }
 
@@ -758,6 +940,7 @@ struct PreparedInsertion {
     node: HtmlTreeNode,
 }
 
+/// The exclusive owner of one run's mutable tree-construction state.
 pub(super) struct HtmlTreeSession {
     identities: HtmlConstructedIdentityCounter,
     nodes: Vec<HtmlTreeNode>,
@@ -774,6 +957,10 @@ pub(super) struct HtmlTreeSession {
 }
 
 impl HtmlTreeSession {
+    /// Starts a run by committing the Document root creation event.
+    ///
+    /// The root has no authored source and no synthesis cause: it is the
+    /// parse result's container, not implied markup.
     pub(super) fn new() -> Result<Self, HtmlTreeSessionError> {
         let mut identities = HtmlConstructedIdentityCounter::new();
         let root = identities
@@ -797,11 +984,22 @@ impl HtmlTreeSession {
         })
     }
 
+    /// Performs exactly one insertion-mode rule evaluation for the given
+    /// admitted token.
+    ///
+    /// This is the session's complete unit of work per call: it never loops
+    /// and never itself redispatches. [`super::driver`] owns same-token
+    /// redispatch orchestration and calls this once per dispatch, retaining
+    /// the same admitted token and trigger across a
+    /// [`DispatchOutcome::ReprocessSameToken`] result.
     pub(super) fn dispatch(
         &mut self,
         token: &AdmittedToken<'_>,
         trigger: &HtmlTreeTokenTrigger,
     ) -> Result<DispatchOutcome, HtmlTreeSessionError> {
+        // Both gates run before anything can change: the token was already
+        // admitted lexically, and this reads the private selected-element
+        // state without borrowing it mutably.
         let open_selected_ordinary = self.open_selected_ordinary_names();
         let paragraph_is_current = self.open_paragraph()?.is_some();
         let step = match classify(
@@ -843,7 +1041,15 @@ impl HtmlTreeSession {
         }
     }
 
+    /// Consumes the session into the freeze boundary's input.
+    ///
+    /// The session itself never escapes, and nothing mutable travels in the
+    /// returned parts.
     pub(super) fn finish(self, completion: HtmlTreeCompletion) -> HtmlDocumentShellParts {
+        // Snapshot the actual final open selected state before the mutable
+        // stack is dropped, so the freeze boundary can validate the committed
+        // action stream against it instead of trusting this session. Only the
+        // semantic identities travel; the stack itself does not.
         let final_open_selected_ordinary = self.open_selected_ordinary_ids();
         let final_open_paragraph = self
             .open_elements
@@ -955,6 +1161,10 @@ impl HtmlTreeSession {
                 self.recover_selected_ordinary_suffix_and_close_target(name, trigger)
             }
             Effect::RecordUnmatchedSelectedOrdinaryEndTag(name) => {
+                // The bounded not-in-scope condition is what makes this the
+                // ignored-end cell rather than the closing cell, so it is
+                // proved before either the diagnostic or the disposition is
+                // recorded.
                 if self.nearest_open_selected_ordinary(name).is_some() {
                     return Err(
                         HtmlTreeSessionError::UnmatchedSelectedOrdinaryEndTagWithElementInScope(
@@ -1000,6 +1210,12 @@ impl HtmlTreeSession {
         }
     }
 
+    /// Creates one shell element node.
+    ///
+    /// Every fallible step — insertion parent resolution, open-element
+    /// uniqueness, authored evidence availability, and identity headroom — is
+    /// resolved before the first mutation, and the creation counter advances
+    /// only after the whole action has committed.
     fn insert_shell_element(
         &mut self,
         name: HtmlShellElementName,
@@ -1073,6 +1289,14 @@ impl HtmlTreeSession {
         Ok(reserved)
     }
 
+    /// Creates one selected ordinary element node from the trigger token's
+    /// own authored start tag.
+    ///
+    /// Every fallible step — start-tag evidence availability, insertion parent
+    /// resolution, and identity headroom — is resolved before the first
+    /// mutation, and the creation counter advances only after the whole action
+    /// has committed. Nesting is deliberately not restricted here: `S(k)`
+    /// admits any `k`, and no numeric nesting cap is introduced.
     fn insert_selected_ordinary_element(
         &mut self,
         name: HtmlSelectedOrdinaryElementName,
@@ -1430,6 +1654,20 @@ impl HtmlTreeSession {
         Ok(())
     }
 
+    /// Closes the nearest same-name open selected ordinary element for its own
+    /// exact authored end tag, when that element is already the current node.
+    ///
+    /// The accepted TC-S3 branch is proved in order and entirely before the
+    /// pop, and stays exactly what it was: the bounded
+    /// selected-element-in-scope condition and the bounded implied-end no-op
+    /// invariant are resolved by [`Self::plan_selected_ordinary_end`], and
+    /// this cell additionally requires the resolved target to be current — a
+    /// non-empty intervening suffix here is the heterogeneous recovery cell,
+    /// not this one. Only then is exactly that identity popped and the closure
+    /// recorded, relating the semantic node identity to the trigger's exact
+    /// authored end tag. No identity is admitted, no recovery relation is
+    /// recorded, no misnested diagnostic is emitted, and the end tag never
+    /// becomes the node's origin.
     fn close_selected_ordinary_element(
         &mut self,
         name: HtmlSelectedOrdinaryElementName,
@@ -1452,6 +1690,26 @@ impl HtmlTreeSession {
         Ok(())
     }
 
+    /// Recovers a heterogeneous open selected ordinary suffix and closes the
+    /// nearest same-name target, all for one exact authored end tag.
+    ///
+    /// The complete decision — nearest same-name target, the complete
+    /// intervening suffix in current-first order, the bounded implied-end
+    /// no-op invariant, and the requirement that the target is not already
+    /// current — is resolved by [`Self::plan_selected_ordinary_end`] before
+    /// anything mutates. The commit is then one coherent stack mutation
+    /// followed by the ordered evidence, so there is no partial pop, no
+    /// rollback, and no state to reconstruct after a refusal.
+    ///
+    /// The two relations stay distinct on purpose. Each intervening element
+    /// gets one recovery-pop relation naming the target that caused it, and
+    /// never a fabricated matching closure: no matching end tag caused its
+    /// removal. A later authored end tag of that element's own name may still
+    /// appear in the source, but the element has already left the open state,
+    /// so that end tag is unmatched and closes nothing. The target alone gets
+    /// the matching closure. All of them, and the single misnested diagnostic,
+    /// carry the same exact authored end tag as trigger evidence, and it is
+    /// the authored origin of none of them. No identity is admitted.
     fn recover_selected_ordinary_suffix_and_close_target(
         &mut self,
         name: HtmlSelectedOrdinaryElementName,
@@ -1487,6 +1745,16 @@ impl HtmlTreeSession {
         Ok(())
     }
 
+    /// Resolves the complete meaning of a supported selected ordinary end tag
+    /// before any mutation.
+    ///
+    /// Read-only by construction: it borrows `&self`, so nothing it inspects
+    /// can already have been changed by the decision it is making. Every
+    /// fallible and precondition-sensitive part of the transaction lives here
+    /// — nearest same-name target lookup, the bounded implied-end no-op
+    /// invariant, and proof that the complete suffix above the target really
+    /// is the bounded selected suffix the accepted cells describe. The caller
+    /// then classifies the plan and commits in one step.
     fn plan_selected_ordinary_end(
         &self,
         name: HtmlSelectedOrdinaryElementName,
@@ -1511,6 +1779,9 @@ impl HtmlTreeSession {
         })
     }
 
+    /// Inserts the trigger token's characters at the current insertion
+    /// position, coalescing into the adjacent text node when one is already
+    /// the last child there.
     fn insert_characters(
         &mut self,
         trigger: &HtmlTreeTokenTrigger,
@@ -1602,6 +1873,13 @@ impl HtmlTreeSession {
         Ok(())
     }
 
+    /// Moves the actual insertion mode to `next`.
+    ///
+    /// This subsystem's per-token termination proof lives in
+    /// [`super::driver`], which tracks already-evaluated modes across
+    /// [`Self::dispatch`] calls for one token; the session itself no longer
+    /// restricts which mode a proved rule may select next, which is what
+    /// admits TC-S2's validated `AfterBody -> InBody` recovery back-edge.
     fn switch_mode(&mut self, next: InsertionMode) {
         self.mode = next;
     }
@@ -1631,6 +1909,8 @@ impl HtmlTreeSession {
             .push(HtmlTreeDiagnostic::new(code, trigger.clone(), recovery));
     }
 
+    /// Resolves a constructed identity by searching, never by indexing
+    /// storage.
     fn node(&self, id: HtmlConstructedNodeId) -> Option<&HtmlTreeNode> {
         self.nodes.iter().find(|node| node.id() == id)
     }
@@ -1646,6 +1926,12 @@ impl HtmlTreeSession {
         )
     }
 
+    /// Whether a shell element name is currently open.
+    ///
+    /// Together with the mode machine this bounds the shell part of the
+    /// open-element state without any depth limit: a shell name can be pushed
+    /// only while it is not already open. Selected ordinary elements are a
+    /// separate domain and are deliberately not counted here.
     fn is_open(&self, name: HtmlShellElementName) -> bool {
         self.open_elements.iter().any(|id| {
             matches!(
@@ -1656,6 +1942,8 @@ impl HtmlTreeSession {
         })
     }
 
+    /// Whether an open-element entry is the selected ordinary element of this
+    /// name, resolved by semantic constructed identity.
     fn is_selected_ordinary(
         &self,
         id: HtmlConstructedNodeId,
@@ -1708,6 +1996,7 @@ impl HtmlTreeSession {
             .collect()
     }
 
+    /// Whether an open-element entry is a selected ordinary element at all.
     fn is_open_selected_ordinary(&self, id: HtmlConstructedNodeId) -> bool {
         matches!(
             self.node(id).map(HtmlTreeNode::kind),
@@ -1749,6 +2038,14 @@ impl HtmlTreeSession {
         None
     }
 
+    /// Whether the HTML Standard's implied-end-tag generation would pop
+    /// nothing over the current represented state.
+    ///
+    /// No generalized implied-end generator is introduced. Instead
+    /// [`is_implied_end_element`] is a total function over the closed
+    /// represented element domain, so this invariant is validated rather than
+    /// assumed — and growing that domain forces the question to be answered
+    /// again rather than silently skipped.
     fn implied_end_generation_is_a_no_op(&self) -> bool {
         self.open_elements.iter().all(|id| {
             !matches!(
@@ -1758,6 +2055,10 @@ impl HtmlTreeSession {
         })
     }
 
+    /// The actual insertion mode.
+    ///
+    /// [`super::driver`] reads this to build and check its per-token
+    /// evaluated-mode history; it is also used by tests.
     pub(super) fn insertion_mode(&self) -> InsertionMode {
         self.mode
     }
