@@ -1,0 +1,153 @@
+name: TC-S5 Documentation Modernize Candidate
+
+on:
+  push:
+    branches:
+      - tooling/tc-s5-test-diagnostics
+
+permissions:
+  contents: write
+
+jobs:
+  modernize-candidate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact documentation candidate
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: tooling/tc-s5-doc-restore-candidate
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Guard exact candidate head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "5a68d2f0be8d1e2f333e7fb795aa4f25e7d376e8"
+          test "$(git status --porcelain)" = ""
+
+      - name: Modernize restored current-contract wording only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          RESULT = Path("crates/frontend-analysis-core/src/html/tree_construction/result.rs")
+          SESSION = Path("crates/frontend-analysis-core/src/html/tree_construction/session.rs")
+
+          def skeleton(text: str) -> list[str]:
+              out = []
+              for line in text.splitlines():
+                  stripped = line.strip()
+                  if stripped and not stripped.startswith("//"):
+                      out.append(" ".join(stripped.split()))
+              return out
+
+          def replace(path: Path, old: str, new: str) -> None:
+              text = path.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one match, found {count}\n--- old ---\n{old}")
+              path.write_text(text.replace(old, new, 1))
+
+          before_result = RESULT.read_text()
+          before_session = SESSION.read_text()
+
+          replace(
+              RESULT,
+              """/// The semantic meaning is the order in which the complete semantic\n/// node-creation action committed during one TC-S1 run. The counter that\n""",
+              """/// The semantic meaning is the order in which the complete semantic\n/// node-creation action committed during one tree-construction run. The counter that\n""",
+          )
+          replace(
+              RESULT,
+              """    /// A tag naming an element outside the proved `html`/`head`/`body` shell.\n    ///\n    /// This is frozen predecessor meaning and keeps it exactly: it is reported\n    /// for a name in neither closed admitted domain. A selected ordinary tag\n    /// never reaches it, and TC-S3 added its own variants below rather than\n    /// widening this one.\n    NonShellElementTag,\n""",
+              """    /// A tag whose interpreted name belongs to none of the three closed\n    /// admitted domains: shell, selected ordinary, or Paragraph.\n    ///\n    /// This is frozen predecessor meaning and keeps it exactly: selected\n    /// ordinary and Paragraph tags never reach it, because those domains own\n    /// their own shape and placement capabilities rather than widening this\n    /// generic unproved-name boundary.\n    NonShellElementTag,\n""",
+          )
+          replace(
+              RESULT,
+              """    /// A selected ordinary tag reached an actual insertion mode other than\n    /// `in body`. TC-S3 proves the selected `div` rules only there, so the\n    /// tag is refused before any shell walk, recovery, missing-DOCTYPE, mode,\n    /// action, coverage, or identity effect.\n    SelectedOrdinaryTagOutsideInBody,\n""",
+              """    /// A selected ordinary tag reached an actual insertion mode other than\n    /// `in body`. The accepted TC-S3/TC-S4 selected `Div | Section` rules are\n    /// proved only there, so the tag is refused before any shell walk, recovery,\n    /// missing-DOCTYPE, mode, action, coverage, or identity effect.\n    SelectedOrdinaryTagOutsideInBody,\n""",
+          )
+          replace(
+              RESULT,
+              """/// Why an effective TC-S1 result is not `Complete`.\n#[derive(Debug, Clone)]\npub(crate) enum HtmlTreeIncompleteCause {\n    /// TC-S1 processed every emitted token it was given, but the retained\n    /// tokenizer run is itself incomplete.\n""",
+              """/// Why an effective tree-construction result is not `Complete`.\n#[derive(Debug, Clone)]\npub(crate) enum HtmlTreeIncompleteCause {\n    /// Tree construction processed every emitted token it was given, but the\n    /// retained tokenizer run is itself incomplete.\n""",
+          )
+          replace(
+              RESULT,
+              """    /// TC-S1 stopped before mutation at input outside its proved envelope.\n""",
+              """    /// Tree construction stopped before mutation at input outside its proved envelope.\n""",
+          )
+          replace(
+              RESULT,
+              """/// Effective TC-S1 completion.\n///\n/// `Complete` requires all three of: tokenizer completion `Complete`, every\n/// emitted token processed through end of file by supported actions, and a\n/// successful freeze. Lower-layer incompleteness is never upgraded.\n""",
+              """/// Effective tree-construction completion.\n///\n/// `Complete` requires all three of: tokenizer completion `Complete`, every\n/// emitted token processed through end of file by supported actions, and a\n/// successful freeze. Lower-layer incompleteness is never upgraded.\n""",
+          )
+          replace(
+              RESULT,
+              """/// The immutable, validated TC-S1 analysis.\n///\n/// Retains the validated [`HtmlTokenizerRunResult`] by value so tokenizer\n""",
+              """/// The immutable, validated HTML tree-construction analysis for the currently\n/// accepted bounded production frontier.\n///\n/// Retains the validated [`HtmlTokenizerRunResult`] by value so tokenizer\n""",
+          )
+          replace(
+              RESULT,
+              """    /// Supported TC-S1 parse diagnostics, in committed order.\n""",
+              """    /// Supported tree-construction parse diagnostics, in committed order.\n""",
+          )
+          replace(
+              RESULT,
+              """    /// The retained-source prefix whose emitted tokens were completely\n    /// processed by committed TC-S1 actions.\n""",
+              """    /// The retained-source prefix whose emitted tokens were completely\n    /// processed by committed tree-construction actions.\n""",
+          )
+          replace(
+              RESULT,
+              """/// coverage and the two must not be conflated. TC-S1 may commit strictly less\n/// than the tokenizer processed.\n""",
+              """/// coverage and the two must not be conflated. Tree construction may commit\n/// strictly less than the tokenizer processed.\n""",
+          )
+          replace(
+              SESSION,
+              """    /// Together with the mode machine this bounds the shell part of the\n    /// open-element state without any depth limit: a shell name can be pushed\n    /// only while it is not already open. Selected ordinary elements are a\n    /// separate domain and are deliberately not counted here.\n""",
+              """    /// Together with the mode machine this bounds the shell part of the\n    /// open-element state without any depth limit: a shell name can be pushed\n    /// only while it is not already open. Selected ordinary elements and\n    /// Paragraph are separate domains and are deliberately not counted here.\n""",
+          )
+
+          after_result = RESULT.read_text()
+          after_session = SESSION.read_text()
+          if skeleton(after_result) != skeleton(before_result):
+              raise SystemExit("result.rs modernization changed Rust code skeleton")
+          if skeleton(after_session) != skeleton(before_session):
+              raise SystemExit("session.rs modernization changed Rust code skeleton")
+          print("current-contract wording updated without code changes")
+          PY
+          git diff --name-only | sort > /tmp/actual-paths
+          printf '%s\n' \
+            crates/frontend-analysis-core/src/html/tree_construction/result.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/session.rs \
+            | sort > /tmp/expected-paths
+          diff -u /tmp/expected-paths /tmp/actual-paths
+
+      - name: Install accepted Rust toolchain
+        run: rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
+
+      - name: Validate candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all
+          cargo fmt --all -- --check
+          test "$(python3 .github/scripts/validate-rust-workspace-state.py .)" = production
+          git diff --name-only | sort > /tmp/actual-paths
+          diff -u /tmp/expected-paths /tmp/actual-paths
+          cargo clippy --workspace --all-targets --all-features -- -D warnings
+          cargo test --workspace --all-targets --all-features
+
+      - name: Commit candidate only after green validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Yuto"
+          git config user.email "msc_prop@proton.me"
+          git add \
+            crates/frontend-analysis-core/src/html/tree_construction/result.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/session.rs
+          git commit -m "docs(html): align restored contracts with TC-S5 frontier"
+          git push origin HEAD:tooling/tc-s5-doc-restore-candidate
