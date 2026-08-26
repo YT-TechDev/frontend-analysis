@@ -2675,9 +2675,9 @@ fn validate_paragraph_lifecycle(
 /// acknowledgement and same-token reprocess actions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ReplayedBodyPosition {
-    InBody,
-    AfterBody,
-    AfterAfterBody,
+    In,
+    After,
+    AfterAfter,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2745,7 +2745,7 @@ fn validate_body_end_open_stack_transitions(
                 name: HtmlShellElementName::Body,
                 ..
             } => {
-                position = Some(ReplayedBodyPosition::InBody);
+                position = Some(ReplayedBodyPosition::In);
             }
             HtmlTreeActionKind::InsertedAuthoredSelectedOrdinaryElement { node, .. } => {
                 open_content.push(*node);
@@ -2785,7 +2785,7 @@ fn validate_body_end_open_stack_transitions(
                         token_index,
                     });
                 }
-                if position != Some(ReplayedBodyPosition::InBody) {
+                if position != Some(ReplayedBodyPosition::In) {
                     return Err(HtmlTreeFreezeError::BodyEndAcknowledgementOutsideInBody {
                         token_index,
                     });
@@ -2874,15 +2874,15 @@ fn validate_body_end_open_stack_transitions(
                 }
 
                 body_end_tokens.push(token_index);
-                position = Some(ReplayedBodyPosition::AfterBody);
+                position = Some(ReplayedBodyPosition::After);
             }
             HtmlTreeActionKind::AcknowledgedShellEndTag {
                 name: HtmlShellElementName::Html,
-            } if position == Some(ReplayedBodyPosition::AfterBody) => {
-                position = Some(ReplayedBodyPosition::AfterAfterBody);
+            } if position == Some(ReplayedBodyPosition::After) => {
+                position = Some(ReplayedBodyPosition::AfterAfter);
             }
             HtmlTreeActionKind::ReprocessedToken
-                if position == Some(ReplayedBodyPosition::AfterBody) =>
+                if position == Some(ReplayedBodyPosition::After) =>
             {
                 if replayed_body_character_class(action.trigger(), tokenizer_run)
                     != Some(ReplayedBodyCharacterClass::AllNonHtmlWhitespace)
@@ -2921,7 +2921,7 @@ fn validate_body_end_open_stack_transitions(
                     });
                 };
                 pending_reprocessed_text = Some((token_index, expected_parent));
-                position = Some(ReplayedBodyPosition::InBody);
+                position = Some(ReplayedBodyPosition::In);
             }
             HtmlTreeActionKind::InsertedTextNode { node }
             | HtmlTreeActionKind::AppendedToTextNode { node } => {
@@ -2947,7 +2947,7 @@ fn validate_body_end_open_stack_transitions(
                     }
                     pending_reprocessed_text = None;
                     consumed_successor_text_tokens.push(token_index);
-                } else if position == Some(ReplayedBodyPosition::AfterBody)
+                } else if position == Some(ReplayedBodyPosition::After)
                     && !body_end_tokens.is_empty()
                 {
                     let Some(expected_parent) = open_content.last().copied().or(body) else {
@@ -2998,7 +2998,7 @@ fn validate_body_end_open_stack_transitions(
             HtmlTreeActionKind::StoppedParsing
                 if matches!(
                     position,
-                    Some(ReplayedBodyPosition::AfterBody | ReplayedBodyPosition::AfterAfterBody)
+                    Some(ReplayedBodyPosition::After | ReplayedBodyPosition::AfterAfter)
                 ) =>
             {
                 if !is_end_of_file_trigger(action.trigger(), tokenizer_run) {
