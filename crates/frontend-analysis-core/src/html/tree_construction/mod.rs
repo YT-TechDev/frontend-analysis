@@ -85,6 +85,8 @@ mod in_body_div_successor_production;
 #[cfg(test)]
 mod in_body_div_successor_validation;
 #[cfg(test)]
+mod in_body_html_end_open_stack_successor_validation;
+#[cfg(test)]
 mod in_body_p_implied_end_successor_production;
 #[cfg(test)]
 mod in_body_p_implied_end_successor_validation;
