@@ -1347,12 +1347,10 @@ fn h30_generated_bounded_stacks_match_independent_closed_form_oracle() {
                     .next_id
                     .checked_sub(candidate_identity_baseline)
                     .expect("candidate cannot consume pre-existing identity");
+                assert_eq!(identity_allocation, oracle.identity_allocation, "{source}");
                 assert_eq!(
-                    identity_allocation, oracle.identity_allocation,
-                    "{source}"
-                );
-                assert_eq!(
-                    observation.nodes.len(), candidate_identity_baseline,
+                    observation.nodes.len(),
+                    candidate_identity_baseline,
                     "{source}"
                 );
                 let lifecycle_mutations = candidate_actions(&observation)
