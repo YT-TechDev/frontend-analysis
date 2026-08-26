@@ -975,7 +975,10 @@ fn validation_module_does_not_import_production_tree_semantics() {
 fn p1_authored_p_lifecycle_text_parentage_and_diagnostics_are_exact() {
     let observation = observe_fixture("P1", 11);
     assert_complete(&observation);
-    assert_eq!(diagnostic_kinds(&observation), vec![DiagnosticKind::MissingDoctype]);
+    assert_eq!(
+        diagnostic_kinds(&observation),
+        vec![DiagnosticKind::MissingDoctype]
+    );
 
     let p = p_nodes(&observation)[0];
     let NodeKind::Element {
@@ -1029,7 +1032,10 @@ fn p2_interpreted_name_is_case_insensitive_but_raw_spelling_is_exact() {
 fn p3_second_p_start_closes_first_before_allocating_second() {
     let observation = observe_fixture("P3", 1);
     assert_complete(&observation);
-    assert_eq!(diagnostic_kinds(&observation), vec![DiagnosticKind::MissingDoctype]);
+    assert_eq!(
+        diagnostic_kinds(&observation),
+        vec![DiagnosticKind::MissingDoctype]
+    );
 
     let ps = p_nodes(&observation);
     assert_eq!(ps.len(), 2);
@@ -1067,15 +1073,31 @@ fn p4_p5_block_start_closes_p_before_block_insertion_without_tc_s4_recovery() {
     for (id, block_name) in [("P4", Name::Div), ("P5", Name::Section)] {
         let observation = observe_fixture(id, 1);
         assert_complete(&observation);
-        assert_eq!(diagnostic_kinds(&observation), vec![DiagnosticKind::MissingDoctype], "{id}");
+        assert_eq!(
+            diagnostic_kinds(&observation),
+            vec![DiagnosticKind::MissingDoctype],
+            "{id}"
+        );
         assert_eq!(observation.p_closures.len(), 1, "{id}");
-        assert_eq!(observation.p_closures[0].kind, PClosureKind::StartTriggered, "{id}");
+        assert_eq!(
+            observation.p_closures[0].kind,
+            PClosureKind::StartTriggered,
+            "{id}"
+        );
         assert!(observation.block_recovery.is_empty(), "{id}");
 
         let p_close_index = observation
             .actions
             .iter()
-            .position(|action| matches!(action, Action::PClose { kind: PClosureKind::StartTriggered, .. }))
+            .position(|action| {
+                matches!(
+                    action,
+                    Action::PClose {
+                        kind: PClosureKind::StartTriggered,
+                        ..
+                    }
+                )
+            })
             .expect("P close action");
         let block_insert_index = observation
             .actions
@@ -1090,7 +1112,10 @@ fn p4_p5_block_start_closes_p_before_block_insertion_without_tc_s4_recovery() {
 fn p6_matching_end_closes_nested_p_without_closing_parent_block() {
     let observation = observe_fixture("P6", 1);
     assert_complete(&observation);
-    assert_eq!(diagnostic_kinds(&observation), vec![DiagnosticKind::MissingDoctype]);
+    assert_eq!(
+        diagnostic_kinds(&observation),
+        vec![DiagnosticKind::MissingDoctype]
+    );
     assert_eq!(observation.p_closures.len(), 1);
     assert_eq!(observation.p_closures[0].kind, PClosureKind::MatchingEnd);
     assert!(observation.block_recovery.is_empty());
@@ -1102,7 +1127,10 @@ fn p7_unmatched_end_has_exact_diagnostic_trigger_synthesis_and_closure_order() {
     assert_complete(&observation);
     assert_eq!(
         diagnostic_kinds(&observation),
-        vec![DiagnosticKind::MissingDoctype, DiagnosticKind::UnmatchedPEnd]
+        vec![
+            DiagnosticKind::MissingDoctype,
+            DiagnosticKind::UnmatchedPEnd
+        ]
     );
     assert_eq!(observation.diagnostics[0].trigger, None);
     assert_eq!(
@@ -1112,13 +1140,19 @@ fn p7_unmatched_end_has_exact_diagnostic_trigger_synthesis_and_closure_order() {
 
     assert_eq!(observation.p_syntheses.len(), 1);
     assert_eq!(observation.p_syntheses[0].token_index, 1);
-    assert_eq!(observation.p_syntheses[0].trigger, expected_evidence(21, (6, 10)));
+    assert_eq!(
+        observation.p_syntheses[0].trigger,
+        expected_evidence(21, (6, 10))
+    );
     assert_eq!(observation.p_closures.len(), 1);
     assert_eq!(
         observation.p_closures[0].kind,
         PClosureKind::UnmatchedEndSynthesized
     );
-    assert_eq!(observation.p_closures[0].trigger, expected_evidence(21, (6, 10)));
+    assert_eq!(
+        observation.p_closures[0].trigger,
+        expected_evidence(21, (6, 10))
+    );
 
     let p = p_nodes(&observation)[0];
     assert_eq!(p.id, observation.p_syntheses[0].node);
@@ -1133,8 +1167,12 @@ fn p7_unmatched_end_has_exact_diagnostic_trigger_synthesis_and_closure_order() {
     let actions = p_actions(&observation);
     assert_eq!(actions.len(), 3);
     assert!(matches!(actions[0], Action::PDiagnostic { trigger } if trigger.range == (6, 10)));
-    assert!(matches!(actions[1], Action::SynthesizedP { node, trigger } if *node == p.id && trigger.range == (6, 10)));
-    assert!(matches!(actions[2], Action::PClose { kind: PClosureKind::UnmatchedEndSynthesized, target, trigger } if *target == p.id && trigger.range == (6, 10)));
+    assert!(
+        matches!(actions[1], Action::SynthesizedP { node, trigger } if *node == p.id && trigger.range == (6, 10))
+    );
+    assert!(
+        matches!(actions[2], Action::PClose { kind: PClosureKind::UnmatchedEndSynthesized, target, trigger } if *target == p.id && trigger.range == (6, 10))
+    );
 }
 
 #[test]
@@ -1143,7 +1181,10 @@ fn p8_synthesized_p_is_placed_under_actual_current_block_and_text_follows_closur
     assert_complete(&observation);
     assert_eq!(
         diagnostic_kinds(&observation),
-        vec![DiagnosticKind::MissingDoctype, DiagnosticKind::UnmatchedPEnd]
+        vec![
+            DiagnosticKind::MissingDoctype,
+            DiagnosticKind::UnmatchedPEnd
+        ]
     );
 
     let synthesized = observation.p_syntheses[0].node;
@@ -1181,15 +1222,26 @@ fn p9_repeated_stray_ends_create_two_exact_diagnostic_synthesis_closure_groups()
             DiagnosticKind::UnmatchedPEnd,
         ]
     );
-    assert_eq!(observation.diagnostics[1].trigger, Some(expected_evidence(31, (6, 10))));
-    assert_eq!(observation.diagnostics[2].trigger, Some(expected_evidence(31, (10, 14))));
+    assert_eq!(
+        observation.diagnostics[1].trigger,
+        Some(expected_evidence(31, (6, 10)))
+    );
+    assert_eq!(
+        observation.diagnostics[2].trigger,
+        Some(expected_evidence(31, (10, 14)))
+    );
     assert_eq!(observation.p_syntheses.len(), 2);
-    assert_ne!(observation.p_syntheses[0].node, observation.p_syntheses[1].node);
+    assert_ne!(
+        observation.p_syntheses[0].node,
+        observation.p_syntheses[1].node
+    );
     assert_eq!(observation.p_closures.len(), 2);
-    assert!(observation
-        .p_closures
-        .iter()
-        .all(|closure| closure.kind == PClosureKind::UnmatchedEndSynthesized));
+    assert!(
+        observation
+            .p_closures
+            .iter()
+            .all(|closure| closure.kind == PClosureKind::UnmatchedEndSynthesized)
+    );
 
     let actions = p_actions(&observation);
     assert_eq!(actions.len(), 6);
@@ -1210,7 +1262,10 @@ fn p9_repeated_stray_ends_create_two_exact_diagnostic_synthesis_closure_groups()
 fn p10_p_only_eof_leaves_p_open_with_exact_predecessor_diagnostic_vector() {
     let observation = observe_fixture("P10", 1);
     assert_complete(&observation);
-    assert_eq!(diagnostic_kinds(&observation), vec![DiagnosticKind::MissingDoctype]);
+    assert_eq!(
+        diagnostic_kinds(&observation),
+        vec![DiagnosticKind::MissingDoctype]
+    );
     assert!(observation.diagnostics[0].trigger.is_none());
     assert_eq!(
         observation.open.last().map(|id| {
@@ -1236,7 +1291,10 @@ fn p11_open_block_eof_diagnostic_is_exact_and_distinct_from_p() {
     assert_complete(&observation);
     assert_eq!(
         diagnostic_kinds(&observation),
-        vec![DiagnosticKind::MissingDoctype, DiagnosticKind::OpenBlockAtEof]
+        vec![
+            DiagnosticKind::MissingDoctype,
+            DiagnosticKind::OpenBlockAtEof
+        ]
     );
     assert_eq!(
         observation.diagnostics[1].trigger,
@@ -1265,7 +1323,10 @@ fn p14_p15_p16_p17_and_p21_shape_and_crossing_exclusions_are_transactional() {
 fn p18_predecessor_normal_div_section_lifecycle_has_exact_zero_p_delta() {
     let observation = observe_fixture("P18", 1);
     assert_complete(&observation);
-    assert_eq!(diagnostic_kinds(&observation), vec![DiagnosticKind::MissingDoctype]);
+    assert_eq!(
+        diagnostic_kinds(&observation),
+        vec![DiagnosticKind::MissingDoctype]
+    );
     assert!(observation.p_closures.is_empty());
     assert!(observation.p_syntheses.is_empty());
     assert!(p_actions(&observation).is_empty());
@@ -1279,7 +1340,10 @@ fn p19_predecessor_heterogeneous_recovery_remains_separate_and_exact() {
     assert_complete(&observation);
     assert_eq!(
         diagnostic_kinds(&observation),
-        vec![DiagnosticKind::MissingDoctype, DiagnosticKind::MisnestedBlockEnd]
+        vec![
+            DiagnosticKind::MissingDoctype,
+            DiagnosticKind::MisnestedBlockEnd
+        ]
     );
     assert!(observation.p_closures.is_empty());
     assert!(observation.p_syntheses.is_empty());
@@ -1289,7 +1353,10 @@ fn p19_predecessor_heterogeneous_recovery_remains_separate_and_exact() {
     assert_ne!(recovery.popped, recovery.target);
     assert_eq!(recovery.token_index, 3);
     assert_eq!(recovery.trigger, expected_evidence(51, (20, 26)));
-    assert_eq!(observation.diagnostics[1].trigger, Some(recovery.trigger.clone()));
+    assert_eq!(
+        observation.diagnostics[1].trigger,
+        Some(recovery.trigger.clone())
+    );
 }
 
 #[test]
@@ -1384,15 +1451,27 @@ fn bounded_generated_sequences_preserve_invariants_or_refuse_cleanly() {
                 .iter()
                 .filter(|closure| closure.kind == PClosureKind::UnmatchedEndSynthesized)
                 .collect();
-            assert_eq!(p_diagnostics.len(), observation.p_syntheses.len(), "{source}");
-            assert_eq!(unmatched_closures.len(), observation.p_syntheses.len(), "{source}");
+            assert_eq!(
+                p_diagnostics.len(),
+                observation.p_syntheses.len(),
+                "{source}"
+            );
+            assert_eq!(
+                unmatched_closures.len(),
+                observation.p_syntheses.len(),
+                "{source}"
+            );
 
             for ((diagnostic, synthesis), closure) in p_diagnostics
                 .iter()
                 .zip(&observation.p_syntheses)
                 .zip(unmatched_closures)
             {
-                assert_eq!(diagnostic.trigger.as_ref(), Some(&synthesis.trigger), "{source}");
+                assert_eq!(
+                    diagnostic.trigger.as_ref(),
+                    Some(&synthesis.trigger),
+                    "{source}"
+                );
                 assert_eq!(synthesis.trigger, closure.trigger, "{source}");
                 assert_eq!(synthesis.node, closure.target, "{source}");
             }
