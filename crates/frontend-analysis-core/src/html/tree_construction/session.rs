@@ -698,6 +698,10 @@ fn classify(
                     ..
                 } => Err(HtmlTreeCapability::UnprovedShellStartTagPosition),
                 AdmittedToken::EndTag {
+                    name: AdmittedElementName::Shell(HtmlShellElementName::Body),
+                    ..
+                } => unreachable!("handled by the TC-S7 pre-firewall branch"),
+                AdmittedToken::EndTag {
                     name:
                         AdmittedElementName::Shell(
                             HtmlShellElementName::Head | HtmlShellElementName::Html,

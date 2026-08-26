@@ -843,10 +843,14 @@ fn p17_body_end_preserves_the_current_p_without_a_selected_open_diagnostic() {
     assert_eq!(analysis.coverage().committed_end(), 16);
     assert_eq!(analysis.coverage().processed_tokens(), 4);
     assert_eq!(
-        diagnostic_count(
-            &analysis,
-            HtmlTreeDiagnosticCode::BodyEndTagWithOpenSelectedOrdinaryElements,
-        ),
+        analysis
+            .diagnostics()
+            .iter()
+            .filter(|diagnostic| {
+                diagnostic.code()
+                    == HtmlTreeDiagnosticCode::BodyEndTagWithOpenSelectedOrdinaryElements
+            })
+            .count(),
         0,
         "P alone is allowed by the bounded body-end stack check"
     );
