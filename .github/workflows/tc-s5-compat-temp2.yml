@@ -1,0 +1,36 @@
+name: TC-S5 Compatibility Runner
+
+on:
+  push:
+    branches:
+      - tooling/tc-s5-compat-1
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tooling branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: tooling/tc-s5-compat-1
+      - name: Apply bounded compatibility patch
+        run: python3 .github/scripts/tc_s5_compat_temp.py
+      - name: Install accepted Rust toolchain
+        run: rustup toolchain install 1.97.1 --profile minimal --component rustfmt
+      - name: Format workspace
+        run: cargo fmt --all
+      - name: Commit bounded patch set
+        run: |
+          git config user.name "Yuto"
+          git config user.email "msc_prop@proton.me"
+          git add crates/frontend-analysis-core/src/html/tree_construction/result.rs
+          git add crates/frontend-analysis-core/src/html/tree_construction/in_body_p_successor_production.rs
+          git add crates/frontend-analysis-core/src/html/tree_construction/validation.rs
+          git add crates/frontend-analysis-core/src/html/tree_construction/in_body_div_successor_production.rs
+          git add crates/frontend-analysis-core/src/html/tree_construction/in_body_div_section_successor_production.rs
+          git add crates/frontend-analysis-core/src/html/tokenizer/validation/tree_construction_gate.rs
+          git commit -m "chore: apply TC-S5 compile compatibility fixes [skip ci]"
+          git push origin HEAD:tooling/tc-s5-compat-1
