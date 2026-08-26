@@ -13,9 +13,9 @@ use super::super::tokenizer::result::HtmlTokenizerRunResult;
 use super::driver::{construct_html_document_shell, drive_token};
 use super::result::{
     HtmlConstructedNodeId, HtmlDocumentShellAnalysis, HtmlDocumentShellParts, HtmlElement,
-    HtmlSelectedOrdinaryElementName, HtmlTreeAction, HtmlTreeActionKind, HtmlTreeCompletion,
-    HtmlTreeDiagnosticCode, HtmlTreeIncompleteCause, HtmlTreeNodeKind, HtmlTreeTokenTrigger,
-    freeze,
+    HtmlSelectedOrdinaryElementName, HtmlTreeAction, HtmlTreeActionKind, HtmlTreeCapability,
+    HtmlTreeCompletion, HtmlTreeDiagnosticCode, HtmlTreeIncompleteCause, HtmlTreeNodeKind,
+    HtmlTreeTokenTrigger, freeze,
 };
 use super::session::{HtmlTreeSession, TokenOutcome, admit, token_trigger};
 
@@ -134,6 +134,129 @@ fn selected_ids(
             _ => None,
         })
         .collect()
+}
+
+fn creation_position(analysis: &HtmlDocumentShellAnalysis, id: HtmlConstructedNodeId) -> usize {
+    analysis
+        .nodes_in_creation_order()
+        .iter()
+        .position(|node| node.id() == id)
+        .expect("constructed identity resolves in creation order")
+}
+
+fn normalized_creation_signature(
+    analysis: &HtmlDocumentShellAnalysis,
+) -> Vec<(String, Option<usize>)> {
+    let nodes = analysis.nodes_in_creation_order();
+    nodes
+        .iter()
+        .map(|node| {
+            let meaning = match node.kind() {
+                HtmlTreeNodeKind::Document => "document".to_owned(),
+                HtmlTreeNodeKind::Element(element) => format!("element:{:?}", element.name()),
+                HtmlTreeNodeKind::Text(text) => format!("text:{:?}", text.interpreted()),
+            };
+            let parent = node.parent().map(|id| {
+                nodes
+                    .iter()
+                    .position(|candidate| candidate.id() == id)
+                    .expect("parent resolves in creation order")
+            });
+            (meaning, parent)
+        })
+        .collect()
+}
+
+fn normalized_implied_pops(
+    analysis: &HtmlDocumentShellAnalysis,
+) -> Vec<(usize, usize, usize, Option<Span>)> {
+    implied_pops(analysis)
+        .into_iter()
+        .map(|(node, target, token, trigger)| {
+            (
+                creation_position(analysis, node),
+                creation_position(analysis, target),
+                token,
+                trigger,
+            )
+        })
+        .collect()
+}
+
+fn normalized_recoveries(analysis: &HtmlDocumentShellAnalysis) -> Vec<(usize, usize, usize)> {
+    selected_recoveries(analysis)
+        .into_iter()
+        .map(|(node, target, token)| {
+            (
+                creation_position(analysis, node),
+                creation_position(analysis, target),
+                token,
+            )
+        })
+        .collect()
+}
+
+fn normalized_closures(
+    analysis: &HtmlDocumentShellAnalysis,
+) -> Vec<(usize, HtmlSelectedOrdinaryElementName, usize)> {
+    selected_closures(analysis)
+        .into_iter()
+        .map(|(node, name, token)| (creation_position(analysis, node), name, token))
+        .collect()
+}
+
+fn assert_unsupported_tc_s6(
+    source: &str,
+    capability: HtmlTreeCapability,
+    refused_token: usize,
+    refused_span: Span,
+    committed_end: usize,
+    processed_tokens: usize,
+    node_count: usize,
+) {
+    let analysis = analyze(source);
+    let HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::UnsupportedCapability(unsupported)) =
+        analysis.completion()
+    else {
+        panic!("{source:?}: expected explicit tree unsupported result")
+    };
+    assert_eq!(unsupported.capability(), capability, "{source:?}");
+    assert_eq!(
+        unsupported.trigger().token_index(),
+        refused_token,
+        "{source:?}"
+    );
+    assert_eq!(
+        span(unsupported.trigger()),
+        Some(refused_span),
+        "{source:?}"
+    );
+    assert_eq!(
+        analysis.coverage().committed_end(),
+        committed_end,
+        "{source:?}"
+    );
+    assert_eq!(
+        analysis.coverage().processed_tokens(),
+        processed_tokens,
+        "{source:?}"
+    );
+    assert_eq!(analysis.node_count(), node_count, "{source:?}");
+    assert!(implied_pops(&analysis).is_empty(), "{source:?}");
+    assert!(
+        analysis
+            .actions()
+            .iter()
+            .all(|action| action.trigger().token_index() < refused_token),
+        "{source:?}: refused token committed no action"
+    );
+    assert!(
+        analysis
+            .diagnostics()
+            .iter()
+            .all(|diagnostic| diagnostic.trigger().token_index() < refused_token),
+        "{source:?}: refused token committed no diagnostic"
+    );
 }
 
 fn text_parent(analysis: &HtmlDocumentShellAnalysis, interpreted: &str) -> HtmlConstructedNodeId {
@@ -374,6 +497,217 @@ fn predecessor_cells_without_selected_end_over_p_do_not_emit_tc_s6_relation() {
         let analysis = analyze(source);
         assert!(implied_pops(&analysis).is_empty(), "{source}");
     }
+}
+
+#[test]
+fn implied_pop_trigger_is_causal_evidence_not_paragraph_origin_or_closure() {
+    let analysis = analyze_with("<body><DiV><P>x</dIv>", 77);
+    let p = paragraph_ids(&analysis)[0];
+    let node = analysis.node(p).expect("Paragraph resolves");
+    let HtmlTreeNodeKind::Element(HtmlElement::Paragraph(paragraph)) = node.kind() else {
+        panic!("Paragraph node")
+    };
+    let super::result::HtmlParagraphElementOrigin::Authored { complete, raw_name } =
+        paragraph.origin()
+    else {
+        panic!("authored Paragraph")
+    };
+    assert_eq!(complete.source_id(), SourceId::new(77));
+    assert_eq!((complete.range().start(), complete.range().end()), (11, 14));
+    assert_eq!((raw_name.range().start(), raw_name.range().end()), (12, 13));
+
+    let pop = analysis
+        .actions()
+        .iter()
+        .find(|action| {
+            matches!(
+                action.kind(),
+                HtmlTreeActionKind::PoppedParagraphElementBySelectedOrdinaryEndTag { node, .. }
+                    if *node == p
+            )
+        })
+        .expect("TC-S6 implied pop");
+    let trigger = pop
+        .trigger()
+        .authored_boundary()
+        .expect("authored selected end");
+    assert_eq!(trigger.source_id(), SourceId::new(77));
+    assert_eq!((trigger.range().start(), trigger.range().end()), (15, 21));
+    assert_ne!(complete.range(), trigger.range());
+    assert!(
+        analysis.actions().iter().all(|action| !matches!(
+            action.kind(),
+            HtmlTreeActionKind::ClosedParagraphElement { node, .. }
+                if *node == p && action.trigger().token_index() == pop.trigger().token_index()
+        )),
+        "TC-S6 implied pop is not encoded as a Paragraph closure"
+    );
+}
+
+#[test]
+fn two_recovery_pops_are_current_first_and_share_the_implied_pop_target() {
+    let analysis = analyze("<body><div><section><section><p>x</div>");
+    assert!(analysis.is_complete());
+    let div = selected_ids(&analysis, HtmlSelectedOrdinaryElementName::Div)[0];
+    let sections = selected_ids(&analysis, HtmlSelectedOrdinaryElementName::Section);
+    assert_eq!(sections.len(), 2);
+    let pop = implied_pops(&analysis);
+    assert_eq!(pop.len(), 1);
+    assert_eq!(pop[0].1, div);
+
+    let recoveries = selected_recoveries(&analysis);
+    assert_eq!(recoveries.len(), 2);
+    assert_eq!(
+        recoveries[0].0, sections[1],
+        "current selected element pops first"
+    );
+    assert_eq!(
+        recoveries[1].0, sections[0],
+        "next selected element pops second"
+    );
+    assert!(
+        recoveries
+            .iter()
+            .all(|(_, target, token)| { *target == div && *token == pop[0].2 })
+    );
+    assert_eq!(
+        selected_closures(&analysis),
+        vec![(div, HtmlSelectedOrdinaryElementName::Div, pop[0].2)]
+    );
+    assert_eq!(
+        diagnostic_count(
+            &analysis,
+            HtmlTreeDiagnosticCode::MisnestedSelectedOrdinaryEndTag
+        ),
+        1
+    );
+}
+
+#[test]
+fn implied_pop_and_unmatched_selected_ignore_allocate_no_creation_event() {
+    let implied = analyze("<body><div><p>x</div><section></section>");
+    let explicit = analyze("<body><div><p>x</p></div><section></section>");
+    assert_eq!(
+        normalized_creation_signature(&implied),
+        normalized_creation_signature(&explicit),
+        "replacing an implied P pop with an explicit P close changes no creation event"
+    );
+    let implied_section = selected_ids(&implied, HtmlSelectedOrdinaryElementName::Section)[0];
+    let explicit_section = selected_ids(&explicit, HtmlSelectedOrdinaryElementName::Section)[0];
+    assert_eq!(
+        creation_position(&implied, implied_section),
+        creation_position(&explicit, explicit_section)
+    );
+
+    let ignored = analyze("<body><div><p>x</section><section></section>");
+    let control = analyze("<body><div><p>x<section></section>");
+    assert_eq!(
+        diagnostic_count(
+            &ignored,
+            HtmlTreeDiagnosticCode::UnmatchedSelectedOrdinaryEndTag
+        ),
+        1
+    );
+    assert_eq!(
+        normalized_creation_signature(&ignored),
+        normalized_creation_signature(&control),
+        "ignored selected end consumes no creation event"
+    );
+    let ignored_section = selected_ids(&ignored, HtmlSelectedOrdinaryElementName::Section)[0];
+    let control_section = selected_ids(&control, HtmlSelectedOrdinaryElementName::Section)[0];
+    assert_eq!(
+        creation_position(&ignored, ignored_section),
+        creation_position(&control, control_section)
+    );
+}
+
+#[test]
+fn semantic_relation_endpoints_and_order_are_source_id_independent() {
+    let source = "<body><div><section><p>x</div>";
+    let first = analyze_with(source, 41);
+    let second = analyze_with(source, 99);
+    assert_eq!(
+        normalized_creation_signature(&first),
+        normalized_creation_signature(&second)
+    );
+    assert_eq!(
+        normalized_implied_pops(&first),
+        normalized_implied_pops(&second)
+    );
+    assert_eq!(
+        normalized_recoveries(&first),
+        normalized_recoveries(&second)
+    );
+    assert_eq!(normalized_closures(&first), normalized_closures(&second));
+
+    let first_trigger = first
+        .actions()
+        .iter()
+        .find(|action| {
+            matches!(
+                action.kind(),
+                HtmlTreeActionKind::PoppedParagraphElementBySelectedOrdinaryEndTag { .. }
+            )
+        })
+        .unwrap()
+        .trigger()
+        .authored_boundary()
+        .unwrap();
+    let second_trigger = second
+        .actions()
+        .iter()
+        .find(|action| {
+            matches!(
+                action.kind(),
+                HtmlTreeActionKind::PoppedParagraphElementBySelectedOrdinaryEndTag { .. }
+            )
+        })
+        .unwrap()
+        .trigger()
+        .authored_boundary()
+        .unwrap();
+    assert_eq!(first_trigger.source_id(), SourceId::new(41));
+    assert_eq!(second_trigger.source_id(), SourceId::new(99));
+}
+
+#[test]
+fn shape_phase_and_shell_crossing_refuse_before_tc_s6_mutation() {
+    assert_unsupported_tc_s6(
+        "<body><div><p>x</div id=x>",
+        HtmlTreeCapability::SelectedOrdinaryTagAttribute,
+        4,
+        (15, 26),
+        15,
+        4,
+        7,
+    );
+    assert_unsupported_tc_s6(
+        "<body><div><p>x</div/>",
+        HtmlTreeCapability::SelfClosingSelectedOrdinaryTag,
+        4,
+        (15, 22),
+        15,
+        4,
+        7,
+    );
+    assert_unsupported_tc_s6(
+        "<body></body></div>",
+        HtmlTreeCapability::SelectedOrdinaryTagOutsideInBody,
+        2,
+        (13, 19),
+        13,
+        2,
+        4,
+    );
+    assert_unsupported_tc_s6(
+        "<body><p></body>",
+        HtmlTreeCapability::ShellTagWithOpenParagraphElement,
+        2,
+        (9, 16),
+        9,
+        2,
+        5,
+    );
 }
 
 #[test]
