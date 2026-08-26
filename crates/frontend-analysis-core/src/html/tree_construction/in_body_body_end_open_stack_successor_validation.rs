@@ -133,9 +133,11 @@ enum Action {
         trigger: Evidence,
     },
     BodyEndDiagnostic {
+        token_index: usize,
         trigger: Evidence,
     },
     BodyEndTransition {
+        token_index: usize,
         trigger: Evidence,
         stack_before: Vec<NodeId>,
         stack_after: Vec<NodeId>,
@@ -572,7 +574,7 @@ impl Machine {
 
     fn process_in_body(
         &mut self,
-        _token_index: usize,
+        token_index: usize,
         token: &HtmlToken,
     ) -> Result<bool, Unsupported> {
         match token {
@@ -606,12 +608,14 @@ impl Machine {
                             Some(trigger.clone()),
                         );
                         self.actions.push(Action::BodyEndDiagnostic {
+                            token_index,
                             trigger: trigger.clone(),
                         });
                     }
                     self.phase = Phase::AfterBody;
                     let stack_after = self.open.clone();
                     self.actions.push(Action::BodyEndTransition {
+                        token_index,
                         trigger,
                         stack_before,
                         stack_after,
@@ -943,34 +947,40 @@ fn s7_01_to_s7_06_body_end_preserves_exact_stack_and_diagnostic_cardinality() {
             "<body><p></body>",
             vec![Name::Html, Name::Body, Name::P],
             0usize,
+            2usize,
         ),
         (
             "<body><div></body>",
             vec![Name::Html, Name::Body, Name::Div],
             1,
+            2,
         ),
         (
             "<body><section></body>",
             vec![Name::Html, Name::Body, Name::Section],
             1,
+            2,
         ),
         (
             "<body><div><section></body>",
             vec![Name::Html, Name::Body, Name::Div, Name::Section],
             1,
+            3,
         ),
         (
             "<body><div><p></body>",
             vec![Name::Html, Name::Body, Name::Div, Name::P],
             1,
+            3,
         ),
         (
             "<body><div><section><p></body>",
             vec![Name::Html, Name::Body, Name::Div, Name::Section, Name::P],
             1,
+            4,
         ),
     ];
-    for (source, expected_open, body_diagnostics) in cases {
+    for (source, expected_open, body_diagnostics, expected_token_index) in cases {
         let observation = observe(source, 1);
         assert_complete(&observation);
         assert_eq!(observation.phase, Phase::AfterBody, "{source}");
@@ -989,14 +999,30 @@ fn s7_01_to_s7_06_body_end_preserves_exact_stack_and_diagnostic_cardinality() {
             .into_iter()
             .find_map(|action| match action {
                 Action::BodyEndTransition {
+                    token_index,
                     stack_before,
                     stack_after,
                     ..
-                } => Some((stack_before, stack_after)),
+                } => Some((*token_index, stack_before, stack_after)),
                 _ => None,
             })
             .expect("body-end transition");
-        assert_eq!(transition.0, transition.1, "{source}");
+        assert_eq!(transition.0, expected_token_index, "{source}");
+        assert_eq!(transition.1, transition.2, "{source}");
+        assert!(
+            observation.actions.iter().all(|action| !matches!(
+                action,
+                Action::ParagraphClose { .. }
+                    | Action::BlockRecoveryPop { .. }
+                    | Action::BlockClose { .. }
+            )),
+            "body-end transition must not close or recover bounded content: {source}"
+        );
+        for action in body_end_actions(&observation) {
+            if let Action::BodyEndDiagnostic { token_index, .. } = action {
+                assert_eq!(*token_index, expected_token_index, "{source}");
+            }
+        }
     }
 }
 
@@ -1215,6 +1241,22 @@ fn s7_28_body_end_transition_consumes_no_constructed_identity() {
         let candidate = observe(with_end, 1);
         assert_eq!(control.next_id, candidate.next_id, "{with_end}");
     }
+}
+
+#[test]
+fn committed_coverage_and_processed_token_count_are_exact() {
+    let supported_source = "<body><div></body>x";
+    let supported = observe(supported_source, 1);
+    assert_complete(&supported);
+    assert_eq!(supported.committed_end, 19);
+    assert_eq!(supported.processed_tokens, 5);
+
+    let refused_source = "<body><p></body> x";
+    let refused = observe(refused_source, 1);
+    assert_eq!(refused.committed_end, 16);
+    assert_eq!(refused.processed_tokens, 3);
+    let refusal = refused.refusal.as_ref().expect("mixed refusal");
+    assert_eq!(refusal.token_index, 3);
 }
 
 #[test]
