@@ -1359,10 +1359,7 @@ fn h30_generated_bounded_stacks_match_independent_closed_form_oracle() {
                         matches!(action, Action::Insert { .. } | Action::TextInsert { .. })
                     })
                     .count();
-                assert_eq!(
-                    lifecycle_mutations, oracle.lifecycle_mutations,
-                    "{source}"
-                );
+                assert_eq!(lifecycle_mutations, oracle.lifecycle_mutations, "{source}");
 
                 let mode_path: Vec<Phase> = observation
                     .actions
