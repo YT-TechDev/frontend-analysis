@@ -1,7 +1,9 @@
 //! TC-S1 — Disabled-Scripting Document Shell Construction, plus the accepted
 //! TC-S2 — Selected After-Body Uniform Character-Run Handling, TC-S3 —
-//! Selected In-Body No-Attribute `div` Construction, and TC-S4 — Selected
-//! In-Body Heterogeneous `div`/`section` Block Closure Recovery successors.
+//! Selected In-Body No-Attribute `div` Construction, TC-S4 — Selected
+//! In-Body Heterogeneous `div`/`section` Block Closure Recovery, and TC-S5 —
+//! Selected In-Body `p` Lifecycle with Bounded Implicit Closure and
+//! Unmatched-End Synthesis successors.
 //!
 //! The first Core-private HTML tree-construction capability, implemented on
 //! the architecture approved under Issue #117 and recorded by ADR 0010
@@ -19,8 +21,11 @@
 //! grows the same closed domain from `div` to exactly `div | section` and adds
 //! one narrow recovery relation, so a selected end tag whose nearest same-name
 //! target is not the current node pops the intervening selected elements
-//! before closing that target. It moves no boundary, adds no driver semantics,
-//! and changes no tokenizer production. Shell types stay shell-only.
+//! before closing that target. TC-S5 (Issue #367) keeps that authored-only
+//! `div | section` domain closed and adds a separate private Paragraph domain
+//! capable of representing both an authored `<p>` and the source-less P
+//! synthesized by the unmatched-`</p>` rule. It adds no driver semantics and
+//! no tokenizer feedback.
 //!
 //! ```text
 //! &SourceText + HtmlTokenizerLimits
@@ -74,6 +79,8 @@ mod in_body_div_section_successor_validation;
 mod in_body_div_successor_production;
 #[cfg(test)]
 mod in_body_div_successor_validation;
+#[cfg(test)]
+mod in_body_p_successor_production;
 #[cfg(test)]
 mod in_body_p_successor_validation;
 #[cfg(test)]
