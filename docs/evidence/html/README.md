@@ -1,10 +1,26 @@
 # HTML Research Evidence
 
-Status date: 2026-08-24
+Status date: 2026-08-26
 
 Classification: task and evidence record; non-normative.
 
 ## Current Status
+
+The current HTML evidence checkpoint is:
+
+- [2026-08 Tree-Construction Frontier Checkpoint](2026-08-tree-construction-frontier-checkpoint.md).
+
+As of 2026-08-26, production tree construction remains merged through TC-S6 at
+production semantic baseline `5d0366b21dda5847062f7dadfe368129b6d33f0a`.
+The repository `main` is now `5e9ff4d539ebc75a7f812185ef55f0e85e881e72`
+after merging TC-S7 candidate-independent validation from PR #375. TC-S7
+validation is therefore accepted and merged, while production placement is not
+yet decided and production implementation remains unauthorized.
+
+The sections below preserve the historical first-slice and research/architecture
+evidence that led to the current frontier.
+
+## Historical Baseline and Architecture Transition
 
 The first browser-independent HTML source-analysis vertical slice remains
 complete. Issue [#116](https://github.com/YT-TechDev/frontend-analysis/issues/116)
@@ -37,8 +53,8 @@ This proves one narrow authored-source capability. It does **not** prove complet
 HTML Standard parsing, production tree construction, DOM compatibility, or public
 API readiness.
 
-A later research/architecture program has now completed the evidence foundation
-for future tree construction without changing that production capability:
+After that first slice, the research/architecture program completed the evidence
+foundation that later production tree-construction frontiers consumed:
 
 - [#348](https://github.com/YT-TechDev/frontend-analysis/issues/348) completed the
   post-vertical-slice R1–R10 / Wave 1E HTML research program. Its durable
@@ -51,12 +67,13 @@ for future tree construction without changing that production capability:
 - [ADR 0010](../../decisions/0010-html-tree-construction-architecture.md)
   records the approved architecture rationale.
 - [HTML Tree-Construction Architecture](../../architecture/HTML_TREE_CONSTRUCTION.md)
-  owns the active specialized normative invariants when this documentation PR is
-  accepted.
+  owns the active specialized normative invariants for the accepted tree-construction
+  architecture.
 
-Architecture approval and production implementation are separate states. TC-S1
-remains a bounded production candidate and requires its own production-placement
-gate before implementation.
+Architecture approval and production implementation remain separate states. At
+this historical checkpoint TC-S1 still required its own production-placement
+gate; later focused gates and Pull Requests advanced production through TC-S6.
+The dated current checkpoint above is authoritative for present production status.
 
 ## Authoritative Evidence Sources
 
@@ -212,8 +229,9 @@ The later TC-S1 candidate-independent architecture-validation gate recorded:
   than defined by WPT; and
 - concrete tree resource constants remained intentionally OPEN.
 
-That validation is architecture evidence. It is not a production test result and
-does not authorize TC-S1 implementation.
+That validation was architecture evidence rather than a production test result and
+did not, by itself, authorize TC-S1 implementation. Later focused placement and
+production gates supplied the separate implementation authority.
 
 ## Rejected or Unsupported Strong Claims
 
@@ -280,15 +298,21 @@ requires them.
 
 ## Production State
 
-At this documentation change:
+At the 2026-08-26 evidence checkpoint:
 
 ```text
-Architecture direction: APPROVED
-TC-S1 candidate-independent validation: ACCEPTED
-ADR 0010 / specialized normative contract: being recorded by #349 / PR #350
-TC-S1 production placement: BLOCKED until the documentation PR lands
-Production tree-construction implementation: NO
+Architecture direction / Candidate C: APPROVED / UNCHANGED
+ADR 0010 / specialized normative contract: ACCEPTED
+TC-S1 through TC-S6 production: MERGED
+current repository main: 5e9ff4d539ebc75a7f812185ef55f0e85e881e72
+current production semantic baseline: 5d0366b21dda5847062f7dadfe368129b6d33f0a
+TC-S7 candidate-independent validation: ACCEPTED / MERGED via PR #375
+TC-S7 production placement: NOT YET DECIDED
+TC-S7 production implementation: NOT AUTHORIZED
 ```
+
+See [2026-08 Tree-Construction Frontier Checkpoint](2026-08-tree-construction-frontier-checkpoint.md)
+for the exact current evidence and the explicit unproved boundaries.
 
 ## Evidence-to-Architecture Boundary
 
