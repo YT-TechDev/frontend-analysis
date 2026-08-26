@@ -17,7 +17,7 @@ use super::driver::{construct_html_document_shell, drive_token};
 use super::result::{
     HtmlConstructedNodeId, HtmlDocumentShellAnalysis, HtmlDocumentShellParts, HtmlElementName,
     HtmlParagraphClosure, HtmlParagraphSynthesisCause, HtmlSelectedOrdinaryElementName,
-    HtmlShellElementName, HtmlTreeAction, HtmlTreeActionKind, HtmlTreeCapability,
+    HtmlShellClosure, HtmlShellElementName, HtmlTreeAction, HtmlTreeActionKind, HtmlTreeCapability,
     HtmlTreeCompletion, HtmlTreeDiagnostic, HtmlTreeDiagnosticCode, HtmlTreeFreezeError,
     HtmlTreeIncompleteCause, HtmlTreeNode, HtmlTreeNodeKind, HtmlTreeRecovery,
     HtmlTreeTokenTrigger, freeze,
@@ -358,6 +358,22 @@ fn body_ack_action_index(parts: &HtmlDocumentShellParts, token_index: usize) -> 
                 )
         })
         .expect("fixture body acknowledgement")
+}
+
+fn html_ack_action_index(parts: &HtmlDocumentShellParts, token_index: usize) -> usize {
+    parts
+        .actions
+        .iter()
+        .position(|action| {
+            action.trigger().token_index() == token_index
+                && matches!(
+                    action.kind(),
+                    HtmlTreeActionKind::AcknowledgedShellEndTag {
+                        name: HtmlShellElementName::Html
+                    }
+                )
+        })
+        .expect("fixture html acknowledgement")
 }
 
 #[test]
@@ -976,6 +992,97 @@ fn freeze_rejects_non_body_and_duplicate_body_acknowledgement_corruption() {
     assert!(matches!(
         freeze_parts(&fixture, duplicate),
         Err(HtmlTreeFreezeError::DuplicateBodyEndAcknowledgement { token_index: 2 })
+    ));
+}
+
+#[test]
+fn freeze_rejects_missing_body_acknowledgement_even_without_a_tc_s7_diagnostic() {
+    for (source, body_token) in [("<body><p></body>", 2usize), ("<body><div></body>", 2usize)] {
+        let fixture = FreezeFixture::new(source);
+        let mut parts = valid_parts(&fixture);
+        let action_index = body_ack_action_index(&parts, body_token);
+        parts.actions.remove(action_index);
+        parts.diagnostics.retain(|diagnostic| {
+            diagnostic.code() != HtmlTreeDiagnosticCode::BodyEndTagWithOpenSelectedOrdinaryElements
+        });
+        assert!(matches!(
+            freeze_parts(&fixture, parts),
+            Err(HtmlTreeFreezeError::MissingBodyEndAcknowledgement { token_index })
+                if token_index == body_token
+        ));
+    }
+}
+
+#[test]
+fn freeze_rejects_forged_after_body_html_acknowledgement_trigger() {
+    let fixture = FreezeFixture::new("<body><div></body></html>");
+    let mut parts = valid_parts(&fixture);
+    let action_index = html_ack_action_index(&parts, 3);
+    parts.actions[action_index] = HtmlTreeAction::new(
+        HtmlTreeActionKind::AcknowledgedShellEndTag {
+            name: HtmlShellElementName::Html,
+        },
+        HtmlTreeTokenTrigger::authored(3, fixture.anchor(11, 18)),
+    );
+    assert!(matches!(
+        freeze_parts(&fixture, parts),
+        Err(HtmlTreeFreezeError::BodyEndAfterBodySuccessorMismatch { token_index: 3 })
+    ));
+}
+
+#[test]
+fn freeze_rejects_pre_ack_shell_mutation_and_extra_same_trigger_diagnostic() {
+    let fixture = FreezeFixture::new("<body><div></body>");
+
+    let mut shell_mutation = valid_parts(&fixture);
+    let body = shell_mutation
+        .nodes
+        .iter()
+        .find_map(|node| match node.kind() {
+            HtmlTreeNodeKind::Element(element)
+                if element.name() == HtmlElementName::Shell(HtmlShellElementName::Body) =>
+            {
+                Some(node.id())
+            }
+            _ => None,
+        })
+        .expect("fixture body");
+    let action_index = body_ack_action_index(&shell_mutation, 2);
+    shell_mutation.actions.insert(
+        action_index,
+        HtmlTreeAction::new(
+            HtmlTreeActionKind::ClosedShellElement {
+                node: body,
+                name: HtmlShellElementName::Body,
+                closure: HtmlShellClosure::AuthoredEndTag,
+            },
+            fixture.tag_trigger(2),
+        ),
+    );
+    assert!(matches!(
+        freeze_parts(&fixture, shell_mutation),
+        Err(HtmlTreeFreezeError::BodyEndSameTriggerMutation { token_index: 2 })
+    ));
+
+    let mut extra_diagnostic = valid_parts(&fixture);
+    let diagnostic_index = extra_diagnostic
+        .diagnostics
+        .iter()
+        .position(|diagnostic| {
+            diagnostic.code() == HtmlTreeDiagnosticCode::BodyEndTagWithOpenSelectedOrdinaryElements
+        })
+        .expect("TC-S7 diagnostic");
+    extra_diagnostic.diagnostics.insert(
+        diagnostic_index,
+        HtmlTreeDiagnostic::new(
+            HtmlTreeDiagnosticCode::MissingDoctype,
+            fixture.tag_trigger(2),
+            HtmlTreeRecovery::ContinuedInQuirksDocumentMode,
+        ),
+    );
+    assert!(matches!(
+        freeze_parts(&fixture, extra_diagnostic),
+        Err(HtmlTreeFreezeError::BodyEndDiagnosticTriggerOrRecoveryMismatch { token_index: 2 })
     ));
 }
 
