@@ -1,0 +1,69 @@
+name: TC-S5 Production Test Expansion
+
+on:
+  push:
+    branches:
+      - tooling/tc-s5-test-diagnostics
+
+permissions:
+  contents: write
+
+jobs:
+  validate-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact PR branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: feat/html-tc-s5-p-production
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Guard exact head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "e5476e70000b28bc1b0837353cb3594c6b42666e"
+          test "$(git status --porcelain)" = ""
+
+      - name: Install independently authored production correspondence
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin tooling/tc-s5-test-diagnostics
+          git show origin/tooling/tc-s5-test-diagnostics:tc-s5-production-tests-candidate.rs \
+            > crates/frontend-analysis-core/src/html/tree_construction/in_body_p_successor_production.rs
+          git diff --name-only | sort > /tmp/actual-paths
+          printf '%s\n' crates/frontend-analysis-core/src/html/tree_construction/in_body_p_successor_production.rs \
+            > /tmp/expected-paths
+          diff -u /tmp/expected-paths /tmp/actual-paths
+
+      - name: Install accepted Rust toolchain
+        run: rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
+
+      - name: Format and validate workspace state
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all
+          cargo fmt --all -- --check
+          state="$(python3 .github/scripts/validate-rust-workspace-state.py .)"
+          test "$state" = production
+          git diff --name-only | sort > /tmp/actual-paths
+          diff -u /tmp/expected-paths /tmp/actual-paths
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Full tests
+        run: cargo test --workspace --all-targets --all-features
+
+      - name: Commit and push only after green validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Yuto"
+          git config user.email "msc_prop@proton.me"
+          git add crates/frontend-analysis-core/src/html/tree_construction/in_body_p_successor_production.rs
+          git commit -m "test(html): cover TC-S5 production paragraph lifecycle"
+          git push origin HEAD:feat/html-tc-s5-p-production
