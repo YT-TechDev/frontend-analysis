@@ -1,0 +1,49 @@
+name: TC-S6 candidate formatter
+
+on:
+  push:
+    branches:
+      - tooling/tc-s6-format
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout TC-S6 feature branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: test/html-tc-s6-implied-end-validation
+          fetch-depth: 1
+          persist-credentials: true
+
+      - name: Guard exact feature head
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = "35de9f5f7330626a72558c5b56965f91cf65b8d2"
+
+      - name: Install accepted Rust formatter
+        shell: bash
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt
+
+      - name: Correct authority typo and format
+        shell: bash
+        run: |
+          sed -i 's/508a0373333d8a1806504303aeb489d931fabbef6/508a037333d8a1806504303aeb489d931fabbef6/g' \
+            crates/frontend-analysis-core/src/html/tree_construction/in_body_p_implied_end_successor_validation.rs
+          cargo +1.97.1 fmt --all
+
+      - name: Commit exact formatting result
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            crates/frontend-analysis-core/src/html/tree_construction/in_body_p_implied_end_successor_validation.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/mod.rs
+          git diff --cached --check
+          git commit -m 'test(html): format TC-S6 implied-end validation'
+          git push origin HEAD:test/html-tc-s6-implied-end-validation
