@@ -145,6 +145,7 @@ struct Node {
     kind: NodeKind,
 }
 
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Phase {
     BeforeBody,
@@ -463,16 +464,15 @@ impl Machine {
         let adjacent =
             last_direct_child.filter(|id| matches!(self.node(*id).kind, NodeKind::Text { .. }));
 
-        if let Some(id) = adjacent {
-            if let NodeKind::Text {
+        if let Some(id) = adjacent
+            && let NodeKind::Text {
                 interpreted: existing,
                 contributions,
             } = &mut self.node_mut(id).kind
-            {
-                existing.push_str(interpreted);
-                contributions.push(contribution);
-                return;
-            }
+        {
+            existing.push_str(interpreted);
+            contributions.push(contribution);
+            return;
         }
 
         self.allocate(
