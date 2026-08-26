@@ -758,18 +758,37 @@ pub(crate) enum HtmlTreeActionKind {
         name: HtmlSelectedOrdinaryElementName,
     },
     /// An open selected ordinary element was closed by its own exact authored
-    /// end tag, which this action's trigger retains.
+    /// end tag, which this action's trigger retains. No node was created, and
+    /// the end tag is closure evidence only: it is never the closed node's
+    /// authored origin.
     ClosedSelectedOrdinaryElement {
         node: HtmlConstructedNodeId,
         name: HtmlSelectedOrdinaryElementName,
     },
-    /// An open selected ordinary element was popped because the trigger is the
-    /// exact end tag of a different selected ordinary ancestor.
+    /// An open selected ordinary element was popped, without being closed by
+    /// an end tag of its own name, because the trigger token is the exact
+    /// authored end tag of a *different* selected ordinary element further
+    /// out on the open-element stack.
+    ///
+    /// This is deliberately **not** [`Self::ClosedSelectedOrdinaryElement`]:
+    /// no matching end tag caused this pop, so recording a closure for it
+    /// would fabricate authored evidence. A later authored end tag of the
+    /// popped element's own name is therefore unmatched if it appears after
+    /// this recovery. `node` is the intervening element actually popped and
+    /// `target` is the nearest same-name selected ordinary element whose end
+    /// tag caused the pop. Both are semantic creation-event identities, never
+    /// storage positions. One authored target end tag may legitimately carry
+    /// several ordered recovery relations plus exactly one target closure,
+    /// while remaining the authored origin of none of those nodes. No new
+    /// constructed identity is admitted by this relation.
     PoppedSelectedOrdinaryElementByAncestorEndTag {
         node: HtmlConstructedNodeId,
         target: HtmlConstructedNodeId,
     },
     /// A selected ordinary end tag with no matching open element was ignored.
+    /// No node was created, closed, or otherwise mutated, and no constructed
+    /// identity was admitted. The accompanying parse diagnostic is separate
+    /// evidence with its own meaning.
     IgnoredUnmatchedSelectedOrdinaryEndTag {
         name: HtmlSelectedOrdinaryElementName,
     },
@@ -799,7 +818,10 @@ pub(crate) enum HtmlTreeActionKind {
     /// A duplicate shell start tag created no node and admitted no identity.
     DuplicateShellStartTagCreatedNoNode { name: HtmlShellElementName },
     /// The trigger token was handed to a different actual insertion mode
-    /// without being consumed.
+    /// without being consumed. TC-S2's accepted `AfterBody -> InBody`
+    /// recovery makes this a same-token move to a mode that is not
+    /// necessarily later; reprocessing still keeps one emitted token as one
+    /// semantic observation.
     ReprocessedToken,
     /// Document parsing stopped at the trigger token.
     StoppedParsing,
@@ -831,8 +853,11 @@ impl HtmlTreeActionKind {
 
 /// A supported parse diagnostic.
 ///
-/// Tree diagnostics are authored-input evidence. They are independent of
-/// effective completion and of the retained tokenizer run's own diagnostics.
+/// Tree diagnostics are authored-input evidence and are orthogonal to
+/// effective completion: a supported run may be `Complete` while carrying
+/// parse diagnostics and recovery evidence. They are also independent of the
+/// retained tokenizer run's diagnostics, which remain authoritative in the
+/// tokenizer result and are never copied into this vocabulary.
 #[derive(Debug, Clone)]
 pub(crate) struct HtmlTreeDiagnostic {
     code: HtmlTreeDiagnosticCode,
@@ -927,6 +952,14 @@ pub(crate) enum HtmlTreeRecovery {
 }
 
 /// A capability boundary reached by admitted input.
+///
+/// Unsupported coverage is *not* evidence that the authored source is invalid
+/// HTML, and it is not a tokenizer condition. It says only that this
+/// tree-construction subsystem has reached a rule outside its proved action
+/// set. Variants are durable semantic evidence: a successor adds a new variant
+/// for a new boundary rather than silently widening or renaming predecessor
+/// meanings. TC-S5 therefore adds Paragraph-specific variants while keeping
+/// shell and selected-ordinary variants exact.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HtmlTreeCapability {
     /// A tag naming an element outside the proved `html`/`head`/`body` shell.
@@ -968,10 +1001,19 @@ pub(crate) enum HtmlTreeCapability {
     /// A self-closing solidus on a selected ordinary tag. Kept distinct from
     /// [`Self::SelfClosingShellTag`] for the same reason.
     SelfClosingSelectedOrdinaryTag,
+    /// A Paragraph tag reached an actual insertion mode other than `in body`.
     ParagraphTagOutsideInBody,
+    /// Attribute evidence on a Paragraph tag is outside TC-S5's plain-P shape.
     ParagraphTagAttribute,
+    /// A self-closing solidus on a Paragraph tag is outside TC-S5.
     SelfClosingParagraphTag,
+    /// A selected `div`/`section` end tag was reached while P is current. The
+    /// Standard's implied-end step is materially non-noop there, so TC-S5
+    /// refuses before mutation rather than pretending the predecessor rule
+    /// still applies.
     SelectedOrdinaryEndTagWithOpenParagraphElement,
+    /// A shell tag was reached while P is current; shell/P crossing is outside
+    /// the bounded TC-S5 theorem and is refused before any partial shell effect.
     ShellTagWithOpenParagraphElement,
 }
 
@@ -1235,8 +1277,12 @@ pub(crate) enum HtmlTreeCompletionUpgrade {
 /// A freeze/boundary invariant failure.
 ///
 /// This vocabulary is deliberately separate from HTML parse diagnostics and
-/// from [`HtmlTreeCapability`]. Existing TC-S1–TC-S4 variants retain their
-/// exact meaning; TC-S5 adds only Paragraph-specific boundary failures.
+/// from [`HtmlTreeCapability`]: a freeze failure means the construction
+/// boundary produced something it must never publish, not that authored HTML
+/// is invalid or that capability coverage is missing. Existing TC-S1–TC-S4
+/// variants retain their exact meaning; TC-S5 adds only Paragraph-specific
+/// failures. Every variant carries structural/provenance evidence only;
+/// `Debug` and `Display` never expose arbitrary authored source content.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum HtmlTreeFreezeError {
     /// Two stored nodes carry the same constructed identity.
@@ -1465,8 +1511,11 @@ impl fmt::Display for HtmlTreeFreezeError {
 impl Error for HtmlTreeFreezeError {}
 
 /// Validates private construction output and freezes it into immutable result
-/// meaning. Existing TC-S1–TC-S4 checks remain intact; TC-S5 adds an
-/// independent Paragraph lifecycle replay beside the selected-ordinary replay.
+/// meaning. This is the only constructor of [`HtmlDocumentShellAnalysis`]:
+/// durable invariants are checked at this ownership boundary rather than
+/// trusted because the private session happens to produce them today. Existing
+/// TC-S1–TC-S4 checks remain intact; TC-S5 adds an independent Paragraph
+/// lifecycle replay beside the selected-ordinary replay.
 pub(super) fn freeze(
     source: &SourceText,
     tokenizer_run: HtmlTokenizerRunResult,
@@ -1759,9 +1808,37 @@ fn validate_action_evidence(
     Ok(())
 }
 
-/// Validates the selected ordinary lifecycle-evidence theorem. TC-S5 leaves
-/// this relation intact; a separate Paragraph replay below checks mixed-stack
-/// interactions that this selected-only projection deliberately does not own.
+/// Validates the complete selected-ordinary lifecycle-evidence theorem.
+///
+/// TC-S5 leaves this relation intact; a separate Paragraph replay below checks
+/// the mixed-stack interactions this selected-only projection deliberately does
+/// not own. This replay independently proves that:
+///
+/// - every selected insertion, recovery, and closure endpoint resolves by
+///   semantic constructed identity to the expected stored selected element;
+/// - each selected identity is inserted at most once, so action evidence cannot
+///   pad the replay stack with a repeated node;
+/// - matching closures and recovery groups correlate to the retained emitted
+///   end tag itself, not merely to any revalidating source anchor;
+/// - a heterogeneous recovery target is recomputed as the nearest currently
+///   open selected element of its name, and the intervening suffix is popped in
+///   strict current-first order before exactly that target is closed;
+/// - an intervening recovery-popped element never receives a fabricated matching
+///   closure, while the target's authored end tag may legitimately explain
+///   several ordered pops plus its one closure;
+/// - one retained selected end token spends exactly one terminal selected-end
+///   decision: current closure, recovery-target closure, or ignored-unmatched
+///   disposition;
+/// - misnested and unmatched diagnostics pair one-for-one with the replayed
+///   recovery/disposition groups and retain the group's exact trigger evidence;
+///   and
+/// - the identities still open after replay are exactly, and in the same order
+///   as, the session's immutable final-open selected snapshot.
+///
+/// The final comparison is what makes this validation of construction output
+/// rather than trust in session implementation: an unrecorded pop or closure
+/// cannot masquerade as a legitimate end-of-file-open state. No source search,
+/// rescan, or retokenization participates in any of these checks.
 fn validate_selected_ordinary_lifecycle(
     nodes: &[HtmlTreeNode],
     actions: &[HtmlTreeAction],
