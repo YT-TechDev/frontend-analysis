@@ -10,12 +10,12 @@ The current HTML evidence checkpoint is:
 
 - [2026-08 Tree-Construction Frontier Checkpoint](2026-08-tree-construction-frontier-checkpoint.md).
 
-As of 2026-08-26, production tree construction is merged through TC-S6 on
-`main` `5d0366b21dda5847062f7dadfe368129b6d33f0a`. TC-S7 candidate-independent
-validation is accepted at PR #375 exact head
-`2b5a41749ee7cd32e4504b6682aeecc415937c9f`, but that PR is unmerged; TC-S7
-production placement is not yet decided and production implementation is not
-authorized.
+As of 2026-08-26, production tree construction remains merged through TC-S6 at
+production semantic baseline `5d0366b21dda5847062f7dadfe368129b6d33f0a`.
+The repository `main` is now `5e9ff4d539ebc75a7f812185ef55f0e85e881e72`
+after merging TC-S7 candidate-independent validation from PR #375. TC-S7
+validation is therefore accepted and merged, while production placement is not
+yet decided and production implementation remains unauthorized.
 
 The sections below preserve the historical first-slice and research/architecture
 evidence that led to the current frontier.
@@ -304,8 +304,9 @@ At the 2026-08-26 evidence checkpoint:
 Architecture direction / Candidate C: APPROVED / UNCHANGED
 ADR 0010 / specialized normative contract: ACCEPTED
 TC-S1 through TC-S6 production: MERGED
-current production main: 5d0366b21dda5847062f7dadfe368129b6d33f0a
-TC-S7 candidate-independent validation: ACCEPTED / PR #375 UNMERGED
+current repository main: 5e9ff4d539ebc75a7f812185ef55f0e85e881e72
+current production semantic baseline: 5d0366b21dda5847062f7dadfe368129b6d33f0a
+TC-S7 candidate-independent validation: ACCEPTED / MERGED via PR #375
 TC-S7 production placement: NOT YET DECIDED
 TC-S7 production implementation: NOT AUTHORIZED
 ```

@@ -31,20 +31,31 @@ Evidence record
 
 ## Exact Repository State
 
-Current merged HTML production baseline:
+Current repository main after the TC-S7 validation merge:
 
 ```text
 main:
-5d0366b21dda5847062f7dadfe368129b6d33f0a
+5e9ff4d539ebc75a7f812185ef55f0e85e881e72
 
 tree:
-5fd79a4988fd2b338bdaabf65b554d8359eedf1b
+503cc2fc549638ac58cfb2931a268193a27bbb39
 
 HEAD subject:
-feat(html): implement TC-S6 selected end-tag over paragraph implied-end handling (#372)
+test(html): pin selected in-body body-end transition semantics (#375)
 ```
 
-The merge commit is GitHub-verified.
+The current production semantic baseline remains TC-S6 at:
+
+```text
+production commit:
+5d0366b21dda5847062f7dadfe368129b6d33f0a
+
+production tree:
+5fd79a4988fd2b338bdaabf65b554d8359eedf1b
+```
+
+Both merge commits are GitHub-verified. The TC-S7 merge adds validation-only
+evidence and does not change production tree-construction semantics.
 
 Durable program authorities:
 
@@ -231,7 +242,7 @@ Supported recovery may coexist with `Complete`. Lower-layer tokenizer
 incompleteness is never upgraded by tree construction. Unsupported tree cells
 remain incomplete rather than becoming false clean absence.
 
-## TC-S7 — Accepted Validation, Not Merged Production
+## TC-S7 — Accepted and Merged Validation, Production Still Unimplemented
 
 The fresh post-TC-S6 reassessment selected:
 
@@ -261,6 +272,9 @@ independent exact-head review:
 
 official exact-head CI:
 Rust Core #587 — PASS
+
+squash merge:
+5e9ff4d539ebc75a7f812185ef55f0e85e881e72
 ```
 
 Validation verdict:
@@ -269,14 +283,15 @@ Validation verdict:
 A. TC-S7 CANDIDATE-INDEPENDENT VALIDATION ACCEPTED — PLACEMENT GATE READY
 ```
 
-At this checkpoint PR #375 is **open, Ready for review, and unmerged**.
-Therefore:
+At this checkpoint PR #375 is **merged** into `main` as
+`5e9ff4d539ebc75a7f812185ef55f0e85e881e72`. Therefore:
 
 ```text
-TC-S7 candidate-independent validation: ACCEPTED
+TC-S7 candidate-independent validation: ACCEPTED / MERGED
+TC-S7 validation evidence on main:      YES
 TC-S7 production placement:             NOT YET DECIDED
 TC-S7 production implementation:        NOT AUTHORIZED
-TC-S7 production on main:               NO
+TC-S7 production behavior on main:      NO
 ```
 
 The validation proves, for its closed candidate state, that authored InBody
@@ -326,8 +341,9 @@ first tokenizer/parser/Core vertical slice: ESTABLISHED
 #348 R1–R10 / Wave 1E research:          COMPLETE
 Candidate C architecture / ADR 0010:     ACCEPTED
 TC-S1 through TC-S6 production:          MERGED
-current production main:                 5d0366b21dda5847062f7dadfe368129b6d33f0a
-TC-S7 validation:                        ACCEPTED / UNMERGED
+current repository main:                 5e9ff4d539ebc75a7f812185ef55f0e85e881e72
+current production semantic baseline:    5d0366b21dda5847062f7dadfe368129b6d33f0a
+TC-S7 validation:                        ACCEPTED / MERGED
 TC-S7 production placement:              NOT YET DECIDED
 TC-S7 production implementation:         NOT AUTHORIZED
 full HTML parser claim:                   NO
@@ -337,5 +353,5 @@ full HTML parser claim:                   NO
 
 Add a new dated evidence record when a later frontier materially changes the
 supported theorem, upstream-relevance classification, provenance/recovery model,
-or research status. Do not rewrite this record to make an unmerged validation or
-future candidate look historically production-complete.
+or research status. Do not rewrite this record to make validation-only evidence or a future
+candidate look historically production-complete.
