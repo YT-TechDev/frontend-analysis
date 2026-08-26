@@ -1669,6 +1669,87 @@ fn i22_lower_layer_incompleteness_is_never_upgraded_to_complete() {
 }
 
 #[test]
+fn unmatched_selected_ignore_allocates_no_identity_before_later_node_creation() {
+    let with_ignored = observe_source("<body><div><p>x</section><p>y</p>", 151);
+    let control = observe_source("<body><div><p>x<p>y</p>", 151);
+    assert_complete(&with_ignored);
+    assert_complete(&control);
+
+    assert!(with_ignored.implied_p_pops.is_empty());
+    assert_eq!(
+        with_ignored
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.kind == DiagnosticKind::UnmatchedBlockEnd)
+            .count(),
+        1
+    );
+
+    let with_ps = nodes_named(&with_ignored, Name::P);
+    let control_ps = nodes_named(&control, Name::P);
+    assert_eq!(with_ps.len(), 2);
+    assert_eq!(control_ps.len(), 2);
+    assert_eq!(
+        with_ps[1].id, control_ps[1].id,
+        "ignored selected end must not consume semantic identity"
+    );
+    assert_eq!(with_ignored.nodes.len(), control.nodes.len());
+}
+
+#[test]
+fn p_implied_pop_precedes_two_current_first_recovery_pops_by_identity() {
+    let source = "<body><div><section><section><p>x</div>";
+    let observation = observe_source(source, 161);
+    assert_complete(&observation);
+    assert_eq!(observation.implied_p_pops.len(), 1);
+    assert_eq!(observation.block_recovery.len(), 2);
+    assert_eq!(
+        diagnostic_kinds(&observation),
+        vec![
+            DiagnosticKind::MissingDoctype,
+            DiagnosticKind::MisnestedBlockEnd,
+        ]
+    );
+
+    let sections = nodes_named(&observation, Name::Section);
+    assert_eq!(sections.len(), 2);
+    let outer_section = sections[0].id;
+    let inner_section = sections[1].id;
+    let implied = &observation.implied_p_pops[0];
+    assert_eq!(implied.trigger, expected_evidence(161, (33, 39)));
+    assert_eq!(observation.block_recovery[0].popped, inner_section);
+    assert_eq!(observation.block_recovery[1].popped, outer_section);
+    assert_eq!(
+        observation.block_recovery[0].target,
+        implied.selected_target
+    );
+    assert_eq!(
+        observation.block_recovery[1].target,
+        implied.selected_target
+    );
+
+    let actions = trigger_actions(&observation, &implied.trigger);
+    assert_eq!(actions.len(), 5);
+    assert!(matches!(actions[0], Action::ImpliedPPop { .. }));
+    assert!(matches!(
+        actions[1],
+        Action::BlockDiagnostic {
+            kind: DiagnosticKind::MisnestedBlockEnd,
+            ..
+        }
+    ));
+    assert!(matches!(
+        actions[2],
+        Action::BlockRecoveryPop { popped, .. } if *popped == inner_section
+    ));
+    assert!(matches!(
+        actions[3],
+        Action::BlockRecoveryPop { popped, .. } if *popped == outer_section
+    ));
+    assert!(matches!(actions[4], Action::BlockClose { .. }));
+}
+
+#[test]
 fn i24_generated_cells_agree_with_independent_closed_form_oracle() {
     for depth in 0_u32..=5 {
         for code in 0..2_usize.pow(depth) {
