@@ -70,7 +70,10 @@ enum Origin {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum NodeKind {
-    Element { name: Name, origin: Origin },
+    Element {
+        name: Name,
+        origin: Origin,
+    },
     Text {
         interpreted: String,
         contributions: Vec<Evidence>,
@@ -84,6 +87,7 @@ struct Node {
     kind: NodeKind,
 }
 
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Phase {
     BeforeBody,
@@ -428,12 +432,7 @@ impl Machine {
         self.phase = to;
     }
 
-    fn diagnostic(
-        &mut self,
-        kind: DiagnosticKind,
-        token_index: usize,
-        trigger: Evidence,
-    ) {
+    fn diagnostic(&mut self, kind: DiagnosticKind, token_index: usize, trigger: Evidence) {
         self.diagnostics.push(Diagnostic {
             kind,
             token_index,
@@ -911,7 +910,10 @@ fn authority_markers_and_candidate_independence_are_pinned() {
         ["super::", "result"].concat(),
         ["in_body_html_end_open_stack_successor_", "production"].concat(),
     ] {
-        assert!(!source.contains(&forbidden), "forbidden semantic oracle: {forbidden}");
+        assert!(
+            !source.contains(&forbidden),
+            "forbidden semantic oracle: {forbidden}"
+        );
     }
 }
 
@@ -919,8 +921,16 @@ fn authority_markers_and_candidate_independence_are_pinned() {
 fn h1_h8_closed_stack_audit_cardinality_stack_identity_and_p_distinction() {
     let cases = [
         ("<body></html>", 0usize, vec![Name::Html, Name::Body]),
-        ("<body><p>x</html>", 0, vec![Name::Html, Name::Body, Name::P]),
-        ("<body><div>x</html>", 1, vec![Name::Html, Name::Body, Name::Div]),
+        (
+            "<body><p>x</html>",
+            0,
+            vec![Name::Html, Name::Body, Name::P],
+        ),
+        (
+            "<body><div>x</html>",
+            1,
+            vec![Name::Html, Name::Body, Name::Div],
+        ),
         (
             "<body><section>x</html>",
             1,
@@ -976,15 +986,33 @@ fn h3_h9_h25_exact_mixed_case_evidence_one_token_two_modes_one_reprocess() {
     let expected_kinds: Vec<&str> = actions
         .iter()
         .map(|action| match action {
-            Action::Dispatch { phase: Phase::InBody, .. } => "dispatch-in-body",
-            Action::AuditDiagnostic { kind: DiagnosticKind::HtmlEndAudit, .. } => "audit",
-            Action::Transition { from: Phase::InBody, to: Phase::AfterBody, .. } => "to-after-body",
+            Action::Dispatch {
+                phase: Phase::InBody,
+                ..
+            } => "dispatch-in-body",
+            Action::AuditDiagnostic {
+                kind: DiagnosticKind::HtmlEndAudit,
+                ..
+            } => "audit",
+            Action::Transition {
+                from: Phase::InBody,
+                to: Phase::AfterBody,
+                ..
+            } => "to-after-body",
             Action::ReprocessSameToken { .. } => "reprocess",
-            Action::Dispatch { phase: Phase::AfterBody, .. } => "dispatch-after-body",
-            Action::Transition { from: Phase::AfterBody, to: Phase::AfterAfterBody, .. } => {
-                "to-after-after-body"
-            }
-            Action::Consume { phase: Phase::AfterAfterBody, .. } => "consume",
+            Action::Dispatch {
+                phase: Phase::AfterBody,
+                ..
+            } => "dispatch-after-body",
+            Action::Transition {
+                from: Phase::AfterBody,
+                to: Phase::AfterAfterBody,
+                ..
+            } => "to-after-after-body",
+            Action::Consume {
+                phase: Phase::AfterAfterBody,
+                ..
+            } => "consume",
             other => panic!("unexpected candidate action: {other:?}"),
         })
         .collect();
@@ -1003,14 +1031,26 @@ fn h3_h9_h25_exact_mixed_case_evidence_one_token_two_modes_one_reprocess() {
     assert_eq!(
         actions
             .iter()
-            .filter(|action| matches!(action, Action::Dispatch { phase: Phase::InBody, .. }))
+            .filter(|action| matches!(
+                action,
+                Action::Dispatch {
+                    phase: Phase::InBody,
+                    ..
+                }
+            ))
             .count(),
         1
     );
     assert_eq!(
         actions
             .iter()
-            .filter(|action| matches!(action, Action::Dispatch { phase: Phase::AfterBody, .. }))
+            .filter(|action| matches!(
+                action,
+                Action::Dispatch {
+                    phase: Phase::AfterBody,
+                    ..
+                }
+            ))
             .count(),
         1
     );
@@ -1022,7 +1062,11 @@ fn h3_h9_h25_exact_mixed_case_evidence_one_token_two_modes_one_reprocess() {
     assert_eq!(triggers[0].source_id, SourceId::new(77));
     assert_eq!(triggers[0].range, (12, 19));
     assert_eq!(&source[14..18], "HtMl");
-    assert!(actions.iter().all(|action| action_token_index(action) == Some(token_index)));
+    assert!(
+        actions
+            .iter()
+            .all(|action| action_token_index(action) == Some(token_index))
+    );
 }
 
 #[test]
@@ -1041,7 +1085,10 @@ fn h10_h11_candidate_has_zero_lifecycle_text_or_identity_mutation() {
         machine.commit(token);
     }
     let before = machine.snapshot();
-    assert_eq!(machine.step(candidate_index, &run.tokens()[candidate_index]), Ok(Step::Consumed));
+    assert_eq!(
+        machine.step(candidate_index, &run.tokens()[candidate_index]),
+        Ok(Step::Consumed)
+    );
     machine.commit(&run.tokens()[candidate_index]);
     let after = machine.snapshot();
 
@@ -1049,7 +1096,11 @@ fn h10_h11_candidate_has_zero_lifecycle_text_or_identity_mutation() {
     assert_eq!(after.next_id, before.next_id);
     assert_eq!(after.nodes, before.nodes);
     let new_actions = &after.actions[before.actions.len()..];
-    assert!(new_actions.iter().all(|action| !matches!(action, Action::Insert { .. } | Action::TextInsert { .. })));
+    assert!(
+        new_actions
+            .iter()
+            .all(|action| !matches!(action, Action::Insert { .. } | Action::TextInsert { .. }))
+    );
 
     let mut baseline_probe = Machine {
         slots: machine.slots.clone(),
@@ -1101,10 +1152,19 @@ fn h16_tc_s7_body_end_predecessor_control_stays_one_phase() {
     let observation = observe("<body><div><p>x</body>");
     assert_eq!(observation.completion, Completion::Complete);
     assert_eq!(observation.phase, Phase::AfterBody);
-    assert_eq!(diagnostic_count(&observation, DiagnosticKind::BodyEndAudit), 1);
-    assert_eq!(diagnostic_count(&observation, DiagnosticKind::HtmlEndAudit), 0);
+    assert_eq!(
+        diagnostic_count(&observation, DiagnosticKind::BodyEndAudit),
+        1
+    );
+    assert_eq!(
+        diagnostic_count(&observation, DiagnosticKind::HtmlEndAudit),
+        0
+    );
     assert_eq!(observation.reprocess_count, 0);
-    assert_eq!(open_names(&observation), vec![Name::Html, Name::Body, Name::Div, Name::P]);
+    assert_eq!(
+        open_names(&observation),
+        vec![Name::Html, Name::Body, Name::Div, Name::P]
+    );
 }
 
 #[test]
@@ -1112,8 +1172,14 @@ fn h17_direct_after_body_html_end_has_no_in_body_audit_phase() {
     let observation = observe("<body><div></body></html>");
     assert_eq!(observation.completion, Completion::Complete);
     assert_eq!(observation.phase, Phase::AfterAfterBody);
-    assert_eq!(diagnostic_count(&observation, DiagnosticKind::BodyEndAudit), 1);
-    assert_eq!(diagnostic_count(&observation, DiagnosticKind::HtmlEndAudit), 0);
+    assert_eq!(
+        diagnostic_count(&observation, DiagnosticKind::BodyEndAudit),
+        1
+    );
+    assert_eq!(
+        diagnostic_count(&observation, DiagnosticKind::HtmlEndAudit),
+        0
+    );
     assert_eq!(observation.reprocess_count, 0);
     let html_index = observation
         .actions
@@ -1126,7 +1192,7 @@ fn h17_direct_after_body_html_end_has_no_in_body_audit_phase() {
             } => Some(*token_index),
             _ => None,
         })
-        .last()
+        .next_back()
         .expect("direct after body html dispatch");
     assert_eq!(
         observation
@@ -1162,7 +1228,9 @@ fn h18_h24_excluded_shapes_and_after_after_body_successors_refuse_transactionall
     for (source, capability) in cases {
         let observation = observe(source);
         assert_transactional_refusal(&observation, capability);
-        assert!(matches!(observation.completion, Completion::Unsupported { capability: actual, .. } if actual == capability));
+        assert!(
+            matches!(observation.completion, Completion::Unsupported { capability: actual, .. } if actual == capability)
+        );
     }
 }
 
@@ -1181,7 +1249,11 @@ fn h26_audit_diagnostic_is_exact_html_end_trigger_not_inner_origin() {
     assert_eq!(diagnostic.trigger.range, (15, 22));
 
     for node in &observation.nodes {
-        if let NodeKind::Element { origin: Origin::Authored { complete, .. }, .. } = &node.kind {
+        if let NodeKind::Element {
+            origin: Origin::Authored { complete, .. },
+            ..
+        } = &node.kind
+        {
             assert_ne!(complete.range, diagnostic.trigger.range);
         }
     }
@@ -1193,12 +1265,16 @@ fn h27_source_id_changes_only_authored_evidence_not_normalized_semantics() {
     let one = observe_with(source, 1, StorageLayout::COMPACT, limits());
     let two = observe_with(source, 2, StorageLayout::COMPACT, limits());
     assert_eq!(semantic_signature(&one), semantic_signature(&two));
-    assert!(candidate_trigger_evidence(&one)
-        .iter()
-        .all(|trigger| trigger.source_id == SourceId::new(1)));
-    assert!(candidate_trigger_evidence(&two)
-        .iter()
-        .all(|trigger| trigger.source_id == SourceId::new(2)));
+    assert!(
+        candidate_trigger_evidence(&one)
+            .iter()
+            .all(|trigger| trigger.source_id == SourceId::new(1))
+    );
+    assert!(
+        candidate_trigger_evidence(&two)
+            .iter()
+            .all(|trigger| trigger.source_id == SourceId::new(2))
+    );
 }
 
 #[test]
@@ -1226,9 +1302,7 @@ fn h30_generated_bounded_stacks_match_independent_closed_form_oracle() {
     for depth in 0..=4 {
         let combinations = 1usize << depth;
         for mask in 0..combinations {
-            let blocks: Vec<Name> = (0..depth)
-                .map(|index| names[(mask >> index) & 1])
-                .collect();
+            let blocks: Vec<Name> = (0..depth).map(|index| names[(mask >> index) & 1]).collect();
             for p in [false, true] {
                 let source = generated_source(&blocks, p, "");
                 let observation = observe(&source);
@@ -1240,7 +1314,10 @@ fn h30_generated_bounded_stacks_match_independent_closed_form_oracle() {
                     "{source}"
                 );
                 assert_eq!(open_names(&observation), oracle.final_stack, "{source}");
-                assert_eq!(observation.reprocess_count, oracle.reprocess_count, "{source}");
+                assert_eq!(
+                    observation.reprocess_count, oracle.reprocess_count,
+                    "{source}"
+                );
 
                 let token_index = candidate_token_index(&observation);
                 let mode_path: Vec<Phase> = observation
