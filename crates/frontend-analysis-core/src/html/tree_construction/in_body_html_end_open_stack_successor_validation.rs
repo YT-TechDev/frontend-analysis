@@ -1073,7 +1073,12 @@ fn h3_h9_h25_exact_mixed_case_evidence_one_token_two_modes_one_reprocess() {
         panic!("candidate token must be the retained authored html end tag")
     };
     assert_eq!(candidate_tag.kind(), HtmlTagKind::End);
-    assert!(candidate_tag.name().interpreted().eq_ignore_ascii_case("html"));
+    assert!(
+        candidate_tag
+            .name()
+            .interpreted()
+            .eq_ignore_ascii_case("html")
+    );
     let raw_name = evidence(candidate_tag.name().source());
     assert_eq!(raw_name.source_id, SourceId::new(77));
     assert_eq!(raw_name.range, (14, 18));
