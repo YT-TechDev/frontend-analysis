@@ -1329,7 +1329,28 @@ fn h30_generated_bounded_stacks_match_independent_closed_form_oracle() {
             let blocks: Vec<Name> = (0..depth).map(|index| names[(mask >> index) & 1]).collect();
             for p in [false, true] {
                 let source = generated_source(&blocks, p, "");
-                let observation = observe(&source);
+                let source_text = SourceText::new(SourceId::new(1), source.clone());
+                let run = tokenize(&source_text, limits());
+                let candidate_index = run
+                    .tokens()
+                    .iter()
+                    .position(|token| {
+                        matches!(
+                            token,
+                            HtmlToken::Tag(tag)
+                                if tag.kind() == HtmlTagKind::End
+                                    && tag.name().interpreted().eq_ignore_ascii_case("html")
+                        )
+                    })
+                    .expect("generated html end token");
+                let mut prefix = Machine::new(StorageLayout::COMPACT);
+                for (token_index, token) in run.tokens()[..candidate_index].iter().enumerate() {
+                    assert_eq!(prefix.step(token_index, token), Ok(Step::Consumed), "{source}");
+                    prefix.commit(token);
+                }
+                let pre_candidate_stack = prefix.open.clone();
+
+                let observation = observe_run(&run, StorageLayout::COMPACT);
                 let oracle = closed_form_oracle(&blocks, p);
                 assert_eq!(observation.completion, Completion::Complete, "{source}");
                 assert_eq!(
@@ -1338,6 +1359,7 @@ fn h30_generated_bounded_stacks_match_independent_closed_form_oracle() {
                     "{source}"
                 );
                 assert_eq!(open_names(&observation), oracle.final_stack, "{source}");
+                assert_eq!(observation.open, pre_candidate_stack, "{source}");
                 assert_eq!(
                     observation.reprocess_count, oracle.reprocess_count,
                     "{source}"
