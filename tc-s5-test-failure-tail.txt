@@ -1,0 +1,242 @@
+test html::tree_construction::in_body_div_successor_production::dv9_a_selected_start_tag_in_after_body_remains_refused ... ok
+test html::tree_construction::in_body_div_successor_production::freeze_accepts_a_valid_end_of_file_open_selected_state ... ok
+test html::tree_construction::in_body_div_successor_production::freeze_accepts_the_valid_closure_baseline ... ok
+test html::tree_construction::in_body_div_successor_production::freeze_checks_final_open_ordering_and_accepts_valid_nested_open_state ... ok
+test html::tree_construction::in_body_div_successor_production::freeze_rejects_a_closure_fabricated_at_end_of_file ... ok
+test html::tree_construction::in_body_div_successor_production::freeze_rejects_a_closure_recorded_twice_for_one_element ... ok
+test html::tree_construction::in_body_div_successor_production::freeze_rejects_a_closure_subject_that_is_not_the_selected_ordinary_element ... ok
+test html::tree_construction::in_body_div_successor_production::freeze_rejects_a_closure_that_is_not_stack_consistent ... ok
+test html::tree_construction::in_body_div_successor_production::freeze_rejects_a_closure_that_was_never_opened ... ok
+test html::tree_construction::in_body_div_successor_production::dv8b_a_self_closing_selected_start_tag_refuses_transactionally ... ok
+test html::tree_construction::in_body_div_successor_production::freeze_rejects_a_closure_triggered_by_a_differently_named_end_tag ... ok
+test html::tree_construction::in_body_div_successor_production::freeze_rejects_a_closure_triggered_by_an_unrelated_non_tag_token ... ok
+test html::tree_construction::in_body_div_successor_production::freeze_rejects_a_closure_triggered_by_the_selected_start_tag ... ok
+test html::tree_construction::in_body_div_successor_production::freeze_rejects_a_closure_whose_anchor_is_not_the_retained_end_tag_evidence ... ok
+test html::tree_construction::in_body_div_successor_production::freeze_rejects_a_duplicate_selected_insertion_for_one_semantic_node ... ok
+test html::tree_construction::in_body_div_successor_production::freeze_rejects_a_final_open_element_that_is_not_a_selected_element ... ok
+test html::tree_construction::in_body_div_successor_production::freeze_rejects_a_final_open_element_the_action_stream_reports_closed ... ok
+test html::tree_construction::in_body_div_successor_production::freeze_rejects_a_replayed_open_element_the_session_reports_closed ... ok
+test html::tree_construction::in_body_div_successor_production::predecessor_capability_meanings_are_unchanged_and_selected_ones_are_distinct ... FAILED
+test html::tree_construction::in_body_div_successor_production::selected_support_appears_only_in_the_proved_cells ... FAILED
+test html::tree_construction::in_body_div_successor_production::identity_admission_is_gap_free_across_the_selected_domain ... ok
+test html::tree_construction::in_body_div_successor_production::shell_element_names_stay_shell_only ... ok
+test html::tree_construction::in_body_div_successor_production::tc_s1_and_tc_s2_predecessor_behaviour_is_unchanged ... ok
+test html::tree_construction::in_body_div_successor_production::tc_s3_sources_carry_no_tc_s4_heterogeneous_recovery_semantics ... ok
+test html::tree_construction::in_body_div_successor_production::semantic_meaning_is_identical_under_differing_source_ids ... ok
+test html::tree_construction::in_body_div_successor_production::the_existing_coalescing_path_is_reused_unchanged_beside_a_selected_element ... ok
+test html::tree_construction::in_body_div_successor_validation::accepted_div_starts_move_s_k_to_s_k_plus_one_in_one_dispatch ... ok
+test html::tree_construction::in_body_div_successor_validation::candidate_configuration_and_pinned_branch_projections_are_exact ... ok
+test html::tree_construction::in_body_div_successor_validation::candidate_provenance_retains_source_identity_and_keeps_domains_distinct ... ok
+test html::tree_construction::in_body_div_successor_validation::candidate_widens_nothing_beyond_selected_in_body_no_attribute_div_cells ... ok
+test html::tree_construction::in_body_div_successor_validation::canonical_fixture_bytes_match_issue_357_authority ... ok
+test html::tree_construction::in_body_div_successor_validation::character_data_keeps_parent_sensitive_contributions_and_coalescing_identity ... ok
+test html::tree_construction::in_body_div_successor_validation::dv_cases_match_hand_authored_semantic_gold ... ok
+test html::tree_construction::in_body_div_successor_validation::dv_refusals_are_transactional_and_pin_exact_trigger_evidence ... ok
+test html::tree_construction::in_body_div_successor_validation::candidate_semantics_and_authored_provenance_are_deterministic_across_source_ids ... ok
+test html::tree_construction::in_body_div_successor_validation::historical_body_p_boundary_remains_exactly_unsupported_at_six_to_nine ... ok
+test html::tree_construction::in_body_div_successor_validation::html_whitespace_projection_is_exact ... ok
+test html::tree_construction::in_body_div_successor_validation::lower_layer_incompleteness_is_never_upgraded_and_diagnostics_are_orthogonal ... ok
+test html::tree_construction::in_body_div_successor_validation::matching_div_ends_record_exact_semantic_closure_relations ... ok
+test html::tree_construction::in_body_div_successor_validation::open_div_at_eof_diagnoses_once_without_fabricated_closure ... ok
+test html::tree_construction::in_body_div_successor_validation::pinned_authority_and_candidate_independence_are_explicit ... ok
+test html::tree_construction::in_body_div_successor_validation::selected_cells_terminate_structurally_without_runtime_budget ... ok
+test html::tree_construction::in_body_div_successor_validation::semantic_identities_are_contiguous_and_relationships_are_not_storage_indices ... ok
+test html::tree_construction::in_body_div_successor_validation::stray_div_end_is_diagnosed_ignored_and_creates_no_closure_or_identity ... ok
+test html::tree_construction::in_body_div_successor_validation::tokenizer_emits_exact_evidence_shape_for_all_canonical_fixtures ... ok
+test html::tree_construction::in_body_p_successor_production::tc_s5_production_smoke_reaches_paragraph_candidate ... ok
+test html::tree_construction::in_body_p_successor_validation::authority_and_hand_authored_gold_matrix_are_frozen ... ok
+test html::tree_construction::in_body_div_successor_validation::generated_sequences_uphold_stack_closure_identity_and_completion_theorems ... ok
+test html::tree_construction::in_body_p_successor_validation::lower_layer_incompleteness_is_never_upgraded_to_complete ... ok
+test html::tree_construction::in_body_p_successor_validation::p10_p_only_eof_leaves_p_open_with_exact_predecessor_diagnostic_vector ... ok
+test html::tree_construction::in_body_p_successor_validation::p11_open_block_eof_diagnostic_is_exact_and_distinct_from_p ... ok
+test html::tree_construction::in_body_p_successor_validation::p12_p13_non_noop_implied_end_cells_refuse_before_mutation ... ok
+test html::tree_construction::in_body_p_successor_validation::p14_p15_p16_p17_and_p21_shape_and_crossing_exclusions_are_transactional ... ok
+test html::tree_construction::in_body_p_successor_validation::p18_predecessor_normal_div_section_lifecycle_has_exact_zero_p_delta ... ok
+test html::tree_construction::in_body_p_successor_validation::p19_predecessor_heterogeneous_recovery_remains_separate_and_exact ... ok
+test html::tree_construction::in_body_p_successor_validation::p1_authored_p_lifecycle_text_parentage_and_diagnostics_are_exact ... ok
+test html::tree_construction::in_body_p_successor_validation::p20_source_id_changes_provenance_not_constructed_identity ... ok
+test html::tree_construction::in_body_p_successor_validation::p2_interpreted_name_is_case_insensitive_but_raw_spelling_is_exact ... ok
+test html::tree_construction::in_body_p_successor_validation::p3_second_p_start_closes_first_before_allocating_second ... ok
+test html::tree_construction::in_body_p_successor_validation::p4_p5_block_start_closes_p_before_block_insertion_without_tc_s4_recovery ... ok
+test html::tree_construction::in_body_p_successor_validation::p6_matching_end_closes_nested_p_without_closing_parent_block ... ok
+test html::tree_construction::in_body_p_successor_validation::p7_unmatched_end_has_exact_diagnostic_trigger_synthesis_and_closure_order ... ok
+test html::tree_construction::in_body_p_successor_validation::p8_synthesized_p_is_placed_under_actual_current_block_and_text_follows_closure ... ok
+test html::tree_construction::in_body_p_successor_validation::p9_repeated_stray_ends_create_two_exact_diagnostic_synthesis_closure_groups ... ok
+test html::tree_construction::in_body_p_successor_validation::semantic_identity_and_relations_are_independent_from_private_storage_padding ... ok
+test html::tree_construction::in_body_p_successor_validation::validation_module_does_not_import_production_tree_semantics ... ok
+test html::tree_construction::validation::accepted_end_tags_are_closure_or_acknowledgement_evidence_only ... ok
+test html::tree_construction::validation::accepted_gold_sources_reach_their_required_completion ... FAILED
+test html::tree_construction::validation::adjacent_character_runs_coalesce_with_ordered_contributions ... ok
+test html::tree_construction::validation::admission_refuses_unproved_token_shapes_before_any_mode_runs ... FAILED
+test html::tree_construction::validation::constructed_identities_are_unique_and_ordered_by_creation ... ok
+test html::tree_construction::validation::debug_output_never_exposes_authored_source_content ... ok
+test html::tree_construction::validation::duplicate_body_start_tag_clears_frameset_ok_without_creating_a_node ... ok
+test html::tree_construction::validation::eof_triggers_implied_structure_without_becoming_its_origin ... ok
+test html::tree_construction::validation::freeze_accepts_the_valid_baseline_and_its_storage_permutation ... ok
+test html::tree_construction::validation::freeze_rejects_a_detached_or_cyclic_structure ... ok
+test html::tree_construction::validation::freeze_rejects_a_leaked_unsupported_node_identity ... ok
+test html::tree_construction::validation::freeze_rejects_completion_upgrades ... ok
+test html::tree_construction::validation::freeze_rejects_duplicate_constructed_identities ... ok
+test html::tree_construction::validation::freeze_rejects_fabricated_and_foreign_source_evidence ... ok
+test html::tree_construction::validation::freeze_rejects_identities_the_creation_counter_never_admitted ... ok
+test html::tree_construction::validation::freeze_rejects_invalid_parent_child_relationships ... ok
+test html::tree_construction::validation::freeze_rejects_invalid_text_contribution_ordering_and_content ... ok
+test html::tree_construction::validation::freeze_rejects_out_of_range_evidence_and_coverage ... ok
+test html::tree_construction::validation::freeze_rejects_storage_derived_and_dangling_relationships ... ok
+test html::tree_construction::validation::g10_structural_bounds_hold_without_any_tree_resource_limit ... FAILED
+test html::tree_construction::validation::g3_end_tags_are_action_only_and_create_no_nodes ... ok
+test html::tree_construction::validation::g7_creates_exactly_one_body_and_the_auxiliary_case_exactly_one_head ... ok
+test html::tree_construction::validation::g8_freezes_the_terminal_checkpoint_and_leaks_no_unsupported_identity ... FAILED
+test html::tree_construction::validation::g8_keeps_tokenizer_coverage_and_committed_tree_coverage_distinct ... FAILED
+test html::tree_construction::validation::g9_repeat_runs_preserve_semantic_creation_correspondence ... FAILED
+test html::tree_construction::validation::gold_cases_match_exactly ... FAILED
+test html::tree_construction::validation::insertion_mode_transitions_terminate_without_repeating_a_mode_for_one_token ... ok
+test html::tree_construction::validation::lower_layer_resource_and_configuration_evidence_stays_exact ... ok
+test html::tree_construction::validation::lower_layer_unsupported_capabilities_are_never_upgraded ... ok
+test html::tree_construction::validation::open_shell_element_state_stays_bounded_to_the_admitted_shell ... ok
+test html::tree_construction::validation::private_document_mode_and_frameset_ok_transition_without_reaching_the_result ... ok
+test html::tree_construction::validation::retained_evidence_is_exactly_the_originating_token_evidence ... ok
+test html::tree_construction::validation::retained_evidence_outlives_the_caller_source_handle ... ok
+test html::tree_construction::validation::semantic_relationships_survive_private_storage_replacement ... FAILED
+test html::tree_construction::validation::session_refuses_to_reopen_an_already_open_shell_element ... ok
+test html::tree_construction::validation::synthesized_and_root_nodes_carry_no_authored_source ... FAILED
+test html::tree_construction::validation::token_contract_errors_stay_in_the_tokenizer_vocabulary ... ok
+test html::tree_construction::validation::unproved_shell_positions_remain_explicit_tree_unsupported ... ok
+test html::tree_construction::validation::unproved_token_shapes_remain_explicit_tree_unsupported ... FAILED
+test html::tree_construction::validation::whitespace_sensitive_character_runs_remain_explicit_tree_unsupported ... ok
+test raw_source_coordinate::tests::coordinate_is_detached_from_source_and_anchor_handles ... ok
+test raw_source_coordinate::tests::debug_exposes_only_coordinate_evidence ... ok
+test raw_source_coordinate::tests::endpoint_projections_preserve_identity_offsets_and_empty_anchors ... ok
+test raw_source_coordinate::tests::multibyte_characters_advance_columns_by_utf8_bytes ... ok
+test raw_source_coordinate::tests::only_approved_raw_newlines_increment_the_line ... ok
+test raw_source_coordinate::tests::repeated_copy_and_clone_projections_are_exact ... ok
+test raw_source_coordinate::tests::required_coordinate_tables_are_exact ... ok
+test raw_source_coordinate::tests::trailing_newline_coordinates_are_exact ... ok
+test source::tests::anchor_exact_source_reconciliation_accepts_equal_detached_source ... ok
+test source::tests::anchor_exact_source_reconciliation_rejects_same_id_different_bytes ... ok
+test source::tests::anchor_owns_source_independently_of_original_handles ... ok
+test source::tests::ascii_ranges_include_valid_empty_ranges ... ok
+test source::tests::clones_and_anchors_share_source_storage ... ok
+test source::tests::debug_and_errors_do_not_expose_source_content ... ok
+test source::tests::exact_anchor_source_reconciliation_accepts_shared_and_equal_detached_source ... ok
+test source::tests::exact_anchor_source_reconciliation_rejects_same_id_different_bytes ... ok
+test source::tests::multibyte_ranges_require_character_boundaries ... ok
+test source::tests::repeated_requests_are_deterministic ... ok
+test source::tests::source_identity_preserves_caller_value ... ok
+test source::tests::source_text_preserves_exact_input ... ok
+test source::tests::validation_errors_follow_required_precedence ... ok
+test html::tree_construction::in_body_div_section_successor_validation::generated_sequences_cover_repeated_alternating_recovery_and_reopening ... ok
+test html::tree_construction::in_body_p_successor_validation::bounded_generated_sequences_preserve_invariants_or_refuse_cleanly ... ok
+test html::tokenizer::validation::tree_construction_gate::tree_construction_handles_all_generated_inputs_without_panic ... ok
+
+failures:
+
+---- html::tree_construction::in_body_div_section_successor_production::predecessor_capability_meanings_are_unchanged_and_apply_to_section stdout ----
+
+thread 'html::tree_construction::in_body_div_section_successor_production::predecessor_capability_meanings_are_unchanged_and_apply_to_section' (3942) panicked at crates/frontend-analysis-core/src/html/tree_construction/in_body_div_section_successor_production.rs:1724:13:
+"<body><p>": expected explicit tree-unsupported evidence
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- html::tree_construction::in_body_div_section_successor_production::the_selected_domain_is_closed_at_div_and_section stdout ----
+
+thread 'html::tree_construction::in_body_div_section_successor_production::the_selected_domain_is_closed_at_div_and_section' (3966) panicked at crates/frontend-analysis-core/src/html/tree_construction/in_body_div_section_successor_production.rs:1743:13:
+"<body><p>": expected explicit tree-unsupported evidence
+
+---- html::tree_construction::in_body_div_successor_production::dv11_p_remains_unsupported stdout ----
+
+thread 'html::tree_construction::in_body_div_successor_production::dv11_p_remains_unsupported' (3994) panicked at crates/frontend-analysis-core/src/html/tree_construction/in_body_div_successor_production.rs:215:13:
+TC-S3 predecessor fixtures must not construct a TC-S5 Paragraph
+
+---- html::tree_construction::in_body_div_successor_production::predecessor_capability_meanings_are_unchanged_and_selected_ones_are_distinct stdout ----
+
+thread 'html::tree_construction::in_body_div_successor_production::predecessor_capability_meanings_are_unchanged_and_selected_ones_are_distinct' (4029) panicked at crates/frontend-analysis-core/src/html/tree_construction/in_body_div_successor_production.rs:2475:13:
+"<body><p>": expected an explicit unsupported stop
+
+---- html::tree_construction::in_body_div_successor_production::selected_support_appears_only_in_the_proved_cells stdout ----
+
+thread 'html::tree_construction::in_body_div_successor_production::selected_support_appears_only_in_the_proved_cells' (4030) panicked at crates/frontend-analysis-core/src/html/tree_construction/in_body_div_successor_production.rs:1503:13:
+"<body><p>": expected an explicit unsupported stop
+
+---- html::tree_construction::validation::accepted_gold_sources_reach_their_required_completion stdout ----
+
+thread 'html::tree_construction::validation::accepted_gold_sources_reach_their_required_completion' (4078) panicked at crates/frontend-analysis-core/src/html/tree_construction/validation.rs:624:9:
+assertion `left == right` failed: "<body><p>": effective completion does not match the accepted case
+  left: true
+ right: false
+
+---- html::tree_construction::validation::admission_refuses_unproved_token_shapes_before_any_mode_runs stdout ----
+
+thread 'html::tree_construction::validation::admission_refuses_unproved_token_shapes_before_any_mode_runs' (4080) panicked at crates/frontend-analysis-core/src/html/tree_construction/validation.rs:2023:9:
+assertion `left == right` failed
+  left: None
+ right: Some(NonShellElementTag)
+
+---- html::tree_construction::validation::g10_structural_bounds_hold_without_any_tree_resource_limit stdout ----
+
+thread 'html::tree_construction::validation::g10_structural_bounds_hold_without_any_tree_resource_limit' (4096) panicked at crates/frontend-analysis-core/src/html/tree_construction/validation.rs:1113:5:
+G8: shell/root node count is constant apart from text
+
+---- html::tree_construction::validation::g8_freezes_the_terminal_checkpoint_and_leaks_no_unsupported_identity stdout ----
+
+thread 'html::tree_construction::validation::g8_freezes_the_terminal_checkpoint_and_leaks_no_unsupported_identity' (4099) panicked at crates/frontend-analysis-core/src/html/tree_construction/validation.rs:892:5:
+assertion `left == right` failed
+  left: 5
+ right: 4
+
+---- html::tree_construction::validation::g8_keeps_tokenizer_coverage_and_committed_tree_coverage_distinct stdout ----
+
+thread 'html::tree_construction::validation::g8_keeps_tokenizer_coverage_and_committed_tree_coverage_distinct' (4100) panicked at crates/frontend-analysis-core/src/html/tree_construction/validation.rs:943:5:
+assertion `left == right` failed
+  left: 9
+ right: 6
+
+---- html::tree_construction::validation::g9_repeat_runs_preserve_semantic_creation_correspondence stdout ----
+
+thread 'html::tree_construction::validation::g9_repeat_runs_preserve_semantic_creation_correspondence' (4101) panicked at crates/frontend-analysis-core/src/html/tree_construction/validation.rs:336:13:
+the TC-S1 predecessor GOLD never constructs a TC-S5 Paragraph
+
+---- html::tree_construction::validation::gold_cases_match_exactly stdout ----
+
+thread 'html::tree_construction::validation::gold_cases_match_exactly' (4102) panicked at crates/frontend-analysis-core/src/html/tree_construction/validation.rs:336:13:
+the TC-S1 predecessor GOLD never constructs a TC-S5 Paragraph
+
+---- html::tree_construction::validation::semantic_relationships_survive_private_storage_replacement stdout ----
+
+thread 'html::tree_construction::validation::semantic_relationships_survive_private_storage_replacement' (4110) panicked at crates/frontend-analysis-core/src/html/tree_construction/validation.rs:336:13:
+the TC-S1 predecessor GOLD never constructs a TC-S5 Paragraph
+
+---- html::tree_construction::validation::synthesized_and_root_nodes_carry_no_authored_source stdout ----
+
+thread 'html::tree_construction::validation::synthesized_and_root_nodes_carry_no_authored_source' (4112) panicked at crates/frontend-analysis-core/src/html/tree_construction/validation.rs:757:21:
+internal error: entered unreachable code: no TC-S1 GOLD case constructs a TC-S5 Paragraph
+
+---- html::tree_construction::validation::unproved_token_shapes_remain_explicit_tree_unsupported stdout ----
+
+thread 'html::tree_construction::validation::unproved_token_shapes_remain_explicit_tree_unsupported' (4115) panicked at crates/frontend-analysis-core/src/html/tree_construction/validation.rs:1299:9:
+assertion `left == right` failed: "<body><p>": expected explicit tree-unsupported evidence
+  left: None
+ right: Some(NonShellElementTag)
+
+
+failures:
+    html::tree_construction::in_body_div_section_successor_production::predecessor_capability_meanings_are_unchanged_and_apply_to_section
+    html::tree_construction::in_body_div_section_successor_production::the_selected_domain_is_closed_at_div_and_section
+    html::tree_construction::in_body_div_successor_production::dv11_p_remains_unsupported
+    html::tree_construction::in_body_div_successor_production::predecessor_capability_meanings_are_unchanged_and_selected_ones_are_distinct
+    html::tree_construction::in_body_div_successor_production::selected_support_appears_only_in_the_proved_cells
+    html::tree_construction::validation::accepted_gold_sources_reach_their_required_completion
+    html::tree_construction::validation::admission_refuses_unproved_token_shapes_before_any_mode_runs
+    html::tree_construction::validation::g10_structural_bounds_hold_without_any_tree_resource_limit
+    html::tree_construction::validation::g8_freezes_the_terminal_checkpoint_and_leaks_no_unsupported_identity
+    html::tree_construction::validation::g8_keeps_tokenizer_coverage_and_committed_tree_coverage_distinct
+    html::tree_construction::validation::g9_repeat_runs_preserve_semantic_creation_correspondence
+    html::tree_construction::validation::gold_cases_match_exactly
+    html::tree_construction::validation::semantic_relationships_survive_private_storage_replacement
+    html::tree_construction::validation::synthesized_and_root_nodes_carry_no_authored_source
+    html::tree_construction::validation::unproved_token_shapes_remain_explicit_tree_unsupported
+
+test result: FAILED. 1555 passed; 15 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.56s
+
+error: test failed, to rerun pass `--lib`
+
+EXIT_STATUS=101
