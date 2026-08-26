@@ -1,0 +1,210 @@
+name: TC-S5 Documentation Restore Candidate
+
+on:
+  push:
+    branches:
+      - tooling/tc-s5-test-diagnostics
+
+permissions:
+  contents: write
+
+jobs:
+  restore-candidate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact documentation candidate
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: tooling/tc-s5-doc-restore-candidate
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Guard exact semantic head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "d7468f87988d34835dbaa0ce9fabca21dc18728e"
+          test "$(git status --porcelain)" = ""
+
+      - name: Restore predecessor comment-only blocks without changing code skeleton
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from __future__ import annotations
+
+          from difflib import SequenceMatcher
+          from pathlib import Path
+          import subprocess
+
+          BASE = "705a301f26610cc947c87e035901bec77e566969"
+          PATHS = [
+              "crates/frontend-analysis-core/src/html/tree_construction/result.rs",
+              "crates/frontend-analysis-core/src/html/tree_construction/session.rs",
+          ]
+
+          STALE = (
+              "The two categories stay separate closed sets",
+              "TC-S3 adds the selected `div`",
+              "S(k) = [html, body] ++ [div]^k",
+              "TC-S3 needed only the selected depth",
+              "named `html`, `head`, `body`, or `div`",
+              "`p`, which *is* an implied-end element",
+              "the only construction state the read-only [`classify`] gate needs",
+              "represented state contains only `html`, `body`,",
+          )
+
+          def git_show(ref: str, path: str) -> str:
+              return subprocess.check_output(
+                  ["git", "show", f"{ref}:{path}"], text=True
+              )
+
+          def is_comment_or_blank(line: str) -> bool:
+              stripped = line.strip()
+              return not stripped or stripped.startswith("//")
+
+          def is_comment(line: str) -> bool:
+              return line.strip().startswith("//")
+
+          def norm_code(line: str) -> str:
+              return " ".join(line.strip().split())
+
+          def code_skeleton(text: str) -> list[str]:
+              return [
+                  norm_code(line)
+                  for line in text.splitlines()
+                  if not is_comment_or_blank(line)
+              ]
+
+          def restore(path: str) -> None:
+              base_text = git_show(BASE, path)
+              current_text = Path(path).read_text()
+              base = base_text.splitlines()
+              current = current_text.splitlines()
+
+              base_code = [(i, norm_code(line)) for i, line in enumerate(base) if not is_comment_or_blank(line)]
+              current_code = [(i, norm_code(line)) for i, line in enumerate(current) if not is_comment_or_blank(line)]
+              matcher = SequenceMatcher(
+                  a=[line for _, line in base_code],
+                  b=[line for _, line in current_code],
+                  autojunk=False,
+              )
+              mapping: dict[int, int] = {}
+              for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+                  if tag != "equal":
+                      continue
+                  for offset in range(i2 - i1):
+                      mapping[base_code[i1 + offset][0]] = current_code[j1 + offset][0]
+
+              blocks: list[tuple[int, int, list[str]]] = []
+              i = 0
+              while i < len(base):
+                  if not is_comment_or_blank(base[i]):
+                      i += 1
+                      continue
+                  start = i
+                  while i < len(base) and is_comment_or_blank(base[i]):
+                      i += 1
+                  block = base[start:i]
+                  if any(is_comment(line) for line in block):
+                      blocks.append((start, i, block))
+
+              insertions: list[tuple[int, list[str]]] = []
+              restored = 0
+              skipped_stale = 0
+              skipped_ambiguous = 0
+              for start, end, block in blocks:
+                  block_text = "\n".join(block)
+                  if any(marker in block_text for marker in STALE):
+                      skipped_stale += 1
+                      continue
+
+                  prev_code = next(
+                      (idx for idx in range(start - 1, -1, -1) if not is_comment_or_blank(base[idx])),
+                      None,
+                  )
+                  next_code = next(
+                      (idx for idx in range(end, len(base)) if not is_comment_or_blank(base[idx])),
+                      None,
+                  )
+                  if prev_code is None or next_code is None:
+                      skipped_ambiguous += 1
+                      continue
+                  if prev_code not in mapping or next_code not in mapping:
+                      skipped_ambiguous += 1
+                      continue
+
+                  cur_prev = mapping[prev_code]
+                  cur_next = mapping[next_code]
+                  if cur_prev >= cur_next:
+                      skipped_ambiguous += 1
+                      continue
+                  gap = current[cur_prev + 1 : cur_next]
+                  if any(line.strip() for line in gap):
+                      # Current code or current documentation already owns this gap.
+                      skipped_ambiguous += 1
+                      continue
+
+                  payload = list(block)
+                  # Avoid duplicating leading/trailing blank lines around the insertion.
+                  while payload and not payload[0].strip() and cur_prev + 1 < len(current) and not current[cur_prev + 1].strip():
+                      payload.pop(0)
+                  while payload and not payload[-1].strip() and cur_next > 0 and not current[cur_next - 1].strip():
+                      payload.pop()
+                  if not payload or not any(is_comment(line) for line in payload):
+                      continue
+                  insertions.append((cur_next, payload))
+                  restored += 1
+
+              for index, payload in sorted(insertions, key=lambda item: item[0], reverse=True):
+                  current[index:index] = payload
+
+              merged = "\n".join(current) + "\n"
+              if code_skeleton(merged) != code_skeleton(current_text):
+                  raise SystemExit(f"{path}: documentation restore changed Rust code skeleton")
+              Path(path).write_text(merged)
+              print(
+                  f"{path}: restored_blocks={restored} "
+                  f"skipped_stale={skipped_stale} skipped_ambiguous={skipped_ambiguous}"
+              )
+
+          for path in PATHS:
+              restore(path)
+          PY
+
+          git diff --name-only | sort > /tmp/actual-paths
+          printf '%s\n' \
+            crates/frontend-analysis-core/src/html/tree_construction/result.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/session.rs \
+            | sort > /tmp/expected-paths
+          diff -u /tmp/expected-paths /tmp/actual-paths
+
+      - name: Install accepted Rust toolchain
+        run: rustup toolchain install 1.97.1 --profile minimal --component rustfmt
+
+      - name: Format and re-check code-only delta
+        shell: bash
+        run: |
+          set -euo pipefail
+          before_result="$(grep -vE '^[[:space:]]*//' crates/frontend-analysis-core/src/html/tree_construction/result.rs | sed '/^[[:space:]]*$/d' | sha256sum | cut -d' ' -f1)"
+          before_session="$(grep -vE '^[[:space:]]*//' crates/frontend-analysis-core/src/html/tree_construction/session.rs | sed '/^[[:space:]]*$/d' | sha256sum | cut -d' ' -f1)"
+          cargo fmt --all
+          cargo fmt --all -- --check
+          after_result="$(grep -vE '^[[:space:]]*//' crates/frontend-analysis-core/src/html/tree_construction/result.rs | sed '/^[[:space:]]*$/d' | sha256sum | cut -d' ' -f1)"
+          after_session="$(grep -vE '^[[:space:]]*//' crates/frontend-analysis-core/src/html/tree_construction/session.rs | sed '/^[[:space:]]*$/d' | sha256sum | cut -d' ' -f1)"
+          test "$before_result" = "$after_result"
+          test "$before_session" = "$after_session"
+          git diff --name-only | sort > /tmp/actual-paths
+          diff -u /tmp/expected-paths /tmp/actual-paths
+
+      - name: Commit documentation-only candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Yuto"
+          git config user.email "msc_prop@proton.me"
+          git add \
+            crates/frontend-analysis-core/src/html/tree_construction/result.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/session.rs
+          git commit -m "docs(html): restore predecessor tree-construction rationale"
+          git push origin HEAD:tooling/tc-s5-doc-restore-candidate
