@@ -82,7 +82,10 @@ enum Origin {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum NodeKind {
     Document,
-    Element { name: Name, origin: Origin },
+    Element {
+        name: Name,
+        origin: Origin,
+    },
     Text {
         interpreted: String,
         contributions: Vec<Evidence>,
@@ -404,7 +407,8 @@ impl Machine {
     fn assert_invariant(&self) {
         let valid = match self.phase {
             Phase::BeforeBody => {
-                self.open.len() == 1 && self.open.first().map(|id| self.name(*id)) == Some(Name::Html)
+                self.open.len() == 1
+                    && self.open.first().map(|id| self.name(*id)) == Some(Name::Html)
             }
             Phase::InBody | Phase::AfterBody | Phase::AfterAfterBody => self.assert_bounded_stack(),
         };
@@ -464,8 +468,8 @@ impl Machine {
             .filter(|node| node.parent == Some(parent))
             .max_by_key(|node| node.id)
             .map(|node| node.id);
-        let adjacent = last_direct_child
-            .filter(|id| matches!(self.node(*id).kind, NodeKind::Text { .. }));
+        let adjacent =
+            last_direct_child.filter(|id| matches!(self.node(*id).kind, NodeKind::Text { .. }));
         if let Some(id) = adjacent {
             if let NodeKind::Text {
                 interpreted: existing,
@@ -500,7 +504,8 @@ impl Machine {
         assert!(self.current_is_p());
         let target = self.current();
         self.open.pop();
-        self.actions.push(Action::ParagraphClose { target, trigger });
+        self.actions
+            .push(Action::ParagraphClose { target, trigger });
     }
 
     fn close_block(&mut self, name: Name, trigger: Evidence) {
@@ -578,7 +583,10 @@ impl Machine {
             }
             HtmlToken::EndOfFile(eof) => {
                 if self.has_open_block() {
-                    self.push_diagnostic(DiagnosticKind::OpenBlockAtEof, Some(evidence(eof.source())));
+                    self.push_diagnostic(
+                        DiagnosticKind::OpenBlockAtEof,
+                        Some(evidence(eof.source())),
+                    );
                 }
                 Ok(true)
             }
@@ -906,7 +914,10 @@ fn authority_and_independence_are_frozen() {
         PINNED_WHATWG_BLOB,
         "68dbcb98bbe1001c6ae2531be2368c608fbafddd"
     );
-    assert_eq!(FRESH_WHATWG_HEAD, "ae6c5d8ddfe6c819730f8f766d550dd1417e66c9");
+    assert_eq!(
+        FRESH_WHATWG_HEAD,
+        "ae6c5d8ddfe6c819730f8f766d550dd1417e66c9"
+    );
     assert_eq!(FRESH_WPT_HEAD, "719d5e38fdd0903a18ed9007aba816c98cc491e0");
 
     let source = include_str!("in_body_body_end_open_stack_successor_validation.rs");
@@ -919,15 +930,26 @@ fn authority_and_independence_are_frozen() {
         ["tree_construction", "::result"].concat(),
     ];
     for forbidden in forbidden {
-        assert!(!source.contains(&forbidden), "forbidden oracle: {forbidden}");
+        assert!(
+            !source.contains(&forbidden),
+            "forbidden oracle: {forbidden}"
+        );
     }
 }
 
 #[test]
 fn s7_01_to_s7_06_body_end_preserves_exact_stack_and_diagnostic_cardinality() {
     let cases = [
-        ("<body><p></body>", vec![Name::Html, Name::Body, Name::P], 0usize),
-        ("<body><div></body>", vec![Name::Html, Name::Body, Name::Div], 1),
+        (
+            "<body><p></body>",
+            vec![Name::Html, Name::Body, Name::P],
+            0usize,
+        ),
+        (
+            "<body><div></body>",
+            vec![Name::Html, Name::Body, Name::Div],
+            1,
+        ),
         (
             "<body><section></body>",
             vec![Name::Html, Name::Body, Name::Section],
@@ -958,7 +980,8 @@ fn s7_01_to_s7_06_body_end_preserves_exact_stack_and_diagnostic_cardinality() {
             observation
                 .diagnostics
                 .iter()
-                .filter(|diagnostic| diagnostic.kind == DiagnosticKind::BodyEndWithDisallowedOpenElements)
+                .filter(|diagnostic| diagnostic.kind
+                    == DiagnosticKind::BodyEndWithDisallowedOpenElements)
                 .count(),
             body_diagnostics,
             "{source}"
@@ -1003,8 +1026,16 @@ fn s7_09_to_s7_12_whitespace_delegation_keeps_after_body_and_retained_parent() {
         assert_eq!(observation.reprocess_count, 0, "{source:?}");
         assert!(!diagnostic_kinds(&observation).contains(&DiagnosticKind::AfterBodyCharacterData));
         let text = text_nodes(&observation).last().expect("delegated text");
-        assert_eq!(parent_name(&observation, text), expected_parent, "{source:?}");
-        let NodeKind::Text { interpreted, contributions } = &text.kind else {
+        assert_eq!(
+            parent_name(&observation, text),
+            expected_parent,
+            "{source:?}"
+        );
+        let NodeKind::Text {
+            interpreted,
+            contributions,
+        } = &text.kind
+        else {
             panic!("text node")
         };
         assert_eq!(interpreted, expected_text, "{source:?}");
@@ -1056,7 +1087,10 @@ fn s7_16_mixed_aggregate_refusal_is_exactly_transactional() {
 #[test]
 fn s7_17_s7_18_html_end_moves_after_after_body_without_popping_retained_stack() {
     let cases = [
-        ("<body><p></body></html>", vec![Name::Html, Name::Body, Name::P]),
+        (
+            "<body><p></body></html>",
+            vec![Name::Html, Name::Body, Name::P],
+        ),
         (
             "<body><div></body></html>",
             vec![Name::Html, Name::Body, Name::Div],
@@ -1067,10 +1101,12 @@ fn s7_17_s7_18_html_end_moves_after_after_body_without_popping_retained_stack() 
         assert_complete(&observation);
         assert_eq!(observation.phase, Phase::AfterAfterBody);
         assert_eq!(open_names(&observation), expected_open);
-        assert!(observation
-            .actions
-            .iter()
-            .any(|action| matches!(action, Action::HtmlEndTransition { .. })));
+        assert!(
+            observation
+                .actions
+                .iter()
+                .any(|action| matches!(action, Action::HtmlEndTransition { .. }))
+        );
     }
 }
 
@@ -1079,12 +1115,20 @@ fn s7_19_to_s7_22_later_in_body_actions_prove_original_nodes_remained_open() {
     let p = observe("<body><p></body>x</p>", 1);
     assert_complete(&p);
     assert_eq!(open_names(&p), vec![Name::Html, Name::Body]);
-    assert!(p.actions.iter().any(|action| matches!(action, Action::ParagraphClose { .. })));
+    assert!(
+        p.actions
+            .iter()
+            .any(|action| matches!(action, Action::ParagraphClose { .. }))
+    );
 
     let div = observe("<body><div></body>x</div>", 1);
     assert_complete(&div);
     assert_eq!(open_names(&div), vec![Name::Html, Name::Body]);
-    assert!(div.actions.iter().any(|action| matches!(action, Action::BlockClose { .. })));
+    assert!(
+        div.actions
+            .iter()
+            .any(|action| matches!(action, Action::BlockClose { .. }))
+    );
 
     let recovered = observe("<body><div><section></body>x</div>", 1);
     assert_complete(&recovered);
@@ -1117,10 +1161,7 @@ fn s7_19_to_s7_22_later_in_body_actions_prove_original_nodes_remained_open() {
 fn s7_23_to_s7_26_shape_and_non_candidate_crossings_refuse_before_mutation() {
     assert_refusal("<body><p></body id=x>", Unsupported::BodyEndAttribute);
     assert_refusal("<body><p></body/>", Unsupported::BodyEndSelfClosing);
-    assert_refusal(
-        "<body><p></html>",
-        Unsupported::HtmlEndWithOpenBoundedStack,
-    );
+    assert_refusal("<body><p></html>", Unsupported::HtmlEndWithOpenBoundedStack);
     assert_refusal(
         "<body><p><body>",
         Unsupported::BodyStartWithOpenBoundedStack,
@@ -1167,10 +1208,7 @@ fn s7_28_body_end_transition_consumes_no_constructed_identity() {
     for (without_end, with_end) in [
         ("<body><p>", "<body><p></body>"),
         ("<body><div>", "<body><div></body>"),
-        (
-            "<body><div><section><p>",
-            "<body><div><section><p></body>",
-        ),
+        ("<body><div><section><p>", "<body><div><section><p></body>"),
     ] {
         let control = observe(without_end, 1);
         let candidate = observe(with_end, 1);
@@ -1300,7 +1338,10 @@ fn s7_30_generated_candidate_matches_independent_closed_form_gold() {
                 assert_eq!(observation.phase, gold.phase, "{source}");
                 assert_eq!(open_names(&observation), gold.open, "{source}");
                 assert_eq!(diagnostic_kinds(&observation), gold.diagnostics, "{source}");
-                assert_eq!(observation.reprocess_count, gold.reprocess_count, "{source}");
+                assert_eq!(
+                    observation.reprocess_count, gold.reprocess_count,
+                    "{source}"
+                );
                 let actual_parent = text_nodes(&observation)
                     .last()
                     .map(|node| parent_name(&observation, node));
