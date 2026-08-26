@@ -403,7 +403,11 @@ impl Machine {
                 }
             }
         };
-        assert!(valid, "TC-S5 stack invariant violated: phase={:?} names={names:?}", self.phase);
+        assert!(
+            valid,
+            "TC-S5 stack invariant violated: phase={:?} names={names:?}",
+            self.phase
+        );
         let p_present = names.contains(&Name::P);
         assert_eq!(p_present, names.last() == Some(&Name::P));
     }
