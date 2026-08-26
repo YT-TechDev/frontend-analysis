@@ -24,7 +24,7 @@
 
 use crate::{SourceAnchor, SourceId, SourceText};
 
-use super::super::token::{HtmlTagKind, HtmlToken};
+use super::super::token::{HtmlTagKind, HtmlTagToken, HtmlToken};
 use super::super::tokenizer::producer::tokenize;
 use super::super::tokenizer::resource::HtmlTokenizerLimits;
 use super::super::tokenizer::result::HtmlTokenizerRunResult;
@@ -453,9 +453,15 @@ impl Machine {
 
     fn insert_text(&mut self, interpreted: &str, contribution: Evidence) {
         let parent = self.current();
-        let adjacent = self.slots.iter().flatten().rev().find_map(|node| {
-            (node.parent == Some(parent) && matches!(node.kind, NodeKind::Text { .. }))
-                .then_some(node.id)
+        let last_direct_child = self
+            .slots
+            .iter()
+            .flatten()
+            .filter(|node| node.parent == Some(parent))
+            .max_by_key(|node| node.id)
+            .map(|node| node.id);
+        let adjacent = last_direct_child.filter(|id| {
+            matches!(self.node(*id).kind, NodeKind::Text { .. })
         });
 
         if let Some(id) = adjacent {
@@ -525,7 +531,11 @@ impl Machine {
         if !tag.attributes().is_empty() || tag.self_closing_solidus().is_some() {
             return Err(Unsupported::OutsideCandidate);
         }
-        let body = self.insert_authored(Name::Body, evidence(tag.complete()), evidence(tag.name().source()));
+        let body = self.insert_authored(
+            Name::Body,
+            evidence(tag.complete()),
+            evidence(tag.name().source()),
+        );
         assert_eq!(self.current(), body);
         self.phase = Phase::InBody;
         Ok(false)
@@ -644,10 +654,7 @@ fn interpreted_name(name: &str) -> Result<Name, Unsupported> {
     }
 }
 
-fn reject_tag_shape(
-    name: Name,
-    tag: &super::super::token::HtmlTag,
-) -> Result<(), Unsupported> {
+fn reject_tag_shape(name: Name, tag: &HtmlTagToken) -> Result<(), Unsupported> {
     if !tag.attributes().is_empty() {
         return Err(match (tag.kind(), name) {
             (HtmlTagKind::Start, Name::P) => Unsupported::PStartAttribute,
@@ -685,10 +692,7 @@ fn tokenize_source(source: &str, source_id: u64) -> HtmlTokenizerRunResult {
     )
 }
 
-fn observe_with_layout(
-    run: &HtmlTokenizerRunResult,
-    layout: StorageLayout,
-) -> Observation {
+fn observe_with_layout(run: &HtmlTokenizerRunResult, layout: StorageLayout) -> Observation {
     let mut machine = Machine::new(layout);
     let mut refusal = None;
     let mut stopped = false;
@@ -755,15 +759,7 @@ fn p_nodes(observation: &Observation) -> Vec<&Node> {
     observation
         .nodes
         .iter()
-        .filter(|node| {
-            matches!(
-                node.kind,
-                NodeKind::Element {
-                    name: Name::P,
-                    ..
-                }
-            )
-        })
+        .filter(|node| matches!(node.kind, NodeKind::Element { name: Name::P, .. }))
         .collect()
 }
 
@@ -846,11 +842,20 @@ fn p1_authored_p_lifecycle_and_text_provenance_are_exact() {
     assert_eq!(*raw_name, expected_evidence(11, (7, 8)));
     assert_eq!(observation.p_closures.len(), 1);
     assert_eq!(observation.p_closures[0].kind, PClosureKind::MatchingEnd);
-    assert_eq!(observation.p_closures[0].trigger, expected_evidence(11, (10, 14)));
+    assert_eq!(observation.p_closures[0].token_index, 3);
+    assert_eq!(
+        observation.p_closures[0].trigger,
+        expected_evidence(11, (10, 14))
+    );
     let text = text_nodes(&observation)[0];
-    let NodeKind::Text { contributions, .. } = &text.kind else {
+    let NodeKind::Text {
+        interpreted,
+        contributions,
+    } = &text.kind
+    else {
         panic!("text node")
     };
+    assert_eq!(interpreted, "x");
     assert_eq!(contributions, &vec![expected_evidence(11, (9, 10))]);
 }
 
@@ -862,7 +867,10 @@ fn p2_interpreted_name_is_case_insensitive_but_raw_name_range_is_preserved() {
     };
     assert_eq!(start.name().interpreted(), "p");
     assert_eq!(evidence(start.complete()), expected_evidence(12, (6, 9)));
-    assert_eq!(evidence(start.name().source()), expected_evidence(12, (7, 8)));
+    assert_eq!(
+        evidence(start.name().source()),
+        expected_evidence(12, (7, 8))
+    );
     assert_complete(&observe_with_layout(&run, StorageLayout::COMPACT));
 }
 
@@ -919,6 +927,7 @@ fn p7_unmatched_end_synthesizes_source_less_p_then_closes_it() {
     let observation = observe_fixture("P7", 21);
     assert_complete(&observation);
     assert_eq!(observation.p_syntheses.len(), 1);
+    assert_eq!(observation.p_syntheses[0].token_index, 1);
     assert_eq!(observation.p_closures.len(), 1);
     assert_eq!(
         observation.p_closures[0].kind,
@@ -955,25 +964,18 @@ fn p8_synthesized_p_is_placed_under_actual_current_block() {
         .find(|node| node.id == synthesized)
         .expect("synthesized P");
     let parent = p.parent.expect("P parent");
-    assert_eq!(
-        observation
-            .nodes
-            .iter()
-            .find(|node| node.id == parent)
-            .map(|node| &node.kind),
-        Some(&NodeKind::Element {
+    let parent_node = observation
+        .nodes
+        .iter()
+        .find(|node| node.id == parent)
+        .expect("P parent node");
+    assert!(matches!(
+        parent_node.kind,
+        NodeKind::Element {
             name: Name::Div,
-            origin: observation
-                .nodes
-                .iter()
-                .find(|node| node.id == parent)
-                .and_then(|node| match &node.kind {
-                    NodeKind::Element { origin, .. } => Some(origin.clone()),
-                    _ => None,
-                })
-                .expect("div origin"),
-        })
-    );
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -981,7 +983,10 @@ fn p9_repeated_stray_end_tags_create_distinct_synthesized_identities() {
     let observation = observe_fixture("P9", 1);
     assert_complete(&observation);
     assert_eq!(observation.p_syntheses.len(), 2);
-    assert_ne!(observation.p_syntheses[0].node, observation.p_syntheses[1].node);
+    assert_ne!(
+        observation.p_syntheses[0].node,
+        observation.p_syntheses[1].node
+    );
     assert_eq!(
         observation
             .diagnostics
@@ -1020,14 +1025,22 @@ fn p10_p_only_eof_leaves_p_open_without_p_diagnostic_or_closure() {
     assert!(observation.p_closures.is_empty());
     assert!(observation.p_syntheses.is_empty());
     assert!(!observation.diagnostics.contains(&Diagnostic::UnmatchedPEnd));
-    assert!(!observation.diagnostics.contains(&Diagnostic::OpenBlockAtEof));
+    assert!(
+        !observation
+            .diagnostics
+            .contains(&Diagnostic::OpenBlockAtEof)
+    );
 }
 
 #[test]
 fn p11_open_block_eof_diagnostic_remains_distinct_from_p() {
     let observation = observe_fixture("P11", 1);
     assert_complete(&observation);
-    assert!(observation.diagnostics.contains(&Diagnostic::OpenBlockAtEof));
+    assert!(
+        observation
+            .diagnostics
+            .contains(&Diagnostic::OpenBlockAtEof)
+    );
     assert!(!observation.diagnostics.contains(&Diagnostic::UnmatchedPEnd));
     assert!(observation.p_closures.is_empty());
 }
@@ -1064,7 +1077,14 @@ fn p19_predecessor_heterogeneous_recovery_remains_separate() {
     assert!(observation.p_closures.is_empty());
     assert!(observation.p_syntheses.is_empty());
     assert_eq!(observation.block_recovery.len(), 1);
-    assert!(observation.diagnostics.contains(&Diagnostic::MisnestedBlockEnd));
+    let recovery = &observation.block_recovery[0];
+    assert_ne!(recovery.popped, recovery.target);
+    assert_eq!(recovery.token_index, 3);
+    assert!(
+        observation
+            .diagnostics
+            .contains(&Diagnostic::MisnestedBlockEnd)
+    );
 }
 
 #[test]
@@ -1109,10 +1129,7 @@ fn semantic_identity_is_independent_from_private_storage_padding() {
 #[test]
 fn lower_layer_incompleteness_is_never_upgraded_to_complete() {
     let source = SourceText::new(SourceId::new(1), "<body><p>xxxxxxxx".to_owned());
-    let run = tokenize(
-        &source,
-        HtmlTokenizerLimits::new(1, 1, 1, 1, 1, 1, 1),
-    );
+    let run = tokenize(&source, HtmlTokenizerLimits::new(1, 1, 1, 1, 1, 1, 1));
     assert!(run.is_incomplete());
     let observation = observe_with_layout(&run, StorageLayout::COMPACT);
     assert_ne!(observation.completion, Completion::Complete);
