@@ -1707,9 +1707,8 @@ fn predecessor_capability_meanings_are_unchanged_and_apply_to_section() {
             "<body><section></body>",
             HtmlTreeCapability::ShellTagWithOpenSelectedOrdinaryElement,
         ),
-        // Names outside both closed domains keep the frozen predecessor
-        // meaning: the selected domain grew by exactly one member.
-        ("<body><p>", HtmlTreeCapability::NonShellElementTag),
+        // Non-P names outside the selected-ordinary and Paragraph domains
+        // keep the frozen unproved-name meaning.
         ("<body><span>", HtmlTreeCapability::NonShellElementTag),
         ("<body><article>", HtmlTreeCapability::NonShellElementTag),
         ("<body></article>", HtmlTreeCapability::NonShellElementTag),
@@ -1729,10 +1728,11 @@ fn predecessor_capability_meanings_are_unchanged_and_apply_to_section() {
 
 #[test]
 fn the_selected_domain_is_closed_at_div_and_section() {
-    // Anything that merely looks like a block element stays outside.
+    // Anything outside the dedicated Paragraph successor that merely looks
+    // like a block element stays outside the selected ordinary domain.
     for name in [
-        "p", "span", "article", "aside", "main", "nav", "header", "footer", "sections", "divs",
-        "sec", "SECTIONS",
+        "span", "article", "aside", "main", "nav", "header", "footer", "sections", "divs", "sec",
+        "SECTIONS",
     ] {
         let source = format!("<body><{name}>");
         let analysis = analyze_with(&source, 1);
@@ -1748,6 +1748,30 @@ fn the_selected_domain_is_closed_at_div_and_section() {
             "{source:?}"
         );
     }
+
+    let paragraph = analyze("<body><p>");
+    assert!(paragraph.is_complete());
+    assert!(
+        paragraph
+            .nodes_in_creation_order()
+            .into_iter()
+            .any(|node| matches!(
+                node.kind(),
+                HtmlTreeNodeKind::Element(HtmlElement::Paragraph(_))
+            ))
+    );
+    assert_eq!(
+        paragraph
+            .nodes_in_creation_order()
+            .into_iter()
+            .filter(|node| matches!(
+                node.kind(),
+                HtmlTreeNodeKind::Element(HtmlElement::SelectedOrdinary(_))
+            ))
+            .count(),
+        0,
+        "Paragraph support is a separate domain, not a third selected-ordinary name"
+    );
 }
 
 // ---------------------------------------------------------------------------

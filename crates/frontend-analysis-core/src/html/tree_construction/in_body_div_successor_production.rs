@@ -1062,29 +1062,52 @@ fn dv10_body_close_with_an_open_selected_element_commits_no_partial_mutation() {
 }
 
 // ---------------------------------------------------------------------------
-// DV11 - `<p>` remains unsupported
+// DV11 - historical TC-S3 P boundary, superseded by TC-S5 production
 // ---------------------------------------------------------------------------
 
 #[test]
-fn dv11_p_remains_unsupported() {
-    // `<body><p>`
-    //  0     6   9
-    check(&ExpectedRun {
-        id: "DV11",
-        source: "<body><p>",
-        tree: shell_with_authored_body(vec![]),
-        actions: shell_prelude_actions(),
-        diagnostics: vec![missing_doctype_at(0, (0, 6))],
-        closures: vec![],
-        node_count: 4,
-        committed_end: 6,
-        processed_tokens: 1,
-        completion: ExpectedCompletion::Unsupported {
-            capability: HtmlTreeCapability::NonShellElementTag,
-            token: 1,
-            trigger: Some((6, 9)),
-        },
-    });
+fn dv11_historical_p_boundary_is_now_owned_by_tc_s5_without_widening_selected_domain() {
+    let analysis = analyze("<body><p>");
+    assert!(analysis.is_complete());
+    assert_eq!(analysis.node_count(), 5);
+    assert_eq!(analysis.coverage().committed_end(), 9);
+
+    let paragraph = analysis
+        .nodes_in_creation_order()
+        .into_iter()
+        .find(|node| {
+            matches!(
+                node.kind(),
+                HtmlTreeNodeKind::Element(HtmlElement::Paragraph(_))
+            )
+        })
+        .expect("TC-S5 constructs the authored P");
+    let Some(HtmlAuthoredSource::StartTag { complete, raw_name }) = paragraph.authored_source()
+    else {
+        panic!("the authored P keeps its own source evidence")
+    };
+    assert_eq!(span(complete), (6, 9));
+    assert_eq!(span(raw_name), (7, 8));
+    assert_eq!(
+        analysis
+            .nodes_in_creation_order()
+            .into_iter()
+            .filter(|node| matches!(
+                node.kind(),
+                HtmlTreeNodeKind::Element(HtmlElement::SelectedOrdinary(_))
+            ))
+            .count(),
+        0,
+        "TC-S5 P support does not widen the selected ordinary div/section domain"
+    );
+    assert_eq!(
+        project_diagnostics(&analysis),
+        vec![missing_doctype_at(0, (0, 6))]
+    );
+    assert!(analysis.actions().iter().any(|action| matches!(
+        action.kind(),
+        HtmlTreeActionKind::InsertedAuthoredParagraphElement { .. }
+    )));
 }
 
 // ---------------------------------------------------------------------------
@@ -1488,9 +1511,7 @@ fn selected_support_appears_only_in_the_proved_cells() {
             "<body><div></html>",
             HtmlTreeCapability::ShellTagWithOpenSelectedOrdinaryElement,
         ),
-        // Names outside both closed domains stay unproved.
-        ("<body><p>", HtmlTreeCapability::NonShellElementTag),
-        ("<body><div><p>", HtmlTreeCapability::NonShellElementTag),
+        // Non-P names outside the selected-ordinary and Paragraph domains stay unproved.
         ("<body><span>", HtmlTreeCapability::NonShellElementTag),
     ] {
         let analysis = analyze(source_text);
@@ -2448,9 +2469,10 @@ fn predecessor_capability_meanings_are_unchanged_and_selected_ones_are_distinct(
     // selected ordinary syntax boundary reports its own variants instead of
     // borrowing a shell-specific one.
     for (source_text, expected) in [
-        // Frozen predecessor meanings.
-        ("<body><p>", HtmlTreeCapability::NonShellElementTag),
-        ("</p>", HtmlTreeCapability::NonShellElementTag),
+        // Frozen non-P predecessor meaning.
+        ("<body><span>", HtmlTreeCapability::NonShellElementTag),
+        // TC-S5 recognizes P, but P outside actual InBody is still a transactional refusal.
+        ("</p>", HtmlTreeCapability::ParagraphTagOutsideInBody),
         ("<body a>", HtmlTreeCapability::ShellTagAttribute),
         ("<html lang=en>", HtmlTreeCapability::ShellTagAttribute),
         ("<body/>", HtmlTreeCapability::SelfClosingShellTag),
