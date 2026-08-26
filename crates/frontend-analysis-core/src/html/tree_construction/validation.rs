@@ -332,6 +332,9 @@ fn project_tree(analysis: &HtmlDocumentShellAnalysis, id: HtmlConstructedNodeId)
             ),
             children,
         },
+        HtmlTreeNodeKind::Element(HtmlElement::Paragraph(_)) => {
+            panic!("the TC-S1 predecessor GOLD never constructs a TC-S5 Paragraph")
+        }
         HtmlTreeNodeKind::Text(text) => GoldNode::Text {
             // Leaked back as a `&'static str` is impossible, so the comparison
             // below uses the owned projection instead; this arm exists only so
@@ -441,6 +444,9 @@ fn project_diagnostics(analysis: &HtmlDocumentShellAnalysis) -> Vec<GoldDiagnost
             | HtmlTreeDiagnosticCode::OpenSelectedOrdinaryElementAtEndOfFile
             | HtmlTreeDiagnosticCode::MisnestedSelectedOrdinaryEndTag => {
                 panic!("the TC-S1 predecessor GOLD never produces a selected ordinary diagnostic")
+            }
+            HtmlTreeDiagnosticCode::UnmatchedParagraphEndTag => {
+                panic!("the TC-S1 predecessor GOLD never produces a TC-S5 Paragraph diagnostic")
             }
         })
         .collect()
@@ -746,6 +752,9 @@ fn synthesized_and_root_nodes_carry_no_authored_source() {
                 ),
                 HtmlTreeNodeKind::Element(HtmlElement::SelectedOrdinary(_)) => {
                     unreachable!("no TC-S1 GOLD case constructs a selected ordinary element")
+                }
+                HtmlTreeNodeKind::Element(HtmlElement::Paragraph(_)) => {
+                    unreachable!("no TC-S1 GOLD case constructs a TC-S5 Paragraph")
                 }
                 HtmlTreeNodeKind::Element(HtmlElement::Shell(shell)) => match shell.origin() {
                     HtmlShellElementOrigin::Synthesized(_) => assert!(
@@ -1557,6 +1566,7 @@ fn valid_parts(fixture: &FreezeFixture) -> HtmlDocumentShellParts {
         completion: HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete),
         // TC-S1 shell parts open no selected ordinary element.
         final_open_selected_ordinary: Vec::new(),
+        final_open_paragraph: None,
     }
 }
 

@@ -131,6 +131,7 @@ fn render_node(
                     HtmlSelectedOrdinaryElementName::Div => "div",
                     HtmlSelectedOrdinaryElementName::Section => "section",
                 },
+                HtmlElement::Paragraph(_) => "p",
             });
             match node.authored_source() {
                 Some(HtmlAuthoredSource::StartTag { complete, raw_name }) => {

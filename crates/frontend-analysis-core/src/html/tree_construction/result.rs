@@ -2054,27 +2054,25 @@ fn validate_paragraph_lifecycle(
                     let same = next.trigger().token_index() == action.trigger().token_index()
                         && same_trigger(next.trigger(), action.trigger());
                     let expected = retained_start_tag_name(action.trigger(), tokenizer_run);
-                    let next_matches = match (expected, next.kind()) {
+                    let next_matches = matches!(
+                        (expected, next.kind()),
                         (
                             Some("p"),
                             HtmlTreeActionKind::InsertedAuthoredParagraphElement { .. },
-                        ) => true,
-                        (
+                        ) | (
                             Some("div"),
                             HtmlTreeActionKind::InsertedAuthoredSelectedOrdinaryElement {
                                 name: HtmlSelectedOrdinaryElementName::Div,
                                 ..
                             },
-                        ) => true,
-                        (
+                        ) | (
                             Some("section"),
                             HtmlTreeActionKind::InsertedAuthoredSelectedOrdinaryElement {
                                 name: HtmlSelectedOrdinaryElementName::Section,
                                 ..
                             },
-                        ) => true,
-                        _ => false,
-                    };
+                        )
+                    );
                     if !same || !next_matches {
                         return Err(
                             HtmlTreeFreezeError::ParagraphStartTriggeredInsertionMismatch {
