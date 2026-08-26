@@ -1,12 +1,12 @@
 //! The private TC-S1 tree-construction session, with its accepted TC-S2,
-//! TC-S3, and TC-S4 successors.
+//! TC-S3, TC-S4, and TC-S5 successors.
 //!
 //! The session exclusively owns every piece of mutable tree-construction
 //! state for exactly one run: the insertion mode, the open elements — the
-//! shell plus TC-S3's selected ordinary elements — the head pointer, the
-//! private document mode and `frameset-ok` flag, the constructed identity
-//! counter, the temporary node storage, and the committed diagnostics,
-//! actions, and coverage.
+//! shell, TC-S3/TC-S4's selected ordinary elements, and TC-S5's bounded
+//! Paragraph — the head pointer, the private document mode and `frameset-ok`
+//! flag, the constructed identity counter, the temporary node storage, and the
+//! committed diagnostics, actions, and coverage.
 //!
 //! Ownership boundaries this module keeps:
 //!
@@ -24,15 +24,17 @@
 //! now two distinct gates:
 //!
 //! 1. [`admit`] is *pure lexical admission*. It is a function of the validated
-//!    token alone, reads no construction state, and recognizes exactly the two
-//!    closed categories [`AdmittedElementName::Shell`] and
-//!    [`AdmittedElementName::SelectedOrdinary`] while propagating the token's
-//!    exact evidence. Unsupported tag syntax — an unproved name, attributes, a
+//!    token alone, reads no construction state, and recognizes exactly the
+//!    three closed categories [`AdmittedElementName::Shell`],
+//!    [`AdmittedElementName::SelectedOrdinary`], and
+//!    [`AdmittedElementName::Paragraph`] while propagating the token's exact
+//!    evidence. Unsupported tag syntax — an unproved name, attributes, a
 //!    self-closing solidus — is refused here.
 //! 2. [`classify`] is *read-only selection*. It is a free function of the
 //!    actual insertion mode, the already-read ordered names of the open
-//!    selected ordinary elements, and the admitted token: it takes no `&self`,
-//!    performs no mutation, and returns either the step to apply or the
+//!    selected ordinary elements, the bounded fact that a Paragraph is
+//!    current, and the admitted token: it takes no `&self`, performs no
+//!    mutation, and returns either the step to apply or the
 //!    [`HtmlTreeCapability`] this subsystem does not prove.
 //!
 //! TC-S4 adds a third separation inside the mutating half. A supported
@@ -42,6 +44,13 @@
 //! invariant — and only then commits, in one stack mutation followed by the
 //! ordered evidence. There is no partial pop, no rollback, and no state to
 //! reconstruct after a refusal.
+//!
+//! TC-S5 keeps that pattern. Cells with more than one semantic effect use one
+//! focused compound effect, but every fallible part of the node insertion is
+//! resolved into a private [`PreparedInsertion`] before the current P is
+//! popped or an unmatched-P diagnostic is recorded. Once the first semantic
+//! mutation commits, the remainder is infallible: no rollback or generalized
+//! effect-list machinery is introduced.
 //!
 //! An unsupported cell therefore cannot mutate anything, and the session is a
 //! valid semantic construction checkpoint at every instant — no rollback,
@@ -60,23 +69,22 @@
 //! finite per-token work: the bound comes from the finite [`InsertionMode`]
 //! domain, not from a strictly-forward order or a numeric budget.
 //!
-//! TC-S4's recovery adds no work dimension either, and no budget stands behind
-//! it. Termination stays structural: the nearest-target lookup and the suffix
-//! plan each traverse the finite open-element stack once, a committed selected
-//! end removes at least its own target from that stack, and the number of
-//! recovery relations is exactly the number of elements removed above it. No
-//! same-token redispatch, tokenizer feedback, or retry is introduced.
+//! TC-S4's recovery and TC-S5's Paragraph transactions add no work dimension
+//! either. All scans traverse the finite open-element stack; TC-S5 adds no
+//! redispatch, tokenizer feedback, retry loop, generalized scope engine, or
+//! generalized implied-end generator.
 
 use crate::SourceAnchor;
 
 use super::super::token::{HtmlTagKind, HtmlToken};
 use super::result::{
     HtmlConstructedIdentityCounter, HtmlConstructedNodeId, HtmlDocumentShellParts, HtmlElement,
-    HtmlSelectedOrdinaryElement, HtmlSelectedOrdinaryElementName, HtmlShellClosure,
-    HtmlShellElement, HtmlShellElementName, HtmlShellElementOrigin, HtmlSynthesisCause,
-    HtmlTextContribution, HtmlTextNode, HtmlTreeAction, HtmlTreeActionKind, HtmlTreeCapability,
-    HtmlTreeCompletion, HtmlTreeDiagnostic, HtmlTreeDiagnosticCode, HtmlTreeNode, HtmlTreeNodeKind,
-    HtmlTreeRecovery, HtmlTreeTokenTrigger,
+    HtmlParagraphClosure, HtmlParagraphElement, HtmlParagraphElementOrigin,
+    HtmlParagraphSynthesisCause, HtmlSelectedOrdinaryElement, HtmlSelectedOrdinaryElementName,
+    HtmlShellClosure, HtmlShellElement, HtmlShellElementName, HtmlShellElementOrigin,
+    HtmlSynthesisCause, HtmlTextContribution, HtmlTextNode, HtmlTreeAction, HtmlTreeActionKind,
+    HtmlTreeCapability, HtmlTreeCompletion, HtmlTreeDiagnostic, HtmlTreeDiagnosticCode,
+    HtmlTreeNode, HtmlTreeNodeKind, HtmlTreeRecovery, HtmlTreeTokenTrigger,
 };
 
 /// The document-construction insertion modes.
@@ -114,6 +122,7 @@ pub(super) enum HtmlDocumentMode {
 pub(super) enum AdmittedElementName {
     Shell(HtmlShellElementName),
     SelectedOrdinary(HtmlSelectedOrdinaryElementName),
+    Paragraph,
 }
 
 /// A validated emitted token, normalized to the shapes this subsystem admits.
@@ -177,6 +186,20 @@ impl AdmittedToken<'_> {
         )
     }
 
+    /// Whether this token is a Paragraph tag, start or end.
+    fn is_paragraph_tag(&self) -> bool {
+        matches!(
+            self,
+            Self::StartTag {
+                name: AdmittedElementName::Paragraph,
+                ..
+            } | Self::EndTag {
+                name: AdmittedElementName::Paragraph,
+                ..
+            }
+        )
+    }
+
     /// Whether this token is a shell tag, start or end.
     fn is_shell_tag(&self) -> bool {
         matches!(
@@ -216,8 +239,7 @@ pub(super) fn admit(token: &HtmlToken) -> Result<AdmittedToken<'_>, HtmlTreeCapa
         HtmlToken::Tag(tag) => {
             // Resolve the closed name domain first, so each syntax refusal can
             // report the capability that belongs to that domain. The frozen
-            // predecessor variants keep exactly their old meaning, and a
-            // selected ordinary tag never reports a shell-specific one.
+            // predecessor variants keep exactly their old meaning.
             let Some(name) = admitted_element_name(tag.name().interpreted()) else {
                 return Err(HtmlTreeCapability::NonShellElementTag);
             };
@@ -227,6 +249,7 @@ pub(super) fn admit(token: &HtmlToken) -> Result<AdmittedToken<'_>, HtmlTreeCapa
                     AdmittedElementName::SelectedOrdinary(_) => {
                         HtmlTreeCapability::SelectedOrdinaryTagAttribute
                     }
+                    AdmittedElementName::Paragraph => HtmlTreeCapability::ParagraphTagAttribute,
                 });
             }
             if tag.self_closing_solidus().is_some() {
@@ -235,6 +258,7 @@ pub(super) fn admit(token: &HtmlToken) -> Result<AdmittedToken<'_>, HtmlTreeCapa
                     AdmittedElementName::SelectedOrdinary(_) => {
                         HtmlTreeCapability::SelfClosingSelectedOrdinaryTag
                     }
+                    AdmittedElementName::Paragraph => HtmlTreeCapability::SelfClosingParagraphTag,
                 });
             }
             match tag.kind() {
@@ -257,9 +281,12 @@ pub(super) fn admit(token: &HtmlToken) -> Result<AdmittedToken<'_>, HtmlTreeCapa
 
 /// The closed domain an interpreted tag name belongs to, if it is proved.
 ///
-/// The two categories stay separate closed sets. Nothing is admitted merely
-/// because a name looks like an element name, and no arbitrary-name or
-/// namespace-switching path exists here.
+/// Shell, selected ordinary (`Div | Section`), and Paragraph are three
+/// deliberately separate closed categories. A name is never admitted merely
+/// because it looks element-like, and this helper introduces no arbitrary-name,
+/// namespace-switching, or browser-specific path. Keeping P separate prevents
+/// its synthesized-origin semantics from contaminating the authored-only
+/// selected-ordinary contract.
 fn admitted_element_name(interpreted: &str) -> Option<AdmittedElementName> {
     match interpreted {
         "html" => Some(AdmittedElementName::Shell(HtmlShellElementName::Html)),
@@ -271,6 +298,7 @@ fn admitted_element_name(interpreted: &str) -> Option<AdmittedElementName> {
         "section" => Some(AdmittedElementName::SelectedOrdinary(
             HtmlSelectedOrdinaryElementName::Section,
         )),
+        "p" => Some(AdmittedElementName::Paragraph),
         _ => None,
     }
 }
@@ -336,6 +364,10 @@ enum ElementProvenance {
 }
 
 /// One committed effect of an insertion-mode rule.
+///
+/// TC-S5 keeps [`ModeStep`] single-effect. Multi-effect P cells are represented
+/// by focused compound effects whose complete insertion plan is resolved before
+/// the first mutation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Effect {
     RecordMissingDoctype,
@@ -353,6 +385,11 @@ enum Effect {
     RecoverInterveningSelectedOrdinaryElementsAndCloseTarget(HtmlSelectedOrdinaryElementName),
     RecordUnmatchedSelectedOrdinaryEndTag(HtmlSelectedOrdinaryElementName),
     RecordOpenSelectedOrdinaryElementAtEndOfFile,
+    InsertParagraphElement,
+    CloseParagraphElement,
+    CloseParagraphThenInsertParagraph,
+    CloseParagraphThenInsertSelectedOrdinaryElement(HtmlSelectedOrdinaryElementName),
+    SynthesizeAndCloseParagraphForUnmatchedEnd,
 }
 
 /// What an insertion-mode rule does with the current token.
@@ -370,12 +407,9 @@ enum ModeStep {
         effect: Option<Effect>,
         next: InsertionMode,
     },
-    /// Apply the effect if present, then stop document parsing at this token.
-    ///
-    /// The optional effect is what lets the accepted end-of-file branch record
-    /// its open-selected-element diagnostic while still reusing the ordinary
-    /// stop behaviour: nothing is popped, closed, or synthesized here.
-    Stop { effect: Option<Effect> },
+    Stop {
+        effect: Option<Effect>,
+    },
 }
 
 /// The selected `in body` character step: insert the token's characters and
@@ -392,31 +426,26 @@ fn selected_in_body_character_step() -> ModeStep {
     }
 }
 
-/// Selects the rule for one (insertion mode, selected-element state, admitted
-/// token) cell.
+/// Selects the proved action for one bounded construction-state/token cell.
 ///
-/// This function is the complete, exhaustive statement of the proved action
-/// set. Every cell it returns `Ok` for is a cell the accepted candidate-
-/// independent GOLD proves; every other cell returns typed unsupported
-/// evidence. Notably, no cell is admitted merely because a tag happens to be
-/// named `html`, `head`, `body`, or `div`: an admitted name reached in a
-/// document position the GOLD does not prove is refused like any other.
+/// This is the second gate after lexical [`admit`], and it is deliberately a
+/// free, read-only function. Its complete construction-state input is the
+/// actual insertion mode, the ordered `Div | Section` semantic-name projection,
+/// and one separate `paragraph_is_current` fact. It receives no mutable session
+/// reference and no constructed identity, so an unsupported result is decided
+/// before mutation and rule selection cannot accidentally depend on storage or
+/// on a relationship the transaction has not yet resolved.
 ///
-/// This is the second of the two gates. It is deliberately read-only: it
-/// borrows nothing mutable, reads the caller's already-taken ordered
-/// selected-name projection, and mutates nothing, so an unsupported result is
-/// structurally guaranteed to stop before mutation.
-///
-/// TC-S3 needed only the selected depth here, because its represented state
-/// was `[html, body] ++ [div]^k` and every selected end tag therefore matched
-/// the current node or nothing. TC-S4's represented state is `[html, body] ++
-/// W` with `W ∈ {Div, Section}*`, so selecting between the matching, the
-/// heterogeneous recovery, and the ignored cells needs the ordered names —
-/// and nothing more. The projection carries no constructed identity, so no
-/// relationship meaning can leak into rule selection.
+/// TC-S4's selected projection remains a bounded `W ∈ {Div, Section}*`; TC-S5
+/// does not widen W with P. Instead the dedicated P bit selects the few new
+/// Paragraph cells and explicitly refuses selected-end/shell crossings where
+/// the predecessor reduction would cease to be sound. This is an exhaustive
+/// statement of the currently proved action set, not general WHATWG scope or
+/// tree-construction coverage.
 fn classify(
     mode: InsertionMode,
     open_selected_ordinary: &[HtmlSelectedOrdinaryElementName],
+    paragraph_is_current: bool,
     token: &AdmittedToken<'_>,
 ) -> Result<ModeStep, HtmlTreeCapability> {
     // A selected ordinary tag is proved only in the actual `in body` mode.
@@ -425,6 +454,9 @@ fn classify(
     // recovery, a mode change, an action, coverage, or an identity.
     if !matches!(mode, InsertionMode::InBody) && token.is_selected_ordinary_tag() {
         return Err(HtmlTreeCapability::SelectedOrdinaryTagOutsideInBody);
+    }
+    if !matches!(mode, InsertionMode::InBody) && token.is_paragraph_tag() {
+        return Err(HtmlTreeCapability::ParagraphTagOutsideInBody);
     }
     match mode {
         // Every admitted token is content, and no DOCTYPE can reach TC-S1:
@@ -546,26 +578,57 @@ fn classify(
                 }),
             }
         }
-        // Inside `in body`, whitespace and non-whitespace characters are
-        // inserted identically, so a contiguous Data run needs no splitting
-        // and needs no whitespace refusal. TC-S3 adds the selected `div`
-        // start, matching end, stray end, and end-of-file branches here, and
-        // nothing else: `S(k) = [html, body] ++ [div]^k` is the whole
-        // represented state.
         InsertionMode::InBody => {
-            // No shell interaction over an open selected ordinary element is
-            // proved. Refusing before the token match keeps `</body>` with an
-            // open `div` from committing any part of the body close.
+            if paragraph_is_current && token.is_shell_tag() {
+                return Err(HtmlTreeCapability::ShellTagWithOpenParagraphElement);
+            }
             if !open_selected_ordinary.is_empty() && token.is_shell_tag() {
                 return Err(HtmlTreeCapability::ShellTagWithOpenSelectedOrdinaryElement);
+            }
+            if paragraph_is_current
+                && matches!(
+                    token,
+                    AdmittedToken::EndTag {
+                        name: AdmittedElementName::SelectedOrdinary(_),
+                        ..
+                    }
+                )
+            {
+                return Err(HtmlTreeCapability::SelectedOrdinaryEndTagWithOpenParagraphElement);
             }
             match token {
                 AdmittedToken::Characters { .. } => Ok(selected_in_body_character_step()),
                 AdmittedToken::StartTag {
+                    name: AdmittedElementName::Paragraph,
+                    ..
+                } => Ok(ModeStep::Consume {
+                    effect: Some(if paragraph_is_current {
+                        Effect::CloseParagraphThenInsertParagraph
+                    } else {
+                        Effect::InsertParagraphElement
+                    }),
+                    next: None,
+                }),
+                AdmittedToken::EndTag {
+                    name: AdmittedElementName::Paragraph,
+                    ..
+                } => Ok(ModeStep::Consume {
+                    effect: Some(if paragraph_is_current {
+                        Effect::CloseParagraphElement
+                    } else {
+                        Effect::SynthesizeAndCloseParagraphForUnmatchedEnd
+                    }),
+                    next: None,
+                }),
+                AdmittedToken::StartTag {
                     name: AdmittedElementName::SelectedOrdinary(name),
                     ..
                 } => Ok(ModeStep::Consume {
-                    effect: Some(Effect::InsertSelectedOrdinaryElement(*name)),
+                    effect: Some(if paragraph_is_current {
+                        Effect::CloseParagraphThenInsertSelectedOrdinaryElement(*name)
+                    } else {
+                        Effect::InsertSelectedOrdinaryElement(*name)
+                    }),
                     next: None,
                 }),
                 // A supported selected ordinary end tag selects its nearest
@@ -635,6 +698,8 @@ fn classify(
                 // evidence is fabricated for a token that has no authored
                 // extent.
                 AdmittedToken::EndOfFile { .. } => Ok(ModeStep::Stop {
+                    // P itself is an allowed stack member at EOF. A selected
+                    // Div/Section ancestor retains the predecessor diagnostic.
                     effect: (!open_selected_ordinary.is_empty())
                         .then_some(Effect::RecordOpenSelectedOrdinaryElementAtEndOfFile),
                 }),
@@ -710,10 +775,13 @@ enum SelectedEndTarget {
 /// Classifies a supported selected ordinary end tag against the ordered
 /// selected-name projection, innermost last.
 ///
-/// The bounded represented state is `[html, body] ++ W` with
-/// `W ∈ {Div, Section}*`, so the whole selected slice sits above `body` and a
-/// reverse scan of `W` is exactly the bounded selected-element scope walk.
-/// This is deliberately not general WHATWG scope coverage and claims none.
+/// This helper is reached only after [`classify`] has ruled out a current P.
+/// In that cell the relevant bounded suffix is `[html, body] ++ W`, with
+/// `W ∈ {Div, Section}*`, so a reverse scan of W is exactly the selected-slice
+/// scope reduction. The separate Paragraph firewall is load-bearing: with P
+/// current, implied-end handling becomes materially non-noop and the end tag is
+/// refused instead of being sent through this reduction. This helper therefore
+/// remains explicitly narrower than general WHATWG scope.
 fn selected_end_target(
     open_selected_ordinary: &[HtmlSelectedOrdinaryElementName],
     name: HtmlSelectedOrdinaryElementName,
@@ -730,18 +798,14 @@ fn selected_end_target(
     }
 }
 
-/// Whether an element in the represented state would be popped by the HTML
-/// Standard's "generate implied end tags" step.
+/// Whether one represented element belongs to the Standard's implied-end set.
 ///
-/// Written as a total function over the closed represented element domain
-/// rather than as a generalized implied-end generator. Neither the shell
-/// elements nor the selected ordinary `div` and `section` is an implied-end
-/// element, so the step is a no-op over every state this subsystem can reach —
-/// which is exactly the bounded invariant the accepted end-tag branches rely
-/// on. The selected arm matches each closed name rather than the domain as a
-/// whole, so growing that domain again forces this question to be answered for
-/// the new member instead of being silently inherited. `p`, which *is* an
-/// implied-end element, is outside both closed domains and stays unsupported.
+/// This is a total function over the closed element domain, not a generalized
+/// implied-end generator. Shell and selected ordinary elements are false; P is
+/// deliberately true. Consequently any future domain growth forces this
+/// question to be answered explicitly, and TC-S5's selected-end-over-P firewall
+/// prevents the predecessor `generate implied end tags` no-op theorem from
+/// being applied where it is no longer true.
 fn is_implied_end_element(element: &HtmlElement) -> bool {
     match element {
         HtmlElement::Shell(_) => false,
@@ -750,6 +814,7 @@ fn is_implied_end_element(element: &HtmlElement) -> bool {
                 false
             }
         },
+        HtmlElement::Paragraph(_) => true,
     }
 }
 
@@ -833,11 +898,10 @@ pub(crate) enum HtmlTreeSessionError {
     /// A selected ordinary close was requested while the current node was not
     /// that element.
     SelectedOrdinaryElementIsNotCurrent(HtmlSelectedOrdinaryElementName),
-    /// Implied-end-tag generation would not have been a no-op over the
-    /// represented state. This is the bounded invariant that stands in for a
-    /// generalized implied-end generator; it is never expected to fire while
-    /// the represented state is `[html, body] ++ W` with
-    /// `W ∈ {Div, Section}*`.
+    /// Implied-end-tag generation would not have been a no-op in a predecessor
+    /// selected-end cell. TC-S5 reaches that predecessor transaction only after
+    /// the Paragraph-current firewall has ruled P out, so the expected local
+    /// state is still `[html, body] ++ W` with `W ∈ {Div, Section}*`.
     ImpliedEndGenerationIsNotABoundedNoOp,
     /// A heterogeneous selected ordinary recovery was requested while the
     /// nearest same-name target was in fact the current node, which is the
@@ -854,6 +918,17 @@ pub(crate) enum HtmlTreeSessionError {
     /// The open-selected-element end-of-file diagnostic was recorded while no
     /// selected ordinary element was open.
     NoOpenSelectedOrdinaryElementAtEndOfFile,
+    /// A Paragraph exists on the private open stack but is not the current node,
+    /// violating TC-S5's `P?`-is-current invariant.
+    ParagraphIsNotCurrent(HtmlConstructedNodeId),
+    /// More than one Paragraph is open, which the bounded TC-S5 lifecycle never
+    /// permits.
+    MultipleOpenParagraphElements,
+    /// A Paragraph close was requested when no current Paragraph exists.
+    ParagraphElementIsNotCurrent,
+    /// A Paragraph insertion/synthesis path was entered while a Paragraph was
+    /// already open instead of using the explicit close-then-insert cell.
+    ParagraphElementAlreadyOpen,
 }
 
 impl std::fmt::Display for HtmlTreeSessionError {
@@ -890,6 +965,15 @@ struct SelectedOrdinaryEndPlan {
     /// current node first and target-ward last. Empty exactly when the target
     /// is already the current node.
     intervening_current_first: Vec<HtmlConstructedNodeId>,
+}
+
+/// A completely pre-resolved node insertion. The private storage coordinate is
+/// ephemeral and exists only to make the commit infallible after another
+/// semantic effect has already happened.
+struct PreparedInsertion {
+    parent_storage_index: usize,
+    reserved: HtmlConstructedNodeId,
+    node: HtmlTreeNode,
 }
 
 /// The exclusive owner of one run's mutable tree-construction state.
@@ -950,10 +1034,18 @@ impl HtmlTreeSession {
         trigger: &HtmlTreeTokenTrigger,
     ) -> Result<DispatchOutcome, HtmlTreeSessionError> {
         // Both gates run before anything can change: the token was already
-        // admitted lexically, and this reads the private selected-element
-        // state without borrowing it mutably.
+        // admitted lexically, and this snapshots only the read-only selected
+        // semantic-name projection plus the independent Paragraph-current fact.
+        // Neither projection exposes mutable state, storage coordinates, or a
+        // constructed relationship to rule selection.
         let open_selected_ordinary = self.open_selected_ordinary_names();
-        let step = match classify(self.mode, &open_selected_ordinary, token) {
+        let paragraph_is_current = self.open_paragraph()?.is_some();
+        let step = match classify(
+            self.mode,
+            &open_selected_ordinary,
+            paragraph_is_current,
+            token,
+        ) {
             Ok(step) => step,
             Err(capability) => return Ok(DispatchOutcome::Unsupported(capability)),
         };
@@ -992,11 +1084,17 @@ impl HtmlTreeSession {
     /// The session itself never escapes, and nothing mutable travels in the
     /// returned parts.
     pub(super) fn finish(self, completion: HtmlTreeCompletion) -> HtmlDocumentShellParts {
-        // Snapshot the actual final open selected state before the mutable
-        // stack is dropped, so the freeze boundary can validate the committed
-        // action stream against it instead of trusting this session. Only the
-        // semantic identities travel; the stack itself does not.
+        // Snapshot the actual final open selected state and the independent
+        // final-open Paragraph fact before the mutable stack is dropped. Freeze
+        // validates both committed action replays against these semantic
+        // identities instead of trusting this session. The stack itself and all
+        // storage coordinates remain private.
         let final_open_selected_ordinary = self.open_selected_ordinary_ids();
+        let final_open_paragraph = self
+            .open_elements
+            .iter()
+            .copied()
+            .find(|id| self.is_paragraph(*id));
         HtmlDocumentShellParts {
             nodes: self.nodes,
             root: self.root,
@@ -1007,6 +1105,7 @@ impl HtmlTreeSession {
             committed_prefix_end: self.committed_prefix_end,
             completion,
             final_open_selected_ordinary,
+            final_open_paragraph,
         }
     }
 
@@ -1134,6 +1233,19 @@ impl HtmlTreeSession {
                 );
                 Ok(())
             }
+            Effect::InsertParagraphElement => self.insert_paragraph(trigger, token),
+            Effect::CloseParagraphElement => {
+                self.close_paragraph(HtmlParagraphClosure::MatchingEndTag, trigger)
+            }
+            Effect::CloseParagraphThenInsertParagraph => {
+                self.close_paragraph_then_insert_paragraph(trigger, token)
+            }
+            Effect::CloseParagraphThenInsertSelectedOrdinaryElement(name) => {
+                self.close_paragraph_then_insert_selected(name, trigger, token)
+            }
+            Effect::SynthesizeAndCloseParagraphForUnmatchedEnd => {
+                self.synthesize_and_close_paragraph(trigger)
+            }
         }
     }
 
@@ -1230,6 +1342,21 @@ impl HtmlTreeSession {
         trigger: &HtmlTreeTokenTrigger,
         token: &AdmittedToken<'_>,
     ) -> Result<(), HtmlTreeSessionError> {
+        let plan = self.prepare_selected_insertion(name, token)?;
+        let node = plan.reserved;
+        self.commit_prepared_insertion(plan);
+        self.record_action(
+            HtmlTreeActionKind::InsertedAuthoredSelectedOrdinaryElement { node, name },
+            trigger,
+        );
+        Ok(())
+    }
+
+    fn prepare_selected_insertion(
+        &self,
+        name: HtmlSelectedOrdinaryElementName,
+        token: &AdmittedToken<'_>,
+    ) -> Result<PreparedInsertion, HtmlTreeSessionError> {
         let AdmittedToken::StartTag {
             complete, raw_name, ..
         } = token
@@ -1240,33 +1367,326 @@ impl HtmlTreeSession {
             .open_elements
             .last()
             .ok_or(HtmlTreeSessionError::MissingInsertionParent)?;
-        if self.node(parent).is_none() {
-            return Err(HtmlTreeSessionError::UnknownConstructedNode(parent));
-        }
+        let parent_storage_index = self
+            .nodes
+            .iter()
+            .position(|node| node.id() == parent)
+            .ok_or(HtmlTreeSessionError::UnknownConstructedNode(parent))?;
         let reserved = self
             .identities
             .reserve()
             .ok_or(HtmlTreeSessionError::ConstructedIdentityExhausted)?;
-
         let element =
             HtmlSelectedOrdinaryElement::new(name, (*complete).clone(), (*raw_name).clone());
-        let node = HtmlTreeNode::new(
+        Ok(PreparedInsertion {
+            parent_storage_index,
             reserved,
-            Some(parent),
-            Vec::new(),
-            HtmlTreeNodeKind::Element(HtmlElement::SelectedOrdinary(element)),
-        );
-        self.node_mut(parent)
-            .ok_or(HtmlTreeSessionError::UnknownConstructedNode(parent))?
-            .push_child(reserved);
-        self.nodes.push(node);
-        self.open_elements.push(reserved);
-        self.identities.commit(reserved);
+            node: HtmlTreeNode::new(
+                reserved,
+                Some(parent),
+                Vec::new(),
+                HtmlTreeNodeKind::Element(HtmlElement::SelectedOrdinary(element)),
+            ),
+        })
+    }
 
+    fn prepare_authored_paragraph_insertion(
+        &self,
+        token: &AdmittedToken<'_>,
+    ) -> Result<PreparedInsertion, HtmlTreeSessionError> {
+        let AdmittedToken::StartTag {
+            name: AdmittedElementName::Paragraph,
+            complete,
+            raw_name,
+        } = token
+        else {
+            return Err(HtmlTreeSessionError::AuthoredInsertionWithoutStartTag);
+        };
+        let parent = *self
+            .open_elements
+            .last()
+            .ok_or(HtmlTreeSessionError::MissingInsertionParent)?;
+        let parent_storage_index = self
+            .nodes
+            .iter()
+            .position(|node| node.id() == parent)
+            .ok_or(HtmlTreeSessionError::UnknownConstructedNode(parent))?;
+        let reserved = self
+            .identities
+            .reserve()
+            .ok_or(HtmlTreeSessionError::ConstructedIdentityExhausted)?;
+        let paragraph = HtmlParagraphElement::new(HtmlParagraphElementOrigin::Authored {
+            complete: (*complete).clone(),
+            raw_name: (*raw_name).clone(),
+        });
+        Ok(PreparedInsertion {
+            parent_storage_index,
+            reserved,
+            node: HtmlTreeNode::new(
+                reserved,
+                Some(parent),
+                Vec::new(),
+                HtmlTreeNodeKind::Element(HtmlElement::Paragraph(paragraph)),
+            ),
+        })
+    }
+
+    fn prepare_synthesized_paragraph_insertion(
+        &self,
+    ) -> Result<PreparedInsertion, HtmlTreeSessionError> {
+        let parent = *self
+            .open_elements
+            .last()
+            .ok_or(HtmlTreeSessionError::MissingInsertionParent)?;
+        let parent_storage_index = self
+            .nodes
+            .iter()
+            .position(|node| node.id() == parent)
+            .ok_or(HtmlTreeSessionError::UnknownConstructedNode(parent))?;
+        let reserved = self
+            .identities
+            .reserve()
+            .ok_or(HtmlTreeSessionError::ConstructedIdentityExhausted)?;
+        let paragraph = HtmlParagraphElement::new(HtmlParagraphElementOrigin::Synthesized(
+            HtmlParagraphSynthesisCause::UnmatchedParagraphEndTag,
+        ));
+        Ok(PreparedInsertion {
+            parent_storage_index,
+            reserved,
+            node: HtmlTreeNode::new(
+                reserved,
+                Some(parent),
+                Vec::new(),
+                HtmlTreeNodeKind::Element(HtmlElement::Paragraph(paragraph)),
+            ),
+        })
+    }
+
+    fn commit_prepared_insertion(&mut self, plan: PreparedInsertion) {
+        self.nodes[plan.parent_storage_index].push_child(plan.reserved);
+        self.nodes.push(plan.node);
+        self.open_elements.push(plan.reserved);
+        self.identities.commit(plan.reserved);
+    }
+
+    fn insert_paragraph(
+        &mut self,
+        trigger: &HtmlTreeTokenTrigger,
+        token: &AdmittedToken<'_>,
+    ) -> Result<(), HtmlTreeSessionError> {
+        if self.open_paragraph()?.is_some() {
+            return Err(HtmlTreeSessionError::ParagraphElementAlreadyOpen);
+        }
+        let plan = self.prepare_authored_paragraph_insertion(token)?;
+        let node = plan.reserved;
+        self.commit_prepared_insertion(plan);
+        self.record_action(
+            HtmlTreeActionKind::InsertedAuthoredParagraphElement { node },
+            trigger,
+        );
+        Ok(())
+    }
+
+    fn close_paragraph(
+        &mut self,
+        closure: HtmlParagraphClosure,
+        trigger: &HtmlTreeTokenTrigger,
+    ) -> Result<(), HtmlTreeSessionError> {
+        let paragraph = self
+            .open_paragraph()?
+            .ok_or(HtmlTreeSessionError::ParagraphElementIsNotCurrent)?;
+        if self.open_elements.last() != Some(&paragraph) {
+            return Err(HtmlTreeSessionError::ParagraphIsNotCurrent(paragraph));
+        }
+        // Under TC-S5 P is current whenever present, so generate-implied-end-
+        // tags-except-P has nothing above P to pop. This proves only the
+        // bounded no-op and does not call the generic predecessor helper.
+        self.open_elements.pop();
+        self.record_action(
+            HtmlTreeActionKind::ClosedParagraphElement {
+                node: paragraph,
+                closure,
+            },
+            trigger,
+        );
+        Ok(())
+    }
+
+    fn close_paragraph_then_insert_paragraph(
+        &mut self,
+        trigger: &HtmlTreeTokenTrigger,
+        token: &AdmittedToken<'_>,
+    ) -> Result<(), HtmlTreeSessionError> {
+        let paragraph = self
+            .open_paragraph()?
+            .ok_or(HtmlTreeSessionError::ParagraphElementIsNotCurrent)?;
+        let plan = self.prepare_insertion_after_current_paragraph(
+            |parent, parent_storage_index, reserved| {
+                let AdmittedToken::StartTag {
+                    name: AdmittedElementName::Paragraph,
+                    complete,
+                    raw_name,
+                } = token
+                else {
+                    return Err(HtmlTreeSessionError::AuthoredInsertionWithoutStartTag);
+                };
+                let element = HtmlParagraphElement::new(HtmlParagraphElementOrigin::Authored {
+                    complete: (*complete).clone(),
+                    raw_name: (*raw_name).clone(),
+                });
+                Ok(PreparedInsertion {
+                    parent_storage_index,
+                    reserved,
+                    node: HtmlTreeNode::new(
+                        reserved,
+                        Some(parent),
+                        Vec::new(),
+                        HtmlTreeNodeKind::Element(HtmlElement::Paragraph(element)),
+                    ),
+                })
+            },
+        )?;
+        let new_node = plan.reserved;
+        self.open_elements.pop();
+        self.record_action(
+            HtmlTreeActionKind::ClosedParagraphElement {
+                node: paragraph,
+                closure: HtmlParagraphClosure::StartTriggered,
+            },
+            trigger,
+        );
+        self.commit_prepared_insertion(plan);
+        self.record_action(
+            HtmlTreeActionKind::InsertedAuthoredParagraphElement { node: new_node },
+            trigger,
+        );
+        Ok(())
+    }
+
+    fn close_paragraph_then_insert_selected(
+        &mut self,
+        name: HtmlSelectedOrdinaryElementName,
+        trigger: &HtmlTreeTokenTrigger,
+        token: &AdmittedToken<'_>,
+    ) -> Result<(), HtmlTreeSessionError> {
+        let paragraph = self
+            .open_paragraph()?
+            .ok_or(HtmlTreeSessionError::ParagraphElementIsNotCurrent)?;
+        let plan = self.prepare_insertion_after_current_paragraph(
+            |parent, parent_storage_index, reserved| {
+                let AdmittedToken::StartTag {
+                    name: AdmittedElementName::SelectedOrdinary(token_name),
+                    complete,
+                    raw_name,
+                } = token
+                else {
+                    return Err(HtmlTreeSessionError::AuthoredInsertionWithoutStartTag);
+                };
+                if *token_name != name {
+                    return Err(HtmlTreeSessionError::AuthoredInsertionWithoutStartTag);
+                }
+                let element = HtmlSelectedOrdinaryElement::new(
+                    name,
+                    (*complete).clone(),
+                    (*raw_name).clone(),
+                );
+                Ok(PreparedInsertion {
+                    parent_storage_index,
+                    reserved,
+                    node: HtmlTreeNode::new(
+                        reserved,
+                        Some(parent),
+                        Vec::new(),
+                        HtmlTreeNodeKind::Element(HtmlElement::SelectedOrdinary(element)),
+                    ),
+                })
+            },
+        )?;
+        let new_node = plan.reserved;
+        self.open_elements.pop();
+        self.record_action(
+            HtmlTreeActionKind::ClosedParagraphElement {
+                node: paragraph,
+                closure: HtmlParagraphClosure::StartTriggered,
+            },
+            trigger,
+        );
+        self.commit_prepared_insertion(plan);
         self.record_action(
             HtmlTreeActionKind::InsertedAuthoredSelectedOrdinaryElement {
-                node: reserved,
+                node: new_node,
                 name,
+            },
+            trigger,
+        );
+        Ok(())
+    }
+
+    fn prepare_insertion_after_current_paragraph<F>(
+        &self,
+        build: F,
+    ) -> Result<PreparedInsertion, HtmlTreeSessionError>
+    where
+        F: FnOnce(
+            HtmlConstructedNodeId,
+            usize,
+            HtmlConstructedNodeId,
+        ) -> Result<PreparedInsertion, HtmlTreeSessionError>,
+    {
+        let paragraph = self
+            .open_paragraph()?
+            .ok_or(HtmlTreeSessionError::ParagraphElementIsNotCurrent)?;
+        if self.open_elements.last() != Some(&paragraph) {
+            return Err(HtmlTreeSessionError::ParagraphIsNotCurrent(paragraph));
+        }
+        let parent = *self
+            .open_elements
+            .get(self.open_elements.len().saturating_sub(2))
+            .ok_or(HtmlTreeSessionError::MissingInsertionParent)?;
+        let parent_storage_index = self
+            .nodes
+            .iter()
+            .position(|node| node.id() == parent)
+            .ok_or(HtmlTreeSessionError::UnknownConstructedNode(parent))?;
+        let reserved = self
+            .identities
+            .reserve()
+            .ok_or(HtmlTreeSessionError::ConstructedIdentityExhausted)?;
+        build(parent, parent_storage_index, reserved)
+    }
+
+    fn synthesize_and_close_paragraph(
+        &mut self,
+        trigger: &HtmlTreeTokenTrigger,
+    ) -> Result<(), HtmlTreeSessionError> {
+        if self.open_paragraph()?.is_some() {
+            return Err(HtmlTreeSessionError::ParagraphElementAlreadyOpen);
+        }
+        let plan = self.prepare_synthesized_paragraph_insertion()?;
+        let node = plan.reserved;
+
+        // All fallible work is complete. From the diagnostic onward the three
+        // validated semantic effects commit without any operation that can
+        // return failure.
+        self.record_diagnostic(
+            HtmlTreeDiagnosticCode::UnmatchedParagraphEndTag,
+            trigger,
+            HtmlTreeRecovery::SynthesizedParagraphElementAndClosedIt,
+        );
+        self.commit_prepared_insertion(plan);
+        self.record_action(
+            HtmlTreeActionKind::InsertedSynthesizedParagraphElement {
+                node,
+                cause: HtmlParagraphSynthesisCause::UnmatchedParagraphEndTag,
+            },
+            trigger,
+        );
+        let popped = self.open_elements.pop();
+        debug_assert_eq!(popped, Some(node));
+        self.record_action(
+            HtmlTreeActionKind::ClosedParagraphElement {
+                node,
+                closure: HtmlParagraphClosure::UnmatchedEndTagSynthesized,
             },
             trigger,
         );
@@ -1549,8 +1969,8 @@ impl HtmlTreeSession {
     ///
     /// Together with the mode machine this bounds the shell part of the
     /// open-element state without any depth limit: a shell name can be pushed
-    /// only while it is not already open. Selected ordinary elements are a
-    /// separate domain and are deliberately not counted here.
+    /// only while it is not already open. Selected ordinary elements and
+    /// Paragraph are separate domains and are deliberately not counted here.
     fn is_open(&self, name: HtmlShellElementName) -> bool {
         self.open_elements.iter().any(|id| {
             matches!(
@@ -1575,11 +1995,33 @@ impl HtmlTreeSession {
         )
     }
 
-    /// The semantic identities of the currently open selected ordinary
-    /// elements, in open-element stack order with the innermost last.
-    ///
-    /// Semantic identities only: no storage position, and no borrow of the
-    /// private stack itself, escapes through this.
+    fn is_paragraph(&self, id: HtmlConstructedNodeId) -> bool {
+        matches!(
+            self.node(id).map(HtmlTreeNode::kind),
+            Some(HtmlTreeNodeKind::Element(HtmlElement::Paragraph(_)))
+        )
+    }
+
+    /// Returns the one open P exactly when it is current. Any other P shape is
+    /// an internal invariant failure, never unsupported input.
+    fn open_paragraph(&self) -> Result<Option<HtmlConstructedNodeId>, HtmlTreeSessionError> {
+        let mut found = None;
+        for id in &self.open_elements {
+            if self.is_paragraph(*id) {
+                if found.is_some() {
+                    return Err(HtmlTreeSessionError::MultipleOpenParagraphElements);
+                }
+                found = Some(*id);
+            }
+        }
+        if let Some(paragraph) = found
+            && self.open_elements.last() != Some(&paragraph)
+        {
+            return Err(HtmlTreeSessionError::ParagraphIsNotCurrent(paragraph));
+        }
+        Ok(found)
+    }
+
     fn open_selected_ordinary_ids(&self) -> Vec<HtmlConstructedNodeId> {
         self.open_elements
             .iter()
@@ -1601,15 +2043,10 @@ impl HtmlTreeSession {
         )
     }
 
-    /// The closed selected names of the currently open selected ordinary
-    /// elements, in open-element stack order with the innermost last.
-    ///
-    /// This is the `W` of the represented state `[html, body] ++ W`, and it is
-    /// the only construction state the read-only [`classify`] gate needs. It
-    /// carries no constructed identity, so rule selection cannot come to
-    /// depend on a relationship the transaction has not resolved yet. It is
-    /// read-only construction state, not a budget: nothing compares its length
-    /// against a maximum.
+    /// The closed selected names currently open, in stack order with the
+    /// innermost last. This is a semantic-name projection only: no constructed
+    /// identity or storage coordinate escapes to [`classify`]. TC-S5 supplies
+    /// Paragraph presence separately rather than widening this projection.
     fn open_selected_ordinary_names(&self) -> Vec<HtmlSelectedOrdinaryElementName> {
         self.open_elements
             .iter()
@@ -1622,19 +2059,12 @@ impl HtmlTreeSession {
             .collect()
     }
 
-    /// The nearest same-name open selected ordinary element, as a private
-    /// open-element stack position.
-    ///
-    /// Walks the private open-element stack by semantic constructed identity,
-    /// from the current node outwards, and stops at the represented HTML
-    /// boundary. This is deliberately **not** general WHATWG scope coverage
-    /// and claims none: the represented state contains only `html`, `body`,
-    /// and selected ordinary elements, so `html` is the only boundary element
-    /// that can occur in it.
-    ///
-    /// The returned position is ephemeral and private. It is a coordinate for
-    /// the commit that immediately follows, never semantic identity, and it is
-    /// never recorded anywhere durable.
+    /// Finds the nearest same-name selected ordinary element as a private,
+    /// ephemeral open-stack coordinate. This is used only in selected-end cells
+    /// for which the Paragraph-current firewall has already succeeded, so the
+    /// reverse scan is the bounded selected-slice reduction, not general WHATWG
+    /// scope. The returned coordinate is consumed immediately by the transaction
+    /// and is never recorded as durable identity.
     fn nearest_open_selected_ordinary(
         &self,
         name: HtmlSelectedOrdinaryElementName,
@@ -1657,14 +2087,12 @@ impl HtmlTreeSession {
         None
     }
 
-    /// Whether the HTML Standard's implied-end-tag generation would pop
-    /// nothing over the current represented state.
-    ///
-    /// No generalized implied-end generator is introduced. Instead
-    /// [`is_implied_end_element`] is a total function over the closed
-    /// represented element domain, so this invariant is validated rather than
-    /// assumed — and growing that domain forces the question to be answered
-    /// again rather than silently skipped.
+    /// Whether the Standard's implied-end step would pop nothing over the
+    /// current private stack. No generalized generator is introduced: the
+    /// total [`is_implied_end_element`] classifier validates the no-op theorem
+    /// directly. TC-S5 calls this only from predecessor selected-end
+    /// transactions after P-current has already been ruled out, so a Paragraph
+    /// cannot silently make the old theorem false.
     fn implied_end_generation_is_a_no_op(&self) -> bool {
         self.open_elements.iter().all(|id| {
             !matches!(

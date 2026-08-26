@@ -39,7 +39,7 @@ use super::driver::{
 };
 use super::result::{
     HtmlAuthoredSource, HtmlConstructedIdentityCounter, HtmlConstructedNodeId,
-    HtmlDocumentShellAnalysis, HtmlDocumentShellParts, HtmlElement,
+    HtmlDocumentShellAnalysis, HtmlDocumentShellParts, HtmlElement, HtmlParagraphElementOrigin,
     HtmlSelectedOrdinaryElementName, HtmlShellClosure, HtmlShellElement, HtmlShellElementName,
     HtmlShellElementOrigin, HtmlSynthesisCause, HtmlTextContribution, HtmlTextNode, HtmlTreeAction,
     HtmlTreeActionKind, HtmlTreeCapability, HtmlTreeCompletion, HtmlTreeCompletionUpgrade,
@@ -281,6 +281,16 @@ fn gold_cases() -> Vec<GoldCase> {
     ]
 }
 
+/// The TC-S1 G8 `<body><p>` row is frozen historical negative-space evidence.
+/// TC-S5 intentionally supersedes only its rolling production correspondence;
+/// the authored Gold row itself remains unchanged above.
+fn production_correspondence_cases() -> Vec<GoldCase> {
+    gold_cases()
+        .into_iter()
+        .filter(|case| case.id != "G8")
+        .collect()
+}
+
 // ---------------------------------------------------------------------------
 // Mechanical projection from production meaning into the independent model
 // ---------------------------------------------------------------------------
@@ -330,6 +340,19 @@ fn project_tree(analysis: &HtmlDocumentShellAnalysis, id: HtmlConstructedNodeId)
                     selected.raw_name().range().end(),
                 ),
             ),
+            children,
+        },
+        HtmlTreeNodeKind::Element(HtmlElement::Paragraph(paragraph)) => GoldNode::Element {
+            name: "p",
+            origin: match paragraph.origin() {
+                HtmlParagraphElementOrigin::Authored { complete, raw_name } => {
+                    GoldOrigin::Authored(
+                        (complete.range().start(), complete.range().end()),
+                        (raw_name.range().start(), raw_name.range().end()),
+                    )
+                }
+                HtmlParagraphElementOrigin::Synthesized(_) => GoldOrigin::None,
+            },
             children,
         },
         HtmlTreeNodeKind::Text(text) => GoldNode::Text {
@@ -442,6 +465,9 @@ fn project_diagnostics(analysis: &HtmlDocumentShellAnalysis) -> Vec<GoldDiagnost
             | HtmlTreeDiagnosticCode::MisnestedSelectedOrdinaryEndTag => {
                 panic!("the TC-S1 predecessor GOLD never produces a selected ordinary diagnostic")
             }
+            HtmlTreeDiagnosticCode::UnmatchedParagraphEndTag => {
+                panic!("the TC-S1 predecessor GOLD never produces a TC-S5 Paragraph diagnostic")
+            }
         })
         .collect()
 }
@@ -505,9 +531,9 @@ fn unsupported_capability(analysis: &HtmlDocumentShellAnalysis) -> Option<HtmlTr
 // ---------------------------------------------------------------------------
 
 #[test]
-fn gold_cases_match_exactly() {
+fn unsuperseded_gold_cases_match_current_production_exactly() {
     let mut mismatches = Vec::new();
-    for case in gold_cases() {
+    for case in production_correspondence_cases() {
         let analysis = analyze(case.source);
 
         let expected_tree = own_gold(&case.tree);
@@ -601,8 +627,8 @@ fn shell_element_count(analysis: &HtmlDocumentShellAnalysis, name: HtmlShellElem
 /// authoritative input around the current state machine fails here even if the
 /// `gold_cases()` table itself were changed to match.
 #[test]
-fn accepted_gold_sources_reach_their_required_completion() {
-    let expected: [(&str, bool); 9] = [
+fn unsuperseded_gold_sources_reach_their_required_completion() {
+    let expected: [(&str, bool); 8] = [
         ("", true),
         ("hello", true),
         ("<html><head></head><body></body></html>", true),
@@ -611,7 +637,6 @@ fn accepted_gold_sources_reach_their_required_completion() {
         ("<body>x</body>", true),
         ("<body><body></body>", true),
         ("<head><head></head>", true),
-        ("<body><p>", false),
     ];
     for (source, complete) in expected {
         let analysis = analyze(source);
@@ -623,7 +648,10 @@ fn accepted_gold_sources_reach_their_required_completion() {
     }
 
     // Every accepted case is also present verbatim in the authoritative table.
-    let table: Vec<&str> = gold_cases().iter().map(|case| case.source).collect();
+    let table: Vec<&str> = production_correspondence_cases()
+        .iter()
+        .map(|case| case.source)
+        .collect();
     for (source, _) in expected {
         assert!(
             table.contains(&source),
@@ -746,6 +774,18 @@ fn synthesized_and_root_nodes_carry_no_authored_source() {
                 ),
                 HtmlTreeNodeKind::Element(HtmlElement::SelectedOrdinary(_)) => {
                     unreachable!("no TC-S1 GOLD case constructs a selected ordinary element")
+                }
+                HtmlTreeNodeKind::Element(HtmlElement::Paragraph(paragraph)) => {
+                    match paragraph.origin() {
+                        HtmlParagraphElementOrigin::Authored { complete, .. } => {
+                            assert!(!complete.range().is_empty());
+                        }
+                        HtmlParagraphElementOrigin::Synthesized(_) => assert!(
+                            node.authored_source().is_none(),
+                            "{}: a synthesized Paragraph has no authored source",
+                            case.id
+                        ),
+                    }
                 }
                 HtmlTreeNodeKind::Element(HtmlElement::Shell(shell)) => match shell.origin() {
                     HtmlShellElementOrigin::Synthesized(_) => assert!(
@@ -875,54 +915,62 @@ fn adjacent_character_runs_coalesce_with_ordered_contributions() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn g8_freezes_the_terminal_checkpoint_and_leaks_no_unsupported_identity() {
-    let analysis = analyze("<body><p>");
+fn g8_historical_tc_s1_boundary_is_frozen_while_tc_s5_owns_current_production() {
+    let g8 = gold_cases()
+        .into_iter()
+        .find(|case| case.id == "G8")
+        .expect("historical G8 remains in the frozen Gold table");
+    assert_eq!(g8.source, "<body><p>");
+    assert_eq!(g8.completion, GoldCompletion::IncompleteUnsupported((6, 9)));
+    assert_eq!(g8.committed_prefix_end, 6);
+    assert_eq!(g8.diagnostics, &[GoldDiagnostic::MissingDoctype]);
 
-    // The authored body survives, the shell is complete, and no `p` node
-    // exists at all.
-    assert_eq!(analysis.node_count(), 4);
+    let analysis = analyze(g8.source);
+    assert!(
+        analysis.is_complete(),
+        "TC-S5 now owns this production cell"
+    );
+    assert_eq!(analysis.node_count(), 5);
     assert_eq!(
         shell_element_count(&analysis, HtmlShellElementName::Body),
         1
     );
 
-    let HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::UnsupportedCapability(unsupported)) =
-        analysis.completion()
+    let paragraph = analysis
+        .nodes_in_creation_order()
+        .into_iter()
+        .find(|node| {
+            matches!(
+                node.kind(),
+                HtmlTreeNodeKind::Element(HtmlElement::Paragraph(_))
+            )
+        })
+        .expect("TC-S5 constructs one authored Paragraph");
+    let Some(HtmlAuthoredSource::StartTag { complete, raw_name }) = paragraph.authored_source()
     else {
-        panic!("G8 is Incomplete(UnsupportedCapability)")
+        panic!("the TC-S5 Paragraph keeps its own authored start-tag evidence")
     };
+    assert_eq!((complete.range().start(), complete.range().end()), (6, 9));
+    assert_eq!((raw_name.range().start(), raw_name.range().end()), (7, 8));
     assert_eq!(
-        unsupported.capability(),
-        HtmlTreeCapability::NonShellElementTag
+        analysis
+            .nodes_in_creation_order()
+            .into_iter()
+            .filter(|node| matches!(
+                node.kind(),
+                HtmlTreeNodeKind::Element(HtmlElement::SelectedOrdinary(_))
+            ))
+            .count(),
+        0,
+        "P remains separate from the authored-only div/section domain"
     );
-    let trigger = unsupported
-        .trigger()
-        .authored_boundary()
-        .expect("authored trigger");
-    assert_eq!((trigger.range().start(), trigger.range().end()), (6, 9));
-
-    // No node's authored origin is the refused token's range, so no `p`
-    // identity leaks through any surface.
-    for node in analysis.nodes_in_creation_order() {
-        if let Some(HtmlAuthoredSource::StartTag { complete, .. }) = node.authored_source() {
-            assert_ne!(complete.range(), trigger.range());
-        }
-    }
-    // Nor does any action or diagnostic reference the refused token.
-    for action in analysis.actions() {
-        assert!(action.trigger().token_index() < unsupported.trigger().token_index());
-    }
-    for diagnostic in analysis.diagnostics() {
-        assert!(diagnostic.trigger().token_index() < unsupported.trigger().token_index());
-    }
 }
 
 #[test]
-fn g8_keeps_tokenizer_coverage_and_committed_tree_coverage_distinct() {
+fn g8_current_tc_s5_commits_full_tree_coverage_without_rewriting_historical_gold() {
     let analysis = analyze("<body><p>");
     let tokenizer_coverage = analysis.tokenizer_run().coverage();
 
-    // The tokenizer completed the whole source.
     assert!(tokenizer_coverage.is_complete());
     assert_eq!(tokenizer_coverage.processed_end(), 9);
     assert!(matches!(
@@ -930,11 +978,19 @@ fn g8_keeps_tokenizer_coverage_and_committed_tree_coverage_distinct() {
         HtmlTokenizerCompletion::Complete
     ));
 
-    // Committed tree coverage stopped at the last completely processed token.
-    assert_eq!(analysis.coverage().committed_end(), 6);
-    assert_eq!(analysis.coverage().processed_tokens(), 1);
-    assert!(analysis.coverage().committed_end() < tokenizer_coverage.processed_end());
-    assert!(!analysis.is_complete());
+    assert_eq!(analysis.coverage().committed_end(), 9);
+    assert_eq!(
+        analysis.coverage().processed_tokens(),
+        analysis.tokenizer_run().tokens().len()
+    );
+    assert!(analysis.is_complete());
+
+    let g8 = gold_cases()
+        .into_iter()
+        .find(|case| case.id == "G8")
+        .expect("historical G8 remains frozen");
+    assert_eq!(g8.committed_prefix_end, 6);
+    assert_eq!(g8.completion, GoldCompletion::IncompleteUnsupported((6, 9)));
 }
 
 // ---------------------------------------------------------------------------
@@ -1147,14 +1203,13 @@ fn assert_structural_bounds(analysis: &HtmlDocumentShellAnalysis, label: &str) {
 
 #[test]
 fn g10_structural_bounds_hold_without_any_tree_resource_limit() {
-    for case in gold_cases() {
+    for case in production_correspondence_cases() {
         assert_structural_bounds(&analyze(case.source), case.id);
     }
     for source in [
         "<body>a<body>b<body>c",
         "<html><head></head><body>x</body></html>",
         "<head></head><body>",
-        "<body><p>",
         "<p>",
         "x<body>",
     ] {
@@ -1271,8 +1326,8 @@ fn duplicate_body_start_tag_clears_frameset_ok_without_creating_a_node() {
 #[test]
 fn unproved_token_shapes_remain_explicit_tree_unsupported() {
     for (source, expected) in [
-        ("<body><p>", HtmlTreeCapability::NonShellElementTag),
-        ("</p>", HtmlTreeCapability::NonShellElementTag),
+        ("<body><span>", HtmlTreeCapability::NonShellElementTag),
+        ("</p>", HtmlTreeCapability::ParagraphTagOutsideInBody),
         // `div` is admitted lexically by the TC-S3 successor, so a `div` in a
         // document position that successor does not prove now carries its own
         // wrong-mode refusal rather than the unproved-name one. It is still
@@ -1557,6 +1612,7 @@ fn valid_parts(fixture: &FreezeFixture) -> HtmlDocumentShellParts {
         completion: HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete),
         // TC-S1 shell parts open no selected ordinary element.
         final_open_selected_ordinary: Vec::new(),
+        final_open_paragraph: None,
     }
 }
 
@@ -2001,15 +2057,18 @@ fn session_refuses_to_reopen_an_already_open_shell_element() {
 }
 
 #[test]
-fn admission_refuses_unproved_token_shapes_before_any_mode_runs() {
+fn admission_refuses_unproved_shapes_but_recognizes_the_tc_s5_p_token() {
     let source = SourceText::new(SourceId::new(1), "<p><body a><body/>".to_owned());
     let run = crate::html::tokenizer::producer::tokenize(&source, generous_limits());
+    assert!(
+        admit(&run.tokens()[0]).is_ok(),
+        "TC-S5 recognizes a plain p token before insertion-mode ownership is checked"
+    );
     let expected = [
-        HtmlTreeCapability::NonShellElementTag,
         HtmlTreeCapability::ShellTagAttribute,
         HtmlTreeCapability::SelfClosingShellTag,
     ];
-    for (token, expected) in run.tokens().iter().zip(expected) {
+    for (token, expected) in run.tokens()[1..].iter().zip(expected) {
         assert_eq!(admit(token).err(), Some(expected));
     }
 }

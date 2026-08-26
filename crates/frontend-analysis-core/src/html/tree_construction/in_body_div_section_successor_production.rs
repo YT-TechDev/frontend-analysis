@@ -242,6 +242,9 @@ fn project_tree(
                 children,
             }
         }
+        HtmlTreeNodeKind::Element(HtmlElement::Paragraph(_)) => {
+            panic!("TC-S4 predecessor fixtures must not construct a TC-S5 Paragraph")
+        }
         HtmlTreeNodeKind::Text(text) => ExpectedNode::Text {
             interpreted: text.interpreted().to_owned(),
             contributions: text
@@ -292,6 +295,11 @@ fn project_actions(analysis: &HtmlDocumentShellAnalysis) -> Vec<(ExpectedAction,
                 }
                 HtmlTreeActionKind::IgnoredUnmatchedSelectedOrdinaryEndTag { name } => {
                     ExpectedAction::IgnoredUnmatchedSelectedOrdinaryEndTag(selected_name(*name))
+                }
+                HtmlTreeActionKind::InsertedAuthoredParagraphElement { .. }
+                | HtmlTreeActionKind::InsertedSynthesizedParagraphElement { .. }
+                | HtmlTreeActionKind::ClosedParagraphElement { .. } => {
+                    panic!("TC-S4 predecessor fixtures must not record a TC-S5 Paragraph action")
                 }
                 HtmlTreeActionKind::ReprocessedToken => ExpectedAction::Reprocessed,
                 HtmlTreeActionKind::StoppedParsing => ExpectedAction::Stopped,
@@ -1699,9 +1707,8 @@ fn predecessor_capability_meanings_are_unchanged_and_apply_to_section() {
             "<body><section></body>",
             HtmlTreeCapability::ShellTagWithOpenSelectedOrdinaryElement,
         ),
-        // Names outside both closed domains keep the frozen predecessor
-        // meaning: the selected domain grew by exactly one member.
-        ("<body><p>", HtmlTreeCapability::NonShellElementTag),
+        // Non-P names outside the selected-ordinary and Paragraph domains
+        // keep the frozen unproved-name meaning.
         ("<body><span>", HtmlTreeCapability::NonShellElementTag),
         ("<body><article>", HtmlTreeCapability::NonShellElementTag),
         ("<body></article>", HtmlTreeCapability::NonShellElementTag),
@@ -1721,10 +1728,11 @@ fn predecessor_capability_meanings_are_unchanged_and_apply_to_section() {
 
 #[test]
 fn the_selected_domain_is_closed_at_div_and_section() {
-    // Anything that merely looks like a block element stays outside.
+    // Anything outside the dedicated Paragraph successor that merely looks
+    // like a block element stays outside the selected ordinary domain.
     for name in [
-        "p", "span", "article", "aside", "main", "nav", "header", "footer", "sections", "divs",
-        "sec", "SECTIONS",
+        "span", "article", "aside", "main", "nav", "header", "footer", "sections", "divs", "sec",
+        "SECTIONS",
     ] {
         let source = format!("<body><{name}>");
         let analysis = analyze_with(&source, 1);
@@ -1740,6 +1748,30 @@ fn the_selected_domain_is_closed_at_div_and_section() {
             "{source:?}"
         );
     }
+
+    let paragraph = analyze("<body><p>");
+    assert!(paragraph.is_complete());
+    assert!(
+        paragraph
+            .nodes_in_creation_order()
+            .into_iter()
+            .any(|node| matches!(
+                node.kind(),
+                HtmlTreeNodeKind::Element(HtmlElement::Paragraph(_))
+            ))
+    );
+    assert_eq!(
+        paragraph
+            .nodes_in_creation_order()
+            .into_iter()
+            .filter(|node| matches!(
+                node.kind(),
+                HtmlTreeNodeKind::Element(HtmlElement::SelectedOrdinary(_))
+            ))
+            .count(),
+        0,
+        "Paragraph support is a separate domain, not a third selected-ordinary name"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -2057,6 +2089,7 @@ fn fixture_a_parts(fixture: &LifecycleFixture) -> HtmlDocumentShellParts {
         committed_prefix_end: 30,
         completion: HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete),
         final_open_selected_ordinary: Vec::new(),
+        final_open_paragraph: None,
     }
 }
 
@@ -2144,6 +2177,7 @@ fn fixture_b_parts(fixture: &LifecycleFixture) -> HtmlDocumentShellParts {
         committed_prefix_end: 35,
         completion: HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete),
         final_open_selected_ordinary: Vec::new(),
+        final_open_paragraph: None,
     }
 }
 
@@ -2231,6 +2265,7 @@ fn fixture_c_parts(fixture: &LifecycleFixture) -> HtmlDocumentShellParts {
         committed_prefix_end: 39,
         // The outer `section` is still open at hand-off.
         final_open_selected_ordinary: vec![outer_section],
+        final_open_paragraph: None,
         completion: HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete),
     }
 }
@@ -2936,6 +2971,7 @@ fn fixture_e_parts(fixture: &LifecycleFixture) -> HtmlDocumentShellParts {
         committed_prefix_end: 44,
         completion: HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete),
         final_open_selected_ordinary: vec![outer_section, outer_div],
+        final_open_paragraph: None,
     }
 }
 
@@ -3048,6 +3084,7 @@ fn fixture_h_parts(fixture: &LifecycleFixture) -> HtmlDocumentShellParts {
         committed_prefix_end: 34,
         completion: HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete),
         final_open_selected_ordinary: vec![outer_section],
+        final_open_paragraph: None,
     }
 }
 
@@ -3150,6 +3187,7 @@ fn fixture_f_parts(fixture: &LifecycleFixture) -> HtmlDocumentShellParts {
         committed_prefix_end: 25,
         completion: HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete),
         final_open_selected_ordinary: vec![section_id],
+        final_open_paragraph: None,
     }
 }
 
@@ -3300,6 +3338,7 @@ fn freeze_rejects_an_unmatched_end_while_a_same_name_target_is_open() {
         committed_prefix_end: 25,
         completion: HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete),
         final_open_selected_ordinary: vec![section_id],
+        final_open_paragraph: None,
     };
     assert!(matches!(
         freeze_parts(&fixture, parts),
