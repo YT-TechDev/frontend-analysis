@@ -1,5 +1,5 @@
 //! Immutable, validated result meaning for TC-S1 and its accepted TC-S2,
-//! TC-S3, TC-S4, and TC-S5 successors.
+//! TC-S3, TC-S4, TC-S5, and TC-S6 successors.
 //!
 //! This module owns the durable half of the accepted Candidate C model: the
 //! frozen tree, constructed identity, authored/synthesized provenance,
@@ -806,6 +806,16 @@ pub(crate) enum HtmlTreeActionKind {
         node: HtmlConstructedNodeId,
         closure: HtmlParagraphClosure,
     },
+    /// The current Paragraph was implied-popped because the trigger is the
+    /// exact authored end tag of the nearest same-name selected ordinary
+    /// target. This is TC-S6 implied-end evidence, not a Paragraph closure and
+    /// not TC-S4 selected-ordinary recovery. The target end tag is causal
+    /// evidence only and is never the Paragraph's authored origin. No
+    /// constructed identity is admitted.
+    PoppedParagraphElementBySelectedOrdinaryEndTag {
+        node: HtmlConstructedNodeId,
+        target: HtmlConstructedNodeId,
+    },
     /// An open shell element was closed. No node was created.
     ClosedShellElement {
         node: HtmlConstructedNodeId,
@@ -841,6 +851,7 @@ impl HtmlTreeActionKind {
             | Self::InsertedAuthoredParagraphElement { node }
             | Self::InsertedSynthesizedParagraphElement { node, .. }
             | Self::ClosedParagraphElement { node, .. }
+            | Self::PoppedParagraphElementBySelectedOrdinaryEndTag { node, .. }
             | Self::ClosedShellElement { node, .. } => Some(*node),
             Self::IgnoredUnmatchedSelectedOrdinaryEndTag { .. }
             | Self::AcknowledgedShellEndTag { .. }
@@ -1008,11 +1019,6 @@ pub(crate) enum HtmlTreeCapability {
     ParagraphTagAttribute,
     /// A self-closing solidus on a Paragraph tag is outside TC-S5.
     SelfClosingParagraphTag,
-    /// A selected `div`/`section` end tag was reached while P is current. The
-    /// Standard's implied-end step is materially non-noop there, so TC-S5
-    /// refuses before mutation rather than pretending the predecessor rule
-    /// still applies.
-    SelectedOrdinaryEndTagWithOpenParagraphElement,
     /// A shell tag was reached while P is current; shell/P crossing is outside
     /// the bounded TC-S5 theorem and is refused before any partial shell effect.
     ShellTagWithOpenParagraphElement,
@@ -1481,6 +1487,16 @@ pub(crate) enum HtmlTreeFreezeError {
     },
     ParagraphClosureTriggerMismatch {
         node: HtmlConstructedNodeId,
+        token_index: usize,
+    },
+    ParagraphImpliedPopTargetIsNotSelectedOrdinaryElement(HtmlConstructedNodeId),
+    ParagraphImpliedPopTargetIsNotNearestMatchingSelectedOrdinary(HtmlConstructedNodeId),
+    ParagraphImpliedPopTriggerMismatch {
+        node: HtmlConstructedNodeId,
+        target: HtmlConstructedNodeId,
+        token_index: usize,
+    },
+    ParagraphImpliedPopContinuationMismatch {
         token_index: usize,
     },
     NonLifoParagraphInteraction(HtmlConstructedNodeId),
@@ -2353,6 +2369,66 @@ fn validate_paragraph_lifecycle(
                     return Err(HtmlTreeFreezeError::ParagraphSynthesisClosureMismatch {
                         token_index: action.trigger().token_index(),
                     });
+                }
+            }
+            HtmlTreeActionKind::PoppedParagraphElementBySelectedOrdinaryEndTag { node, target } => {
+                if paragraph(nodes, *node).is_none() {
+                    return Err(HtmlTreeFreezeError::ParagraphActionSubjectIsNotParagraph(
+                        *node,
+                    ));
+                }
+                let Some(target_name) = selected_ordinary_name(nodes, *target) else {
+                    return Err(
+                        HtmlTreeFreezeError::ParagraphImpliedPopTargetIsNotSelectedOrdinaryElement(
+                            *target,
+                        ),
+                    );
+                };
+                if open_content.last() != Some(node) {
+                    return Err(HtmlTreeFreezeError::NonLifoParagraphInteraction(*node));
+                }
+                if nearest_open_selected_ordinary(nodes, &open_content, target_name)
+                    != Some(*target)
+                {
+                    return Err(
+                        HtmlTreeFreezeError::ParagraphImpliedPopTargetIsNotNearestMatchingSelectedOrdinary(
+                            *target,
+                        ),
+                    );
+                }
+                if !is_matching_end_tag_trigger(target_name, action.trigger(), tokenizer_run) {
+                    return Err(HtmlTreeFreezeError::ParagraphImpliedPopTriggerMismatch {
+                        node: *node,
+                        target: *target,
+                        token_index: action.trigger().token_index(),
+                    });
+                }
+                open_content.pop();
+
+                let Some(next) = actions.get(index + 1) else {
+                    return Err(
+                        HtmlTreeFreezeError::ParagraphImpliedPopContinuationMismatch {
+                            token_index: action.trigger().token_index(),
+                        },
+                    );
+                };
+                let same = same_trigger(next.trigger(), action.trigger());
+                let continuation = match next.kind() {
+                    HtmlTreeActionKind::PoppedSelectedOrdinaryElementByAncestorEndTag {
+                        target: recovery_target,
+                        ..
+                    } => *recovery_target == *target,
+                    HtmlTreeActionKind::ClosedSelectedOrdinaryElement { node: closed, name } => {
+                        *closed == *target && *name == target_name
+                    }
+                    _ => false,
+                };
+                if !same || !continuation {
+                    return Err(
+                        HtmlTreeFreezeError::ParagraphImpliedPopContinuationMismatch {
+                            token_index: action.trigger().token_index(),
+                        },
+                    );
                 }
             }
             HtmlTreeActionKind::ClosedParagraphElement { node, closure } => {
