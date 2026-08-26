@@ -6,7 +6,7 @@
 //! checked only against hand-authored expected values.
 
 use super::super::tokenizer::resource::HtmlTokenizerLimits;
-use super::driver::construct_document_shell;
+use super::driver::construct_html_document_shell;
 use crate::{SourceId, SourceText};
 
 fn limits() -> HtmlTokenizerLimits {
@@ -16,6 +16,6 @@ fn limits() -> HtmlTokenizerLimits {
 #[test]
 fn tc_s5_production_smoke_reaches_paragraph_candidate() {
     let source = SourceText::new(SourceId::new(1), "<body><p>x</p>".to_owned());
-    let result = construct_document_shell(&source, limits()).expect("TC-S5 production smoke");
+    let result = construct_html_document_shell(&source, limits()).expect("TC-S5 production smoke");
     assert!(result.is_complete());
 }

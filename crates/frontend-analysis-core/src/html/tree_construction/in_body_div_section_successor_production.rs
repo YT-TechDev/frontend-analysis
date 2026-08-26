@@ -242,6 +242,9 @@ fn project_tree(
                 children,
             }
         }
+        HtmlTreeNodeKind::Element(HtmlElement::Paragraph(_)) => {
+            panic!("TC-S4 predecessor fixtures must not construct a TC-S5 Paragraph")
+        }
         HtmlTreeNodeKind::Text(text) => ExpectedNode::Text {
             interpreted: text.interpreted().to_owned(),
             contributions: text
@@ -292,6 +295,11 @@ fn project_actions(analysis: &HtmlDocumentShellAnalysis) -> Vec<(ExpectedAction,
                 }
                 HtmlTreeActionKind::IgnoredUnmatchedSelectedOrdinaryEndTag { name } => {
                     ExpectedAction::IgnoredUnmatchedSelectedOrdinaryEndTag(selected_name(*name))
+                }
+                HtmlTreeActionKind::InsertedAuthoredParagraphElement { .. }
+                | HtmlTreeActionKind::InsertedSynthesizedParagraphElement { .. }
+                | HtmlTreeActionKind::ClosedParagraphElement { .. } => {
+                    panic!("TC-S4 predecessor fixtures must not record a TC-S5 Paragraph action")
                 }
                 HtmlTreeActionKind::ReprocessedToken => ExpectedAction::Reprocessed,
                 HtmlTreeActionKind::StoppedParsing => ExpectedAction::Stopped,
@@ -2057,6 +2065,7 @@ fn fixture_a_parts(fixture: &LifecycleFixture) -> HtmlDocumentShellParts {
         committed_prefix_end: 30,
         completion: HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete),
         final_open_selected_ordinary: Vec::new(),
+        final_open_paragraph: None,
     }
 }
 
@@ -2144,6 +2153,7 @@ fn fixture_b_parts(fixture: &LifecycleFixture) -> HtmlDocumentShellParts {
         committed_prefix_end: 35,
         completion: HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete),
         final_open_selected_ordinary: Vec::new(),
+        final_open_paragraph: None,
     }
 }
 
@@ -2231,6 +2241,7 @@ fn fixture_c_parts(fixture: &LifecycleFixture) -> HtmlDocumentShellParts {
         committed_prefix_end: 39,
         // The outer `section` is still open at hand-off.
         final_open_selected_ordinary: vec![outer_section],
+        final_open_paragraph: None,
         completion: HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete),
     }
 }
@@ -2936,6 +2947,7 @@ fn fixture_e_parts(fixture: &LifecycleFixture) -> HtmlDocumentShellParts {
         committed_prefix_end: 44,
         completion: HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete),
         final_open_selected_ordinary: vec![outer_section, outer_div],
+        final_open_paragraph: None,
     }
 }
 
@@ -3048,6 +3060,7 @@ fn fixture_h_parts(fixture: &LifecycleFixture) -> HtmlDocumentShellParts {
         committed_prefix_end: 34,
         completion: HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete),
         final_open_selected_ordinary: vec![outer_section],
+        final_open_paragraph: None,
     }
 }
 
@@ -3150,6 +3163,7 @@ fn fixture_f_parts(fixture: &LifecycleFixture) -> HtmlDocumentShellParts {
         committed_prefix_end: 25,
         completion: HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete),
         final_open_selected_ordinary: vec![section_id],
+        final_open_paragraph: None,
     }
 }
 
@@ -3300,6 +3314,7 @@ fn freeze_rejects_an_unmatched_end_while_a_same_name_target_is_open() {
         committed_prefix_end: 25,
         completion: HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete),
         final_open_selected_ordinary: vec![section_id],
+        final_open_paragraph: None,
     };
     assert!(matches!(
         freeze_parts(&fixture, parts),
