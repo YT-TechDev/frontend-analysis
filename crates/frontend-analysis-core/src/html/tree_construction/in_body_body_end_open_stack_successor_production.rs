@@ -122,10 +122,7 @@ fn body_acknowledgements(analysis: &HtmlDocumentShellAnalysis) -> Vec<(usize, So
         .collect()
 }
 
-fn reprocess_count_for_token(
-    analysis: &HtmlDocumentShellAnalysis,
-    token_index: usize,
-) -> usize {
+fn reprocess_count_for_token(analysis: &HtmlDocumentShellAnalysis, token_index: usize) -> usize {
     analysis
         .actions()
         .iter()
