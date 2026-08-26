@@ -31,11 +31,25 @@ jobs:
         run: |
           set -euo pipefail
           git fetch origin tooling/tc-s5-test-diagnostics
-          git show origin/tooling/tc-s5-test-diagnostics:tc-s5-production-tests-candidate.rs \
-            > crates/frontend-analysis-core/src/html/tree_construction/in_body_p_successor_production.rs
+          target=crates/frontend-analysis-core/src/html/tree_construction/in_body_p_successor_production.rs
+          git show origin/tooling/tc-s5-test-diagnostics:tc-s5-production-tests-candidate.rs > "$target"
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("crates/frontend-analysis-core/src/html/tree_construction/in_body_p_successor_production.rs")
+          text = path.read_text()
+          old = """            let kind = match action.kind() {\n"""
+          new = """            match action.kind() {\n"""
+          if text.count(old) != 1:
+              raise SystemExit("expected one let-and-return helper head")
+          text = text.replace(old, new, 1)
+          old = """            };\n            kind\n        })\n"""
+          new = """            }\n        })\n"""
+          if text.count(old) != 1:
+              raise SystemExit("expected one let-and-return helper tail")
+          path.write_text(text.replace(old, new, 1))
+          PY
           git diff --name-only | sort > /tmp/actual-paths
-          printf '%s\n' crates/frontend-analysis-core/src/html/tree_construction/in_body_p_successor_production.rs \
-            > /tmp/expected-paths
+          printf '%s\n' "$target" > /tmp/expected-paths
           diff -u /tmp/expected-paths /tmp/actual-paths
 
       - name: Install accepted Rust toolchain
