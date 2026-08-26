@@ -1,0 +1,35 @@
+name: TC-S5 Temporary Rustfmt
+
+on:
+  push:
+    branches:
+      - tooling/tc-s5-rustfmt
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tooling branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: tooling/tc-s5-rustfmt
+      - name: Install accepted Rust toolchain
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt
+      - name: Format workspace
+        run: cargo fmt --all
+      - name: Commit formatted blobs
+        run: |
+          if git diff --quiet; then
+            exit 0
+          fi
+          git config user.name "Yuto"
+          git config user.email "msc_prop@proton.me"
+          git add crates/frontend-analysis-core/src/html/tree_construction/result.rs \
+                  crates/frontend-analysis-core/src/html/tree_construction/session.rs \
+                  crates/frontend-analysis-core/src/html/tree_construction/in_body_p_successor_production.rs
+          git commit -m "chore: format TC-S5 production work [skip ci]"
+          git push origin HEAD:tooling/tc-s5-rustfmt
