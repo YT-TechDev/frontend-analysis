@@ -1,5 +1,5 @@
 //! Immutable, validated result meaning for TC-S1 and its accepted TC-S2,
-//! TC-S3, and TC-S4 successors.
+//! TC-S3, TC-S4, and TC-S5 successors.
 //!
 //! This module owns the durable half of the accepted Candidate C model: the
 //! frozen tree, constructed identity, authored/synthesized provenance,
@@ -8,7 +8,7 @@
 //! observes the tokenizer or the private
 //! [`session`](super::session).
 //!
-//! # Two distinct relations, never one generic fact
+//! # Distinct relations, never one generic fact
 //!
 //! A selected ordinary element leaves the open-element state in exactly one of
 //! two ways, and the difference is durable meaning rather than presentation.
@@ -22,6 +22,15 @@
 //! relations into one "closed by this token" fact would fabricate authored
 //! evidence, so [`freeze`] proves them separately and proves that no element
 //! receives both.
+//!
+//! TC-S5 adds a third, separate Paragraph domain rather than widening the
+//! authored-only selected ordinary domain. A Paragraph may originate from its
+//! own authored `<p>` start tag or be synthesized by the unmatched authored
+//! `</p>` rule. A synthesized Paragraph has no authored start-tag evidence;
+//! the `</p>` remains trigger / diagnostic / closure evidence only. Matching
+//! P closure, start-triggered P closure, and unmatched-end synthesized P
+//! closure are also separate durable relations and are never TC-S4 ancestor
+//! recovery.
 //!
 //! Everything here is crate-private. No item is `pub`, serialized, or
 //! promised across results, runs, source edits, or implementation revisions.
@@ -238,7 +247,8 @@ impl HtmlSelectedOrdinaryElementName {
 /// one exactly from its own authored start tag, so there is no synthesized
 /// variant and no synthesis cause: its matching end tag is closure evidence
 /// recorded separately as [`HtmlTreeActionKind::ClosedSelectedOrdinaryElement`]
-/// and is never this node's origin.
+/// and is never this node's origin. TC-S5 intentionally keeps this theorem
+/// unchanged and uses [`HtmlParagraphElement`] for P instead.
 #[derive(Clone)]
 pub(crate) struct HtmlSelectedOrdinaryElement {
     name: HtmlSelectedOrdinaryElementName,
@@ -290,28 +300,87 @@ impl fmt::Debug for HtmlSelectedOrdinaryElement {
     }
 }
 
+/// Why a Paragraph with no authored start-tag source exists.
+///
+/// This is a distinct synthesis domain from [`HtmlSynthesisCause`]: shell
+/// structure is implied by document construction, whereas this cause belongs
+/// only to the bounded unmatched-`</p>` InBody rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HtmlParagraphSynthesisCause {
+    UnmatchedParagraphEndTag,
+}
+
+/// Where a constructed Paragraph's existence comes from.
+#[derive(Clone)]
+pub(crate) enum HtmlParagraphElementOrigin {
+    /// Exact retained authored `<p>` start-tag evidence.
+    Authored {
+        complete: SourceAnchor,
+        raw_name: SourceAnchor,
+    },
+    /// Explicit absence of authored start-tag source. The unmatched `</p>`
+    /// trigger is retained separately and is never copied here.
+    Synthesized(HtmlParagraphSynthesisCause),
+}
+
+impl fmt::Debug for HtmlParagraphElementOrigin {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Authored { complete, raw_name } => formatter
+                .debug_struct("Authored")
+                .field("source_id", &complete.source_id())
+                .field("complete_range", &complete.range())
+                .field("raw_name_range", &raw_name.range())
+                .finish(),
+            Self::Synthesized(cause) => formatter.debug_tuple("Synthesized").field(cause).finish(),
+        }
+    }
+}
+
+/// A bounded HTML Paragraph observation.
+///
+/// The element name is a type invariant: this type means exactly HTML `p` and
+/// nothing else. That avoids widening the authored-only `Div | Section`
+/// domain or introducing a generic arbitrary-name element representation.
+#[derive(Debug, Clone)]
+pub(crate) struct HtmlParagraphElement {
+    origin: HtmlParagraphElementOrigin,
+}
+
+impl HtmlParagraphElement {
+    pub(super) fn new(origin: HtmlParagraphElementOrigin) -> Self {
+        Self { origin }
+    }
+
+    pub(crate) fn origin(&self) -> &HtmlParagraphElementOrigin {
+        &self.origin
+    }
+}
+
 /// The interpreted name of a constructed element, in whichever closed domain
 /// owns it.
 ///
 /// This is a projection for reading an element's name without first knowing
-/// which domain it belongs to. It never merges the two domains: each arm
-/// stays exactly its own closed enum.
+/// which domain it belongs to. It never merges the domains: each arm stays
+/// exactly its own closed meaning.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HtmlElementName {
     Shell(HtmlShellElementName),
     SelectedOrdinary(HtmlSelectedOrdinaryElementName),
+    Paragraph,
 }
 
 /// What kind of element a constructed element node is.
 ///
-/// Shell meaning and selected ordinary meaning are kept in separate closed
-/// domains so neither can be made semantically false by the other. A shell
-/// element may be authored or synthesized; a selected ordinary element is
-/// always authored.
+/// Shell, selected ordinary, and Paragraph meaning are separate closed
+/// domains. A shell element may be authored or synthesized; a selected
+/// ordinary element is always authored; a Paragraph has its own authored or
+/// unmatched-end-synthesized origin model.
 #[derive(Debug, Clone)]
 pub(crate) enum HtmlElement {
     Shell(HtmlShellElement),
     SelectedOrdinary(HtmlSelectedOrdinaryElement),
+    Paragraph(HtmlParagraphElement),
 }
 
 impl HtmlElement {
@@ -319,6 +388,7 @@ impl HtmlElement {
         match self {
             Self::Shell(element) => HtmlElementName::Shell(element.name()),
             Self::SelectedOrdinary(element) => HtmlElementName::SelectedOrdinary(element.name()),
+            Self::Paragraph(_) => HtmlElementName::Paragraph,
         }
     }
 
@@ -326,7 +396,7 @@ impl HtmlElement {
     pub(crate) fn shell(&self) -> Option<&HtmlShellElement> {
         match self {
             Self::Shell(element) => Some(element),
-            Self::SelectedOrdinary(_) => None,
+            Self::SelectedOrdinary(_) | Self::Paragraph(_) => None,
         }
     }
 
@@ -334,7 +404,15 @@ impl HtmlElement {
     pub(crate) fn selected_ordinary(&self) -> Option<&HtmlSelectedOrdinaryElement> {
         match self {
             Self::SelectedOrdinary(element) => Some(element),
-            Self::Shell(_) => None,
+            Self::Shell(_) | Self::Paragraph(_) => None,
+        }
+    }
+
+    /// The Paragraph this is, when it is one.
+    pub(crate) fn paragraph(&self) -> Option<&HtmlParagraphElement> {
+        match self {
+            Self::Paragraph(element) => Some(element),
+            Self::Shell(_) | Self::SelectedOrdinary(_) => None,
         }
     }
 }
@@ -490,8 +568,8 @@ impl HtmlTreeNode {
     }
 
     /// The node's exact authored source evidence, or `None` when the node has
-    /// none. The document root and every synthesized shell element return
-    /// `None`.
+    /// none. The document root, every synthesized shell element, and every
+    /// unmatched-end-synthesized Paragraph return `None`.
     pub(crate) fn authored_source(&self) -> Option<HtmlAuthoredSource<'_>> {
         match &self.kind {
             HtmlTreeNodeKind::Document => None,
@@ -508,6 +586,14 @@ impl HtmlTreeNode {
                     complete: selected.complete(),
                     raw_name: selected.raw_name(),
                 })
+            }
+            HtmlTreeNodeKind::Element(HtmlElement::Paragraph(paragraph)) => {
+                match paragraph.origin() {
+                    HtmlParagraphElementOrigin::Authored { complete, raw_name } => {
+                        Some(HtmlAuthoredSource::StartTag { complete, raw_name })
+                    }
+                    HtmlParagraphElementOrigin::Synthesized(_) => None,
+                }
             }
             HtmlTreeNodeKind::Text(text) => {
                 Some(HtmlAuthoredSource::Characters(text.contributions()))
@@ -601,6 +687,19 @@ pub(crate) enum HtmlShellClosure {
     ImpliedByToken,
 }
 
+/// How a Paragraph left the open-element state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HtmlParagraphClosure {
+    /// Its own authored `</p>` closed the current P.
+    MatchingEndTag,
+    /// A following `<p>`, `<div>`, or `<section>` start closed the current P
+    /// before the new element was inserted.
+    StartTriggered,
+    /// An unmatched authored `</p>` synthesized a source-less P and that same
+    /// end tag immediately closed it.
+    UnmatchedEndTagSynthesized,
+}
+
 /// One committed action, with the token that triggered it.
 #[derive(Debug, Clone)]
 pub(crate) struct HtmlTreeAction {
@@ -626,8 +725,9 @@ impl HtmlTreeAction {
 ///
 /// This is deliberately not a complete construction event log: it records only
 /// what a supported query needs in order to explain a durable observation.
-/// TC-S3 extended it with the selected ordinary insertion, closure, and
-/// ignored-end variants and nothing else.
+/// TC-S3 extended it with selected ordinary insertion/closure, TC-S4 with one
+/// narrow recovery relation, and TC-S5 with three Paragraph lifecycle
+/// relations without turning it into a generic DOM mutation log.
 #[derive(Debug, Clone)]
 pub(crate) enum HtmlTreeActionKind {
     /// A shell element node was created from the trigger token's own authored
@@ -658,45 +758,34 @@ pub(crate) enum HtmlTreeActionKind {
         name: HtmlSelectedOrdinaryElementName,
     },
     /// An open selected ordinary element was closed by its own exact authored
-    /// end tag, which this action's trigger retains. No node was created, and
-    /// the end tag is closure evidence only: it is never the closed node's
-    /// authored origin.
+    /// end tag, which this action's trigger retains.
     ClosedSelectedOrdinaryElement {
         node: HtmlConstructedNodeId,
         name: HtmlSelectedOrdinaryElementName,
     },
-    /// An open selected ordinary element was popped, without being closed by
-    /// an end tag of its own name, because the trigger token is the exact
-    /// authored end tag of a *different* selected ordinary element further
-    /// out on the open-element stack.
-    ///
-    /// This is deliberately **not**
-    /// [`Self::ClosedSelectedOrdinaryElement`]: no matching end tag caused
-    /// this pop, so recording a closure for it would fabricate authored
-    /// evidence. A later authored end tag of `node`'s own name may still
-    /// appear in the source; because `node` already left the open state here,
-    /// that end tag is unmatched and closes nothing. `node` is the intervening
-    /// element that
-    /// was actually popped and `target` is the nearest same-name selected
-    /// ordinary element whose end tag caused the pop; both are semantic
-    /// creation-event identities, never storage positions, and they are
-    /// always distinct. The trigger this action carries is that same exact
-    /// authored end tag, which is also the trigger of the target's own
-    /// matching closure — one authored end tag legitimately participates in
-    /// several ordered recovery relations plus exactly one closure, and is
-    /// the authored origin of none of them.
-    ///
-    /// No node was created and no constructed identity was admitted.
+    /// An open selected ordinary element was popped because the trigger is the
+    /// exact end tag of a different selected ordinary ancestor.
     PoppedSelectedOrdinaryElementByAncestorEndTag {
         node: HtmlConstructedNodeId,
         target: HtmlConstructedNodeId,
     },
     /// A selected ordinary end tag with no matching open element was ignored.
-    /// No node was created, closed, or otherwise mutated, and no constructed
-    /// identity was admitted. The accompanying parse diagnostic is separate
-    /// evidence with its own meaning.
     IgnoredUnmatchedSelectedOrdinaryEndTag {
         name: HtmlSelectedOrdinaryElementName,
+    },
+    /// An authored `<p>` created a Paragraph. The trigger is the node's own
+    /// authored start origin.
+    InsertedAuthoredParagraphElement { node: HtmlConstructedNodeId },
+    /// An unmatched authored `</p>` created a source-less Paragraph. The
+    /// trigger is causal evidence only and is never the node's authored origin.
+    InsertedSynthesizedParagraphElement {
+        node: HtmlConstructedNodeId,
+        cause: HtmlParagraphSynthesisCause,
+    },
+    /// An open Paragraph was removed for exactly one validated TC-S5 reason.
+    ClosedParagraphElement {
+        node: HtmlConstructedNodeId,
+        closure: HtmlParagraphClosure,
     },
     /// An open shell element was closed. No node was created.
     ClosedShellElement {
@@ -707,14 +796,10 @@ pub(crate) enum HtmlTreeActionKind {
     /// A supported shell end tag moved the document position without
     /// creating, closing, or mutating any node.
     AcknowledgedShellEndTag { name: HtmlShellElementName },
-    /// A duplicate shell start tag created no node and admitted no
-    /// constructed identity.
+    /// A duplicate shell start tag created no node and admitted no identity.
     DuplicateShellStartTagCreatedNoNode { name: HtmlShellElementName },
     /// The trigger token was handed to a different actual insertion mode
-    /// without being consumed. TC-S2's accepted `AfterBody -> InBody`
-    /// recovery makes this a same-token move to a mode that is not
-    /// necessarily later; reprocessing still keeps one token as one
-    /// observation.
+    /// without being consumed.
     ReprocessedToken,
     /// Document parsing stopped at the trigger token.
     StoppedParsing,
@@ -731,6 +816,9 @@ impl HtmlTreeActionKind {
             | Self::InsertedAuthoredSelectedOrdinaryElement { node, .. }
             | Self::ClosedSelectedOrdinaryElement { node, .. }
             | Self::PoppedSelectedOrdinaryElementByAncestorEndTag { node, .. }
+            | Self::InsertedAuthoredParagraphElement { node }
+            | Self::InsertedSynthesizedParagraphElement { node, .. }
+            | Self::ClosedParagraphElement { node, .. }
             | Self::ClosedShellElement { node, .. } => Some(*node),
             Self::IgnoredUnmatchedSelectedOrdinaryEndTag { .. }
             | Self::AcknowledgedShellEndTag { .. }
@@ -744,10 +832,7 @@ impl HtmlTreeActionKind {
 /// A supported parse diagnostic.
 ///
 /// Tree diagnostics are authored-input evidence. They are independent of
-/// effective completion: a `Complete` result normally carries at least the
-/// missing-DOCTYPE diagnostic, and neither TC-S3 diagnostic forces
-/// incompleteness either. They are also independent of the retained
-/// tokenizer run's own diagnostics, which are never copied here.
+/// effective completion and of the retained tokenizer run's own diagnostics.
 #[derive(Debug, Clone)]
 pub(crate) struct HtmlTreeDiagnostic {
     code: HtmlTreeDiagnosticCode,
@@ -783,111 +868,52 @@ impl HtmlTreeDiagnostic {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HtmlTreeDiagnosticCode {
-    /// Ordinary document parsing reached content with no DOCTYPE.
     MissingDoctype,
-    /// A `head` start tag appeared while the head insertion mode was current.
     DuplicateHeadStartTag,
-    /// A `body` start tag appeared while a body element was already open.
     DuplicateBodyStartTag,
-    /// A non-whitespace character run appeared while `AfterBody` was the
-    /// actual insertion mode.
     AfterBodyCharacterData,
-    /// A selected ordinary end tag appeared with no matching selected ordinary
-    /// element in the bounded selected-element scope.
     UnmatchedSelectedOrdinaryEndTag,
-    /// A selected ordinary end tag appeared while its nearest same-name
-    /// selected ordinary element was open but was not the current node, so
-    /// one or more differently-nested selected ordinary elements had to be
-    /// popped before it could be closed.
-    ///
-    /// Exactly one of these is recorded per misnested end tag, however many
-    /// intervening elements the recovery popped. Which elements were popped,
-    /// and which target they were popped for, is recorded once each as
-    /// [`HtmlTreeActionKind::PoppedSelectedOrdinaryElementByAncestorEndTag`]
-    /// rather than duplicated here.
     MisnestedSelectedOrdinaryEndTag,
-    /// Document parsing reached end of file while a selected ordinary element
-    /// was still open.
     OpenSelectedOrdinaryElementAtEndOfFile,
+    /// An authored `</p>` appeared while no P was present in the bounded
+    /// TC-S5 button-scope reduction.
+    UnmatchedParagraphEndTag,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HtmlTreeRecovery {
-    /// Construction continued; the private document mode became quirks.
     ContinuedInQuirksDocumentMode,
-    /// The duplicate shell start tag produced no node and no identity.
     DuplicateShellStartTagProducedNoNode,
-    /// The actual insertion mode changed from `AfterBody` to `InBody` and the
-    /// same admitted token was reprocessed there.
     SwitchedToInBodyAndReprocessedSameToken,
-    /// The token was ignored. The constructed tree, the open elements, the
-    /// actual insertion mode, constructed identity, and closure evidence were
-    /// all left exactly as they were.
     IgnoredToken,
-    /// The intervening open selected ordinary elements were popped in
-    /// current-first order and the nearest same-name target was then closed
-    /// by its own exact authored end tag. No end tag was synthesized for a
-    /// popped element and no node was created.
     PoppedInterveningSelectedOrdinaryElementsAndClosedTarget,
-    /// Document parsing stopped normally with the selected ordinary element
-    /// still open. Nothing was popped, synthesized, or closed, and no closure
-    /// evidence was fabricated for the end-of-file token.
     StoppedParsingWithOpenSelectedOrdinaryElements,
+    /// The unmatched-P recovery inserted one source-less Paragraph and closed
+    /// that exact node under the same authored `</p>` trigger.
+    SynthesizedParagraphElementAndClosedIt,
 }
 
 /// A capability boundary reached by admitted input.
-///
-/// Unsupported coverage is *not* evidence that the source is invalid HTML,
-/// and it is not a tokenizer condition. It records that this subsystem's
-/// proved action set does not contain the reached rule.
-///
-/// Variants are frozen evidence: a successor adds its own rather than
-/// widening or renaming an existing one, so predecessor results keep saying
-/// exactly what they always said.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HtmlTreeCapability {
-    /// A tag naming an element outside the proved `html`/`head`/`body` shell.
-    ///
-    /// This is frozen predecessor meaning and keeps it exactly: it is reported
-    /// for a name in neither closed admitted domain. A selected ordinary tag
-    /// never reaches it, and TC-S3 added its own variants below rather than
-    /// widening this one.
     NonShellElementTag,
-    /// Attribute evidence on a shell tag. TC-S1 proves no attribute
-    /// semantics, including attribute merging on duplicate shell tags.
     ShellTagAttribute,
-    /// A self-closing solidus on a shell tag.
     SelfClosingShellTag,
-    /// Character data whose supported handling would depend on the
-    /// whitespace/non-whitespace distinction the current document position
-    /// makes. TC-S1 proves no whitespace-sensitive character handling.
     WhitespaceSensitiveCharacterData,
-    /// Character data reached in a document position TC-S1 does not prove.
     UnprovedCharacterDataPosition,
-    /// A shell start tag reached in a document position TC-S1 does not prove.
     UnprovedShellStartTagPosition,
-    /// A shell end tag reached in a document position TC-S1 does not prove.
     UnprovedShellEndTagPosition,
-    /// A selected ordinary tag reached an actual insertion mode other than
-    /// `in body`. TC-S3 proves the selected `div` rules only there, so the
-    /// tag is refused before any shell walk, recovery, missing-DOCTYPE, mode,
-    /// action, coverage, or identity effect.
     SelectedOrdinaryTagOutsideInBody,
-    /// A shell tag reached `in body` while a selected ordinary element was
-    /// still open. TC-S3 proves no shell interaction over an open selected
-    /// ordinary element, so the tag is refused before any partial mutation.
     ShellTagWithOpenSelectedOrdinaryElement,
-    /// Attribute evidence on a selected ordinary tag. TC-S3 proves no
-    /// attribute semantics for the selected ordinary domain, and deliberately
-    /// does not report the shell-specific
-    /// [`Self::ShellTagAttribute`], which would be false about a `div`.
     SelectedOrdinaryTagAttribute,
-    /// A self-closing solidus on a selected ordinary tag. Kept distinct from
-    /// [`Self::SelfClosingShellTag`] for the same reason.
     SelfClosingSelectedOrdinaryTag,
+    ParagraphTagOutsideInBody,
+    ParagraphTagAttribute,
+    SelfClosingParagraphTag,
+    SelectedOrdinaryEndTagWithOpenParagraphElement,
+    ShellTagWithOpenParagraphElement,
 }
 
-/// The exact typed evidence for an unsupported stop.
 #[derive(Debug, Clone)]
 pub(crate) struct HtmlTreeUnsupportedCapability {
     capability: HtmlTreeCapability,
@@ -906,38 +932,17 @@ impl HtmlTreeUnsupportedCapability {
         self.capability
     }
 
-    /// The exact token that stopped construction. This is trigger evidence
-    /// only: the refused action committed no mutation, so nothing in the
-    /// frozen tree originates from it.
     pub(crate) fn trigger(&self) -> &HtmlTreeTokenTrigger {
         &self.trigger
     }
 }
 
-/// Why an effective TC-S1 result is not `Complete`.
 #[derive(Debug, Clone)]
 pub(crate) enum HtmlTreeIncompleteCause {
-    /// TC-S1 processed every emitted token it was given, but the retained
-    /// tokenizer run is itself incomplete.
-    ///
-    /// The exact lower-layer meaning — `UnsupportedCapability`,
-    /// `ResourceLimit`, `InvalidConfiguration`, or
-    /// `InternalInvariantFailure` — remains authoritative on
-    /// [`HtmlDocumentShellAnalysis::tokenizer_run`] and is deliberately not
-    /// duplicated, re-encoded, or lossily summarized here.
     LowerLayerIncomplete,
-    /// TC-S1 stopped before mutation at input outside its proved envelope.
-    ///
-    /// The retained tokenizer run's own completion remains separately
-    /// authoritative and may additionally be incomplete.
     UnsupportedCapability(HtmlTreeUnsupportedCapability),
 }
 
-/// Effective TC-S1 completion.
-///
-/// `Complete` requires all three of: tokenizer completion `Complete`, every
-/// emitted token processed through end of file by supported actions, and a
-/// successful freeze. Lower-layer incompleteness is never upgraded.
 #[derive(Debug, Clone)]
 pub(crate) enum HtmlTreeCompletion {
     Complete,
@@ -950,13 +955,6 @@ impl HtmlTreeCompletion {
     }
 }
 
-/// How far committed tree construction actually got.
-///
-/// Byte coverage alone is not treated as sufficient progress evidence: the
-/// processed-token count is recorded explicitly beside it. Committed tree
-/// coverage is a different measurement from the retained tokenizer run's own
-/// coverage and the two must not be conflated. TC-S1 may commit strictly less
-/// than the tokenizer processed.
 #[derive(Clone)]
 pub(crate) struct HtmlTreeCommittedCoverage {
     committed_prefix: SourceAnchor,
@@ -964,8 +962,6 @@ pub(crate) struct HtmlTreeCommittedCoverage {
 }
 
 impl HtmlTreeCommittedCoverage {
-    /// The retained-source prefix whose emitted tokens were completely
-    /// processed by committed TC-S1 actions.
     pub(crate) fn committed_prefix(&self) -> &SourceAnchor {
         &self.committed_prefix
     }
@@ -974,8 +970,6 @@ impl HtmlTreeCommittedCoverage {
         self.committed_prefix.range().end()
     }
 
-    /// How many emitted tokens of the retained run were completely processed.
-    /// This is parser progress, not byte progress.
     pub(crate) fn processed_tokens(&self) -> usize {
         self.processed_tokens
     }
@@ -992,11 +986,6 @@ impl fmt::Debug for HtmlTreeCommittedCoverage {
     }
 }
 
-/// The immutable, validated TC-S1 analysis.
-///
-/// Retains the validated [`HtmlTokenizerRunResult`] by value so tokenizer
-/// tokens, diagnostics, coverage, completion, limits, and usage remain
-/// authoritative in one place rather than being duplicated.
 #[derive(Clone)]
 pub(crate) struct HtmlDocumentShellAnalysis {
     tokenizer_run: HtmlTokenizerRunResult,
@@ -1009,9 +998,6 @@ pub(crate) struct HtmlDocumentShellAnalysis {
 }
 
 impl HtmlDocumentShellAnalysis {
-    /// The retained validated tokenizer run. Tokenizer completion,
-    /// diagnostics, coverage, and resource evidence remain authoritative
-    /// here.
     pub(crate) fn tokenizer_run(&self) -> &HtmlTokenizerRunResult {
         &self.tokenizer_run
     }
@@ -1020,12 +1006,6 @@ impl HtmlDocumentShellAnalysis {
         self.root
     }
 
-    /// Resolves a constructed identity.
-    ///
-    /// Deliberately a search over stored nodes for a matching identity, never
-    /// an index into storage: identity is committed creation-event order, not
-    /// a storage slot, so replacing or permuting private storage must not
-    /// change any answer.
     pub(crate) fn node(&self, id: HtmlConstructedNodeId) -> Option<&HtmlTreeNode> {
         self.nodes.iter().find(|node| node.id() == id)
     }
@@ -1034,19 +1014,16 @@ impl HtmlDocumentShellAnalysis {
         self.nodes.len()
     }
 
-    /// All constructed nodes in committed semantic creation order.
     pub(crate) fn nodes_in_creation_order(&self) -> Vec<&HtmlTreeNode> {
         let mut ordered: Vec<&HtmlTreeNode> = self.nodes.iter().collect();
         ordered.sort_by_key(|node| node.id());
         ordered
     }
 
-    /// Supported TC-S1 parse diagnostics, in committed order.
     pub(crate) fn diagnostics(&self) -> &[HtmlTreeDiagnostic] {
         &self.diagnostics
     }
 
-    /// Committed action and disposition evidence, in committed order.
     pub(crate) fn actions(&self) -> &[HtmlTreeAction] {
         &self.actions
     }
@@ -1063,12 +1040,6 @@ impl HtmlDocumentShellAnalysis {
         self.completion.is_complete()
     }
 
-    /// Test-only storage perturbation.
-    ///
-    /// Reverses private node storage without touching any identity or
-    /// relationship, so tests can prove that durable meaning survives storage
-    /// replacement and that nothing resolves relationships by storage
-    /// position.
     #[cfg(test)]
     pub(super) fn with_reversed_storage(mut self) -> Self {
         self.nodes.reverse();
@@ -1105,19 +1076,13 @@ pub(super) struct HtmlDocumentShellParts {
     pub(super) processed_tokens: usize,
     pub(super) committed_prefix_end: usize,
     pub(super) completion: HtmlTreeCompletion,
-    /// The semantic identities of the selected ordinary elements that were
-    /// still open on the private session's own open-element stack when the run
-    /// finished, innermost last.
-    ///
-    /// This is an immutable snapshot taken at hand-off, not the mutable stack:
-    /// it exists so [`freeze`] can check the committed action stream against
-    /// the state it actually describes, and it is consumed and discarded here.
-    /// It never reaches [`HtmlDocumentShellAnalysis`] and no consumer can
-    /// observe it or the parser stack behind it.
     pub(super) final_open_selected_ordinary: Vec<HtmlConstructedNodeId>,
+    /// The P still open on the private stack at hand-off, if any. Under the
+    /// accepted TC-S5 theorem there can be at most one and it is current.
+    /// This immutable checkpoint is consumed by freeze and never escapes.
+    pub(super) final_open_paragraph: Option<HtmlConstructedNodeId>,
 }
 
-/// Which retained evidence a source-validation freeze error concerns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HtmlTreeEvidenceRole {
     AuthoredCompleteTag,
@@ -1129,228 +1094,135 @@ pub(crate) enum HtmlTreeEvidenceRole {
     CommittedCoverage,
 }
 
-/// Why an effective `Complete` claim was rejected at freeze.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HtmlTreeCompletionUpgrade {
-    /// The retained tokenizer run is not `Complete`.
     RetainedTokenizerRunIsIncomplete,
-    /// Emitted tokens remain unprocessed.
     EmittedTokensRemainUnprocessed,
-    /// The committed tree is not a complete document shell.
     DocumentShellIsIncomplete,
 }
 
 /// A freeze/boundary invariant failure.
 ///
 /// This vocabulary is deliberately separate from HTML parse diagnostics and
-/// from [`HtmlTreeCapability`]: a freeze failure means the construction
-/// boundary produced something it must never produce, not that the authored
-/// source was bad or that a capability is missing.
-///
-/// Every variant carries only structural evidence — constructed identities,
-/// roles, counts, [`SourceId`], and [`SourceRangeError`]. `Debug` and
-/// `Display` never expose arbitrary authored source content.
+/// from [`HtmlTreeCapability`]. Existing TC-S1–TC-S4 variants retain their
+/// exact meaning; TC-S5 adds only Paragraph-specific boundary failures.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum HtmlTreeFreezeError {
-    /// Two stored nodes carry the same constructed identity.
     DuplicateConstructedIdentity(HtmlConstructedNodeId),
-    /// The stored node inventory does not match the identities the session's
-    /// committed creation counter admitted.
     CreationEventInventoryMismatch { admitted: usize, stored: usize },
-    /// A stored identity was never admitted by the creation counter.
     UnadmittedConstructedIdentity(HtmlConstructedNodeId),
-    /// The declared root is not stored.
     MissingRootNode(HtmlConstructedNodeId),
-    /// The declared root is not a Document node, or a Document node is stored
-    /// somewhere other than the root.
     InvalidDocumentRoot(HtmlConstructedNodeId),
-    /// The root records a parent relationship.
     RootMustNotHaveParent(HtmlConstructedNodeId),
-    /// A non-root node records no parent relationship.
     MissingParentRelationship(HtmlConstructedNodeId),
-    /// A relationship names an identity that is not stored.
     UnresolvedRelationship {
         from: HtmlConstructedNodeId,
         to: HtmlConstructedNodeId,
     },
-    /// A parent/child relationship is not recorded mutually and exactly once
-    /// on both sides.
     AsymmetricRelationship {
         parent: HtmlConstructedNodeId,
         child: HtmlConstructedNodeId,
     },
-    /// A child's creation event precedes its parent's.
     ChildPrecedesParentCreation {
         parent: HtmlConstructedNodeId,
         child: HtmlConstructedNodeId,
     },
-    /// The stored nodes are not exactly the nodes reachable from the root.
     UnreachableOrCyclicStructure { reachable: usize, stored: usize },
-    /// A text node has no contributions, an empty contribution, contributions
-    /// that are not in strictly increasing source order, or interpreted text
-    /// that is not the exact ordered concatenation of its contributions.
     InvalidTextContributions(HtmlConstructedNodeId),
-    /// Retained evidence is bound to a source identity other than the exact
-    /// supplied [`SourceText`].
     ForeignSourceEvidence {
         role: HtmlTreeEvidenceRole,
         expected: SourceId,
         actual: SourceId,
     },
-    /// Retained evidence did not revalidate through the exact supplied
-    /// [`SourceText`].
     InvalidSourceEvidence {
         role: HtmlTreeEvidenceRole,
         error: SourceRangeError,
     },
-    /// Retained evidence revalidated, but the exact supplied [`SourceText`]
-    /// carries different content at that range.
     MismatchedSourceEvidence { role: HtmlTreeEvidenceRole },
-    /// A node's raw tag-name evidence is not contained in its complete
-    /// authored start-tag evidence.
     AuthoredNameOutsideCompleteTag(HtmlConstructedNodeId),
-    /// An action names a constructed identity that is not stored.
     UnresolvedActionSubject(HtmlConstructedNodeId),
-    /// A recorded trigger names a token outside the retained run, or recorded
-    /// evidence is not in non-decreasing token order.
     InvalidTokenProgression {
         role: HtmlTreeEvidenceRole,
         token_index: usize,
     },
-    /// Committed tree coverage is not a valid prefix of the retained source.
     InvalidCommittedCoverage {
         committed_prefix_end: usize,
         source_len: usize,
     },
-    /// Committed tree coverage claims more processed tokens than the retained
-    /// run emitted.
     CommittedTokensExceedRetainedRun {
         processed_tokens: usize,
         emitted_tokens: usize,
     },
-    /// Effective `Complete` was claimed without the conditions that permit
-    /// it.
     CompletionUpgrade(HtmlTreeCompletionUpgrade),
-    /// A node's authored origin is the same authored range as the unsupported
-    /// trigger, which would leak identity for input that committed nothing.
     UnsupportedTriggerLeakedAsAuthoredOrigin(HtmlConstructedNodeId),
-    /// A recorded selected ordinary closure names a node that is not a
-    /// selected ordinary element of the recorded name.
     ClosureSubjectIsNotTheSelectedOrdinaryElement {
         node: HtmlConstructedNodeId,
         name: HtmlSelectedOrdinaryElementName,
     },
-    /// A selected ordinary closure was recorded without the exact authored
-    /// end-tag trigger that is its only permitted evidence. End of file
-    /// fabricates no closure.
     FabricatedSelectedOrdinaryClosure(HtmlConstructedNodeId),
-    /// A selected ordinary closure was recorded for an element that was not
-    /// the innermost open selected ordinary element at that point, or that
-    /// was never inserted or was already closed. Closure is unique and
-    /// stack-consistent for the selected slice.
     NonLifoSelectedOrdinaryClosure(HtmlConstructedNodeId),
-    /// A selected ordinary closure trigger does not resolve, in the retained
-    /// tokenizer run, to the exact emitted matching end tag for that element.
-    ///
-    /// This is what makes closure evidence *matching* end-tag evidence rather
-    /// than merely some valid authored anchor: a start tag, an unrelated
-    /// authored token, a differently-named end tag, or an anchor that is not
-    /// the retained token's own complete-tag evidence all land here.
     ClosureTriggerIsNotTheMatchingEndTag {
         node: HtmlConstructedNodeId,
         token_index: usize,
     },
-    /// The same selected ordinary semantic identity was inserted more than
-    /// once by the committed action stream.
     DuplicateSelectedOrdinaryInsertion(HtmlConstructedNodeId),
-    /// A recorded final open selected ordinary identity does not resolve to a
-    /// stored selected ordinary element.
     FinalOpenSelectedOrdinaryIsNotASelectedElement(HtmlConstructedNodeId),
-    /// The selected ordinary elements left open by the committed action stream
-    /// are not exactly, and in the same order as, the session's actual final
-    /// open selected ordinary elements.
     FinalOpenSelectedOrdinaryStateMismatch {
         replayed: Vec<HtmlConstructedNodeId>,
         actual: Vec<HtmlConstructedNodeId>,
     },
-    /// A recorded heterogeneous recovery pop names a subject that is not a
-    /// stored selected ordinary element.
     RecoverySubjectIsNotSelectedOrdinaryElement(HtmlConstructedNodeId),
-    /// A recorded heterogeneous recovery pop names a target that is not a
-    /// stored selected ordinary element.
     RecoveryTargetIsNotSelectedOrdinaryElement(HtmlConstructedNodeId),
-    /// A recorded heterogeneous recovery pop names the same identity as both
-    /// the popped element and the target it was popped for. The target is
-    /// closed by its own matching end tag and is never recovery-popped.
     SelfTargetingSelectedOrdinaryRecovery(HtmlConstructedNodeId),
-    /// A recorded heterogeneous recovery pop does not resolve, in the
-    /// retained tokenizer run, to the exact emitted matching end tag of its
-    /// target. End of file, a start tag, a character run, an unrelated end
-    /// tag, a differently-named end tag, and an anchor that is not the
-    /// retained token's own complete-tag evidence all land here.
     RecoveryTriggerIsNotMatchingTargetEndTag {
         node: HtmlConstructedNodeId,
         token_index: usize,
     },
-    /// A recorded heterogeneous recovery names a target that was not open, or
-    /// was not the nearest currently-open selected ordinary element of its own
-    /// name, at the point the recovery was committed.
     RecoveryTargetIsNotNearestMatchingSelectedOrdinary(HtmlConstructedNodeId),
-    /// A recorded heterogeneous recovery pop names an element that was not the
-    /// current selected ordinary element at that point: the suffix was
-    /// popped out of order, an intervening element was skipped, the same
-    /// element was popped twice, or the element had already left the open
-    /// state.
     NonLifoSelectedOrdinaryRecovery(HtmlConstructedNodeId),
-    /// A committed recovery group was never terminated by its target's own
-    /// matching closure: the action stream ended, or an unrelated action was
-    /// committed, while the group was still open.
     UnterminatedSelectedOrdinaryRecovery(HtmlConstructedNodeId),
-    /// A committed recovery group is terminated by a closure that is not its
-    /// target's, or by a closure whose trigger token is not the recovery
-    /// group's own trigger token.
     SelectedOrdinaryRecoveryClosureMismatch {
         target: HtmlConstructedNodeId,
         closed: HtmlConstructedNodeId,
     },
-    /// The misnested selected ordinary end-tag diagnostics are not exactly
-    /// one per committed recovery group, with the group's own trigger token
-    /// and the accepted recovery summary.
     SelectedOrdinaryRecoveryDiagnosticMismatch {
         recovery_groups: Vec<usize>,
         misnested_diagnostics: Vec<usize>,
     },
-    /// The ignored unmatched selected ordinary end-tag actions and the
-    /// unmatched selected ordinary end-tag diagnostics do not name exactly
-    /// the same trigger tokens, or an unmatched diagnostic does not carry
-    /// that action's own exact authored end tag and the ignored-token
-    /// recovery.
     UnmatchedSelectedOrdinaryEndTagDiagnosticMismatch {
         actions: Vec<usize>,
         diagnostics: Vec<usize>,
     },
-    /// One retained selected ordinary end token supplied more than one
-    /// terminal selected-end decision.
-    ///
-    /// One dispatch of one authored selected end tag reaches exactly one of
-    /// the three terminal cells: a current-target matching closure, a
-    /// recovery group's target closure, or an ignored unmatched disposition.
-    /// A group may carry many ordered recovery pops before its one closure,
-    /// but the token is spent once that closure or disposition commits. A
-    /// replay that spends the same retained token twice — for example to
-    /// close a second, further-out same-name ancestor after the first group
-    /// already succeeded — describes semantics no single dispatch can
-    /// produce.
     DuplicateSelectedOrdinaryEndTokenDecision { token_index: usize },
-    /// A recorded ignored unmatched selected ordinary end tag does not
-    /// resolve, in the retained tokenizer run, to the exact emitted end tag
-    /// of its own recorded selected name.
     UnmatchedSelectedOrdinaryEndTriggerIsNotTheMatchingEndTag { token_index: usize },
-    /// A selected ordinary end tag was recorded as unmatched while a
-    /// same-name selected ordinary element was in fact still open at that
-    /// point in the replayed lifecycle. That is the closing or recovering
-    /// cell, not the ignored one.
     UnmatchedSelectedOrdinaryEndTagWithOpenTarget(HtmlConstructedNodeId),
+    ParagraphActionSubjectIsNotParagraph(HtmlConstructedNodeId),
+    DuplicateParagraphInsertion(HtmlConstructedNodeId),
+    ParagraphInsertionInventoryMismatch(HtmlConstructedNodeId),
+    ParagraphAuthoredInsertionTriggerMismatch {
+        node: HtmlConstructedNodeId,
+        token_index: usize,
+    },
+    ParagraphSynthesizedInsertionTriggerMismatch {
+        node: HtmlConstructedNodeId,
+        token_index: usize,
+    },
+    ParagraphClosureTriggerMismatch {
+        node: HtmlConstructedNodeId,
+        token_index: usize,
+    },
+    NonLifoParagraphInteraction(HtmlConstructedNodeId),
+    ParagraphStartTriggeredInsertionMismatch { token_index: usize },
+    ParagraphSynthesisClosureMismatch { token_index: usize },
+    UnmatchedParagraphDiagnosticMismatch {
+        syntheses: Vec<usize>,
+        diagnostics: Vec<usize>,
+    },
+    FinalOpenParagraphIsNotParagraph(HtmlConstructedNodeId),
+    FinalOpenParagraphStateMismatch {
+        replayed: Option<HtmlConstructedNodeId>,
+        actual: Option<HtmlConstructedNodeId>,
+    },
 }
 
 impl fmt::Display for HtmlTreeFreezeError {
@@ -1364,12 +1236,9 @@ impl fmt::Display for HtmlTreeFreezeError {
 
 impl Error for HtmlTreeFreezeError {}
 
-/// Validates the private session's construction output and freezes it into an
-/// immutable [`HtmlDocumentShellAnalysis`].
-///
-/// This is the only way an [`HtmlDocumentShellAnalysis`] is created. Every
-/// durable invariant this subsystem promises is checked here rather than
-/// assumed from how the session happens to be written.
+/// Validates private construction output and freezes it into immutable result
+/// meaning. Existing TC-S1–TC-S4 checks remain intact; TC-S5 adds an
+/// independent Paragraph lifecycle replay beside the selected-ordinary replay.
 pub(super) fn freeze(
     source: &SourceText,
     tokenizer_run: HtmlTokenizerRunResult,
@@ -1385,6 +1254,7 @@ pub(super) fn freeze(
         committed_prefix_end,
         completion,
         final_open_selected_ordinary,
+        final_open_paragraph,
     } = parts;
 
     validate_identity_inventory(&nodes, admitted_creation_events)?;
@@ -1397,6 +1267,13 @@ pub(super) fn freeze(
         &diagnostics,
         &tokenizer_run,
         &final_open_selected_ordinary,
+    )?;
+    validate_paragraph_lifecycle(
+        &nodes,
+        &actions,
+        &diagnostics,
+        &tokenizer_run,
+        final_open_paragraph,
     )?;
     validate_diagnostic_evidence(source, &diagnostics, tokenizer_run.tokens().len())?;
     validate_completion(
@@ -1534,9 +1411,6 @@ fn validate_structure(
         }
     }
 
-    // Reachability doubles as the acyclicity proof: every non-root node has
-    // exactly one recorded parent, so a cycle would detach its members from
-    // the root and the reachable count would fall short of the stored count.
     let mut reachable = 0usize;
     let mut frontier = vec![root];
     let mut visited: Vec<HtmlConstructedNodeId> = Vec::new();
@@ -1577,6 +1451,12 @@ fn validate_node_evidence(
                     HtmlElement::SelectedOrdinary(selected) => {
                         Some((selected.complete(), selected.raw_name()))
                     }
+                    HtmlElement::Paragraph(paragraph) => match paragraph.origin() {
+                        HtmlParagraphElementOrigin::Authored { complete, raw_name } => {
+                            Some((complete, raw_name))
+                        }
+                        HtmlParagraphElementOrigin::Synthesized(_) => None,
+                    },
                 };
                 if let Some((complete, raw_name)) = authored {
                     validate_evidence(source, HtmlTreeEvidenceRole::AuthoredCompleteTag, complete)?;
@@ -1648,53 +1528,9 @@ fn validate_action_evidence(
     Ok(())
 }
 
-/// Validates the complete selected ordinary lifecycle-evidence theorem.
-///
-/// Replays the committed selected ordinary insertion, heterogeneous
-/// recovery-pop, and matching-closure actions in committed order over a
-/// private stack of semantic constructed identities, correlating each
-/// recovery and closure against the retained tokenizer run, then against the
-/// committed diagnostics, and finally against the session's own actual final
-/// open selected state. Together that proves every part of the theorem:
-///
-/// - every insertion, recovery, and closure endpoint resolves to a stored
-///   selected ordinary element, and every closure subject carries the
-///   recorded name;
-/// - a selected ordinary identity is inserted at most once, so the replay
-///   stack cannot be padded with a repeated identity;
-/// - a closure trigger resolves, in the retained run, to the exact emitted
-///   matching end tag for that element — not merely to some valid authored
-///   anchor — so a start tag, an unrelated token, or end of file can never
-///   stand in as closure evidence;
-/// - a recovery trigger resolves the same way to the exact emitted matching
-///   end tag of the recovery's own *target*, which is what keeps one authored
-///   end tag able to cause several ordered pops plus one closure without
-///   becoming any of those nodes' authored origin;
-/// - a recorded recovery target really is the nearest currently-open selected
-///   ordinary element of its own name, recomputed here from the replayed
-///   stack rather than trusted from the recorded field;
-/// - recovery and closure order is stack-consistent (LIFO) for the selected
-///   slice, so a skipped intervening element, a reversed suffix, a duplicate
-///   or extra pop, a pop after the element already left the open state, and a
-///   non-current target closed without its required recovery are all
-///   rejected;
-/// - a recovery group is contiguous and is terminated by exactly its own
-///   target's closure under exactly its own trigger token, so an intervening
-///   element can never receive a fabricated matching closure and the target
-///   can never be recovery-popped instead of closed;
-/// - the misnested diagnostics are exactly one per committed recovery group,
-///   with that group's own exact authored end tag — recorrelated against the
-///   retained run, not merely against the recorded token index — and the
-///   accepted recovery summary,
-///   and the ignored unmatched end-tag actions and diagnostics name exactly
-///   the same trigger tokens; and
-/// - the identities still open after the replay are exactly, and in the same
-///   order as, the session's actual final open selected ordinary elements.
-///
-/// That last comparison is what makes this validation of construction output
-/// rather than trust in how the session happens to be written: a session that
-/// popped a selected element without recording its recovery or closure would
-/// otherwise be indistinguishable from the valid end-of-file-open case.
+/// Validates the selected ordinary lifecycle-evidence theorem. TC-S5 leaves
+/// this relation intact; a separate Paragraph replay below checks mixed-stack
+/// interactions that this selected-only projection deliberately does not own.
 fn validate_selected_ordinary_lifecycle(
     nodes: &[HtmlTreeNode],
     actions: &[HtmlTreeAction],
@@ -1704,15 +1540,9 @@ fn validate_selected_ordinary_lifecycle(
 ) -> Result<(), HtmlTreeFreezeError> {
     let mut open: Vec<HtmlConstructedNodeId> = Vec::new();
     let mut inserted: Vec<HtmlConstructedNodeId> = Vec::new();
-    // The recovery group currently awaiting its target's own matching
-    // closure, as `(target, trigger token index)`. A group is opened by its
-    // first recovery pop and must be closed before any other action commits.
     let mut pending: Option<(HtmlConstructedNodeId, usize)> = None;
     let mut recovery_groups: Vec<ReplayedRecoveryGroup> = Vec::new();
     let mut ignored_unmatched: Vec<ReplayedUnmatchedEnd> = Vec::new();
-    // Which retained tokens have already spent their one terminal
-    // selected-end decision. Recovery pops are not terminal; the closure or
-    // disposition that ends the dispatch is.
     let mut spent_end_tokens: Vec<usize> = Vec::new();
 
     for action in actions {
@@ -1754,8 +1584,6 @@ fn validate_selected_ordinary_lifecycle(
                 }
                 match pending {
                     Some((pending_target, pending_token)) => {
-                        // A recovery group belongs to exactly one target under
-                        // exactly one authored end tag.
                         if pending_target != *target
                             || pending_token != action.trigger().token_index()
                         {
@@ -1765,8 +1593,6 @@ fn validate_selected_ordinary_lifecycle(
                         }
                     }
                     None => {
-                        // Recomputed from the replayed stack, so a recorded
-                        // target that merely looks plausible is still rejected.
                         if nearest_open_selected_ordinary(nodes, &open, target_name)
                             != Some(*target)
                         {
@@ -1806,17 +1632,10 @@ fn validate_selected_ordinary_lifecycle(
                     return Err(HtmlTreeFreezeError::NonLifoSelectedOrdinaryClosure(*node));
                 }
                 open.pop();
-                // Checked after the stack-consistency rules above, so a
-                // duplicated closure of one element keeps reporting the
-                // predecessor non-LIFO meaning it always did.
                 spend_end_token(&mut spent_end_tokens, action.trigger().token_index())?;
             }
             HtmlTreeActionKind::IgnoredUnmatchedSelectedOrdinaryEndTag { name } => {
                 reject_interleaved_recovery(pending)?;
-                // Independently proved, not inferred from the recorded token
-                // index: the trigger really is the retained emitted end tag of
-                // this recorded selected name, and no same-name target was
-                // open, so the ignored cell really is the cell that applied.
                 if !is_matching_end_tag_trigger(*name, action.trigger(), tokenizer_run) {
                     return Err(
                         HtmlTreeFreezeError::UnmatchedSelectedOrdinaryEndTriggerIsNotTheMatchingEndTag {
@@ -1863,26 +1682,16 @@ fn validate_selected_ordinary_lifecycle(
     Ok(())
 }
 
-/// One committed heterogeneous recovery group, as the freeze replay
-/// reconstructed it rather than as the session described it.
 struct ReplayedRecoveryGroup {
-    /// The retained-run index of the one authored end tag the whole group
-    /// shares.
     trigger_token: usize,
-    /// The closed selected name of the group's target, which is also the name
-    /// its authored end tag must be spelled with.
     target_name: HtmlSelectedOrdinaryElementName,
 }
 
-/// One committed ignored unmatched selected ordinary end tag, as the freeze
-/// replay reconstructed it.
 struct ReplayedUnmatchedEnd {
     trigger_token: usize,
     name: HtmlSelectedOrdinaryElementName,
 }
 
-/// Records that a retained token has spent its one terminal selected-end
-/// decision, rejecting a second one.
 fn spend_end_token(spent: &mut Vec<usize>, token_index: usize) -> Result<(), HtmlTreeFreezeError> {
     if spent.contains(&token_index) {
         return Err(HtmlTreeFreezeError::DuplicateSelectedOrdinaryEndTokenDecision { token_index });
@@ -1891,8 +1700,6 @@ fn spend_end_token(spent: &mut Vec<usize>, token_index: usize) -> Result<(), Htm
     Ok(())
 }
 
-/// Rejects an open recovery group that something other than its own target's
-/// matching closure reached.
 const fn reject_interleaved_recovery(
     pending: Option<(HtmlConstructedNodeId, usize)>,
 ) -> Result<(), HtmlTreeFreezeError> {
@@ -1904,16 +1711,6 @@ const fn reject_interleaved_recovery(
     }
 }
 
-/// Correlates the selected ordinary diagnostics against the replayed action
-/// stream.
-///
-/// One misnested diagnostic per committed recovery group, carrying that
-/// group's own exact authored end tag and the accepted recovery summary; and
-/// exactly the ignored unmatched end-tag actions' trigger tokens as unmatched
-/// diagnostics. A missing, duplicated, wrongly-triggered, wrongly-summarized,
-/// or recovery-free misnested diagnostic all fail here — including one whose
-/// recorded token index is right but whose recorded boundary is not that
-/// token's own complete authored evidence.
 fn validate_selected_ordinary_diagnostics(
     diagnostics: &[HtmlTreeDiagnostic],
     recovery_groups: &[ReplayedRecoveryGroup],
@@ -1934,19 +1731,15 @@ fn validate_selected_ordinary_diagnostics(
         .iter()
         .map(|diagnostic| diagnostic.trigger().token_index())
         .collect();
-    // One per group, in the same order, carrying the accepted recovery
-    // summary and — checked against the retained run rather than against the
-    // recorded token index alone — that group's own exact authored end tag.
-    let paired =
-        group_tokens == misnested_tokens
-            && recovery_groups
-                .iter()
-                .zip(&misnested)
-                .all(|(group, found)| {
-                    found.recovery()
-                == HtmlTreeRecovery::PoppedInterveningSelectedOrdinaryElementsAndClosedTarget
-                && is_matching_end_tag_trigger(group.target_name, found.trigger(), tokenizer_run)
-                });
+    let paired = group_tokens == misnested_tokens
+        && recovery_groups
+            .iter()
+            .zip(&misnested)
+            .all(|(group, found)| {
+                found.recovery()
+                    == HtmlTreeRecovery::PoppedInterveningSelectedOrdinaryElementsAndClosedTarget
+                    && is_matching_end_tag_trigger(group.target_name, found.trigger(), tokenizer_run)
+            });
     if !paired {
         return Err(
             HtmlTreeFreezeError::SelectedOrdinaryRecoveryDiagnosticMismatch {
@@ -1970,9 +1763,6 @@ fn validate_selected_ordinary_diagnostics(
         .iter()
         .map(|diagnostic| diagnostic.trigger().token_index())
         .collect();
-    // One per ignored disposition, in the same order, carrying that
-    // disposition's own exact authored end tag — recorrelated against the
-    // retained run — and the accepted ignored-token recovery.
     let paired = unmatched_action_tokens == unmatched_diagnostic_tokens
         && ignored_unmatched
             .iter()
@@ -1992,7 +1782,6 @@ fn validate_selected_ordinary_diagnostics(
     Ok(())
 }
 
-/// The closed selected ordinary name of a stored node, when it is one.
 fn selected_ordinary_name(
     nodes: &[HtmlTreeNode],
     id: HtmlConstructedNodeId,
@@ -2001,12 +1790,11 @@ fn selected_ordinary_name(
         HtmlTreeNodeKind::Element(HtmlElement::SelectedOrdinary(selected)) => Some(selected.name()),
         HtmlTreeNodeKind::Document
         | HtmlTreeNodeKind::Element(HtmlElement::Shell(_))
+        | HtmlTreeNodeKind::Element(HtmlElement::Paragraph(_))
         | HtmlTreeNodeKind::Text(_) => None,
     }
 }
 
-/// The nearest currently-open selected ordinary element of `name`, innermost
-/// first, over the replayed selected stack.
 fn nearest_open_selected_ordinary(
     nodes: &[HtmlTreeNode],
     open: &[HtmlConstructedNodeId],
@@ -2018,19 +1806,12 @@ fn nearest_open_selected_ordinary(
         .find(|id| selected_ordinary_name(nodes, *id) == Some(name))
 }
 
-/// Proves a recorded closure trigger is the exact emitted matching end tag.
-///
-/// Reads the retained emitted token at the trigger's own index and compares it
-/// against the recorded evidence. This is correlation of retained evidence, not
-/// source discovery: no source search, rescan, or retokenization occurs, and
-/// the tokenizer is neither consulted nor re-run.
 fn validate_closure_trigger(
     node: HtmlConstructedNodeId,
     name: HtmlSelectedOrdinaryElementName,
     trigger: &HtmlTreeTokenTrigger,
     tokenizer_run: &HtmlTokenizerRunResult,
 ) -> Result<(), HtmlTreeFreezeError> {
-    // End of file has no authored extent and may never close anything.
     if trigger.authored_boundary().is_none() {
         return Err(HtmlTreeFreezeError::FabricatedSelectedOrdinaryClosure(node));
     }
@@ -2044,42 +1825,14 @@ fn validate_closure_trigger(
     }
 }
 
-/// Whether a recorded trigger is the retained run's own emitted end tag for
-/// `name`.
-///
-/// Shared by matching-closure and heterogeneous recovery validation so the two
-/// relations are proved against exactly the same authored evidence, which is
-/// what lets one authored end tag legitimately trigger several ordered
-/// recovery pops plus exactly one closure. Reads the retained emitted token at
-/// the trigger's own index: this is correlation of retained evidence, not
-/// source discovery, and no source search, rescan, or retokenization occurs.
 fn is_matching_end_tag_trigger(
     name: HtmlSelectedOrdinaryElementName,
     trigger: &HtmlTreeTokenTrigger,
     tokenizer_run: &HtmlTokenizerRunResult,
 ) -> bool {
-    let Some(boundary) = trigger.authored_boundary() else {
-        return false;
-    };
-    let Some(HtmlToken::Tag(tag)) = tokenizer_run.tokens().get(trigger.token_index()) else {
-        return false;
-    };
-    if !matches!(tag.kind(), HtmlTagKind::End) {
-        return false;
-    }
-    if tag.name().interpreted() != name.interpreted() {
-        return false;
-    }
-    // The recorded anchor must be that token's own complete-tag evidence, not
-    // merely an anchor that happens to revalidate.
-    let complete = tag.complete();
-    boundary.source_id() == complete.source_id()
-        && boundary.range() == complete.range()
-        && boundary.fragment() == complete.fragment()
+    is_exact_tag_trigger(trigger, tokenizer_run, HtmlTagKind::End, &[name.interpreted()])
 }
 
-/// Resolves a recorded selected ordinary subject by semantic constructed
-/// identity and checks that it really is that element.
 fn expect_selected_ordinary(
     nodes: &[HtmlTreeNode],
     id: HtmlConstructedNodeId,
@@ -2092,6 +1845,340 @@ fn expect_selected_ordinary(
         Ok(())
     } else {
         Err(HtmlTreeFreezeError::ClosureSubjectIsNotTheSelectedOrdinaryElement { node: id, name })
+    }
+}
+
+/// Validates TC-S5 Paragraph lifecycle meaning independently of session code.
+///
+/// It replays the mixed selected-ordinary / Paragraph open-content actions,
+/// correlates each P action to retained tokenizer evidence, proves the bounded
+/// P-current invariant, checks start-triggered and synthesized action order,
+/// pairs unmatched-P diagnostics to the synthesized insertion, and finally
+/// compares replay state with the session's immutable final-open checkpoint.
+fn validate_paragraph_lifecycle(
+    nodes: &[HtmlTreeNode],
+    actions: &[HtmlTreeAction],
+    diagnostics: &[HtmlTreeDiagnostic],
+    tokenizer_run: &HtmlTokenizerRunResult,
+    final_open_paragraph: Option<HtmlConstructedNodeId>,
+) -> Result<(), HtmlTreeFreezeError> {
+    let paragraph_nodes: Vec<HtmlConstructedNodeId> = nodes
+        .iter()
+        .filter_map(|node| paragraph(nodes, node.id()).map(|_| node.id()))
+        .collect();
+    let mut inserted: Vec<HtmlConstructedNodeId> = Vec::new();
+    let mut open_content: Vec<HtmlConstructedNodeId> = Vec::new();
+    let mut synthesis_tokens = Vec::new();
+
+    for (index, action) in actions.iter().enumerate() {
+        match action.kind() {
+            HtmlTreeActionKind::InsertedAuthoredSelectedOrdinaryElement { node, .. } => {
+                if open_content
+                    .iter()
+                    .any(|open| paragraph(nodes, *open).is_some())
+                {
+                    return Err(HtmlTreeFreezeError::NonLifoParagraphInteraction(*node));
+                }
+                open_content.push(*node);
+            }
+            HtmlTreeActionKind::PoppedSelectedOrdinaryElementByAncestorEndTag { node, .. }
+            | HtmlTreeActionKind::ClosedSelectedOrdinaryElement { node, .. } => {
+                if open_content.last() != Some(node) {
+                    return Err(HtmlTreeFreezeError::NonLifoParagraphInteraction(*node));
+                }
+                open_content.pop();
+            }
+            HtmlTreeActionKind::InsertedAuthoredParagraphElement { node } => {
+                let Some(element) = paragraph(nodes, *node) else {
+                    return Err(HtmlTreeFreezeError::ParagraphActionSubjectIsNotParagraph(*node));
+                };
+                if inserted.contains(node) {
+                    return Err(HtmlTreeFreezeError::DuplicateParagraphInsertion(*node));
+                }
+                if open_content
+                    .iter()
+                    .any(|open| paragraph(nodes, *open).is_some())
+                {
+                    return Err(HtmlTreeFreezeError::NonLifoParagraphInteraction(*node));
+                }
+                if !paragraph_authored_insertion_matches(element, action.trigger(), tokenizer_run) {
+                    return Err(HtmlTreeFreezeError::ParagraphAuthoredInsertionTriggerMismatch {
+                        node: *node,
+                        token_index: action.trigger().token_index(),
+                    });
+                }
+                inserted.push(*node);
+                open_content.push(*node);
+            }
+            HtmlTreeActionKind::InsertedSynthesizedParagraphElement { node, cause } => {
+                let Some(element) = paragraph(nodes, *node) else {
+                    return Err(HtmlTreeFreezeError::ParagraphActionSubjectIsNotParagraph(*node));
+                };
+                if inserted.contains(node) {
+                    return Err(HtmlTreeFreezeError::DuplicateParagraphInsertion(*node));
+                }
+                if open_content
+                    .iter()
+                    .any(|open| paragraph(nodes, *open).is_some())
+                {
+                    return Err(HtmlTreeFreezeError::NonLifoParagraphInteraction(*node));
+                }
+                if *cause != HtmlParagraphSynthesisCause::UnmatchedParagraphEndTag
+                    || !matches!(
+                        element.origin(),
+                        HtmlParagraphElementOrigin::Synthesized(
+                            HtmlParagraphSynthesisCause::UnmatchedParagraphEndTag
+                        )
+                    )
+                    || !is_exact_tag_trigger(action.trigger(), tokenizer_run, HtmlTagKind::End, &["p"])
+                {
+                    return Err(
+                        HtmlTreeFreezeError::ParagraphSynthesizedInsertionTriggerMismatch {
+                            node: *node,
+                            token_index: action.trigger().token_index(),
+                        },
+                    );
+                }
+                inserted.push(*node);
+                open_content.push(*node);
+                synthesis_tokens.push(action.trigger().token_index());
+
+                let Some(next) = actions.get(index + 1) else {
+                    return Err(HtmlTreeFreezeError::ParagraphSynthesisClosureMismatch {
+                        token_index: action.trigger().token_index(),
+                    });
+                };
+                if !matches!(
+                    next.kind(),
+                    HtmlTreeActionKind::ClosedParagraphElement {
+                        node: closed,
+                        closure: HtmlParagraphClosure::UnmatchedEndTagSynthesized,
+                    } if *closed == *node
+                        && next.trigger().token_index() == action.trigger().token_index()
+                        && same_trigger(next.trigger(), action.trigger())
+                ) {
+                    return Err(HtmlTreeFreezeError::ParagraphSynthesisClosureMismatch {
+                        token_index: action.trigger().token_index(),
+                    });
+                }
+            }
+            HtmlTreeActionKind::ClosedParagraphElement { node, closure } => {
+                if paragraph(nodes, *node).is_none() {
+                    return Err(HtmlTreeFreezeError::ParagraphActionSubjectIsNotParagraph(*node));
+                }
+                if open_content.last() != Some(node) {
+                    return Err(HtmlTreeFreezeError::NonLifoParagraphInteraction(*node));
+                }
+                let valid_trigger = match closure {
+                    HtmlParagraphClosure::MatchingEndTag
+                    | HtmlParagraphClosure::UnmatchedEndTagSynthesized => is_exact_tag_trigger(
+                        action.trigger(),
+                        tokenizer_run,
+                        HtmlTagKind::End,
+                        &["p"],
+                    ),
+                    HtmlParagraphClosure::StartTriggered => is_exact_tag_trigger(
+                        action.trigger(),
+                        tokenizer_run,
+                        HtmlTagKind::Start,
+                        &["p", "div", "section"],
+                    ),
+                };
+                if !valid_trigger {
+                    return Err(HtmlTreeFreezeError::ParagraphClosureTriggerMismatch {
+                        node: *node,
+                        token_index: action.trigger().token_index(),
+                    });
+                }
+                if *closure == HtmlParagraphClosure::UnmatchedEndTagSynthesized
+                    && !matches!(
+                        paragraph(nodes, *node).map(HtmlParagraphElement::origin),
+                        Some(HtmlParagraphElementOrigin::Synthesized(
+                            HtmlParagraphSynthesisCause::UnmatchedParagraphEndTag
+                        ))
+                    )
+                {
+                    return Err(HtmlTreeFreezeError::ParagraphClosureTriggerMismatch {
+                        node: *node,
+                        token_index: action.trigger().token_index(),
+                    });
+                }
+                open_content.pop();
+
+                if *closure == HtmlParagraphClosure::StartTriggered {
+                    let Some(next) = actions.get(index + 1) else {
+                        return Err(
+                            HtmlTreeFreezeError::ParagraphStartTriggeredInsertionMismatch {
+                                token_index: action.trigger().token_index(),
+                            },
+                        );
+                    };
+                    let same = next.trigger().token_index() == action.trigger().token_index()
+                        && same_trigger(next.trigger(), action.trigger());
+                    let expected = retained_start_tag_name(action.trigger(), tokenizer_run);
+                    let next_matches = match (expected, next.kind()) {
+                        (Some("p"), HtmlTreeActionKind::InsertedAuthoredParagraphElement { .. }) => {
+                            true
+                        }
+                        (
+                            Some("div"),
+                            HtmlTreeActionKind::InsertedAuthoredSelectedOrdinaryElement {
+                                name: HtmlSelectedOrdinaryElementName::Div,
+                                ..
+                            },
+                        ) => true,
+                        (
+                            Some("section"),
+                            HtmlTreeActionKind::InsertedAuthoredSelectedOrdinaryElement {
+                                name: HtmlSelectedOrdinaryElementName::Section,
+                                ..
+                            },
+                        ) => true,
+                        _ => false,
+                    };
+                    if !same || !next_matches {
+                        return Err(
+                            HtmlTreeFreezeError::ParagraphStartTriggeredInsertionMismatch {
+                                token_index: action.trigger().token_index(),
+                            },
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    for node in paragraph_nodes {
+        if inserted.iter().filter(|inserted| **inserted == node).count() != 1 {
+            return Err(HtmlTreeFreezeError::ParagraphInsertionInventoryMismatch(node));
+        }
+    }
+
+    let unmatched: Vec<&HtmlTreeDiagnostic> = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code() == HtmlTreeDiagnosticCode::UnmatchedParagraphEndTag)
+        .collect();
+    let diagnostic_tokens: Vec<usize> = unmatched
+        .iter()
+        .map(|diagnostic| diagnostic.trigger().token_index())
+        .collect();
+    let paired = synthesis_tokens == diagnostic_tokens
+        && unmatched.iter().all(|diagnostic| {
+            diagnostic.recovery() == HtmlTreeRecovery::SynthesizedParagraphElementAndClosedIt
+                && is_exact_tag_trigger(
+                    diagnostic.trigger(),
+                    tokenizer_run,
+                    HtmlTagKind::End,
+                    &["p"],
+                )
+        });
+    if !paired {
+        return Err(HtmlTreeFreezeError::UnmatchedParagraphDiagnosticMismatch {
+            syntheses: synthesis_tokens,
+            diagnostics: diagnostic_tokens,
+        });
+    }
+
+    let replayed_paragraphs: Vec<HtmlConstructedNodeId> = open_content
+        .iter()
+        .copied()
+        .filter(|id| paragraph(nodes, *id).is_some())
+        .collect();
+    if replayed_paragraphs.len() > 1
+        || replayed_paragraphs
+            .first()
+            .is_some_and(|paragraph| open_content.last() != Some(paragraph))
+    {
+        return Err(HtmlTreeFreezeError::NonLifoParagraphInteraction(
+            *replayed_paragraphs
+                .last()
+                .expect("invalid Paragraph state is non-empty"),
+        ));
+    }
+    let replayed = replayed_paragraphs.first().copied();
+    if let Some(actual) = final_open_paragraph
+        && paragraph(nodes, actual).is_none()
+    {
+        return Err(HtmlTreeFreezeError::FinalOpenParagraphIsNotParagraph(actual));
+    }
+    if replayed != final_open_paragraph {
+        return Err(HtmlTreeFreezeError::FinalOpenParagraphStateMismatch {
+            replayed,
+            actual: final_open_paragraph,
+        });
+    }
+    Ok(())
+}
+
+fn paragraph(nodes: &[HtmlTreeNode], id: HtmlConstructedNodeId) -> Option<&HtmlParagraphElement> {
+    match find(nodes, id)?.kind() {
+        HtmlTreeNodeKind::Element(HtmlElement::Paragraph(paragraph)) => Some(paragraph),
+        _ => None,
+    }
+}
+
+fn paragraph_authored_insertion_matches(
+    paragraph: &HtmlParagraphElement,
+    trigger: &HtmlTreeTokenTrigger,
+    tokenizer_run: &HtmlTokenizerRunResult,
+) -> bool {
+    let HtmlParagraphElementOrigin::Authored { complete, raw_name } = paragraph.origin() else {
+        return false;
+    };
+    let Some(HtmlToken::Tag(tag)) = tokenizer_run.tokens().get(trigger.token_index()) else {
+        return false;
+    };
+    tag.kind() == HtmlTagKind::Start
+        && tag.name().interpreted() == "p"
+        && exact_anchor(trigger.authored_boundary(), Some(tag.complete()))
+        && exact_anchor(Some(complete), Some(tag.complete()))
+        && exact_anchor(Some(raw_name), Some(tag.name().source()))
+}
+
+fn retained_start_tag_name<'a>(
+    trigger: &HtmlTreeTokenTrigger,
+    tokenizer_run: &'a HtmlTokenizerRunResult,
+) -> Option<&'a str> {
+    let Some(HtmlToken::Tag(tag)) = tokenizer_run.tokens().get(trigger.token_index()) else {
+        return None;
+    };
+    if tag.kind() != HtmlTagKind::Start
+        || !exact_anchor(trigger.authored_boundary(), Some(tag.complete()))
+    {
+        return None;
+    }
+    Some(tag.name().interpreted())
+}
+
+fn is_exact_tag_trigger(
+    trigger: &HtmlTreeTokenTrigger,
+    tokenizer_run: &HtmlTokenizerRunResult,
+    kind: HtmlTagKind,
+    names: &[&str],
+) -> bool {
+    let Some(HtmlToken::Tag(tag)) = tokenizer_run.tokens().get(trigger.token_index()) else {
+        return false;
+    };
+    tag.kind() == kind
+        && names.contains(&tag.name().interpreted())
+        && exact_anchor(trigger.authored_boundary(), Some(tag.complete()))
+}
+
+fn same_trigger(first: &HtmlTreeTokenTrigger, second: &HtmlTreeTokenTrigger) -> bool {
+    first.token_index() == second.token_index()
+        && exact_anchor(first.authored_boundary(), second.authored_boundary())
+}
+
+fn exact_anchor(first: Option<&SourceAnchor>, second: Option<&SourceAnchor>) -> bool {
+    match (first, second) {
+        (None, None) => true,
+        (Some(first), Some(second)) => {
+            first.source_id() == second.source_id()
+                && first.range() == second.range()
+                && first.fragment() == second.fragment()
+        }
+        _ => false,
     }
 }
 
@@ -2201,7 +2288,8 @@ fn validate_completion(
 }
 
 /// Whether the committed tree is the complete `Document -> html(head, body)`
-/// shell every effective `Complete` TC-S1 result must contain.
+/// shell every effective `Complete` result must contain. Content below body is
+/// intentionally unrestricted by this shell-completeness check.
 fn is_complete_document_shell(nodes: &[HtmlTreeNode], root: HtmlConstructedNodeId) -> bool {
     let Some(root_node) = find(nodes, root) else {
         return false;
