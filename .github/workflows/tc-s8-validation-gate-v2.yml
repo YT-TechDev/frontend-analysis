@@ -22,14 +22,11 @@ jobs:
 
       - name: Guard exact feature head
         run: |
-          test "$(git rev-parse HEAD)" = "ad81b430eae921b11cacb3ff4ddfeb7ffa84ce4b"
+          test "$(git rev-parse HEAD)" = "51ca3efe38fd9f4aea6582fa8d1b5fd53eda1eef"
           test "$(git merge-base 024e0e62520d1c7e298605eb4539434ef6c8d5e7 HEAD)" = "024e0e62520d1c7e298605eb4539434ef6c8d5e7"
 
-      - name: Apply lint-only corrections
-        run: |
-          file=crates/frontend-analysis-core/src/html/tree_construction/in_body_html_end_open_stack_successor_validation.rs
-          python3 -c 'from pathlib import Path; p=Path("crates/frontend-analysis-core/src/html/tree_construction/in_body_html_end_open_stack_successor_validation.rs"); s=p.read_text(); a="#[derive(Debug, Clone, Copy, PartialEq, Eq)]\nenum Phase {"; b="#[allow(clippy::enum_variant_names)]\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\nenum Phase {"; assert a in s; s=s.replace(a,b,1); a="        .last()\n        .expect(\"direct after body html dispatch\");"; b="        .next_back()\n        .expect(\"direct after body html dispatch\");"; assert a in s; p.write_text(s.replace(a,b,1))'
-          test -n "$(git diff -- "$file")"
+      - name: Apply evidence strengthening
+        run: python3 .github/tc-s8-strengthen.py
 
       - name: Install Rust 1.97.1
         run: rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
@@ -72,5 +69,5 @@ jobs:
           git config user.name "YT-TechDev"
           git config user.email "msc_prop@proton.me"
           git add crates/frontend-analysis-core/src/html/tree_construction/in_body_html_end_open_stack_successor_validation.rs
-          git commit -m "test(html): fix TC-S8 validation lint gate"
+          git commit -m "test(html): strengthen TC-S8 validation evidence"
           git push origin HEAD:test/380-tc-s8-validation
