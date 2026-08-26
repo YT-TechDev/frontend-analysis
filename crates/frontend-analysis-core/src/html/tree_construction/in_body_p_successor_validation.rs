@@ -384,18 +384,26 @@ impl Machine {
 
     fn assert_invariant(&self) {
         let names: Vec<Name> = self.open.iter().map(|id| self.name(*id)).collect();
-        let valid = match names.as_slice() {
-            [Name::Html] => self.phase == Phase::BeforeBody,
-            [Name::Html, Name::Body, rest @ ..] => {
-                let p_count = rest.iter().filter(|name| **name == Name::P).count();
-                let blocks_end = rest.len().saturating_sub(p_count);
-                p_count <= 1
-                    && rest[..blocks_end].iter().all(|name| name.is_block())
-                    && (p_count == 0 || rest.last() == Some(&Name::P))
+        let valid = match self.phase {
+            Phase::BeforeBody => names == [Name::Html],
+            Phase::AfterBody => names == [Name::Html, Name::Body],
+            Phase::InBody => {
+                if names.len() < 2 || names[0] != Name::Html || names[1] != Name::Body {
+                    false
+                } else {
+                    let mut saw_p = false;
+                    names[2..].iter().all(|name| match name {
+                        Name::Div | Name::Section if !saw_p => true,
+                        Name::P if !saw_p => {
+                            saw_p = true;
+                            true
+                        }
+                        _ => false,
+                    })
+                }
             }
-            _ => false,
         };
-        assert!(valid, "TC-S5 stack invariant violated: {names:?}");
+        assert!(valid, "TC-S5 stack invariant violated: phase={:?} names={names:?}", self.phase);
         let p_present = names.contains(&Name::P);
         assert_eq!(p_present, names.last() == Some(&Name::P));
     }
