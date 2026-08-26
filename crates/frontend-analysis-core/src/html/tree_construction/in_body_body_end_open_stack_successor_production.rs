@@ -122,11 +122,17 @@ fn body_acknowledgements(analysis: &HtmlDocumentShellAnalysis) -> Vec<(usize, So
         .collect()
 }
 
-fn reprocess_count(analysis: &HtmlDocumentShellAnalysis) -> usize {
+fn reprocess_count_for_token(
+    analysis: &HtmlDocumentShellAnalysis,
+    token_index: usize,
+) -> usize {
     analysis
         .actions()
         .iter()
-        .filter(|action| matches!(action.kind(), HtmlTreeActionKind::ReprocessedToken))
+        .filter(|action| {
+            action.trigger().token_index() == token_index
+                && matches!(action.kind(), HtmlTreeActionKind::ReprocessedToken)
+        })
         .count()
 }
 
@@ -397,6 +403,11 @@ fn p_only_div_section_and_heterogeneous_body_end_have_exact_cardinality_and_zero
             "{source}"
         );
         assert_eq!(
+            reprocess_count_for_token(&analysis, body_token),
+            0,
+            "{source}"
+        );
+        assert_eq!(
             forbidden_body_end_actions(&analysis, body_token),
             0,
             "{source}"
@@ -531,7 +542,12 @@ fn whitespace_after_body_uses_retained_current_parent_and_keeps_after_body_mode(
     for (source, expected_parent, expected_text) in cases {
         let analysis = analyze(source);
         assert!(analysis.is_complete(), "{source:?}");
-        assert_eq!(reprocess_count(&analysis), 0, "{source:?}");
+        let character_token = analysis.tokenizer_run().tokens().len() - 2;
+        assert_eq!(
+            reprocess_count_for_token(&analysis, character_token),
+            0,
+            "{source:?}"
+        );
         assert_eq!(
             diagnostic_count(&analysis, HtmlTreeDiagnosticCode::AfterBodyCharacterData),
             0,
@@ -569,7 +585,6 @@ fn non_whitespace_after_body_records_then_reprocesses_once_under_retained_parent
     for (source, expected_parent) in cases {
         let analysis = analyze(source);
         assert!(analysis.is_complete(), "{source}");
-        assert_eq!(reprocess_count(&analysis), 1, "{source}");
         assert_eq!(
             diagnostic_count(&analysis, HtmlTreeDiagnosticCode::AfterBodyCharacterData),
             1,
@@ -581,13 +596,21 @@ fn non_whitespace_after_body_records_then_reprocesses_once_under_retained_parent
             .find(|diagnostic| diagnostic.code() == HtmlTreeDiagnosticCode::AfterBodyCharacterData)
             .expect("AfterBody diagnostic");
         assert_eq!(
+            reprocess_count_for_token(&analysis, after_body.trigger().token_index()),
+            1,
+            "{source}"
+        );
+        assert_eq!(
             after_body.recovery(),
             HtmlTreeRecovery::SwitchedToInBodyAndReprocessedSameToken
         );
         let reprocess_position = analysis
             .actions()
             .iter()
-            .position(|action| matches!(action.kind(), HtmlTreeActionKind::ReprocessedToken))
+            .position(|action| {
+                action.trigger().token_index() == after_body.trigger().token_index()
+                    && matches!(action.kind(), HtmlTreeActionKind::ReprocessedToken)
+            })
             .expect("reprocess action");
         let text_position = analysis
             .actions()
@@ -631,7 +654,7 @@ fn mixed_after_body_aggregate_refuses_whole_before_any_mutation() {
     assert_eq!(analysis.coverage().processed_tokens(), 4);
     assert_eq!(analysis.node_count(), 6);
     assert!(text_nodes(&analysis).is_empty());
-    assert_eq!(reprocess_count(&analysis), 0);
+    assert_eq!(reprocess_count_for_token(&analysis, 4), 0);
     assert_eq!(
         diagnostic_count(&analysis, HtmlTreeDiagnosticCode::AfterBodyCharacterData),
         0
@@ -720,7 +743,7 @@ fn repeated_body_end_after_non_whitespace_recovery_reuses_the_same_open_stack() 
             ),
         ]
     );
-    assert_eq!(reprocess_count(&analysis), 1);
+    assert_eq!(reprocess_count_for_token(&analysis, 3), 1);
     assert_eq!(selected_insertions(&analysis).len(), 1);
     assert!(analysis.actions().iter().all(|action| !matches!(
         action.kind(),
@@ -1229,13 +1252,24 @@ fn generated_bounded_stack_successors_match_an_independent_closed_form_model() {
                     generated_expected_diagnostics(&blocks, successor),
                     "{source}"
                 );
+                assert_eq!(body_acknowledgements(&analysis).len(), 1, "{source}");
+                let body_token = body_acknowledgements(&analysis)[0].0;
                 assert_eq!(
-                    reprocess_count(&analysis),
+                    reprocess_count_for_token(&analysis, body_token),
+                    0,
+                    "{source}"
+                );
+                let successor_token = match successor {
+                    GeneratedSuccessor::Eof => analysis.tokenizer_run().tokens().len() - 1,
+                    GeneratedSuccessor::Whitespace | GeneratedSuccessor::NonWhitespace => {
+                        analysis.tokenizer_run().tokens().len() - 2
+                    }
+                };
+                assert_eq!(
+                    reprocess_count_for_token(&analysis, successor_token),
                     usize::from(successor == GeneratedSuccessor::NonWhitespace),
                     "{source}"
                 );
-                assert_eq!(body_acknowledgements(&analysis).len(), 1, "{source}");
-                let body_token = body_acknowledgements(&analysis)[0].0;
                 assert_eq!(
                     forbidden_body_end_actions(&analysis, body_token),
                     0,
