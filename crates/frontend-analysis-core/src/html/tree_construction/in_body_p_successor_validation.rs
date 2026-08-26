@@ -834,7 +834,10 @@ fn validation_module_does_not_import_production_tree_semantics() {
         ["tree_construction", "::result"].concat(),
     ];
     for forbidden in forbidden {
-        assert!(!source.contains(&forbidden), "forbidden oracle: {forbidden}");
+        assert!(
+            !source.contains(&forbidden),
+            "forbidden oracle: {forbidden}"
+        );
     }
 }
 
