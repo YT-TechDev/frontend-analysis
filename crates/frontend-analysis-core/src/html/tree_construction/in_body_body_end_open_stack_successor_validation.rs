@@ -470,21 +470,20 @@ impl Machine {
             .map(|node| node.id);
         let adjacent =
             last_direct_child.filter(|id| matches!(self.node(*id).kind, NodeKind::Text { .. }));
-        if let Some(id) = adjacent {
-            if let NodeKind::Text {
+        if let Some(id) = adjacent
+            && let NodeKind::Text {
                 interpreted: existing,
                 contributions,
             } = &mut self.node_mut(id).kind
-            {
-                existing.push_str(interpreted);
-                contributions.push(contribution.clone());
-                self.actions.push(Action::TextAppend {
-                    node: id,
-                    parent,
-                    contribution,
-                });
-                return;
-            }
+        {
+            existing.push_str(interpreted);
+            contributions.push(contribution.clone());
+            self.actions.push(Action::TextAppend {
+                node: id,
+                parent,
+                contribution,
+            });
+            return;
         }
         let id = self.allocate(
             Some(parent),
@@ -573,7 +572,7 @@ impl Machine {
 
     fn process_in_body(
         &mut self,
-        token_index: usize,
+        _token_index: usize,
         token: &HtmlToken,
     ) -> Result<bool, Unsupported> {
         match token {
@@ -1025,7 +1024,8 @@ fn s7_09_to_s7_12_whitespace_delegation_keeps_after_body_and_retained_parent() {
         assert_eq!(observation.phase, Phase::AfterBody, "{source:?}");
         assert_eq!(observation.reprocess_count, 0, "{source:?}");
         assert!(!diagnostic_kinds(&observation).contains(&DiagnosticKind::AfterBodyCharacterData));
-        let text = text_nodes(&observation).last().expect("delegated text");
+        let texts = text_nodes(&observation);
+        let text = texts.last().expect("delegated text");
         assert_eq!(
             parent_name(&observation, text),
             expected_parent,
@@ -1071,7 +1071,8 @@ fn s7_13_to_s7_15_non_whitespace_reprocesses_once_and_retains_parent() {
             usize::from(has_body_diag),
             "{source}"
         );
-        let text = text_nodes(&observation).last().expect("reprocessed text");
+        let texts = text_nodes(&observation);
+        let text = texts.last().expect("reprocessed text");
         assert_eq!(parent_name(&observation, text), expected_parent, "{source}");
     }
 }
