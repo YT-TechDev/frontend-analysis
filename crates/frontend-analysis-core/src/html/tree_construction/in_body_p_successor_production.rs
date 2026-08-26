@@ -777,25 +777,22 @@ fn p11_open_block_eof_keeps_only_the_predecessor_block_diagnostic() {
 }
 
 #[test]
-fn p12_p13_block_end_over_open_p_refuses_before_mutation() {
-    assert_unsupported(
-        fixture("P12").source,
-        HtmlTreeCapability::SelectedOrdinaryEndTagWithOpenParagraphElement,
-        3,
-        (14, 20),
-        14,
-        3,
-        6,
-    );
-    assert_unsupported(
-        fixture("P13").source,
-        HtmlTreeCapability::SelectedOrdinaryEndTagWithOpenParagraphElement,
-        3,
-        (18, 28),
-        18,
-        3,
-        6,
-    );
+fn p12_p13_block_end_over_open_p_advance_to_tc_s6_support() {
+    for id in ["P12", "P13"] {
+        let analysis = analyze(fixture(id).source);
+        assert!(analysis.is_complete(), "{id}");
+        assert!(matches!(
+            analysis.completion(),
+            HtmlTreeCompletion::Complete
+        ));
+        assert!(
+            analysis.actions().iter().any(|action| matches!(
+                action.kind(),
+                HtmlTreeActionKind::PoppedParagraphElementBySelectedOrdinaryEndTag { .. }
+            )),
+            "{id}"
+        );
+    }
 }
 
 #[test]

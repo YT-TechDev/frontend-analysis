@@ -3,7 +3,8 @@
 //! Selected In-Body No-Attribute `div` Construction, TC-S4 — Selected
 //! In-Body Heterogeneous `div`/`section` Block Closure Recovery, and TC-S5 —
 //! Selected In-Body `p` Lifecycle with Bounded Implicit Closure and
-//! Unmatched-End Synthesis successors.
+//! Unmatched-End Synthesis, and TC-S6 — Selected End Tags over Current P with
+//! Bounded Non-Noop Implied-End Handling successors.
 //!
 //! The first Core-private HTML tree-construction capability, implemented on
 //! the architecture approved under Issue #117 and recorded by ADR 0010
@@ -79,6 +80,8 @@ mod in_body_div_section_successor_validation;
 mod in_body_div_successor_production;
 #[cfg(test)]
 mod in_body_div_successor_validation;
+#[cfg(test)]
+mod in_body_p_implied_end_successor_production;
 #[cfg(test)]
 mod in_body_p_implied_end_successor_validation;
 #[cfg(test)]

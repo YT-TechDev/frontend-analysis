@@ -1,5 +1,5 @@
 //! The private TC-S1 tree-construction session, with its accepted TC-S2,
-//! TC-S3, TC-S4, and TC-S5 successors.
+//! TC-S3, TC-S4, TC-S5, and TC-S6 successors.
 //!
 //! The session exclusively owns every piece of mutable tree-construction
 //! state for exactly one run: the insertion mode, the open elements — the
@@ -383,6 +383,7 @@ enum Effect {
     InsertSelectedOrdinaryElement(HtmlSelectedOrdinaryElementName),
     CloseSelectedOrdinaryElement(HtmlSelectedOrdinaryElementName),
     RecoverInterveningSelectedOrdinaryElementsAndCloseTarget(HtmlSelectedOrdinaryElementName),
+    PopParagraphThenResolveSelectedOrdinaryEnd(HtmlSelectedOrdinaryElementName),
     RecordUnmatchedSelectedOrdinaryEndTag(HtmlSelectedOrdinaryElementName),
     RecordOpenSelectedOrdinaryElementAtEndOfFile,
     InsertParagraphElement,
@@ -585,17 +586,6 @@ fn classify(
             if !open_selected_ordinary.is_empty() && token.is_shell_tag() {
                 return Err(HtmlTreeCapability::ShellTagWithOpenSelectedOrdinaryElement);
             }
-            if paragraph_is_current
-                && matches!(
-                    token,
-                    AdmittedToken::EndTag {
-                        name: AdmittedElementName::SelectedOrdinary(_),
-                        ..
-                    }
-                )
-            {
-                return Err(HtmlTreeCapability::SelectedOrdinaryEndTagWithOpenParagraphElement);
-            }
             match token {
                 AdmittedToken::Characters { .. } => Ok(selected_in_body_character_step()),
                 AdmittedToken::StartTag {
@@ -652,6 +642,11 @@ fn classify(
                         // This is the accepted TC-S3 cell, unchanged: the end
                         // tag closes exactly that element, nothing is
                         // recovered, and no misnested diagnostic is recorded.
+                        SelectedEndTarget::Current | SelectedEndTarget::NonCurrent
+                            if paragraph_is_current =>
+                        {
+                            Effect::PopParagraphThenResolveSelectedOrdinaryEnd(*name)
+                        }
                         SelectedEndTarget::Current => Effect::CloseSelectedOrdinaryElement(*name),
                         // The nearest same-name target is open below one or
                         // more differently-nested selected ordinary elements.
@@ -775,13 +770,12 @@ enum SelectedEndTarget {
 /// Classifies a supported selected ordinary end tag against the ordered
 /// selected-name projection, innermost last.
 ///
-/// This helper is reached only after [`classify`] has ruled out a current P.
-/// In that cell the relevant bounded suffix is `[html, body] ++ W`, with
-/// `W ∈ {Div, Section}*`, so a reverse scan of W is exactly the selected-slice
-/// scope reduction. The separate Paragraph firewall is load-bearing: with P
-/// current, implied-end handling becomes materially non-noop and the end tag is
-/// refused instead of being sent through this reduction. This helper therefore
-/// remains explicitly narrower than general WHATWG scope.
+/// The selected-name projection deliberately excludes P, so this helper is
+/// valid both for the predecessor selected-only cell and for TC-S6's current-P
+/// cell. It resolves only nearest same-name membership inside the closed
+/// `Div | Section` projection; the session separately decides whether the
+/// current Paragraph must be implied-popped. This remains explicitly narrower
+/// than general WHATWG scope.
 fn selected_end_target(
     open_selected_ordinary: &[HtmlSelectedOrdinaryElementName],
     name: HtmlSelectedOrdinaryElementName,
@@ -964,6 +958,17 @@ struct SelectedOrdinaryEndPlan {
     /// The complete open selected ordinary suffix above the target, ordered
     /// current node first and target-ward last. Empty exactly when the target
     /// is already the current node.
+    intervening_current_first: Vec<HtmlConstructedNodeId>,
+}
+
+/// TC-S6's completely pre-resolved selected-end transaction while P is current.
+/// Every fallible lookup and invariant check is completed before the stack is
+/// truncated, so the commit phase only records the already-proved semantic
+/// order.
+struct SelectedOrdinaryEndOverParagraphPlan {
+    paragraph: HtmlConstructedNodeId,
+    target: HtmlConstructedNodeId,
+    target_open_element: usize,
     intervening_current_first: Vec<HtmlConstructedNodeId>,
 }
 
@@ -1198,6 +1203,9 @@ impl HtmlTreeSession {
             }
             Effect::RecoverInterveningSelectedOrdinaryElementsAndCloseTarget(name) => {
                 self.recover_selected_ordinary_suffix_and_close_target(name, trigger)
+            }
+            Effect::PopParagraphThenResolveSelectedOrdinaryEnd(name) => {
+                self.pop_paragraph_then_resolve_selected_ordinary_end(name, trigger)
             }
             Effect::RecordUnmatchedSelectedOrdinaryEndTag(name) => {
                 // The bounded not-in-scope condition is what makes this the
@@ -1691,6 +1699,94 @@ impl HtmlTreeSession {
             trigger,
         );
         Ok(())
+    }
+
+    /// Applies the bounded TC-S6 selected-end rule while Paragraph is current.
+    ///
+    /// Target existence, the current Paragraph, the exact target coordinate,
+    /// and the complete selected suffix are all resolved by the read-only plan
+    /// before this function mutates anything. Once mutation starts, the rest is
+    /// infallible and records the exact same-trigger semantic order.
+    fn pop_paragraph_then_resolve_selected_ordinary_end(
+        &mut self,
+        name: HtmlSelectedOrdinaryElementName,
+        trigger: &HtmlTreeTokenTrigger,
+    ) -> Result<(), HtmlTreeSessionError> {
+        let plan = self.plan_selected_ordinary_end_over_paragraph(name)?;
+
+        // One private mutation removes P, every selected intervening element,
+        // and the target. Durable actions below retain their distinct meaning
+        // and exact current-first order.
+        self.open_elements.truncate(plan.target_open_element);
+        self.record_action(
+            HtmlTreeActionKind::PoppedParagraphElementBySelectedOrdinaryEndTag {
+                node: plan.paragraph,
+                target: plan.target,
+            },
+            trigger,
+        );
+        if !plan.intervening_current_first.is_empty() {
+            self.record_diagnostic(
+                HtmlTreeDiagnosticCode::MisnestedSelectedOrdinaryEndTag,
+                trigger,
+                HtmlTreeRecovery::PoppedInterveningSelectedOrdinaryElementsAndClosedTarget,
+            );
+        }
+        for node in plan.intervening_current_first {
+            self.record_action(
+                HtmlTreeActionKind::PoppedSelectedOrdinaryElementByAncestorEndTag {
+                    node,
+                    target: plan.target,
+                },
+                trigger,
+            );
+        }
+        self.record_action(
+            HtmlTreeActionKind::ClosedSelectedOrdinaryElement {
+                node: plan.target,
+                name,
+            },
+            trigger,
+        );
+        Ok(())
+    }
+
+    /// Resolves TC-S6's complete selected-end-over-P meaning before mutation.
+    fn plan_selected_ordinary_end_over_paragraph(
+        &self,
+        name: HtmlSelectedOrdinaryElementName,
+    ) -> Result<SelectedOrdinaryEndOverParagraphPlan, HtmlTreeSessionError> {
+        let paragraph = self
+            .open_paragraph()?
+            .ok_or(HtmlTreeSessionError::ParagraphElementIsNotCurrent)?;
+        if self.open_elements.last() != Some(&paragraph) {
+            return Err(HtmlTreeSessionError::ParagraphIsNotCurrent(paragraph));
+        }
+        let target_open_element = self.nearest_open_selected_ordinary(name).ok_or(
+            HtmlTreeSessionError::SelectedOrdinaryElementIsNotInScope(name),
+        )?;
+        let paragraph_open_element = self.open_elements.len().saturating_sub(1);
+        if target_open_element >= paragraph_open_element {
+            return Err(HtmlTreeSessionError::SelectedOrdinaryElementIsNotInScope(
+                name,
+            ));
+        }
+        let mut intervening_current_first = Vec::new();
+        for id in self.open_elements[target_open_element + 1..paragraph_open_element]
+            .iter()
+            .rev()
+        {
+            if !self.is_open_selected_ordinary(*id) {
+                return Err(HtmlTreeSessionError::SelectedOrdinaryRecoverySuffixIsNotSelected(*id));
+            }
+            intervening_current_first.push(*id);
+        }
+        Ok(SelectedOrdinaryEndOverParagraphPlan {
+            paragraph,
+            target: self.open_elements[target_open_element],
+            target_open_element,
+            intervening_current_first,
+        })
     }
 
     /// Closes the nearest same-name open selected ordinary element for its own

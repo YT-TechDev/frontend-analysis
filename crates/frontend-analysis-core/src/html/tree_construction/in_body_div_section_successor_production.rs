@@ -298,7 +298,8 @@ fn project_actions(analysis: &HtmlDocumentShellAnalysis) -> Vec<(ExpectedAction,
                 }
                 HtmlTreeActionKind::InsertedAuthoredParagraphElement { .. }
                 | HtmlTreeActionKind::InsertedSynthesizedParagraphElement { .. }
-                | HtmlTreeActionKind::ClosedParagraphElement { .. } => {
+                | HtmlTreeActionKind::ClosedParagraphElement { .. }
+                | HtmlTreeActionKind::PoppedParagraphElementBySelectedOrdinaryEndTag { .. } => {
                     panic!("TC-S4 predecessor fixtures must not record a TC-S5 Paragraph action")
                 }
                 HtmlTreeActionKind::ReprocessedToken => ExpectedAction::Reprocessed,
