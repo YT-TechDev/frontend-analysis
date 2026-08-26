@@ -1,6 +1,6 @@
 # CSS Research Evidence
 
-Status date: 2026-08-12
+Status date: 2026-08-26
 
 Classification: task and evidence record; non-normative.
 
@@ -28,6 +28,12 @@ computed style, layout, paint, or browser-runtime applicability.
 
 Future production expansion requires a focused unfreeze/follow-up decision;
 research may continue without silently mutating the frozen contracts.
+
+A fresh 2026-08-26 repository review found no CSS production semantic Pull
+Request later than #185. The current status is recorded in
+[2026-08 Semantic Foundation Status Checkpoint](2026-08-semantic-foundation-status-checkpoint.md).
+This is deliberately a status confirmation, not a claim of post-freeze semantic
+progress.
 
 ## Authoritative Evidence Sources
 
