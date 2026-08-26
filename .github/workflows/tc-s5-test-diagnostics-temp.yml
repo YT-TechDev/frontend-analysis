@@ -1,0 +1,36 @@
+name: TC-S5 Test Diagnostics
+
+on:
+  push:
+    branches:
+      - tooling/tc-s5-test-diagnostics
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tooling branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: tooling/tc-s5-test-diagnostics
+      - name: Install accepted Rust toolchain
+        run: rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
+      - name: Run tests and capture failure tail
+        shell: bash
+        run: |
+          set +e
+          cargo test --workspace --all-targets > /tmp/tc-s5-test.log 2>&1
+          status=$?
+          tail -n 240 /tmp/tc-s5-test.log > tc-s5-test-failure-tail.txt
+          printf '\nEXIT_STATUS=%s\n' "$status" >> tc-s5-test-failure-tail.txt
+          exit 0
+      - name: Commit diagnostic tail
+        run: |
+          git config user.name "Yuto"
+          git config user.email "msc_prop@proton.me"
+          git add tc-s5-test-failure-tail.txt
+          git commit -m "chore: capture TC-S5 test failure tail [skip ci]"
+          git push origin HEAD:tooling/tc-s5-test-diagnostics
