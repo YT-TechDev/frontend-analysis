@@ -30,7 +30,7 @@ use super::super::tokenizer::producer::tokenize;
 use super::super::tokenizer::resource::HtmlTokenizerLimits;
 use super::super::tokenizer::result::HtmlTokenizerRunResult;
 
-const PINNED_WHATWG_COMMIT: &str = "508a0373333d8a1806504303aeb489d931fabbef6";
+const PINNED_WHATWG_COMMIT: &str = "508a037333d8a1806504303aeb489d931fabbef6";
 const PINNED_WHATWG_BLOB: &str = "68dbcb98bbe1001c6ae2531be2368c608fbafddd";
 
 #[derive(Debug, Clone, Copy)]
@@ -958,7 +958,9 @@ fn nodes_named(observation: &Observation, name: Name) -> Vec<&Node> {
     observation
         .nodes
         .iter()
-        .filter(|node| matches!(node.kind, NodeKind::Element { name: actual, .. } if actual == name))
+        .filter(
+            |node| matches!(node.kind, NodeKind::Element { name: actual, .. } if actual == name),
+        )
         .collect()
 }
 
@@ -1006,15 +1008,31 @@ fn trigger_actions<'a>(observation: &'a Observation, trigger: &Evidence) -> Vec<
         .actions
         .iter()
         .filter(|action| match action {
-            Action::AuthoredInsert { trigger: actual, .. }
+            Action::AuthoredInsert {
+                trigger: actual, ..
+            }
             | Action::PDiagnostic { trigger: actual }
-            | Action::SynthesizedP { trigger: actual, .. }
-            | Action::PClose { trigger: actual, .. }
-            | Action::ImpliedPPop { trigger: actual, .. }
-            | Action::BlockDiagnostic { trigger: actual, .. }
-            | Action::BlockIgnored { trigger: actual, .. }
-            | Action::BlockRecoveryPop { trigger: actual, .. }
-            | Action::BlockClose { trigger: actual, .. } => actual == trigger,
+            | Action::SynthesizedP {
+                trigger: actual, ..
+            }
+            | Action::PClose {
+                trigger: actual, ..
+            }
+            | Action::ImpliedPPop {
+                trigger: actual, ..
+            }
+            | Action::BlockDiagnostic {
+                trigger: actual, ..
+            }
+            | Action::BlockIgnored {
+                trigger: actual, ..
+            }
+            | Action::BlockRecoveryPop {
+                trigger: actual, ..
+            }
+            | Action::BlockClose {
+                trigger: actual, ..
+            } => actual == trigger,
             Action::TextInsert { contribution, .. } | Action::TextAppend { contribution, .. } => {
                 contribution == trigger
             }
@@ -1092,7 +1110,9 @@ fn machine_cell_outcome(blocks: &[Name], p_current: bool, end: Name) -> ClosedFo
         let before = machine.fingerprint();
         let stop = machine
             .process(token_index, token)
-            .unwrap_or_else(|capability| panic!("generated cell refused: {source:?} {capability:?}"));
+            .unwrap_or_else(|capability| {
+                panic!("generated cell refused: {source:?} {capability:?}")
+            });
         assert!(!stop);
         machine.commit(token);
         assert_ne!(before.processed_tokens, machine.processed_tokens);
@@ -1111,11 +1131,21 @@ fn machine_cell_outcome(blocks: &[Name], p_current: bool, end: Name) -> ClosedFo
         .actions
         .iter()
         .filter(|action| match action {
-            Action::ImpliedPPop { trigger: actual, .. }
-            | Action::BlockDiagnostic { trigger: actual, .. }
-            | Action::BlockIgnored { trigger: actual, .. }
-            | Action::BlockRecoveryPop { trigger: actual, .. }
-            | Action::BlockClose { trigger: actual, .. } => actual == &trigger,
+            Action::ImpliedPPop {
+                trigger: actual, ..
+            }
+            | Action::BlockDiagnostic {
+                trigger: actual, ..
+            }
+            | Action::BlockIgnored {
+                trigger: actual, ..
+            }
+            | Action::BlockRecoveryPop {
+                trigger: actual, ..
+            }
+            | Action::BlockClose {
+                trigger: actual, ..
+            } => actual == &trigger,
             _ => false,
         })
         .collect();
@@ -1167,7 +1197,7 @@ fn machine_cell_outcome(blocks: &[Name], p_current: bool, end: Name) -> ClosedFo
 fn authority_and_hand_authored_gold_matrix_are_frozen() {
     assert_eq!(
         PINNED_WHATWG_COMMIT,
-        "508a0373333d8a1806504303aeb489d931fabbef6"
+        "508a037333d8a1806504303aeb489d931fabbef6"
     );
     assert_eq!(
         PINNED_WHATWG_BLOB,
@@ -1201,10 +1231,8 @@ fn validation_module_does_not_import_production_tree_semantics() {
 
 #[test]
 fn i1_i2_target_current_after_implied_pop_has_exact_order_and_no_misnested_diagnostic() {
-    for (id, name, trigger_range) in [
-        ("I1", Name::Div, (15, 21)),
-        ("I2", Name::Section, (19, 29)),
-    ] {
+    for (id, name, trigger_range) in [("I1", Name::Div, (15, 21)), ("I2", Name::Section, (19, 29))]
+    {
         let observation = observe_fixture(id, 11);
         assert_complete(&observation);
         assert_eq!(
@@ -1217,16 +1245,30 @@ fn i1_i2_target_current_after_implied_pop_has_exact_order_and_no_misnested_diagn
         assert!(observation.p_closures.is_empty(), "{id}");
 
         let implied = &observation.implied_p_pops[0];
-        assert_eq!(implied.trigger, expected_evidence(11, trigger_range), "{id}");
+        assert_eq!(
+            implied.trigger,
+            expected_evidence(11, trigger_range),
+            "{id}"
+        );
         assert_eq!(node_name(&observation, implied.paragraph), Name::P, "{id}");
-        assert_eq!(node_name(&observation, implied.selected_target), name, "{id}");
+        assert_eq!(
+            node_name(&observation, implied.selected_target),
+            name,
+            "{id}"
+        );
 
         let actions = trigger_actions(&observation, &implied.trigger);
         assert_eq!(actions.len(), 2, "{id}");
-        assert!(matches!(actions[0], Action::ImpliedPPop { paragraph, selected_target, .. }
-            if *paragraph == implied.paragraph && *selected_target == implied.selected_target), "{id}");
-        assert!(matches!(actions[1], Action::BlockClose { target, name: actual, .. }
-            if *target == implied.selected_target && *actual == name), "{id}");
+        assert!(
+            matches!(actions[0], Action::ImpliedPPop { paragraph, selected_target, .. }
+            if *paragraph == implied.paragraph && *selected_target == implied.selected_target),
+            "{id}"
+        );
+        assert!(
+            matches!(actions[1], Action::BlockClose { target, name: actual, .. }
+            if *target == implied.selected_target && *actual == name),
+            "{id}"
+        );
     }
 }
 
@@ -1251,7 +1293,10 @@ fn i3_case_insensitive_semantics_retain_exact_raw_end_tag_evidence() {
     let observation = observe_with_layout(&run, StorageLayout::COMPACT);
     assert_complete(&observation);
     assert_eq!(observation.implied_p_pops.len(), 1);
-    assert_eq!(observation.implied_p_pops[0].trigger, evidence(end.complete()));
+    assert_eq!(
+        observation.implied_p_pops[0].trigger,
+        evidence(end.complete())
+    );
 }
 
 #[test]
@@ -1264,32 +1309,52 @@ fn i4_i5_noncurrent_target_orders_implied_pop_diagnostic_recovery_then_close() {
         assert_complete(&observation);
         assert_eq!(
             diagnostic_kinds(&observation),
-            vec![DiagnosticKind::MissingDoctype, DiagnosticKind::MisnestedBlockEnd],
+            vec![
+                DiagnosticKind::MissingDoctype,
+                DiagnosticKind::MisnestedBlockEnd
+            ],
             "{id}"
         );
         assert_eq!(observation.implied_p_pops.len(), 1, "{id}");
         assert_eq!(observation.block_recovery.len(), 1, "{id}");
         let implied = &observation.implied_p_pops[0];
-        assert_eq!(implied.trigger, expected_evidence(31, trigger_range), "{id}");
-        assert_eq!(node_name(&observation, implied.selected_target), target_name, "{id}");
+        assert_eq!(
+            implied.trigger,
+            expected_evidence(31, trigger_range),
+            "{id}"
+        );
+        assert_eq!(
+            node_name(&observation, implied.selected_target),
+            target_name,
+            "{id}"
+        );
         assert_eq!(
             node_name(&observation, observation.block_recovery[0].popped),
             recovered_name,
             "{id}"
         );
-        assert_eq!(observation.block_recovery[0].target, implied.selected_target, "{id}");
+        assert_eq!(
+            observation.block_recovery[0].target, implied.selected_target,
+            "{id}"
+        );
 
         let actions = trigger_actions(&observation, &implied.trigger);
         assert_eq!(actions.len(), 4, "{id}");
         assert!(matches!(actions[0], Action::ImpliedPPop { .. }), "{id}");
-        assert!(matches!(
-            actions[1],
-            Action::BlockDiagnostic {
-                kind: DiagnosticKind::MisnestedBlockEnd,
-                ..
-            }
-        ), "{id}");
-        assert!(matches!(actions[2], Action::BlockRecoveryPop { .. }), "{id}");
+        assert!(
+            matches!(
+                actions[1],
+                Action::BlockDiagnostic {
+                    kind: DiagnosticKind::MisnestedBlockEnd,
+                    ..
+                }
+            ),
+            "{id}"
+        );
+        assert!(
+            matches!(actions[2], Action::BlockRecoveryPop { .. }),
+            "{id}"
+        );
         assert!(matches!(actions[3], Action::BlockClose { .. }), "{id}");
     }
 }
@@ -1301,7 +1366,10 @@ fn i6_nearest_same_name_target_controls_exact_recovery_suffix() {
     assert_eq!(observation.implied_p_pops.len(), 1);
     assert_eq!(observation.block_recovery.len(), 1);
     let implied = &observation.implied_p_pops[0];
-    assert_eq!(node_name(&observation, implied.selected_target), Name::Section);
+    assert_eq!(
+        node_name(&observation, implied.selected_target),
+        Name::Section
+    );
     assert_eq!(
         node_name(&observation, observation.block_recovery[0].popped),
         Name::Div
@@ -1331,7 +1399,10 @@ fn i7_i8_target_absence_is_resolved_before_any_implied_p_mutation() {
                     DiagnosticKind::OpenBlockAtEof,
                 ]
             } else {
-                vec![DiagnosticKind::MissingDoctype, DiagnosticKind::UnmatchedBlockEnd]
+                vec![
+                    DiagnosticKind::MissingDoctype,
+                    DiagnosticKind::UnmatchedBlockEnd,
+                ]
             },
             "{id}"
         );
@@ -1352,7 +1423,10 @@ fn i7_i8_target_absence_is_resolved_before_any_implied_p_mutation() {
             } if *actual == name
         ));
         assert!(matches!(actions[1], Action::BlockIgnored { name: actual, .. } if *actual == name));
-        assert_eq!(node_name(&observation, *observation.open.last().unwrap()), Name::P);
+        assert_eq!(
+            node_name(&observation, *observation.open.last().unwrap()),
+            Name::P
+        );
     }
 }
 
@@ -1373,11 +1447,20 @@ fn i9_repeated_unmatched_selected_ends_each_ignore_without_popping_p() {
         observation
             .actions
             .iter()
-            .filter(|action| matches!(action, Action::BlockIgnored { name: Name::Section, .. }))
+            .filter(|action| matches!(
+                action,
+                Action::BlockIgnored {
+                    name: Name::Section,
+                    ..
+                }
+            ))
             .count(),
         2
     );
-    assert_eq!(node_name(&observation, *observation.open.last().unwrap()), Name::P);
+    assert_eq!(
+        node_name(&observation, *observation.open.last().unwrap()),
+        Name::P
+    );
 }
 
 #[test]
@@ -1419,10 +1502,17 @@ fn i11_text_before_and_after_selected_end_has_exact_parentage() {
     assert_eq!(texts.len(), 2);
     assert_eq!(texts[0].parent, Some(p.id));
     assert_eq!(texts[1].parent, Some(body.id));
-    let NodeKind::Text { interpreted: first, .. } = &texts[0].kind else {
+    let NodeKind::Text {
+        interpreted: first, ..
+    } = &texts[0].kind
+    else {
         panic!("first text")
     };
-    let NodeKind::Text { interpreted: second, .. } = &texts[1].kind else {
+    let NodeKind::Text {
+        interpreted: second,
+        ..
+    } = &texts[1].kind
+    else {
         panic!("second text")
     };
     assert_eq!(first, "x");
@@ -1447,7 +1537,10 @@ fn i12_unmatched_selected_end_preserves_p_and_predecessor_open_block_eof_diagnos
         observation.diagnostics[2].trigger,
         Some(expected_evidence(91, (source.len(), source.len())))
     );
-    assert_eq!(node_name(&observation, *observation.open.last().unwrap()), Name::P);
+    assert_eq!(
+        node_name(&observation, *observation.open.last().unwrap()),
+        Name::P
+    );
 }
 
 #[test]
@@ -1477,7 +1570,10 @@ fn i17_predecessor_tc_s4_recovery_without_p_is_unchanged() {
     assert_eq!(observation.block_recovery.len(), 1);
     assert_eq!(
         diagnostic_kinds(&observation),
-        vec![DiagnosticKind::MissingDoctype, DiagnosticKind::MisnestedBlockEnd]
+        vec![
+            DiagnosticKind::MissingDoctype,
+            DiagnosticKind::MisnestedBlockEnd
+        ]
     );
     assert_eq!(
         node_name(&observation, observation.block_recovery[0].popped),
@@ -1538,10 +1634,7 @@ fn i19_exact_authored_origins_and_selected_end_trigger_remain_separate() {
 #[test]
 fn i20_implied_pop_allocates_no_identity_and_later_node_ids_match_explicit_p_close_control() {
     let implied = observe_fixture("I20", 131);
-    let control = observe_source(
-        "<body><div><p>x</p></div><section>y</section>",
-        131,
-    );
+    let control = observe_source("<body><div><p>x</p></div><section>y</section>", 131);
     assert_complete(&implied);
     assert_complete(&control);
     assert_eq!(implied.nodes.len(), control.nodes.len());
@@ -1591,7 +1684,10 @@ fn i24_generated_cells_agree_with_independent_closed_form_oracle() {
                 for end in [Name::Div, Name::Section] {
                     let oracle = closed_form_oracle(&blocks, p_current, end);
                     let candidate = machine_cell_outcome(&blocks, p_current, end);
-                    assert_eq!(candidate, oracle, "blocks={blocks:?} p={p_current} end={end:?}");
+                    assert_eq!(
+                        candidate, oracle,
+                        "blocks={blocks:?} p={p_current} end={end:?}"
+                    );
                 }
             }
         }
