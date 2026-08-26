@@ -1109,7 +1109,10 @@ pub(crate) enum HtmlTreeCompletionUpgrade {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum HtmlTreeFreezeError {
     DuplicateConstructedIdentity(HtmlConstructedNodeId),
-    CreationEventInventoryMismatch { admitted: usize, stored: usize },
+    CreationEventInventoryMismatch {
+        admitted: usize,
+        stored: usize,
+    },
     UnadmittedConstructedIdentity(HtmlConstructedNodeId),
     MissingRootNode(HtmlConstructedNodeId),
     InvalidDocumentRoot(HtmlConstructedNodeId),
@@ -1127,7 +1130,10 @@ pub(crate) enum HtmlTreeFreezeError {
         parent: HtmlConstructedNodeId,
         child: HtmlConstructedNodeId,
     },
-    UnreachableOrCyclicStructure { reachable: usize, stored: usize },
+    UnreachableOrCyclicStructure {
+        reachable: usize,
+        stored: usize,
+    },
     InvalidTextContributions(HtmlConstructedNodeId),
     ForeignSourceEvidence {
         role: HtmlTreeEvidenceRole,
@@ -1138,7 +1144,9 @@ pub(crate) enum HtmlTreeFreezeError {
         role: HtmlTreeEvidenceRole,
         error: SourceRangeError,
     },
-    MismatchedSourceEvidence { role: HtmlTreeEvidenceRole },
+    MismatchedSourceEvidence {
+        role: HtmlTreeEvidenceRole,
+    },
     AuthoredNameOutsideCompleteTag(HtmlConstructedNodeId),
     UnresolvedActionSubject(HtmlConstructedNodeId),
     InvalidTokenProgression {
@@ -1193,8 +1201,12 @@ pub(crate) enum HtmlTreeFreezeError {
         actions: Vec<usize>,
         diagnostics: Vec<usize>,
     },
-    DuplicateSelectedOrdinaryEndTokenDecision { token_index: usize },
-    UnmatchedSelectedOrdinaryEndTriggerIsNotTheMatchingEndTag { token_index: usize },
+    DuplicateSelectedOrdinaryEndTokenDecision {
+        token_index: usize,
+    },
+    UnmatchedSelectedOrdinaryEndTriggerIsNotTheMatchingEndTag {
+        token_index: usize,
+    },
     UnmatchedSelectedOrdinaryEndTagWithOpenTarget(HtmlConstructedNodeId),
     ParagraphActionSubjectIsNotParagraph(HtmlConstructedNodeId),
     DuplicateParagraphInsertion(HtmlConstructedNodeId),
@@ -1212,8 +1224,12 @@ pub(crate) enum HtmlTreeFreezeError {
         token_index: usize,
     },
     NonLifoParagraphInteraction(HtmlConstructedNodeId),
-    ParagraphStartTriggeredInsertionMismatch { token_index: usize },
-    ParagraphSynthesisClosureMismatch { token_index: usize },
+    ParagraphStartTriggeredInsertionMismatch {
+        token_index: usize,
+    },
+    ParagraphSynthesisClosureMismatch {
+        token_index: usize,
+    },
     UnmatchedParagraphDiagnosticMismatch {
         syntheses: Vec<usize>,
         diagnostics: Vec<usize>,
@@ -1738,7 +1754,11 @@ fn validate_selected_ordinary_diagnostics(
             .all(|(group, found)| {
                 found.recovery()
                     == HtmlTreeRecovery::PoppedInterveningSelectedOrdinaryElementsAndClosedTarget
-                    && is_matching_end_tag_trigger(group.target_name, found.trigger(), tokenizer_run)
+                    && is_matching_end_tag_trigger(
+                        group.target_name,
+                        found.trigger(),
+                        tokenizer_run,
+                    )
             });
     if !paired {
         return Err(
@@ -1830,7 +1850,12 @@ fn is_matching_end_tag_trigger(
     trigger: &HtmlTreeTokenTrigger,
     tokenizer_run: &HtmlTokenizerRunResult,
 ) -> bool {
-    is_exact_tag_trigger(trigger, tokenizer_run, HtmlTagKind::End, &[name.interpreted()])
+    is_exact_tag_trigger(
+        trigger,
+        tokenizer_run,
+        HtmlTagKind::End,
+        &[name.interpreted()],
+    )
 }
 
 fn expect_selected_ordinary(
@@ -1890,7 +1915,9 @@ fn validate_paragraph_lifecycle(
             }
             HtmlTreeActionKind::InsertedAuthoredParagraphElement { node } => {
                 let Some(element) = paragraph(nodes, *node) else {
-                    return Err(HtmlTreeFreezeError::ParagraphActionSubjectIsNotParagraph(*node));
+                    return Err(HtmlTreeFreezeError::ParagraphActionSubjectIsNotParagraph(
+                        *node,
+                    ));
                 };
                 if inserted.contains(node) {
                     return Err(HtmlTreeFreezeError::DuplicateParagraphInsertion(*node));
@@ -1902,17 +1929,21 @@ fn validate_paragraph_lifecycle(
                     return Err(HtmlTreeFreezeError::NonLifoParagraphInteraction(*node));
                 }
                 if !paragraph_authored_insertion_matches(element, action.trigger(), tokenizer_run) {
-                    return Err(HtmlTreeFreezeError::ParagraphAuthoredInsertionTriggerMismatch {
-                        node: *node,
-                        token_index: action.trigger().token_index(),
-                    });
+                    return Err(
+                        HtmlTreeFreezeError::ParagraphAuthoredInsertionTriggerMismatch {
+                            node: *node,
+                            token_index: action.trigger().token_index(),
+                        },
+                    );
                 }
                 inserted.push(*node);
                 open_content.push(*node);
             }
             HtmlTreeActionKind::InsertedSynthesizedParagraphElement { node, cause } => {
                 let Some(element) = paragraph(nodes, *node) else {
-                    return Err(HtmlTreeFreezeError::ParagraphActionSubjectIsNotParagraph(*node));
+                    return Err(HtmlTreeFreezeError::ParagraphActionSubjectIsNotParagraph(
+                        *node,
+                    ));
                 };
                 if inserted.contains(node) {
                     return Err(HtmlTreeFreezeError::DuplicateParagraphInsertion(*node));
@@ -1930,7 +1961,12 @@ fn validate_paragraph_lifecycle(
                             HtmlParagraphSynthesisCause::UnmatchedParagraphEndTag
                         )
                     )
-                    || !is_exact_tag_trigger(action.trigger(), tokenizer_run, HtmlTagKind::End, &["p"])
+                    || !is_exact_tag_trigger(
+                        action.trigger(),
+                        tokenizer_run,
+                        HtmlTagKind::End,
+                        &["p"],
+                    )
                 {
                     return Err(
                         HtmlTreeFreezeError::ParagraphSynthesizedInsertionTriggerMismatch {
@@ -1964,7 +2000,9 @@ fn validate_paragraph_lifecycle(
             }
             HtmlTreeActionKind::ClosedParagraphElement { node, closure } => {
                 if paragraph(nodes, *node).is_none() {
-                    return Err(HtmlTreeFreezeError::ParagraphActionSubjectIsNotParagraph(*node));
+                    return Err(HtmlTreeFreezeError::ParagraphActionSubjectIsNotParagraph(
+                        *node,
+                    ));
                 }
                 if open_content.last() != Some(node) {
                     return Err(HtmlTreeFreezeError::NonLifoParagraphInteraction(*node));
@@ -2017,9 +2055,10 @@ fn validate_paragraph_lifecycle(
                         && same_trigger(next.trigger(), action.trigger());
                     let expected = retained_start_tag_name(action.trigger(), tokenizer_run);
                     let next_matches = match (expected, next.kind()) {
-                        (Some("p"), HtmlTreeActionKind::InsertedAuthoredParagraphElement { .. }) => {
-                            true
-                        }
+                        (
+                            Some("p"),
+                            HtmlTreeActionKind::InsertedAuthoredParagraphElement { .. },
+                        ) => true,
                         (
                             Some("div"),
                             HtmlTreeActionKind::InsertedAuthoredSelectedOrdinaryElement {
@@ -2050,8 +2089,15 @@ fn validate_paragraph_lifecycle(
     }
 
     for node in paragraph_nodes {
-        if inserted.iter().filter(|inserted| **inserted == node).count() != 1 {
-            return Err(HtmlTreeFreezeError::ParagraphInsertionInventoryMismatch(node));
+        if inserted
+            .iter()
+            .filter(|inserted| **inserted == node)
+            .count()
+            != 1
+        {
+            return Err(HtmlTreeFreezeError::ParagraphInsertionInventoryMismatch(
+                node,
+            ));
         }
     }
 
@@ -2100,7 +2146,9 @@ fn validate_paragraph_lifecycle(
     if let Some(actual) = final_open_paragraph
         && paragraph(nodes, actual).is_none()
     {
-        return Err(HtmlTreeFreezeError::FinalOpenParagraphIsNotParagraph(actual));
+        return Err(HtmlTreeFreezeError::FinalOpenParagraphIsNotParagraph(
+            actual,
+        ));
     }
     if replayed != final_open_paragraph {
         return Err(HtmlTreeFreezeError::FinalOpenParagraphStateMismatch {
