@@ -460,6 +460,9 @@ fn project_diagnostics(analysis: &HtmlDocumentShellAnalysis) -> Vec<GoldDiagnost
             HtmlTreeDiagnosticCode::AfterBodyCharacterData => {
                 panic!("the TC-S1 predecessor GOLD never produces the TC-S2 after-body diagnostic")
             }
+            HtmlTreeDiagnosticCode::BodyEndTagWithOpenSelectedOrdinaryElements => {
+                panic!("the TC-S1 predecessor GOLD never produces the TC-S7 body-end diagnostic")
+            }
             HtmlTreeDiagnosticCode::UnmatchedSelectedOrdinaryEndTag
             | HtmlTreeDiagnosticCode::OpenSelectedOrdinaryElementAtEndOfFile
             | HtmlTreeDiagnosticCode::MisnestedSelectedOrdinaryEndTag => {

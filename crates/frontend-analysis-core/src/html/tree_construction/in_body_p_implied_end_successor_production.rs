@@ -671,7 +671,7 @@ fn semantic_relation_endpoints_and_order_are_source_id_independent() {
 }
 
 #[test]
-fn shape_phase_and_shell_crossing_refuse_before_tc_s6_mutation() {
+fn shape_and_phase_controls_refuse_before_tc_s6_mutation() {
     assert_unsupported_tc_s6(
         "<body><div><p>x</div id=x>",
         HtmlTreeCapability::SelectedOrdinaryTagAttribute,
@@ -699,15 +699,38 @@ fn shape_phase_and_shell_crossing_refuse_before_tc_s6_mutation() {
         2,
         4,
     );
-    assert_unsupported_tc_s6(
-        "<body><p></body>",
-        HtmlTreeCapability::ShellTagWithOpenParagraphElement,
-        2,
-        (9, 16),
-        9,
-        2,
-        5,
+}
+
+#[test]
+fn repeated_p_body_end_predecessor_control_advances_to_tc_s7_without_p_mutation() {
+    let analysis = analyze("<body><p></body>");
+    assert!(analysis.is_complete());
+    assert_eq!(analysis.node_count(), 5);
+    assert_eq!(analysis.coverage().committed_end(), 16);
+    assert_eq!(analysis.coverage().processed_tokens(), 4);
+    assert_eq!(
+        diagnostic_count(
+            &analysis,
+            HtmlTreeDiagnosticCode::BodyEndTagWithOpenSelectedOrdinaryElements,
+        ),
+        0
     );
+    assert!(analysis.actions().iter().any(|action| matches!(
+        action.kind(),
+        HtmlTreeActionKind::AcknowledgedShellEndTag {
+            name: super::result::HtmlShellElementName::Body,
+        } if action.trigger().token_index() == 2
+    )));
+    assert!(analysis.actions().iter().all(|action| {
+        action.trigger().token_index() != 2
+            || !matches!(
+                action.kind(),
+                HtmlTreeActionKind::ClosedParagraphElement { .. }
+                    | HtmlTreeActionKind::PoppedParagraphElementBySelectedOrdinaryEndTag { .. }
+                    | HtmlTreeActionKind::ClosedSelectedOrdinaryElement { .. }
+                    | HtmlTreeActionKind::PoppedSelectedOrdinaryElementByAncestorEndTag { .. }
+            )
+    }));
 }
 
 #[test]

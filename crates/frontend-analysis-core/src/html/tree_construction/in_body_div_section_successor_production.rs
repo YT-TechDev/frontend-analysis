@@ -113,6 +113,10 @@ enum ExpectedDiagnostic {
     OpenSelectedOrdinaryElementAtEndOfFile {
         token: usize,
     },
+    BodyEndTagWithOpenSelectedOrdinaryElements {
+        token: usize,
+        trigger: Span,
+    },
 }
 
 /// One matching closure, named by the closed element's own authored start tag
@@ -352,6 +356,16 @@ fn project_diagnostics(analysis: &HtmlDocumentShellAnalysis) -> Vec<ExpectedDiag
                         "the end-of-file trigger must carry no authored extent"
                     );
                     ExpectedDiagnostic::OpenSelectedOrdinaryElementAtEndOfFile { token }
+                }
+                HtmlTreeDiagnosticCode::BodyEndTagWithOpenSelectedOrdinaryElements => {
+                    assert_eq!(
+                        diagnostic.recovery(),
+                        HtmlTreeRecovery::SwitchedToAfterBodyPreservingOpenElements,
+                    );
+                    ExpectedDiagnostic::BodyEndTagWithOpenSelectedOrdinaryElements {
+                        token,
+                        trigger: authored("body-end"),
+                    }
                 }
                 other => panic!("unexpected diagnostic {other:?} for a TC-S4 source"),
             }
@@ -1449,51 +1463,72 @@ fn ps16_a_section_outside_in_body_refuses_transactionally() {
 }
 
 #[test]
-fn ps17_a_body_close_over_an_open_section_commits_no_partial_mutation() {
-    // The accepted TC-S3 refusal boundary, extended honestly to `section` and
-    // to mixed selected stacks. Nothing of the body close commits.
-    check(&refusal_run(RefusalCase {
-        id: "PS17",
-        source: "<body><section></body>",
-        body_children: vec![section((6, 15), (7, 14), vec![])],
-        tail: vec![(
-            ExpectedAction::InsertedAuthoredSelectedOrdinary("section"),
-            1,
-        )],
-        node_count: 5,
-        committed_end: 15,
-        processed_tokens: 2,
-        completion: ExpectedCompletion::Unsupported {
-            capability: HtmlTreeCapability::ShellTagWithOpenSelectedOrdinaryElement,
-            token: 2,
-            trigger: Some((15, 22)),
-        },
-    }));
+fn ps17_a_body_close_over_an_open_section_advances_only_the_tc_s7_cell() {
+    let analysis = analyze("<body><section></body>");
+    assert!(analysis.is_complete());
+    assert_eq!(analysis.node_count(), 5);
+    assert_eq!(analysis.coverage().committed_end(), 22);
+    assert_eq!(analysis.coverage().processed_tokens(), 4);
+    assert_eq!(
+        project_diagnostics(&analysis)
+            .into_iter()
+            .filter(|diagnostic| matches!(
+                diagnostic,
+                ExpectedDiagnostic::BodyEndTagWithOpenSelectedOrdinaryElements { .. }
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            ExpectedDiagnostic::BodyEndTagWithOpenSelectedOrdinaryElements {
+                token: 2,
+                trigger: (15, 22),
+            },
+        ]
+    );
+    assert!(project_closures(&analysis).is_empty());
+    assert!(project_recoveries(&analysis).is_empty());
+    assert!(analysis.actions().iter().any(|action| matches!(
+        action.kind(),
+        HtmlTreeActionKind::AcknowledgedShellEndTag {
+            name: HtmlShellElementName::Body,
+        } if action.trigger().token_index() == 2
+    )));
 }
 
 #[test]
-fn a_shell_tag_over_a_mixed_selected_stack_refuses_before_any_effect() {
-    for (source, committed_end, processed) in [
-        ("<body><section></body>", 15usize, 2usize),
-        ("<body><section><div></body>", 20, 3),
-        ("<body><div><section></body>", 20, 3),
-        ("<body><section><div></html>", 20, 3),
+fn body_end_advances_mixed_selected_stacks_while_html_end_stays_firewalled() {
+    for source in [
+        "<body><section></body>",
+        "<body><section><div></body>",
+        "<body><div><section></body>",
     ] {
         let analysis = analyze(source);
+        assert!(analysis.is_complete(), "{source:?}");
         assert_eq!(
-            project_completion(&analysis),
-            ExpectedCompletion::Unsupported {
-                capability: HtmlTreeCapability::ShellTagWithOpenSelectedOrdinaryElement,
-                token: processed,
-                trigger: Some((committed_end, source.len())),
-            },
+            analysis
+                .diagnostics()
+                .iter()
+                .filter(|diagnostic| diagnostic.code()
+                    == HtmlTreeDiagnosticCode::BodyEndTagWithOpenSelectedOrdinaryElements)
+                .count(),
+            1,
             "{source:?}"
         );
-        assert_eq!(analysis.coverage().committed_end(), committed_end);
-        assert_eq!(analysis.coverage().processed_tokens(), processed);
         assert!(project_recoveries(&analysis).is_empty());
         assert!(project_closures(&analysis).is_empty());
     }
+
+    let source = "<body><section><div></html>";
+    let analysis = analyze(source);
+    assert_eq!(
+        project_completion(&analysis),
+        ExpectedCompletion::Unsupported {
+            capability: HtmlTreeCapability::ShellTagWithOpenSelectedOrdinaryElement,
+            token: 3,
+            trigger: Some((20, source.len())),
+        }
+    );
+    assert_eq!(analysis.coverage().committed_end(), 20);
+    assert_eq!(analysis.coverage().processed_tokens(), 3);
 }
 
 #[test]
@@ -1703,10 +1738,6 @@ fn predecessor_capability_meanings_are_unchanged_and_apply_to_section() {
         (
             "</section>",
             HtmlTreeCapability::SelectedOrdinaryTagOutsideInBody,
-        ),
-        (
-            "<body><section></body>",
-            HtmlTreeCapability::ShellTagWithOpenSelectedOrdinaryElement,
         ),
         // Non-P names outside the selected-ordinary and Paragraph domains
         // keep the frozen unproved-name meaning.

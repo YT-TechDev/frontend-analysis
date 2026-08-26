@@ -1,5 +1,5 @@
 //! Immutable, validated result meaning for TC-S1 and its accepted TC-S2,
-//! TC-S3, TC-S4, TC-S5, and TC-S6 successors.
+//! TC-S3, TC-S4, TC-S5, TC-S6, and TC-S7 successors.
 //!
 //! This module owns the durable half of the accepted Candidate C model: the
 //! frozen tree, constructed identity, authored/synthesized provenance,
@@ -727,7 +727,9 @@ impl HtmlTreeAction {
 /// what a supported query needs in order to explain a durable observation.
 /// TC-S3 extended it with selected ordinary insertion/closure, TC-S4 with one
 /// narrow recovery relation, and TC-S5 with three Paragraph lifecycle
-/// relations without turning it into a generic DOM mutation log.
+/// relations. TC-S7 deliberately reuses the existing Body acknowledgement
+/// rather than adding another action, so this remains a selective vocabulary
+/// rather than a generic DOM mutation log.
 #[derive(Debug, Clone)]
 pub(crate) enum HtmlTreeActionKind {
     /// A shell element node was created from the trigger token's own authored
@@ -913,6 +915,12 @@ pub(crate) enum HtmlTreeDiagnosticCode {
     /// A non-whitespace character run appeared while `AfterBody` was the
     /// actual insertion mode.
     AfterBodyCharacterData,
+    /// An authored plain `</body>` switched the actual insertion mode from
+    /// `InBody` to `AfterBody` while one or more selected ordinary `Div |
+    /// Section` elements remained open. Exactly one is recorded per such
+    /// body-end token, independent of selected depth; P alone does not cause
+    /// it.
+    BodyEndTagWithOpenSelectedOrdinaryElements,
     /// A selected ordinary end tag appeared with no matching selected ordinary
     /// element in the bounded selected-element scope.
     UnmatchedSelectedOrdinaryEndTag,
@@ -944,6 +952,10 @@ pub(crate) enum HtmlTreeRecovery {
     /// The actual insertion mode changed from `AfterBody` to `InBody` and the
     /// same admitted token was reprocessed there.
     SwitchedToInBodyAndReprocessedSameToken,
+    /// The authored plain `</body>` moved the actual insertion mode to
+    /// `AfterBody` while preserving the complete bounded open stack and every
+    /// constructed identity.
+    SwitchedToAfterBodyPreservingOpenElements,
     /// The token was ignored. The constructed tree, the open elements, the
     /// actual insertion mode, constructed identity, and closure evidence were
     /// all left exactly as they were.
@@ -1288,8 +1300,9 @@ pub(crate) enum HtmlTreeCompletionUpgrade {
 /// from [`HtmlTreeCapability`]: a freeze failure means the construction
 /// boundary produced something it must never publish, not that authored HTML
 /// is invalid or that capability coverage is missing. Existing TC-S1–TC-S4
-/// variants retain their exact meaning; TC-S5 adds only Paragraph-specific
-/// failures. Every variant carries structural/provenance evidence only;
+/// variants retain their exact meaning; TC-S5 adds Paragraph-specific failures
+/// and TC-S7 adds only bounded body-end replay failures. Every variant carries
+/// structural/provenance evidence only;
 /// `Debug` and `Display` never expose arbitrary authored source content.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum HtmlTreeFreezeError {
@@ -1515,6 +1528,66 @@ pub(crate) enum HtmlTreeFreezeError {
         replayed: Option<HtmlConstructedNodeId>,
         actual: Option<HtmlConstructedNodeId>,
     },
+    /// A committed plain `</body>` token had no corresponding retained
+    /// Body acknowledgement action.
+    MissingBodyEndAcknowledgement {
+        token_index: usize,
+    },
+    /// A body acknowledgement was not triggered by the retained authored
+    /// plain `</body>` token it names.
+    BodyEndAcknowledgementTriggerMismatch {
+        token_index: usize,
+    },
+    /// One retained `</body>` token was claimed to perform the body-end
+    /// transition more than once.
+    DuplicateBodyEndAcknowledgement {
+        token_index: usize,
+    },
+    /// A body acknowledgement was recorded while the replayed body position
+    /// was not `InBody`.
+    BodyEndAcknowledgementOutsideInBody {
+        token_index: usize,
+    },
+    /// The dedicated TC-S7 diagnostic count did not equal the replayed
+    /// selected-open condition for this body-end token.
+    BodyEndDiagnosticCardinalityMismatch {
+        token_index: usize,
+        selected_open: usize,
+        diagnostics: usize,
+    },
+    /// The one required TC-S7 diagnostic did not carry the body action's exact
+    /// retained trigger and dedicated recovery meaning.
+    BodyEndDiagnosticTriggerOrRecoveryMismatch {
+        token_index: usize,
+    },
+    /// A TC-S7 diagnostic exists without a corresponding body acknowledgement.
+    OrphanBodyEndDiagnostic {
+        token_index: usize,
+    },
+    /// A close, implied pop, selected recovery, synthesis, or node-creation
+    /// action was attributed to the body-end trigger after the bounded
+    /// transition was reached.
+    BodyEndSameTriggerMutation {
+        token_index: usize,
+    },
+    /// The independent TC-S7 mixed selected/P replay did not preserve the
+    /// bounded open-content lifecycle.
+    BodyEndOpenContentReplayMismatch {
+        token_index: usize,
+    },
+    /// An AfterBody successor character did not preserve the retained current
+    /// insertion parent or the accepted whitespace/non-whitespace transition.
+    BodyEndAfterBodySuccessorMismatch {
+        token_index: usize,
+    },
+    /// EOF was reached while the replayed body position remained outside
+    /// `InBody`, but the InBody selected-open EOF diagnostic was fabricated.
+    BodyEndAfterBodyEofDiagnosticMismatch {
+        token_index: usize,
+    },
+    /// The TC-S7 mixed replay's final selected/P state does not equal the
+    /// immutable session hand-off checkpoints.
+    BodyEndFinalOpenStateMismatch,
 }
 
 impl fmt::Display for HtmlTreeFreezeError {
@@ -1533,7 +1606,8 @@ impl Error for HtmlTreeFreezeError {}
 /// durable invariants are checked at this ownership boundary rather than
 /// trusted because the private session happens to produce them today. Existing
 /// TC-S1–TC-S4 checks remain intact; TC-S5 adds an independent Paragraph
-/// lifecycle replay beside the selected-ordinary replay.
+/// lifecycle replay beside the selected-ordinary replay, and TC-S7 adds one
+/// mixed open-content/body-position replay over both retained lifecycles.
 pub(super) fn freeze(
     source: &SourceText,
     tokenizer_run: HtmlTokenizerRunResult,
@@ -1568,6 +1642,15 @@ pub(super) fn freeze(
         &actions,
         &diagnostics,
         &tokenizer_run,
+        final_open_paragraph,
+    )?;
+    validate_body_end_open_stack_transitions(
+        &nodes,
+        &actions,
+        &diagnostics,
+        &tokenizer_run,
+        processed_tokens,
+        &final_open_selected_ordinary,
         final_open_paragraph,
     )?;
     validate_diagnostic_evidence(source, &diagnostics, tokenizer_run.tokens().len())?;
@@ -2588,6 +2671,513 @@ fn validate_paragraph_lifecycle(
         });
     }
     Ok(())
+}
+
+/// The body position reconstructed from durable action chronology.
+///
+/// This is freeze-owned replay state, not a snapshot copied from the mutable
+/// session. `InBody` begins only after the retained Body insertion action;
+/// every later transition is reconstructed from the existing shell
+/// acknowledgement and same-token reprocess actions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReplayedBodyPosition {
+    In,
+    After,
+    AfterAfter,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReplayedBodyCharacterClass {
+    AllHtmlWhitespace,
+    AllNonHtmlWhitespace,
+    Mixed,
+}
+
+/// Independently validates TC-S7 body-end and successor composition.
+///
+/// The mutable session contributes no conclusion to this replay. It consumes
+/// only retained tokenizer tokens, committed actions and diagnostics, stored
+/// semantic identities, and the two immutable final-open checkpoints. In one
+/// ordered pass it reconstructs the mixed `Div | Section | P` lifecycle and
+/// body position, then proves that a plain authored `</body>`:
+///
+/// - is acknowledged once from `InBody`;
+/// - records exactly one dedicated diagnostic iff a selected ordinary element
+///   is open (P alone is allowed);
+/// - preserves the complete open-content state and every identity;
+/// - performs no same-trigger close, implied pop, recovery, synthesis, or
+///   creation after the transition;
+/// - leaves AfterBody whitespace under the retained current node without
+///   reprocess;
+/// - pairs non-whitespace with the accepted diagnostic and exactly-one
+///   reprocess before insertion under that same retained parent; and
+/// - never fabricates the InBody selected-open EOF diagnostic while the
+///   replayed position remains AfterBody or AfterAfterBody.
+fn validate_body_end_open_stack_transitions(
+    nodes: &[HtmlTreeNode],
+    actions: &[HtmlTreeAction],
+    diagnostics: &[HtmlTreeDiagnostic],
+    tokenizer_run: &HtmlTokenizerRunResult,
+    processed_tokens: usize,
+    final_open_selected_ordinary: &[HtmlConstructedNodeId],
+    final_open_paragraph: Option<HtmlConstructedNodeId>,
+) -> Result<(), HtmlTreeFreezeError> {
+    let body = nodes
+        .iter()
+        .find(|node| is_shell_element(node, HtmlShellElementName::Body))
+        .map(HtmlTreeNode::id);
+    let mut position = None;
+    let mut open_content: Vec<HtmlConstructedNodeId> = Vec::new();
+    let mut body_end_tokens = Vec::new();
+    let mut matched_body_diagnostics = Vec::new();
+    let mut pending_reprocessed_text: Option<(usize, HtmlConstructedNodeId)> = None;
+    let mut consumed_successor_text_tokens = Vec::new();
+
+    for (action_index, action) in actions.iter().enumerate() {
+        let token_index = action.trigger().token_index();
+        if let Some((pending_token, _)) = pending_reprocessed_text
+            && pending_token != token_index
+        {
+            return Err(HtmlTreeFreezeError::BodyEndAfterBodySuccessorMismatch {
+                token_index: pending_token,
+            });
+        }
+
+        match action.kind() {
+            HtmlTreeActionKind::InsertedAuthoredShellElement {
+                name: HtmlShellElementName::Body,
+                ..
+            }
+            | HtmlTreeActionKind::InsertedSynthesizedShellElement {
+                name: HtmlShellElementName::Body,
+                ..
+            } => {
+                position = Some(ReplayedBodyPosition::In);
+            }
+            HtmlTreeActionKind::InsertedAuthoredSelectedOrdinaryElement { node, .. } => {
+                open_content.push(*node);
+            }
+            HtmlTreeActionKind::PoppedSelectedOrdinaryElementByAncestorEndTag { node, .. }
+            | HtmlTreeActionKind::ClosedSelectedOrdinaryElement { node, .. } => {
+                if open_content.last() != Some(node) {
+                    return Err(HtmlTreeFreezeError::BodyEndOpenContentReplayMismatch {
+                        token_index,
+                    });
+                }
+                open_content.pop();
+            }
+            HtmlTreeActionKind::InsertedAuthoredParagraphElement { node }
+            | HtmlTreeActionKind::InsertedSynthesizedParagraphElement { node, .. } => {
+                open_content.push(*node);
+            }
+            HtmlTreeActionKind::ClosedParagraphElement { node, .. }
+            | HtmlTreeActionKind::PoppedParagraphElementBySelectedOrdinaryEndTag { node, .. } => {
+                if open_content.last() != Some(node) {
+                    return Err(HtmlTreeFreezeError::BodyEndOpenContentReplayMismatch {
+                        token_index,
+                    });
+                }
+                open_content.pop();
+            }
+            HtmlTreeActionKind::AcknowledgedShellEndTag {
+                name: HtmlShellElementName::Body,
+            } => {
+                if !is_plain_body_end_trigger(action.trigger(), tokenizer_run) {
+                    return Err(HtmlTreeFreezeError::BodyEndAcknowledgementTriggerMismatch {
+                        token_index,
+                    });
+                }
+                if body_end_tokens.contains(&token_index) {
+                    return Err(HtmlTreeFreezeError::DuplicateBodyEndAcknowledgement {
+                        token_index,
+                    });
+                }
+                if position != Some(ReplayedBodyPosition::In) {
+                    return Err(HtmlTreeFreezeError::BodyEndAcknowledgementOutsideInBody {
+                        token_index,
+                    });
+                }
+
+                let selected_open = open_content
+                    .iter()
+                    .filter(|id| selected_ordinary_name(nodes, **id).is_some())
+                    .count();
+                let tc_s7_open_content = !open_content.is_empty();
+                let body_diagnostics: Vec<(usize, &HtmlTreeDiagnostic)> = diagnostics
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, diagnostic)| {
+                        diagnostic.code()
+                            == HtmlTreeDiagnosticCode::BodyEndTagWithOpenSelectedOrdinaryElements
+                            && diagnostic.trigger().token_index() == token_index
+                    })
+                    .collect();
+                if tc_s7_open_content
+                    && diagnostics.iter().enumerate().any(|(other_index, other)| {
+                        same_trigger(other.trigger(), action.trigger())
+                            && !body_diagnostics
+                                .iter()
+                                .any(|(index, _)| *index == other_index)
+                    })
+                {
+                    return Err(
+                        HtmlTreeFreezeError::BodyEndDiagnosticTriggerOrRecoveryMismatch {
+                            token_index,
+                        },
+                    );
+                }
+                let expected = usize::from(selected_open != 0);
+                if body_diagnostics.len() != expected {
+                    return Err(HtmlTreeFreezeError::BodyEndDiagnosticCardinalityMismatch {
+                        token_index,
+                        selected_open,
+                        diagnostics: body_diagnostics.len(),
+                    });
+                }
+                if let [(diagnostic_index, diagnostic)] = body_diagnostics.as_slice() {
+                    if diagnostic.recovery()
+                        != HtmlTreeRecovery::SwitchedToAfterBodyPreservingOpenElements
+                        || !same_trigger(diagnostic.trigger(), action.trigger())
+                        || !is_plain_body_end_trigger(diagnostic.trigger(), tokenizer_run)
+                        || diagnostics.iter().enumerate().any(|(other_index, other)| {
+                            other_index > *diagnostic_index
+                                && same_trigger(other.trigger(), diagnostic.trigger())
+                        })
+                    {
+                        return Err(
+                            HtmlTreeFreezeError::BodyEndDiagnosticTriggerOrRecoveryMismatch {
+                                token_index,
+                            },
+                        );
+                    }
+                    matched_body_diagnostics.push(*diagnostic_index);
+                }
+
+                // The action order is load-bearing. Shell creation/closure may
+                // legitimately precede the acknowledgement when one early
+                // `</body>` token walks through implied shell construction.
+                // No selected/P/text creation may share a body-end trigger,
+                // and nothing at all may mutate after the acknowledgement
+                // under that consumed token.
+                for (other_index, other) in actions.iter().enumerate() {
+                    if other_index == action_index
+                        || !same_trigger(other.trigger(), action.trigger())
+                    {
+                        continue;
+                    }
+                    // A duplicate body acknowledgement is not a mutation;
+                    // let the ordered replay reach it and report the more
+                    // exact duplicate-decision failure below.
+                    if matches!(
+                        other.kind(),
+                        HtmlTreeActionKind::AcknowledgedShellEndTag {
+                            name: HtmlShellElementName::Body
+                        }
+                    ) {
+                        continue;
+                    }
+                    if tc_s7_open_content {
+                        return Err(HtmlTreeFreezeError::BodyEndSameTriggerMutation {
+                            token_index,
+                        });
+                    }
+                    let forbidden_anywhere = matches!(
+                        other.kind(),
+                        HtmlTreeActionKind::InsertedTextNode { .. }
+                            | HtmlTreeActionKind::AppendedToTextNode { .. }
+                            | HtmlTreeActionKind::InsertedAuthoredSelectedOrdinaryElement { .. }
+                            | HtmlTreeActionKind::ClosedSelectedOrdinaryElement { .. }
+                            | HtmlTreeActionKind::PoppedSelectedOrdinaryElementByAncestorEndTag { .. }
+                            | HtmlTreeActionKind::InsertedAuthoredParagraphElement { .. }
+                            | HtmlTreeActionKind::InsertedSynthesizedParagraphElement { .. }
+                            | HtmlTreeActionKind::ClosedParagraphElement { .. }
+                            | HtmlTreeActionKind::PoppedParagraphElementBySelectedOrdinaryEndTag { .. }
+                    );
+                    if forbidden_anywhere || other_index > action_index {
+                        return Err(HtmlTreeFreezeError::BodyEndSameTriggerMutation {
+                            token_index,
+                        });
+                    }
+                }
+
+                body_end_tokens.push(token_index);
+                position = Some(ReplayedBodyPosition::After);
+            }
+            HtmlTreeActionKind::AcknowledgedShellEndTag {
+                name: HtmlShellElementName::Html,
+            } if position == Some(ReplayedBodyPosition::After) => {
+                if !is_plain_html_end_trigger(action.trigger(), tokenizer_run) {
+                    return Err(HtmlTreeFreezeError::BodyEndAfterBodySuccessorMismatch {
+                        token_index,
+                    });
+                }
+                position = Some(ReplayedBodyPosition::AfterAfter);
+            }
+            HtmlTreeActionKind::ReprocessedToken
+                if position == Some(ReplayedBodyPosition::After) =>
+            {
+                if replayed_body_character_class(action.trigger(), tokenizer_run)
+                    != Some(ReplayedBodyCharacterClass::AllNonHtmlWhitespace)
+                    || actions
+                        .iter()
+                        .filter(|candidate| {
+                            matches!(candidate.kind(), HtmlTreeActionKind::ReprocessedToken)
+                                && same_trigger(candidate.trigger(), action.trigger())
+                        })
+                        .count()
+                        != 1
+                {
+                    return Err(HtmlTreeFreezeError::BodyEndAfterBodySuccessorMismatch {
+                        token_index,
+                    });
+                }
+                let after_body_diagnostics: Vec<&HtmlTreeDiagnostic> = diagnostics
+                    .iter()
+                    .filter(|diagnostic| {
+                        diagnostic.code() == HtmlTreeDiagnosticCode::AfterBodyCharacterData
+                            && diagnostic.trigger().token_index() == token_index
+                    })
+                    .collect();
+                if !matches!(after_body_diagnostics.as_slice(), [diagnostic]
+                    if diagnostic.recovery()
+                        == HtmlTreeRecovery::SwitchedToInBodyAndReprocessedSameToken
+                        && same_trigger(diagnostic.trigger(), action.trigger()))
+                {
+                    return Err(HtmlTreeFreezeError::BodyEndAfterBodySuccessorMismatch {
+                        token_index,
+                    });
+                }
+                let Some(expected_parent) = open_content.last().copied().or(body) else {
+                    return Err(HtmlTreeFreezeError::BodyEndAfterBodySuccessorMismatch {
+                        token_index,
+                    });
+                };
+                pending_reprocessed_text = Some((token_index, expected_parent));
+                position = Some(ReplayedBodyPosition::In);
+            }
+            HtmlTreeActionKind::InsertedTextNode { node }
+            | HtmlTreeActionKind::AppendedToTextNode { node } => {
+                if let Some((pending_token, expected_parent)) = pending_reprocessed_text {
+                    if pending_token != token_index
+                        || find(nodes, *node).and_then(HtmlTreeNode::parent)
+                            != Some(expected_parent)
+                        || actions
+                            .iter()
+                            .filter(|candidate| {
+                                matches!(
+                                    candidate.kind(),
+                                    HtmlTreeActionKind::InsertedTextNode { .. }
+                                        | HtmlTreeActionKind::AppendedToTextNode { .. }
+                                ) && same_trigger(candidate.trigger(), action.trigger())
+                            })
+                            .count()
+                            != 1
+                    {
+                        return Err(HtmlTreeFreezeError::BodyEndAfterBodySuccessorMismatch {
+                            token_index,
+                        });
+                    }
+                    pending_reprocessed_text = None;
+                    consumed_successor_text_tokens.push(token_index);
+                } else if position == Some(ReplayedBodyPosition::After)
+                    && !body_end_tokens.is_empty()
+                {
+                    let Some(expected_parent) = open_content.last().copied().or(body) else {
+                        return Err(HtmlTreeFreezeError::BodyEndAfterBodySuccessorMismatch {
+                            token_index,
+                        });
+                    };
+                    let text_actions = actions
+                        .iter()
+                        .filter(|candidate| {
+                            matches!(
+                                candidate.kind(),
+                                HtmlTreeActionKind::InsertedTextNode { .. }
+                                    | HtmlTreeActionKind::AppendedToTextNode { .. }
+                            ) && same_trigger(candidate.trigger(), action.trigger())
+                        })
+                        .count();
+                    let reprocesses = actions
+                        .iter()
+                        .filter(|candidate| {
+                            matches!(candidate.kind(), HtmlTreeActionKind::ReprocessedToken)
+                                && same_trigger(candidate.trigger(), action.trigger())
+                        })
+                        .count();
+                    let after_body_diagnostics = diagnostics
+                        .iter()
+                        .filter(|diagnostic| {
+                            diagnostic.code() == HtmlTreeDiagnosticCode::AfterBodyCharacterData
+                                && diagnostic.trigger().token_index() == token_index
+                        })
+                        .count();
+                    if replayed_body_character_class(action.trigger(), tokenizer_run)
+                        != Some(ReplayedBodyCharacterClass::AllHtmlWhitespace)
+                        || find(nodes, *node).and_then(HtmlTreeNode::parent)
+                            != Some(expected_parent)
+                        || text_actions != 1
+                        || reprocesses != 0
+                        || after_body_diagnostics != 0
+                        || consumed_successor_text_tokens.contains(&token_index)
+                    {
+                        return Err(HtmlTreeFreezeError::BodyEndAfterBodySuccessorMismatch {
+                            token_index,
+                        });
+                    }
+                    consumed_successor_text_tokens.push(token_index);
+                }
+            }
+            HtmlTreeActionKind::StoppedParsing
+                if matches!(
+                    position,
+                    Some(ReplayedBodyPosition::After | ReplayedBodyPosition::AfterAfter)
+                ) =>
+            {
+                if !is_end_of_file_trigger(action.trigger(), tokenizer_run) {
+                    return Err(HtmlTreeFreezeError::BodyEndAfterBodySuccessorMismatch {
+                        token_index,
+                    });
+                }
+                let selected_is_open = open_content
+                    .iter()
+                    .any(|id| selected_ordinary_name(nodes, *id).is_some());
+                let fabricated = diagnostics.iter().any(|diagnostic| {
+                    diagnostic.code()
+                        == HtmlTreeDiagnosticCode::OpenSelectedOrdinaryElementAtEndOfFile
+                        && diagnostic.trigger().token_index() == token_index
+                });
+                if selected_is_open && fabricated {
+                    return Err(HtmlTreeFreezeError::BodyEndAfterBodyEofDiagnosticMismatch {
+                        token_index,
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if let Some((token_index, _)) = pending_reprocessed_text {
+        return Err(HtmlTreeFreezeError::BodyEndAfterBodySuccessorMismatch { token_index });
+    }
+    for (token_index, token) in tokenizer_run
+        .tokens()
+        .iter()
+        .take(processed_tokens)
+        .enumerate()
+    {
+        if is_plain_body_end_token(token) && !body_end_tokens.contains(&token_index) {
+            return Err(HtmlTreeFreezeError::MissingBodyEndAcknowledgement { token_index });
+        }
+    }
+    for (diagnostic_index, diagnostic) in diagnostics.iter().enumerate() {
+        if diagnostic.code() == HtmlTreeDiagnosticCode::BodyEndTagWithOpenSelectedOrdinaryElements
+            && !matched_body_diagnostics.contains(&diagnostic_index)
+        {
+            return Err(HtmlTreeFreezeError::OrphanBodyEndDiagnostic {
+                token_index: diagnostic.trigger().token_index(),
+            });
+        }
+    }
+
+    let replayed_selected: Vec<HtmlConstructedNodeId> = open_content
+        .iter()
+        .copied()
+        .filter(|id| selected_ordinary_name(nodes, *id).is_some())
+        .collect();
+    let replayed_paragraphs: Vec<HtmlConstructedNodeId> = open_content
+        .iter()
+        .copied()
+        .filter(|id| paragraph(nodes, *id).is_some())
+        .collect();
+    let replayed_paragraph = replayed_paragraphs.first().copied();
+    if replayed_selected != final_open_selected_ordinary
+        || replayed_paragraphs.len() > 1
+        || replayed_paragraph != final_open_paragraph
+    {
+        return Err(HtmlTreeFreezeError::BodyEndFinalOpenStateMismatch);
+    }
+
+    Ok(())
+}
+
+fn is_plain_body_end_token(token: &HtmlToken) -> bool {
+    is_plain_shell_end_token(token, "body")
+}
+
+fn is_plain_body_end_trigger(
+    trigger: &HtmlTreeTokenTrigger,
+    tokenizer_run: &HtmlTokenizerRunResult,
+) -> bool {
+    is_plain_shell_end_trigger(trigger, tokenizer_run, "body")
+}
+
+fn is_plain_html_end_trigger(
+    trigger: &HtmlTreeTokenTrigger,
+    tokenizer_run: &HtmlTokenizerRunResult,
+) -> bool {
+    is_plain_shell_end_trigger(trigger, tokenizer_run, "html")
+}
+
+fn is_plain_shell_end_token(token: &HtmlToken, expected_name: &str) -> bool {
+    let HtmlToken::Tag(tag) = token else {
+        return false;
+    };
+    tag.kind() == HtmlTagKind::End
+        && tag.name().interpreted() == expected_name
+        && tag.attributes().is_empty()
+        && tag.self_closing_solidus().is_none()
+}
+
+fn is_plain_shell_end_trigger(
+    trigger: &HtmlTreeTokenTrigger,
+    tokenizer_run: &HtmlTokenizerRunResult,
+    expected_name: &str,
+) -> bool {
+    let Some(token) = tokenizer_run.tokens().get(trigger.token_index()) else {
+        return false;
+    };
+    let HtmlToken::Tag(tag) = token else {
+        return false;
+    };
+    is_plain_shell_end_token(token, expected_name)
+        && exact_anchor(trigger.authored_boundary(), Some(tag.complete()))
+}
+
+fn is_end_of_file_trigger(
+    trigger: &HtmlTreeTokenTrigger,
+    tokenizer_run: &HtmlTokenizerRunResult,
+) -> bool {
+    matches!(
+        tokenizer_run.tokens().get(trigger.token_index()),
+        Some(HtmlToken::EndOfFile(_))
+    ) && trigger.authored_boundary().is_none()
+}
+
+fn replayed_body_character_class(
+    trigger: &HtmlTreeTokenTrigger,
+    tokenizer_run: &HtmlTokenizerRunResult,
+) -> Option<ReplayedBodyCharacterClass> {
+    let Some(HtmlToken::Character(character)) = tokenizer_run.tokens().get(trigger.token_index())
+    else {
+        return None;
+    };
+    if !exact_anchor(trigger.authored_boundary(), Some(character.source())) {
+        return None;
+    }
+    let mut whitespace = false;
+    let mut non_whitespace = false;
+    for value in character.interpreted().chars() {
+        if matches!(value, '\t' | '\n' | '\u{000c}' | '\r' | ' ') {
+            whitespace = true;
+        } else {
+            non_whitespace = true;
+        }
+    }
+    Some(match (whitespace, non_whitespace) {
+        (true, true) => ReplayedBodyCharacterClass::Mixed,
+        (false, true) => ReplayedBodyCharacterClass::AllNonHtmlWhitespace,
+        (true, false) | (false, false) => ReplayedBodyCharacterClass::AllHtmlWhitespace,
+    })
 }
 
 fn paragraph(nodes: &[HtmlTreeNode], id: HtmlConstructedNodeId) -> Option<&HtmlParagraphElement> {

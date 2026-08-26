@@ -1,5 +1,5 @@
 //! The private TC-S1 tree-construction session, with its accepted TC-S2,
-//! TC-S3, TC-S4, TC-S5, and TC-S6 successors.
+//! TC-S3, TC-S4, TC-S5, TC-S6, and TC-S7 successors.
 //!
 //! The session exclusively owns every piece of mutable tree-construction
 //! state for exactly one run: the insertion mode, the open elements — the
@@ -379,6 +379,7 @@ enum Effect {
     RecordDuplicateBodyStartTag,
     CloseHeadElement(HtmlShellClosure),
     AcknowledgeShellEndTag(HtmlShellElementName),
+    AcknowledgeBodyEndTagWithOpenSelectedOrdinaryElements,
     RecordAfterBodyCharacterData,
     InsertSelectedOrdinaryElement(HtmlSelectedOrdinaryElementName),
     CloseSelectedOrdinaryElement(HtmlSelectedOrdinaryElementName),
@@ -580,6 +581,29 @@ fn classify(
             }
         }
         InsertionMode::InBody => {
+            // TC-S7 advances exactly one plain admitted shell cell before the
+            // broad P/selected firewalls: authored `</body>`. Admission has
+            // already ruled out attributes and a self-closing solidus. The
+            // selected-name projection alone decides whether the bounded
+            // body-end diagnostic exists; P is an allowed open member and
+            // does not affect its cardinality. No other shell token bypasses
+            // either firewall.
+            if matches!(
+                token,
+                AdmittedToken::EndTag {
+                    name: AdmittedElementName::Shell(HtmlShellElementName::Body),
+                    ..
+                }
+            ) {
+                return Ok(ModeStep::Consume {
+                    effect: Some(if open_selected_ordinary.is_empty() {
+                        Effect::AcknowledgeShellEndTag(HtmlShellElementName::Body)
+                    } else {
+                        Effect::AcknowledgeBodyEndTagWithOpenSelectedOrdinaryElements
+                    }),
+                    next: Some(InsertionMode::AfterBody),
+                });
+            }
             if paragraph_is_current && token.is_shell_tag() {
                 return Err(HtmlTreeCapability::ShellTagWithOpenParagraphElement);
             }
@@ -676,10 +700,7 @@ fn classify(
                 AdmittedToken::EndTag {
                     name: AdmittedElementName::Shell(HtmlShellElementName::Body),
                     ..
-                } => Ok(ModeStep::Consume {
-                    effect: Some(Effect::AcknowledgeShellEndTag(HtmlShellElementName::Body)),
-                    next: Some(InsertionMode::AfterBody),
-                }),
+                } => unreachable!("handled by the TC-S7 pre-firewall branch"),
                 AdmittedToken::EndTag {
                     name:
                         AdmittedElementName::Shell(
@@ -912,6 +933,10 @@ pub(crate) enum HtmlTreeSessionError {
     /// The open-selected-element end-of-file diagnostic was recorded while no
     /// selected ordinary element was open.
     NoOpenSelectedOrdinaryElementAtEndOfFile,
+    /// The TC-S7 selected-open body-end effect was selected while no selected
+    /// ordinary element was open. The P-only and empty-stack cells use the
+    /// ordinary body acknowledgement and never reach this effect.
+    NoOpenSelectedOrdinaryElementAtBodyEnd,
     /// A Paragraph exists on the private open stack but is not the current node,
     /// violating TC-S5's `P?`-is-current invariant.
     ParagraphIsNotCurrent(HtmlConstructedNodeId),
@@ -1183,6 +1208,28 @@ impl HtmlTreeSession {
             Effect::AcknowledgeShellEndTag(name) => {
                 self.record_action(
                     HtmlTreeActionKind::AcknowledgedShellEndTag { name },
+                    trigger,
+                );
+                Ok(())
+            }
+            Effect::AcknowledgeBodyEndTagWithOpenSelectedOrdinaryElements => {
+                // Resolve the complete state-dependent condition before the
+                // first record is committed. The compound effect then records
+                // the dedicated diagnostic followed by the already-existing
+                // body acknowledgement, without touching the open stack,
+                // nodes, closures, or identity counter.
+                if self.open_selected_ordinary_ids().is_empty() {
+                    return Err(HtmlTreeSessionError::NoOpenSelectedOrdinaryElementAtBodyEnd);
+                }
+                self.record_diagnostic(
+                    HtmlTreeDiagnosticCode::BodyEndTagWithOpenSelectedOrdinaryElements,
+                    trigger,
+                    HtmlTreeRecovery::SwitchedToAfterBodyPreservingOpenElements,
+                );
+                self.record_action(
+                    HtmlTreeActionKind::AcknowledgedShellEndTag {
+                        name: HtmlShellElementName::Body,
+                    },
                     trigger,
                 );
                 Ok(())
