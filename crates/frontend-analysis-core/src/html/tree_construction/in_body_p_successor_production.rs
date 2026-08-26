@@ -5,8 +5,8 @@
 //! candidate-independent validation machine; production observations are
 //! checked only against hand-authored expected values.
 
-use super::driver::construct_document_shell;
 use super::super::tokenizer::resource::HtmlTokenizerLimits;
+use super::driver::construct_document_shell;
 use crate::{SourceId, SourceText};
 
 fn limits() -> HtmlTokenizerLimits {

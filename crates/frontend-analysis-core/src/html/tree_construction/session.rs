@@ -258,9 +258,7 @@ pub(super) fn admit(token: &HtmlToken) -> Result<AdmittedToken<'_>, HtmlTreeCapa
                     AdmittedElementName::SelectedOrdinary(_) => {
                         HtmlTreeCapability::SelfClosingSelectedOrdinaryTag
                     }
-                    AdmittedElementName::Paragraph => {
-                        HtmlTreeCapability::SelfClosingParagraphTag
-                    }
+                    AdmittedElementName::Paragraph => HtmlTreeCapability::SelfClosingParagraphTag,
                 });
             }
             match tag.kind() {
@@ -373,7 +371,9 @@ enum ModeStep {
         effect: Option<Effect>,
         next: InsertionMode,
     },
-    Stop { effect: Option<Effect> },
+    Stop {
+        effect: Option<Effect>,
+    },
 }
 
 fn selected_in_body_character_step() -> ModeStep {
@@ -1217,7 +1217,10 @@ impl HtmlTreeSession {
         let plan = self.prepare_authored_paragraph_insertion(token)?;
         let node = plan.reserved;
         self.commit_prepared_insertion(plan);
-        self.record_action(HtmlTreeActionKind::InsertedAuthoredParagraphElement { node }, trigger);
+        self.record_action(
+            HtmlTreeActionKind::InsertedAuthoredParagraphElement { node },
+            trigger,
+        );
         Ok(())
     }
 
@@ -1254,30 +1257,32 @@ impl HtmlTreeSession {
         let paragraph = self
             .open_paragraph()?
             .ok_or(HtmlTreeSessionError::ParagraphElementIsNotCurrent)?;
-        let plan = self.prepare_insertion_after_current_paragraph(|parent, parent_storage_index, reserved| {
-            let AdmittedToken::StartTag {
-                name: AdmittedElementName::Paragraph,
-                complete,
-                raw_name,
-            } = token
-            else {
-                return Err(HtmlTreeSessionError::AuthoredInsertionWithoutStartTag);
-            };
-            let element = HtmlParagraphElement::new(HtmlParagraphElementOrigin::Authored {
-                complete: (*complete).clone(),
-                raw_name: (*raw_name).clone(),
-            });
-            Ok(PreparedInsertion {
-                parent_storage_index,
-                reserved,
-                node: HtmlTreeNode::new(
+        let plan = self.prepare_insertion_after_current_paragraph(
+            |parent, parent_storage_index, reserved| {
+                let AdmittedToken::StartTag {
+                    name: AdmittedElementName::Paragraph,
+                    complete,
+                    raw_name,
+                } = token
+                else {
+                    return Err(HtmlTreeSessionError::AuthoredInsertionWithoutStartTag);
+                };
+                let element = HtmlParagraphElement::new(HtmlParagraphElementOrigin::Authored {
+                    complete: (*complete).clone(),
+                    raw_name: (*raw_name).clone(),
+                });
+                Ok(PreparedInsertion {
+                    parent_storage_index,
                     reserved,
-                    Some(parent),
-                    Vec::new(),
-                    HtmlTreeNodeKind::Element(HtmlElement::Paragraph(element)),
-                ),
-            })
-        })?;
+                    node: HtmlTreeNode::new(
+                        reserved,
+                        Some(parent),
+                        Vec::new(),
+                        HtmlTreeNodeKind::Element(HtmlElement::Paragraph(element)),
+                    ),
+                })
+            },
+        )?;
         let new_node = plan.reserved;
         self.open_elements.pop();
         self.record_action(
@@ -1304,34 +1309,36 @@ impl HtmlTreeSession {
         let paragraph = self
             .open_paragraph()?
             .ok_or(HtmlTreeSessionError::ParagraphElementIsNotCurrent)?;
-        let plan = self.prepare_insertion_after_current_paragraph(|parent, parent_storage_index, reserved| {
-            let AdmittedToken::StartTag {
-                name: AdmittedElementName::SelectedOrdinary(token_name),
-                complete,
-                raw_name,
-            } = token
-            else {
-                return Err(HtmlTreeSessionError::AuthoredInsertionWithoutStartTag);
-            };
-            if *token_name != name {
-                return Err(HtmlTreeSessionError::AuthoredInsertionWithoutStartTag);
-            }
-            let element = HtmlSelectedOrdinaryElement::new(
-                name,
-                (*complete).clone(),
-                (*raw_name).clone(),
-            );
-            Ok(PreparedInsertion {
-                parent_storage_index,
-                reserved,
-                node: HtmlTreeNode::new(
+        let plan = self.prepare_insertion_after_current_paragraph(
+            |parent, parent_storage_index, reserved| {
+                let AdmittedToken::StartTag {
+                    name: AdmittedElementName::SelectedOrdinary(token_name),
+                    complete,
+                    raw_name,
+                } = token
+                else {
+                    return Err(HtmlTreeSessionError::AuthoredInsertionWithoutStartTag);
+                };
+                if *token_name != name {
+                    return Err(HtmlTreeSessionError::AuthoredInsertionWithoutStartTag);
+                }
+                let element = HtmlSelectedOrdinaryElement::new(
+                    name,
+                    (*complete).clone(),
+                    (*raw_name).clone(),
+                );
+                Ok(PreparedInsertion {
+                    parent_storage_index,
                     reserved,
-                    Some(parent),
-                    Vec::new(),
-                    HtmlTreeNodeKind::Element(HtmlElement::SelectedOrdinary(element)),
-                ),
-            })
-        })?;
+                    node: HtmlTreeNode::new(
+                        reserved,
+                        Some(parent),
+                        Vec::new(),
+                        HtmlTreeNodeKind::Element(HtmlElement::SelectedOrdinary(element)),
+                    ),
+                })
+            },
+        )?;
         let new_node = plan.reserved;
         self.open_elements.pop();
         self.record_action(
