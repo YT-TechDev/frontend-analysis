@@ -26,6 +26,24 @@ jobs:
           test "$(git rev-parse HEAD)" = "ad81b430eae921b11cacb3ff4ddfeb7ffa84ce4b"
           test "$(git merge-base 024e0e62520d1c7e298605eb4539434ef6c8d5e7 HEAD)" = "024e0e62520d1c7e298605eb4539434ef6c8d5e7"
 
+      - name: Apply two Clippy-only fixes
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('crates/frontend-analysis-core/src/html/tree_construction/in_body_html_end_open_stack_successor_validation.rs')
+          text = path.read_text()
+          old = '#[derive(Debug, Clone, Copy, PartialEq, Eq)]\nenum Phase {'
+          new = '#[allow(clippy::enum_variant_names)]\n#[derive(Debug, Clone, Copy, PartialEq, Eq)]\nenum Phase {'
+          assert old in text
+          text = text.replace(old, new, 1)
+          old = '        .last()\n        .expect("direct after body html dispatch");'
+          new = '        .next_back()\n        .expect("direct after body html dispatch");'
+          assert old in text
+          text = text.replace(old, new, 1)
+          path.write_text(text)
+          PY
+
       - name: Install accepted Rust toolchain
         shell: bash
         run: |
@@ -72,15 +90,13 @@ jobs:
       - name: Validate diff hygiene
         run: git diff --check
 
-      - name: Publish formatting-only normalization if needed
+      - name: Publish validated local fixes
         shell: bash
         run: |
-          if test -n "$(git status --short)"; then
-            changed="$(git diff --name-only | sort)"
-            test "$changed" = "crates/frontend-analysis-core/src/html/tree_construction/in_body_html_end_open_stack_successor_validation.rs"
-            git config user.name "YT-TechDev"
-            git config user.email "msc_prop@proton.me"
-            git add crates/frontend-analysis-core/src/html/tree_construction/in_body_html_end_open_stack_successor_validation.rs
-            git commit -m "style(html): format TC-S8 validation"
-            git push origin HEAD:test/380-tc-s8-validation
-          fi
+          changed="$(git diff --name-only | sort)"
+          test "$changed" = "crates/frontend-analysis-core/src/html/tree_construction/in_body_html_end_open_stack_successor_validation.rs"
+          git config user.name "YT-TechDev"
+          git config user.email "msc_prop@proton.me"
+          git add crates/frontend-analysis-core/src/html/tree_construction/in_body_html_end_open_stack_successor_validation.rs
+          git commit -m "test(html): fix TC-S8 validation lint gate"
+          git push origin HEAD:test/380-tc-s8-validation
