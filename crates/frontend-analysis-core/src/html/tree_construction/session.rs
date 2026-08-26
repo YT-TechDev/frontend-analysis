@@ -1322,11 +1322,13 @@ impl HtmlTreeSession {
     ///
     /// The two relations stay distinct on purpose. Each intervening element
     /// gets one recovery-pop relation naming the target that caused it, and
-    /// never a fabricated matching closure: no end tag of its own name exists
-    /// anywhere in the source. The target alone gets the matching closure. All
-    /// of them, and the single misnested diagnostic, carry the same exact
-    /// authored end tag as trigger evidence, and it is the authored origin of
-    /// none of them. No identity is admitted.
+    /// never a fabricated matching closure: no matching end tag caused its
+    /// removal. A later authored end tag of that element's own name may still
+    /// appear in the source, but the element has already left the open state,
+    /// so that end tag is unmatched and closes nothing. The target alone gets
+    /// the matching closure. All of them, and the single misnested diagnostic,
+    /// carry the same exact authored end tag as trigger evidence, and it is
+    /// the authored origin of none of them. No identity is admitted.
     fn recover_selected_ordinary_suffix_and_close_target(
         &mut self,
         name: HtmlSelectedOrdinaryElementName,

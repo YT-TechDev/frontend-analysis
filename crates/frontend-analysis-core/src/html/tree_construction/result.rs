@@ -15,11 +15,13 @@
 //! [`HtmlTreeActionKind::ClosedSelectedOrdinaryElement`] means the element's
 //! *own* exact authored end tag closed it.
 //! [`HtmlTreeActionKind::PoppedSelectedOrdinaryElementByAncestorEndTag`] means
-//! the element has no end tag anywhere in the source and was popped because an
-//! enclosing element's end tag needed it out of the way. Collapsing the two
-//! into one "closed by this token" fact would fabricate authored evidence, so
-//! [`freeze`] proves them separately and proves that no element receives
-//! both.
+//! *no matching end tag caused this pop*: the element was removed because an
+//! enclosing element's end tag needed it out of the way. A later authored end
+//! tag of the popped element's own name may still appear in the source — it is
+//! then an unmatched end tag, and it still closes nothing. Collapsing the two
+//! relations into one "closed by this token" fact would fabricate authored
+//! evidence, so [`freeze`] proves them separately and proves that no element
+//! receives both.
 //!
 //! Everything here is crate-private. No item is `pub`, serialized, or
 //! promised across results, runs, source edits, or implementation revisions.
@@ -669,9 +671,12 @@ pub(crate) enum HtmlTreeActionKind {
     /// out on the open-element stack.
     ///
     /// This is deliberately **not**
-    /// [`Self::ClosedSelectedOrdinaryElement`]: `node` has no matching end
-    /// tag anywhere in the source, so recording one would fabricate authored
-    /// evidence that does not exist. `node` is the intervening element that
+    /// [`Self::ClosedSelectedOrdinaryElement`]: no matching end tag caused
+    /// this pop, so recording a closure for it would fabricate authored
+    /// evidence. A later authored end tag of `node`'s own name may still
+    /// appear in the source; because `node` already left the open state here,
+    /// that end tag is unmatched and closes nothing. `node` is the intervening
+    /// element that
     /// was actually popped and `target` is the nearest same-name selected
     /// ordinary element whose end tag caused the pop; both are semantic
     /// creation-event identities, never storage positions, and they are
@@ -1317,11 +1322,35 @@ pub(crate) enum HtmlTreeFreezeError {
     },
     /// The ignored unmatched selected ordinary end-tag actions and the
     /// unmatched selected ordinary end-tag diagnostics do not name exactly
-    /// the same trigger tokens.
+    /// the same trigger tokens, or an unmatched diagnostic does not carry
+    /// that action's own exact authored end tag and the ignored-token
+    /// recovery.
     UnmatchedSelectedOrdinaryEndTagDiagnosticMismatch {
         actions: Vec<usize>,
         diagnostics: Vec<usize>,
     },
+    /// One retained selected ordinary end token supplied more than one
+    /// terminal selected-end decision.
+    ///
+    /// One dispatch of one authored selected end tag reaches exactly one of
+    /// the three terminal cells: a current-target matching closure, a
+    /// recovery group's target closure, or an ignored unmatched disposition.
+    /// A group may carry many ordered recovery pops before its one closure,
+    /// but the token is spent once that closure or disposition commits. A
+    /// replay that spends the same retained token twice — for example to
+    /// close a second, further-out same-name ancestor after the first group
+    /// already succeeded — describes semantics no single dispatch can
+    /// produce.
+    DuplicateSelectedOrdinaryEndTokenDecision { token_index: usize },
+    /// A recorded ignored unmatched selected ordinary end tag does not
+    /// resolve, in the retained tokenizer run, to the exact emitted end tag
+    /// of its own recorded selected name.
+    UnmatchedSelectedOrdinaryEndTriggerIsNotTheMatchingEndTag { token_index: usize },
+    /// A selected ordinary end tag was recorded as unmatched while a
+    /// same-name selected ordinary element was in fact still open at that
+    /// point in the replayed lifecycle. That is the closing or recovering
+    /// cell, not the ignored one.
+    UnmatchedSelectedOrdinaryEndTagWithOpenTarget(HtmlConstructedNodeId),
 }
 
 impl fmt::Display for HtmlTreeFreezeError {
@@ -1680,7 +1709,11 @@ fn validate_selected_ordinary_lifecycle(
     // first recovery pop and must be closed before any other action commits.
     let mut pending: Option<(HtmlConstructedNodeId, usize)> = None;
     let mut recovery_groups: Vec<ReplayedRecoveryGroup> = Vec::new();
-    let mut ignored_unmatched: Vec<usize> = Vec::new();
+    let mut ignored_unmatched: Vec<ReplayedUnmatchedEnd> = Vec::new();
+    // Which retained tokens have already spent their one terminal
+    // selected-end decision. Recovery pops are not terminal; the closure or
+    // disposition that ends the dispatch is.
+    let mut spent_end_tokens: Vec<usize> = Vec::new();
 
     for action in actions {
         match action.kind() {
@@ -1773,10 +1806,34 @@ fn validate_selected_ordinary_lifecycle(
                     return Err(HtmlTreeFreezeError::NonLifoSelectedOrdinaryClosure(*node));
                 }
                 open.pop();
+                // Checked after the stack-consistency rules above, so a
+                // duplicated closure of one element keeps reporting the
+                // predecessor non-LIFO meaning it always did.
+                spend_end_token(&mut spent_end_tokens, action.trigger().token_index())?;
             }
-            HtmlTreeActionKind::IgnoredUnmatchedSelectedOrdinaryEndTag { .. } => {
+            HtmlTreeActionKind::IgnoredUnmatchedSelectedOrdinaryEndTag { name } => {
                 reject_interleaved_recovery(pending)?;
-                ignored_unmatched.push(action.trigger().token_index());
+                // Independently proved, not inferred from the recorded token
+                // index: the trigger really is the retained emitted end tag of
+                // this recorded selected name, and no same-name target was
+                // open, so the ignored cell really is the cell that applied.
+                if !is_matching_end_tag_trigger(*name, action.trigger(), tokenizer_run) {
+                    return Err(
+                        HtmlTreeFreezeError::UnmatchedSelectedOrdinaryEndTriggerIsNotTheMatchingEndTag {
+                            token_index: action.trigger().token_index(),
+                        },
+                    );
+                }
+                if let Some(target) = nearest_open_selected_ordinary(nodes, &open, *name) {
+                    return Err(
+                        HtmlTreeFreezeError::UnmatchedSelectedOrdinaryEndTagWithOpenTarget(target),
+                    );
+                }
+                spend_end_token(&mut spent_end_tokens, action.trigger().token_index())?;
+                ignored_unmatched.push(ReplayedUnmatchedEnd {
+                    trigger_token: action.trigger().token_index(),
+                    name: *name,
+                });
             }
             _ => reject_interleaved_recovery(pending)?,
         }
@@ -1817,6 +1874,23 @@ struct ReplayedRecoveryGroup {
     target_name: HtmlSelectedOrdinaryElementName,
 }
 
+/// One committed ignored unmatched selected ordinary end tag, as the freeze
+/// replay reconstructed it.
+struct ReplayedUnmatchedEnd {
+    trigger_token: usize,
+    name: HtmlSelectedOrdinaryElementName,
+}
+
+/// Records that a retained token has spent its one terminal selected-end
+/// decision, rejecting a second one.
+fn spend_end_token(spent: &mut Vec<usize>, token_index: usize) -> Result<(), HtmlTreeFreezeError> {
+    if spent.contains(&token_index) {
+        return Err(HtmlTreeFreezeError::DuplicateSelectedOrdinaryEndTokenDecision { token_index });
+    }
+    spent.push(token_index);
+    Ok(())
+}
+
 /// Rejects an open recovery group that something other than its own target's
 /// matching closure reached.
 const fn reject_interleaved_recovery(
@@ -1843,7 +1917,7 @@ const fn reject_interleaved_recovery(
 fn validate_selected_ordinary_diagnostics(
     diagnostics: &[HtmlTreeDiagnostic],
     recovery_groups: &[ReplayedRecoveryGroup],
-    ignored_unmatched: &[usize],
+    ignored_unmatched: &[ReplayedUnmatchedEnd],
     tokenizer_run: &HtmlTokenizerRunResult,
 ) -> Result<(), HtmlTreeFreezeError> {
     let misnested: Vec<&HtmlTreeDiagnostic> = diagnostics
@@ -1882,18 +1956,36 @@ fn validate_selected_ordinary_diagnostics(
         );
     }
 
-    let unmatched: Vec<usize> = diagnostics
+    let unmatched: Vec<&HtmlTreeDiagnostic> = diagnostics
         .iter()
         .filter(|diagnostic| {
             diagnostic.code() == HtmlTreeDiagnosticCode::UnmatchedSelectedOrdinaryEndTag
         })
+        .collect();
+    let unmatched_action_tokens: Vec<usize> = ignored_unmatched
+        .iter()
+        .map(|end| end.trigger_token)
+        .collect();
+    let unmatched_diagnostic_tokens: Vec<usize> = unmatched
+        .iter()
         .map(|diagnostic| diagnostic.trigger().token_index())
         .collect();
-    if unmatched != ignored_unmatched {
+    // One per ignored disposition, in the same order, carrying that
+    // disposition's own exact authored end tag — recorrelated against the
+    // retained run — and the accepted ignored-token recovery.
+    let paired = unmatched_action_tokens == unmatched_diagnostic_tokens
+        && ignored_unmatched
+            .iter()
+            .zip(&unmatched)
+            .all(|(end, found)| {
+                found.recovery() == HtmlTreeRecovery::IgnoredToken
+                    && is_matching_end_tag_trigger(end.name, found.trigger(), tokenizer_run)
+            });
+    if !paired {
         return Err(
             HtmlTreeFreezeError::UnmatchedSelectedOrdinaryEndTagDiagnosticMismatch {
-                actions: ignored_unmatched.to_vec(),
-                diagnostics: unmatched,
+                actions: unmatched_action_tokens,
+                diagnostics: unmatched_diagnostic_tokens,
             },
         );
     }

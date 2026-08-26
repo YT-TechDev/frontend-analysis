@@ -813,8 +813,9 @@ fn ps4_a_misnested_end_tag_recovers_the_suffix_and_closes_its_target() {
 
 #[test]
 fn ps4_the_recovered_div_receives_no_fabricated_matching_closure() {
-    // The whole point of the two relations: the `div` has no `</div>`
-    // anywhere in the source, so it must never appear as a closure subject.
+    // The whole point of the two relations: no matching end tag caused the
+    // `div` to be removed, so it must never appear as a closure subject —
+    // whether or not a `</div>` appears later in some other source.
     let analysis = analyze("<body><section><div></section>");
     let closures = project_closures(&analysis);
     assert_eq!(closures.len(), 1);
@@ -2817,4 +2818,532 @@ fn freeze_rejects_a_misnested_diagnostic_triggered_at_end_of_file() {
         freeze_parts(&fixture, parts),
         Err(HtmlTreeFreezeError::SelectedOrdinaryRecoveryDiagnosticMismatch { .. })
     ));
+}
+
+// ---------------------------------------------------------------------------
+// One retained selected end token spends exactly one terminal decision
+// ---------------------------------------------------------------------------
+//
+// A recovery group may carry many ordered pops before its one closure, but the
+// dispatch ends there. A replay that spends the same retained end token again
+// — to close a second, further-out same-name ancestor — describes semantics no
+// single dispatch can produce, and each of its two groups looks individually
+// valid, so only an explicit per-token ledger rejects it.
+
+/// `<body><section><div><section><div></section>`, where the one authored
+/// `</section>` legitimately recovers exactly one `div` and closes the *inner*
+/// `section`, leaving the outer `section` and its `div` open.
+fn fixture_e() -> LifecycleFixture {
+    lifecycle_fixture("<body><section><div><section><div></section>", 8)
+}
+
+fn fixture_e_parts(fixture: &LifecycleFixture) -> HtmlDocumentShellParts {
+    let [
+        _,
+        _,
+        _,
+        body,
+        outer_section,
+        outer_div,
+        inner_section,
+        inner_div,
+    ] = fixture.ids[..]
+    else {
+        panic!("eight minted identities")
+    };
+    let mut nodes = shell_prefix_nodes(fixture, vec![outer_section]);
+    for (id, parent, children, name, complete, raw_name) in [
+        (
+            outer_section,
+            body,
+            vec![outer_div],
+            HtmlSelectedOrdinaryElementName::Section,
+            (6, 15),
+            (7, 14),
+        ),
+        (
+            outer_div,
+            outer_section,
+            vec![inner_section],
+            HtmlSelectedOrdinaryElementName::Div,
+            (15, 20),
+            (16, 19),
+        ),
+        (
+            inner_section,
+            outer_div,
+            vec![inner_div],
+            HtmlSelectedOrdinaryElementName::Section,
+            (20, 29),
+            (21, 28),
+        ),
+        (
+            inner_div,
+            inner_section,
+            vec![],
+            HtmlSelectedOrdinaryElementName::Div,
+            (29, 34),
+            (30, 33),
+        ),
+    ] {
+        nodes.push(HtmlTreeNode::new(
+            id,
+            Some(parent),
+            children,
+            selected_kind(fixture, name, complete, raw_name),
+        ));
+    }
+
+    HtmlDocumentShellParts {
+        nodes,
+        root: fixture.ids[0],
+        admitted_creation_events: 8,
+        diagnostics: vec![misnested_diagnostic(5, fixture.anchor(34, 44))],
+        actions: vec![
+            insertion(
+                outer_section,
+                HtmlSelectedOrdinaryElementName::Section,
+                1,
+                fixture.anchor(6, 15),
+            ),
+            insertion(
+                outer_div,
+                HtmlSelectedOrdinaryElementName::Div,
+                2,
+                fixture.anchor(15, 20),
+            ),
+            insertion(
+                inner_section,
+                HtmlSelectedOrdinaryElementName::Section,
+                3,
+                fixture.anchor(20, 29),
+            ),
+            insertion(
+                inner_div,
+                HtmlSelectedOrdinaryElementName::Div,
+                4,
+                fixture.anchor(29, 34),
+            ),
+            recovery_pop(inner_div, inner_section, 5, fixture.anchor(34, 44)),
+            matching_closure(
+                inner_section,
+                HtmlSelectedOrdinaryElementName::Section,
+                5,
+                fixture.anchor(34, 44),
+            ),
+        ],
+        processed_tokens: 6,
+        committed_prefix_end: 44,
+        completion: HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete),
+        final_open_selected_ordinary: vec![outer_section, outer_div],
+    }
+}
+
+#[test]
+fn freeze_accepts_one_group_leaving_a_further_out_same_name_ancestor_open() {
+    let fixture = fixture_e();
+    let analysis = freeze_parts(&fixture, fixture_e_parts(&fixture)).expect("valid parts freeze");
+    assert_eq!(project_recoveries(&analysis).len(), 1);
+    assert_eq!(project_closures(&analysis).len(), 1);
+    assert_eq!(
+        project_closures(&analysis)[0].subject_start_tag,
+        (20, 29),
+        "the inner section is the nearest target"
+    );
+}
+
+#[test]
+fn freeze_rejects_one_end_token_spending_a_second_recovery_group_and_closure() {
+    // Both forged groups are individually well-formed: correct nearest target
+    // recomputed from the post-first-group stack, current-first pop, matching
+    // trigger, and a paired misnested diagnostic. Only the fact that one
+    // retained token cannot terminate twice rejects this.
+    let fixture = fixture_e();
+    let mut parts = fixture_e_parts(&fixture);
+    let [_, _, _, _, outer_section, outer_div, ..] = fixture.ids[..] else {
+        panic!("eight minted identities")
+    };
+    parts.actions.push(recovery_pop(
+        outer_div,
+        outer_section,
+        5,
+        fixture.anchor(34, 44),
+    ));
+    parts.actions.push(matching_closure(
+        outer_section,
+        HtmlSelectedOrdinaryElementName::Section,
+        5,
+        fixture.anchor(34, 44),
+    ));
+    parts
+        .diagnostics
+        .push(misnested_diagnostic(5, fixture.anchor(34, 44)));
+    parts.final_open_selected_ordinary = Vec::new();
+    assert!(matches!(
+        freeze_parts(&fixture, parts),
+        Err(HtmlTreeFreezeError::DuplicateSelectedOrdinaryEndTokenDecision { .. })
+    ));
+}
+
+/// `<body><section><section></section>`, where the one authored `</section>`
+/// legitimately closes the inner `section` as a current target.
+fn fixture_h() -> LifecycleFixture {
+    lifecycle_fixture("<body><section><section></section>", 6)
+}
+
+fn fixture_h_parts(fixture: &LifecycleFixture) -> HtmlDocumentShellParts {
+    let [_, _, _, body, outer_section, inner_section] = fixture.ids[..] else {
+        panic!("six minted identities")
+    };
+    let mut nodes = shell_prefix_nodes(fixture, vec![outer_section]);
+    nodes.push(HtmlTreeNode::new(
+        outer_section,
+        Some(body),
+        vec![inner_section],
+        selected_kind(
+            fixture,
+            HtmlSelectedOrdinaryElementName::Section,
+            (6, 15),
+            (7, 14),
+        ),
+    ));
+    nodes.push(HtmlTreeNode::new(
+        inner_section,
+        Some(outer_section),
+        vec![],
+        selected_kind(
+            fixture,
+            HtmlSelectedOrdinaryElementName::Section,
+            (15, 24),
+            (16, 23),
+        ),
+    ));
+
+    HtmlDocumentShellParts {
+        nodes,
+        root: fixture.ids[0],
+        admitted_creation_events: 6,
+        diagnostics: vec![],
+        actions: vec![
+            insertion(
+                outer_section,
+                HtmlSelectedOrdinaryElementName::Section,
+                1,
+                fixture.anchor(6, 15),
+            ),
+            insertion(
+                inner_section,
+                HtmlSelectedOrdinaryElementName::Section,
+                2,
+                fixture.anchor(15, 24),
+            ),
+            matching_closure(
+                inner_section,
+                HtmlSelectedOrdinaryElementName::Section,
+                3,
+                fixture.anchor(24, 34),
+            ),
+        ],
+        processed_tokens: 4,
+        committed_prefix_end: 34,
+        completion: HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete),
+        final_open_selected_ordinary: vec![outer_section],
+    }
+}
+
+#[test]
+fn freeze_accepts_the_valid_current_target_closure_baseline() {
+    let fixture = fixture_h();
+    let analysis = freeze_parts(&fixture, fixture_h_parts(&fixture)).expect("valid parts freeze");
+    assert_eq!(project_closures(&analysis).len(), 1);
+    assert!(project_recoveries(&analysis).is_empty());
+}
+
+#[test]
+fn freeze_rejects_one_end_token_spending_a_second_current_target_closure() {
+    // The same ledger rule with no recovery involved at all: after the inner
+    // `section` is closed, the outer one *is* the current node, so a second
+    // closure under the same retained token is stack-consistent, uniquely
+    // subjected, and correctly triggered. Only the per-token ledger rejects
+    // it.
+    let fixture = fixture_h();
+    let mut parts = fixture_h_parts(&fixture);
+    let outer_section = fixture.ids[4];
+    parts.actions.push(matching_closure(
+        outer_section,
+        HtmlSelectedOrdinaryElementName::Section,
+        3,
+        fixture.anchor(24, 34),
+    ));
+    parts.final_open_selected_ordinary = Vec::new();
+    assert!(matches!(
+        freeze_parts(&fixture, parts),
+        Err(HtmlTreeFreezeError::DuplicateSelectedOrdinaryEndTokenDecision { .. })
+    ));
+}
+
+// ---------------------------------------------------------------------------
+// Unmatched selected-end evidence is proved, not merely paired by token index
+// ---------------------------------------------------------------------------
+
+/// `<body></section><section>`: one ignored unmatched `</section>` before any
+/// selected element is open, then an ordinary `section` left open at the end.
+fn fixture_f() -> LifecycleFixture {
+    lifecycle_fixture("<body></section><section>", 5)
+}
+
+fn ignored_unmatched_end(
+    name: HtmlSelectedOrdinaryElementName,
+    token: usize,
+    trigger: crate::SourceAnchor,
+) -> HtmlTreeAction {
+    HtmlTreeAction::new(
+        HtmlTreeActionKind::IgnoredUnmatchedSelectedOrdinaryEndTag { name },
+        HtmlTreeTokenTrigger::authored(token, trigger),
+    )
+}
+
+fn unmatched_diagnostic(token: usize, trigger: crate::SourceAnchor) -> HtmlTreeDiagnostic {
+    HtmlTreeDiagnostic::new(
+        HtmlTreeDiagnosticCode::UnmatchedSelectedOrdinaryEndTag,
+        HtmlTreeTokenTrigger::authored(token, trigger),
+        HtmlTreeRecovery::IgnoredToken,
+    )
+}
+
+fn fixture_f_parts(fixture: &LifecycleFixture) -> HtmlDocumentShellParts {
+    let [_, _, _, body, section_id] = fixture.ids[..] else {
+        panic!("five minted identities")
+    };
+    let mut nodes = shell_prefix_nodes(fixture, vec![section_id]);
+    nodes.push(HtmlTreeNode::new(
+        section_id,
+        Some(body),
+        vec![],
+        selected_kind(
+            fixture,
+            HtmlSelectedOrdinaryElementName::Section,
+            (16, 25),
+            (17, 24),
+        ),
+    ));
+
+    HtmlDocumentShellParts {
+        nodes,
+        root: fixture.ids[0],
+        admitted_creation_events: 5,
+        diagnostics: vec![unmatched_diagnostic(1, fixture.anchor(6, 16))],
+        actions: vec![
+            ignored_unmatched_end(
+                HtmlSelectedOrdinaryElementName::Section,
+                1,
+                fixture.anchor(6, 16),
+            ),
+            insertion(
+                section_id,
+                HtmlSelectedOrdinaryElementName::Section,
+                2,
+                fixture.anchor(16, 25),
+            ),
+        ],
+        processed_tokens: 3,
+        committed_prefix_end: 25,
+        completion: HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete),
+        final_open_selected_ordinary: vec![section_id],
+    }
+}
+
+#[test]
+fn freeze_accepts_the_valid_unmatched_end_baseline() {
+    let fixture = fixture_f();
+    let analysis = freeze_parts(&fixture, fixture_f_parts(&fixture)).expect("valid parts freeze");
+    assert!(project_closures(&analysis).is_empty());
+    assert!(project_recoveries(&analysis).is_empty());
+}
+
+#[test]
+fn freeze_rejects_an_unmatched_end_triggered_by_a_start_tag() {
+    let fixture = fixture_f();
+    let mut parts = fixture_f_parts(&fixture);
+    // Token 2 is the `<section>` start tag: real, retained, authored, and in
+    // non-decreasing order — but not an end tag.
+    parts.actions[0] = ignored_unmatched_end(
+        HtmlSelectedOrdinaryElementName::Section,
+        2,
+        fixture.anchor(16, 25),
+    );
+    parts.diagnostics = vec![unmatched_diagnostic(2, fixture.anchor(16, 25))];
+    assert!(matches!(
+        freeze_parts(&fixture, parts),
+        Err(HtmlTreeFreezeError::UnmatchedSelectedOrdinaryEndTriggerIsNotTheMatchingEndTag { .. })
+    ));
+}
+
+#[test]
+fn freeze_rejects_an_unmatched_end_whose_recorded_name_is_not_the_trigger_name() {
+    let fixture = fixture_f();
+    let mut parts = fixture_f_parts(&fixture);
+    parts.actions[0] = ignored_unmatched_end(
+        HtmlSelectedOrdinaryElementName::Div,
+        1,
+        fixture.anchor(6, 16),
+    );
+    assert!(matches!(
+        freeze_parts(&fixture, parts),
+        Err(HtmlTreeFreezeError::UnmatchedSelectedOrdinaryEndTriggerIsNotTheMatchingEndTag { .. })
+    ));
+}
+
+#[test]
+fn freeze_rejects_an_unmatched_end_whose_range_is_not_the_retained_evidence() {
+    let fixture = fixture_f();
+    let mut parts = fixture_f_parts(&fixture);
+    parts.actions[0] = ignored_unmatched_end(
+        HtmlSelectedOrdinaryElementName::Section,
+        1,
+        fixture.anchor(6, 15),
+    );
+    assert!(matches!(
+        freeze_parts(&fixture, parts),
+        Err(HtmlTreeFreezeError::UnmatchedSelectedOrdinaryEndTriggerIsNotTheMatchingEndTag { .. })
+    ));
+}
+
+#[test]
+fn freeze_rejects_unmatched_end_evidence_bound_to_a_foreign_source() {
+    let fixture = fixture_f();
+    let foreign = SourceText::new(SourceId::new(99), "<body></section><section>".to_owned());
+    let mut parts = fixture_f_parts(&fixture);
+    parts.actions[0] = ignored_unmatched_end(
+        HtmlSelectedOrdinaryElementName::Section,
+        1,
+        foreign.anchor(6, 16).expect("valid range"),
+    );
+    assert!(matches!(
+        freeze_parts(&fixture, parts),
+        Err(HtmlTreeFreezeError::ForeignSourceEvidence { .. })
+    ));
+}
+
+#[test]
+fn freeze_rejects_an_unmatched_diagnostic_with_the_wrong_recovery_summary() {
+    let fixture = fixture_f();
+    let mut parts = fixture_f_parts(&fixture);
+    parts.diagnostics = vec![HtmlTreeDiagnostic::new(
+        HtmlTreeDiagnosticCode::UnmatchedSelectedOrdinaryEndTag,
+        HtmlTreeTokenTrigger::authored(1, fixture.anchor(6, 16)),
+        HtmlTreeRecovery::StoppedParsingWithOpenSelectedOrdinaryElements,
+    )];
+    assert!(matches!(
+        freeze_parts(&fixture, parts),
+        Err(HtmlTreeFreezeError::UnmatchedSelectedOrdinaryEndTagDiagnosticMismatch { .. })
+    ));
+}
+
+#[test]
+fn freeze_rejects_an_unmatched_diagnostic_whose_boundary_is_not_the_trigger_evidence() {
+    let fixture = fixture_f();
+    let mut parts = fixture_f_parts(&fixture);
+    parts.diagnostics = vec![unmatched_diagnostic(1, fixture.anchor(6, 15))];
+    assert!(matches!(
+        freeze_parts(&fixture, parts),
+        Err(HtmlTreeFreezeError::UnmatchedSelectedOrdinaryEndTagDiagnosticMismatch { .. })
+    ));
+}
+
+/// `<body><section></section>`, forged so the authored `</section>` is claimed
+/// to be unmatched while its own target is still open.
+fn fixture_g() -> LifecycleFixture {
+    lifecycle_fixture("<body><section></section>", 5)
+}
+
+#[test]
+fn freeze_rejects_an_unmatched_end_while_a_same_name_target_is_open() {
+    let fixture = fixture_g();
+    let [_, _, _, body, section_id] = fixture.ids[..] else {
+        panic!("five minted identities")
+    };
+    let mut nodes = shell_prefix_nodes(&fixture, vec![section_id]);
+    nodes.push(HtmlTreeNode::new(
+        section_id,
+        Some(body),
+        vec![],
+        selected_kind(
+            &fixture,
+            HtmlSelectedOrdinaryElementName::Section,
+            (6, 15),
+            (7, 14),
+        ),
+    ));
+    let parts = HtmlDocumentShellParts {
+        nodes,
+        root: fixture.ids[0],
+        admitted_creation_events: 5,
+        diagnostics: vec![unmatched_diagnostic(2, fixture.anchor(15, 25))],
+        actions: vec![
+            insertion(
+                section_id,
+                HtmlSelectedOrdinaryElementName::Section,
+                1,
+                fixture.anchor(6, 15),
+            ),
+            // The trigger really is the retained `</section>` and the recorded
+            // name really is `Section` — but that element is open, so the
+            // ignored cell is not the cell that applies.
+            ignored_unmatched_end(
+                HtmlSelectedOrdinaryElementName::Section,
+                2,
+                fixture.anchor(15, 25),
+            ),
+        ],
+        processed_tokens: 3,
+        committed_prefix_end: 25,
+        completion: HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete),
+        final_open_selected_ordinary: vec![section_id],
+    };
+    assert!(matches!(
+        freeze_parts(&fixture, parts),
+        Err(HtmlTreeFreezeError::UnmatchedSelectedOrdinaryEndTagWithOpenTarget(_))
+    ));
+}
+
+// ---------------------------------------------------------------------------
+// A recovery-popped element's later same-name end tag is unmatched, not a
+// closure
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_later_same_name_end_tag_after_a_recovery_pop_is_unmatched() {
+    // `<body><section><div></section></div>` really does contain a `</div>`
+    // for the recovery-popped `div`. The durable statement is not that no such
+    // end tag exists, but that no matching end tag *caused* the pop and that
+    // no closure relation may be fabricated for it. The later `</div>` is an
+    // ordinary unmatched end: it closes nothing and recovers nothing.
+    let analysis = analyze("<body><section><div></section></div>");
+    let closures = project_closures(&analysis);
+    assert_eq!(closures.len(), 1, "only the section is ever closed");
+    assert_eq!(closures[0].subject_start_tag, (6, 15));
+    assert_eq!(project_recoveries(&analysis).len(), 1);
+    assert_eq!(
+        project_diagnostics(&analysis),
+        vec![
+            missing_doctype_at(0, (0, 6)),
+            ExpectedDiagnostic::MisnestedSelectedOrdinaryEndTag {
+                token: 3,
+                trigger: (20, 30),
+            },
+            ExpectedDiagnostic::UnmatchedSelectedOrdinaryEndTag {
+                token: 4,
+                trigger: (30, 36),
+            },
+        ]
+    );
+    assert!(
+        project_actions(&analysis).contains(&(
+            ExpectedAction::IgnoredUnmatchedSelectedOrdinaryEndTag("div"),
+            4
+        )),
+        "the later `</div>` is ignored, not a closure"
+    );
+    assert!(analysis.is_complete());
 }
