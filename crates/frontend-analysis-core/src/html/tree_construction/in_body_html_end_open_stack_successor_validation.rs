@@ -857,6 +857,8 @@ struct Oracle {
     final_stack: Vec<Name>,
     mode_path: Vec<Phase>,
     reprocess_count: usize,
+    identity_allocation: usize,
+    lifecycle_mutations: usize,
 }
 
 fn closed_form_oracle(blocks: &[Name], p: bool) -> Oracle {
@@ -870,6 +872,8 @@ fn closed_form_oracle(blocks: &[Name], p: bool) -> Oracle {
         final_stack,
         mode_path: vec![Phase::InBody, Phase::AfterBody, Phase::AfterAfterBody],
         reprocess_count: 1,
+        identity_allocation: 0,
+        lifecycle_mutations: 0,
     }
 }
 
@@ -1061,7 +1065,20 @@ fn h3_h9_h25_exact_mixed_case_evidence_one_token_two_modes_one_reprocess() {
     assert!(triggers.iter().all(|trigger| trigger == &triggers[0]));
     assert_eq!(triggers[0].source_id, SourceId::new(77));
     assert_eq!(triggers[0].range, (12, 19));
-    assert_eq!(&source[14..18], "HtMl");
+
+    let source_text = SourceText::new(SourceId::new(77), source.to_owned());
+    let run = tokenize(&source_text, limits());
+    let candidate_token = &run.tokens()[token_index];
+    let HtmlToken::Tag(candidate_tag) = candidate_token else {
+        panic!("candidate token must be the retained authored html end tag")
+    };
+    assert_eq!(candidate_tag.kind(), HtmlTagKind::End);
+    assert!(candidate_tag.name().interpreted().eq_ignore_ascii_case("html"));
+    let raw_name = evidence(candidate_tag.name().source());
+    assert_eq!(raw_name.source_id, SourceId::new(77));
+    assert_eq!(raw_name.range, (14, 18));
+    assert_eq!(&source[raw_name.range.0..raw_name.range.1], "HtMl");
+    assert_eq!(token_evidence(candidate_token), triggers[0]);
     assert!(
         actions
             .iter()
@@ -1320,6 +1337,35 @@ fn h30_generated_bounded_stacks_match_independent_closed_form_oracle() {
                 );
 
                 let token_index = candidate_token_index(&observation);
+                let candidate_identity_baseline =
+                    2 + blocks.len() + if p { 2 } else { 0 };
+                let identity_allocation = observation
+                    .next_id
+                    .checked_sub(candidate_identity_baseline)
+                    .expect("candidate cannot consume pre-existing identity");
+                assert_eq!(
+                    identity_allocation, oracle.identity_allocation,
+                    "{source}"
+                );
+                assert_eq!(
+                    observation.nodes.len(), candidate_identity_baseline,
+                    "{source}"
+                );
+                let lifecycle_mutations = candidate_actions(&observation)
+                    .into_iter()
+                    .map(|action| {
+                        if matches!(action, Action::Insert { .. } | Action::TextInsert { .. }) {
+                            1usize
+                        } else {
+                            0usize
+                        }
+                    })
+                    .sum::<usize>();
+                assert_eq!(
+                    lifecycle_mutations, oracle.lifecycle_mutations,
+                    "{source}"
+                );
+
                 let mode_path: Vec<Phase> = observation
                     .actions
                     .iter()
