@@ -39,18 +39,51 @@
 //!   `</title>` is not an authored end tag;
 //! - one authored named reference may decode to more than one Unicode scalar.
 //!
-//! Scope boundaries deliberately preserved by this bounded machine:
+//! The selected candidate is exactly *ordinary selected RCDATA text plus
+//! selected Named Character References*. It is deliberately **not** general
+//! RCDATA recovery, so the scope boundaries below are proved as negative
+//! space rather than assumed:
 //!
 //! - Numeric Character References are **not** selected. The numeric cell below
 //!   proves Title entry, RCDATA entry, and character-reference entry all
-//!   succeed and that the single remaining unsupported requirement is
-//!   specifically the Numeric branch.
+//!   succeed — the authored `&` that causes entry is committed, so entry
+//!   evidence never precedes committed coverage — and that the single
+//!   remaining unsupported requirement is specifically the Numeric branch. The
+//!   following `#` travels only as the *trigger* identifying that branch;
+//!   triggers are not produced or retained evidence, the same separation the
+//!   project's existing unsupported-input fixtures already make.
+//! - The NUL-specific RCDATA recovery branch is **not** selected. The NUL cell
+//!   proves Title and RCDATA entry succeed and then refuses, committing no
+//!   scalar, claiming no replacement output, and recording no candidate-owned
+//!   recovery diagnostic.
 //! - `textarea` is an RCDATA element that this candidate does **not** select.
 //!   The bounded machine refuses it, so a durable RCDATA tokenizer-mode
 //!   vocabulary cannot be read as authorization for every RCDATA element.
 //! - The tree->tokenizer control modelled here is the title-specific
 //!   [`Feedback::EnterRcdataForTitle`]. It carries no tokenizer-mode operand
 //!   and is not a proposed production type or API name.
+//!
+//! Two further obligations are proved rather than assumed:
+//!
+//! - **Semantic-commit atomicity.** One bounded test-local failpoint refuses
+//!   the fallible effect that would commit an already-discovered maximum
+//!   match. Because discovery is non-committing, refusal leaves no partial
+//!   effect to undo: no cursor advance for the match, no resolution
+//!   diagnostic, no token, no contribution, no fabricated close — and no
+//!   generic rollback or transaction framework. This is a candidate semantic
+//!   failpoint, not a production resource strategy or temporary-buffer
+//!   accounting decision.
+//! - **Character-reference diagnostic anchors are not frozen.** Issue #390
+//!   leaves the project's durable `SourceAnchor` encoding open wherever the
+//!   pinned obligations do not uniquely determine a range. Candidate-owned
+//!   character-reference diagnostics therefore validate kind, observation
+//!   order, `SourceId` identity, and a test-local semantic *site* relating
+//!   each diagnostic to its own reference lifecycle — and deliberately carry
+//!   no raw range. Authored provenance is untouched elsewhere: Title starts,
+//!   text contributions, resolved-reference source contributions, authored
+//!   Title closes, EOF evidence, and input-preprocessing diagnostics whose
+//!   offending scalar an existing project contract already fixes all keep
+//!   exact evidence.
 //!
 //! The named-reference data below is a deliberately small **test-local**
 //! subset of the WHATWG named character references table, chosen only to
@@ -63,8 +96,8 @@
 //! WPT and html5lib-family parsing fixtures are challenge/corroboration
 //! evidence only. This test-only machine models exactly the semantic states
 //! needed to falsify the selected theorem; it is not a proposed production
-//! tokenizer state layout, cursor API, diagnostic enum, entity-table
-//! placement, or coordinator contract.
+//! tokenizer state layout, cursor API, diagnostic enum or anchor encoding,
+//! resource representation, entity-table placement, or coordinator contract.
 
 use crate::{SourceId, SourceText};
 
@@ -274,9 +307,6 @@ enum ContributionOrigin {
     /// An ampersand run that did not resolve. Interpreted text equals authored
     /// text; this is not a syntax token and not a resolved reference.
     UnresolvedAmpersandRun,
-    /// A NUL replaced by U+FFFD. Interpreted text differs from authored text
-    /// without any reference having been resolved.
-    NullReplacement,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -426,15 +456,48 @@ enum Feedback {
 enum DiagnosticKind {
     MissingSemicolonAfterNamedReference,
     UnknownNamedCharacterReference,
-    UnexpectedNullCharacter,
     ControlCharacterInInputStream,
+    EofInTitleText,
+}
+
+/// Where a diagnostic belongs in the bounded semantic lifecycle.
+///
+/// For candidate-owned character-reference diagnostics this *site* is the
+/// whole correctness claim: Issue #390 leaves the project's durable
+/// `SourceAnchor` encoding open wherever the pinned obligations do not
+/// uniquely determine a range, so this validation deliberately does not freeze
+/// one. These variant names are test-local and are not a proposed production
+/// diagnostic enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DiagnosticSite {
+    /// The resolved named reference whose maximum match did not end in `;`.
+    /// Related to its reference by name and by the ordinal of the
+    /// character-reference entry that produced it, never by a raw range.
+    MissingSemicolonForResolvedNamedReference {
+        name: &'static str,
+        entry_index: usize,
+    },
+    /// The ambiguous ampersand state, on the `;` that ended an unresolved
+    /// ampersand run, related to its entry ordinal.
+    UnknownNamedReferenceAtAmbiguousAmpersand { entry_index: usize },
+    /// One authored input-preprocessing scalar. An existing project contract
+    /// already fixes the offending scalar, so this site keeps exact evidence.
+    InputPreprocessingScalar,
+    /// EOF while a Title remains open in Text. Unambiguous, so it keeps exact
+    /// evidence.
     EofInTitleText,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Diagnostic {
     kind: DiagnosticKind,
-    evidence: Evidence,
+    source_id: SourceId,
+    site: DiagnosticSite,
+    /// Exact authored evidence, retained only where an existing contract or an
+    /// unambiguous obligation already fixes it. `None` for candidate-owned
+    /// character-reference diagnostics, whose durable anchor placement is a
+    /// future project decision this validation must not make.
+    anchor: Option<Evidence>,
 }
 
 fn preprocessing_diagnostic_kind(scalar: char) -> Option<DiagnosticKind> {
@@ -458,8 +521,6 @@ enum TokenClass {
         value: &'static str,
     },
     AmpersandFlush,
-    NullReplacement,
-    NumericReferenceStart,
     EndTitle,
     Eof,
     UnsupportedTitleShape,
@@ -474,9 +535,35 @@ struct Token {
     state_at_emission: LexState,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LowerLayerStop {
+/// Bounded reasons the tokenizer half of the candidate stops producing.
+///
+/// All three non-resource variants stop *before* any effect of the branch they
+/// name is committed, so none of them needs a rollback framework: there is
+/// nothing to roll back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TokenizerStop {
     ResourceLimit,
+    /// Character-reference entry reached the deliberately unselected Numeric
+    /// branch. The authored `&` that caused entry is already committed; the
+    /// following `#` is retained only as the *trigger* that identifies the
+    /// branch, exactly like the project's existing unsupported-input triggers,
+    /// which are not claimed as produced or retained evidence.
+    NumericCharacterReferenceBranch {
+        trigger: Evidence,
+    },
+    /// RCDATA reached the NUL recovery branch. The selected candidate is
+    /// ordinary selected RCDATA text plus selected Named Character References,
+    /// not general RCDATA recovery, so the NUL scalar is never committed and no
+    /// replacement output or recovery diagnostic is claimed.
+    NullRecoveryBranch {
+        trigger: Evidence,
+    },
+    /// Test-local forced failure at the selected Named-reference semantic
+    /// commit boundary: the maximum match has been discovered
+    /// non-committingly, and the fallible effect that would commit it refuses.
+    /// Nothing about the match is committed — no cursor advance, no
+    /// resolution diagnostic, no token, no contribution.
+    ForcedNamedSemanticCommitFailure,
 }
 
 /// Observation instrumentation for one maximum-match discovery.
@@ -509,10 +596,20 @@ struct CandidateTokenizer {
     character_reference_entries: Vec<Evidence>,
     lookaheads: Vec<LookaheadRecord>,
     byte_limit: Option<usize>,
+    /// Test-local forced-failure injection, keyed by the ampersand offset of
+    /// the selected Named reference whose semantic commit must refuse. This is
+    /// a candidate semantic failpoint, not a production resource strategy and
+    /// not a temporary-buffer accounting decision.
+    named_commit_failpoint: Option<usize>,
 }
 
 impl CandidateTokenizer {
-    fn new(source: &SourceText, cursor: usize, byte_limit: Option<usize>) -> Self {
+    fn new(
+        source: &SourceText,
+        cursor: usize,
+        byte_limit: Option<usize>,
+        named_commit_failpoint: Option<usize>,
+    ) -> Self {
         Self {
             source: source.clone(),
             cursor,
@@ -522,6 +619,7 @@ impl CandidateTokenizer {
             character_reference_entries: Vec::new(),
             lookaheads: Vec::new(),
             byte_limit,
+            named_commit_failpoint,
         }
     }
 
@@ -541,7 +639,9 @@ impl CandidateTokenizer {
                 let span = evidence(&self.source, offset, offset + scalar.len_utf8());
                 self.diagnostics.push(Diagnostic {
                     kind,
-                    evidence: span,
+                    source_id: span.source_id,
+                    site: DiagnosticSite::InputPreprocessingScalar,
+                    anchor: Some(span),
                 });
             }
             offset += scalar.len_utf8();
@@ -586,12 +686,12 @@ impl CandidateTokenizer {
         });
     }
 
-    fn next_token(&mut self) -> Result<Token, LowerLayerStop> {
+    fn next_token(&mut self) -> Result<Token, TokenizerStop> {
         if self
             .byte_limit
             .is_some_and(|limit| self.cursor >= limit && self.cursor < self.source.as_str().len())
         {
-            return Err(LowerLayerStop::ResourceLimit);
+            return Err(TokenizerStop::ResourceLimit);
         }
         match self.state {
             LexState::Data => self.next_data(),
@@ -599,7 +699,7 @@ impl CandidateTokenizer {
         }
     }
 
-    fn next_data(&mut self) -> Result<Token, LowerLayerStop> {
+    fn next_data(&mut self) -> Result<Token, TokenizerStop> {
         let text = self.source.as_str().to_owned();
         if self.cursor == text.len() {
             return Ok(self.token(TokenClass::Eof, self.cursor, self.cursor, LexState::Data));
@@ -654,7 +754,7 @@ impl CandidateTokenizer {
         Ok(self.token(TokenClass::OtherData, start, end, LexState::Data))
     }
 
-    fn next_rcdata(&mut self) -> Result<Token, LowerLayerStop> {
+    fn next_rcdata(&mut self) -> Result<Token, TokenizerStop> {
         let text = self.source.as_str().to_owned();
         if self.cursor == text.len() {
             return Ok(self.token(TokenClass::Eof, self.cursor, self.cursor, LexState::Rcdata));
@@ -669,19 +769,12 @@ impl CandidateTokenizer {
 
         let rest = &text[self.cursor..];
         if rest.starts_with('\0') {
-            let start = self.cursor;
-            self.commit(start + 1);
-            let span = evidence(&self.source, start, start + 1);
-            self.diagnostics.push(Diagnostic {
-                kind: DiagnosticKind::UnexpectedNullCharacter,
-                evidence: span,
+            // The NUL-specific RCDATA recovery branch is outside the selected
+            // candidate. Refuse before committing the scalar so the candidate
+            // never claims replacement output or recovery support.
+            return Err(TokenizerStop::NullRecoveryBranch {
+                trigger: evidence(&self.source, self.cursor, self.cursor + 1),
             });
-            return Ok(self.token(
-                TokenClass::NullReplacement,
-                start,
-                start + 1,
-                LexState::Rcdata,
-            ));
         }
 
         if rest.starts_with('&') {
@@ -709,24 +802,27 @@ impl CandidateTokenizer {
     }
 
     /// Character reference state with the RCDATA return state.
-    fn character_reference(&mut self, text: &str) -> Result<Token, LowerLayerStop> {
+    fn character_reference(&mut self, text: &str) -> Result<Token, TokenizerStop> {
         let ampersand = self.cursor;
         let after = ampersand + 1;
+
+        // The return state consumes the authored `&` into the character
+        // reference state. Committing it here is what makes the recorded entry
+        // causally honest: entry evidence never precedes committed coverage.
+        self.commit(after);
         let entry_span = evidence(&self.source, ampersand, after);
         self.character_reference_entries.push(entry_span);
+        let entry_index = self.character_reference_entries.len() - 1;
 
         let next = text[after..].chars().next();
         match next {
             Some('#') => {
                 // Numeric branch: reached, deliberately not selected. Nothing
-                // is committed, so coverage stops at the ampersand.
-                let end = after + 1;
-                Ok(self.token(
-                    TokenClass::NumericReferenceStart,
-                    ampersand,
-                    end,
-                    LexState::Rcdata,
-                ))
+                // beyond the committed `&` is consumed, and the `#` travels
+                // only as the trigger identifying the branch.
+                Err(TokenizerStop::NumericCharacterReferenceBranch {
+                    trigger: evidence(&self.source, after, after + 1),
+                })
             }
             Some(scalar) if scalar.is_ascii_alphanumeric() => {
                 let before = self.commit_state();
@@ -735,13 +831,23 @@ impl CandidateTokenizer {
                 self.record_lookahead(after, lookahead, before, settled);
                 match lookahead.matched {
                     Some(entry) => {
+                        if self.named_commit_failpoint == Some(ampersand) {
+                            // The maximum match is known, and nothing about it
+                            // has been committed yet. Refusing here leaves no
+                            // partial semantic effect to undo.
+                            return Err(TokenizerStop::ForcedNamedSemanticCommitFailure);
+                        }
                         let end = after + entry.name.len();
                         self.commit(end);
                         if !entry.name.ends_with(';') {
-                            let span = evidence(&self.source, ampersand, end);
                             self.diagnostics.push(Diagnostic {
                                 kind: DiagnosticKind::MissingSemicolonAfterNamedReference,
-                                evidence: span,
+                                source_id: self.source.id(),
+                                site: DiagnosticSite::MissingSemicolonForResolvedNamedReference {
+                                    name: entry.name,
+                                    entry_index,
+                                },
+                                anchor: None,
                             });
                         }
                         Ok(self.token(
@@ -755,8 +861,8 @@ impl CandidateTokenizer {
                         ))
                     }
                     None => {
-                        // Flush the ampersand, then the ambiguous ampersand
-                        // state's alphanumeric run.
+                        // The `&` is already flushed; consume the ambiguous
+                        // ampersand state's alphanumeric run.
                         let mut end = after;
                         while let Some(scalar) = text[end..].chars().next() {
                             if scalar.is_ascii_alphanumeric() {
@@ -767,10 +873,13 @@ impl CandidateTokenizer {
                         }
                         self.commit(end);
                         if text[end..].starts_with(';') {
-                            let span = evidence(&self.source, end, end + 1);
                             self.diagnostics.push(Diagnostic {
                                 kind: DiagnosticKind::UnknownNamedCharacterReference,
-                                evidence: span,
+                                source_id: self.source.id(),
+                                site: DiagnosticSite::UnknownNamedReferenceAtAmbiguousAmpersand {
+                                    entry_index,
+                                },
+                                anchor: None,
                             });
                         }
                         Ok(
@@ -784,15 +893,12 @@ impl CandidateTokenizer {
                     }
                 }
             }
-            _ => {
-                self.commit(after);
-                Ok(self.token(
-                    TokenClass::AmpersandFlush,
-                    ampersand,
-                    after,
-                    LexState::Rcdata,
-                ))
-            }
+            _ => Ok(self.token(
+                TokenClass::AmpersandFlush,
+                ampersand,
+                after,
+                LexState::Rcdata,
+            )),
         }
     }
 
@@ -801,11 +907,11 @@ impl CandidateTokenizer {
         class: TokenClass,
         width: usize,
         state: LexState,
-    ) -> Result<Token, LowerLayerStop> {
+    ) -> Result<Token, TokenizerStop> {
         let start = self.cursor;
         let end = start + width;
         if self.byte_limit.is_some_and(|limit| end > limit) {
-            return Err(LowerLayerStop::ResourceLimit);
+            return Err(TokenizerStop::ResourceLimit);
         }
         self.commit(end);
         Ok(self.token(class, start, end, state))
@@ -997,6 +1103,9 @@ enum Completion {
     Complete,
     PendingSameTokenReprocess,
     LowerLayerIncomplete,
+    /// A bounded incomplete outcome: a fallible semantic effect refused before
+    /// committing anything.
+    SemanticEffectRefused,
     Unsupported,
 }
 
@@ -1006,8 +1115,10 @@ enum Terminal {
     PostCloseSentinel,
     EofInRcdataReprocessPending,
     LowerLayerStop,
+    ForcedNamedSemanticCommitFailure,
     UnsupportedShape,
     UnsupportedNumericCharacterReference,
+    UnsupportedNullRecoveryBranch,
 }
 
 /// Narrow, honest unsupported requirements.
@@ -1018,6 +1129,9 @@ enum Terminal {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum UnsupportedRequirement {
     NumericCharacterReferenceInRcdata,
+    /// The selected candidate is ordinary selected RCDATA text plus selected
+    /// Named Character References, not general RCDATA recovery.
+    NullRecoveryInRcdata,
     NonSelectedTitleStartShape,
     NonTitleRcdataElement,
     TitleOutsideSelectedInHeadContext,
@@ -1039,6 +1153,11 @@ struct Observation {
     completion: Completion,
     terminal: Terminal,
     unsupported_requirement: Option<UnsupportedRequirement>,
+    /// The authored unit that identifies a refused branch. A trigger is not
+    /// produced or retained evidence, so it may legitimately name source that
+    /// coverage never reached — the same separation the project's existing
+    /// unsupported-input fixtures already make.
+    unsupported_trigger: Option<Evidence>,
 }
 
 struct Machine {
@@ -1056,6 +1175,7 @@ impl Machine {
         completion: Completion,
         terminal: Terminal,
         unsupported_requirement: Option<UnsupportedRequirement>,
+        unsupported_trigger: Option<Evidence>,
     ) -> Observation {
         let mut diagnostics = self.tokenizer.diagnostics.clone();
         if self.tree.eof_in_text_diagnostic
@@ -1063,7 +1183,9 @@ impl Machine {
         {
             diagnostics.push(Diagnostic {
                 kind: DiagnosticKind::EofInTitleText,
-                evidence: token.evidence.clone(),
+                source_id: token.evidence.source_id,
+                site: DiagnosticSite::EofInTitleText,
+                anchor: Some(token.evidence.clone()),
             });
         }
         Observation {
@@ -1081,6 +1203,7 @@ impl Machine {
             completion,
             terminal,
             unsupported_requirement,
+            unsupported_trigger,
         }
     }
 }
@@ -1090,8 +1213,22 @@ fn run_candidate(
     start_cursor: usize,
     byte_limit: Option<usize>,
 ) -> Observation {
+    run_candidate_with(source, start_cursor, byte_limit, None)
+}
+
+fn run_candidate_with(
+    source: &SourceText,
+    start_cursor: usize,
+    byte_limit: Option<usize>,
+    named_commit_failpoint: Option<usize>,
+) -> Observation {
     let mut machine = Machine {
-        tokenizer: CandidateTokenizer::new(source, start_cursor, byte_limit),
+        tokenizer: CandidateTokenizer::new(
+            source,
+            start_cursor,
+            byte_limit,
+            named_commit_failpoint,
+        ),
         tree: TreeState::candidate_prestate(),
         events: Vec::new(),
         pending_feedback: None,
@@ -1100,12 +1237,54 @@ fn run_candidate(
     loop {
         let token = match machine.tokenizer.next_token() {
             Ok(token) => token,
-            Err(LowerLayerStop::ResourceLimit) => {
+            Err(TokenizerStop::ResourceLimit) => {
                 return machine.observe(
                     source,
                     None,
                     Completion::LowerLayerIncomplete,
                     Terminal::LowerLayerStop,
+                    None,
+                    None,
+                );
+            }
+            Err(TokenizerStop::NumericCharacterReferenceBranch { trigger }) => {
+                // Entry itself succeeded and is committed, so it is recorded.
+                let entered = machine
+                    .tokenizer
+                    .character_reference_entries
+                    .last()
+                    .cloned();
+                if let Some(ampersand) = entered {
+                    machine
+                        .events
+                        .push(Event::CharacterReferenceEntered { ampersand });
+                }
+                return machine.observe(
+                    source,
+                    None,
+                    Completion::Unsupported,
+                    Terminal::UnsupportedNumericCharacterReference,
+                    Some(UnsupportedRequirement::NumericCharacterReferenceInRcdata),
+                    Some(trigger),
+                );
+            }
+            Err(TokenizerStop::NullRecoveryBranch { trigger }) => {
+                return machine.observe(
+                    source,
+                    None,
+                    Completion::Unsupported,
+                    Terminal::UnsupportedNullRecoveryBranch,
+                    Some(UnsupportedRequirement::NullRecoveryInRcdata),
+                    Some(trigger),
+                );
+            }
+            Err(TokenizerStop::ForcedNamedSemanticCommitFailure) => {
+                return machine.observe(
+                    source,
+                    None,
+                    Completion::SemanticEffectRefused,
+                    Terminal::ForcedNamedSemanticCommitFailure,
+                    None,
                     None,
                 );
             }
@@ -1120,9 +1299,7 @@ fn run_candidate(
         if token.state_at_emission == LexState::Rcdata
             && matches!(
                 token.class,
-                TokenClass::NamedReference { .. }
-                    | TokenClass::AmpersandFlush
-                    | TokenClass::NumericReferenceStart
+                TokenClass::NamedReference { .. } | TokenClass::AmpersandFlush
             )
             && let Some(ampersand) = machine.tokenizer.character_reference_entries.last()
         {
@@ -1166,15 +1343,6 @@ fn run_candidate(
                 );
                 Feedback::None
             }
-            (InsertionMode::Text, TokenClass::NullReplacement) => {
-                contribute(
-                    &mut machine,
-                    ContributionOrigin::NullReplacement,
-                    token.evidence.clone(),
-                    "\u{fffd}".to_owned(),
-                );
-                Feedback::None
-            }
             (InsertionMode::Text, TokenClass::NamedReference { name, value }) => {
                 contribute(
                     &mut machine,
@@ -1188,15 +1356,6 @@ fn run_candidate(
                     interpreted: value.to_owned(),
                 });
                 Feedback::None
-            }
-            (InsertionMode::Text, TokenClass::NumericReferenceStart) => {
-                return machine.observe(
-                    source,
-                    None,
-                    Completion::Unsupported,
-                    Terminal::UnsupportedNumericCharacterReference,
-                    Some(UnsupportedRequirement::NumericCharacterReferenceInRcdata),
-                );
             }
             (InsertionMode::Text, TokenClass::EndTitle) => {
                 machine.tree.close_title(token.evidence.clone());
@@ -1225,6 +1384,7 @@ fn run_candidate(
                     Completion::PendingSameTokenReprocess,
                     Terminal::EofInRcdataReprocessPending,
                     None,
+                    None,
                 );
             }
             (InsertionMode::InHead, TokenClass::StartBodySentinel)
@@ -1240,6 +1400,7 @@ fn run_candidate(
                     Completion::Complete,
                     Terminal::PostCloseSentinel,
                     None,
+                    None,
                 );
             }
             (InsertionMode::InHead, TokenClass::Eof) if machine.tree.all_titles_closed() => {
@@ -1248,6 +1409,7 @@ fn run_candidate(
                     None,
                     Completion::Complete,
                     Terminal::AppropriateCloseThenEof,
+                    None,
                     None,
                 );
             }
@@ -1258,6 +1420,7 @@ fn run_candidate(
                     Completion::Unsupported,
                     Terminal::UnsupportedShape,
                     Some(UnsupportedRequirement::NonSelectedTitleStartShape),
+                    None,
                 );
             }
             (InsertionMode::InHead, TokenClass::UnsupportedTextareaShape) => {
@@ -1267,6 +1430,7 @@ fn run_candidate(
                     Completion::Unsupported,
                     Terminal::UnsupportedShape,
                     Some(UnsupportedRequirement::NonTitleRcdataElement),
+                    None,
                 );
             }
             (InsertionMode::InHead, TokenClass::StartBodySentinel) => {
@@ -1276,6 +1440,7 @@ fn run_candidate(
                     Completion::Unsupported,
                     Terminal::UnsupportedShape,
                     Some(UnsupportedRequirement::TitleOutsideSelectedInHeadContext),
+                    None,
                 );
             }
             _ => panic!("fixture escaped closed candidate: {token:?}"),
@@ -1354,7 +1519,10 @@ struct GoldTitle {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct GoldDiagnostic {
     kind: DiagnosticKind,
-    at: GoldEvidence,
+    site: DiagnosticSite,
+    /// `None` where Issue #390 leaves the durable anchor open. Present only
+    /// where an existing contract or an unambiguous obligation fixes it.
+    anchor: Option<GoldEvidence>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1450,7 +1618,13 @@ fn assert_gold(observation: &Observation, gold: &Gold) {
     );
     for (actual, expected) in observation.diagnostics.iter().zip(&gold.diagnostics) {
         assert_eq!(actual.kind, expected.kind);
-        assert_evidence(&actual.evidence, observation.source_id, &expected.at);
+        assert_eq!(actual.site, expected.site);
+        assert_eq!(actual.source_id, observation.source_id);
+        match (&actual.anchor, &expected.anchor) {
+            (Some(anchor), Some(want)) => assert_evidence(anchor, observation.source_id, want),
+            (None, None) => {}
+            pair => panic!("diagnostic anchor mismatch: {pair:?}"),
+        }
     }
 
     if let Some(expected) = &gold.sentinel {
@@ -1545,6 +1719,7 @@ enum FreezeError {
     ClosedPathCloseEvidenceMismatch,
     ClosedPathImpossibleConstructedIdentity,
     EofPathClaimsAuthoredClose,
+    EvidenceBeyondCommittedCoverage,
     FabricatedContributionEvidence,
     OverlappingContributionEvidence,
     ContributionOriginContradictsInterpretation,
@@ -1633,9 +1808,6 @@ fn validate_contributions(tree: &TreeState) -> Result<(), FreezeError> {
                         && authored.raw.len() == name.len() + 1
                         && authored.raw[1..] == *name
                 }
-                ContributionOrigin::NullReplacement => {
-                    authored.raw == "\0" && contribution.interpreted == "\u{fffd}"
-                }
             };
             if !honest {
                 return Err(FreezeError::ContributionOriginContradictsInterpretation);
@@ -1649,9 +1821,59 @@ fn validate_contributions(tree: &TreeState) -> Result<(), FreezeError> {
     Ok(())
 }
 
+/// No produced token, recorded causal event, or retained tree evidence may
+/// claim authored bytes the tokenizer never committed.
+///
+/// `unsupported_trigger` is deliberately excluded: a trigger identifies a
+/// refused branch and is not produced or retained evidence, the same
+/// separation the project's existing unsupported-input fixtures already make.
+fn evidence_within_committed_coverage(observation: &Observation) -> bool {
+    let coverage = observation.tokenizer_coverage_end;
+    let events_ok = observation.events.iter().all(|event| match event {
+        Event::Produced { evidence, .. }
+        | Event::PostCloseSentinel { evidence, .. }
+        | Event::SameTokenReprocessPending { evidence, .. } => evidence.end <= coverage,
+        Event::CharacterReferenceEntered { ampersand } => ampersand.end <= coverage,
+        Event::TitleInserted { start, .. } => start.end <= coverage,
+        Event::TextContributed { authored, .. }
+        | Event::NamedReferenceResolved { authored, .. } => authored.end <= coverage,
+        Event::TitleClosed { close } | Event::TokenizerReturnedToData { close } => {
+            close.end <= coverage
+        }
+        Event::FeedbackRequested { .. }
+        | Event::FeedbackApplied { .. }
+        | Event::EnteredText { .. }
+        | Event::RestoredMode { .. }
+        | Event::EofInTextRecovery => true,
+    });
+    let retained_ok = observation.tree.titles.iter().all(|title| {
+        title.start.end <= coverage
+            && title
+                .contributions
+                .iter()
+                .all(|contribution| contribution.authored.end <= coverage)
+            && title
+                .close
+                .as_ref()
+                .is_none_or(|close| close.end <= coverage)
+    });
+    let entries_ok = observation
+        .character_reference_entries
+        .iter()
+        .all(|entry| entry.end <= coverage);
+    let diagnostics_ok = observation
+        .diagnostics
+        .iter()
+        .all(|diagnostic| diagnostic.anchor.as_ref().is_none_or(|a| a.end <= coverage));
+    events_ok && retained_ok && entries_ok && diagnostics_ok
+}
+
 fn validate_candidate_freeze(observation: &Observation) -> Result<(), FreezeError> {
     if observation.pending_feedback.is_some() {
         return Err(FreezeError::PendingFeedback);
+    }
+    if !evidence_within_committed_coverage(observation) {
+        return Err(FreezeError::EvidenceBeyondCommittedCoverage);
     }
     if observation.completion == Completion::Complete && observation.pending_reprocess.is_some() {
         return Err(FreezeError::OutstandingSameTokenReprocess);
@@ -1700,8 +1922,10 @@ fn validate_candidate_freeze(observation: &Observation) -> Result<(), FreezeErro
             assert_eq!(observation.tree.open, vec![NodeId(0), NodeId(1)]);
         }
         Terminal::LowerLayerStop
+        | Terminal::ForcedNamedSemanticCommitFailure
         | Terminal::UnsupportedShape
-        | Terminal::UnsupportedNumericCharacterReference => {}
+        | Terminal::UnsupportedNumericCharacterReference
+        | Terminal::UnsupportedNullRecoveryBranch => {}
     }
     Ok(())
 }
@@ -1730,7 +1954,7 @@ fn diagnostic_kinds(observation: &Observation) -> Vec<DiagnosticKind> {
 }
 
 fn eager_all_data_classes(source: &SourceText, start_cursor: usize) -> Vec<TokenClass> {
-    let mut tokenizer = CandidateTokenizer::new(source, start_cursor, None);
+    let mut tokenizer = CandidateTokenizer::new(source, start_cursor, None, None);
     let mut classes = Vec::new();
     loop {
         tokenizer.state = LexState::Data;
@@ -1743,7 +1967,7 @@ fn eager_all_data_classes(source: &SourceText, start_cursor: usize) -> Vec<Token
 }
 
 fn late_feedback_probe(source: &SourceText) -> (TokenClass, LexState) {
-    let mut tokenizer = CandidateTokenizer::new(source, 0, None);
+    let mut tokenizer = CandidateTokenizer::new(source, 0, None, None);
     let mut tree = TreeState::candidate_prestate();
     let title = tokenizer.next_token().expect("title token");
     assert_eq!(title.class, TokenClass::StartTitle);
@@ -1810,6 +2034,43 @@ fn source(id: u64, text: &str) -> SourceText {
 
 fn gold_evidence(start: usize, end: usize, raw: &'static str) -> GoldEvidence {
     GoldEvidence { start, end, raw }
+}
+
+/// Candidate-owned character-reference diagnostic: kind, semantic site, order,
+/// and `SourceId` are the theorem; the raw range is left to future project
+/// placement and is deliberately not frozen here.
+fn missing_semicolon_diagnostic(name: &'static str, entry_index: usize) -> GoldDiagnostic {
+    GoldDiagnostic {
+        kind: DiagnosticKind::MissingSemicolonAfterNamedReference,
+        site: DiagnosticSite::MissingSemicolonForResolvedNamedReference { name, entry_index },
+        anchor: None,
+    }
+}
+
+fn unknown_named_reference_diagnostic(entry_index: usize) -> GoldDiagnostic {
+    GoldDiagnostic {
+        kind: DiagnosticKind::UnknownNamedCharacterReference,
+        site: DiagnosticSite::UnknownNamedReferenceAtAmbiguousAmpersand { entry_index },
+        anchor: None,
+    }
+}
+
+/// Input-preprocessing diagnostics keep exact authored evidence: an existing
+/// project contract already fixes the offending source scalar.
+fn preprocessing_diagnostic(kind: DiagnosticKind, anchor: GoldEvidence) -> GoldDiagnostic {
+    GoldDiagnostic {
+        kind,
+        site: DiagnosticSite::InputPreprocessingScalar,
+        anchor: Some(anchor),
+    }
+}
+
+fn eof_in_title_text_diagnostic(anchor: GoldEvidence) -> GoldDiagnostic {
+    GoldDiagnostic {
+        kind: DiagnosticKind::EofInTitleText,
+        site: DiagnosticSite::EofInTitleText,
+        anchor: Some(anchor),
+    }
 }
 
 fn raw_run(start: usize, end: usize, raw: &'static str) -> GoldContribution {
@@ -2145,10 +2406,7 @@ fn n3_semicolonless_maximum_match_leaves_the_remainder_ordinary() {
                 ],
                 gold_evidence(14, 22, "</title>"),
             )],
-            vec![GoldDiagnostic {
-                kind: DiagnosticKind::MissingSemicolonAfterNamedReference,
-                at: gold_evidence(7, 11, "&not"),
-            }],
+            vec![missing_semicolon_diagnostic("not", 0)],
         ),
     );
     assert_eq!(validate_candidate_freeze(&actual), Ok(()));
@@ -2218,10 +2476,7 @@ fn n5_unresolved_ampersand_run_is_neither_resolved_output_nor_authored_syntax() 
                 vec![ampersand_run(7, 13, "&bogus"), raw_run(13, 14, ";")],
                 gold_evidence(14, 22, "</title>"),
             )],
-            vec![GoldDiagnostic {
-                kind: DiagnosticKind::UnknownNamedCharacterReference,
-                at: gold_evidence(13, 14, ";"),
-            }],
+            vec![unknown_named_reference_diagnostic(0)],
         ),
     );
     assert_eq!(validate_candidate_freeze(&actual), Ok(()));
@@ -2344,14 +2599,11 @@ fn l1_speculative_maximum_match_cannot_reorder_a_later_preprocessing_diagnostic(
                 gold_evidence(12, 20, "</title>"),
             )],
             vec![
-                GoldDiagnostic {
-                    kind: DiagnosticKind::MissingSemicolonAfterNamedReference,
-                    at: gold_evidence(7, 11, "&not"),
-                },
-                GoldDiagnostic {
-                    kind: DiagnosticKind::ControlCharacterInInputStream,
-                    at: gold_evidence(11, 12, "\u{0001}"),
-                },
+                missing_semicolon_diagnostic("not", 0),
+                preprocessing_diagnostic(
+                    DiagnosticKind::ControlCharacterInInputStream,
+                    gold_evidence(11, 12, "\u{0001}"),
+                ),
             ],
         ),
     );
@@ -2374,11 +2626,11 @@ fn l1_speculative_maximum_match_cannot_reorder_a_later_preprocessing_diagnostic(
     assert_eq!(lookahead.coverage_before, lookahead.coverage_after);
     assert_eq!(lookahead.diagnostics_before, lookahead.diagnostics_after);
     assert_eq!(
-        lookahead.cursor_before, 7,
-        "speculative discovery never advanced the authoritative cursor"
+        lookahead.cursor_before, 8,
+        "discovery starts from the committed `&` and never advances the cursor"
     );
     assert_eq!(
-        lookahead.coverage_before, 7,
+        lookahead.coverage_before, 8,
         "speculative discovery never advanced coverage"
     );
 
@@ -2421,10 +2673,7 @@ fn e1_eof_after_a_bare_ampersand_restores_the_tree_without_fabricating_a_close()
                 contributions: vec![ampersand_run(7, 8, "&")],
                 close: None,
             }],
-            diagnostics: vec![GoldDiagnostic {
-                kind: DiagnosticKind::EofInTitleText,
-                at: gold_evidence(8, 8, ""),
-            }],
+            diagnostics: vec![eof_in_title_text_diagnostic(gold_evidence(8, 8, ""))],
             final_lex: LexState::Rcdata,
             completion: Completion::PendingSameTokenReprocess,
             terminal: Terminal::EofInRcdataReprocessPending,
@@ -2472,14 +2721,8 @@ fn e2_eof_after_a_semicolonless_match_keeps_the_reference_and_the_checkpoint() {
                 close: None,
             }],
             diagnostics: vec![
-                GoldDiagnostic {
-                    kind: DiagnosticKind::MissingSemicolonAfterNamedReference,
-                    at: gold_evidence(7, 11, "&amp"),
-                },
-                GoldDiagnostic {
-                    kind: DiagnosticKind::EofInTitleText,
-                    at: gold_evidence(11, 11, ""),
-                },
+                missing_semicolon_diagnostic("amp", 0),
+                eof_in_title_text_diagnostic(gold_evidence(11, 11, "")),
             ],
             final_lex: LexState::Rcdata,
             completion: Completion::PendingSameTokenReprocess,
@@ -2495,6 +2738,108 @@ fn e2_eof_after_a_semicolonless_match_keeps_the_reference_and_the_checkpoint() {
         "the resolved value differs from the authored spelling"
     );
     assert_eq!(actual.tree.titles[0].contributions[0].authored.raw, "&amp");
+}
+
+// ---------------------------------------------------------------------------
+// Selected Named-reference semantic commit atomicity
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a1_forced_failure_at_the_named_semantic_commit_leaves_no_partial_effect() {
+    // A semicolonless cell, so a diagnostic that would semantically claim a
+    // resolved reference is observable by its absence.
+    let fixture = source(25, "<title>&notit;</title>");
+    let unforced = run_candidate(&fixture, 0, None);
+    let forced = run_candidate_with(&fixture, 0, None, Some(7));
+
+    // The probe is live: without it the same cell resolves and diagnoses.
+    assert_eq!(unforced.completion, Completion::Complete);
+    assert_eq!(unforced.tree.titles[0].text, "\u{00ac}it;");
+    assert_eq!(
+        diagnostic_kinds(&unforced),
+        vec![DiagnosticKind::MissingSemicolonAfterNamedReference]
+    );
+
+    // Refusal is bounded incomplete, never complete.
+    assert_eq!(forced.completion, Completion::SemanticEffectRefused);
+    assert_eq!(forced.terminal, Terminal::ForcedNamedSemanticCommitFailure);
+    assert_ne!(forced.completion, Completion::Complete);
+
+    // Prior valid evidence is preserved.
+    assert_eq!(forced.tree.titles.len(), 1);
+    assert_evidence(
+        &forced.tree.titles[0].start,
+        forced.source_id,
+        &gold_evidence(0, 7, "<title>"),
+    );
+    assert_eq!(forced.tree.mode, InsertionMode::Text);
+    assert_eq!(forced.tree.original_mode, Some(InsertionMode::InHead));
+    assert_eq!(forced.tokenizer_state, LexState::Rcdata);
+    assert!(
+        forced
+            .events
+            .iter()
+            .any(|event| matches!(event, Event::TitleInserted { .. }))
+    );
+    assert!(forced.events.iter().any(|event| matches!(
+        event,
+        Event::FeedbackApplied {
+            from: LexState::Data,
+            to: LexState::Rcdata,
+            ..
+        }
+    )));
+    // The character-reference entry that did succeed stays committed.
+    assert_eq!(forced.character_reference_entries.len(), 1);
+    assert_eq!(forced.tokenizer_cursor, 8);
+    assert_eq!(forced.tokenizer_coverage_end, 8);
+
+    // No partial semantic effect of the refused Named commit survives.
+    assert!(
+        forced.tree.titles[0].contributions.is_empty(),
+        "no resolved Named text contribution is committed"
+    );
+    assert!(forced.tree.titles[0].text.is_empty());
+    assert!(
+        !forced
+            .events
+            .iter()
+            .any(|event| matches!(event, Event::NamedReferenceResolved { .. })),
+        "no NamedReferenceResolved event is committed"
+    );
+    assert!(
+        !forced
+            .events
+            .iter()
+            .any(|event| matches!(event, Event::TextContributed { .. }))
+    );
+    assert!(
+        forced.diagnostics.is_empty(),
+        "no diagnostic claiming a successful Named resolution precedes the failure"
+    );
+    assert!(
+        !forced
+            .events
+            .iter()
+            .any(|event| matches!(event, Event::Produced { class, .. }
+                if matches!(class, TokenClass::NamedReference { .. }))),
+        "the refused match never becomes a produced token"
+    );
+
+    // No close evidence is fabricated, and nothing needs undoing.
+    assert!(forced.tree.titles[0].close.is_none());
+    assert!(!forced.tree.titles[0].eof_closed);
+    assert!(
+        !forced
+            .events
+            .iter()
+            .any(|event| matches!(event, Event::TitleClosed { .. }))
+    );
+    // The maximum match had already been discovered non-committingly.
+    assert_eq!(forced.lookaheads.len(), 1);
+    assert_eq!(forced.lookaheads[0].matched, Some("not"));
+    assert!(evidence_within_committed_coverage(&forced));
+    assert_eq!(validate_candidate_freeze(&forced), Ok(()));
 }
 
 // ---------------------------------------------------------------------------
@@ -2571,22 +2916,49 @@ fn x1_numeric_branch_is_reached_and_deferred_without_a_false_coarse_claim() {
     assert_eq!(numeric.tokenizer_state, LexState::Rcdata);
     assert_eq!(numeric.tree.mode, InsertionMode::Text);
     assert_eq!(numeric.tree.original_mode, Some(InsertionMode::InHead));
-    // Character reference entry was reached.
+    // Character reference entry was reached, and the authored `&` that caused
+    // entry is causally committed: entry evidence never precedes coverage.
     assert_eq!(numeric.character_reference_entries.len(), 1);
     assert_evidence(
         &numeric.character_reference_entries[0],
         numeric.source_id,
         &gold_evidence(7, 8, "&"),
     );
+    assert_eq!(
+        numeric.tokenizer_coverage_end, 8,
+        "the `&` that caused character-reference entry is committed"
+    );
+    assert_eq!(numeric.tokenizer_cursor, 8);
+    assert!(numeric.character_reference_entries[0].end <= numeric.tokenizer_coverage_end);
     assert!(
         numeric
             .events
             .iter()
             .any(|event| matches!(event, Event::CharacterReferenceEntered { .. }))
     );
-    // Nothing beyond the ampersand was committed.
-    assert_eq!(numeric.tokenizer_coverage_end, 7);
+
+    // Nothing is claimed as produced or retained from uncommitted source. The
+    // `#` travels only as the trigger identifying the Numeric branch.
+    assert!(evidence_within_committed_coverage(&numeric));
+    assert!(
+        !numeric
+            .events
+            .iter()
+            .any(|event| matches!(event, Event::Produced { evidence, .. } if evidence.end > 8)),
+        "no Produced event may claim authored bytes beyond committed coverage"
+    );
+    let trigger = numeric
+        .unsupported_trigger
+        .as_ref()
+        .expect("the Numeric branch is identified by an authored trigger");
+    assert_evidence(trigger, numeric.source_id, &gold_evidence(8, 9, "#"));
+    assert!(
+        trigger.end > numeric.tokenizer_coverage_end,
+        "a trigger is not produced or retained evidence"
+    );
     assert!(numeric.tree.titles[0].contributions.is_empty());
+    assert!(numeric.tree.titles[0].close.is_none());
+    assert!(numeric.diagnostics.is_empty());
     assert!(
         numeric.lookaheads.is_empty(),
         "no named match was attempted"
@@ -2643,33 +3015,62 @@ fn x4_title_outside_the_selected_in_head_context_refuses_transactionally() {
 }
 
 #[test]
-fn x5_null_in_rcdata_is_recovered_output_not_a_resolved_reference() {
+fn x5_rcdata_null_recovery_branch_is_outside_the_selected_candidate() {
     let fixture = source(48, "<title>\0</title>");
     let actual = run_candidate(&fixture, 0, None);
-    assert_gold(
-        &actual,
-        &complete_gold(
-            vec![closed_title(
-                gold_evidence(0, 7, "<title>"),
-                "\u{fffd}",
-                vec![GoldContribution {
-                    origin: ContributionOrigin::NullReplacement,
-                    authored: gold_evidence(7, 8, "\0"),
-                    interpreted: "\u{fffd}",
-                }],
-                gold_evidence(8, 16, "</title>"),
-            )],
-            vec![GoldDiagnostic {
-                kind: DiagnosticKind::UnexpectedNullCharacter,
-                at: gold_evidence(7, 8, "\0"),
-            }],
-        ),
+
+    // Title entry succeeded.
+    assert_eq!(actual.tree.titles.len(), 1);
+    assert_evidence(
+        &actual.tree.titles[0].start,
+        actual.source_id,
+        &gold_evidence(0, 7, "<title>"),
     );
-    assert_eq!(validate_candidate_freeze(&actual), Ok(()));
+    // RCDATA entry succeeded.
+    assert_eq!(actual.tokenizer_state, LexState::Rcdata);
+    assert_eq!(actual.tree.mode, InsertionMode::Text);
+    assert_eq!(actual.tree.original_mode, Some(InsertionMode::InHead));
+    assert!(
+        actual
+            .events
+            .iter()
+            .any(|event| matches!(event, Event::FeedbackApplied { .. }))
+    );
+
+    // The NUL-specific RCDATA recovery branch is outside the selected
+    // candidate. The selected candidate is ordinary selected RCDATA text plus
+    // selected Named Character References, not general RCDATA recovery.
+    assert_eq!(actual.completion, Completion::Unsupported);
+    assert_eq!(actual.terminal, Terminal::UnsupportedNullRecoveryBranch);
+    assert_eq!(
+        actual.unsupported_requirement,
+        Some(UnsupportedRequirement::NullRecoveryInRcdata)
+    );
+    let trigger = actual
+        .unsupported_trigger
+        .as_ref()
+        .expect("the NUL branch is identified by an authored trigger");
+    assert_evidence(trigger, actual.source_id, &gold_evidence(7, 8, "\0"));
+
+    // Nothing about that branch is claimed as selected support.
+    assert_eq!(
+        actual.tokenizer_coverage_end, 7,
+        "the NUL scalar is never committed"
+    );
+    assert!(actual.tree.titles[0].contributions.is_empty());
+    assert!(actual.tree.titles[0].text.is_empty());
+    assert!(actual.tree.titles[0].close.is_none());
+    assert!(!actual.tree.titles[0].eof_closed);
+    assert!(
+        actual.diagnostics.is_empty(),
+        "no candidate-owned NUL recovery diagnostic is claimed"
+    );
     assert!(
         actual.character_reference_entries.is_empty(),
-        "NUL recovery is not character-reference decoding"
+        "NUL is not character-reference decoding"
     );
+    assert!(evidence_within_committed_coverage(&actual));
+    assert_eq!(validate_candidate_freeze(&actual), Ok(()));
 }
 
 #[test]
@@ -2873,6 +3274,13 @@ fn c4_freeze_rejects_impossible_terminal_states() {
         Err(FreezeError::CoalescedTextContradictsContributions)
     );
 
+    let mut beyond_coverage = valid.clone();
+    beyond_coverage.tokenizer_coverage_end = 10;
+    assert_eq!(
+        validate_candidate_freeze(&beyond_coverage),
+        Err(FreezeError::EvidenceBeyondCommittedCoverage)
+    );
+
     let eof_source = source(85, "<title>&amp");
     let mut false_complete = run_candidate(&eof_source, 0, None);
     false_complete.completion = Completion::Complete;
@@ -2925,8 +3333,10 @@ fn c5_every_retained_range_is_real_and_never_fabricated() {
             }
         }
         for diagnostic in &observation.diagnostics {
-            let span = &diagnostic.evidence;
-            assert_eq!(span.raw, &fixture.as_str()[span.start..span.end]);
+            assert_eq!(diagnostic.source_id, fixture.id());
+            if let Some(span) = &diagnostic.anchor {
+                assert_eq!(span.raw, &fixture.as_str()[span.start..span.end]);
+            }
         }
         assert!(checked > 0, "every cell retains at least the Title start");
     }
@@ -2982,4 +3392,80 @@ fn c7_gold_is_hand_authored_and_external_heads_are_freshness_markers_only() {
         Vec::new(),
     );
     assert_gold(&actual, &hand_authored);
+}
+
+#[test]
+fn c8_character_reference_diagnostic_anchors_are_not_frozen() {
+    let semicolonless = run_candidate(&source(94, "<title>&notit;</title>"), 0, None);
+    let ambiguous = run_candidate(&source(95, "<title>&bogus;</title>"), 0, None);
+    let preprocessing = run_candidate(&source(96, "<title>&not\u{0001}</title>"), 0, None);
+    let eof = run_candidate(&source(97, "<title>&amp"), 0, None);
+
+    // Candidate-owned character-reference diagnostics keep kind, semantic
+    // site, order, and SourceId, and deliberately carry no raw range: the
+    // durable anchor placement is a future project decision.
+    for observation in [&semicolonless, &ambiguous, &preprocessing] {
+        for diagnostic in &observation.diagnostics {
+            assert_eq!(diagnostic.source_id, observation.source_id);
+            match diagnostic.site {
+                DiagnosticSite::MissingSemicolonForResolvedNamedReference { .. }
+                | DiagnosticSite::UnknownNamedReferenceAtAmbiguousAmpersand { .. } => {
+                    assert_eq!(
+                        diagnostic.anchor, None,
+                        "a candidate-owned character-reference anchor must not be frozen"
+                    );
+                }
+                DiagnosticSite::InputPreprocessingScalar | DiagnosticSite::EofInTitleText => {
+                    assert!(
+                        diagnostic.anchor.is_some(),
+                        "an already-contracted or unambiguous anchor stays exact"
+                    );
+                }
+            }
+        }
+    }
+
+    // The semantic site still relates each diagnostic to its own reference
+    // lifecycle without naming a range.
+    assert_eq!(
+        semicolonless.diagnostics[0].site,
+        DiagnosticSite::MissingSemicolonForResolvedNamedReference {
+            name: "not",
+            entry_index: 0,
+        }
+    );
+    assert_eq!(
+        ambiguous.diagnostics[0].site,
+        DiagnosticSite::UnknownNamedReferenceAtAmbiguousAmpersand { entry_index: 0 }
+    );
+
+    // Ordering remains a theorem.
+    assert_eq!(
+        diagnostic_kinds(&preprocessing),
+        vec![
+            DiagnosticKind::MissingSemicolonAfterNamedReference,
+            DiagnosticKind::ControlCharacterInInputStream,
+        ]
+    );
+    // Preprocessing and EOF evidence is untouched by this remediation.
+    assert_evidence(
+        preprocessing.diagnostics[1]
+            .anchor
+            .as_ref()
+            .expect("preprocessing anchor"),
+        preprocessing.source_id,
+        &gold_evidence(11, 12, "\u{0001}"),
+    );
+    assert_evidence(
+        eof.diagnostics[1].anchor.as_ref().expect("EOF anchor"),
+        eof.source_id,
+        &gold_evidence(11, 11, ""),
+    );
+    // Authored provenance generally is untouched: the resolved reference still
+    // carries its exact authored source contribution.
+    assert_evidence(
+        &semicolonless.tree.titles[0].contributions[0].authored,
+        semicolonless.source_id,
+        &gold_evidence(7, 11, "&not"),
+    );
 }
