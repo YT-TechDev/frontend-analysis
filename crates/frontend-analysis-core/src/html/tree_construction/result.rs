@@ -768,8 +768,12 @@ pub(crate) enum HtmlTreeActionKind {
         name: HtmlShellElementName,
         cause: HtmlSynthesisCause,
     },
-    InsertedTextNode { node: HtmlConstructedNodeId },
-    AppendedToTextNode { node: HtmlConstructedNodeId },
+    InsertedTextNode {
+        node: HtmlConstructedNodeId,
+    },
+    AppendedToTextNode {
+        node: HtmlConstructedNodeId,
+    },
     InsertedAuthoredSelectedOrdinaryElement {
         node: HtmlConstructedNodeId,
         name: HtmlSelectedOrdinaryElementName,
@@ -785,7 +789,9 @@ pub(crate) enum HtmlTreeActionKind {
     IgnoredUnmatchedSelectedOrdinaryEndTag {
         name: HtmlSelectedOrdinaryElementName,
     },
-    InsertedAuthoredParagraphElement { node: HtmlConstructedNodeId },
+    InsertedAuthoredParagraphElement {
+        node: HtmlConstructedNodeId,
+    },
     InsertedSynthesizedParagraphElement {
         node: HtmlConstructedNodeId,
         cause: HtmlParagraphSynthesisCause,
@@ -798,16 +804,26 @@ pub(crate) enum HtmlTreeActionKind {
         node: HtmlConstructedNodeId,
         target: HtmlConstructedNodeId,
     },
-    InsertedAuthoredStyleElement { node: HtmlConstructedNodeId },
-    ClosedStyleElementByAuthoredEndTag { node: HtmlConstructedNodeId },
-    PoppedStyleElementAtEndOfFile { node: HtmlConstructedNodeId },
+    InsertedAuthoredStyleElement {
+        node: HtmlConstructedNodeId,
+    },
+    ClosedStyleElementByAuthoredEndTag {
+        node: HtmlConstructedNodeId,
+    },
+    PoppedStyleElementAtEndOfFile {
+        node: HtmlConstructedNodeId,
+    },
     ClosedShellElement {
         node: HtmlConstructedNodeId,
         name: HtmlShellElementName,
         closure: HtmlShellClosure,
     },
-    AcknowledgedShellEndTag { name: HtmlShellElementName },
-    DuplicateShellStartTagCreatedNoNode { name: HtmlShellElementName },
+    AcknowledgedShellEndTag {
+        name: HtmlShellElementName,
+    },
+    DuplicateShellStartTagCreatedNoNode {
+        name: HtmlShellElementName,
+    },
     ReprocessedToken,
     StoppedParsing,
 }
@@ -1110,111 +1126,274 @@ pub(crate) enum HtmlTreeCompletionUpgrade {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum HtmlTreeFreezeError {
     DuplicateConstructedIdentity(HtmlConstructedNodeId),
-    CreationEventInventoryMismatch { admitted: usize, stored: usize },
+    CreationEventInventoryMismatch {
+        admitted: usize,
+        stored: usize,
+    },
     UnadmittedConstructedIdentity(HtmlConstructedNodeId),
     MissingRootNode(HtmlConstructedNodeId),
     InvalidDocumentRoot(HtmlConstructedNodeId),
     RootMustNotHaveParent(HtmlConstructedNodeId),
     MissingParentRelationship(HtmlConstructedNodeId),
-    UnresolvedRelationship { from: HtmlConstructedNodeId, to: HtmlConstructedNodeId },
-    AsymmetricRelationship { parent: HtmlConstructedNodeId, child: HtmlConstructedNodeId },
-    ChildPrecedesParentCreation { parent: HtmlConstructedNodeId, child: HtmlConstructedNodeId },
-    UnreachableOrCyclicStructure { reachable: usize, stored: usize },
+    UnresolvedRelationship {
+        from: HtmlConstructedNodeId,
+        to: HtmlConstructedNodeId,
+    },
+    AsymmetricRelationship {
+        parent: HtmlConstructedNodeId,
+        child: HtmlConstructedNodeId,
+    },
+    ChildPrecedesParentCreation {
+        parent: HtmlConstructedNodeId,
+        child: HtmlConstructedNodeId,
+    },
+    UnreachableOrCyclicStructure {
+        reachable: usize,
+        stored: usize,
+    },
     InvalidTextContributions(HtmlConstructedNodeId),
-    ForeignSourceEvidence { role: HtmlTreeEvidenceRole, expected: SourceId, actual: SourceId },
-    InvalidSourceEvidence { role: HtmlTreeEvidenceRole, error: SourceRangeError },
-    MismatchedSourceEvidence { role: HtmlTreeEvidenceRole },
+    ForeignSourceEvidence {
+        role: HtmlTreeEvidenceRole,
+        expected: SourceId,
+        actual: SourceId,
+    },
+    InvalidSourceEvidence {
+        role: HtmlTreeEvidenceRole,
+        error: SourceRangeError,
+    },
+    MismatchedSourceEvidence {
+        role: HtmlTreeEvidenceRole,
+    },
     AuthoredNameOutsideCompleteTag(HtmlConstructedNodeId),
     UnresolvedActionSubject(HtmlConstructedNodeId),
-    InvalidTokenProgression { role: HtmlTreeEvidenceRole, token_index: usize },
-    InvalidCommittedCoverage { committed_prefix_end: usize, source_len: usize },
-    CommittedTokensExceedRetainedRun { processed_tokens: usize, emitted_tokens: usize },
+    InvalidTokenProgression {
+        role: HtmlTreeEvidenceRole,
+        token_index: usize,
+    },
+    InvalidCommittedCoverage {
+        committed_prefix_end: usize,
+        source_len: usize,
+    },
+    CommittedTokensExceedRetainedRun {
+        processed_tokens: usize,
+        emitted_tokens: usize,
+    },
     CompletionUpgrade(HtmlTreeCompletionUpgrade),
     UnsupportedTriggerLeakedAsAuthoredOrigin(HtmlConstructedNodeId),
-    ClosureSubjectIsNotTheSelectedOrdinaryElement { node: HtmlConstructedNodeId, name: HtmlSelectedOrdinaryElementName },
+    ClosureSubjectIsNotTheSelectedOrdinaryElement {
+        node: HtmlConstructedNodeId,
+        name: HtmlSelectedOrdinaryElementName,
+    },
     FabricatedSelectedOrdinaryClosure(HtmlConstructedNodeId),
     NonLifoSelectedOrdinaryClosure(HtmlConstructedNodeId),
-    ClosureTriggerIsNotTheMatchingEndTag { node: HtmlConstructedNodeId, token_index: usize },
+    ClosureTriggerIsNotTheMatchingEndTag {
+        node: HtmlConstructedNodeId,
+        token_index: usize,
+    },
     DuplicateSelectedOrdinaryInsertion(HtmlConstructedNodeId),
     FinalOpenSelectedOrdinaryIsNotASelectedElement(HtmlConstructedNodeId),
-    FinalOpenSelectedOrdinaryStateMismatch { replayed: Vec<HtmlConstructedNodeId>, actual: Vec<HtmlConstructedNodeId> },
+    FinalOpenSelectedOrdinaryStateMismatch {
+        replayed: Vec<HtmlConstructedNodeId>,
+        actual: Vec<HtmlConstructedNodeId>,
+    },
     RecoverySubjectIsNotSelectedOrdinaryElement(HtmlConstructedNodeId),
     RecoveryTargetIsNotSelectedOrdinaryElement(HtmlConstructedNodeId),
     SelfTargetingSelectedOrdinaryRecovery(HtmlConstructedNodeId),
-    RecoveryTriggerIsNotMatchingTargetEndTag { node: HtmlConstructedNodeId, token_index: usize },
+    RecoveryTriggerIsNotMatchingTargetEndTag {
+        node: HtmlConstructedNodeId,
+        token_index: usize,
+    },
     RecoveryTargetIsNotNearestMatchingSelectedOrdinary(HtmlConstructedNodeId),
     NonLifoSelectedOrdinaryRecovery(HtmlConstructedNodeId),
     UnterminatedSelectedOrdinaryRecovery(HtmlConstructedNodeId),
-    SelectedOrdinaryRecoveryClosureMismatch { target: HtmlConstructedNodeId, closed: HtmlConstructedNodeId },
-    SelectedOrdinaryRecoveryDiagnosticMismatch { recovery_groups: Vec<usize>, misnested_diagnostics: Vec<usize> },
-    UnmatchedSelectedOrdinaryEndTagDiagnosticMismatch { actions: Vec<usize>, diagnostics: Vec<usize> },
-    DuplicateSelectedOrdinaryEndTokenDecision { token_index: usize },
-    UnmatchedSelectedOrdinaryEndTriggerIsNotTheMatchingEndTag { token_index: usize },
+    SelectedOrdinaryRecoveryClosureMismatch {
+        target: HtmlConstructedNodeId,
+        closed: HtmlConstructedNodeId,
+    },
+    SelectedOrdinaryRecoveryDiagnosticMismatch {
+        recovery_groups: Vec<usize>,
+        misnested_diagnostics: Vec<usize>,
+    },
+    UnmatchedSelectedOrdinaryEndTagDiagnosticMismatch {
+        actions: Vec<usize>,
+        diagnostics: Vec<usize>,
+    },
+    DuplicateSelectedOrdinaryEndTokenDecision {
+        token_index: usize,
+    },
+    UnmatchedSelectedOrdinaryEndTriggerIsNotTheMatchingEndTag {
+        token_index: usize,
+    },
     UnmatchedSelectedOrdinaryEndTagWithOpenTarget(HtmlConstructedNodeId),
     ParagraphActionSubjectIsNotParagraph(HtmlConstructedNodeId),
     DuplicateParagraphInsertion(HtmlConstructedNodeId),
     ParagraphInsertionInventoryMismatch(HtmlConstructedNodeId),
-    ParagraphAuthoredInsertionTriggerMismatch { node: HtmlConstructedNodeId, token_index: usize },
-    ParagraphSynthesizedInsertionTriggerMismatch { node: HtmlConstructedNodeId, token_index: usize },
-    ParagraphClosureTriggerMismatch { node: HtmlConstructedNodeId, token_index: usize },
+    ParagraphAuthoredInsertionTriggerMismatch {
+        node: HtmlConstructedNodeId,
+        token_index: usize,
+    },
+    ParagraphSynthesizedInsertionTriggerMismatch {
+        node: HtmlConstructedNodeId,
+        token_index: usize,
+    },
+    ParagraphClosureTriggerMismatch {
+        node: HtmlConstructedNodeId,
+        token_index: usize,
+    },
     ParagraphImpliedPopTargetIsNotSelectedOrdinaryElement(HtmlConstructedNodeId),
     ParagraphImpliedPopTargetIsNotNearestMatchingSelectedOrdinary(HtmlConstructedNodeId),
-    ParagraphImpliedPopTriggerMismatch { node: HtmlConstructedNodeId, target: HtmlConstructedNodeId, token_index: usize },
-    ParagraphImpliedPopContinuationMismatch { token_index: usize },
+    ParagraphImpliedPopTriggerMismatch {
+        node: HtmlConstructedNodeId,
+        target: HtmlConstructedNodeId,
+        token_index: usize,
+    },
+    ParagraphImpliedPopContinuationMismatch {
+        token_index: usize,
+    },
     NonLifoParagraphInteraction(HtmlConstructedNodeId),
-    ParagraphStartTriggeredInsertionMismatch { token_index: usize },
-    ParagraphSynthesisClosureMismatch { token_index: usize },
-    UnmatchedParagraphDiagnosticMismatch { syntheses: Vec<usize>, diagnostics: Vec<usize> },
+    ParagraphStartTriggeredInsertionMismatch {
+        token_index: usize,
+    },
+    ParagraphSynthesisClosureMismatch {
+        token_index: usize,
+    },
+    UnmatchedParagraphDiagnosticMismatch {
+        syntheses: Vec<usize>,
+        diagnostics: Vec<usize>,
+    },
     FinalOpenParagraphIsNotParagraph(HtmlConstructedNodeId),
-    FinalOpenParagraphStateMismatch { replayed: Option<HtmlConstructedNodeId>, actual: Option<HtmlConstructedNodeId> },
-    MissingBodyEndAcknowledgement { token_index: usize },
-    BodyEndAcknowledgementTriggerMismatch { token_index: usize },
-    DuplicateBodyEndAcknowledgement { token_index: usize },
-    BodyEndAcknowledgementOutsideInBody { token_index: usize },
-    BodyEndDiagnosticCardinalityMismatch { token_index: usize, selected_open: usize, diagnostics: usize },
-    BodyEndDiagnosticTriggerOrRecoveryMismatch { token_index: usize },
-    OrphanBodyEndDiagnostic { token_index: usize },
-    BodyEndSameTriggerMutation { token_index: usize },
-    BodyEndOpenContentReplayMismatch { token_index: usize },
-    BodyEndAfterBodySuccessorMismatch { token_index: usize },
-    BodyEndAfterBodyEofDiagnosticMismatch { token_index: usize },
+    FinalOpenParagraphStateMismatch {
+        replayed: Option<HtmlConstructedNodeId>,
+        actual: Option<HtmlConstructedNodeId>,
+    },
+    MissingBodyEndAcknowledgement {
+        token_index: usize,
+    },
+    BodyEndAcknowledgementTriggerMismatch {
+        token_index: usize,
+    },
+    DuplicateBodyEndAcknowledgement {
+        token_index: usize,
+    },
+    BodyEndAcknowledgementOutsideInBody {
+        token_index: usize,
+    },
+    BodyEndDiagnosticCardinalityMismatch {
+        token_index: usize,
+        selected_open: usize,
+        diagnostics: usize,
+    },
+    BodyEndDiagnosticTriggerOrRecoveryMismatch {
+        token_index: usize,
+    },
+    OrphanBodyEndDiagnostic {
+        token_index: usize,
+    },
+    BodyEndSameTriggerMutation {
+        token_index: usize,
+    },
+    BodyEndOpenContentReplayMismatch {
+        token_index: usize,
+    },
+    BodyEndAfterBodySuccessorMismatch {
+        token_index: usize,
+    },
+    BodyEndAfterBodyEofDiagnosticMismatch {
+        token_index: usize,
+    },
     BodyEndFinalOpenStateMismatch,
-    MissingHtmlEndReprocess { token_index: usize },
-    HtmlEndReprocessTriggerMismatch { token_index: usize },
-    DuplicateHtmlEndReprocess { token_index: usize },
-    MissingHtmlEndAcknowledgement { token_index: usize },
-    HtmlEndAcknowledgementTriggerMismatch { token_index: usize },
-    DuplicateHtmlEndAcknowledgement { token_index: usize },
-    HtmlEndDiagnosticCardinalityMismatch { token_index: usize, selected_open: usize, diagnostics: usize },
-    HtmlEndDiagnosticTriggerOrRecoveryMismatch { token_index: usize },
-    OrphanHtmlEndDiagnostic { token_index: usize },
-    HtmlEndSameTriggerMutation { token_index: usize },
-    HtmlEndOpenContentReplayMismatch { token_index: usize },
+    MissingHtmlEndReprocess {
+        token_index: usize,
+    },
+    HtmlEndReprocessTriggerMismatch {
+        token_index: usize,
+    },
+    DuplicateHtmlEndReprocess {
+        token_index: usize,
+    },
+    MissingHtmlEndAcknowledgement {
+        token_index: usize,
+    },
+    HtmlEndAcknowledgementTriggerMismatch {
+        token_index: usize,
+    },
+    DuplicateHtmlEndAcknowledgement {
+        token_index: usize,
+    },
+    HtmlEndDiagnosticCardinalityMismatch {
+        token_index: usize,
+        selected_open: usize,
+        diagnostics: usize,
+    },
+    HtmlEndDiagnosticTriggerOrRecoveryMismatch {
+        token_index: usize,
+    },
+    OrphanHtmlEndDiagnostic {
+        token_index: usize,
+    },
+    HtmlEndSameTriggerMutation {
+        token_index: usize,
+    },
+    HtmlEndOpenContentReplayMismatch {
+        token_index: usize,
+    },
     OutstandingTokenizerFeedback,
     StyleActionSubjectIsNotStyle(HtmlConstructedNodeId),
     DuplicateStyleInsertion(HtmlConstructedNodeId),
     StyleInsertionInventoryMismatch(HtmlConstructedNodeId),
-    StyleInsertionTriggerMismatch { node: HtmlConstructedNodeId, token_index: usize },
+    StyleInsertionTriggerMismatch {
+        node: HtmlConstructedNodeId,
+        token_index: usize,
+    },
     StyleParentIsNotHead(HtmlConstructedNodeId),
-    StyleHasNonTextChild { style: HtmlConstructedNodeId, child: HtmlConstructedNodeId },
-    StyleCoordinationEntryMismatch { actions: Vec<usize>, coordinated: Vec<usize> },
-    StyleAuthoredCloseTriggerMismatch { node: HtmlConstructedNodeId, token_index: usize },
-    StyleCoordinationCloseMismatch { actions: Vec<usize>, coordinated: Vec<usize> },
-    StyleEndOfFileTriggerMismatch { node: HtmlConstructedNodeId, token_index: usize },
-    StyleEndOfFileDiagnosticMismatch { token_index: usize },
-    StyleEndOfFileRedispatchMismatch { token_index: usize },
-    StyleTextTokenMismatch { token_index: usize },
-    StyleTextParentMismatch { node: HtmlConstructedNodeId, style: HtmlConstructedNodeId },
+    StyleHasNonTextChild {
+        style: HtmlConstructedNodeId,
+        child: HtmlConstructedNodeId,
+    },
+    StyleCoordinationEntryMismatch {
+        actions: Vec<usize>,
+        coordinated: Vec<usize>,
+    },
+    StyleAuthoredCloseTriggerMismatch {
+        node: HtmlConstructedNodeId,
+        token_index: usize,
+    },
+    StyleCoordinationCloseMismatch {
+        actions: Vec<usize>,
+        coordinated: Vec<usize>,
+    },
+    StyleEndOfFileTriggerMismatch {
+        node: HtmlConstructedNodeId,
+        token_index: usize,
+    },
+    StyleEndOfFileDiagnosticMismatch {
+        token_index: usize,
+    },
+    StyleEndOfFileRedispatchMismatch {
+        token_index: usize,
+    },
+    StyleTextTokenMismatch {
+        token_index: usize,
+    },
+    StyleTextParentMismatch {
+        node: HtmlConstructedNodeId,
+        style: HtmlConstructedNodeId,
+    },
     NonLifoStyleInteraction(HtmlConstructedNodeId),
     FinalOpenStyleIsNotStyle(HtmlConstructedNodeId),
     FinalStyleStateMismatch,
     CompleteStyleStateMismatch,
-    OrphanStyleEndOfFileDiagnostic { token_index: usize },
+    OrphanStyleEndOfFileDiagnostic {
+        token_index: usize,
+    },
 }
 
 impl fmt::Display for HtmlTreeFreezeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "HTML document shell freeze invariant violation: {self:?}")
+        write!(
+            formatter,
+            "HTML document shell freeze invariant violation: {self:?}"
+        )
     }
 }
 
@@ -1286,11 +1465,21 @@ pub(super) fn freeze(
         final_open_paragraph,
     )?;
     validate_diagnostic_evidence(source, &diagnostics, tokenizer_run.tokens().len())?;
-    validate_completion(source, &nodes, root, &tokenizer_run, processed_tokens, &completion)?;
+    validate_completion(
+        source,
+        &nodes,
+        root,
+        &tokenizer_run,
+        processed_tokens,
+        &completion,
+    )?;
 
     let source_len = source.as_str().len();
     if committed_prefix_end > source_len {
-        return Err(HtmlTreeFreezeError::InvalidCommittedCoverage { committed_prefix_end, source_len });
+        return Err(HtmlTreeFreezeError::InvalidCommittedCoverage {
+            committed_prefix_end,
+            source_len,
+        });
     }
     if processed_tokens > tokenizer_run.tokens().len() {
         return Err(HtmlTreeFreezeError::CommittedTokensExceedRetainedRun {
@@ -1311,21 +1500,35 @@ pub(super) fn freeze(
         root,
         diagnostics,
         actions,
-        coverage: HtmlTreeCommittedCoverage { committed_prefix, processed_tokens },
+        coverage: HtmlTreeCommittedCoverage {
+            committed_prefix,
+            processed_tokens,
+        },
         completion,
     })
 }
 
-fn validate_identity_inventory(nodes: &[HtmlTreeNode], admitted_creation_events: u32) -> Result<(), HtmlTreeFreezeError> {
+fn validate_identity_inventory(
+    nodes: &[HtmlTreeNode],
+    admitted_creation_events: u32,
+) -> Result<(), HtmlTreeFreezeError> {
     let admitted = admitted_creation_events as usize;
     if nodes.len() != admitted {
-        return Err(HtmlTreeFreezeError::CreationEventInventoryMismatch { admitted, stored: nodes.len() });
+        return Err(HtmlTreeFreezeError::CreationEventInventoryMismatch {
+            admitted,
+            stored: nodes.len(),
+        });
     }
     for (position, node) in nodes.iter().enumerate() {
         if node.id().0 >= admitted_creation_events {
-            return Err(HtmlTreeFreezeError::UnadmittedConstructedIdentity(node.id()));
+            return Err(HtmlTreeFreezeError::UnadmittedConstructedIdentity(
+                node.id(),
+            ));
         }
-        if nodes[..position].iter().any(|earlier| earlier.id() == node.id()) {
+        if nodes[..position]
+            .iter()
+            .any(|earlier| earlier.id() == node.id())
+        {
             return Err(HtmlTreeFreezeError::DuplicateConstructedIdentity(node.id()));
         }
     }
@@ -1336,7 +1539,10 @@ fn find(nodes: &[HtmlTreeNode], id: HtmlConstructedNodeId) -> Option<&HtmlTreeNo
     nodes.iter().find(|node| node.id() == id)
 }
 
-fn validate_structure(nodes: &[HtmlTreeNode], root: HtmlConstructedNodeId) -> Result<(), HtmlTreeFreezeError> {
+fn validate_structure(
+    nodes: &[HtmlTreeNode],
+    root: HtmlConstructedNodeId,
+) -> Result<(), HtmlTreeFreezeError> {
     let root_node = find(nodes, root).ok_or(HtmlTreeFreezeError::MissingRootNode(root))?;
     if !matches!(root_node.kind(), HtmlTreeNodeKind::Document) {
         return Err(HtmlTreeFreezeError::InvalidDocumentRoot(root));
@@ -1349,19 +1555,44 @@ fn validate_structure(nodes: &[HtmlTreeNode], root: HtmlConstructedNodeId) -> Re
             if matches!(node.kind(), HtmlTreeNodeKind::Document) {
                 return Err(HtmlTreeFreezeError::InvalidDocumentRoot(node.id()));
             }
-            let parent_id = node.parent().ok_or(HtmlTreeFreezeError::MissingParentRelationship(node.id()))?;
-            let parent = find(nodes, parent_id).ok_or(HtmlTreeFreezeError::UnresolvedRelationship { from: node.id(), to: parent_id })?;
-            if parent.children().iter().filter(|id| **id == node.id()).count() != 1 {
-                return Err(HtmlTreeFreezeError::AsymmetricRelationship { parent: parent_id, child: node.id() });
+            let parent_id = node
+                .parent()
+                .ok_or(HtmlTreeFreezeError::MissingParentRelationship(node.id()))?;
+            let parent =
+                find(nodes, parent_id).ok_or(HtmlTreeFreezeError::UnresolvedRelationship {
+                    from: node.id(),
+                    to: parent_id,
+                })?;
+            if parent
+                .children()
+                .iter()
+                .filter(|id| **id == node.id())
+                .count()
+                != 1
+            {
+                return Err(HtmlTreeFreezeError::AsymmetricRelationship {
+                    parent: parent_id,
+                    child: node.id(),
+                });
             }
             if parent_id >= node.id() {
-                return Err(HtmlTreeFreezeError::ChildPrecedesParentCreation { parent: parent_id, child: node.id() });
+                return Err(HtmlTreeFreezeError::ChildPrecedesParentCreation {
+                    parent: parent_id,
+                    child: node.id(),
+                });
             }
         }
         for child_id in node.children() {
-            let child = find(nodes, *child_id).ok_or(HtmlTreeFreezeError::UnresolvedRelationship { from: node.id(), to: *child_id })?;
+            let child =
+                find(nodes, *child_id).ok_or(HtmlTreeFreezeError::UnresolvedRelationship {
+                    from: node.id(),
+                    to: *child_id,
+                })?;
             if child.parent() != Some(node.id()) {
-                return Err(HtmlTreeFreezeError::AsymmetricRelationship { parent: node.id(), child: *child_id });
+                return Err(HtmlTreeFreezeError::AsymmetricRelationship {
+                    parent: node.id(),
+                    child: *child_id,
+                });
             }
         }
     }
@@ -1369,31 +1600,46 @@ fn validate_structure(nodes: &[HtmlTreeNode], root: HtmlConstructedNodeId) -> Re
     let mut frontier = vec![root];
     let mut visited = Vec::new();
     while let Some(id) = frontier.pop() {
-        if visited.contains(&id) { continue; }
+        if visited.contains(&id) {
+            continue;
+        }
         visited.push(id);
         reachable += 1;
-        let node = find(nodes, id).ok_or(HtmlTreeFreezeError::UnresolvedRelationship { from: root, to: id })?;
+        let node = find(nodes, id)
+            .ok_or(HtmlTreeFreezeError::UnresolvedRelationship { from: root, to: id })?;
         frontier.extend(node.children().iter().copied());
     }
     if reachable != nodes.len() {
-        return Err(HtmlTreeFreezeError::UnreachableOrCyclicStructure { reachable, stored: nodes.len() });
+        return Err(HtmlTreeFreezeError::UnreachableOrCyclicStructure {
+            reachable,
+            stored: nodes.len(),
+        });
     }
     Ok(())
 }
 
-fn validate_node_evidence(source: &SourceText, nodes: &[HtmlTreeNode]) -> Result<(), HtmlTreeFreezeError> {
+fn validate_node_evidence(
+    source: &SourceText,
+    nodes: &[HtmlTreeNode],
+) -> Result<(), HtmlTreeFreezeError> {
     for node in nodes {
         match node.kind() {
             HtmlTreeNodeKind::Document => {}
             HtmlTreeNodeKind::Element(element) => {
                 let authored = match element {
                     HtmlElement::Shell(shell) => match shell.origin() {
-                        HtmlShellElementOrigin::Authored { complete, raw_name } => Some((complete, raw_name)),
+                        HtmlShellElementOrigin::Authored { complete, raw_name } => {
+                            Some((complete, raw_name))
+                        }
                         HtmlShellElementOrigin::Synthesized(_) => None,
                     },
-                    HtmlElement::SelectedOrdinary(selected) => Some((selected.complete(), selected.raw_name())),
+                    HtmlElement::SelectedOrdinary(selected) => {
+                        Some((selected.complete(), selected.raw_name()))
+                    }
                     HtmlElement::Paragraph(paragraph) => match paragraph.origin() {
-                        HtmlParagraphElementOrigin::Authored { complete, raw_name } => Some((complete, raw_name)),
+                        HtmlParagraphElementOrigin::Authored { complete, raw_name } => {
+                            Some((complete, raw_name))
+                        }
                         HtmlParagraphElementOrigin::Synthesized(_) => None,
                     },
                     HtmlElement::Style(style) => Some((style.complete(), style.raw_name())),
@@ -1401,8 +1647,12 @@ fn validate_node_evidence(source: &SourceText, nodes: &[HtmlTreeNode]) -> Result
                 if let Some((complete, raw_name)) = authored {
                     validate_evidence(source, HtmlTreeEvidenceRole::AuthoredCompleteTag, complete)?;
                     validate_evidence(source, HtmlTreeEvidenceRole::AuthoredRawName, raw_name)?;
-                    if complete.range().start() > raw_name.range().start() || raw_name.range().end() > complete.range().end() {
-                        return Err(HtmlTreeFreezeError::AuthoredNameOutsideCompleteTag(node.id()));
+                    if complete.range().start() > raw_name.range().start()
+                        || raw_name.range().end() > complete.range().end()
+                    {
+                        return Err(HtmlTreeFreezeError::AuthoredNameOutsideCompleteTag(
+                            node.id(),
+                        ));
                     }
                 }
             }
@@ -1413,11 +1663,19 @@ fn validate_node_evidence(source: &SourceText, nodes: &[HtmlTreeNode]) -> Result
                 let mut rebuilt = String::new();
                 let mut previous_end = None;
                 for contribution in text.contributions() {
-                    validate_evidence(source, HtmlTreeEvidenceRole::TextContribution, contribution.source())?;
-                    if contribution.source().range().is_empty() || contribution.interpreted().is_empty() {
+                    validate_evidence(
+                        source,
+                        HtmlTreeEvidenceRole::TextContribution,
+                        contribution.source(),
+                    )?;
+                    if contribution.source().range().is_empty()
+                        || contribution.interpreted().is_empty()
+                    {
                         return Err(HtmlTreeFreezeError::InvalidTextContributions(node.id()));
                     }
-                    if let Some(previous_end) = previous_end && contribution.source().range().start() < previous_end {
+                    if let Some(previous_end) = previous_end
+                        && contribution.source().range().start() < previous_end
+                    {
                         return Err(HtmlTreeFreezeError::InvalidTextContributions(node.id()));
                     }
                     previous_end = Some(contribution.source().range().end());
@@ -1432,11 +1690,24 @@ fn validate_node_evidence(source: &SourceText, nodes: &[HtmlTreeNode]) -> Result
     Ok(())
 }
 
-fn validate_action_evidence(source: &SourceText, nodes: &[HtmlTreeNode], actions: &[HtmlTreeAction], emitted_tokens: usize) -> Result<(), HtmlTreeFreezeError> {
+fn validate_action_evidence(
+    source: &SourceText,
+    nodes: &[HtmlTreeNode],
+    actions: &[HtmlTreeAction],
+    emitted_tokens: usize,
+) -> Result<(), HtmlTreeFreezeError> {
     let mut previous_index = None;
     for action in actions {
-        validate_trigger(source, HtmlTreeEvidenceRole::ActionTrigger, action.trigger(), emitted_tokens, &mut previous_index)?;
-        if let Some(subject) = action.kind().subject() && find(nodes, subject).is_none() {
+        validate_trigger(
+            source,
+            HtmlTreeEvidenceRole::ActionTrigger,
+            action.trigger(),
+            emitted_tokens,
+            &mut previous_index,
+        )?;
+        if let Some(subject) = action.kind().subject()
+            && find(nodes, subject).is_none()
+        {
             return Err(HtmlTreeFreezeError::UnresolvedActionSubject(subject));
         }
     }
@@ -1461,18 +1732,29 @@ fn validate_style_lifecycle(
         return Err(HtmlTreeFreezeError::OutstandingTokenizerFeedback);
     }
 
-    let style_nodes: Vec<HtmlConstructedNodeId> = nodes.iter().filter_map(|node| style(nodes, node.id()).map(|_| node.id())).collect();
+    let style_nodes: Vec<HtmlConstructedNodeId> = nodes
+        .iter()
+        .filter_map(|node| style(nodes, node.id()).map(|_| node.id()))
+        .collect();
     for id in &style_nodes {
         let node = find(nodes, *id).expect("style inventory is stored");
         let Some(parent) = node.parent() else {
             return Err(HtmlTreeFreezeError::StyleParentIsNotHead(*id));
         };
-        if !find(nodes, parent).is_some_and(|node| is_shell_element(node, HtmlShellElementName::Head)) {
+        if !find(nodes, parent)
+            .is_some_and(|node| is_shell_element(node, HtmlShellElementName::Head))
+        {
             return Err(HtmlTreeFreezeError::StyleParentIsNotHead(*id));
         }
         for child in node.children() {
-            if !matches!(find(nodes, *child).map(HtmlTreeNode::kind), Some(HtmlTreeNodeKind::Text(_))) {
-                return Err(HtmlTreeFreezeError::StyleHasNonTextChild { style: *id, child: *child });
+            if !matches!(
+                find(nodes, *child).map(HtmlTreeNode::kind),
+                Some(HtmlTreeNodeKind::Text(_))
+            ) {
+                return Err(HtmlTreeFreezeError::StyleHasNonTextChild {
+                    style: *id,
+                    child: *child,
+                });
             }
         }
     }
@@ -1494,57 +1776,96 @@ fn validate_style_lifecycle(
                 if inserted.contains(node) {
                     return Err(HtmlTreeFreezeError::DuplicateStyleInsertion(*node));
                 }
-                if replayed_open.is_some() || !style_start_matches(element, action.trigger(), tokenizer_run) {
-                    return Err(HtmlTreeFreezeError::StyleInsertionTriggerMismatch { node: *node, token_index });
+                if replayed_open.is_some()
+                    || !style_start_matches(element, action.trigger(), tokenizer_run)
+                {
+                    return Err(HtmlTreeFreezeError::StyleInsertionTriggerMismatch {
+                        node: *node,
+                        token_index,
+                    });
                 }
                 inserted.push(*node);
                 insertion_tokens.push(token_index);
                 replayed_open = Some(*node);
                 episode_start = Some(token_index);
             }
-            HtmlTreeActionKind::InsertedTextNode { node } | HtmlTreeActionKind::AppendedToTextNode { node } if replayed_open.is_some() => {
+            HtmlTreeActionKind::InsertedTextNode { node }
+            | HtmlTreeActionKind::AppendedToTextNode { node }
+                if replayed_open.is_some() =>
+            {
                 let style_id = replayed_open.expect("guarded style open");
                 if find(nodes, *node).and_then(HtmlTreeNode::parent) != Some(style_id) {
-                    return Err(HtmlTreeFreezeError::StyleTextParentMismatch { node: *node, style: style_id });
+                    return Err(HtmlTreeFreezeError::StyleTextParentMismatch {
+                        node: *node,
+                        style: style_id,
+                    });
                 }
                 if !text_action_matches(*node, action.trigger(), tokenizer_run, nodes) {
                     return Err(HtmlTreeFreezeError::StyleTextTokenMismatch { token_index });
                 }
             }
             HtmlTreeActionKind::ClosedStyleElementByAuthoredEndTag { node } => {
-                if replayed_open != Some(*node) || !is_plain_style_trigger(action.trigger(), tokenizer_run, HtmlTagKind::End) {
-                    return Err(HtmlTreeFreezeError::StyleAuthoredCloseTriggerMismatch { node: *node, token_index });
+                if replayed_open != Some(*node)
+                    || !is_plain_style_trigger(action.trigger(), tokenizer_run, HtmlTagKind::End)
+                {
+                    return Err(HtmlTreeFreezeError::StyleAuthoredCloseTriggerMismatch {
+                        node: *node,
+                        token_index,
+                    });
                 }
-                let start = episode_start.ok_or(HtmlTreeFreezeError::NonLifoStyleInteraction(*node))?;
+                let start =
+                    episode_start.ok_or(HtmlTreeFreezeError::NonLifoStyleInteraction(*node))?;
                 validate_raw_text_character_interval(tokenizer_run, start, token_index)?;
                 close_tokens.push(token_index);
                 replayed_open = None;
                 episode_start = None;
             }
             HtmlTreeActionKind::PoppedStyleElementAtEndOfFile { node } => {
-                if replayed_open != Some(*node) || !is_end_of_file_trigger(action.trigger(), tokenizer_run) {
-                    return Err(HtmlTreeFreezeError::StyleEndOfFileTriggerMismatch { node: *node, token_index });
+                if replayed_open != Some(*node)
+                    || !is_end_of_file_trigger(action.trigger(), tokenizer_run)
+                {
+                    return Err(HtmlTreeFreezeError::StyleEndOfFileTriggerMismatch {
+                        node: *node,
+                        token_index,
+                    });
                 }
-                let start = episode_start.ok_or(HtmlTreeFreezeError::NonLifoStyleInteraction(*node))?;
+                let start =
+                    episode_start.ok_or(HtmlTreeFreezeError::NonLifoStyleInteraction(*node))?;
                 validate_raw_text_character_interval(tokenizer_run, start, token_index)?;
-                let eof_diags: Vec<(usize, &HtmlTreeDiagnostic)> = diagnostics.iter().enumerate().filter(|(_, diagnostic)| {
-                    diagnostic.code() == HtmlTreeDiagnosticCode::StyleEndOfFileInText && diagnostic.trigger().token_index() == token_index
-                }).collect();
-                if !matches!(eof_diags.as_slice(), [(index, diagnostic)] if diagnostic.recovery() == HtmlTreeRecovery::PoppedStyleAtEndOfFileAndRestoredInHead && same_trigger(diagnostic.trigger(), action.trigger())) {
-                    return Err(HtmlTreeFreezeError::StyleEndOfFileDiagnosticMismatch { token_index });
+                let eof_diags: Vec<(usize, &HtmlTreeDiagnostic)> = diagnostics
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, diagnostic)| {
+                        diagnostic.code() == HtmlTreeDiagnosticCode::StyleEndOfFileInText
+                            && diagnostic.trigger().token_index() == token_index
+                    })
+                    .collect();
+                if !matches!(eof_diags.as_slice(), [(index, diagnostic)] if diagnostic.recovery() == HtmlTreeRecovery::PoppedStyleAtEndOfFileAndRestoredInHead && same_trigger(diagnostic.trigger(), action.trigger()))
+                {
+                    return Err(HtmlTreeFreezeError::StyleEndOfFileDiagnosticMismatch {
+                        token_index,
+                    });
                 }
                 matched_eof_diagnostics.push(eof_diags[0].0);
                 let Some(next) = actions.get(action_index + 1) else {
-                    return Err(HtmlTreeFreezeError::StyleEndOfFileRedispatchMismatch { token_index });
+                    return Err(HtmlTreeFreezeError::StyleEndOfFileRedispatchMismatch {
+                        token_index,
+                    });
                 };
-                if !matches!(next.kind(), HtmlTreeActionKind::ReprocessedToken) || !same_trigger(next.trigger(), action.trigger()) {
-                    return Err(HtmlTreeFreezeError::StyleEndOfFileRedispatchMismatch { token_index });
+                if !matches!(next.kind(), HtmlTreeActionKind::ReprocessedToken)
+                    || !same_trigger(next.trigger(), action.trigger())
+                {
+                    return Err(HtmlTreeFreezeError::StyleEndOfFileRedispatchMismatch {
+                        token_index,
+                    });
                 }
                 replayed_open = None;
                 episode_start = None;
             }
             HtmlTreeActionKind::ReprocessedToken if replayed_open.is_some() => {
-                return Err(HtmlTreeFreezeError::NonLifoStyleInteraction(replayed_open.expect("guarded style open")));
+                return Err(HtmlTreeFreezeError::NonLifoStyleInteraction(
+                    replayed_open.expect("guarded style open"),
+                ));
             }
             HtmlTreeActionKind::InsertedAuthoredShellElement { .. }
             | HtmlTreeActionKind::InsertedSynthesizedShellElement { .. }
@@ -1559,30 +1880,51 @@ fn validate_style_lifecycle(
             | HtmlTreeActionKind::AcknowledgedShellEndTag { .. }
             | HtmlTreeActionKind::DuplicateShellStartTagCreatedNoNode { .. }
             | HtmlTreeActionKind::IgnoredUnmatchedSelectedOrdinaryEndTag { .. }
-            | HtmlTreeActionKind::StoppedParsing if replayed_open.is_some() => {
-                return Err(HtmlTreeFreezeError::NonLifoStyleInteraction(replayed_open.expect("guarded style open")));
+            | HtmlTreeActionKind::StoppedParsing
+                if replayed_open.is_some() =>
+            {
+                return Err(HtmlTreeFreezeError::NonLifoStyleInteraction(
+                    replayed_open.expect("guarded style open"),
+                ));
             }
             _ => {}
         }
     }
 
     for node in style_nodes {
-        if inserted.iter().filter(|inserted| **inserted == node).count() != 1 {
+        if inserted
+            .iter()
+            .filter(|inserted| **inserted == node)
+            .count()
+            != 1
+        {
             return Err(HtmlTreeFreezeError::StyleInsertionInventoryMismatch(node));
         }
     }
     if insertion_tokens != coordinated_entries {
-        return Err(HtmlTreeFreezeError::StyleCoordinationEntryMismatch { actions: insertion_tokens, coordinated: coordinated_entries.to_vec() });
+        return Err(HtmlTreeFreezeError::StyleCoordinationEntryMismatch {
+            actions: insertion_tokens,
+            coordinated: coordinated_entries.to_vec(),
+        });
     }
     if close_tokens != coordinated_closes {
-        return Err(HtmlTreeFreezeError::StyleCoordinationCloseMismatch { actions: close_tokens, coordinated: coordinated_closes.to_vec() });
+        return Err(HtmlTreeFreezeError::StyleCoordinationCloseMismatch {
+            actions: close_tokens,
+            coordinated: coordinated_closes.to_vec(),
+        });
     }
     for (index, diagnostic) in diagnostics.iter().enumerate() {
-        if diagnostic.code() == HtmlTreeDiagnosticCode::StyleEndOfFileInText && !matched_eof_diagnostics.contains(&index) {
-            return Err(HtmlTreeFreezeError::OrphanStyleEndOfFileDiagnostic { token_index: diagnostic.trigger().token_index() });
+        if diagnostic.code() == HtmlTreeDiagnosticCode::StyleEndOfFileInText
+            && !matched_eof_diagnostics.contains(&index)
+        {
+            return Err(HtmlTreeFreezeError::OrphanStyleEndOfFileDiagnostic {
+                token_index: diagnostic.trigger().token_index(),
+            });
         }
     }
-    if let Some(actual) = final_open_style && style(nodes, actual).is_none() {
+    if let Some(actual) = final_open_style
+        && style(nodes, actual).is_none()
+    {
         return Err(HtmlTreeFreezeError::FinalOpenStyleIsNotStyle(actual));
     }
     if replayed_open != final_open_style {
@@ -1616,8 +1958,14 @@ fn style(nodes: &[HtmlTreeNode], id: HtmlConstructedNodeId) -> Option<&HtmlStyle
     }
 }
 
-fn style_start_matches(style: &HtmlStyleElement, trigger: &HtmlTreeTokenTrigger, tokenizer_run: &HtmlTokenizerRunResult) -> bool {
-    let Some(HtmlToken::Tag(tag)) = tokenizer_run.tokens().get(trigger.token_index()) else { return false; };
+fn style_start_matches(
+    style: &HtmlStyleElement,
+    trigger: &HtmlTreeTokenTrigger,
+    tokenizer_run: &HtmlTokenizerRunResult,
+) -> bool {
+    let Some(HtmlToken::Tag(tag)) = tokenizer_run.tokens().get(trigger.token_index()) else {
+        return false;
+    };
     tag.kind() == HtmlTagKind::Start
         && tag.name().interpreted() == "style"
         && tag.attributes().is_empty()
@@ -1627,8 +1975,14 @@ fn style_start_matches(style: &HtmlStyleElement, trigger: &HtmlTreeTokenTrigger,
         && exact_anchor(Some(style.raw_name()), Some(tag.name().source()))
 }
 
-fn is_plain_style_trigger(trigger: &HtmlTreeTokenTrigger, tokenizer_run: &HtmlTokenizerRunResult, kind: HtmlTagKind) -> bool {
-    let Some(HtmlToken::Tag(tag)) = tokenizer_run.tokens().get(trigger.token_index()) else { return false; };
+fn is_plain_style_trigger(
+    trigger: &HtmlTreeTokenTrigger,
+    tokenizer_run: &HtmlTokenizerRunResult,
+    kind: HtmlTagKind,
+) -> bool {
+    let Some(HtmlToken::Tag(tag)) = tokenizer_run.tokens().get(trigger.token_index()) else {
+        return false;
+    };
     tag.kind() == kind
         && tag.name().interpreted() == "style"
         && tag.attributes().is_empty()
@@ -1636,20 +1990,45 @@ fn is_plain_style_trigger(trigger: &HtmlTreeTokenTrigger, tokenizer_run: &HtmlTo
         && exact_anchor(trigger.authored_boundary(), Some(tag.complete()))
 }
 
-fn text_action_matches(node: HtmlConstructedNodeId, trigger: &HtmlTreeTokenTrigger, tokenizer_run: &HtmlTokenizerRunResult, nodes: &[HtmlTreeNode]) -> bool {
-    let Some(HtmlToken::Character(character)) = tokenizer_run.tokens().get(trigger.token_index()) else { return false; };
-    if !exact_anchor(trigger.authored_boundary(), Some(character.source())) { return false; }
-    let Some(HtmlTreeNodeKind::Text(text)) = find(nodes, node).map(HtmlTreeNode::kind) else { return false; };
+fn text_action_matches(
+    node: HtmlConstructedNodeId,
+    trigger: &HtmlTreeTokenTrigger,
+    tokenizer_run: &HtmlTokenizerRunResult,
+    nodes: &[HtmlTreeNode],
+) -> bool {
+    let Some(HtmlToken::Character(character)) = tokenizer_run.tokens().get(trigger.token_index())
+    else {
+        return false;
+    };
+    if !exact_anchor(trigger.authored_boundary(), Some(character.source())) {
+        return false;
+    }
+    let Some(HtmlTreeNodeKind::Text(text)) = find(nodes, node).map(HtmlTreeNode::kind) else {
+        return false;
+    };
     text.contributions().iter().any(|contribution| {
-        exact_anchor(Some(contribution.source()), Some(character.source())) && contribution.interpreted() == character.interpreted()
+        exact_anchor(Some(contribution.source()), Some(character.source()))
+            && contribution.interpreted() == character.interpreted()
     })
 }
 
-fn validate_raw_text_character_interval(tokenizer_run: &HtmlTokenizerRunResult, start: usize, terminal: usize) -> Result<(), HtmlTreeFreezeError> {
+fn validate_raw_text_character_interval(
+    tokenizer_run: &HtmlTokenizerRunResult,
+    start: usize,
+    terminal: usize,
+) -> Result<(), HtmlTreeFreezeError> {
     if start >= terminal || terminal >= tokenizer_run.tokens().len() {
-        return Err(HtmlTreeFreezeError::StyleTextTokenMismatch { token_index: terminal });
+        return Err(HtmlTreeFreezeError::StyleTextTokenMismatch {
+            token_index: terminal,
+        });
     }
-    for (index, token) in tokenizer_run.tokens().iter().enumerate().take(terminal).skip(start + 1) {
+    for (index, token) in tokenizer_run
+        .tokens()
+        .iter()
+        .enumerate()
+        .take(terminal)
+        .skip(start + 1)
+    {
         if !matches!(token, HtmlToken::Character(_)) {
             return Err(HtmlTreeFreezeError::StyleTextTokenMismatch { token_index: index });
         }
@@ -1676,190 +2055,622 @@ fn validate_selected_ordinary_lifecycle(
             HtmlTreeActionKind::InsertedAuthoredSelectedOrdinaryElement { node, name } => {
                 reject_interleaved_recovery(pending)?;
                 expect_selected_ordinary(nodes, *node, *name)?;
-                if inserted.contains(node) { return Err(HtmlTreeFreezeError::DuplicateSelectedOrdinaryInsertion(*node)); }
+                if inserted.contains(node) {
+                    return Err(HtmlTreeFreezeError::DuplicateSelectedOrdinaryInsertion(
+                        *node,
+                    ));
+                }
                 inserted.push(*node);
                 open.push(*node);
             }
             HtmlTreeActionKind::PoppedSelectedOrdinaryElementByAncestorEndTag { node, target } => {
-                if selected_ordinary_name(nodes, *node).is_none() { return Err(HtmlTreeFreezeError::RecoverySubjectIsNotSelectedOrdinaryElement(*node)); }
-                let Some(target_name) = selected_ordinary_name(nodes, *target) else { return Err(HtmlTreeFreezeError::RecoveryTargetIsNotSelectedOrdinaryElement(*target)); };
-                if node == target { return Err(HtmlTreeFreezeError::SelfTargetingSelectedOrdinaryRecovery(*node)); }
-                if !is_matching_end_tag_trigger(target_name, action.trigger(), tokenizer_run) { return Err(HtmlTreeFreezeError::RecoveryTriggerIsNotMatchingTargetEndTag { node: *node, token_index: action.trigger().token_index() }); }
+                if selected_ordinary_name(nodes, *node).is_none() {
+                    return Err(
+                        HtmlTreeFreezeError::RecoverySubjectIsNotSelectedOrdinaryElement(*node),
+                    );
+                }
+                let Some(target_name) = selected_ordinary_name(nodes, *target) else {
+                    return Err(
+                        HtmlTreeFreezeError::RecoveryTargetIsNotSelectedOrdinaryElement(*target),
+                    );
+                };
+                if node == target {
+                    return Err(HtmlTreeFreezeError::SelfTargetingSelectedOrdinaryRecovery(
+                        *node,
+                    ));
+                }
+                if !is_matching_end_tag_trigger(target_name, action.trigger(), tokenizer_run) {
+                    return Err(
+                        HtmlTreeFreezeError::RecoveryTriggerIsNotMatchingTargetEndTag {
+                            node: *node,
+                            token_index: action.trigger().token_index(),
+                        },
+                    );
+                }
                 match pending {
-                    Some((pending_target, pending_token)) => if pending_target != *target || pending_token != action.trigger().token_index() { return Err(HtmlTreeFreezeError::UnterminatedSelectedOrdinaryRecovery(pending_target)); },
+                    Some((pending_target, pending_token)) => {
+                        if pending_target != *target
+                            || pending_token != action.trigger().token_index()
+                        {
+                            return Err(HtmlTreeFreezeError::UnterminatedSelectedOrdinaryRecovery(
+                                pending_target,
+                            ));
+                        }
+                    }
                     None => {
-                        if nearest_open_selected_ordinary(nodes, &open, target_name) != Some(*target) { return Err(HtmlTreeFreezeError::RecoveryTargetIsNotNearestMatchingSelectedOrdinary(*target)); }
+                        if nearest_open_selected_ordinary(nodes, &open, target_name)
+                            != Some(*target)
+                        {
+                            return Err(HtmlTreeFreezeError::RecoveryTargetIsNotNearestMatchingSelectedOrdinary(*target));
+                        }
                         pending = Some((*target, action.trigger().token_index()));
                     }
                 }
-                if open.last() != Some(node) { return Err(HtmlTreeFreezeError::NonLifoSelectedOrdinaryRecovery(*node)); }
+                if open.last() != Some(node) {
+                    return Err(HtmlTreeFreezeError::NonLifoSelectedOrdinaryRecovery(*node));
+                }
                 open.pop();
             }
             HtmlTreeActionKind::ClosedSelectedOrdinaryElement { node, name } => {
                 expect_selected_ordinary(nodes, *node, *name)?;
                 validate_closure_trigger(*node, *name, action.trigger(), tokenizer_run)?;
                 if let Some((target, token)) = pending {
-                    if target != *node || token != action.trigger().token_index() { return Err(HtmlTreeFreezeError::SelectedOrdinaryRecoveryClosureMismatch { target, closed: *node }); }
-                    recovery_groups.push(ReplayedRecoveryGroup { trigger_token: token, target_name: *name });
+                    if target != *node || token != action.trigger().token_index() {
+                        return Err(
+                            HtmlTreeFreezeError::SelectedOrdinaryRecoveryClosureMismatch {
+                                target,
+                                closed: *node,
+                            },
+                        );
+                    }
+                    recovery_groups.push(ReplayedRecoveryGroup {
+                        trigger_token: token,
+                        target_name: *name,
+                    });
                     pending = None;
                 }
-                if open.last() != Some(node) { return Err(HtmlTreeFreezeError::NonLifoSelectedOrdinaryClosure(*node)); }
+                if open.last() != Some(node) {
+                    return Err(HtmlTreeFreezeError::NonLifoSelectedOrdinaryClosure(*node));
+                }
                 open.pop();
                 spend_end_token(&mut spent_end_tokens, action.trigger().token_index())?;
             }
             HtmlTreeActionKind::IgnoredUnmatchedSelectedOrdinaryEndTag { name } => {
                 reject_interleaved_recovery(pending)?;
-                if !is_matching_end_tag_trigger(*name, action.trigger(), tokenizer_run) { return Err(HtmlTreeFreezeError::UnmatchedSelectedOrdinaryEndTriggerIsNotTheMatchingEndTag { token_index: action.trigger().token_index() }); }
-                if let Some(target) = nearest_open_selected_ordinary(nodes, &open, *name) { return Err(HtmlTreeFreezeError::UnmatchedSelectedOrdinaryEndTagWithOpenTarget(target)); }
+                if !is_matching_end_tag_trigger(*name, action.trigger(), tokenizer_run) {
+                    return Err(HtmlTreeFreezeError::UnmatchedSelectedOrdinaryEndTriggerIsNotTheMatchingEndTag { token_index: action.trigger().token_index() });
+                }
+                if let Some(target) = nearest_open_selected_ordinary(nodes, &open, *name) {
+                    return Err(
+                        HtmlTreeFreezeError::UnmatchedSelectedOrdinaryEndTagWithOpenTarget(target),
+                    );
+                }
                 spend_end_token(&mut spent_end_tokens, action.trigger().token_index())?;
-                ignored_unmatched.push(ReplayedUnmatchedEnd { trigger_token: action.trigger().token_index(), name: *name });
+                ignored_unmatched.push(ReplayedUnmatchedEnd {
+                    trigger_token: action.trigger().token_index(),
+                    name: *name,
+                });
             }
             _ => reject_interleaved_recovery(pending)?,
         }
     }
     reject_interleaved_recovery(pending)?;
-    validate_selected_ordinary_diagnostics(diagnostics, &recovery_groups, &ignored_unmatched, tokenizer_run)?;
+    validate_selected_ordinary_diagnostics(
+        diagnostics,
+        &recovery_groups,
+        &ignored_unmatched,
+        tokenizer_run,
+    )?;
     for id in final_open_selected_ordinary {
-        if selected_ordinary_name(nodes, *id).is_none() { return Err(HtmlTreeFreezeError::FinalOpenSelectedOrdinaryIsNotASelectedElement(*id)); }
+        if selected_ordinary_name(nodes, *id).is_none() {
+            return Err(HtmlTreeFreezeError::FinalOpenSelectedOrdinaryIsNotASelectedElement(*id));
+        }
     }
-    if open != final_open_selected_ordinary { return Err(HtmlTreeFreezeError::FinalOpenSelectedOrdinaryStateMismatch { replayed: open, actual: final_open_selected_ordinary.to_vec() }); }
+    if open != final_open_selected_ordinary {
+        return Err(
+            HtmlTreeFreezeError::FinalOpenSelectedOrdinaryStateMismatch {
+                replayed: open,
+                actual: final_open_selected_ordinary.to_vec(),
+            },
+        );
+    }
     Ok(())
 }
 
-struct ReplayedRecoveryGroup { trigger_token: usize, target_name: HtmlSelectedOrdinaryElementName }
-struct ReplayedUnmatchedEnd { trigger_token: usize, name: HtmlSelectedOrdinaryElementName }
+struct ReplayedRecoveryGroup {
+    trigger_token: usize,
+    target_name: HtmlSelectedOrdinaryElementName,
+}
+struct ReplayedUnmatchedEnd {
+    trigger_token: usize,
+    name: HtmlSelectedOrdinaryElementName,
+}
 
 fn spend_end_token(spent: &mut Vec<usize>, token_index: usize) -> Result<(), HtmlTreeFreezeError> {
-    if spent.contains(&token_index) { return Err(HtmlTreeFreezeError::DuplicateSelectedOrdinaryEndTokenDecision { token_index }); }
+    if spent.contains(&token_index) {
+        return Err(HtmlTreeFreezeError::DuplicateSelectedOrdinaryEndTokenDecision { token_index });
+    }
     spent.push(token_index);
     Ok(())
 }
 
-const fn reject_interleaved_recovery(pending: Option<(HtmlConstructedNodeId, usize)>) -> Result<(), HtmlTreeFreezeError> {
-    match pending { Some((target, _)) => Err(HtmlTreeFreezeError::UnterminatedSelectedOrdinaryRecovery(target)), None => Ok(()) }
+const fn reject_interleaved_recovery(
+    pending: Option<(HtmlConstructedNodeId, usize)>,
+) -> Result<(), HtmlTreeFreezeError> {
+    match pending {
+        Some((target, _)) => Err(HtmlTreeFreezeError::UnterminatedSelectedOrdinaryRecovery(
+            target,
+        )),
+        None => Ok(()),
+    }
 }
 
-fn validate_selected_ordinary_diagnostics(diagnostics: &[HtmlTreeDiagnostic], recovery_groups: &[ReplayedRecoveryGroup], ignored_unmatched: &[ReplayedUnmatchedEnd], tokenizer_run: &HtmlTokenizerRunResult) -> Result<(), HtmlTreeFreezeError> {
-    let misnested: Vec<&HtmlTreeDiagnostic> = diagnostics.iter().filter(|d| d.code() == HtmlTreeDiagnosticCode::MisnestedSelectedOrdinaryEndTag).collect();
+fn validate_selected_ordinary_diagnostics(
+    diagnostics: &[HtmlTreeDiagnostic],
+    recovery_groups: &[ReplayedRecoveryGroup],
+    ignored_unmatched: &[ReplayedUnmatchedEnd],
+    tokenizer_run: &HtmlTokenizerRunResult,
+) -> Result<(), HtmlTreeFreezeError> {
+    let misnested: Vec<&HtmlTreeDiagnostic> = diagnostics
+        .iter()
+        .filter(|d| d.code() == HtmlTreeDiagnosticCode::MisnestedSelectedOrdinaryEndTag)
+        .collect();
     let group_tokens: Vec<usize> = recovery_groups.iter().map(|g| g.trigger_token).collect();
-    let misnested_tokens: Vec<usize> = misnested.iter().map(|d| d.trigger().token_index()).collect();
-    let paired = group_tokens == misnested_tokens && recovery_groups.iter().zip(&misnested).all(|(g,d)| d.recovery() == HtmlTreeRecovery::PoppedInterveningSelectedOrdinaryElementsAndClosedTarget && is_matching_end_tag_trigger(g.target_name, d.trigger(), tokenizer_run));
-    if !paired { return Err(HtmlTreeFreezeError::SelectedOrdinaryRecoveryDiagnosticMismatch { recovery_groups: group_tokens, misnested_diagnostics: misnested_tokens }); }
-    let unmatched: Vec<&HtmlTreeDiagnostic> = diagnostics.iter().filter(|d| d.code() == HtmlTreeDiagnosticCode::UnmatchedSelectedOrdinaryEndTag).collect();
+    let misnested_tokens: Vec<usize> = misnested
+        .iter()
+        .map(|d| d.trigger().token_index())
+        .collect();
+    let paired = group_tokens == misnested_tokens
+        && recovery_groups.iter().zip(&misnested).all(|(g, d)| {
+            d.recovery()
+                == HtmlTreeRecovery::PoppedInterveningSelectedOrdinaryElementsAndClosedTarget
+                && is_matching_end_tag_trigger(g.target_name, d.trigger(), tokenizer_run)
+        });
+    if !paired {
+        return Err(
+            HtmlTreeFreezeError::SelectedOrdinaryRecoveryDiagnosticMismatch {
+                recovery_groups: group_tokens,
+                misnested_diagnostics: misnested_tokens,
+            },
+        );
+    }
+    let unmatched: Vec<&HtmlTreeDiagnostic> = diagnostics
+        .iter()
+        .filter(|d| d.code() == HtmlTreeDiagnosticCode::UnmatchedSelectedOrdinaryEndTag)
+        .collect();
     let action_tokens: Vec<usize> = ignored_unmatched.iter().map(|e| e.trigger_token).collect();
-    let diagnostic_tokens: Vec<usize> = unmatched.iter().map(|d| d.trigger().token_index()).collect();
-    let paired = action_tokens == diagnostic_tokens && ignored_unmatched.iter().zip(&unmatched).all(|(e,d)| d.recovery() == HtmlTreeRecovery::IgnoredToken && is_matching_end_tag_trigger(e.name, d.trigger(), tokenizer_run));
-    if !paired { return Err(HtmlTreeFreezeError::UnmatchedSelectedOrdinaryEndTagDiagnosticMismatch { actions: action_tokens, diagnostics: diagnostic_tokens }); }
+    let diagnostic_tokens: Vec<usize> = unmatched
+        .iter()
+        .map(|d| d.trigger().token_index())
+        .collect();
+    let paired = action_tokens == diagnostic_tokens
+        && ignored_unmatched.iter().zip(&unmatched).all(|(e, d)| {
+            d.recovery() == HtmlTreeRecovery::IgnoredToken
+                && is_matching_end_tag_trigger(e.name, d.trigger(), tokenizer_run)
+        });
+    if !paired {
+        return Err(
+            HtmlTreeFreezeError::UnmatchedSelectedOrdinaryEndTagDiagnosticMismatch {
+                actions: action_tokens,
+                diagnostics: diagnostic_tokens,
+            },
+        );
+    }
     Ok(())
 }
 
-fn selected_ordinary_name(nodes: &[HtmlTreeNode], id: HtmlConstructedNodeId) -> Option<HtmlSelectedOrdinaryElementName> {
+fn selected_ordinary_name(
+    nodes: &[HtmlTreeNode],
+    id: HtmlConstructedNodeId,
+) -> Option<HtmlSelectedOrdinaryElementName> {
     match find(nodes, id)?.kind() {
         HtmlTreeNodeKind::Element(HtmlElement::SelectedOrdinary(selected)) => Some(selected.name()),
         _ => None,
     }
 }
 
-fn nearest_open_selected_ordinary(nodes: &[HtmlTreeNode], open: &[HtmlConstructedNodeId], name: HtmlSelectedOrdinaryElementName) -> Option<HtmlConstructedNodeId> {
-    open.iter().rev().copied().find(|id| selected_ordinary_name(nodes, *id) == Some(name))
+fn nearest_open_selected_ordinary(
+    nodes: &[HtmlTreeNode],
+    open: &[HtmlConstructedNodeId],
+    name: HtmlSelectedOrdinaryElementName,
+) -> Option<HtmlConstructedNodeId> {
+    open.iter()
+        .rev()
+        .copied()
+        .find(|id| selected_ordinary_name(nodes, *id) == Some(name))
 }
 
-fn validate_closure_trigger(node: HtmlConstructedNodeId, name: HtmlSelectedOrdinaryElementName, trigger: &HtmlTreeTokenTrigger, tokenizer_run: &HtmlTokenizerRunResult) -> Result<(), HtmlTreeFreezeError> {
-    if trigger.authored_boundary().is_none() { return Err(HtmlTreeFreezeError::FabricatedSelectedOrdinaryClosure(node)); }
-    if is_matching_end_tag_trigger(name, trigger, tokenizer_run) { Ok(()) } else { Err(HtmlTreeFreezeError::ClosureTriggerIsNotTheMatchingEndTag { node, token_index: trigger.token_index() }) }
+fn validate_closure_trigger(
+    node: HtmlConstructedNodeId,
+    name: HtmlSelectedOrdinaryElementName,
+    trigger: &HtmlTreeTokenTrigger,
+    tokenizer_run: &HtmlTokenizerRunResult,
+) -> Result<(), HtmlTreeFreezeError> {
+    if trigger.authored_boundary().is_none() {
+        return Err(HtmlTreeFreezeError::FabricatedSelectedOrdinaryClosure(node));
+    }
+    if is_matching_end_tag_trigger(name, trigger, tokenizer_run) {
+        Ok(())
+    } else {
+        Err(HtmlTreeFreezeError::ClosureTriggerIsNotTheMatchingEndTag {
+            node,
+            token_index: trigger.token_index(),
+        })
+    }
 }
 
-fn is_matching_end_tag_trigger(name: HtmlSelectedOrdinaryElementName, trigger: &HtmlTreeTokenTrigger, tokenizer_run: &HtmlTokenizerRunResult) -> bool {
-    is_exact_tag_trigger(trigger, tokenizer_run, HtmlTagKind::End, &[name.interpreted()])
+fn is_matching_end_tag_trigger(
+    name: HtmlSelectedOrdinaryElementName,
+    trigger: &HtmlTreeTokenTrigger,
+    tokenizer_run: &HtmlTokenizerRunResult,
+) -> bool {
+    is_exact_tag_trigger(
+        trigger,
+        tokenizer_run,
+        HtmlTagKind::End,
+        &[name.interpreted()],
+    )
 }
 
-fn expect_selected_ordinary(nodes: &[HtmlTreeNode], id: HtmlConstructedNodeId, name: HtmlSelectedOrdinaryElementName) -> Result<(), HtmlTreeFreezeError> {
-    if find(nodes, id).is_none() { return Err(HtmlTreeFreezeError::UnresolvedActionSubject(id)); }
-    if selected_ordinary_name(nodes, id) == Some(name) { Ok(()) } else { Err(HtmlTreeFreezeError::ClosureSubjectIsNotTheSelectedOrdinaryElement { node: id, name }) }
+fn expect_selected_ordinary(
+    nodes: &[HtmlTreeNode],
+    id: HtmlConstructedNodeId,
+    name: HtmlSelectedOrdinaryElementName,
+) -> Result<(), HtmlTreeFreezeError> {
+    if find(nodes, id).is_none() {
+        return Err(HtmlTreeFreezeError::UnresolvedActionSubject(id));
+    }
+    if selected_ordinary_name(nodes, id) == Some(name) {
+        Ok(())
+    } else {
+        Err(HtmlTreeFreezeError::ClosureSubjectIsNotTheSelectedOrdinaryElement { node: id, name })
+    }
 }
 
-fn validate_paragraph_lifecycle(nodes: &[HtmlTreeNode], actions: &[HtmlTreeAction], diagnostics: &[HtmlTreeDiagnostic], tokenizer_run: &HtmlTokenizerRunResult, final_open_paragraph: Option<HtmlConstructedNodeId>) -> Result<(), HtmlTreeFreezeError> {
-    let paragraph_nodes: Vec<HtmlConstructedNodeId> = nodes.iter().filter_map(|node| paragraph(nodes, node.id()).map(|_| node.id())).collect();
+fn validate_paragraph_lifecycle(
+    nodes: &[HtmlTreeNode],
+    actions: &[HtmlTreeAction],
+    diagnostics: &[HtmlTreeDiagnostic],
+    tokenizer_run: &HtmlTokenizerRunResult,
+    final_open_paragraph: Option<HtmlConstructedNodeId>,
+) -> Result<(), HtmlTreeFreezeError> {
+    let paragraph_nodes: Vec<HtmlConstructedNodeId> = nodes
+        .iter()
+        .filter_map(|node| paragraph(nodes, node.id()).map(|_| node.id()))
+        .collect();
     let mut inserted = Vec::new();
     let mut open_content = Vec::new();
     let mut synthesis_tokens = Vec::new();
     for (index, action) in actions.iter().enumerate() {
         match action.kind() {
             HtmlTreeActionKind::InsertedAuthoredSelectedOrdinaryElement { node, .. } => {
-                if open_content.iter().any(|open| paragraph(nodes, *open).is_some()) { return Err(HtmlTreeFreezeError::NonLifoParagraphInteraction(*node)); }
+                if open_content
+                    .iter()
+                    .any(|open| paragraph(nodes, *open).is_some())
+                {
+                    return Err(HtmlTreeFreezeError::NonLifoParagraphInteraction(*node));
+                }
                 open_content.push(*node);
             }
-            HtmlTreeActionKind::PoppedSelectedOrdinaryElementByAncestorEndTag { node, .. } | HtmlTreeActionKind::ClosedSelectedOrdinaryElement { node, .. } => {
-                if open_content.last() != Some(node) { return Err(HtmlTreeFreezeError::NonLifoParagraphInteraction(*node)); }
+            HtmlTreeActionKind::PoppedSelectedOrdinaryElementByAncestorEndTag { node, .. }
+            | HtmlTreeActionKind::ClosedSelectedOrdinaryElement { node, .. } => {
+                if open_content.last() != Some(node) {
+                    return Err(HtmlTreeFreezeError::NonLifoParagraphInteraction(*node));
+                }
                 open_content.pop();
             }
             HtmlTreeActionKind::InsertedAuthoredParagraphElement { node } => {
-                let Some(element) = paragraph(nodes, *node) else { return Err(HtmlTreeFreezeError::ParagraphActionSubjectIsNotParagraph(*node)); };
-                if inserted.contains(node) { return Err(HtmlTreeFreezeError::DuplicateParagraphInsertion(*node)); }
-                if open_content.iter().any(|open| paragraph(nodes, *open).is_some()) { return Err(HtmlTreeFreezeError::NonLifoParagraphInteraction(*node)); }
-                if !paragraph_authored_insertion_matches(element, action.trigger(), tokenizer_run) { return Err(HtmlTreeFreezeError::ParagraphAuthoredInsertionTriggerMismatch { node: *node, token_index: action.trigger().token_index() }); }
-                inserted.push(*node); open_content.push(*node);
+                let Some(element) = paragraph(nodes, *node) else {
+                    return Err(HtmlTreeFreezeError::ParagraphActionSubjectIsNotParagraph(
+                        *node,
+                    ));
+                };
+                if inserted.contains(node) {
+                    return Err(HtmlTreeFreezeError::DuplicateParagraphInsertion(*node));
+                }
+                if open_content
+                    .iter()
+                    .any(|open| paragraph(nodes, *open).is_some())
+                {
+                    return Err(HtmlTreeFreezeError::NonLifoParagraphInteraction(*node));
+                }
+                if !paragraph_authored_insertion_matches(element, action.trigger(), tokenizer_run) {
+                    return Err(
+                        HtmlTreeFreezeError::ParagraphAuthoredInsertionTriggerMismatch {
+                            node: *node,
+                            token_index: action.trigger().token_index(),
+                        },
+                    );
+                }
+                inserted.push(*node);
+                open_content.push(*node);
             }
             HtmlTreeActionKind::InsertedSynthesizedParagraphElement { node, cause } => {
-                let Some(element) = paragraph(nodes, *node) else { return Err(HtmlTreeFreezeError::ParagraphActionSubjectIsNotParagraph(*node)); };
-                if inserted.contains(node) { return Err(HtmlTreeFreezeError::DuplicateParagraphInsertion(*node)); }
-                if open_content.iter().any(|open| paragraph(nodes, *open).is_some()) { return Err(HtmlTreeFreezeError::NonLifoParagraphInteraction(*node)); }
-                if *cause != HtmlParagraphSynthesisCause::UnmatchedParagraphEndTag || !matches!(element.origin(), HtmlParagraphElementOrigin::Synthesized(HtmlParagraphSynthesisCause::UnmatchedParagraphEndTag)) || !is_exact_tag_trigger(action.trigger(), tokenizer_run, HtmlTagKind::End, &["p"]) { return Err(HtmlTreeFreezeError::ParagraphSynthesizedInsertionTriggerMismatch { node: *node, token_index: action.trigger().token_index() }); }
-                inserted.push(*node); open_content.push(*node); synthesis_tokens.push(action.trigger().token_index());
-                let Some(next) = actions.get(index + 1) else { return Err(HtmlTreeFreezeError::ParagraphSynthesisClosureMismatch { token_index: action.trigger().token_index() }); };
-                if !matches!(next.kind(), HtmlTreeActionKind::ClosedParagraphElement { node: closed, closure: HtmlParagraphClosure::UnmatchedEndTagSynthesized } if *closed == *node && same_trigger(next.trigger(), action.trigger())) { return Err(HtmlTreeFreezeError::ParagraphSynthesisClosureMismatch { token_index: action.trigger().token_index() }); }
+                let Some(element) = paragraph(nodes, *node) else {
+                    return Err(HtmlTreeFreezeError::ParagraphActionSubjectIsNotParagraph(
+                        *node,
+                    ));
+                };
+                if inserted.contains(node) {
+                    return Err(HtmlTreeFreezeError::DuplicateParagraphInsertion(*node));
+                }
+                if open_content
+                    .iter()
+                    .any(|open| paragraph(nodes, *open).is_some())
+                {
+                    return Err(HtmlTreeFreezeError::NonLifoParagraphInteraction(*node));
+                }
+                if *cause != HtmlParagraphSynthesisCause::UnmatchedParagraphEndTag
+                    || !matches!(
+                        element.origin(),
+                        HtmlParagraphElementOrigin::Synthesized(
+                            HtmlParagraphSynthesisCause::UnmatchedParagraphEndTag
+                        )
+                    )
+                    || !is_exact_tag_trigger(
+                        action.trigger(),
+                        tokenizer_run,
+                        HtmlTagKind::End,
+                        &["p"],
+                    )
+                {
+                    return Err(
+                        HtmlTreeFreezeError::ParagraphSynthesizedInsertionTriggerMismatch {
+                            node: *node,
+                            token_index: action.trigger().token_index(),
+                        },
+                    );
+                }
+                inserted.push(*node);
+                open_content.push(*node);
+                synthesis_tokens.push(action.trigger().token_index());
+                let Some(next) = actions.get(index + 1) else {
+                    return Err(HtmlTreeFreezeError::ParagraphSynthesisClosureMismatch {
+                        token_index: action.trigger().token_index(),
+                    });
+                };
+                if !matches!(next.kind(), HtmlTreeActionKind::ClosedParagraphElement { node: closed, closure: HtmlParagraphClosure::UnmatchedEndTagSynthesized } if *closed == *node && same_trigger(next.trigger(), action.trigger()))
+                {
+                    return Err(HtmlTreeFreezeError::ParagraphSynthesisClosureMismatch {
+                        token_index: action.trigger().token_index(),
+                    });
+                }
             }
             HtmlTreeActionKind::PoppedParagraphElementBySelectedOrdinaryEndTag { node, target } => {
-                if paragraph(nodes, *node).is_none() { return Err(HtmlTreeFreezeError::ParagraphActionSubjectIsNotParagraph(*node)); }
-                let Some(target_name) = selected_ordinary_name(nodes, *target) else { return Err(HtmlTreeFreezeError::ParagraphImpliedPopTargetIsNotSelectedOrdinaryElement(*target)); };
-                if open_content.last() != Some(node) { return Err(HtmlTreeFreezeError::NonLifoParagraphInteraction(*node)); }
-                if nearest_open_selected_ordinary(nodes, &open_content, target_name) != Some(*target) { return Err(HtmlTreeFreezeError::ParagraphImpliedPopTargetIsNotNearestMatchingSelectedOrdinary(*target)); }
-                if !is_matching_end_tag_trigger(target_name, action.trigger(), tokenizer_run) { return Err(HtmlTreeFreezeError::ParagraphImpliedPopTriggerMismatch { node: *node, target: *target, token_index: action.trigger().token_index() }); }
+                if paragraph(nodes, *node).is_none() {
+                    return Err(HtmlTreeFreezeError::ParagraphActionSubjectIsNotParagraph(
+                        *node,
+                    ));
+                }
+                let Some(target_name) = selected_ordinary_name(nodes, *target) else {
+                    return Err(
+                        HtmlTreeFreezeError::ParagraphImpliedPopTargetIsNotSelectedOrdinaryElement(
+                            *target,
+                        ),
+                    );
+                };
+                if open_content.last() != Some(node) {
+                    return Err(HtmlTreeFreezeError::NonLifoParagraphInteraction(*node));
+                }
+                if nearest_open_selected_ordinary(nodes, &open_content, target_name)
+                    != Some(*target)
+                {
+                    return Err(HtmlTreeFreezeError::ParagraphImpliedPopTargetIsNotNearestMatchingSelectedOrdinary(*target));
+                }
+                if !is_matching_end_tag_trigger(target_name, action.trigger(), tokenizer_run) {
+                    return Err(HtmlTreeFreezeError::ParagraphImpliedPopTriggerMismatch {
+                        node: *node,
+                        target: *target,
+                        token_index: action.trigger().token_index(),
+                    });
+                }
                 open_content.pop();
-                let Some(next) = actions.get(index + 1) else { return Err(HtmlTreeFreezeError::ParagraphImpliedPopContinuationMismatch { token_index: action.trigger().token_index() }); };
-                let continuation = match next.kind() { HtmlTreeActionKind::PoppedSelectedOrdinaryElementByAncestorEndTag { target: recovery_target, .. } => *recovery_target == *target, HtmlTreeActionKind::ClosedSelectedOrdinaryElement { node: closed, name } => *closed == *target && *name == target_name, _ => false };
-                if !same_trigger(next.trigger(), action.trigger()) || !continuation { return Err(HtmlTreeFreezeError::ParagraphImpliedPopContinuationMismatch { token_index: action.trigger().token_index() }); }
+                let Some(next) = actions.get(index + 1) else {
+                    return Err(
+                        HtmlTreeFreezeError::ParagraphImpliedPopContinuationMismatch {
+                            token_index: action.trigger().token_index(),
+                        },
+                    );
+                };
+                let continuation = match next.kind() {
+                    HtmlTreeActionKind::PoppedSelectedOrdinaryElementByAncestorEndTag {
+                        target: recovery_target,
+                        ..
+                    } => *recovery_target == *target,
+                    HtmlTreeActionKind::ClosedSelectedOrdinaryElement { node: closed, name } => {
+                        *closed == *target && *name == target_name
+                    }
+                    _ => false,
+                };
+                if !same_trigger(next.trigger(), action.trigger()) || !continuation {
+                    return Err(
+                        HtmlTreeFreezeError::ParagraphImpliedPopContinuationMismatch {
+                            token_index: action.trigger().token_index(),
+                        },
+                    );
+                }
             }
             HtmlTreeActionKind::ClosedParagraphElement { node, closure } => {
-                if paragraph(nodes, *node).is_none() { return Err(HtmlTreeFreezeError::ParagraphActionSubjectIsNotParagraph(*node)); }
-                if open_content.last() != Some(node) { return Err(HtmlTreeFreezeError::NonLifoParagraphInteraction(*node)); }
-                let valid = match closure { HtmlParagraphClosure::MatchingEndTag | HtmlParagraphClosure::UnmatchedEndTagSynthesized => is_exact_tag_trigger(action.trigger(), tokenizer_run, HtmlTagKind::End, &["p"]), HtmlParagraphClosure::StartTriggered => is_exact_tag_trigger(action.trigger(), tokenizer_run, HtmlTagKind::Start, &["p", "div", "section"]) };
-                if !valid { return Err(HtmlTreeFreezeError::ParagraphClosureTriggerMismatch { node: *node, token_index: action.trigger().token_index() }); }
-                if *closure == HtmlParagraphClosure::UnmatchedEndTagSynthesized && !matches!(paragraph(nodes, *node).map(HtmlParagraphElement::origin), Some(HtmlParagraphElementOrigin::Synthesized(HtmlParagraphSynthesisCause::UnmatchedParagraphEndTag))) { return Err(HtmlTreeFreezeError::ParagraphClosureTriggerMismatch { node: *node, token_index: action.trigger().token_index() }); }
+                if paragraph(nodes, *node).is_none() {
+                    return Err(HtmlTreeFreezeError::ParagraphActionSubjectIsNotParagraph(
+                        *node,
+                    ));
+                }
+                if open_content.last() != Some(node) {
+                    return Err(HtmlTreeFreezeError::NonLifoParagraphInteraction(*node));
+                }
+                let valid = match closure {
+                    HtmlParagraphClosure::MatchingEndTag
+                    | HtmlParagraphClosure::UnmatchedEndTagSynthesized => is_exact_tag_trigger(
+                        action.trigger(),
+                        tokenizer_run,
+                        HtmlTagKind::End,
+                        &["p"],
+                    ),
+                    HtmlParagraphClosure::StartTriggered => is_exact_tag_trigger(
+                        action.trigger(),
+                        tokenizer_run,
+                        HtmlTagKind::Start,
+                        &["p", "div", "section"],
+                    ),
+                };
+                if !valid {
+                    return Err(HtmlTreeFreezeError::ParagraphClosureTriggerMismatch {
+                        node: *node,
+                        token_index: action.trigger().token_index(),
+                    });
+                }
+                if *closure == HtmlParagraphClosure::UnmatchedEndTagSynthesized
+                    && !matches!(
+                        paragraph(nodes, *node).map(HtmlParagraphElement::origin),
+                        Some(HtmlParagraphElementOrigin::Synthesized(
+                            HtmlParagraphSynthesisCause::UnmatchedParagraphEndTag
+                        ))
+                    )
+                {
+                    return Err(HtmlTreeFreezeError::ParagraphClosureTriggerMismatch {
+                        node: *node,
+                        token_index: action.trigger().token_index(),
+                    });
+                }
                 open_content.pop();
                 if *closure == HtmlParagraphClosure::StartTriggered {
-                    let Some(next) = actions.get(index + 1) else { return Err(HtmlTreeFreezeError::ParagraphStartTriggeredInsertionMismatch { token_index: action.trigger().token_index() }); };
+                    let Some(next) = actions.get(index + 1) else {
+                        return Err(
+                            HtmlTreeFreezeError::ParagraphStartTriggeredInsertionMismatch {
+                                token_index: action.trigger().token_index(),
+                            },
+                        );
+                    };
                     let expected = retained_start_tag_name(action.trigger(), tokenizer_run);
-                    let matches_next = matches!((expected, next.kind()), (Some("p"), HtmlTreeActionKind::InsertedAuthoredParagraphElement { .. }) | (Some("div"), HtmlTreeActionKind::InsertedAuthoredSelectedOrdinaryElement { name: HtmlSelectedOrdinaryElementName::Div, .. }) | (Some("section"), HtmlTreeActionKind::InsertedAuthoredSelectedOrdinaryElement { name: HtmlSelectedOrdinaryElementName::Section, .. }));
-                    if !same_trigger(next.trigger(), action.trigger()) || !matches_next { return Err(HtmlTreeFreezeError::ParagraphStartTriggeredInsertionMismatch { token_index: action.trigger().token_index() }); }
+                    let matches_next = matches!(
+                        (expected, next.kind()),
+                        (
+                            Some("p"),
+                            HtmlTreeActionKind::InsertedAuthoredParagraphElement { .. }
+                        ) | (
+                            Some("div"),
+                            HtmlTreeActionKind::InsertedAuthoredSelectedOrdinaryElement {
+                                name: HtmlSelectedOrdinaryElementName::Div,
+                                ..
+                            }
+                        ) | (
+                            Some("section"),
+                            HtmlTreeActionKind::InsertedAuthoredSelectedOrdinaryElement {
+                                name: HtmlSelectedOrdinaryElementName::Section,
+                                ..
+                            }
+                        )
+                    );
+                    if !same_trigger(next.trigger(), action.trigger()) || !matches_next {
+                        return Err(
+                            HtmlTreeFreezeError::ParagraphStartTriggeredInsertionMismatch {
+                                token_index: action.trigger().token_index(),
+                            },
+                        );
+                    }
                 }
             }
             _ => {}
         }
     }
-    for node in paragraph_nodes { if inserted.iter().filter(|inserted| **inserted == node).count() != 1 { return Err(HtmlTreeFreezeError::ParagraphInsertionInventoryMismatch(node)); } }
-    let unmatched: Vec<&HtmlTreeDiagnostic> = diagnostics.iter().filter(|d| d.code() == HtmlTreeDiagnosticCode::UnmatchedParagraphEndTag).collect();
-    let diagnostic_tokens: Vec<usize> = unmatched.iter().map(|d| d.trigger().token_index()).collect();
-    if synthesis_tokens != diagnostic_tokens || !unmatched.iter().all(|d| d.recovery() == HtmlTreeRecovery::SynthesizedParagraphElementAndClosedIt && is_exact_tag_trigger(d.trigger(), tokenizer_run, HtmlTagKind::End, &["p"])) { return Err(HtmlTreeFreezeError::UnmatchedParagraphDiagnosticMismatch { syntheses: synthesis_tokens, diagnostics: diagnostic_tokens }); }
-    let replayed_paragraphs: Vec<HtmlConstructedNodeId> = open_content.iter().copied().filter(|id| paragraph(nodes, *id).is_some()).collect();
-    if replayed_paragraphs.len() > 1 || replayed_paragraphs.first().is_some_and(|paragraph| open_content.last() != Some(paragraph)) { return Err(HtmlTreeFreezeError::NonLifoParagraphInteraction(*replayed_paragraphs.last().expect("invalid Paragraph state is non-empty"))); }
+    for node in paragraph_nodes {
+        if inserted
+            .iter()
+            .filter(|inserted| **inserted == node)
+            .count()
+            != 1
+        {
+            return Err(HtmlTreeFreezeError::ParagraphInsertionInventoryMismatch(
+                node,
+            ));
+        }
+    }
+    let unmatched: Vec<&HtmlTreeDiagnostic> = diagnostics
+        .iter()
+        .filter(|d| d.code() == HtmlTreeDiagnosticCode::UnmatchedParagraphEndTag)
+        .collect();
+    let diagnostic_tokens: Vec<usize> = unmatched
+        .iter()
+        .map(|d| d.trigger().token_index())
+        .collect();
+    if synthesis_tokens != diagnostic_tokens
+        || !unmatched.iter().all(|d| {
+            d.recovery() == HtmlTreeRecovery::SynthesizedParagraphElementAndClosedIt
+                && is_exact_tag_trigger(d.trigger(), tokenizer_run, HtmlTagKind::End, &["p"])
+        })
+    {
+        return Err(HtmlTreeFreezeError::UnmatchedParagraphDiagnosticMismatch {
+            syntheses: synthesis_tokens,
+            diagnostics: diagnostic_tokens,
+        });
+    }
+    let replayed_paragraphs: Vec<HtmlConstructedNodeId> = open_content
+        .iter()
+        .copied()
+        .filter(|id| paragraph(nodes, *id).is_some())
+        .collect();
+    if replayed_paragraphs.len() > 1
+        || replayed_paragraphs
+            .first()
+            .is_some_and(|paragraph| open_content.last() != Some(paragraph))
+    {
+        return Err(HtmlTreeFreezeError::NonLifoParagraphInteraction(
+            *replayed_paragraphs
+                .last()
+                .expect("invalid Paragraph state is non-empty"),
+        ));
+    }
     let replayed = replayed_paragraphs.first().copied();
-    if let Some(actual) = final_open_paragraph && paragraph(nodes, actual).is_none() { return Err(HtmlTreeFreezeError::FinalOpenParagraphIsNotParagraph(actual)); }
-    if replayed != final_open_paragraph { return Err(HtmlTreeFreezeError::FinalOpenParagraphStateMismatch { replayed, actual: final_open_paragraph }); }
+    if let Some(actual) = final_open_paragraph
+        && paragraph(nodes, actual).is_none()
+    {
+        return Err(HtmlTreeFreezeError::FinalOpenParagraphIsNotParagraph(
+            actual,
+        ));
+    }
+    if replayed != final_open_paragraph {
+        return Err(HtmlTreeFreezeError::FinalOpenParagraphStateMismatch {
+            replayed,
+            actual: final_open_paragraph,
+        });
+    }
     Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ReplayedBodyPosition { In, After, AfterAfter }
+enum ReplayedBodyPosition {
+    In,
+    After,
+    AfterAfter,
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ReplayedBodyCharacterClass { AllHtmlWhitespace, AllNonHtmlWhitespace, Mixed }
+enum ReplayedBodyCharacterClass {
+    AllHtmlWhitespace,
+    AllNonHtmlWhitespace,
+    Mixed,
+}
 #[derive(Debug, Clone)]
-struct PendingSelectedHtmlEnd { token_index: usize, trigger: HtmlTreeTokenTrigger, reprocess_action_index: usize, open_content: Vec<HtmlConstructedNodeId> }
+struct PendingSelectedHtmlEnd {
+    token_index: usize,
+    trigger: HtmlTreeTokenTrigger,
+    reprocess_action_index: usize,
+    open_content: Vec<HtmlConstructedNodeId>,
+}
 
 fn validate_body_and_html_end_open_stack_transitions(
-    nodes: &[HtmlTreeNode], actions: &[HtmlTreeAction], diagnostics: &[HtmlTreeDiagnostic], tokenizer_run: &HtmlTokenizerRunResult, processed_tokens: usize, final_open_selected_ordinary: &[HtmlConstructedNodeId], final_open_paragraph: Option<HtmlConstructedNodeId>,
+    nodes: &[HtmlTreeNode],
+    actions: &[HtmlTreeAction],
+    diagnostics: &[HtmlTreeDiagnostic],
+    tokenizer_run: &HtmlTokenizerRunResult,
+    processed_tokens: usize,
+    final_open_selected_ordinary: &[HtmlConstructedNodeId],
+    final_open_paragraph: Option<HtmlConstructedNodeId>,
 ) -> Result<(), HtmlTreeFreezeError> {
-    let body = nodes.iter().find(|node| is_shell_element(node, HtmlShellElementName::Body)).map(HtmlTreeNode::id);
+    let body = nodes
+        .iter()
+        .find(|node| is_shell_element(node, HtmlShellElementName::Body))
+        .map(HtmlTreeNode::id);
     let mut position = None;
     let mut in_body_entry_action_index = None;
     let mut open_content = Vec::new();
@@ -1873,92 +2684,656 @@ fn validate_body_and_html_end_open_stack_transitions(
     let mut consumed_successor_text_tokens = Vec::new();
     for (action_index, action) in actions.iter().enumerate() {
         let token_index = action.trigger().token_index();
-        if let Some((pending_token, _)) = pending_reprocessed_text && pending_token != token_index { return Err(HtmlTreeFreezeError::BodyEndAfterBodySuccessorMismatch { token_index: pending_token }); }
-        if let Some(pending) = &pending_selected_html_end && action_index > pending.reprocess_action_index {
-            if pending.token_index != token_index { return Err(HtmlTreeFreezeError::MissingHtmlEndAcknowledgement { token_index: pending.token_index }); }
-            match action.kind() { HtmlTreeActionKind::AcknowledgedShellEndTag { name: HtmlShellElementName::Html } => {}, HtmlTreeActionKind::ReprocessedToken => return Err(HtmlTreeFreezeError::DuplicateHtmlEndReprocess { token_index }), _ => return Err(HtmlTreeFreezeError::HtmlEndSameTriggerMutation { token_index }) }
+        if let Some((pending_token, _)) = pending_reprocessed_text
+            && pending_token != token_index
+        {
+            return Err(HtmlTreeFreezeError::BodyEndAfterBodySuccessorMismatch {
+                token_index: pending_token,
+            });
+        }
+        if let Some(pending) = &pending_selected_html_end
+            && action_index > pending.reprocess_action_index
+        {
+            if pending.token_index != token_index {
+                return Err(HtmlTreeFreezeError::MissingHtmlEndAcknowledgement {
+                    token_index: pending.token_index,
+                });
+            }
+            match action.kind() {
+                HtmlTreeActionKind::AcknowledgedShellEndTag {
+                    name: HtmlShellElementName::Html,
+                } => {}
+                HtmlTreeActionKind::ReprocessedToken => {
+                    return Err(HtmlTreeFreezeError::DuplicateHtmlEndReprocess { token_index });
+                }
+                _ => return Err(HtmlTreeFreezeError::HtmlEndSameTriggerMutation { token_index }),
+            }
         }
         match action.kind() {
-            HtmlTreeActionKind::InsertedAuthoredShellElement { name: HtmlShellElementName::Body, .. } | HtmlTreeActionKind::InsertedSynthesizedShellElement { name: HtmlShellElementName::Body, .. } => { position = Some(ReplayedBodyPosition::In); in_body_entry_action_index = Some(action_index); }
-            HtmlTreeActionKind::InsertedAuthoredSelectedOrdinaryElement { node, .. } => open_content.push(*node),
-            HtmlTreeActionKind::PoppedSelectedOrdinaryElementByAncestorEndTag { node, .. } | HtmlTreeActionKind::ClosedSelectedOrdinaryElement { node, .. } => { if open_content.last() != Some(node) { return Err(HtmlTreeFreezeError::BodyEndOpenContentReplayMismatch { token_index }); } open_content.pop(); }
-            HtmlTreeActionKind::InsertedAuthoredParagraphElement { node } | HtmlTreeActionKind::InsertedSynthesizedParagraphElement { node, .. } => open_content.push(*node),
-            HtmlTreeActionKind::ClosedParagraphElement { node, .. } | HtmlTreeActionKind::PoppedParagraphElementBySelectedOrdinaryEndTag { node, .. } => { if open_content.last() != Some(node) { return Err(HtmlTreeFreezeError::BodyEndOpenContentReplayMismatch { token_index }); } open_content.pop(); }
-            HtmlTreeActionKind::AcknowledgedShellEndTag { name: HtmlShellElementName::Body } => {
-                if !is_plain_body_end_trigger(action.trigger(), tokenizer_run) { return Err(HtmlTreeFreezeError::BodyEndAcknowledgementTriggerMismatch { token_index }); }
-                if body_end_tokens.contains(&token_index) { return Err(HtmlTreeFreezeError::DuplicateBodyEndAcknowledgement { token_index }); }
-                if position != Some(ReplayedBodyPosition::In) { return Err(HtmlTreeFreezeError::BodyEndAcknowledgementOutsideInBody { token_index }); }
-                let selected_open = open_content.iter().filter(|id| selected_ordinary_name(nodes, **id).is_some()).count();
-                let body_diags: Vec<(usize,&HtmlTreeDiagnostic)> = diagnostics.iter().enumerate().filter(|(_,d)| d.code()==HtmlTreeDiagnosticCode::BodyEndTagWithOpenSelectedOrdinaryElements && d.trigger().token_index()==token_index).collect();
+            HtmlTreeActionKind::InsertedAuthoredShellElement {
+                name: HtmlShellElementName::Body,
+                ..
+            }
+            | HtmlTreeActionKind::InsertedSynthesizedShellElement {
+                name: HtmlShellElementName::Body,
+                ..
+            } => {
+                position = Some(ReplayedBodyPosition::In);
+                in_body_entry_action_index = Some(action_index);
+            }
+            HtmlTreeActionKind::InsertedAuthoredSelectedOrdinaryElement { node, .. } => {
+                open_content.push(*node)
+            }
+            HtmlTreeActionKind::PoppedSelectedOrdinaryElementByAncestorEndTag { node, .. }
+            | HtmlTreeActionKind::ClosedSelectedOrdinaryElement { node, .. } => {
+                if open_content.last() != Some(node) {
+                    return Err(HtmlTreeFreezeError::BodyEndOpenContentReplayMismatch {
+                        token_index,
+                    });
+                }
+                open_content.pop();
+            }
+            HtmlTreeActionKind::InsertedAuthoredParagraphElement { node }
+            | HtmlTreeActionKind::InsertedSynthesizedParagraphElement { node, .. } => {
+                open_content.push(*node)
+            }
+            HtmlTreeActionKind::ClosedParagraphElement { node, .. }
+            | HtmlTreeActionKind::PoppedParagraphElementBySelectedOrdinaryEndTag { node, .. } => {
+                if open_content.last() != Some(node) {
+                    return Err(HtmlTreeFreezeError::BodyEndOpenContentReplayMismatch {
+                        token_index,
+                    });
+                }
+                open_content.pop();
+            }
+            HtmlTreeActionKind::AcknowledgedShellEndTag {
+                name: HtmlShellElementName::Body,
+            } => {
+                if !is_plain_body_end_trigger(action.trigger(), tokenizer_run) {
+                    return Err(HtmlTreeFreezeError::BodyEndAcknowledgementTriggerMismatch {
+                        token_index,
+                    });
+                }
+                if body_end_tokens.contains(&token_index) {
+                    return Err(HtmlTreeFreezeError::DuplicateBodyEndAcknowledgement {
+                        token_index,
+                    });
+                }
+                if position != Some(ReplayedBodyPosition::In) {
+                    return Err(HtmlTreeFreezeError::BodyEndAcknowledgementOutsideInBody {
+                        token_index,
+                    });
+                }
+                let selected_open = open_content
+                    .iter()
+                    .filter(|id| selected_ordinary_name(nodes, **id).is_some())
+                    .count();
+                let body_diags: Vec<(usize, &HtmlTreeDiagnostic)> = diagnostics
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, d)| {
+                        d.code()
+                            == HtmlTreeDiagnosticCode::BodyEndTagWithOpenSelectedOrdinaryElements
+                            && d.trigger().token_index() == token_index
+                    })
+                    .collect();
                 let expected = usize::from(selected_open != 0);
-                if body_diags.len()!=expected { return Err(HtmlTreeFreezeError::BodyEndDiagnosticCardinalityMismatch { token_index, selected_open, diagnostics: body_diags.len() }); }
-                if let [(idx,d)] = body_diags.as_slice() { if d.recovery()!=HtmlTreeRecovery::SwitchedToAfterBodyPreservingOpenElements || !same_trigger(d.trigger(),action.trigger()) { return Err(HtmlTreeFreezeError::BodyEndDiagnosticTriggerOrRecoveryMismatch { token_index }); } matched_body_diagnostics.push(*idx); }
-                body_end_tokens.push(token_index); position=Some(ReplayedBodyPosition::After);
+                if body_diags.len() != expected {
+                    return Err(HtmlTreeFreezeError::BodyEndDiagnosticCardinalityMismatch {
+                        token_index,
+                        selected_open,
+                        diagnostics: body_diags.len(),
+                    });
+                }
+                if let [(idx, d)] = body_diags.as_slice() {
+                    if d.recovery() != HtmlTreeRecovery::SwitchedToAfterBodyPreservingOpenElements
+                        || !same_trigger(d.trigger(), action.trigger())
+                    {
+                        return Err(
+                            HtmlTreeFreezeError::BodyEndDiagnosticTriggerOrRecoveryMismatch {
+                                token_index,
+                            },
+                        );
+                    }
+                    matched_body_diagnostics.push(*idx);
+                }
+                body_end_tokens.push(token_index);
+                position = Some(ReplayedBodyPosition::After);
             }
-            HtmlTreeActionKind::ReprocessedToken if position==Some(ReplayedBodyPosition::In) => {
-                let predecessor = action_index.checked_sub(1).and_then(|i| actions.get(i)).is_some_and(|p| matches!(p.kind(),HtmlTreeActionKind::InsertedSynthesizedShellElement{name:HtmlShellElementName::Body,..}) && same_trigger(p.trigger(),action.trigger()));
-                if predecessor { in_body_entry_action_index=Some(action_index); continue; }
-                if !is_plain_html_end_trigger(action.trigger(),tokenizer_run) { return Err(HtmlTreeFreezeError::HtmlEndReprocessTriggerMismatch{token_index}); }
-                let Some(entry)=in_body_entry_action_index else { return Err(HtmlTreeFreezeError::HtmlEndOpenContentReplayMismatch{token_index}); };
-                if actions.iter().enumerate().skip(entry+1).take(action_index.saturating_sub(entry+1)).any(|(_,c)|same_trigger(c.trigger(),action.trigger())) { return Err(HtmlTreeFreezeError::HtmlEndSameTriggerMutation{token_index}); }
-                if selected_html_end_tokens.contains(&token_index) { return Err(HtmlTreeFreezeError::DuplicateHtmlEndReprocess{token_index}); }
-                let selected_open=open_content.iter().filter(|id|selected_ordinary_name(nodes,**id).is_some()).count();
-                let html_diags:Vec<(usize,&HtmlTreeDiagnostic)>=diagnostics.iter().enumerate().filter(|(_,d)|d.code()==HtmlTreeDiagnosticCode::HtmlEndTagWithOpenSelectedOrdinaryElements&&d.trigger().token_index()==token_index).collect();
-                if html_diags.len()!=usize::from(selected_open!=0){return Err(HtmlTreeFreezeError::HtmlEndDiagnosticCardinalityMismatch{token_index,selected_open,diagnostics:html_diags.len()});}
-                if let [(idx,d)]=html_diags.as_slice(){if d.recovery()!=HtmlTreeRecovery::SwitchedToAfterBodyPreservingOpenElements||!same_trigger(d.trigger(),action.trigger()){return Err(HtmlTreeFreezeError::HtmlEndDiagnosticTriggerOrRecoveryMismatch{token_index});}matched_html_diagnostics.push(*idx);}
-                selected_html_end_tokens.push(token_index); pending_selected_html_end=Some(PendingSelectedHtmlEnd{token_index,trigger:action.trigger().clone(),reprocess_action_index:action_index,open_content:open_content.clone()}); position=Some(ReplayedBodyPosition::After);
+            HtmlTreeActionKind::ReprocessedToken if position == Some(ReplayedBodyPosition::In) => {
+                let predecessor = action_index
+                    .checked_sub(1)
+                    .and_then(|i| actions.get(i))
+                    .is_some_and(|p| {
+                        matches!(
+                            p.kind(),
+                            HtmlTreeActionKind::InsertedSynthesizedShellElement {
+                                name: HtmlShellElementName::Body,
+                                ..
+                            }
+                        ) && same_trigger(p.trigger(), action.trigger())
+                    });
+                if predecessor {
+                    in_body_entry_action_index = Some(action_index);
+                    continue;
+                }
+                if !is_plain_html_end_trigger(action.trigger(), tokenizer_run) {
+                    return Err(HtmlTreeFreezeError::HtmlEndReprocessTriggerMismatch {
+                        token_index,
+                    });
+                }
+                let Some(entry) = in_body_entry_action_index else {
+                    return Err(HtmlTreeFreezeError::HtmlEndOpenContentReplayMismatch {
+                        token_index,
+                    });
+                };
+                if actions
+                    .iter()
+                    .enumerate()
+                    .skip(entry + 1)
+                    .take(action_index.saturating_sub(entry + 1))
+                    .any(|(_, c)| same_trigger(c.trigger(), action.trigger()))
+                {
+                    return Err(HtmlTreeFreezeError::HtmlEndSameTriggerMutation { token_index });
+                }
+                if selected_html_end_tokens.contains(&token_index) {
+                    return Err(HtmlTreeFreezeError::DuplicateHtmlEndReprocess { token_index });
+                }
+                let selected_open = open_content
+                    .iter()
+                    .filter(|id| selected_ordinary_name(nodes, **id).is_some())
+                    .count();
+                let html_diags: Vec<(usize, &HtmlTreeDiagnostic)> = diagnostics
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, d)| {
+                        d.code()
+                            == HtmlTreeDiagnosticCode::HtmlEndTagWithOpenSelectedOrdinaryElements
+                            && d.trigger().token_index() == token_index
+                    })
+                    .collect();
+                if html_diags.len() != usize::from(selected_open != 0) {
+                    return Err(HtmlTreeFreezeError::HtmlEndDiagnosticCardinalityMismatch {
+                        token_index,
+                        selected_open,
+                        diagnostics: html_diags.len(),
+                    });
+                }
+                if let [(idx, d)] = html_diags.as_slice() {
+                    if d.recovery() != HtmlTreeRecovery::SwitchedToAfterBodyPreservingOpenElements
+                        || !same_trigger(d.trigger(), action.trigger())
+                    {
+                        return Err(
+                            HtmlTreeFreezeError::HtmlEndDiagnosticTriggerOrRecoveryMismatch {
+                                token_index,
+                            },
+                        );
+                    }
+                    matched_html_diagnostics.push(*idx);
+                }
+                selected_html_end_tokens.push(token_index);
+                pending_selected_html_end = Some(PendingSelectedHtmlEnd {
+                    token_index,
+                    trigger: action.trigger().clone(),
+                    reprocess_action_index: action_index,
+                    open_content: open_content.clone(),
+                });
+                position = Some(ReplayedBodyPosition::After);
             }
-            HtmlTreeActionKind::AcknowledgedShellEndTag{name:HtmlShellElementName::Html} => {
-                if !is_plain_html_end_trigger(action.trigger(),tokenizer_run){return Err(HtmlTreeFreezeError::HtmlEndAcknowledgementTriggerMismatch{token_index});}
-                if html_end_tokens.contains(&token_index){return Err(HtmlTreeFreezeError::DuplicateHtmlEndAcknowledgement{token_index});}
-                if position!=Some(ReplayedBodyPosition::After){return Err(HtmlTreeFreezeError::MissingHtmlEndReprocess{token_index});}
-                if let Some(pending)=pending_selected_html_end.take(){if action_index!=pending.reprocess_action_index+1||!same_trigger(action.trigger(),&pending.trigger){return Err(HtmlTreeFreezeError::HtmlEndAcknowledgementTriggerMismatch{token_index});}if open_content!=pending.open_content{return Err(HtmlTreeFreezeError::HtmlEndOpenContentReplayMismatch{token_index});}}
-                html_end_tokens.push(token_index);position=Some(ReplayedBodyPosition::AfterAfter);
+            HtmlTreeActionKind::AcknowledgedShellEndTag {
+                name: HtmlShellElementName::Html,
+            } => {
+                if !is_plain_html_end_trigger(action.trigger(), tokenizer_run) {
+                    return Err(HtmlTreeFreezeError::HtmlEndAcknowledgementTriggerMismatch {
+                        token_index,
+                    });
+                }
+                if html_end_tokens.contains(&token_index) {
+                    return Err(HtmlTreeFreezeError::DuplicateHtmlEndAcknowledgement {
+                        token_index,
+                    });
+                }
+                if position != Some(ReplayedBodyPosition::After) {
+                    return Err(HtmlTreeFreezeError::MissingHtmlEndReprocess { token_index });
+                }
+                if let Some(pending) = pending_selected_html_end.take() {
+                    if action_index != pending.reprocess_action_index + 1
+                        || !same_trigger(action.trigger(), &pending.trigger)
+                    {
+                        return Err(HtmlTreeFreezeError::HtmlEndAcknowledgementTriggerMismatch {
+                            token_index,
+                        });
+                    }
+                    if open_content != pending.open_content {
+                        return Err(HtmlTreeFreezeError::HtmlEndOpenContentReplayMismatch {
+                            token_index,
+                        });
+                    }
+                }
+                html_end_tokens.push(token_index);
+                position = Some(ReplayedBodyPosition::AfterAfter);
             }
-            HtmlTreeActionKind::ReprocessedToken if position==Some(ReplayedBodyPosition::After)=>{
-                if replayed_body_character_class(action.trigger(),tokenizer_run)!=Some(ReplayedBodyCharacterClass::AllNonHtmlWhitespace){return Err(HtmlTreeFreezeError::BodyEndAfterBodySuccessorMismatch{token_index});}
-                let Some(expected_parent)=open_content.last().copied().or(body) else{return Err(HtmlTreeFreezeError::BodyEndAfterBodySuccessorMismatch{token_index});};
-                pending_reprocessed_text=Some((token_index,expected_parent));position=Some(ReplayedBodyPosition::In);in_body_entry_action_index=Some(action_index);
+            HtmlTreeActionKind::ReprocessedToken
+                if position == Some(ReplayedBodyPosition::After) =>
+            {
+                if replayed_body_character_class(action.trigger(), tokenizer_run)
+                    != Some(ReplayedBodyCharacterClass::AllNonHtmlWhitespace)
+                {
+                    return Err(HtmlTreeFreezeError::BodyEndAfterBodySuccessorMismatch {
+                        token_index,
+                    });
+                }
+                let Some(expected_parent) = open_content.last().copied().or(body) else {
+                    return Err(HtmlTreeFreezeError::BodyEndAfterBodySuccessorMismatch {
+                        token_index,
+                    });
+                };
+                pending_reprocessed_text = Some((token_index, expected_parent));
+                position = Some(ReplayedBodyPosition::In);
+                in_body_entry_action_index = Some(action_index);
             }
-            HtmlTreeActionKind::InsertedTextNode{node}|HtmlTreeActionKind::AppendedToTextNode{node}=>{
-                if let Some((pending_token,expected_parent))=pending_reprocessed_text{if pending_token!=token_index||find(nodes,*node).and_then(HtmlTreeNode::parent)!=Some(expected_parent){return Err(HtmlTreeFreezeError::BodyEndAfterBodySuccessorMismatch{token_index});}pending_reprocessed_text=None;consumed_successor_text_tokens.push(token_index);} else if position==Some(ReplayedBodyPosition::After)&&!body_end_tokens.is_empty(){let Some(expected_parent)=open_content.last().copied().or(body) else{return Err(HtmlTreeFreezeError::BodyEndAfterBodySuccessorMismatch{token_index});};if replayed_body_character_class(action.trigger(),tokenizer_run)!=Some(ReplayedBodyCharacterClass::AllHtmlWhitespace)||find(nodes,*node).and_then(HtmlTreeNode::parent)!=Some(expected_parent)||consumed_successor_text_tokens.contains(&token_index){return Err(HtmlTreeFreezeError::BodyEndAfterBodySuccessorMismatch{token_index});}consumed_successor_text_tokens.push(token_index);}
+            HtmlTreeActionKind::InsertedTextNode { node }
+            | HtmlTreeActionKind::AppendedToTextNode { node } => {
+                if let Some((pending_token, expected_parent)) = pending_reprocessed_text {
+                    if pending_token != token_index
+                        || find(nodes, *node).and_then(HtmlTreeNode::parent)
+                            != Some(expected_parent)
+                    {
+                        return Err(HtmlTreeFreezeError::BodyEndAfterBodySuccessorMismatch {
+                            token_index,
+                        });
+                    }
+                    pending_reprocessed_text = None;
+                    consumed_successor_text_tokens.push(token_index);
+                } else if position == Some(ReplayedBodyPosition::After)
+                    && !body_end_tokens.is_empty()
+                {
+                    let Some(expected_parent) = open_content.last().copied().or(body) else {
+                        return Err(HtmlTreeFreezeError::BodyEndAfterBodySuccessorMismatch {
+                            token_index,
+                        });
+                    };
+                    if replayed_body_character_class(action.trigger(), tokenizer_run)
+                        != Some(ReplayedBodyCharacterClass::AllHtmlWhitespace)
+                        || find(nodes, *node).and_then(HtmlTreeNode::parent)
+                            != Some(expected_parent)
+                        || consumed_successor_text_tokens.contains(&token_index)
+                    {
+                        return Err(HtmlTreeFreezeError::BodyEndAfterBodySuccessorMismatch {
+                            token_index,
+                        });
+                    }
+                    consumed_successor_text_tokens.push(token_index);
+                }
             }
-            HtmlTreeActionKind::StoppedParsing if matches!(position,Some(ReplayedBodyPosition::After|ReplayedBodyPosition::AfterAfter))=>{if !is_end_of_file_trigger(action.trigger(),tokenizer_run){return Err(HtmlTreeFreezeError::BodyEndAfterBodySuccessorMismatch{token_index});}let selected_is_open=open_content.iter().any(|id|selected_ordinary_name(nodes,*id).is_some());let fabricated=diagnostics.iter().any(|d|d.code()==HtmlTreeDiagnosticCode::OpenSelectedOrdinaryElementAtEndOfFile&&d.trigger().token_index()==token_index);if selected_is_open&&fabricated{return Err(HtmlTreeFreezeError::BodyEndAfterBodyEofDiagnosticMismatch{token_index});}}
-            _=>{}
+            HtmlTreeActionKind::StoppedParsing
+                if matches!(
+                    position,
+                    Some(ReplayedBodyPosition::After | ReplayedBodyPosition::AfterAfter)
+                ) =>
+            {
+                if !is_end_of_file_trigger(action.trigger(), tokenizer_run) {
+                    return Err(HtmlTreeFreezeError::BodyEndAfterBodySuccessorMismatch {
+                        token_index,
+                    });
+                }
+                let selected_is_open = open_content
+                    .iter()
+                    .any(|id| selected_ordinary_name(nodes, *id).is_some());
+                let fabricated = diagnostics.iter().any(|d| {
+                    d.code() == HtmlTreeDiagnosticCode::OpenSelectedOrdinaryElementAtEndOfFile
+                        && d.trigger().token_index() == token_index
+                });
+                if selected_is_open && fabricated {
+                    return Err(HtmlTreeFreezeError::BodyEndAfterBodyEofDiagnosticMismatch {
+                        token_index,
+                    });
+                }
+            }
+            _ => {}
         }
     }
-    if let Some((token_index,_))=pending_reprocessed_text{return Err(HtmlTreeFreezeError::BodyEndAfterBodySuccessorMismatch{token_index});}
-    if let Some(pending)=pending_selected_html_end{return Err(HtmlTreeFreezeError::MissingHtmlEndAcknowledgement{token_index:pending.token_index});}
-    for (token_index,token) in tokenizer_run.tokens().iter().take(processed_tokens).enumerate(){if is_plain_body_end_token(token)&&!body_end_tokens.contains(&token_index){return Err(HtmlTreeFreezeError::MissingBodyEndAcknowledgement{token_index});}if is_plain_html_end_token(token)&&!html_end_tokens.contains(&token_index){return Err(HtmlTreeFreezeError::MissingHtmlEndAcknowledgement{token_index});}}
-    for (i,d) in diagnostics.iter().enumerate(){if d.code()==HtmlTreeDiagnosticCode::BodyEndTagWithOpenSelectedOrdinaryElements&&!matched_body_diagnostics.contains(&i){return Err(HtmlTreeFreezeError::OrphanBodyEndDiagnostic{token_index:d.trigger().token_index()});}if d.code()==HtmlTreeDiagnosticCode::HtmlEndTagWithOpenSelectedOrdinaryElements&&!matched_html_diagnostics.contains(&i){return Err(HtmlTreeFreezeError::OrphanHtmlEndDiagnostic{token_index:d.trigger().token_index()});}}
-    let replayed_selected:Vec<_>=open_content.iter().copied().filter(|id|selected_ordinary_name(nodes,*id).is_some()).collect();
-    let replayed_paragraphs:Vec<_>=open_content.iter().copied().filter(|id|paragraph(nodes,*id).is_some()).collect();
-    if replayed_selected!=final_open_selected_ordinary||replayed_paragraphs.len()>1||replayed_paragraphs.first().copied()!=final_open_paragraph{return Err(HtmlTreeFreezeError::BodyEndFinalOpenStateMismatch);}
+    if let Some((token_index, _)) = pending_reprocessed_text {
+        return Err(HtmlTreeFreezeError::BodyEndAfterBodySuccessorMismatch { token_index });
+    }
+    if let Some(pending) = pending_selected_html_end {
+        return Err(HtmlTreeFreezeError::MissingHtmlEndAcknowledgement {
+            token_index: pending.token_index,
+        });
+    }
+    for (token_index, token) in tokenizer_run
+        .tokens()
+        .iter()
+        .take(processed_tokens)
+        .enumerate()
+    {
+        if is_plain_body_end_token(token) && !body_end_tokens.contains(&token_index) {
+            return Err(HtmlTreeFreezeError::MissingBodyEndAcknowledgement { token_index });
+        }
+        if is_plain_html_end_token(token) && !html_end_tokens.contains(&token_index) {
+            return Err(HtmlTreeFreezeError::MissingHtmlEndAcknowledgement { token_index });
+        }
+    }
+    for (i, d) in diagnostics.iter().enumerate() {
+        if d.code() == HtmlTreeDiagnosticCode::BodyEndTagWithOpenSelectedOrdinaryElements
+            && !matched_body_diagnostics.contains(&i)
+        {
+            return Err(HtmlTreeFreezeError::OrphanBodyEndDiagnostic {
+                token_index: d.trigger().token_index(),
+            });
+        }
+        if d.code() == HtmlTreeDiagnosticCode::HtmlEndTagWithOpenSelectedOrdinaryElements
+            && !matched_html_diagnostics.contains(&i)
+        {
+            return Err(HtmlTreeFreezeError::OrphanHtmlEndDiagnostic {
+                token_index: d.trigger().token_index(),
+            });
+        }
+    }
+    let replayed_selected: Vec<_> = open_content
+        .iter()
+        .copied()
+        .filter(|id| selected_ordinary_name(nodes, *id).is_some())
+        .collect();
+    let replayed_paragraphs: Vec<_> = open_content
+        .iter()
+        .copied()
+        .filter(|id| paragraph(nodes, *id).is_some())
+        .collect();
+    if replayed_selected != final_open_selected_ordinary
+        || replayed_paragraphs.len() > 1
+        || replayed_paragraphs.first().copied() != final_open_paragraph
+    {
+        return Err(HtmlTreeFreezeError::BodyEndFinalOpenStateMismatch);
+    }
     Ok(())
 }
 
-fn is_plain_body_end_token(token:&HtmlToken)->bool{is_plain_shell_end_token(token,"body")}
-fn is_plain_html_end_token(token:&HtmlToken)->bool{is_plain_shell_end_token(token,"html")}
-fn is_plain_body_end_trigger(trigger:&HtmlTreeTokenTrigger,run:&HtmlTokenizerRunResult)->bool{is_plain_shell_end_trigger(trigger,run,"body")}
-fn is_plain_html_end_trigger(trigger:&HtmlTreeTokenTrigger,run:&HtmlTokenizerRunResult)->bool{is_plain_shell_end_trigger(trigger,run,"html")}
-fn is_plain_shell_end_token(token:&HtmlToken,expected:&str)->bool{let HtmlToken::Tag(tag)=token else{return false;};tag.kind()==HtmlTagKind::End&&tag.name().interpreted()==expected&&tag.attributes().is_empty()&&tag.self_closing_solidus().is_none()}
-fn is_plain_shell_end_trigger(trigger:&HtmlTreeTokenTrigger,run:&HtmlTokenizerRunResult,expected:&str)->bool{run.tokens().get(trigger.token_index()).is_some_and(|token|is_plain_shell_end_token(token,expected))&&match run.tokens().get(trigger.token_index()){Some(HtmlToken::Tag(tag))=>exact_anchor(trigger.authored_boundary(),Some(tag.complete())),_=>false}}
-fn is_end_of_file_trigger(trigger:&HtmlTreeTokenTrigger,run:&HtmlTokenizerRunResult)->bool{matches!(run.tokens().get(trigger.token_index()),Some(HtmlToken::EndOfFile(_)))&&trigger.authored_boundary().is_none()}
-fn replayed_body_character_class(trigger:&HtmlTreeTokenTrigger,run:&HtmlTokenizerRunResult)->Option<ReplayedBodyCharacterClass>{let Some(HtmlToken::Character(character))=run.tokens().get(trigger.token_index())else{return None;};if !exact_anchor(trigger.authored_boundary(),Some(character.source())){return None;}let mut w=false;let mut n=false;for value in character.interpreted().chars(){if matches!(value,'\t'|'\n'|'\u{000c}'|'\r'|' '){w=true}else{n=true}}Some(match(w,n){(true,true)=>ReplayedBodyCharacterClass::Mixed,(false,true)=>ReplayedBodyCharacterClass::AllNonHtmlWhitespace,_=>ReplayedBodyCharacterClass::AllHtmlWhitespace})}
+fn is_plain_body_end_token(token: &HtmlToken) -> bool {
+    is_plain_shell_end_token(token, "body")
+}
+fn is_plain_html_end_token(token: &HtmlToken) -> bool {
+    is_plain_shell_end_token(token, "html")
+}
+fn is_plain_body_end_trigger(trigger: &HtmlTreeTokenTrigger, run: &HtmlTokenizerRunResult) -> bool {
+    is_plain_shell_end_trigger(trigger, run, "body")
+}
+fn is_plain_html_end_trigger(trigger: &HtmlTreeTokenTrigger, run: &HtmlTokenizerRunResult) -> bool {
+    is_plain_shell_end_trigger(trigger, run, "html")
+}
+fn is_plain_shell_end_token(token: &HtmlToken, expected: &str) -> bool {
+    let HtmlToken::Tag(tag) = token else {
+        return false;
+    };
+    tag.kind() == HtmlTagKind::End
+        && tag.name().interpreted() == expected
+        && tag.attributes().is_empty()
+        && tag.self_closing_solidus().is_none()
+}
+fn is_plain_shell_end_trigger(
+    trigger: &HtmlTreeTokenTrigger,
+    run: &HtmlTokenizerRunResult,
+    expected: &str,
+) -> bool {
+    run.tokens()
+        .get(trigger.token_index())
+        .is_some_and(|token| is_plain_shell_end_token(token, expected))
+        && match run.tokens().get(trigger.token_index()) {
+            Some(HtmlToken::Tag(tag)) => {
+                exact_anchor(trigger.authored_boundary(), Some(tag.complete()))
+            }
+            _ => false,
+        }
+}
+fn is_end_of_file_trigger(trigger: &HtmlTreeTokenTrigger, run: &HtmlTokenizerRunResult) -> bool {
+    matches!(
+        run.tokens().get(trigger.token_index()),
+        Some(HtmlToken::EndOfFile(_))
+    ) && trigger.authored_boundary().is_none()
+}
+fn replayed_body_character_class(
+    trigger: &HtmlTreeTokenTrigger,
+    run: &HtmlTokenizerRunResult,
+) -> Option<ReplayedBodyCharacterClass> {
+    let Some(HtmlToken::Character(character)) = run.tokens().get(trigger.token_index()) else {
+        return None;
+    };
+    if !exact_anchor(trigger.authored_boundary(), Some(character.source())) {
+        return None;
+    }
+    let mut w = false;
+    let mut n = false;
+    for value in character.interpreted().chars() {
+        if matches!(value, '\t' | '\n' | '\u{000c}' | '\r' | ' ') {
+            w = true
+        } else {
+            n = true
+        }
+    }
+    Some(match (w, n) {
+        (true, true) => ReplayedBodyCharacterClass::Mixed,
+        (false, true) => ReplayedBodyCharacterClass::AllNonHtmlWhitespace,
+        _ => ReplayedBodyCharacterClass::AllHtmlWhitespace,
+    })
+}
 
-fn paragraph(nodes:&[HtmlTreeNode],id:HtmlConstructedNodeId)->Option<&HtmlParagraphElement>{match find(nodes,id)?.kind(){HtmlTreeNodeKind::Element(HtmlElement::Paragraph(p))=>Some(p),_=>None}}
-fn paragraph_authored_insertion_matches(paragraph:&HtmlParagraphElement,trigger:&HtmlTreeTokenTrigger,run:&HtmlTokenizerRunResult)->bool{let HtmlParagraphElementOrigin::Authored{complete,raw_name}=paragraph.origin()else{return false;};let Some(HtmlToken::Tag(tag))=run.tokens().get(trigger.token_index())else{return false;};tag.kind()==HtmlTagKind::Start&&tag.name().interpreted()=="p"&&exact_anchor(trigger.authored_boundary(),Some(tag.complete()))&&exact_anchor(Some(complete),Some(tag.complete()))&&exact_anchor(Some(raw_name),Some(tag.name().source()))}
-fn retained_start_tag_name<'a>(trigger:&HtmlTreeTokenTrigger,run:&'a HtmlTokenizerRunResult)->Option<&'a str>{let Some(HtmlToken::Tag(tag))=run.tokens().get(trigger.token_index())else{return None;};if tag.kind()!=HtmlTagKind::Start||!exact_anchor(trigger.authored_boundary(),Some(tag.complete())){return None;}Some(tag.name().interpreted())}
-fn is_exact_tag_trigger(trigger:&HtmlTreeTokenTrigger,run:&HtmlTokenizerRunResult,kind:HtmlTagKind,names:&[&str])->bool{let Some(HtmlToken::Tag(tag))=run.tokens().get(trigger.token_index())else{return false;};tag.kind()==kind&&names.contains(&tag.name().interpreted())&&exact_anchor(trigger.authored_boundary(),Some(tag.complete()))}
-fn same_trigger(first:&HtmlTreeTokenTrigger,second:&HtmlTreeTokenTrigger)->bool{first.token_index()==second.token_index()&&exact_anchor(first.authored_boundary(),second.authored_boundary())}
-fn exact_anchor(first:Option<&SourceAnchor>,second:Option<&SourceAnchor>)->bool{match(first,second){(None,None)=>true,(Some(first),Some(second))=>first.source_id()==second.source_id()&&first.range()==second.range()&&first.fragment()==second.fragment(),_=>false}}
+fn paragraph(nodes: &[HtmlTreeNode], id: HtmlConstructedNodeId) -> Option<&HtmlParagraphElement> {
+    match find(nodes, id)?.kind() {
+        HtmlTreeNodeKind::Element(HtmlElement::Paragraph(p)) => Some(p),
+        _ => None,
+    }
+}
+fn paragraph_authored_insertion_matches(
+    paragraph: &HtmlParagraphElement,
+    trigger: &HtmlTreeTokenTrigger,
+    run: &HtmlTokenizerRunResult,
+) -> bool {
+    let HtmlParagraphElementOrigin::Authored { complete, raw_name } = paragraph.origin() else {
+        return false;
+    };
+    let Some(HtmlToken::Tag(tag)) = run.tokens().get(trigger.token_index()) else {
+        return false;
+    };
+    tag.kind() == HtmlTagKind::Start
+        && tag.name().interpreted() == "p"
+        && exact_anchor(trigger.authored_boundary(), Some(tag.complete()))
+        && exact_anchor(Some(complete), Some(tag.complete()))
+        && exact_anchor(Some(raw_name), Some(tag.name().source()))
+}
+fn retained_start_tag_name<'a>(
+    trigger: &HtmlTreeTokenTrigger,
+    run: &'a HtmlTokenizerRunResult,
+) -> Option<&'a str> {
+    let Some(HtmlToken::Tag(tag)) = run.tokens().get(trigger.token_index()) else {
+        return None;
+    };
+    if tag.kind() != HtmlTagKind::Start
+        || !exact_anchor(trigger.authored_boundary(), Some(tag.complete()))
+    {
+        return None;
+    }
+    Some(tag.name().interpreted())
+}
+fn is_exact_tag_trigger(
+    trigger: &HtmlTreeTokenTrigger,
+    run: &HtmlTokenizerRunResult,
+    kind: HtmlTagKind,
+    names: &[&str],
+) -> bool {
+    let Some(HtmlToken::Tag(tag)) = run.tokens().get(trigger.token_index()) else {
+        return false;
+    };
+    tag.kind() == kind
+        && names.contains(&tag.name().interpreted())
+        && exact_anchor(trigger.authored_boundary(), Some(tag.complete()))
+}
+fn same_trigger(first: &HtmlTreeTokenTrigger, second: &HtmlTreeTokenTrigger) -> bool {
+    first.token_index() == second.token_index()
+        && exact_anchor(first.authored_boundary(), second.authored_boundary())
+}
+fn exact_anchor(first: Option<&SourceAnchor>, second: Option<&SourceAnchor>) -> bool {
+    match (first, second) {
+        (None, None) => true,
+        (Some(first), Some(second)) => {
+            first.source_id() == second.source_id()
+                && first.range() == second.range()
+                && first.fragment() == second.fragment()
+        }
+        _ => false,
+    }
+}
 
-fn validate_diagnostic_evidence(source:&SourceText,diagnostics:&[HtmlTreeDiagnostic],emitted_tokens:usize)->Result<(),HtmlTreeFreezeError>{let mut previous=None;for d in diagnostics{validate_trigger(source,HtmlTreeEvidenceRole::DiagnosticTrigger,d.trigger(),emitted_tokens,&mut previous)?;}Ok(())}
-fn validate_trigger(source:&SourceText,role:HtmlTreeEvidenceRole,trigger:&HtmlTreeTokenTrigger,emitted_tokens:usize,previous:&mut Option<usize>)->Result<(),HtmlTreeFreezeError>{if trigger.token_index()>=emitted_tokens{return Err(HtmlTreeFreezeError::InvalidTokenProgression{role,token_index:trigger.token_index()});}if let Some(p)=*previous&&trigger.token_index()<p{return Err(HtmlTreeFreezeError::InvalidTokenProgression{role,token_index:trigger.token_index()});}*previous=Some(trigger.token_index());if let Some(boundary)=trigger.authored_boundary(){validate_evidence(source,role,boundary)?;}Ok(())}
+fn validate_diagnostic_evidence(
+    source: &SourceText,
+    diagnostics: &[HtmlTreeDiagnostic],
+    emitted_tokens: usize,
+) -> Result<(), HtmlTreeFreezeError> {
+    let mut previous = None;
+    for d in diagnostics {
+        validate_trigger(
+            source,
+            HtmlTreeEvidenceRole::DiagnosticTrigger,
+            d.trigger(),
+            emitted_tokens,
+            &mut previous,
+        )?;
+    }
+    Ok(())
+}
+fn validate_trigger(
+    source: &SourceText,
+    role: HtmlTreeEvidenceRole,
+    trigger: &HtmlTreeTokenTrigger,
+    emitted_tokens: usize,
+    previous: &mut Option<usize>,
+) -> Result<(), HtmlTreeFreezeError> {
+    if trigger.token_index() >= emitted_tokens {
+        return Err(HtmlTreeFreezeError::InvalidTokenProgression {
+            role,
+            token_index: trigger.token_index(),
+        });
+    }
+    if let Some(p) = *previous
+        && trigger.token_index() < p
+    {
+        return Err(HtmlTreeFreezeError::InvalidTokenProgression {
+            role,
+            token_index: trigger.token_index(),
+        });
+    }
+    *previous = Some(trigger.token_index());
+    if let Some(boundary) = trigger.authored_boundary() {
+        validate_evidence(source, role, boundary)?;
+    }
+    Ok(())
+}
 
-fn validate_completion(source:&SourceText,nodes:&[HtmlTreeNode],root:HtmlConstructedNodeId,tokenizer_run:&HtmlTokenizerRunResult,processed_tokens:usize,completion:&HtmlTreeCompletion)->Result<(),HtmlTreeFreezeError>{match completion{HtmlTreeCompletion::Complete=>{if !matches!(tokenizer_run.completion(),HtmlTokenizerCompletion::Complete){return Err(HtmlTreeFreezeError::CompletionUpgrade(HtmlTreeCompletionUpgrade::RetainedTokenizerRunIsIncomplete));}if processed_tokens!=tokenizer_run.tokens().len(){return Err(HtmlTreeFreezeError::CompletionUpgrade(HtmlTreeCompletionUpgrade::EmittedTokensRemainUnprocessed));}if !is_complete_document_shell(nodes,root){return Err(HtmlTreeFreezeError::CompletionUpgrade(HtmlTreeCompletionUpgrade::DocumentShellIsIncomplete));}Ok(())}HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete)=>Ok(()),HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::UnsupportedCapability(unsupported))=>{let mut previous=None;validate_trigger(source,HtmlTreeEvidenceRole::UnsupportedTrigger,unsupported.trigger(),tokenizer_run.tokens().len(),&mut previous)?;let Some(boundary)=unsupported.trigger().authored_boundary()else{return Ok(());};for node in nodes{if let Some(HtmlAuthoredSource::StartTag{complete,..})=node.authored_source()&&complete.range()==boundary.range(){return Err(HtmlTreeFreezeError::UnsupportedTriggerLeakedAsAuthoredOrigin(node.id()));}}Ok(())}}}
+fn validate_completion(
+    source: &SourceText,
+    nodes: &[HtmlTreeNode],
+    root: HtmlConstructedNodeId,
+    tokenizer_run: &HtmlTokenizerRunResult,
+    processed_tokens: usize,
+    completion: &HtmlTreeCompletion,
+) -> Result<(), HtmlTreeFreezeError> {
+    match completion {
+        HtmlTreeCompletion::Complete => {
+            if !matches!(
+                tokenizer_run.completion(),
+                HtmlTokenizerCompletion::Complete
+            ) {
+                return Err(HtmlTreeFreezeError::CompletionUpgrade(
+                    HtmlTreeCompletionUpgrade::RetainedTokenizerRunIsIncomplete,
+                ));
+            }
+            if processed_tokens != tokenizer_run.tokens().len() {
+                return Err(HtmlTreeFreezeError::CompletionUpgrade(
+                    HtmlTreeCompletionUpgrade::EmittedTokensRemainUnprocessed,
+                ));
+            }
+            if !is_complete_document_shell(nodes, root) {
+                return Err(HtmlTreeFreezeError::CompletionUpgrade(
+                    HtmlTreeCompletionUpgrade::DocumentShellIsIncomplete,
+                ));
+            }
+            Ok(())
+        }
+        HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete) => Ok(()),
+        HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::UnsupportedCapability(
+            unsupported,
+        )) => {
+            let mut previous = None;
+            validate_trigger(
+                source,
+                HtmlTreeEvidenceRole::UnsupportedTrigger,
+                unsupported.trigger(),
+                tokenizer_run.tokens().len(),
+                &mut previous,
+            )?;
+            let Some(boundary) = unsupported.trigger().authored_boundary() else {
+                return Ok(());
+            };
+            for node in nodes {
+                if let Some(HtmlAuthoredSource::StartTag { complete, .. }) = node.authored_source()
+                    && complete.range() == boundary.range()
+                {
+                    return Err(
+                        HtmlTreeFreezeError::UnsupportedTriggerLeakedAsAuthoredOrigin(node.id()),
+                    );
+                }
+            }
+            Ok(())
+        }
+    }
+}
 
-fn is_complete_document_shell(nodes:&[HtmlTreeNode],root:HtmlConstructedNodeId)->bool{let Some(root_node)=find(nodes,root)else{return false;};let[html_id]=root_node.children()else{return false;};let Some(html)=find(nodes,*html_id)else{return false;};if !is_shell_element(html,HtmlShellElementName::Html){return false;}let[head_id,body_id]=html.children()else{return false;};let(Some(head),Some(body))=(find(nodes,*head_id),find(nodes,*body_id))else{return false;};is_shell_element(head,HtmlShellElementName::Head)&&is_shell_element(body,HtmlShellElementName::Body)}
-fn is_shell_element(node:&HtmlTreeNode,name:HtmlShellElementName)->bool{matches!(node.kind(),HtmlTreeNodeKind::Element(HtmlElement::Shell(shell))if shell.name()==name)}
+fn is_complete_document_shell(nodes: &[HtmlTreeNode], root: HtmlConstructedNodeId) -> bool {
+    let Some(root_node) = find(nodes, root) else {
+        return false;
+    };
+    let [html_id] = root_node.children() else {
+        return false;
+    };
+    let Some(html) = find(nodes, *html_id) else {
+        return false;
+    };
+    if !is_shell_element(html, HtmlShellElementName::Html) {
+        return false;
+    }
+    let [head_id, body_id] = html.children() else {
+        return false;
+    };
+    let (Some(head), Some(body)) = (find(nodes, *head_id), find(nodes, *body_id)) else {
+        return false;
+    };
+    is_shell_element(head, HtmlShellElementName::Head)
+        && is_shell_element(body, HtmlShellElementName::Body)
+}
+fn is_shell_element(node: &HtmlTreeNode, name: HtmlShellElementName) -> bool {
+    matches!(node.kind(),HtmlTreeNodeKind::Element(HtmlElement::Shell(shell))if shell.name()==name)
+}
 
-fn validate_evidence(source:&SourceText,role:HtmlTreeEvidenceRole,anchor:&SourceAnchor)->Result<(),HtmlTreeFreezeError>{if anchor.source_id()!=source.id(){return Err(HtmlTreeFreezeError::ForeignSourceEvidence{role,expected:source.id(),actual:anchor.source_id()});}if !source.retains_exact_anchor_source(anchor){return Err(HtmlTreeFreezeError::MismatchedSourceEvidence{role});}let range=anchor.range();let revalidated=source.anchor(range.start(),range.end()).map_err(|error|HtmlTreeFreezeError::InvalidSourceEvidence{role,error})?;if revalidated.fragment()!=anchor.fragment(){return Err(HtmlTreeFreezeError::MismatchedSourceEvidence{role});}Ok(())}
+fn validate_evidence(
+    source: &SourceText,
+    role: HtmlTreeEvidenceRole,
+    anchor: &SourceAnchor,
+) -> Result<(), HtmlTreeFreezeError> {
+    if anchor.source_id() != source.id() {
+        return Err(HtmlTreeFreezeError::ForeignSourceEvidence {
+            role,
+            expected: source.id(),
+            actual: anchor.source_id(),
+        });
+    }
+    if !source.retains_exact_anchor_source(anchor) {
+        return Err(HtmlTreeFreezeError::MismatchedSourceEvidence { role });
+    }
+    let range = anchor.range();
+    let revalidated = source
+        .anchor(range.start(), range.end())
+        .map_err(|error| HtmlTreeFreezeError::InvalidSourceEvidence { role, error })?;
+    if revalidated.fragment() != anchor.fragment() {
+        return Err(HtmlTreeFreezeError::MismatchedSourceEvidence { role });
+    }
+    Ok(())
+}

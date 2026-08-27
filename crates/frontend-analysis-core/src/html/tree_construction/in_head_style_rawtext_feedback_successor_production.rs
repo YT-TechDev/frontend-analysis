@@ -26,7 +26,8 @@ use super::result::{
     HtmlTreeNode, HtmlTreeNodeKind, HtmlTreeRecovery, freeze,
 };
 use super::session::{
-    DispatchOutcome, HtmlTreeSession, HtmlTreeTokenizerFeedback, InsertionMode, admit, token_trigger,
+    DispatchOutcome, HtmlTreeSession, HtmlTreeTokenizerFeedback, InsertionMode, admit,
+    token_trigger,
 };
 
 fn limits() -> HtmlTokenizerLimits {
@@ -64,10 +65,12 @@ fn style_text(analysis: &HtmlDocumentShellAnalysis) -> String {
         .expect("Style node")
         .children()
         .iter()
-        .map(|child| match analysis.node(*child).expect("Style child").kind() {
-            HtmlTreeNodeKind::Text(text) => text.interpreted().to_owned(),
-            other => panic!("Style child must be text, got {other:?}"),
-        })
+        .map(
+            |child| match analysis.node(*child).expect("Style child").kind() {
+                HtmlTreeNodeKind::Text(text) => text.interpreted().to_owned(),
+                other => panic!("Style child must be text, got {other:?}"),
+            },
+        )
         .collect()
 }
 
@@ -85,13 +88,19 @@ fn style_action_token(
 
 fn style_insert_token(analysis: &HtmlDocumentShellAnalysis) -> usize {
     style_action_token(analysis, |kind| {
-        matches!(kind, HtmlTreeActionKind::InsertedAuthoredStyleElement { .. })
+        matches!(
+            kind,
+            HtmlTreeActionKind::InsertedAuthoredStyleElement { .. }
+        )
     })
 }
 
 fn style_close_token(analysis: &HtmlDocumentShellAnalysis) -> usize {
     style_action_token(analysis, |kind| {
-        matches!(kind, HtmlTreeActionKind::ClosedStyleElementByAuthoredEndTag { .. })
+        matches!(
+            kind,
+            HtmlTreeActionKind::ClosedStyleElementByAuthoredEndTag { .. }
+        )
     })
 }
 
@@ -127,13 +136,7 @@ fn action_signature(analysis: &HtmlDocumentShellAnalysis) -> Vec<String> {
     analysis
         .actions()
         .iter()
-        .map(|action| {
-            format!(
-                "{}|{:?}",
-                action.trigger().token_index(),
-                action.kind()
-            )
-        })
+        .map(|action| format!("{}|{:?}", action.trigger().token_index(), action.kind()))
         .collect()
 }
 
@@ -165,16 +168,17 @@ fn p1_plain_style_round_trip_is_authored_and_complete() {
 
 #[test]
 fn p2_feedback_is_applied_before_any_post_style_source_is_produced() {
-    let source = SourceText::new(
-        SourceId::new(11),
-        "<style><b>x</style><body>".to_owned(),
-    );
+    let source = SourceText::new(SourceId::new(11), "<style><b>x</style><body>".to_owned());
     let mut tokenizer = HtmlTokenizerSession::new(&source, limits());
     assert_eq!(
         tokenizer.drive_to_boundary(),
         HtmlTokenizerSessionBoundary::Suspended(HtmlTokenizerMode::RawText)
     );
-    assert_eq!(tokenizer.tokens().len(), 1, "only <style> may exist pre-feedback");
+    assert_eq!(
+        tokenizer.tokens().len(),
+        1,
+        "only <style> may exist pre-feedback"
+    );
     let HtmlToken::Tag(style) = &tokenizer.tokens()[0] else {
         panic!("Style start token")
     };
@@ -254,10 +258,12 @@ fn p4_mixed_case_appropriate_close_keeps_exact_authored_evidence() {
     let action = analysis
         .actions()
         .iter()
-        .find(|action| matches!(
-            action.kind(),
-            HtmlTreeActionKind::ClosedStyleElementByAuthoredEndTag { .. }
-        ))
+        .find(|action| {
+            matches!(
+                action.kind(),
+                HtmlTreeActionKind::ClosedStyleElementByAuthoredEndTag { .. }
+            )
+        })
         .expect("Style close action");
     assert_eq!(action.trigger().token_index(), token_index);
     assert_eq!(
@@ -280,18 +286,25 @@ fn p5_close_returns_tokenizer_to_data_before_body_sentinel() {
         .tokenizer_run()
         .tokens()
         .iter()
-        .position(|token| matches!(
-            token,
-            HtmlToken::Tag(tag) if tag.kind() == HtmlTagKind::Start
-                && tag.name().interpreted() == "body"
-        ))
+        .position(|token| {
+            matches!(
+                token,
+                HtmlToken::Tag(tag) if tag.kind() == HtmlTagKind::Start
+                    && tag.name().interpreted() == "body"
+            )
+        })
         .expect("post-close Body token");
     assert!(body > close);
-    assert!(analysis.nodes_in_creation_order().iter().any(|node| matches!(
-        node.kind(),
-        HtmlTreeNodeKind::Element(element)
-            if element.name() == HtmlElementName::Shell(HtmlShellElementName::Body)
-    )));
+    assert!(
+        analysis
+            .nodes_in_creation_order()
+            .iter()
+            .any(|node| matches!(
+                node.kind(),
+                HtmlTreeNodeKind::Element(element)
+                    if element.name() == HtmlElementName::Shell(HtmlShellElementName::Body)
+            ))
+    );
 }
 
 #[test]
@@ -306,10 +319,12 @@ fn p6_text_eof_pops_style_restores_in_head_and_reprocesses_same_eof() {
     let pop = analysis
         .actions()
         .iter()
-        .find(|action| matches!(
-            action.kind(),
-            HtmlTreeActionKind::PoppedStyleElementAtEndOfFile { .. }
-        ))
+        .find(|action| {
+            matches!(
+                action.kind(),
+                HtmlTreeActionKind::PoppedStyleElementAtEndOfFile { .. }
+            )
+        })
         .expect("Style EOF pop");
     let eof_index = pop.trigger().token_index();
     assert!(pop.trigger().authored_boundary().is_none());
@@ -361,7 +376,10 @@ fn p8_source_id_perturbation_preserves_semantics_but_rebinds_evidence() {
     };
     assert_eq!(first_close.name().source().fragment(), "StYlE");
     assert_eq!(second_close.name().source().fragment(), "StYlE");
-    assert_ne!(first_close.complete().source_id(), second_close.complete().source_id());
+    assert_ne!(
+        first_close.complete().source_id(),
+        second_close.complete().source_id()
+    );
 }
 
 #[test]
@@ -392,10 +410,15 @@ fn p10_excluded_style_shapes_refuse_transactionally() {
     ] {
         let analysis = analyze(source);
         assert_eq!(tree_unsupported(&analysis), Some(expected), "{source}");
-        assert!(analysis.nodes_in_creation_order().iter().all(|node| !matches!(
-            node.kind(),
-            HtmlTreeNodeKind::Element(HtmlElement::Style(_))
-        )));
+        assert!(
+            analysis
+                .nodes_in_creation_order()
+                .iter()
+                .all(|node| !matches!(
+                    node.kind(),
+                    HtmlTreeNodeKind::Element(HtmlElement::Style(_))
+                ))
+        );
         assert!(analysis.actions().iter().all(|action| !matches!(
             action.kind(),
             HtmlTreeActionKind::InsertedAuthoredStyleElement { .. }
@@ -411,9 +434,9 @@ fn p11_batch_tokenizer_keeps_predecessor_deferred_rawtext_boundary() {
     let run = tokenize(&source, limits());
     assert_eq!(run.tokens().len(), 1);
     match run.completion() {
-        HtmlTokenizerCompletion::Incomplete(HtmlTokenizerIncompleteCause::UnsupportedCapability(
-            unsupported,
-        )) => {
+        HtmlTokenizerCompletion::Incomplete(
+            HtmlTokenizerIncompleteCause::UnsupportedCapability(unsupported),
+        ) => {
             assert_eq!(
                 unsupported.capability(),
                 HtmlTokenizerCapability::ContextDependentTokenizerMode {
@@ -432,15 +455,23 @@ fn p11_batch_tokenizer_keeps_predecessor_deferred_rawtext_boundary() {
 #[test]
 fn p12_tree_stop_does_not_guess_or_apply_future_style_feedback() {
     let analysis = analyze("<unknown><style>x</style>");
-    assert_eq!(tree_unsupported(&analysis), Some(HtmlTreeCapability::NonShellElementTag));
-    assert!(analysis.nodes_in_creation_order().iter().all(|node| !matches!(
-        node.kind(),
-        HtmlTreeNodeKind::Element(HtmlElement::Style(_))
-    )));
+    assert_eq!(
+        tree_unsupported(&analysis),
+        Some(HtmlTreeCapability::NonShellElementTag)
+    );
+    assert!(
+        analysis
+            .nodes_in_creation_order()
+            .iter()
+            .all(|node| !matches!(
+                node.kind(),
+                HtmlTreeNodeKind::Element(HtmlElement::Style(_))
+            ))
+    );
     match analysis.tokenizer_run().completion() {
-        HtmlTokenizerCompletion::Incomplete(HtmlTokenizerIncompleteCause::UnsupportedCapability(
-            unsupported,
-        )) => assert_eq!(
+        HtmlTokenizerCompletion::Incomplete(
+            HtmlTokenizerIncompleteCause::UnsupportedCapability(unsupported),
+        ) => assert_eq!(
             unsupported.capability(),
             HtmlTokenizerCapability::ContextDependentTokenizerMode {
                 mode: HtmlTokenizerMode::RawText,
@@ -466,15 +497,25 @@ fn p13_lower_layer_incomplete_is_never_upgraded_to_complete() {
 fn p15_representative_tc_s1_through_s8_control_remains_complete() {
     let analysis = analyze("<body><div>x</div></body></html>");
     assert!(analysis.is_complete());
-    assert!(analysis.nodes_in_creation_order().iter().all(|node| !matches!(
-        node.kind(),
-        HtmlTreeNodeKind::Element(HtmlElement::Style(_))
-    )));
-    assert!(analysis.nodes_in_creation_order().iter().any(|node| matches!(
-        node.kind(),
-        HtmlTreeNodeKind::Element(element)
-            if matches!(element.name(), HtmlElementName::SelectedOrdinary(_))
-    )));
+    assert!(
+        analysis
+            .nodes_in_creation_order()
+            .iter()
+            .all(|node| !matches!(
+                node.kind(),
+                HtmlTreeNodeKind::Element(HtmlElement::Style(_))
+            ))
+    );
+    assert!(
+        analysis
+            .nodes_in_creation_order()
+            .iter()
+            .any(|node| matches!(
+                node.kind(),
+                HtmlTreeNodeKind::Element(element)
+                    if matches!(element.name(), HtmlElementName::SelectedOrdinary(_))
+            ))
+    );
 }
 
 struct PartsFixture {
@@ -508,7 +549,10 @@ fn coordinated_parts_with(source_text: &str, limits: HtmlTokenizerLimits) -> Par
 
             loop {
                 let mode = session.insertion_mode();
-                assert!(!evaluated.contains(&mode), "same-token insertion-mode cycle");
+                assert!(
+                    !evaluated.contains(&mode),
+                    "same-token insertion-mode cycle"
+                );
                 evaluated.push(mode);
                 match session.dispatch(&admitted, &trigger).expect("dispatch") {
                     DispatchOutcome::Consumed => {
@@ -558,7 +602,7 @@ fn coordinated_parts_with(source_text: &str, limits: HtmlTokenizerLimits) -> Par
                 panic!("fixture suspension without tree feedback: {mode:?}")
             }
             HtmlTokenizerSessionBoundary::Terminal => {
-                break 'produce tokenizer.into_result().expect("terminal result")
+                break 'produce tokenizer.into_result().expect("terminal result");
             }
         }
     };
@@ -574,7 +618,10 @@ fn coordinated_parts_with(source_text: &str, limits: HtmlTokenizerLimits) -> Par
     PartsFixture { source, run, parts }
 }
 
-fn freeze_fixture(fixture: &PartsFixture, parts: HtmlDocumentShellParts) -> Result<HtmlDocumentShellAnalysis, HtmlTreeFreezeError> {
+fn freeze_fixture(
+    fixture: &PartsFixture,
+    parts: HtmlDocumentShellParts,
+) -> Result<HtmlDocumentShellAnalysis, HtmlTreeFreezeError> {
     freeze(&fixture.source, fixture.run.clone(), parts)
 }
 
@@ -589,7 +636,10 @@ fn style_node_id(parts: &HtmlDocumentShellParts) -> HtmlConstructedNodeId {
         .expect("fixture Style")
 }
 
-fn action_index(parts: &HtmlDocumentShellParts, predicate: impl Fn(&HtmlTreeActionKind) -> bool) -> usize {
+fn action_index(
+    parts: &HtmlDocumentShellParts,
+    predicate: impl Fn(&HtmlTreeActionKind) -> bool,
+) -> usize {
     parts
         .actions
         .iter()
@@ -648,14 +698,18 @@ fn p14_freeze_rejects_wrong_terminal_tree_state_and_close_trigger() {
     assert!(freeze_fixture(&fixture, claimed_open).is_err());
 
     let mut wrong_close = coordinated_parts("<style>x</style>").parts;
-    let insert = action_index(&wrong_close, |kind| matches!(
-        kind,
-        HtmlTreeActionKind::InsertedAuthoredStyleElement { .. }
-    ));
-    let close = action_index(&wrong_close, |kind| matches!(
-        kind,
-        HtmlTreeActionKind::ClosedStyleElementByAuthoredEndTag { .. }
-    ));
+    let insert = action_index(&wrong_close, |kind| {
+        matches!(
+            kind,
+            HtmlTreeActionKind::InsertedAuthoredStyleElement { .. }
+        )
+    });
+    let close = action_index(&wrong_close, |kind| {
+        matches!(
+            kind,
+            HtmlTreeActionKind::ClosedStyleElementByAuthoredEndTag { .. }
+        )
+    });
     let style = style_node_id(&wrong_close);
     let trigger = wrong_close.actions[insert].trigger().clone();
     wrong_close.actions[close] = HtmlTreeAction::new(
@@ -674,10 +728,12 @@ fn p14_freeze_rejects_fabricated_eof_close_missing_eof_evidence_and_wrong_redisp
     let fixture = coordinated_parts("<style>x");
 
     let mut fabricated_close = coordinated_parts("<style>x").parts;
-    let pop = action_index(&fabricated_close, |kind| matches!(
-        kind,
-        HtmlTreeActionKind::PoppedStyleElementAtEndOfFile { .. }
-    ));
+    let pop = action_index(&fabricated_close, |kind| {
+        matches!(
+            kind,
+            HtmlTreeActionKind::PoppedStyleElementAtEndOfFile { .. }
+        )
+    });
     let style = style_node_id(&fabricated_close);
     let trigger = fabricated_close.actions[pop].trigger().clone();
     fabricated_close.actions[pop] = HtmlTreeAction::new(
@@ -737,14 +793,18 @@ fn p14_freeze_rejects_corrupt_rawtext_contribution_and_chronology() {
     ));
 
     let mut chronology = coordinated_parts("<style>x</style>").parts;
-    let insert = action_index(&chronology, |kind| matches!(
-        kind,
-        HtmlTreeActionKind::InsertedAuthoredStyleElement { .. }
-    ));
-    let close = action_index(&chronology, |kind| matches!(
-        kind,
-        HtmlTreeActionKind::ClosedStyleElementByAuthoredEndTag { .. }
-    ));
+    let insert = action_index(&chronology, |kind| {
+        matches!(
+            kind,
+            HtmlTreeActionKind::InsertedAuthoredStyleElement { .. }
+        )
+    });
+    let close = action_index(&chronology, |kind| {
+        matches!(
+            kind,
+            HtmlTreeActionKind::ClosedStyleElementByAuthoredEndTag { .. }
+        )
+    });
     chronology.actions.swap(insert, close);
     assert!(freeze_fixture(&fixture, chronology).is_err());
 }
@@ -764,12 +824,24 @@ fn p14_complete_claim_cannot_upgrade_a_lower_layer_resource_stop() {
 
 #[test]
 fn negative_space_has_no_general_rcdata_script_or_plaintext_entry() {
-    for source in ["<title>x</title>", "<textarea>x</textarea>", "<script>x</script>"] {
+    for source in [
+        "<title>x</title>",
+        "<textarea>x</textarea>",
+        "<script>x</script>",
+    ] {
         let analysis = analyze(source);
-        assert_eq!(tree_unsupported(&analysis), Some(HtmlTreeCapability::NonShellElementTag));
-        assert!(analysis.nodes_in_creation_order().iter().all(|node| !matches!(
-            node.kind(),
-            HtmlTreeNodeKind::Element(HtmlElement::Style(_))
-        )));
+        assert_eq!(
+            tree_unsupported(&analysis),
+            Some(HtmlTreeCapability::NonShellElementTag)
+        );
+        assert!(
+            analysis
+                .nodes_in_creation_order()
+                .iter()
+                .all(|node| !matches!(
+                    node.kind(),
+                    HtmlTreeNodeKind::Element(HtmlElement::Style(_))
+                ))
+        );
     }
 }

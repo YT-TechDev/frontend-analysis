@@ -1150,13 +1150,14 @@ impl HtmlTreeSession {
         trigger: &HtmlTreeTokenTrigger,
         token: &AdmittedToken<'_>,
     ) -> Result<HtmlConstructedNodeId, HtmlTreeSessionError> {
-        let parent = match name {
-            HtmlShellElementName::Html => self.root,
-            HtmlShellElementName::Head | HtmlShellElementName::Body => *self
-                .open_elements
-                .last()
-                .ok_or(HtmlTreeSessionError::MissingInsertionParent)?,
-        };
+        let parent =
+            match name {
+                HtmlShellElementName::Html => self.root,
+                HtmlShellElementName::Head | HtmlShellElementName::Body => *self
+                    .open_elements
+                    .last()
+                    .ok_or(HtmlTreeSessionError::MissingInsertionParent)?,
+            };
         if self.node(parent).is_none() {
             return Err(HtmlTreeSessionError::UnknownConstructedNode(parent));
         }
