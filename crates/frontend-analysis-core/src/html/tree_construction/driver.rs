@@ -230,7 +230,9 @@ pub(super) fn drive_token(
     match drive_coordinated_token(session, admitted, trigger)? {
         CoordinatedTokenOutcome::Consumed => Ok(TokenOutcome::Consumed),
         CoordinatedTokenOutcome::StoppedParsing => Ok(TokenOutcome::StoppedParsing),
-        CoordinatedTokenOutcome::Unsupported(capability) => Ok(TokenOutcome::Unsupported(capability)),
+        CoordinatedTokenOutcome::Unsupported(capability) => {
+            Ok(TokenOutcome::Unsupported(capability))
+        }
         CoordinatedTokenOutcome::TokenizerFeedbackRequested(_) => {
             Err(HtmlTreeSessionError::TokenizerFeedbackRequiresCoordinator)
         }
