@@ -1,0 +1,217 @@
+name: Temporary TC-S9 refinement validation
+
+on:
+  push:
+    branches:
+      - tmp-tc-s9-refinement-843ee4
+    paths:
+      - .github/workflows/tmp-tc-s9-refinement.yml
+
+permissions:
+  contents: write
+
+jobs:
+  refine:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout exact helper branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: tmp-tc-s9-refinement-843ee4
+
+      - name: Install exact Rust toolchain
+        run: rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
+
+      - name: Apply focused 13-path refinement
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          ROOT = Path('.')
+
+          def replace_exact(path, old, new, expected=1):
+              p = ROOT / path
+              text = p.read_text()
+              count = text.count(old)
+              if count != expected:
+                  raise SystemExit(f'{path}: expected {expected} exact replacements, found {count}')
+              p.write_text(text.replace(old, new))
+
+          # Local eight-path quality fix: coordinator error must not expose the
+          # narrower tree-owned semantic feedback enum.
+          driver = 'crates/frontend-analysis-core/src/html/tree_construction/driver.rs'
+          replace_exact(
+              driver,
+              '''    FeedbackRequestedWithoutMatchingTokenizerSuspension {\n        requested: HtmlTreeTokenizerFeedback,\n        boundary: HtmlTokenizerSessionBoundary,\n    },''',
+              '''    FeedbackRequestedWithoutMatchingTokenizerSuspension {\n        boundary: HtmlTokenizerSessionBoundary,\n    },''',
+          )
+          replace_exact(
+              driver,
+              '''                            HtmlTreeCoordinatorError::FeedbackRequestedWithoutMatchingTokenizerSuspension {\n                                requested: feedback,\n                                boundary,\n                            },''',
+              '''                            HtmlTreeCoordinatorError::FeedbackRequestedWithoutMatchingTokenizerSuspension {\n                                boundary,\n                            },''',
+          )
+
+          # Local eight-path quality fix: make Style freeze inputs one narrow
+          # private validation context rather than suppressing too_many_arguments.
+          result = 'crates/frontend-analysis-core/src/html/tree_construction/result.rs'
+          old_call = '''    validate_style_lifecycle(\n        &nodes,\n        &actions,\n        &diagnostics,\n        &tokenizer_run,\n        processed_tokens,\n        &completion,\n        final_open_style,\n        final_style_text_mode_active,\n        final_style_original_in_head_retained,\n        pending_tokenizer_feedback,\n        &coordinated_raw_text_entry_tokens,\n        &coordinated_raw_text_close_tokens,\n    )?;'''
+          new_call = '''    validate_style_lifecycle(StyleLifecycleValidation {\n        nodes: &nodes,\n        actions: &actions,\n        diagnostics: &diagnostics,\n        tokenizer_run: &tokenizer_run,\n        processed_tokens,\n        completion: &completion,\n        final_open_style,\n        final_style_text_mode_active,\n        final_style_original_in_head_retained,\n        pending_tokenizer_feedback,\n        coordinated_entries: &coordinated_raw_text_entry_tokens,\n        coordinated_closes: &coordinated_raw_text_close_tokens,\n    })?;'''
+          replace_exact(result, old_call, new_call)
+
+          old_fn = '''fn validate_style_lifecycle(\n    nodes: &[HtmlTreeNode],\n    actions: &[HtmlTreeAction],\n    diagnostics: &[HtmlTreeDiagnostic],\n    tokenizer_run: &HtmlTokenizerRunResult,\n    processed_tokens: usize,\n    completion: &HtmlTreeCompletion,\n    final_open_style: Option<HtmlConstructedNodeId>,\n    final_style_text_mode_active: bool,\n    final_style_original_in_head_retained: bool,\n    pending_tokenizer_feedback: bool,\n    coordinated_entries: &[usize],\n    coordinated_closes: &[usize],\n) -> Result<(), HtmlTreeFreezeError> {'''
+          new_fn = '''struct StyleLifecycleValidation<'a> {\n    nodes: &'a [HtmlTreeNode],\n    actions: &'a [HtmlTreeAction],\n    diagnostics: &'a [HtmlTreeDiagnostic],\n    tokenizer_run: &'a HtmlTokenizerRunResult,\n    processed_tokens: usize,\n    completion: &'a HtmlTreeCompletion,\n    final_open_style: Option<HtmlConstructedNodeId>,\n    final_style_text_mode_active: bool,\n    final_style_original_in_head_retained: bool,\n    pending_tokenizer_feedback: bool,\n    coordinated_entries: &'a [usize],\n    coordinated_closes: &'a [usize],\n}\n\nfn validate_style_lifecycle(input: StyleLifecycleValidation<'_>) -> Result<(), HtmlTreeFreezeError> {\n    let StyleLifecycleValidation {\n        nodes,\n        actions,\n        diagnostics,\n        tokenizer_run,\n        processed_tokens,\n        completion,\n        final_open_style,\n        final_style_text_mode_active,\n        final_style_original_in_head_retained,\n        pending_tokenizer_feedback,\n        coordinated_entries,\n        coordinated_closes,\n    } = input;'''
+          replace_exact(result, old_fn, new_fn)
+
+          # Cross-layer tokenizer gate: total structural projection only.
+          gate = 'crates/frontend-analysis-core/src/html/tokenizer/validation/tree_construction_gate.rs'
+          replace_exact(
+              gate,
+              '                HtmlElement::Paragraph(_) => "p",',
+              '                HtmlElement::Paragraph(_) => "p",\n                HtmlElement::Style(_) => "style",',
+          )
+
+          # TC-S3 and TC-S4 predecessor production projections: Style is an
+          # explicit impossible successor state, never accepted predecessor GOLD.
+          for path, predecessor in [
+              ('crates/frontend-analysis-core/src/html/tree_construction/in_body_div_successor_production.rs', 'TC-S3'),
+              ('crates/frontend-analysis-core/src/html/tree_construction/in_body_div_section_successor_production.rs', 'TC-S4'),
+          ]:
+              replace_exact(
+                  path,
+                  '''        HtmlTreeNodeKind::Element(HtmlElement::Paragraph(_)) => {\n            panic!("''' + predecessor + ''' predecessor fixtures must not construct a TC-S5 Paragraph")\n        }\n        HtmlTreeNodeKind::Text(text) =>''',
+                  '''        HtmlTreeNodeKind::Element(HtmlElement::Paragraph(_)) => {\n            panic!("''' + predecessor + ''' predecessor fixtures must not construct a TC-S5 Paragraph")\n        }\n        HtmlTreeNodeKind::Element(HtmlElement::Style(_)) => {\n            panic!("''' + predecessor + ''' predecessor fixtures must not construct a TC-S9 Style")\n        }\n        HtmlTreeNodeKind::Text(text) =>''',
+              )
+              replace_exact(
+                  path,
+                  '''                HtmlTreeActionKind::InsertedAuthoredParagraphElement { .. }\n                | HtmlTreeActionKind::InsertedSynthesizedParagraphElement { .. }\n                | HtmlTreeActionKind::ClosedParagraphElement { .. }\n                | HtmlTreeActionKind::PoppedParagraphElementBySelectedOrdinaryEndTag { .. } => {\n                    panic!("''' + predecessor + ''' predecessor fixtures must not record a TC-S5 Paragraph action")\n                }\n                HtmlTreeActionKind::ReprocessedToken =>''',
+                  '''                HtmlTreeActionKind::InsertedAuthoredParagraphElement { .. }\n                | HtmlTreeActionKind::InsertedSynthesizedParagraphElement { .. }\n                | HtmlTreeActionKind::ClosedParagraphElement { .. }\n                | HtmlTreeActionKind::PoppedParagraphElementBySelectedOrdinaryEndTag { .. } => {\n                    panic!("''' + predecessor + ''' predecessor fixtures must not record a TC-S5 Paragraph action")\n                }\n                HtmlTreeActionKind::InsertedAuthoredStyleElement { .. }\n                | HtmlTreeActionKind::ClosedStyleElementByAuthoredEndTag { .. }\n                | HtmlTreeActionKind::PoppedStyleElementAtEndOfFile { .. } => {\n                    panic!("''' + predecessor + ''' predecessor fixtures must not record a TC-S9 Style action")\n                }\n                HtmlTreeActionKind::ReprocessedToken =>''',
+              )
+
+          # TC-S5 production projection: Style remains an explicit later-successor state.
+          pprod = 'crates/frontend-analysis-core/src/html/tree_construction/in_body_p_successor_production.rs'
+          replace_exact(
+              pprod,
+              '''                HtmlTreeNodeKind::Text(text) => NodeMeaning::Text(''',
+              '''                HtmlTreeNodeKind::Element(HtmlElement::Style(_)) => {\n                    panic!("TC-S5 predecessor fixtures must not construct a TC-S9 Style")\n                }\n                HtmlTreeNodeKind::Text(text) => NodeMeaning::Text(''',
+          )
+
+          # TC-S1 validation projection remains generic/total; its authored GOLD is untouched.
+          validation = 'crates/frontend-analysis-core/src/html/tree_construction/validation.rs'
+          replace_exact(
+              validation,
+              '''        HtmlTreeNodeKind::Text(text) => GoldNode::Text {''',
+              '''        HtmlTreeNodeKind::Element(HtmlElement::Style(style)) => GoldNode::Element {\n            name: "style",\n            origin: GoldOrigin::Authored(\n                (style.complete().range().start(), style.complete().range().end()),\n                (style.raw_name().range().start(), style.raw_name().range().end()),\n            ),\n            children,\n        },\n        HtmlTreeNodeKind::Text(text) => GoldNode::Text {''',
+              expected=1,
+          )
+          replace_exact(
+              validation,
+              '''            HtmlTreeDiagnosticCode::UnmatchedParagraphEndTag => {\n                panic!("the TC-S1 predecessor GOLD never produces a TC-S5 Paragraph diagnostic")\n            }\n        })''',
+              '''            HtmlTreeDiagnosticCode::UnmatchedParagraphEndTag => {\n                panic!("the TC-S1 predecessor GOLD never produces a TC-S5 Paragraph diagnostic")\n            }\n            HtmlTreeDiagnosticCode::StyleEndOfFileInText => {\n                panic!("the TC-S1 predecessor GOLD never produces a TC-S9 Style diagnostic")\n            }\n        })''',
+          )
+          replace_exact(
+              validation,
+              '''                HtmlTreeNodeKind::Element(HtmlElement::Shell(shell)) => match shell.origin() {''',
+              '''                HtmlTreeNodeKind::Element(HtmlElement::Style(_)) => {\n                    unreachable!("no TC-S1 GOLD case constructs a TC-S9 Style")\n                }\n                HtmlTreeNodeKind::Element(HtmlElement::Shell(shell)) => match shell.origin() {''',
+              expected=1,
+          )
+
+          # Direct historical private-parts fixtures get only neutral TC-S9 hand-off state.
+          neutral_paths = {
+              'crates/frontend-analysis-core/src/html/tree_construction/in_body_div_successor_production.rs': 5,
+              'crates/frontend-analysis-core/src/html/tree_construction/in_body_div_section_successor_production.rs': 7,
+              'crates/frontend-analysis-core/src/html/tree_construction/validation.rs': 1,
+          }
+          pattern = re.compile(r'(?m)^(?P<indent>\s*)final_open_paragraph:\s*(?P<value>[^\n]+),\n(?P<close>\s*)}')
+          for path, expected in neutral_paths.items():
+              p = ROOT / path
+              text = p.read_text()
+              matches = list(pattern.finditer(text))
+              if len(matches) != expected:
+                  raise SystemExit(f'{path}: expected {expected} neutral hand-off sites, found {len(matches)}')
+              def repl(m):
+                  i = m.group('indent')
+                  return (
+                      f"{i}final_open_paragraph: {m.group('value')},\n"
+                      f"{i}final_open_style: None,\n"
+                      f"{i}final_style_text_mode_active: false,\n"
+                      f"{i}final_style_original_in_head_retained: false,\n"
+                      f"{i}pending_tokenizer_feedback: false,\n"
+                      f"{i}coordinated_raw_text_entry_tokens: Vec::new(),\n"
+                      f"{i}coordinated_raw_text_close_tokens: Vec::new(),\n"
+                      f"{m.group('close')}}}"
+                  )
+              p.write_text(pattern.sub(repl, text))
+
+          print('focused refinement patch applied')
+          PY
+
+      - name: Format exact refinement
+        run: cargo +1.97.1 fmt --all
+
+      - name: Prove refined path envelope
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import subprocess
+          allowed = {
+            'crates/frontend-analysis-core/src/html/tokenizer/producer/session.rs',
+            'crates/frontend-analysis-core/src/html/tokenizer/producer/mod.rs',
+            'crates/frontend-analysis-core/src/html/tokenizer/producer/state.rs',
+            'crates/frontend-analysis-core/src/html/tree_construction/driver.rs',
+            'crates/frontend-analysis-core/src/html/tree_construction/session.rs',
+            'crates/frontend-analysis-core/src/html/tree_construction/result.rs',
+            'crates/frontend-analysis-core/src/html/tree_construction/in_head_style_rawtext_feedback_successor_production.rs',
+            'crates/frontend-analysis-core/src/html/tree_construction/mod.rs',
+            'crates/frontend-analysis-core/src/html/tokenizer/validation/tree_construction_gate.rs',
+            'crates/frontend-analysis-core/src/html/tree_construction/in_body_div_section_successor_production.rs',
+            'crates/frontend-analysis-core/src/html/tree_construction/in_body_div_successor_production.rs',
+            'crates/frontend-analysis-core/src/html/tree_construction/in_body_p_successor_production.rs',
+            'crates/frontend-analysis-core/src/html/tree_construction/validation.rs',
+          }
+          helper = '.github/workflows/tmp-tc-s9-refinement.yml'
+          changed = set(subprocess.check_output(
+              ['git', 'diff', '--name-only', '843ee4e94454af97233a55c4a10fae890992a01c'],
+              text=True,
+          ).splitlines())
+          changed.discard(helper)
+          unexpected = changed - allowed
+          missing = allowed - changed
+          if unexpected:
+              raise SystemExit(f'14th-path STOP: {sorted(unexpected)}')
+          if missing:
+              raise SystemExit(f'expected refined path not changed: {sorted(missing)}')
+          print('exact 13-path refinement envelope proved')
+          PY
+
+      - name: Clippy all targets
+        run: cargo +1.97.1 clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Full workspace tests
+        run: cargo +1.97.1 test --workspace --all-targets --all-features
+
+      - name: Locked metadata
+        run: cargo +1.97.1 metadata --offline --format-version 1 --locked > /dev/null
+
+      - name: Commit validated refinement artifacts
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- \
+            crates/frontend-analysis-core/src/html/tokenizer/producer/session.rs \
+            crates/frontend-analysis-core/src/html/tokenizer/producer/mod.rs \
+            crates/frontend-analysis-core/src/html/tokenizer/producer/state.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/driver.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/session.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/result.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/in_head_style_rawtext_feedback_successor_production.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/mod.rs \
+            crates/frontend-analysis-core/src/html/tokenizer/validation/tree_construction_gate.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/in_body_div_section_successor_production.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/in_body_div_successor_production.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/in_body_p_successor_production.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/validation.rs
+          git commit -m 'fix(html): apply TC-S9 focused placement refinement'
+          git push origin HEAD:tmp-tc-s9-refinement-843ee4
