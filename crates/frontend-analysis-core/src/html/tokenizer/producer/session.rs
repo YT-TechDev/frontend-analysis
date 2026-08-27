@@ -19,18 +19,18 @@
 use crate::SourceText;
 use crate::html::token::{HtmlTagKind, HtmlToken};
 
+use super::super::resource::HtmlTokenizerLimits;
+use super::super::result::{
+    HtmlTokenizerCapability, HtmlTokenizerCapabilityAvailability, HtmlTokenizerCompletion,
+    HtmlTokenizerIncompleteCause, HtmlTokenizerMode, HtmlTokenizerRunResult,
+    HtmlTokenizerUnsupportedCapability, HtmlTokenizerUnsupportedTrigger,
+};
 use super::builder::TagBuilder;
 use super::cursor::InputUnit;
 use super::state::State;
 use super::{
     DataRun, Engine, Step, context_dependent_mode, invalid_configuration_result,
     source_bytes_limit_result,
-};
-use super::super::resource::HtmlTokenizerLimits;
-use super::super::result::{
-    HtmlTokenizerCapability, HtmlTokenizerCapabilityAvailability, HtmlTokenizerCompletion,
-    HtmlTokenizerIncompleteCause, HtmlTokenizerMode, HtmlTokenizerRunResult,
-    HtmlTokenizerUnsupportedCapability, HtmlTokenizerUnsupportedTrigger,
 };
 
 /// One private production boundary reached while driving the tokenizer.
@@ -167,9 +167,7 @@ impl<'a> HtmlTokenizerSession<'a> {
             return Err(HtmlTokenizerSessionControlError::RawTextRequestedWithoutSuspension);
         };
         if mode != HtmlTokenizerMode::RawText {
-            return Err(
-                HtmlTokenizerSessionControlError::RawTextRequestedForDifferentMode(mode),
-            );
+            return Err(HtmlTokenizerSessionControlError::RawTextRequestedForDifferentMode(mode));
         }
         if !self
             .engine
@@ -488,10 +486,7 @@ impl<'a> Engine<'a> {
     /// tokenizer itself examined that candidate. This is not downstream
     /// source search/rescan/re-tokenization.
     fn fallback_raw_text_end_tag_candidate(&mut self) -> Result<(), Step> {
-        let tag = self
-            .tag
-            .as_ref()
-            .expect("RAWTEXT end-tag candidate active");
+        let tag = self.tag.as_ref().expect("RAWTEXT end-tag candidate active");
         let start = tag.tag_start;
         let end = tag.name_end;
 
