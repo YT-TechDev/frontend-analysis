@@ -710,24 +710,24 @@ fn assert_core_causal_events(observation: &Observation) {
     });
     assert_eq!(entered, Some(InsertionMode::InHead));
 
-    if let Some(style) = &observation.tree.style {
-        if let Some(close) = &style.close {
-            let tokenizer_close = observation.events.iter().find_map(|event| match event {
-                Event::TokenizerReturnedToData { close } => Some(close),
-                _ => None,
-            });
-            assert_eq!(tokenizer_close, Some(close));
-            let tree_close = observation.events.iter().find_map(|event| match event {
-                Event::StyleClosed { close } => Some(close),
-                _ => None,
-            });
-            assert_eq!(tree_close, Some(close));
-            let restored = observation.events.iter().find_map(|event| match event {
-                Event::RestoredMode { mode } => Some(*mode),
-                _ => None,
-            });
-            assert_eq!(restored, Some(InsertionMode::InHead));
-        }
+    if let Some(style) = &observation.tree.style
+        && let Some(close) = &style.close
+    {
+        let tokenizer_close = observation.events.iter().find_map(|event| match event {
+            Event::TokenizerReturnedToData { close } => Some(close),
+            _ => None,
+        });
+        assert_eq!(tokenizer_close, Some(close));
+        let tree_close = observation.events.iter().find_map(|event| match event {
+            Event::StyleClosed { close } => Some(close),
+            _ => None,
+        });
+        assert_eq!(tree_close, Some(close));
+        let restored = observation.events.iter().find_map(|event| match event {
+            Event::RestoredMode { mode } => Some(*mode),
+            _ => None,
+        });
+        assert_eq!(restored, Some(InsertionMode::InHead));
     }
 }
 
