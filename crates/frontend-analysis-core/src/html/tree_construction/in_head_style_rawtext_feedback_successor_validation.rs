@@ -21,8 +21,10 @@
 //!   Data before the corresponding end-tag token is consumed by the tree;
 //! - the non-script end-tag rule in `text` pops the current node and restores
 //!   the retained original insertion mode;
-//! - EOF in `text` pops the current node and restores the original insertion
-//!   mode without fabricating authored closing-tag evidence.
+//! - EOF in `text` pops the current node, restores the original insertion mode,
+//!   and requires the same EOF token to be reprocessed, without fabricating
+//!   authored closing-tag evidence. This bounded model exposes that reprocess as
+//!   an explicit non-complete checkpoint rather than widening into later modes.
 //!
 //! WPT/html5lib-family parsing fixtures are challenge/corroboration evidence
 //! only. This test-only machine intentionally models only the semantic states
@@ -70,6 +72,7 @@ enum Name {
     Html,
     Head,
     Style,
+    B,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -158,9 +161,16 @@ impl TreeState {
             close: None,
             eof_closed: false,
         });
+        Feedback::SwitchTokenizer(LexState::RawText)
+    }
+
+    fn enter_text_after_feedback(&mut self) {
+        assert_eq!(self.mode, InsertionMode::InHead);
+        assert!(self.original_mode.is_none());
+        let style = self.style.as_ref().expect("inserted style before Text");
+        assert_eq!(self.open.last(), Some(&style.id));
         self.original_mode = Some(self.mode);
         self.mode = InsertionMode::Text;
-        Feedback::SwitchTokenizer(LexState::RawText)
     }
 
     fn insert_raw_text(&mut self, contribution: Evidence) {
@@ -422,6 +432,11 @@ enum Event {
         evidence: Evidence,
     },
     EofInTextRecovery,
+    SameTokenReprocessPending {
+        class: TokenClass,
+        state: LexState,
+        evidence: Evidence,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -497,6 +512,7 @@ fn event_kinds(events: &[Event]) -> Vec<EventKind> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Completion {
     Complete,
+    PendingSameTokenReprocess,
     LowerLayerIncomplete,
     Unsupported,
 }
@@ -505,7 +521,7 @@ enum Completion {
 enum Terminal {
     AppropriateCloseThenEof,
     PostCloseSentinel,
-    EofInRawText,
+    EofInRawTextReprocessPending,
     LowerLayerStop,
     UnsupportedStyleShape,
 }
@@ -517,6 +533,7 @@ struct Observation {
     tokenizer_state: LexState,
     tokenizer_cursor: usize,
     pending_feedback: Option<LexState>,
+    pending_reprocess: Option<Token>,
     events: Vec<Event>,
     completion: Completion,
     terminal: Terminal,
@@ -542,6 +559,7 @@ fn run_candidate(
                     tokenizer_state: tokenizer.state,
                     tokenizer_cursor: tokenizer.cursor,
                     pending_feedback,
+                    pending_reprocess: None,
                     events,
                     completion: Completion::LowerLayerIncomplete,
                     terminal: Terminal::LowerLayerStop,
@@ -570,9 +588,6 @@ fn run_candidate(
                     id: style.id,
                     start: token.evidence.clone(),
                 });
-                events.push(Event::EnteredText {
-                    original: InsertionMode::InHead,
-                });
                 feedback
             }
             (InsertionMode::Text, TokenClass::Characters) => {
@@ -598,15 +613,21 @@ fn run_candidate(
                 events.push(Event::RestoredMode {
                     mode: InsertionMode::InHead,
                 });
+                events.push(Event::SameTokenReprocessPending {
+                    class: token.class,
+                    state: token.state_at_emission,
+                    evidence: token.evidence.clone(),
+                });
                 return Observation {
                     source_id: source.id(),
                     tree,
                     tokenizer_state: tokenizer.state,
                     tokenizer_cursor: tokenizer.cursor,
                     pending_feedback,
+                    pending_reprocess: Some(token),
                     events,
-                    completion: Completion::Complete,
-                    terminal: Terminal::EofInRawText,
+                    completion: Completion::PendingSameTokenReprocess,
+                    terminal: Terminal::EofInRawTextReprocessPending,
                 };
             }
             (InsertionMode::InHead, TokenClass::StartBodySentinel)
@@ -625,6 +646,7 @@ fn run_candidate(
                     tokenizer_state: tokenizer.state,
                     tokenizer_cursor: tokenizer.cursor,
                     pending_feedback,
+                    pending_reprocess: None,
                     events,
                     completion: Completion::Complete,
                     terminal: Terminal::PostCloseSentinel,
@@ -642,6 +664,7 @@ fn run_candidate(
                     tokenizer_state: tokenizer.state,
                     tokenizer_cursor: tokenizer.cursor,
                     pending_feedback,
+                    pending_reprocess: None,
                     events,
                     completion: Completion::Complete,
                     terminal: Terminal::AppropriateCloseThenEof,
@@ -654,6 +677,7 @@ fn run_candidate(
                     tokenizer_state: tokenizer.state,
                     tokenizer_cursor: tokenizer.cursor,
                     pending_feedback,
+                    pending_reprocess: None,
                     events,
                     completion: Completion::Unsupported,
                     terminal: Terminal::UnsupportedStyleShape,
@@ -679,6 +703,11 @@ fn run_candidate(
                 to: applied,
                 cursor: tokenizer.cursor,
             });
+            assert_eq!(applied, LexState::RawText);
+            tree.enter_text_after_feedback();
+            events.push(Event::EnteredText {
+                original: InsertionMode::InHead,
+            });
         }
     }
 }
@@ -697,16 +726,25 @@ struct Gold {
     text_contribution: Option<GoldEvidence>,
     close: Option<GoldEvidence>,
     final_lex: LexState,
+    completion: Completion,
     terminal: Terminal,
+    pending_reprocess: Option<(LexState, TokenClass)>,
     eof_in_text_diagnostic: bool,
     sentinel: Option<GoldEvidence>,
 }
 
 fn assert_gold(observation: &Observation, gold: &Gold) {
-    assert_eq!(observation.completion, Completion::Complete);
+    assert_eq!(observation.completion, gold.completion);
     assert_eq!(observation.terminal, gold.terminal);
     assert_eq!(observation.tokenizer_state, gold.final_lex);
     assert_eq!(observation.pending_feedback, None);
+    assert_eq!(
+        observation
+            .pending_reprocess
+            .as_ref()
+            .map(|token| (token.state_at_emission, token.class)),
+        gold.pending_reprocess
+    );
     assert_eq!(observation.tree.mode, InsertionMode::InHead);
     assert_eq!(observation.tree.original_mode, None);
     assert_eq!(observation.tree.open, vec![NodeId(0), NodeId(1)]);
@@ -742,7 +780,10 @@ fn assert_gold(observation: &Observation, gold: &Gold) {
         (None, None) => {}
         pair => panic!("close evidence mismatch: {pair:?}"),
     }
-    assert_eq!(style.eof_closed, gold.terminal == Terminal::EofInRawText);
+    assert_eq!(
+        style.eof_closed,
+        gold.terminal == Terminal::EofInRawTextReprocessPending
+    );
     assert_eq!(
         observation.tree.eof_in_text_diagnostic,
         gold.eof_in_text_diagnostic
@@ -824,19 +865,66 @@ fn assert_core_causal_events(observation: &Observation) {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FreezeError {
     PendingFeedback,
+    OutstandingSameTokenReprocess,
     ActiveTextWithoutOriginal,
     ClosedPathTokenizerNotData,
     ClosedPathTreeNotRestored,
     ClosedPathStyleStillOpen,
+    ClosedPathCloseEvidenceMismatch,
+    ClosedPathImpossibleConstructedIdentity,
     EofPathClaimsAuthoredClose,
 }
 
-fn validate_candidate_freeze(observation: &Observation) -> Result<(), FreezeError> {
-    if observation.completion != Completion::Complete {
-        return Ok(());
+fn selected_constructed_identity_is_valid(tree: &TreeState) -> bool {
+    if tree.next_id != 3 || tree.elements.len() != 3 {
+        return false;
     }
+    let [html, head, style] = tree.elements.as_slice() else {
+        return false;
+    };
+    if html.id != NodeId(0)
+        || html.name != Name::Html
+        || html.parent.is_some()
+        || head.id != NodeId(1)
+        || head.name != Name::Head
+        || head.parent != Some(NodeId(0))
+        || style.id != NodeId(2)
+        || style.name != Name::Style
+        || style.parent != Some(NodeId(1))
+    {
+        return false;
+    }
+    tree.style
+        .as_ref()
+        .is_some_and(|record| record.id == NodeId(2))
+}
+
+fn retained_close_matches_emitted_close(observation: &Observation) -> bool {
+    let Some(retained) = observation
+        .tree
+        .style
+        .as_ref()
+        .and_then(|style| style.close.as_ref())
+    else {
+        return false;
+    };
+    let mut emitted = observation.events.iter().filter_map(|event| match event {
+        Event::Produced {
+            state: LexState::RawText,
+            class: TokenClass::EndStyle,
+            evidence,
+        } => Some(evidence),
+        _ => None,
+    });
+    emitted.next() == Some(retained) && emitted.next().is_none()
+}
+
+fn validate_candidate_freeze(observation: &Observation) -> Result<(), FreezeError> {
     if observation.pending_feedback.is_some() {
         return Err(FreezeError::PendingFeedback);
+    }
+    if observation.completion == Completion::Complete && observation.pending_reprocess.is_some() {
+        return Err(FreezeError::OutstandingSameTokenReprocess);
     }
     if observation.tree.mode == InsertionMode::Text && observation.tree.original_mode.is_none() {
         return Err(FreezeError::ActiveTextWithoutOriginal);
@@ -844,6 +932,9 @@ fn validate_candidate_freeze(observation: &Observation) -> Result<(), FreezeErro
 
     match observation.terminal {
         Terminal::AppropriateCloseThenEof | Terminal::PostCloseSentinel => {
+            if observation.completion != Completion::Complete {
+                return Ok(());
+            }
             if observation.tokenizer_state != LexState::Data {
                 return Err(FreezeError::ClosedPathTokenizerNotData);
             }
@@ -855,8 +946,14 @@ fn validate_candidate_freeze(observation: &Observation) -> Result<(), FreezeErro
             if observation.tree.open != vec![NodeId(0), NodeId(1)] {
                 return Err(FreezeError::ClosedPathStyleStillOpen);
             }
+            if !retained_close_matches_emitted_close(observation) {
+                return Err(FreezeError::ClosedPathCloseEvidenceMismatch);
+            }
+            if !selected_constructed_identity_is_valid(&observation.tree) {
+                return Err(FreezeError::ClosedPathImpossibleConstructedIdentity);
+            }
         }
-        Terminal::EofInRawText => {
+        Terminal::EofInRawTextReprocessPending => {
             let style = observation.tree.style.as_ref().expect("EOF style record");
             if style.close.is_some() {
                 return Err(FreezeError::EofPathClaimsAuthoredClose);
@@ -945,7 +1042,9 @@ fn r1_empty_style_proves_complete_feedback_round_trip() {
                 raw: "</style>",
             }),
             final_lex: LexState::Data,
+            completion: Completion::Complete,
             terminal: Terminal::AppropriateCloseThenEof,
+            pending_reprocess: None,
             eof_in_text_diagnostic: false,
             sentinel: None,
         },
@@ -993,7 +1092,9 @@ fn r2_f1_f3_tag_shaped_raw_text_falsifies_completed_data_vector_and_reinterpreta
                 raw: "</style>",
             }),
             final_lex: LexState::Data,
+            completion: Completion::Complete,
             terminal: Terminal::AppropriateCloseThenEof,
+            pending_reprocess: None,
             eof_in_text_diagnostic: false,
             sentinel: None,
         },
@@ -1047,7 +1148,9 @@ fn r3_non_appropriate_end_tag_candidate_remains_raw_text() {
                 raw: "</style>",
             }),
             final_lex: LexState::Data,
+            completion: Completion::Complete,
             terminal: Terminal::AppropriateCloseThenEof,
+            pending_reprocess: None,
             eof_in_text_diagnostic: false,
             sentinel: None,
         },
@@ -1078,7 +1181,9 @@ fn r4_mixed_case_appropriate_close_preserves_raw_spelling() {
                 raw: "</StYlE>",
             }),
             final_lex: LexState::Data,
+            completion: Completion::Complete,
             terminal: Terminal::AppropriateCloseThenEof,
+            pending_reprocess: None,
             eof_in_text_diagnostic: false,
             sentinel: None,
         },
@@ -1109,7 +1214,9 @@ fn r5_f2_f4_full_source_sentinel_proves_feedback_is_early_and_round_trip_is_two_
                 raw: "</style>",
             }),
             final_lex: LexState::Data,
+            completion: Completion::Complete,
             terminal: Terminal::PostCloseSentinel,
+            pending_reprocess: None,
             eof_in_text_diagnostic: false,
             sentinel: Some(GoldEvidence {
                 start: 25,
@@ -1124,9 +1231,9 @@ fn r5_f2_f4_full_source_sentinel_proves_feedback_is_early_and_round_trip_is_two_
         vec![
             EventKind::ProducedStartStyleData,
             EventKind::StyleInserted,
-            EventKind::EnteredText,
             EventKind::FeedbackRequestedRawText,
             EventKind::FeedbackAppliedRawText,
+            EventKind::EnteredText,
             EventKind::ProducedCharactersRawText,
             EventKind::RawTextInserted,
             EventKind::ProducedEndStyleRawText,
@@ -1153,7 +1260,7 @@ fn r5_f2_f4_full_source_sentinel_proves_feedback_is_early_and_round_trip_is_two_
 }
 
 #[test]
-fn r6_eof_in_raw_text_restores_tree_without_fabricating_close_or_data_transition() {
+fn r6_eof_in_raw_text_restores_tree_and_exposes_same_token_reprocess_checkpoint() {
     let source = source(6, "<style><b>x");
     let actual = run_candidate(&source, 0, None);
     assert_gold(
@@ -1172,12 +1279,36 @@ fn r6_eof_in_raw_text_restores_tree_without_fabricating_close_or_data_transition
             }),
             close: None,
             final_lex: LexState::RawText,
-            terminal: Terminal::EofInRawText,
+            completion: Completion::PendingSameTokenReprocess,
+            terminal: Terminal::EofInRawTextReprocessPending,
+            pending_reprocess: Some((LexState::RawText, TokenClass::Eof)),
             eof_in_text_diagnostic: true,
             sentinel: None,
         },
     );
+    assert_ne!(actual.completion, Completion::Complete);
     assert_eq!(validate_candidate_freeze(&actual), Ok(()));
+    let pending = actual
+        .pending_reprocess
+        .as_ref()
+        .expect("same EOF token remains pending for reprocess");
+    assert_evidence(
+        &pending.evidence,
+        source.id(),
+        &GoldEvidence {
+            start: 11,
+            end: 11,
+            raw: "",
+        },
+    );
+    assert!(actual.events.iter().any(|event| matches!(
+        event,
+        Event::SameTokenReprocessPending {
+            class: TokenClass::Eof,
+            state: LexState::RawText,
+            evidence
+        } if evidence.start == 11 && evidence.end == 11 && evidence.raw.is_empty()
+    )));
     assert!(
         !actual
             .events
@@ -1210,7 +1341,9 @@ fn r7_raw_text_less_than_and_non_name_end_open_fallback_stays_text() {
                 raw: "</style>",
             }),
             final_lex: LexState::Data,
+            completion: Completion::Complete,
             terminal: Terminal::AppropriateCloseThenEof,
+            pending_reprocess: None,
             eof_in_text_diagnostic: false,
             sentinel: None,
         },
@@ -1266,6 +1399,7 @@ fn r10_lower_layer_stop_is_never_upgraded_to_complete() {
     assert_eq!(actual.tokenizer_cursor, 7);
     assert_eq!(actual.tree.mode, InsertionMode::Text);
     assert_eq!(actual.tree.original_mode, Some(InsertionMode::InHead));
+    assert_eq!(actual.pending_reprocess, None);
     assert_eq!(validate_candidate_freeze(&actual), Ok(()));
 }
 
@@ -1279,6 +1413,7 @@ fn r11_excluded_style_shape_refuses_before_tree_identity_or_feedback_mutation() 
     assert_eq!(actual.tokenizer_state, LexState::Data);
     assert_eq!(actual.tokenizer_cursor, 15);
     assert_eq!(actual.pending_feedback, None);
+    assert_eq!(actual.pending_reprocess, None);
     assert!(!actual.events.iter().any(|event| matches!(
         event,
         Event::FeedbackRequested { .. }
@@ -1288,7 +1423,7 @@ fn r11_excluded_style_shape_refuses_before_tree_identity_or_feedback_mutation() 
 }
 
 #[test]
-fn r12_f5_f6_freeze_rejects_inconsistent_feedback_and_restoration_state() {
+fn r12_f5_f6_freeze_rejects_inconsistent_feedback_provenance_and_identity_state() {
     let fixture_source = source(12, "<style>x</style>");
     let valid = run_candidate(&fixture_source, 0, None);
     assert_eq!(validate_candidate_freeze(&valid), Ok(()));
@@ -1331,7 +1466,35 @@ fn r12_f5_f6_freeze_rejects_inconsistent_feedback_and_restoration_state() {
         Err(FreezeError::ClosedPathStyleStillOpen)
     );
 
+    let mut mismatched_close = valid.clone();
+    mismatched_close.tree.style.as_mut().unwrap().close = Some(evidence(&fixture_source, 7, 8));
+    assert_eq!(
+        validate_candidate_freeze(&mismatched_close),
+        Err(FreezeError::ClosedPathCloseEvidenceMismatch)
+    );
+
+    let tag_source = source(121, "<style><b>x</style>");
+    let mut impossible_identity = run_candidate(&tag_source, 0, None);
+    impossible_identity.tree.elements.push(Element {
+        id: NodeId(3),
+        name: Name::B,
+        parent: Some(NodeId(2)),
+        origin: Origin::Authored(evidence(&tag_source, 7, 10)),
+    });
+    impossible_identity.tree.next_id = 4;
+    assert_eq!(
+        validate_candidate_freeze(&impossible_identity),
+        Err(FreezeError::ClosedPathImpossibleConstructedIdentity)
+    );
+
     let eof_source = source(120, "<style>x");
+    let mut false_complete = run_candidate(&eof_source, 0, None);
+    false_complete.completion = Completion::Complete;
+    assert_eq!(
+        validate_candidate_freeze(&false_complete),
+        Err(FreezeError::OutstandingSameTokenReprocess)
+    );
+
     let mut fake_close = run_candidate(&eof_source, 0, None);
     fake_close.tree.style.as_mut().unwrap().close = Some(evidence(&eof_source, 8, 8));
     assert_eq!(
@@ -1384,7 +1547,9 @@ fn f8_gold_is_normative_hand_authored_and_external_heads_are_freshness_markers_o
             raw: "</style>",
         }),
         final_lex: LexState::Data,
+        completion: Completion::Complete,
         terminal: Terminal::AppropriateCloseThenEof,
+        pending_reprocess: None,
         eof_in_text_diagnostic: false,
         sentinel: None,
     };
