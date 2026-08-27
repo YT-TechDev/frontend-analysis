@@ -1,0 +1,90 @@
+name: Temporary TC-S9 TC-S7 freeze diagnostic
+
+on:
+  push:
+    branches:
+      - tmp-tc-s9-refinement-843ee4
+    paths:
+      - .github/workflows/tmp-tc-s9-tc-s7-diagnostic.yml
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout exact helper branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: tmp-tc-s9-refinement-843ee4
+
+      - name: Install exact Rust toolchain
+        run: rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
+
+      - name: Reapply v3 validated production candidate
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          workflow = Path('.github/workflows/tmp-tc-s9-refinement-v3.yml').read_text()
+          blocks = re.findall(r"          python3 - <<'PY'\n(.*?)\n          PY", workflow, re.S)
+          if len(blocks) < 2:
+              raise SystemExit(f'expected at least two v3 python blocks, found {len(blocks)}')
+          for index, block in enumerate(blocks[:2], 1):
+              script = '\n'.join(line[10:] if line.startswith('          ') else line for line in block.splitlines())
+              exec(compile(script, f'<v3-block-{index}>', 'exec'))
+          PY
+
+      - name: Instrument three historical TC-S7 assertions transiently
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('crates/frontend-analysis-core/src/html/tree_construction/in_body_body_end_open_stack_successor_production.rs')
+          text = path.read_text()
+
+          replacements = [
+              (
+                  '''    assert!(matches!(\n        freeze_parts(&fixture, wrong_phase),\n        Err(HtmlTreeFreezeError::BodyEndDiagnosticTriggerOrRecoveryMismatch { token_index: 2 })\n    ));''',
+                  '''    let actual_wrong_phase = freeze_parts(&fixture, wrong_phase);\n    eprintln!("TC-S7-DIAG wrong_phase = {actual_wrong_phase:?}");\n    assert!(matches!(\n        actual_wrong_phase,\n        Err(HtmlTreeFreezeError::BodyEndDiagnosticTriggerOrRecoveryMismatch { token_index: 2 })\n    ));''',
+              ),
+              (
+                  '''    assert!(matches!(\n        freeze_parts(&fixture, parts),\n        Err(HtmlTreeFreezeError::BodyEndAfterBodySuccessorMismatch { token_index: 3 })\n    ));''',
+                  '''    let actual_forged_after_body = freeze_parts(&fixture, parts);\n    eprintln!("TC-S7-DIAG forged_after_body = {actual_forged_after_body:?}");\n    assert!(matches!(\n        actual_forged_after_body,\n        Err(HtmlTreeFreezeError::BodyEndAfterBodySuccessorMismatch { token_index: 3 })\n    ));''',
+              ),
+              (
+                  '''    assert!(matches!(\n        freeze_parts(&fixture, shell_mutation),\n        Err(HtmlTreeFreezeError::BodyEndSameTriggerMutation { token_index: 2 })\n    ));''',
+                  '''    let actual_shell_mutation = freeze_parts(&fixture, shell_mutation);\n    eprintln!("TC-S7-DIAG shell_mutation = {actual_shell_mutation:?}");\n    assert!(matches!(\n        actual_shell_mutation,\n        Err(HtmlTreeFreezeError::BodyEndSameTriggerMutation { token_index: 2 })\n    ));''',
+              ),
+          ]
+
+          for old, new in replacements:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'expected one transient diagnostic replacement, found {count}')
+              text = text.replace(old, new)
+          path.write_text(text)
+          PY
+
+      - name: Run three TC-S7 diagnostics with nocapture
+        shell: bash
+        run: |
+          cargo +1.97.1 test -p frontend-analysis-core \
+            html::tree_construction::in_body_body_end_open_stack_successor_production::freeze_rejects_body_end_diagnostic_token_source_range_recovery_and_phase_corruption \
+            -- --nocapture || true
+          cargo +1.97.1 test -p frontend-analysis-core \
+            html::tree_construction::in_body_body_end_open_stack_successor_production::freeze_rejects_forged_after_body_html_acknowledgement_trigger \
+            -- --nocapture || true
+          cargo +1.97.1 test -p frontend-analysis-core \
+            html::tree_construction::in_body_body_end_open_stack_successor_production::freeze_rejects_pre_ack_shell_mutation_and_extra_same_trigger_diagnostic \
+            -- --nocapture || true
+
+      - name: Prove diagnostic file is uncommitted only
+        shell: bash
+        run: |
+          git status --short
+          test -n "$(git diff -- crates/frontend-analysis-core/src/html/tree_construction/in_body_body_end_open_stack_successor_production.rs)"
