@@ -1,0 +1,134 @@
+name: Temporary TC-S9 refinement validation v6
+
+on:
+  push:
+    branches:
+      - tmp-tc-s9-refinement-843ee4
+    paths:
+      - .github/workflows/tmp-tc-s9-refinement-v6.yml
+
+permissions:
+  contents: write
+
+jobs:
+  validate-and-commit:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout exact helper branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: tmp-tc-s9-refinement-843ee4
+          fetch-depth: 0
+
+      - name: Install exact Rust toolchain
+        run: rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
+
+      - name: Reproduce validated v5 candidate exactly
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          workflow = Path('.github/workflows/tmp-tc-s9-refinement-v5.yml').read_text()
+          blocks = re.findall(r"          python3 - <<'PY'\n(.*?)\n          PY", workflow, re.S)
+          if not blocks:
+              raise SystemExit('expected v5 reproduction block')
+          script = '\n'.join(line[10:] if line.startswith('          ') else line for line in blocks[0].splitlines())
+          exec(compile(script, '<v5-reproduction>', 'exec'))
+          PY
+
+      - name: Format and prove exact 13-path theorem
+        shell: bash
+        run: |
+          cargo +1.97.1 fmt --all
+          python3 - <<'PY'
+          import subprocess
+          expected = {
+            'crates/frontend-analysis-core/src/html/tokenizer/producer/session.rs',
+            'crates/frontend-analysis-core/src/html/tokenizer/producer/mod.rs',
+            'crates/frontend-analysis-core/src/html/tokenizer/producer/state.rs',
+            'crates/frontend-analysis-core/src/html/tree_construction/driver.rs',
+            'crates/frontend-analysis-core/src/html/tree_construction/session.rs',
+            'crates/frontend-analysis-core/src/html/tree_construction/result.rs',
+            'crates/frontend-analysis-core/src/html/tree_construction/in_head_style_rawtext_feedback_successor_production.rs',
+            'crates/frontend-analysis-core/src/html/tree_construction/mod.rs',
+            'crates/frontend-analysis-core/src/html/tokenizer/validation/tree_construction_gate.rs',
+            'crates/frontend-analysis-core/src/html/tree_construction/in_body_div_section_successor_production.rs',
+            'crates/frontend-analysis-core/src/html/tree_construction/in_body_div_successor_production.rs',
+            'crates/frontend-analysis-core/src/html/tree_construction/in_body_p_successor_production.rs',
+            'crates/frontend-analysis-core/src/html/tree_construction/validation.rs',
+          }
+          changed = set(subprocess.check_output(
+              ['git', 'diff', '--name-only', '2c10986c468a62527e270a2d081fee553459451a'], text=True
+          ).splitlines())
+          changed = {path for path in changed if not path.startswith('.github/')}
+          if changed != expected:
+              raise SystemExit(f'13-path theorem mismatch: expected={sorted(expected)} actual={sorted(changed)}')
+          print('exact 13-path theorem proved')
+          PY
+          cargo +1.97.1 fmt --all -- --check
+
+      - name: Clippy all targets
+        run: cargo +1.97.1 clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Full workspace tests
+        run: cargo +1.97.1 test --workspace --all-targets --all-features
+
+      - name: Locked metadata
+        run: cargo +1.97.1 metadata --offline --format-version 1 --locked > /dev/null
+
+      - name: Prove historical hard-zero files unchanged
+        shell: bash
+        run: |
+          for path in \
+            crates/frontend-analysis-core/src/html/tree_construction/in_head_style_rawtext_feedback_successor_validation.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/in_body_p_implied_end_successor_production.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/in_body_body_end_open_stack_successor_production.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/in_body_html_end_open_stack_successor_production.rs \
+            crates/frontend-analysis-core/src/html/tokenizer/result.rs
+          do
+            git diff --quiet 2c10986c468a62527e270a2d081fee553459451a -- "$path" || {
+              echo "hard-zero violation: $path" >&2
+              exit 1
+            }
+          done
+
+      - name: Commit exact validated refinement delta
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- \
+            crates/frontend-analysis-core/src/html/tokenizer/producer/session.rs \
+            crates/frontend-analysis-core/src/html/tokenizer/producer/mod.rs \
+            crates/frontend-analysis-core/src/html/tokenizer/producer/state.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/driver.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/session.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/result.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/in_head_style_rawtext_feedback_successor_production.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/mod.rs \
+            crates/frontend-analysis-core/src/html/tokenizer/validation/tree_construction_gate.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/in_body_div_section_successor_production.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/in_body_div_successor_production.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/in_body_p_successor_production.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/validation.rs
+          python3 - <<'PY'
+          import subprocess
+          expected = {
+            'crates/frontend-analysis-core/src/html/tokenizer/validation/tree_construction_gate.rs',
+            'crates/frontend-analysis-core/src/html/tree_construction/driver.rs',
+            'crates/frontend-analysis-core/src/html/tree_construction/in_body_div_section_successor_production.rs',
+            'crates/frontend-analysis-core/src/html/tree_construction/in_body_div_successor_production.rs',
+            'crates/frontend-analysis-core/src/html/tree_construction/in_body_p_successor_production.rs',
+            'crates/frontend-analysis-core/src/html/tree_construction/result.rs',
+            'crates/frontend-analysis-core/src/html/tree_construction/session.rs',
+            'crates/frontend-analysis-core/src/html/tree_construction/validation.rs',
+          }
+          staged = set(subprocess.check_output(['git', 'diff', '--cached', '--name-only'], text=True).splitlines())
+          if staged != expected:
+              raise SystemExit(f'refinement staged-set mismatch: expected={sorted(expected)} actual={sorted(staged)}')
+          print('exact eight-path refinement delta proved')
+          PY
+          git commit -m 'fix(html): complete TC-S9 focused placement refinement'
+          git push origin HEAD:tmp-tc-s9-refinement-843ee4
