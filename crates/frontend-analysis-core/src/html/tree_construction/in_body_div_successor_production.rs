@@ -222,6 +222,9 @@ fn project_tree(
         HtmlTreeNodeKind::Element(HtmlElement::Paragraph(_)) => {
             panic!("TC-S3 predecessor fixtures must not construct a TC-S5 Paragraph")
         }
+        HtmlTreeNodeKind::Element(HtmlElement::Style(_)) => {
+            panic!("TC-S3 predecessor fixtures must not construct a TC-S9 Style")
+        }
         HtmlTreeNodeKind::Text(text) => ExpectedNode::Text {
             interpreted: text.interpreted().to_owned(),
             contributions: text
@@ -278,6 +281,11 @@ fn project_actions(analysis: &HtmlDocumentShellAnalysis) -> Vec<(ExpectedAction,
                 | HtmlTreeActionKind::ClosedParagraphElement { .. }
                 | HtmlTreeActionKind::PoppedParagraphElementBySelectedOrdinaryEndTag { .. } => {
                     panic!("TC-S3 predecessor fixtures must not record a TC-S5 Paragraph action")
+                }
+                HtmlTreeActionKind::InsertedAuthoredStyleElement { .. }
+                | HtmlTreeActionKind::ClosedStyleElementByAuthoredEndTag { .. }
+                | HtmlTreeActionKind::PoppedStyleElementAtEndOfFile { .. } => {
+                    panic!("TC-S3 predecessor fixtures must not record a TC-S9 Style action")
                 }
                 HtmlTreeActionKind::ReprocessedToken => ExpectedAction::Reprocessed,
                 HtmlTreeActionKind::StoppedParsing => ExpectedAction::Stopped,
@@ -1873,6 +1881,12 @@ fn closure_parts(fixture: &ClosureFixture) -> HtmlDocumentShellParts {
         // The single `div` is closed, so nothing is open at hand-off.
         final_open_selected_ordinary: Vec::new(),
         final_open_paragraph: None,
+        final_open_style: None,
+        final_style_text_mode_active: false,
+        final_style_original_in_head_retained: false,
+        pending_tokenizer_feedback: false,
+        coordinated_raw_text_entry_tokens: Vec::new(),
+        coordinated_raw_text_close_tokens: Vec::new(),
     }
 }
 
@@ -2067,6 +2081,12 @@ fn freeze_rejects_a_closure_that_is_not_stack_consistent() {
         completion: HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete),
         final_open_selected_ordinary: Vec::new(),
         final_open_paragraph: None,
+        final_open_style: None,
+        final_style_text_mode_active: false,
+        final_style_original_in_head_retained: false,
+        pending_tokenizer_feedback: false,
+        coordinated_raw_text_entry_tokens: Vec::new(),
+        coordinated_raw_text_close_tokens: Vec::new(),
     };
 
     assert_eq!(
@@ -2221,6 +2241,12 @@ fn freeze_rejects_a_closure_triggered_by_an_unrelated_non_tag_token() {
         completion: HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete),
         final_open_selected_ordinary: Vec::new(),
         final_open_paragraph: None,
+        final_open_style: None,
+        final_style_text_mode_active: false,
+        final_style_original_in_head_retained: false,
+        pending_tokenizer_feedback: false,
+        coordinated_raw_text_entry_tokens: Vec::new(),
+        coordinated_raw_text_close_tokens: Vec::new(),
     };
     assert_eq!(
         freeze(&source, run, parts).expect_err("freeze must reject this"),
@@ -2335,6 +2361,12 @@ fn freeze_rejects_a_closure_triggered_by_a_differently_named_end_tag() {
         completion: HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete),
         final_open_selected_ordinary: Vec::new(),
         final_open_paragraph: None,
+        final_open_style: None,
+        final_style_text_mode_active: false,
+        final_style_original_in_head_retained: false,
+        pending_tokenizer_feedback: false,
+        coordinated_raw_text_entry_tokens: Vec::new(),
+        coordinated_raw_text_close_tokens: Vec::new(),
     };
     assert_eq!(
         freeze(&source, run, parts).expect_err("freeze must reject this"),
@@ -2503,6 +2535,12 @@ fn freeze_checks_final_open_ordering_and_accepts_valid_nested_open_state() {
         completion: HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete),
         final_open_selected_ordinary: final_open,
         final_open_paragraph: None,
+        final_open_style: None,
+        final_style_text_mode_active: false,
+        final_style_original_in_head_retained: false,
+        pending_tokenizer_feedback: false,
+        coordinated_raw_text_entry_tokens: Vec::new(),
+        coordinated_raw_text_close_tokens: Vec::new(),
     };
 
     // Reversed ordering is rejected even though the set is identical.

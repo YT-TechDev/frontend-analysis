@@ -85,7 +85,6 @@ impl From<HtmlTreeFreezeError> for HtmlDocumentShellConstructionError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HtmlTreeCoordinatorError {
     FeedbackRequestedWithoutMatchingTokenizerSuspension {
-        requested: HtmlTreeTokenizerFeedback,
         boundary: HtmlTokenizerSessionBoundary,
     },
     TokenizerSuspendedWithoutTreeFeedback {
@@ -155,7 +154,6 @@ pub(crate) fn construct_html_document_shell(
                     if boundary != expected_boundary {
                         return Err(HtmlDocumentShellConstructionError::Coordination(
                             HtmlTreeCoordinatorError::FeedbackRequestedWithoutMatchingTokenizerSuspension {
-                                requested: feedback,
                                 boundary,
                             },
                         ));
