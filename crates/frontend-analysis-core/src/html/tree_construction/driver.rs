@@ -111,7 +111,9 @@ pub(crate) enum HtmlTreeCoordinatorError {
         requested: HtmlTreeTokenizerFeedback,
         boundary: HtmlTokenizerSessionBoundary,
     },
-    TokenizerSuspendedWithoutTreeFeedback { mode: HtmlTokenizerMode },
+    TokenizerSuspendedWithoutTreeFeedback {
+        mode: HtmlTokenizerMode,
+    },
     FeedbackTokenWasNotLastProducedAtBoundary,
 }
 
@@ -154,8 +156,7 @@ pub(crate) fn construct_html_document_shell(
                 Ok(admitted) => admitted,
                 Err(capability) => {
                     stop = Some(Stop::Unsupported(HtmlTreeUnsupportedCapability::new(
-                        capability,
-                        trigger,
+                        capability, trigger,
                     )));
                     break;
                 }
@@ -205,8 +206,7 @@ pub(crate) fn construct_html_document_shell(
                 }
                 TokenOutcome::Unsupported(capability) => {
                     stop = Some(Stop::Unsupported(HtmlTreeUnsupportedCapability::new(
-                        capability,
-                        trigger,
+                        capability, trigger,
                     )));
                     break;
                 }
