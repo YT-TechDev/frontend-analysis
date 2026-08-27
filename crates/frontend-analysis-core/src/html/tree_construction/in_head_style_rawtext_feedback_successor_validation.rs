@@ -8,6 +8,26 @@
 //! WHATWG HTML `df14ce3085887cc99d821d238c5192857904de58`, source blob
 //! `16cdaecdb5f3db29eac0753a49f401b221ba9247`;
 //! WPT `5ce815a83b2601ce920e39f001cd7e77642ea860`.
+//!
+//! The hand-authored GOLD below is derived from these pinned normative
+//! obligations, not from browser, WPT, html5lib, or production output:
+//!
+//! - `style` in the `in head` insertion mode uses the generic raw-text element
+//!   parsing algorithm;
+//! - that algorithm inserts the element, switches the tokenizer to RAWTEXT,
+//!   retains the original insertion mode, and switches tree construction to
+//!   `text`;
+//! - RAWTEXT appropriate-end-tag recognition switches the tokenizer back to
+//!   Data before the corresponding end-tag token is consumed by the tree;
+//! - the non-script end-tag rule in `text` pops the current node and restores
+//!   the retained original insertion mode;
+//! - EOF in `text` pops the current node and restores the original insertion
+//!   mode without fabricating authored closing-tag evidence.
+//!
+//! WPT/html5lib-family parsing fixtures are challenge/corroboration evidence
+//! only. This test-only machine intentionally models only the semantic states
+//! needed to falsify the selected theorem; it is not a proposed production
+//! tokenizer state layout or coordinator API.
 
 use crate::{SourceId, SourceText};
 
@@ -402,6 +422,76 @@ enum Event {
         evidence: Evidence,
     },
     EofInTextRecovery,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EventKind {
+    ProducedStartStyleData,
+    StyleInserted,
+    EnteredText,
+    FeedbackRequestedRawText,
+    FeedbackAppliedRawText,
+    ProducedCharactersRawText,
+    RawTextInserted,
+    ProducedEndStyleRawText,
+    TokenizerReturnedToData,
+    StyleClosed,
+    RestoredInHead,
+    ProducedBodyData,
+    PostCloseBodyData,
+    Other,
+}
+
+fn event_kinds(events: &[Event]) -> Vec<EventKind> {
+    events
+        .iter()
+        .map(|event| match event {
+            Event::Produced {
+                state: LexState::Data,
+                class: TokenClass::StartStyle,
+                ..
+            } => EventKind::ProducedStartStyleData,
+            Event::StyleInserted { .. } => EventKind::StyleInserted,
+            Event::EnteredText {
+                original: InsertionMode::InHead,
+            } => EventKind::EnteredText,
+            Event::FeedbackRequested {
+                requested: LexState::RawText,
+                ..
+            } => EventKind::FeedbackRequestedRawText,
+            Event::FeedbackApplied {
+                from: LexState::Data,
+                to: LexState::RawText,
+                ..
+            } => EventKind::FeedbackAppliedRawText,
+            Event::Produced {
+                state: LexState::RawText,
+                class: TokenClass::Characters,
+                ..
+            } => EventKind::ProducedCharactersRawText,
+            Event::RawTextInserted { .. } => EventKind::RawTextInserted,
+            Event::Produced {
+                state: LexState::RawText,
+                class: TokenClass::EndStyle,
+                ..
+            } => EventKind::ProducedEndStyleRawText,
+            Event::TokenizerReturnedToData { .. } => EventKind::TokenizerReturnedToData,
+            Event::StyleClosed { .. } => EventKind::StyleClosed,
+            Event::RestoredMode {
+                mode: InsertionMode::InHead,
+            } => EventKind::RestoredInHead,
+            Event::Produced {
+                state: LexState::Data,
+                class: TokenClass::StartBodySentinel,
+                ..
+            } => EventKind::ProducedBodyData,
+            Event::PostCloseSentinel {
+                state: LexState::Data,
+                ..
+            } => EventKind::PostCloseBodyData,
+            _ => EventKind::Other,
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1029,6 +1119,26 @@ fn r5_f2_f4_full_source_sentinel_proves_feedback_is_early_and_round_trip_is_two_
         },
     );
 
+    assert_eq!(
+        event_kinds(&actual.events),
+        vec![
+            EventKind::ProducedStartStyleData,
+            EventKind::StyleInserted,
+            EventKind::EnteredText,
+            EventKind::FeedbackRequestedRawText,
+            EventKind::FeedbackAppliedRawText,
+            EventKind::ProducedCharactersRawText,
+            EventKind::RawTextInserted,
+            EventKind::ProducedEndStyleRawText,
+            EventKind::TokenizerReturnedToData,
+            EventKind::StyleClosed,
+            EventKind::RestoredInHead,
+            EventKind::ProducedBodyData,
+            EventKind::PostCloseBodyData,
+        ],
+        "the selected round trip is a causal ordering theorem, not only a final-state theorem"
+    );
+
     let late_source = source(55, "<style><b>x</style>");
     assert_eq!(
         late_feedback_probe(&late_source),
@@ -1197,12 +1307,28 @@ fn r12_f5_f6_freeze_rejects_inconsistent_feedback_and_restoration_state() {
         Err(FreezeError::ClosedPathTokenizerNotData)
     );
 
-    let mut wrong_mode = valid.clone();
-    wrong_mode.tree.mode = InsertionMode::Text;
-    wrong_mode.tree.original_mode = None;
+    let mut missing_original = valid.clone();
+    missing_original.tree.mode = InsertionMode::Text;
+    missing_original.tree.original_mode = None;
     assert_eq!(
-        validate_candidate_freeze(&wrong_mode),
+        validate_candidate_freeze(&missing_original),
         Err(FreezeError::ActiveTextWithoutOriginal)
+    );
+
+    let mut unrestored = valid.clone();
+    unrestored.tree.mode = InsertionMode::Text;
+    unrestored.tree.original_mode = Some(InsertionMode::InHead);
+    assert_eq!(
+        validate_candidate_freeze(&unrestored),
+        Err(FreezeError::ClosedPathTreeNotRestored)
+    );
+
+    let mut style_still_open = valid.clone();
+    let style_id = style_still_open.tree.style.as_ref().unwrap().id;
+    style_still_open.tree.open.push(style_id);
+    assert_eq!(
+        validate_candidate_freeze(&style_still_open),
+        Err(FreezeError::ClosedPathStyleStillOpen)
     );
 
     let eof_source = source(120, "<style>x");
