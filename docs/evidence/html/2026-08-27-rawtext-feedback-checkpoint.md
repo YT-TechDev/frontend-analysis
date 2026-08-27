@@ -61,8 +61,9 @@ job: 98405966771
 result: PASS
 ```
 
-At this checkpoint the only open Pull Request identified by the live repository
-inventory is unrelated Dependabot PR #149.
+At the recorded base checkpoint, immediately before this evidence Leaf PR was
+opened, the live repository inventory identified only unrelated Dependabot PR
+#149 as open.
 
 ## Durable Program and Research Authority
 
