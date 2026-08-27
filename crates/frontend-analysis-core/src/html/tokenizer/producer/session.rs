@@ -393,14 +393,13 @@ impl<'a> Engine<'a> {
     pub(super) fn step_raw_text_end_tag_name(&mut self, unit: InputUnit) -> Step {
         match unit {
             InputUnit::Scalar { ch, start, end } if ch.is_ascii_alphabetic() => {
-                let normalized = ch.to_ascii_lowercase();
-                if let Err(stop) = self.try_reserve_retained(normalized.len_utf8(), start) {
+                if let Err(stop) = self.try_reserve_retained(ch.len_utf8(), start) {
                     return stop;
                 }
                 self.tag
                     .as_mut()
                     .expect("RAWTEXT end-tag candidate active")
-                    .push_name(normalized, end);
+                    .push_name(ch, end);
                 Step::Continue
             }
             InputUnit::Scalar { ch, start, end }
@@ -410,6 +409,11 @@ impl<'a> Engine<'a> {
                 if let Err(stop) = self.flush_data_run() {
                     return stop;
                 }
+                self.tag
+                    .as_mut()
+                    .expect("appropriate RAWTEXT end-tag candidate active")
+                    .interpreted_name
+                    .make_ascii_lowercase();
                 self.raw_text_closing_tag = true;
                 match ch {
                     '\t' | '\n' | '\u{000c}' | ' ' => {
@@ -469,7 +473,9 @@ impl<'a> Engine<'a> {
         };
         start.kind() == HtmlTagKind::Start
             && candidate.kind == HtmlTagKind::End
-            && candidate.interpreted_name == start.name().interpreted()
+            && candidate
+                .interpreted_name
+                .eq_ignore_ascii_case(start.name().interpreted())
     }
 
     /// Emits literal `</` fallback without rescanning. The delimiter is known
@@ -482,21 +488,23 @@ impl<'a> Engine<'a> {
     }
 
     /// Reclassifies the current RAWTEXT end-tag candidate as character data
-    /// using only exact offsets and temporary state captured while the
-    /// tokenizer itself examined that candidate. This is not downstream
-    /// source search/rescan/re-tokenization.
+    /// using only exact offsets and the ASCII spelling retained while the
+    /// single forward cursor examined the candidate. No source is searched,
+    /// sliced, rescanned, or retokenized.
     fn fallback_raw_text_end_tag_candidate(&mut self) -> Result<(), Step> {
         let tag = self.tag.as_ref().expect("RAWTEXT end-tag candidate active");
         let start = tag.tag_start;
         let end = tag.name_end;
 
         // The active builder already accounts for the ASCII name bytes.
-        // Fallback replaces it with the exact literal source span, adding
+        // Fallback replaces it with the retained literal spelling and adds
         // only the two `</` delimiter bytes. Preflight that delta before
         // destroying the candidate so a resource refusal preserves state.
         self.try_reserve_retained(2, start)?;
-        let raw = self.anchor(start, end).fragment().to_owned();
-        self.tag.take().expect("RAWTEXT end-tag candidate active");
+        let tag = self.tag.take().expect("RAWTEXT end-tag candidate active");
+        let mut raw = String::with_capacity(2 + tag.interpreted_name.len());
+        raw.push_str("</");
+        raw.push_str(&tag.interpreted_name);
 
         match &mut self.data_run {
             Some(run) => {
