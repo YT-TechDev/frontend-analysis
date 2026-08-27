@@ -1,0 +1,120 @@
+name: Temporary TC-S9 refinement validation v2
+
+on:
+  push:
+    branches:
+      - tmp-tc-s9-refinement-843ee4
+    paths:
+      - .github/workflows/tmp-tc-s9-refinement-v2.yml
+
+permissions:
+  contents: write
+
+jobs:
+  refine:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout exact helper branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: tmp-tc-s9-refinement-843ee4
+
+      - name: Install exact Rust toolchain
+        run: rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
+
+      - name: Apply asserted focused refinement
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          workflow = Path('.github/workflows/tmp-tc-s9-refinement.yml').read_text()
+          marker = "          python3 - <<'PY'\n"
+          start = workflow.index(marker) + len(marker)
+          end = workflow.index("\n          PY", start)
+          script = workflow[start:end]
+          script = '\n'.join(line[10:] if line.startswith('          ') else line for line in script.splitlines())
+          old = "'crates/frontend-analysis-core/src/html/tree_construction/in_body_div_section_successor_production.rs': 7,"
+          new = "'crates/frontend-analysis-core/src/html/tree_construction/in_body_div_section_successor_production.rs': 6,"
+          if script.count(old) != 1:
+              raise SystemExit('expected one TC-S4 neutral-count assertion to refine')
+          script = script.replace(old, new)
+          exec(compile(script, '<focused-refinement>', 'exec'))
+
+          # One TC-S4 fixture has additional private fields after
+          # final_open_paragraph, so it was intentionally excluded from the
+          # immediate-close pattern above. Patch that one exact remaining
+          # neutral hand-off site without touching its semantic expectations.
+          path = Path('crates/frontend-analysis-core/src/html/tree_construction/in_body_div_section_successor_production.rs')
+          text = path.read_text()
+          pattern = re.compile(
+              r'(?m)^(?P<i>\s*)final_open_paragraph:\s*(?P<v>[^\n]+),\n'
+              r'(?!\s*final_open_style:)'
+          )
+          matches = list(pattern.finditer(text))
+          if len(matches) != 1:
+              raise SystemExit(f'expected one remaining TC-S4 neutral hand-off site, found {len(matches)}')
+          def add_neutral(m):
+              i = m.group('i')
+              return (
+                  f"{i}final_open_paragraph: {m.group('v')},\n"
+                  f"{i}final_open_style: None,\n"
+                  f"{i}final_style_text_mode_active: false,\n"
+                  f"{i}final_style_original_in_head_retained: false,\n"
+                  f"{i}pending_tokenizer_feedback: false,\n"
+                  f"{i}coordinated_raw_text_entry_tokens: Vec::new(),\n"
+                  f"{i}coordinated_raw_text_close_tokens: Vec::new(),\n"
+              )
+          path.write_text(pattern.sub(add_neutral, text))
+          PY
+
+      - name: Format exact refinement
+        run: cargo +1.97.1 fmt --all
+
+      - name: Prove refinement delta envelope
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import subprocess
+          expected = {
+            'crates/frontend-analysis-core/src/html/tree_construction/driver.rs',
+            'crates/frontend-analysis-core/src/html/tree_construction/result.rs',
+            'crates/frontend-analysis-core/src/html/tokenizer/validation/tree_construction_gate.rs',
+            'crates/frontend-analysis-core/src/html/tree_construction/in_body_div_section_successor_production.rs',
+            'crates/frontend-analysis-core/src/html/tree_construction/in_body_div_successor_production.rs',
+            'crates/frontend-analysis-core/src/html/tree_construction/in_body_p_successor_production.rs',
+            'crates/frontend-analysis-core/src/html/tree_construction/validation.rs',
+          }
+          changed = set(subprocess.check_output(['git', 'diff', '--name-only'], text=True).splitlines())
+          changed = {p for p in changed if not p.startswith('.github/')}
+          if changed != expected:
+              raise SystemExit(f'refinement-delta mismatch: expected={sorted(expected)} actual={sorted(changed)}')
+          print('exact seven-path refinement delta proved; final PR theorem remains 13 paths')
+          PY
+
+      - name: Clippy all targets
+        run: cargo +1.97.1 clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Full workspace tests
+        run: cargo +1.97.1 test --workspace --all-targets --all-features
+
+      - name: Locked metadata
+        run: cargo +1.97.1 metadata --offline --format-version 1 --locked > /dev/null
+
+      - name: Commit validated code artifacts only
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- \
+            crates/frontend-analysis-core/src/html/tree_construction/driver.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/result.rs \
+            crates/frontend-analysis-core/src/html/tokenizer/validation/tree_construction_gate.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/in_body_div_section_successor_production.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/in_body_div_successor_production.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/in_body_p_successor_production.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/validation.rs
+          test "$(git diff --cached --name-only | wc -l)" -eq 7
+          git commit -m 'fix(html): apply TC-S9 focused placement refinement'
+          git push origin HEAD:tmp-tc-s9-refinement-843ee4
