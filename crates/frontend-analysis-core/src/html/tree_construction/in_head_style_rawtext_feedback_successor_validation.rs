@@ -997,8 +997,8 @@ fn r4_mixed_case_appropriate_close_preserves_raw_spelling() {
 
 #[test]
 fn r5_f2_f4_full_source_sentinel_proves_feedback_is_early_and_round_trip_is_two_way() {
-    let source = source(5, "<head><style><b>x</style><body>");
-    let actual = run_candidate(&source, 6, None);
+    let fixture_source = source(5, "<head><style><b>x</style><body>");
+    let actual = run_candidate(&fixture_source, 6, None);
     assert_gold(
         &actual,
         &Gold {
@@ -1179,8 +1179,8 @@ fn r11_excluded_style_shape_refuses_before_tree_identity_or_feedback_mutation() 
 
 #[test]
 fn r12_f5_f6_freeze_rejects_inconsistent_feedback_and_restoration_state() {
-    let source = source(12, "<style>x</style>");
-    let valid = run_candidate(&source, 0, None);
+    let fixture_source = source(12, "<style>x</style>");
+    let valid = run_candidate(&fixture_source, 0, None);
     assert_eq!(validate_candidate_freeze(&valid), Ok(()));
 
     let mut pending = valid.clone();
