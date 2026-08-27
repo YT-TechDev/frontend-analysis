@@ -32,7 +32,7 @@ jobs:
             crates/frontend-analysis-core/src/html/tree_construction/in_head_style_rawtext_feedback_successor_production.rs \
             crates/frontend-analysis-core/src/html/tree_construction/mod.rs
       - name: Upload formatted artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: tc-s9-formatted
           path: tc-s9-formatted.tar.gz
