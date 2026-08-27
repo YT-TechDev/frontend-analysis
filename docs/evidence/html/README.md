@@ -1,6 +1,6 @@
 # HTML Research Evidence
 
-Status date: 2026-08-26
+Status date: 2026-08-27
 
 Classification: task and evidence record; non-normative.
 
@@ -8,14 +8,20 @@ Classification: task and evidence record; non-normative.
 
 The current HTML evidence checkpoint is:
 
-- [2026-08 Tree-Construction Frontier Checkpoint](2026-08-tree-construction-frontier-checkpoint.md).
+- [2026-08-27 RAWTEXT Feedback and Post-TC-S8 Evidence Checkpoint](2026-08-27-rawtext-feedback-checkpoint.md).
 
-As of 2026-08-26, production tree construction remains merged through TC-S6 at
-production semantic baseline `5d0366b21dda5847062f7dadfe368129b6d33f0a`.
-The repository `main` is now `5e9ff4d539ebc75a7f812185ef55f0e85e881e72`
-after merging TC-S7 candidate-independent validation from PR #375. TC-S7
-validation is therefore accepted and merged, while production placement is not
-yet decided and production implementation remains unauthorized.
+As of 2026-08-27, production tree construction is merged through TC-S8 at
+production semantic baseline `5ffb2eacf0b6cd77b7531a68408cb8e2ceba28b8`.
+The repository `main` is `e5c299e3980f6d3de41c6291b86890f19715890d`
+after merging the accepted candidate-independent `<style>` RAWTEXT feedback
+validation from PR #385. TC-S9 is now the assigned sequence designation and its
+production placement is accepted, while the production Issue remains blocked
+until the current evidence Leaf is reviewed/merged and production implementation
+remains unauthorized.
+
+The older [2026-08 Tree-Construction Frontier Checkpoint](2026-08-tree-construction-frontier-checkpoint.md)
+remains a historical TC-S7-validation-era evidence record and is intentionally
+not rewritten to reflect later production work.
 
 The sections below preserve the historical first-slice and research/architecture
 evidence that led to the current frontier.
@@ -298,21 +304,25 @@ requires them.
 
 ## Production State
 
-At the 2026-08-26 evidence checkpoint:
+At the 2026-08-27 evidence checkpoint:
 
 ```text
 Architecture direction / Candidate C: APPROVED / UNCHANGED
-ADR 0010 / specialized normative contract: ACCEPTED
-TC-S1 through TC-S6 production: MERGED
-current repository main: 5e9ff4d539ebc75a7f812185ef55f0e85e881e72
-current production semantic baseline: 5d0366b21dda5847062f7dadfe368129b6d33f0a
-TC-S7 candidate-independent validation: ACCEPTED / MERGED via PR #375
-TC-S7 production placement: NOT YET DECIDED
-TC-S7 production implementation: NOT AUTHORIZED
+ADR 0010 / specialized normative contract: ACCEPTED / UNCHANGED
+TC-S1 through TC-S8 production: MERGED
+current production semantic baseline: 5ffb2eacf0b6cd77b7531a68408cb8e2ceba28b8
+current repository main: e5c299e3980f6d3de41c6291b86890f19715890d
+RAWTEXT candidate-independent validation: ACCEPTED / MERGED via PR #385
+TC-S9 sequence designation: ASSIGNED
+TC-S9 production placement: ACCEPTED
+TC-S9 production Issue: BLOCKED PENDING CURRENT EVIDENCE LEAF
+TC-S9 production implementation: NOT AUTHORIZED
+full HTML parser claim: NO
 ```
 
-See [2026-08 Tree-Construction Frontier Checkpoint](2026-08-tree-construction-frontier-checkpoint.md)
-for the exact current evidence and the explicit unproved boundaries.
+See [2026-08-27 RAWTEXT Feedback and Post-TC-S8 Evidence Checkpoint](2026-08-27-rawtext-feedback-checkpoint.md)
+for the exact current evidence, falsification results, production-placement
+knowledge, and explicit unproved boundaries.
 
 ## Evidence-to-Architecture Boundary
 
