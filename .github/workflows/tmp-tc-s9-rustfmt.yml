@@ -1,12 +1,14 @@
-name: Temporary TC-S9 rustfmt artifact
+name: Temporary TC-S9 rustfmt commit
 
 on:
   push:
     branches:
       - tmp-tc-s9-rustfmt-88d78e
+    paths:
+      - .github/workflows/tmp-tc-s9-rustfmt.yml
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   format:
@@ -15,14 +17,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          persist-credentials: false
+          ref: tmp-tc-s9-rustfmt-88d78e
       - name: Install exact Rust toolchain
         run: rustup toolchain install 1.97.1 --profile minimal --component rustfmt
       - name: Format workspace
         run: cargo +1.97.1 fmt --all
-      - name: Package exact TC-S9 paths
+      - name: Commit exact TC-S9 formatted paths
         run: |
-          tar -czf tc-s9-formatted.tar.gz \
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- \
             crates/frontend-analysis-core/src/html/tokenizer/producer/mod.rs \
             crates/frontend-analysis-core/src/html/tokenizer/producer/session.rs \
             crates/frontend-analysis-core/src/html/tokenizer/producer/state.rs \
@@ -31,9 +35,9 @@ jobs:
             crates/frontend-analysis-core/src/html/tree_construction/result.rs \
             crates/frontend-analysis-core/src/html/tree_construction/in_head_style_rawtext_feedback_successor_production.rs \
             crates/frontend-analysis-core/src/html/tree_construction/mod.rs
-      - name: Upload formatted artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: tc-s9-formatted
-          path: tc-s9-formatted.tar.gz
-          if-no-files-found: error
+          if git diff --cached --quiet; then
+            echo 'No formatting changes.'
+          else
+            git commit -m 'chore: apply temporary TC-S9 rustfmt'
+            git push origin HEAD:tmp-tc-s9-rustfmt-88d78e
+          fi
