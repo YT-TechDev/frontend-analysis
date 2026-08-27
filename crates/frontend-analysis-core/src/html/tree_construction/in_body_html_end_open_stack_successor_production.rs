@@ -732,7 +732,7 @@ fn generated_block_sequences(max_test_depth: usize) -> Vec<Vec<GeneratedBlock>> 
     sequences
 }
 
-fn generated_source(blocks: &[GeneratedBlock], paragraph: bool) -> String {
+fn generated_prefix(blocks: &[GeneratedBlock], paragraph: bool) -> String {
     let mut source = String::from("<body>");
     for block in blocks {
         source.push_str(match block {
@@ -743,6 +743,11 @@ fn generated_source(blocks: &[GeneratedBlock], paragraph: bool) -> String {
     if paragraph {
         source.push_str("<p>");
     }
+    source
+}
+
+fn generated_source(blocks: &[GeneratedBlock], paragraph: bool) -> String {
+    let mut source = generated_prefix(blocks, paragraph);
     source.push_str("</html>");
     source
 }
@@ -753,7 +758,49 @@ fn generated_div_section_stacks_through_depth_four_times_optional_p_match_closed
     // resource dimension or normative stack limit from this generator.
     for blocks in generated_block_sequences(4) {
         for paragraph in [false, true] {
+            let control_source = generated_prefix(&blocks, paragraph);
             let source = generated_source(&blocks, paragraph);
+            let control_fixture = FreezeFixture::new(&control_source);
+            let candidate_fixture = FreezeFixture::new(&source);
+            let control_parts = valid_parts(&control_fixture);
+            let candidate_parts = valid_parts(&candidate_fixture);
+
+            assert_eq!(
+                &control_parts.final_open_selected_ordinary,
+                &candidate_parts.final_open_selected_ordinary,
+                "{source}: exact selected identities/order match the same-prefix control"
+            );
+            assert_eq!(
+                control_parts.final_open_paragraph, candidate_parts.final_open_paragraph,
+                "{source}: exact P identity matches the same-prefix control"
+            );
+            assert_eq!(
+                control_parts.admitted_creation_events, candidate_parts.admitted_creation_events,
+                "{source}: candidate admits no creation event"
+            );
+
+            let mut control_node_inventory = control_parts
+                .nodes
+                .iter()
+                .map(|node| node.id())
+                .collect::<Vec<_>>();
+            control_node_inventory.sort_unstable();
+            let mut candidate_node_inventory = candidate_parts
+                .nodes
+                .iter()
+                .map(|node| node.id())
+                .collect::<Vec<_>>();
+            candidate_node_inventory.sort_unstable();
+            assert_eq!(
+                control_node_inventory, candidate_node_inventory,
+                "{source}: semantic node identity inventory matches the same-prefix control"
+            );
+            assert_eq!(
+                inserted_selected_ids(&control_parts),
+                inserted_selected_ids(&candidate_parts),
+                "{source}: selected creation identities/order match the same-prefix control"
+            );
+
             let analysis = analyze_with(&source, 31);
             assert!(analysis.is_complete(), "{source}");
             assert_eq!(analysis.coverage().committed_end(), source.len());
