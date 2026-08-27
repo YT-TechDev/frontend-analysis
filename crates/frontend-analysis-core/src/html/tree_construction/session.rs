@@ -969,6 +969,8 @@ impl HtmlTreeSession {
             final_style_original_in_head_retained: self.original_insertion_mode
                 == Some(InsertionMode::InHead),
             pending_tokenizer_feedback: self.pending_tokenizer_feedback.is_some(),
+            coordinated_raw_text_entry_tokens: Vec::new(),
+            coordinated_raw_text_close_tokens: Vec::new(),
         }
     }
 
@@ -1149,13 +1151,14 @@ impl HtmlTreeSession {
         trigger: &HtmlTreeTokenTrigger,
         token: &AdmittedToken<'_>,
     ) -> Result<HtmlConstructedNodeId, HtmlTreeSessionError> {
-        let parent = match name {
-            HtmlShellElementName::Html => self.root,
-            HtmlShellElementName::Head | HtmlShellElementName::Body => *self
-                .open_elements
-                .last()
-                .ok_or(HtmlTreeSessionError::MissingInsertionParent)?,
-        };
+        let parent =
+            match name {
+                HtmlShellElementName::Html => self.root,
+                HtmlShellElementName::Head | HtmlShellElementName::Body => *self
+                    .open_elements
+                    .last()
+                    .ok_or(HtmlTreeSessionError::MissingInsertionParent)?,
+            };
         if self.node(parent).is_none() {
             return Err(HtmlTreeSessionError::UnknownConstructedNode(parent));
         }
@@ -1219,7 +1222,12 @@ impl HtmlTreeSession {
         trigger: &HtmlTreeTokenTrigger,
         token: &AdmittedToken<'_>,
     ) -> Result<(), HtmlTreeSessionError> {
-        if self.open_elements.iter().copied().any(|id| self.is_style(id)) {
+        if self
+            .open_elements
+            .iter()
+            .copied()
+            .any(|id| self.is_style(id))
+        {
             return Err(HtmlTreeSessionError::StyleElementAlreadyOpen);
         }
         let AdmittedToken::StartTag {
