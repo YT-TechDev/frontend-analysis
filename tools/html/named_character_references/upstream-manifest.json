@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "whatwg_html": {
+    "repository": "whatwg/html",
+    "commit": "8ad51e24e9d9e48d92317467f434f7192df9d63d",
+    "parent": "9ead9de8f6751ccb98e91972e580ed6e3314c64a",
+    "license": {
+      "upstream_path": "LICENSE",
+      "upstream_blob_sha1": "f2dcda46deccefd245749202a88a7837e35c6daa",
+      "retained_path": "tools/html/named_character_references/WHATWG-LICENSE.txt",
+      "byte_size": 16315,
+      "sha256": "85dc6f5ccb57a6fe8c33d158f9fc8fc7ee5655a5d3db2cdd131c6a3d0f48a864",
+      "local_blob_sha1": "f2dcda46deccefd245749202a88a7837e35c6daa"
+    }
+  },
+  "dataset": {
+    "official_url": "https://html.spec.whatwg.org/entities.json",
+    "retained_path": "tools/html/named_character_references/inputs/entities.json",
+    "byte_size": 145897,
+    "sha256": "d741d877ac77c4194c4ad526b5b4a19aef8dfe411ab840a466891cdbb9f362e6",
+    "local_blob_sha1": "557170b41f47a13a46ec695561eb5fe76da73bdb"
+  },
+  "derived": {
+    "entry_count": 2231,
+    "semicolonless_entry_count": 106,
+    "two_scalar_entry_count": 93,
+    "maximum_generated_key_byte_length": 32,
+    "maximum_generated_keys": [
+      "CounterClockwiseContourIntegral;"
+    ]
+  }
+}
