@@ -1,4 +1,9 @@
-//! The exhaustive private state enum approved by #109.
+//! The exhaustive private tokenizer state enum.
+//!
+//! TC-S9 extends the established Data-context subset with only the four
+//! RAWTEXT states required by the selected InHead `<style>` lifecycle. This
+//! remains private lexical implementation state; tree construction never owns
+//! or imports it.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum State {
@@ -15,4 +20,8 @@ pub(super) enum State {
     AttributeValueUnquoted,
     AfterAttributeValueQuoted,
     SelfClosingStartTag,
+    RawText,
+    RawTextLessThanSign,
+    RawTextEndTagOpen,
+    RawTextEndTagName,
 }
