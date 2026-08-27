@@ -254,7 +254,9 @@ fn drive_coordinated_token(
         match session.dispatch(admitted, trigger)? {
             DispatchOutcome::Consumed => return Ok(CoordinatedTokenOutcome::Consumed),
             DispatchOutcome::TokenizerFeedbackRequested(feedback) => {
-                return Ok(CoordinatedTokenOutcome::TokenizerFeedbackRequested(feedback));
+                return Ok(CoordinatedTokenOutcome::TokenizerFeedbackRequested(
+                    feedback,
+                ));
             }
             DispatchOutcome::ReprocessSameToken => {}
             DispatchOutcome::StoppedParsing => return Ok(CoordinatedTokenOutcome::StoppedParsing),
