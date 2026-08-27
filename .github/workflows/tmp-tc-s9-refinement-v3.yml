@@ -1,0 +1,137 @@
+name: Temporary TC-S9 refinement validation v3
+
+on:
+  push:
+    branches:
+      - tmp-tc-s9-refinement-843ee4
+    paths:
+      - .github/workflows/tmp-tc-s9-refinement-v3.yml
+
+permissions:
+  contents: write
+
+jobs:
+  refine:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout exact helper branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: tmp-tc-s9-refinement-843ee4
+
+      - name: Install exact Rust toolchain
+        run: rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
+
+      - name: Reapply validated compatibility refinement
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          workflow = Path('.github/workflows/tmp-tc-s9-refinement-v2.yml').read_text()
+          marker = "          python3 - <<'PY'\n"
+          start = workflow.index(marker) + len(marker)
+          end = workflow.index("\n          PY", start)
+          script = workflow[start:end]
+          script = '\n'.join(line[10:] if line.startswith('          ') else line for line in script.splitlines())
+          exec(compile(script, '<refinement-v2>', 'exec'))
+          PY
+
+      - name: Apply semantic-owner corrections
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_exact(path, old, new, expected=1):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != expected:
+                  raise SystemExit(f'{path}: expected {expected} replacements, found {count}')
+              p.write_text(text.replace(old, new))
+
+          session = 'crates/frontend-analysis-core/src/html/tree_construction/session.rs'
+          replace_exact(
+              session,
+              '''            (\n                InsertionMode::InHead,\n                AdmittedToken::StartTag {\n                    name: AdmittedElementName::Style,\n                    ..\n                },\n            )\n            | (\n                InsertionMode::Text,''',
+              '''            (\n                InsertionMode::Initial\n                | InsertionMode::BeforeHtml\n                | InsertionMode::BeforeHead\n                | InsertionMode::InHead,\n                AdmittedToken::StartTag {\n                    name: AdmittedElementName::Style,\n                    ..\n                },\n            )\n            | (\n                InsertionMode::Text,''',
+          )
+
+          result = 'crates/frontend-analysis-core/src/html/tree_construction/result.rs'
+          style_call = '''    validate_style_lifecycle(StyleLifecycleValidation {\n        nodes: &nodes,\n        actions: &actions,\n        diagnostics: &diagnostics,\n        tokenizer_run: &tokenizer_run,\n        processed_tokens,\n        completion: &completion,\n        final_open_style,\n        final_style_text_mode_active,\n        final_style_original_in_head_retained,\n        pending_tokenizer_feedback,\n        coordinated_entries: &coordinated_raw_text_entry_tokens,\n        coordinated_closes: &coordinated_raw_text_close_tokens,\n    })?;\n'''
+          p = Path(result)
+          text = p.read_text()
+          if text.count(style_call) != 1:
+              raise SystemExit('expected one Style lifecycle validation call')
+          text = text.replace(style_call, '')
+          anchor = '''    validate_body_and_html_end_open_stack_transitions(\n        &nodes,\n        &actions,\n        &diagnostics,\n        &tokenizer_run,\n        processed_tokens,\n        &final_open_selected_ordinary,\n        final_open_paragraph,\n    )?;\n'''
+          if text.count(anchor) != 1:
+              raise SystemExit('expected one predecessor body/html validation call')
+          text = text.replace(anchor, anchor + style_call)
+          p.write_text(text)
+          PY
+
+      - name: Format exact refinement
+        run: cargo +1.97.1 fmt --all
+
+      - name: Prove final 13-path theorem against production base
+        shell: bash
+        run: |
+          git fetch --no-tags --depth=1 origin 2c10986c468a62527e270a2d081fee553459451a
+          python3 - <<'PY'
+          import subprocess
+          expected = {
+            'crates/frontend-analysis-core/src/html/tokenizer/producer/session.rs',
+            'crates/frontend-analysis-core/src/html/tokenizer/producer/mod.rs',
+            'crates/frontend-analysis-core/src/html/tokenizer/producer/state.rs',
+            'crates/frontend-analysis-core/src/html/tree_construction/driver.rs',
+            'crates/frontend-analysis-core/src/html/tree_construction/session.rs',
+            'crates/frontend-analysis-core/src/html/tree_construction/result.rs',
+            'crates/frontend-analysis-core/src/html/tree_construction/in_head_style_rawtext_feedback_successor_production.rs',
+            'crates/frontend-analysis-core/src/html/tree_construction/mod.rs',
+            'crates/frontend-analysis-core/src/html/tokenizer/validation/tree_construction_gate.rs',
+            'crates/frontend-analysis-core/src/html/tree_construction/in_body_div_section_successor_production.rs',
+            'crates/frontend-analysis-core/src/html/tree_construction/in_body_div_successor_production.rs',
+            'crates/frontend-analysis-core/src/html/tree_construction/in_body_p_successor_production.rs',
+            'crates/frontend-analysis-core/src/html/tree_construction/validation.rs',
+          }
+          changed = set(subprocess.check_output(
+              ['git', 'diff', '--name-only', '2c10986c468a62527e270a2d081fee553459451a'], text=True
+          ).splitlines())
+          changed = {p for p in changed if not p.startswith('.github/')}
+          if changed != expected:
+              raise SystemExit(f'13-path theorem mismatch: expected={sorted(expected)} actual={sorted(changed)}')
+          print('exact 13-path theorem proved')
+          PY
+
+      - name: Clippy all targets
+        run: cargo +1.97.1 clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Full workspace tests
+        run: cargo +1.97.1 test --workspace --all-targets --all-features
+
+      - name: Locked metadata
+        run: cargo +1.97.1 metadata --offline --format-version 1 --locked > /dev/null
+
+      - name: Commit validated 13-path code only
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- \
+            crates/frontend-analysis-core/src/html/tokenizer/producer/session.rs \
+            crates/frontend-analysis-core/src/html/tokenizer/producer/mod.rs \
+            crates/frontend-analysis-core/src/html/tokenizer/producer/state.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/driver.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/session.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/result.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/in_head_style_rawtext_feedback_successor_production.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/mod.rs \
+            crates/frontend-analysis-core/src/html/tokenizer/validation/tree_construction_gate.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/in_body_div_section_successor_production.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/in_body_div_successor_production.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/in_body_p_successor_production.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/validation.rs
+          git commit -m 'fix(html): apply TC-S9 focused placement refinement'
+          git push origin HEAD:tmp-tc-s9-refinement-843ee4
