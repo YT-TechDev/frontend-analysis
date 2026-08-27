@@ -253,6 +253,9 @@ fn project_tree(
         HtmlTreeNodeKind::Element(HtmlElement::Paragraph(_)) => {
             panic!("TC-S4 predecessor fixtures must not construct a TC-S5 Paragraph")
         }
+        HtmlTreeNodeKind::Element(HtmlElement::Style(_)) => {
+            panic!("TC-S4 predecessor fixtures must not construct a TC-S9 Style")
+        }
         HtmlTreeNodeKind::Text(text) => ExpectedNode::Text {
             interpreted: text.interpreted().to_owned(),
             contributions: text
@@ -309,6 +312,11 @@ fn project_actions(analysis: &HtmlDocumentShellAnalysis) -> Vec<(ExpectedAction,
                 | HtmlTreeActionKind::ClosedParagraphElement { .. }
                 | HtmlTreeActionKind::PoppedParagraphElementBySelectedOrdinaryEndTag { .. } => {
                     panic!("TC-S4 predecessor fixtures must not record a TC-S5 Paragraph action")
+                }
+                HtmlTreeActionKind::InsertedAuthoredStyleElement { .. }
+                | HtmlTreeActionKind::ClosedStyleElementByAuthoredEndTag { .. }
+                | HtmlTreeActionKind::PoppedStyleElementAtEndOfFile { .. } => {
+                    panic!("TC-S4 predecessor fixtures must not record a TC-S9 Style action")
                 }
                 HtmlTreeActionKind::ReprocessedToken => ExpectedAction::Reprocessed,
                 HtmlTreeActionKind::StoppedParsing => ExpectedAction::Stopped,
@@ -2156,6 +2164,12 @@ fn fixture_a_parts(fixture: &LifecycleFixture) -> HtmlDocumentShellParts {
         completion: HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete),
         final_open_selected_ordinary: Vec::new(),
         final_open_paragraph: None,
+        final_open_style: None,
+        final_style_text_mode_active: false,
+        final_style_original_in_head_retained: false,
+        pending_tokenizer_feedback: false,
+        coordinated_raw_text_entry_tokens: Vec::new(),
+        coordinated_raw_text_close_tokens: Vec::new(),
     }
 }
 
@@ -2244,6 +2258,12 @@ fn fixture_b_parts(fixture: &LifecycleFixture) -> HtmlDocumentShellParts {
         completion: HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete),
         final_open_selected_ordinary: Vec::new(),
         final_open_paragraph: None,
+        final_open_style: None,
+        final_style_text_mode_active: false,
+        final_style_original_in_head_retained: false,
+        pending_tokenizer_feedback: false,
+        coordinated_raw_text_entry_tokens: Vec::new(),
+        coordinated_raw_text_close_tokens: Vec::new(),
     }
 }
 
@@ -2332,6 +2352,12 @@ fn fixture_c_parts(fixture: &LifecycleFixture) -> HtmlDocumentShellParts {
         // The outer `section` is still open at hand-off.
         final_open_selected_ordinary: vec![outer_section],
         final_open_paragraph: None,
+        final_open_style: None,
+        final_style_text_mode_active: false,
+        final_style_original_in_head_retained: false,
+        pending_tokenizer_feedback: false,
+        coordinated_raw_text_entry_tokens: Vec::new(),
+        coordinated_raw_text_close_tokens: Vec::new(),
         completion: HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete),
     }
 }
@@ -3038,6 +3064,12 @@ fn fixture_e_parts(fixture: &LifecycleFixture) -> HtmlDocumentShellParts {
         completion: HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete),
         final_open_selected_ordinary: vec![outer_section, outer_div],
         final_open_paragraph: None,
+        final_open_style: None,
+        final_style_text_mode_active: false,
+        final_style_original_in_head_retained: false,
+        pending_tokenizer_feedback: false,
+        coordinated_raw_text_entry_tokens: Vec::new(),
+        coordinated_raw_text_close_tokens: Vec::new(),
     }
 }
 
@@ -3151,6 +3183,12 @@ fn fixture_h_parts(fixture: &LifecycleFixture) -> HtmlDocumentShellParts {
         completion: HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete),
         final_open_selected_ordinary: vec![outer_section],
         final_open_paragraph: None,
+        final_open_style: None,
+        final_style_text_mode_active: false,
+        final_style_original_in_head_retained: false,
+        pending_tokenizer_feedback: false,
+        coordinated_raw_text_entry_tokens: Vec::new(),
+        coordinated_raw_text_close_tokens: Vec::new(),
     }
 }
 
@@ -3254,6 +3292,12 @@ fn fixture_f_parts(fixture: &LifecycleFixture) -> HtmlDocumentShellParts {
         completion: HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete),
         final_open_selected_ordinary: vec![section_id],
         final_open_paragraph: None,
+        final_open_style: None,
+        final_style_text_mode_active: false,
+        final_style_original_in_head_retained: false,
+        pending_tokenizer_feedback: false,
+        coordinated_raw_text_entry_tokens: Vec::new(),
+        coordinated_raw_text_close_tokens: Vec::new(),
     }
 }
 
@@ -3405,6 +3449,12 @@ fn freeze_rejects_an_unmatched_end_while_a_same_name_target_is_open() {
         completion: HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete),
         final_open_selected_ordinary: vec![section_id],
         final_open_paragraph: None,
+        final_open_style: None,
+        final_style_text_mode_active: false,
+        final_style_original_in_head_retained: false,
+        pending_tokenizer_feedback: false,
+        coordinated_raw_text_entry_tokens: Vec::new(),
+        coordinated_raw_text_close_tokens: Vec::new(),
     };
     assert!(matches!(
         freeze_parts(&fixture, parts),

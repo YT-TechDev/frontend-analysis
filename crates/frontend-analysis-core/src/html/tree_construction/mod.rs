@@ -103,6 +103,8 @@ mod in_body_p_successor_production;
 #[cfg(test)]
 mod in_body_p_successor_validation;
 #[cfg(test)]
+mod in_head_style_rawtext_feedback_successor_production;
+#[cfg(test)]
 mod in_head_style_rawtext_feedback_successor_validation;
 #[cfg(test)]
 mod validation;

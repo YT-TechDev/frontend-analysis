@@ -1,13 +1,19 @@
 //! The crate-private bounded lossless HTML tokenizer production engine.
 //!
-//! Implements the #109-approved Data-context state subset over a
-//! known-valid-UTF-8 `SourceText` using an iterative, non-recursive,
-//! single-forward-owner cursor. Transition accounting, resource accounting,
-//! diagnostics, and completion follow the corrected #111/#112 contracts.
+//! Implements the #109-approved Data-context state subset and TC-S9's
+//! selected RAWTEXT extension over a known-valid-UTF-8 `SourceText` using an
+//! iterative, non-recursive, single-forward-owner cursor. Transition
+//! accounting, resource accounting, diagnostics, and completion follow the
+//! corrected #111/#112 contracts.
 
 mod builder;
 mod cursor;
+mod session;
 mod state;
+
+pub(crate) use self::session::{
+    HtmlTokenizerSession, HtmlTokenizerSessionBoundary, HtmlTokenizerSessionControlError,
+};
 
 use crate::html::token::{
     HtmlCharacterToken, HtmlEndOfFileToken, HtmlPreprocessingEvidence, HtmlTagKind, HtmlToken,
@@ -34,19 +40,13 @@ use super::result::{
 };
 
 /// Produces the collected run result for one synchronous tokenizer pass.
+///
+/// The public-in-crate batch contract is intentionally unchanged. It drains
+/// the same private resumable session used by coordinated tree construction;
+/// without tree feedback, the first context-dependent boundary publishes the
+/// exact predecessor deferred-unsupported result.
 pub(crate) fn tokenize(source: &SourceText, limits: HtmlTokenizerLimits) -> HtmlTokenizerRunResult {
-    if let Some(failure) = limits.configuration_failure() {
-        return invalid_configuration_result(source, limits, failure);
-    }
-
-    let source_len = source.as_str().len();
-    if source_len > limits.max_source_bytes() {
-        return source_bytes_limit_result(source, limits, source_len);
-    }
-
-    let mut engine = Engine::new(source, limits);
-    let completion = engine.run();
-    engine.into_result(completion)
+    HtmlTokenizerSession::new(source, limits).finish_batch_compatible()
 }
 
 fn invalid_configuration_result(
@@ -111,7 +111,7 @@ fn source_bytes_limit_result(
     .expect("valid source-bytes-limit run result")
 }
 
-/// A contiguous run of Data-context character output under construction.
+/// A contiguous run of character output under construction.
 struct DataRun {
     start: usize,
     end: usize,
@@ -153,6 +153,12 @@ struct Engine<'a> {
     committed_retained_bytes: usize,
     peak_attributes_per_tag: usize,
     transition_steps: usize,
+    /// Retained emitted start-tag index that owns appropriate-end-tag meaning
+    /// during the selected RAWTEXT episode. Never supplied by tree state.
+    raw_text_start_tag_index: Option<usize>,
+    /// True only after RAWTEXT end-tag-name recognition proved an appropriate
+    /// candidate and ordinary tag finalization is finishing that exact token.
+    raw_text_closing_tag: bool,
 }
 
 impl<'a> Engine<'a> {
@@ -178,6 +184,8 @@ impl<'a> Engine<'a> {
             committed_retained_bytes: 0,
             peak_attributes_per_tag: 0,
             transition_steps: 0,
+            raw_text_start_tag_index: None,
+            raw_text_closing_tag: false,
         }
     }
 
@@ -304,7 +312,8 @@ impl<'a> Engine<'a> {
     /// without releasing the builder itself: used for resource-limit and
     /// internal-invariant stops, where the tag remains frozen (matching
     /// every other frozen-builder resource-limit stop) and its retained
-    /// bytes stay naturally visible through `active_retained_bytes`.
+    /// bytes stay exactly as they were, visible through
+    /// `active_retained_bytes` at `into_result` time.
     fn retarget_active_tag_diagnostics(&mut self) {
         let Some(tag) = self.tag.as_ref() else {
             return;
@@ -375,6 +384,10 @@ impl<'a> Engine<'a> {
             State::AttributeValueUnquoted => self.step_attribute_value_unquoted(unit),
             State::AfterAttributeValueQuoted => self.step_after_attribute_value_quoted(unit),
             State::SelfClosingStartTag => self.step_self_closing_start_tag(unit),
+            State::RawText => self.step_raw_text(unit),
+            State::RawTextLessThanSign => self.step_raw_text_less_than_sign(unit),
+            State::RawTextEndTagOpen => self.step_raw_text_end_tag_open(unit),
+            State::RawTextEndTagName => self.step_raw_text_end_tag_name(unit),
         }
     }
 
@@ -1479,6 +1492,7 @@ impl<'a> Engine<'a> {
         } else {
             None
         };
+        let finishing_raw_text_close = self.raw_text_closing_tag && !is_start_tag;
         let close_end = close_delimiter.1;
         let token = HtmlToken::Tag(builder::finalize_tag(self.source, tag, close_delimiter));
         self.commit_token(token, committed);
@@ -1487,6 +1501,10 @@ impl<'a> Engine<'a> {
             self.materialize_pending_emission_diagnostics(pending_diagnostics, token_index);
         }
         self.state = State::Data;
+        if finishing_raw_text_close {
+            self.processed_end = close_end;
+            return self.raw_text_close_yield(close_end);
+        }
         match context_mode {
             Some(mode) => {
                 self.processed_end = close_end;
@@ -1829,7 +1847,7 @@ impl<'a> Engine<'a> {
     }
 
     /// Interpreted bytes currently retained by the active (not yet
-    /// committed) data run and tag builder. Returns `None` on checked
+    /// committed) character run and tag builder. Returns `None` on checked
     /// accumulation overflow rather than panicking or wrapping.
     fn active_retained_bytes(&self) -> Option<usize> {
         let data = self
@@ -1863,9 +1881,9 @@ fn is_html_whitespace(ch: char) -> bool {
 }
 
 /// Maps an interpreted start-tag name to the context-dependent tokenizer
-/// mode it would require, per the #109 approved unsupported boundary. Only
-/// exact matches count; this first capability does not implement any of
-/// these modes.
+/// mode it would require, per the established unsupported boundary. TC-S9
+/// implements the selected coordinated `<style>` RAWTEXT path while the batch
+/// entry point preserves this map as deferred evidence for every member.
 fn context_dependent_mode(interpreted_name: &str) -> Option<super::result::HtmlTokenizerMode> {
     use super::result::HtmlTokenizerMode;
     match interpreted_name {
