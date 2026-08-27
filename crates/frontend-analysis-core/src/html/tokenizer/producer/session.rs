@@ -22,7 +22,10 @@ use crate::html::token::{HtmlTagKind, HtmlToken};
 use super::builder::TagBuilder;
 use super::cursor::InputUnit;
 use super::state::State;
-use super::{DataRun, Engine, Step, context_dependent_mode};
+use super::{
+    DataRun, Engine, Step, context_dependent_mode, invalid_configuration_result,
+    source_bytes_limit_result,
+};
 use super::super::resource::HtmlTokenizerLimits;
 use super::super::result::{
     HtmlTokenizerCapability, HtmlTokenizerCapabilityAvailability, HtmlTokenizerCompletion,
@@ -70,6 +73,9 @@ impl std::error::Error for HtmlTokenizerSessionControlError {}
 /// One resumable tokenizer run over the existing lexical Engine.
 pub(crate) struct HtmlTokenizerSession<'a> {
     engine: Option<Engine<'a>>,
+    /// Configuration/source-size preflight results use the exact established
+    /// batch constructors and never instantiate or advance an Engine.
+    immediate_result: Option<HtmlTokenizerRunResult>,
     terminal_completion: Option<HtmlTokenizerCompletion>,
     /// The exact predecessor completion produced by the Engine at a
     /// context-dependent boundary. Batch mode publishes it unchanged;
@@ -81,8 +87,29 @@ pub(crate) struct HtmlTokenizerSession<'a> {
 
 impl<'a> HtmlTokenizerSession<'a> {
     pub(crate) fn new(source: &'a SourceText, limits: HtmlTokenizerLimits) -> Self {
+        if let Some(failure) = limits.configuration_failure() {
+            return Self {
+                engine: None,
+                immediate_result: Some(invalid_configuration_result(source, limits, failure)),
+                terminal_completion: None,
+                suspended_completion: None,
+                suspended_mode: None,
+            };
+        }
+        let source_len = source.as_str().len();
+        if source_len > limits.max_source_bytes() {
+            return Self {
+                engine: None,
+                immediate_result: Some(source_bytes_limit_result(source, limits, source_len)),
+                terminal_completion: None,
+                suspended_completion: None,
+                suspended_mode: None,
+            };
+        }
+
         Self {
             engine: Some(Engine::new(source, limits)),
+            immediate_result: None,
             terminal_completion: None,
             suspended_completion: None,
             suspended_mode: None,
@@ -97,7 +124,7 @@ impl<'a> HtmlTokenizerSession<'a> {
     /// completion as a private suspension while retaining the completion
     /// unchanged for batch-compatible finalization.
     pub(crate) fn drive_to_boundary(&mut self) -> HtmlTokenizerSessionBoundary {
-        if self.terminal_completion.is_some() {
+        if self.immediate_result.is_some() || self.terminal_completion.is_some() {
             return HtmlTokenizerSessionBoundary::Terminal;
         }
         if let Some(mode) = self.suspended_mode {
@@ -123,7 +150,11 @@ impl<'a> HtmlTokenizerSession<'a> {
 
     /// All tokens committed so far, in retained emission order.
     pub(crate) fn tokens(&self) -> &[HtmlToken] {
-        &self.engine.as_ref().expect("live tokenizer engine").tokens
+        match (&self.immediate_result, &self.engine) {
+            (Some(result), _) => result.tokens(),
+            (None, Some(engine)) => &engine.tokens,
+            (None, None) => &[],
+        }
     }
 
     /// Applies the one TC-S9 tree-directed lexical control.
@@ -160,6 +191,9 @@ impl<'a> HtmlTokenizerSession<'a> {
     /// durable tokenizer result and is simply drained until the next real
     /// boundary. This preserves the existing batch tokenizer contract.
     pub(crate) fn finish_batch_compatible(mut self) -> HtmlTokenizerRunResult {
+        if let Some(result) = self.immediate_result.take() {
+            return result;
+        }
         loop {
             if let Some(completion) = self.terminal_completion.take() {
                 return self
@@ -197,6 +231,9 @@ impl<'a> HtmlTokenizerSession<'a> {
             return Err(
                 HtmlTokenizerSessionControlError::ResultRequestedWithOutstandingSuspension(mode),
             );
+        }
+        if let Some(result) = self.immediate_result.take() {
+            return Ok(result);
         }
         let Some(completion) = self.terminal_completion.take() else {
             return Err(HtmlTokenizerSessionControlError::ResultRequestedBeforeTerminal);
@@ -295,11 +332,11 @@ impl<'a> Engine<'a> {
                 start,
                 end,
             } => {
-                // TC-S9 deliberately does not widen tokenizer diagnostic
-                // vocabulary to add a RAWTEXT-specific NULL context. Stop
-                // honestly at the existing tree-controlled-state boundary
-                // rather than mislabeling the diagnostic as Data-context or
-                // silently omitting the parse error.
+                // The accepted 8-path theorem deliberately does not widen
+                // tokenizer diagnostic vocabulary with a RAWTEXT-specific
+                // NULL context. Stop honestly at an existing controlled-state
+                // capability rather than mislabeling the diagnostic as Data
+                // or silently omitting the required parse error.
                 self.raw_text_unproved_input_stop((start, end))
             }
             InputUnit::Scalar { ch, start, end } => {
@@ -437,8 +474,8 @@ impl<'a> Engine<'a> {
             && candidate.interpreted_name == start.name().interpreted()
     }
 
-    /// Emits the literal `</` fallback without rescanning. The delimiter is
-    /// known ASCII source consumed by the single forward cursor.
+    /// Emits literal `</` fallback without rescanning. The delimiter is known
+    /// ASCII source consumed by the single forward cursor.
     fn push_raw_text_opening_literal(&mut self) -> Result<(), Step> {
         let less_than_end = self.tag_open_start + '<'.len_utf8();
         self.push_data_char('<', self.tag_open_start, less_than_end)?;
@@ -446,7 +483,7 @@ impl<'a> Engine<'a> {
         Ok(())
     }
 
-    /// Reclassifies the current RAWTEXT end-tag *candidate* as character data
+    /// Reclassifies the current RAWTEXT end-tag candidate as character data
     /// using only exact offsets and temporary state captured while the
     /// tokenizer itself examined that candidate. This is not downstream
     /// source search/rescan/re-tokenization.
@@ -458,9 +495,9 @@ impl<'a> Engine<'a> {
         let start = tag.tag_start;
         let end = tag.name_end;
 
-        // While the candidate builder is still active it retains exactly the
-        // lower-cased ASCII name bytes. Replacing it with literal character
-        // data adds only the two delimiter bytes; preflight that delta before
+        // The active builder already accounts for the ASCII name bytes.
+        // Fallback replaces it with the exact literal source span, adding
+        // only the two `</` delimiter bytes. Preflight that delta before
         // destroying the candidate so a resource refusal preserves state.
         self.try_reserve_retained(2, start)?;
         let raw = self.anchor(start, end).fragment().to_owned();
