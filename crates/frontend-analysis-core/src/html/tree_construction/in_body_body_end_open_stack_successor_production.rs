@@ -783,18 +783,6 @@ fn body_end_shape_and_other_shell_crossings_keep_the_broad_firewalls() {
             (11, 19),
         ),
         (
-            "<body><p></html>",
-            HtmlTreeCapability::ShellTagWithOpenParagraphElement,
-            2,
-            (9, 16),
-        ),
-        (
-            "<body><div></html>",
-            HtmlTreeCapability::ShellTagWithOpenSelectedOrdinaryElement,
-            2,
-            (11, 18),
-        ),
-        (
             "<body><p><body>",
             HtmlTreeCapability::ShellTagWithOpenParagraphElement,
             2,
@@ -817,6 +805,120 @@ fn body_end_shape_and_other_shell_crossings_keep_the_broad_firewalls() {
         assert_eq!(analysis.coverage().processed_tokens(), token, "{source}");
         assert_eq!(analysis.coverage().committed_end(), trigger.0, "{source}");
     }
+}
+
+#[test]
+fn historical_p_only_html_end_firewall_cell_advances_only_through_tc_s8() {
+    let source = "<body><p></html>";
+    let control_fixture = FreezeFixture::new("<body><p>");
+    let candidate_fixture = FreezeFixture::new(source);
+    let control_parts = valid_parts(&control_fixture);
+    let candidate_parts = valid_parts(&candidate_fixture);
+    let paragraph = inserted_paragraph_id(&candidate_parts);
+
+    assert_eq!(candidate_parts.final_open_paragraph, Some(paragraph));
+    assert_eq!(
+        control_parts.final_open_paragraph, candidate_parts.final_open_paragraph,
+        "the authored P remains the current open Paragraph"
+    );
+    assert!(candidate_parts.final_open_selected_ordinary.is_empty());
+    assert_eq!(
+        control_parts.admitted_creation_events, candidate_parts.admitted_creation_events,
+        "the Html end tag admits no constructed identity"
+    );
+    assert_eq!(control_parts.nodes.len(), candidate_parts.nodes.len());
+
+    let analysis = analyze(source);
+    assert!(analysis.is_complete());
+    assert_eq!(analysis.coverage().committed_end(), source.len());
+    assert_eq!(analysis.coverage().processed_tokens(), 4);
+    assert_eq!(
+        analysis.coverage().processed_tokens(),
+        analysis.tokenizer_run().tokens().len()
+    );
+    assert_eq!(
+        diagnostic_count(
+            &analysis,
+            HtmlTreeDiagnosticCode::HtmlEndTagWithOpenSelectedOrdinaryElements,
+        ),
+        0
+    );
+    assert!(body_acknowledgements(&analysis).is_empty());
+
+    let actions = analysis
+        .actions()
+        .iter()
+        .filter(|action| action.trigger().token_index() == 2)
+        .collect::<Vec<_>>();
+    assert!(matches!(
+        actions.as_slice(),
+        [reprocessed, acknowledged]
+            if matches!(reprocessed.kind(), HtmlTreeActionKind::ReprocessedToken)
+                && matches!(
+                    acknowledged.kind(),
+                    HtmlTreeActionKind::AcknowledgedShellEndTag {
+                        name: HtmlShellElementName::Html,
+                    }
+                )
+    ));
+    for action in actions {
+        let anchor = action
+            .trigger()
+            .authored_boundary()
+            .expect("the Html end transition retains its authored trigger");
+        assert_eq!(anchor.source_id(), SourceId::new(1));
+        assert_eq!(span(anchor), (9, 16));
+    }
+
+    assert!(analysis.actions().iter().all(|action| !matches!(
+        action.kind(),
+        HtmlTreeActionKind::InsertedSynthesizedParagraphElement { .. }
+            | HtmlTreeActionKind::ClosedParagraphElement { .. }
+            | HtmlTreeActionKind::PoppedParagraphElementBySelectedOrdinaryEndTag { .. }
+            | HtmlTreeActionKind::InsertedAuthoredSelectedOrdinaryElement { .. }
+            | HtmlTreeActionKind::ClosedSelectedOrdinaryElement { .. }
+            | HtmlTreeActionKind::PoppedSelectedOrdinaryElementByAncestorEndTag { .. }
+    )));
+}
+
+#[test]
+fn historical_div_html_end_firewall_cell_advances_only_through_tc_s8() {
+    let source = "<body><div></html>";
+    let analysis = analyze(source);
+    assert!(analysis.is_complete());
+    assert_eq!(analysis.coverage().committed_end(), source.len());
+    assert_eq!(analysis.coverage().processed_tokens(), 4);
+    assert!(body_acknowledgements(&analysis).is_empty());
+    assert_eq!(
+        diagnostic_evidence(
+            &analysis,
+            HtmlTreeDiagnosticCode::HtmlEndTagWithOpenSelectedOrdinaryElements,
+        )
+        .iter()
+        .map(|(token, _, range, recovery)| (*token, *range, *recovery))
+        .collect::<Vec<_>>(),
+        vec![(
+            2,
+            (11, 18),
+            HtmlTreeRecovery::SwitchedToAfterBodyPreservingOpenElements,
+        )]
+    );
+    let actions = analysis
+        .actions()
+        .iter()
+        .filter(|action| action.trigger().token_index() == 2)
+        .collect::<Vec<_>>();
+    assert!(matches!(
+        actions.as_slice(),
+        [reprocessed, acknowledged]
+            if matches!(reprocessed.kind(), HtmlTreeActionKind::ReprocessedToken)
+                && matches!(
+                    acknowledged.kind(),
+                    HtmlTreeActionKind::AcknowledgedShellEndTag {
+                        name: HtmlShellElementName::Html,
+                    }
+                )
+    ));
 }
 
 #[test]

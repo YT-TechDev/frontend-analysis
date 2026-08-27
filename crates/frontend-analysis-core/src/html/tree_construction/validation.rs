@@ -463,6 +463,9 @@ fn project_diagnostics(analysis: &HtmlDocumentShellAnalysis) -> Vec<GoldDiagnost
             HtmlTreeDiagnosticCode::BodyEndTagWithOpenSelectedOrdinaryElements => {
                 panic!("the TC-S1 predecessor GOLD never produces the TC-S7 body-end diagnostic")
             }
+            HtmlTreeDiagnosticCode::HtmlEndTagWithOpenSelectedOrdinaryElements => {
+                panic!("the TC-S1 predecessor GOLD never produces the TC-S8 html-end diagnostic")
+            }
             HtmlTreeDiagnosticCode::UnmatchedSelectedOrdinaryEndTag
             | HtmlTreeDiagnosticCode::OpenSelectedOrdinaryElementAtEndOfFile
             | HtmlTreeDiagnosticCode::MisnestedSelectedOrdinaryEndTag => {
@@ -1381,10 +1384,6 @@ fn unproved_shell_positions_remain_explicit_tree_unsupported() {
         ),
         (
             "<head></head></head>",
-            HtmlTreeCapability::UnprovedShellEndTagPosition,
-        ),
-        (
-            "<body></html>",
             HtmlTreeCapability::UnprovedShellEndTagPosition,
         ),
         (

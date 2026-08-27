@@ -4,7 +4,9 @@
 //! In-Body Heterogeneous `div`/`section` Block Closure Recovery, and TC-S5 —
 //! Selected In-Body `p` Lifecycle with Bounded Implicit Closure and
 //! Unmatched-End Synthesis, and TC-S6 — Selected End Tags over Current P with
-//! Bounded Non-Noop Implied-End Handling successors.
+//! Bounded Non-Noop Implied-End Handling, TC-S7 — Selected In-Body Body-End
+//! over the Bounded Open Stack, and TC-S8 — Selected In-Body Html-End over the
+//! same Bounded Open Stack successors.
 //!
 //! The first Core-private HTML tree-construction capability, implemented on
 //! the architecture approved under Issue #117 and recorded by ADR 0010
@@ -26,7 +28,11 @@
 //! `div | section` domain closed and adds a separate private Paragraph domain
 //! capable of representing both an authored `<p>` and the source-less P
 //! synthesized by the unmatched-`</p>` rule. It adds no driver semantics and
-//! no tokenizer feedback.
+//! no tokenizer feedback. TC-S7 and TC-S8 then reuse the same session-owned
+//! bounded open state and result-owned replay: Body-end consumes into
+//! `AfterBody`; Html-end reprocesses the same admitted token there before the
+//! existing acknowledgement moves to `AfterAfterBody`. The driver remains
+//! stack- and tag-agnostic.
 //!
 //! ```text
 //! &SourceText + HtmlTokenizerLimits
@@ -84,6 +90,8 @@ mod in_body_div_section_successor_validation;
 mod in_body_div_successor_production;
 #[cfg(test)]
 mod in_body_div_successor_validation;
+#[cfg(test)]
+mod in_body_html_end_open_stack_successor_production;
 #[cfg(test)]
 mod in_body_html_end_open_stack_successor_validation;
 #[cfg(test)]
