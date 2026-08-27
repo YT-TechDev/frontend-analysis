@@ -108,6 +108,10 @@ enum ExpectedDiagnostic {
         token: usize,
         trigger: Span,
     },
+    HtmlEndTagWithOpenSelectedOrdinaryElements {
+        token: usize,
+        trigger: Span,
+    },
 }
 
 /// One closure, named by the closed element's own authored start tag and the
@@ -329,6 +333,21 @@ fn project_diagnostics(analysis: &HtmlDocumentShellAnalysis) -> Vec<ExpectedDiag
                                 .trigger()
                                 .authored_boundary()
                                 .expect("authored body-end trigger"),
+                        ),
+                    }
+                }
+                HtmlTreeDiagnosticCode::HtmlEndTagWithOpenSelectedOrdinaryElements => {
+                    assert_eq!(
+                        diagnostic.recovery(),
+                        HtmlTreeRecovery::SwitchedToAfterBodyPreservingOpenElements,
+                    );
+                    ExpectedDiagnostic::HtmlEndTagWithOpenSelectedOrdinaryElements {
+                        token,
+                        trigger: span(
+                            diagnostic
+                                .trigger()
+                                .authored_boundary()
+                                .expect("authored html-end trigger"),
                         ),
                     }
                 }
@@ -1529,10 +1548,6 @@ fn selected_support_appears_only_in_the_proved_cells() {
             "<body><div><body>",
             HtmlTreeCapability::ShellTagWithOpenSelectedOrdinaryElement,
         ),
-        (
-            "<body><div></html>",
-            HtmlTreeCapability::ShellTagWithOpenSelectedOrdinaryElement,
-        ),
         // Non-P names outside the selected-ordinary and Paragraph domains stay unproved.
         ("<body><span>", HtmlTreeCapability::NonShellElementTag),
     ] {
@@ -1576,6 +1591,32 @@ fn selected_support_appears_only_in_the_proved_cells() {
             "{source_text:?}: the refused trigger leaked as an authored origin"
         );
     }
+}
+
+#[test]
+fn historical_div_html_end_cell_advances_to_the_tc_s8_successor() {
+    let source = "<body><div></html>";
+    let analysis = analyze(source);
+    assert_eq!(project_completion(&analysis), ExpectedCompletion::Complete);
+    assert_eq!(analysis.coverage().committed_end(), source.len());
+    assert_eq!(analysis.coverage().processed_tokens(), 4);
+    assert!(project_diagnostics(&analysis).contains(
+        &ExpectedDiagnostic::HtmlEndTagWithOpenSelectedOrdinaryElements {
+            token: 2,
+            trigger: (11, 18),
+        }
+    ));
+    assert_eq!(
+        project_actions(&analysis)
+            .into_iter()
+            .filter(|(_, token)| *token == 2)
+            .collect::<Vec<_>>(),
+        vec![
+            (ExpectedAction::Reprocessed, 2),
+            (ExpectedAction::AcknowledgedShellEndTag("html"), 2),
+        ]
+    );
+    assert!(project_closures(&analysis).is_empty());
 }
 
 // ---------------------------------------------------------------------------

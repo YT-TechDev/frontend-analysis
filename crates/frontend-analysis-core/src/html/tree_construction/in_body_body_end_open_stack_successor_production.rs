@@ -783,18 +783,6 @@ fn body_end_shape_and_other_shell_crossings_keep_the_broad_firewalls() {
             (11, 19),
         ),
         (
-            "<body><p></html>",
-            HtmlTreeCapability::ShellTagWithOpenParagraphElement,
-            2,
-            (9, 16),
-        ),
-        (
-            "<body><div></html>",
-            HtmlTreeCapability::ShellTagWithOpenSelectedOrdinaryElement,
-            2,
-            (11, 18),
-        ),
-        (
             "<body><p><body>",
             HtmlTreeCapability::ShellTagWithOpenParagraphElement,
             2,
@@ -817,6 +805,46 @@ fn body_end_shape_and_other_shell_crossings_keep_the_broad_firewalls() {
         assert_eq!(analysis.coverage().processed_tokens(), token, "{source}");
         assert_eq!(analysis.coverage().committed_end(), trigger.0, "{source}");
     }
+}
+
+#[test]
+fn historical_div_html_end_firewall_cell_advances_only_through_tc_s8() {
+    let source = "<body><div></html>";
+    let analysis = analyze(source);
+    assert!(analysis.is_complete());
+    assert_eq!(analysis.coverage().committed_end(), source.len());
+    assert_eq!(analysis.coverage().processed_tokens(), 4);
+    assert!(body_acknowledgements(&analysis).is_empty());
+    assert_eq!(
+        diagnostic_evidence(
+            &analysis,
+            HtmlTreeDiagnosticCode::HtmlEndTagWithOpenSelectedOrdinaryElements,
+        )
+        .iter()
+        .map(|(token, _, range, recovery)| (*token, *range, *recovery))
+        .collect::<Vec<_>>(),
+        vec![(
+            2,
+            (11, 18),
+            HtmlTreeRecovery::SwitchedToAfterBodyPreservingOpenElements,
+        )]
+    );
+    let actions = analysis
+        .actions()
+        .iter()
+        .filter(|action| action.trigger().token_index() == 2)
+        .collect::<Vec<_>>();
+    assert!(matches!(
+        actions.as_slice(),
+        [reprocessed, acknowledged]
+            if matches!(reprocessed.kind(), HtmlTreeActionKind::ReprocessedToken)
+                && matches!(
+                    acknowledged.kind(),
+                    HtmlTreeActionKind::AcknowledgedShellEndTag {
+                        name: HtmlShellElementName::Html,
+                    }
+                )
+    ));
 }
 
 #[test]

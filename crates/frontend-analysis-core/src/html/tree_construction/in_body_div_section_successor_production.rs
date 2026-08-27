@@ -117,6 +117,10 @@ enum ExpectedDiagnostic {
         token: usize,
         trigger: Span,
     },
+    HtmlEndTagWithOpenSelectedOrdinaryElements {
+        token: usize,
+        trigger: Span,
+    },
 }
 
 /// One matching closure, named by the closed element's own authored start tag
@@ -365,6 +369,16 @@ fn project_diagnostics(analysis: &HtmlDocumentShellAnalysis) -> Vec<ExpectedDiag
                     ExpectedDiagnostic::BodyEndTagWithOpenSelectedOrdinaryElements {
                         token,
                         trigger: authored("body-end"),
+                    }
+                }
+                HtmlTreeDiagnosticCode::HtmlEndTagWithOpenSelectedOrdinaryElements => {
+                    assert_eq!(
+                        diagnostic.recovery(),
+                        HtmlTreeRecovery::SwitchedToAfterBodyPreservingOpenElements,
+                    );
+                    ExpectedDiagnostic::HtmlEndTagWithOpenSelectedOrdinaryElements {
+                        token,
+                        trigger: authored("html-end"),
                     }
                 }
                 other => panic!("unexpected diagnostic {other:?} for a TC-S4 source"),
@@ -1495,7 +1509,7 @@ fn ps17_a_body_close_over_an_open_section_advances_only_the_tc_s7_cell() {
 }
 
 #[test]
-fn body_end_advances_mixed_selected_stacks_while_html_end_stays_firewalled() {
+fn body_and_html_end_advance_their_exact_mixed_selected_stack_cells() {
     for source in [
         "<body><section></body>",
         "<body><section><div></body>",
@@ -1519,16 +1533,36 @@ fn body_end_advances_mixed_selected_stacks_while_html_end_stays_firewalled() {
 
     let source = "<body><section><div></html>";
     let analysis = analyze(source);
+    assert_eq!(project_completion(&analysis), ExpectedCompletion::Complete);
+    assert_eq!(analysis.coverage().committed_end(), source.len());
+    assert_eq!(analysis.coverage().processed_tokens(), 5);
     assert_eq!(
-        project_completion(&analysis),
-        ExpectedCompletion::Unsupported {
-            capability: HtmlTreeCapability::ShellTagWithOpenSelectedOrdinaryElement,
-            token: 3,
-            trigger: Some((20, source.len())),
-        }
+        project_diagnostics(&analysis)
+            .into_iter()
+            .filter(|diagnostic| matches!(
+                diagnostic,
+                ExpectedDiagnostic::HtmlEndTagWithOpenSelectedOrdinaryElements { .. }
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            ExpectedDiagnostic::HtmlEndTagWithOpenSelectedOrdinaryElements {
+                token: 3,
+                trigger: (20, source.len()),
+            },
+        ]
     );
-    assert_eq!(analysis.coverage().committed_end(), 20);
-    assert_eq!(analysis.coverage().processed_tokens(), 3);
+    assert_eq!(
+        project_actions(&analysis)
+            .into_iter()
+            .filter(|(_, token)| *token == 3)
+            .collect::<Vec<_>>(),
+        vec![
+            (ExpectedAction::Reprocessed, 3),
+            (ExpectedAction::AcknowledgedShellEndTag("html"), 3),
+        ]
+    );
+    assert!(project_recoveries(&analysis).is_empty());
+    assert!(project_closures(&analysis).is_empty());
 }
 
 #[test]

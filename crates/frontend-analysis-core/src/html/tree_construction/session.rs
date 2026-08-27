@@ -1,5 +1,5 @@
 //! The private TC-S1 tree-construction session, with its accepted TC-S2,
-//! TC-S3, TC-S4, TC-S5, TC-S6, and TC-S7 successors.
+//! TC-S3, TC-S4, TC-S5, TC-S6, TC-S7, and TC-S8 successors.
 //!
 //! The session exclusively owns every piece of mutable tree-construction
 //! state for exactly one run: the insertion mode, the open elements — the
@@ -380,6 +380,7 @@ enum Effect {
     CloseHeadElement(HtmlShellClosure),
     AcknowledgeShellEndTag(HtmlShellElementName),
     AcknowledgeBodyEndTagWithOpenSelectedOrdinaryElements,
+    RecordHtmlEndTagWithOpenSelectedOrdinaryElements,
     RecordAfterBodyCharacterData,
     InsertSelectedOrdinaryElement(HtmlSelectedOrdinaryElementName),
     CloseSelectedOrdinaryElement(HtmlSelectedOrdinaryElementName),
@@ -581,13 +582,13 @@ fn classify(
             }
         }
         InsertionMode::InBody => {
-            // TC-S7 advances exactly one plain admitted shell cell before the
-            // broad P/selected firewalls: authored `</body>`. Admission has
-            // already ruled out attributes and a self-closing solidus. The
-            // selected-name projection alone decides whether the bounded
-            // body-end diagnostic exists; P is an allowed open member and
-            // does not affect its cardinality. No other shell token bypasses
-            // either firewall.
+            // TC-S7 and TC-S8 advance exactly two plain admitted shell cells
+            // before the broad P/selected firewalls: authored `</body>` and
+            // authored `</html>`. Admission has already ruled out attributes
+            // and a self-closing solidus. The selected-name projection alone
+            // decides whether either bounded end diagnostic exists; P is an
+            // allowed open member and does not affect cardinality. No other
+            // shell token bypasses either firewall.
             if matches!(
                 token,
                 AdmittedToken::EndTag {
@@ -602,6 +603,19 @@ fn classify(
                         Effect::AcknowledgeBodyEndTagWithOpenSelectedOrdinaryElements
                     }),
                     next: Some(InsertionMode::AfterBody),
+                });
+            }
+            if matches!(
+                token,
+                AdmittedToken::EndTag {
+                    name: AdmittedElementName::Shell(HtmlShellElementName::Html),
+                    ..
+                }
+            ) {
+                return Ok(ModeStep::Reprocess {
+                    effect: (!open_selected_ordinary.is_empty())
+                        .then_some(Effect::RecordHtmlEndTagWithOpenSelectedOrdinaryElements),
+                    next: InsertionMode::AfterBody,
                 });
             }
             if paragraph_is_current && token.is_shell_tag() {
@@ -698,14 +712,14 @@ fn classify(
                     ..
                 } => Err(HtmlTreeCapability::UnprovedShellStartTagPosition),
                 AdmittedToken::EndTag {
-                    name: AdmittedElementName::Shell(HtmlShellElementName::Body),
-                    ..
-                } => unreachable!("handled by the TC-S7 pre-firewall branch"),
-                AdmittedToken::EndTag {
                     name:
                         AdmittedElementName::Shell(
-                            HtmlShellElementName::Head | HtmlShellElementName::Html,
+                            HtmlShellElementName::Body | HtmlShellElementName::Html,
                         ),
+                    ..
+                } => unreachable!("handled by the TC-S7/TC-S8 pre-firewall branches"),
+                AdmittedToken::EndTag {
+                    name: AdmittedElementName::Shell(HtmlShellElementName::Head),
                     ..
                 } => Err(HtmlTreeCapability::UnprovedShellEndTagPosition),
                 // End of file with a selected ordinary element still open is
@@ -937,6 +951,10 @@ pub(crate) enum HtmlTreeSessionError {
     /// ordinary element was open. The P-only and empty-stack cells use the
     /// ordinary body acknowledgement and never reach this effect.
     NoOpenSelectedOrdinaryElementAtBodyEnd,
+    /// The TC-S8 selected-open html-end effect was selected while no selected
+    /// ordinary element was open. The P-only and empty-stack cells use the
+    /// effect-free reprocess path and never reach this effect.
+    NoOpenSelectedOrdinaryElementAtHtmlEnd,
     /// A Paragraph exists on the private open stack but is not the current node,
     /// violating TC-S5's `P?`-is-current invariant.
     ParagraphIsNotCurrent(HtmlConstructedNodeId),
@@ -1231,6 +1249,22 @@ impl HtmlTreeSession {
                         name: HtmlShellElementName::Body,
                     },
                     trigger,
+                );
+                Ok(())
+            }
+            Effect::RecordHtmlEndTagWithOpenSelectedOrdinaryElements => {
+                // The read-only classifier proved the selected-open condition
+                // before mutation. This effect records only the dedicated
+                // diagnostic; generic reprocess commit machinery then changes
+                // mode and records same-token redispatch. The existing
+                // AfterBody rule owns the eventual Html acknowledgement.
+                if self.open_selected_ordinary_ids().is_empty() {
+                    return Err(HtmlTreeSessionError::NoOpenSelectedOrdinaryElementAtHtmlEnd);
+                }
+                self.record_diagnostic(
+                    HtmlTreeDiagnosticCode::HtmlEndTagWithOpenSelectedOrdinaryElements,
+                    trigger,
+                    HtmlTreeRecovery::SwitchedToAfterBodyPreservingOpenElements,
                 );
                 Ok(())
             }
