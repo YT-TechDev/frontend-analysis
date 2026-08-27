@@ -3,27 +3,36 @@
 //! TC-S9 needs one causal coordination seam: after a context-dependent start
 //! tag has emitted, tree construction must be able to apply the selected
 //! tokenizer control before later source production. The lexical Engine stays
-//! the sole source/cursor/state owner; this wrapper only owns suspension,
-//! resumption, terminalization, and the batch-compatibility policy.
+//! the sole source/cursor/state owner; this wrapper only interprets the
+//! Engine's already-established deliberate stop as a private suspension and
+//! owns resumption/terminalization policy.
+//!
+//! The appropriate RAWTEXT end tag additionally causes one private internal
+//! yield immediately after that end tag emits. The yield is never retained in
+//! an `HtmlTokenizerRunResult`; it only prevents post-close source from being
+//! consumed before the tree restores its original insertion mode.
 //!
 //! This is not a public iterator, stream, parser-control protocol, or
 //! serialization boundary. The existing batch `tokenize()` entry point drains
 //! this same session under the predecessor policy and therefore preserves the
-//! established deferred-unsupported behavior when no tree coordination exists.
+//! exact deferred-unsupported result when no tree coordination exists.
 
 use crate::SourceText;
 use crate::html::token::HtmlToken;
 
 use super::super::resource::HtmlTokenizerLimits;
-use super::super::result::{HtmlTokenizerCompletion, HtmlTokenizerMode, HtmlTokenizerRunResult};
-use super::{Engine, EngineBoundary, invalid_configuration_result, source_bytes_limit_result};
+use super::super::result::{
+    HtmlTokenizerCapability, HtmlTokenizerCompletion, HtmlTokenizerIncompleteCause,
+    HtmlTokenizerMode, HtmlTokenizerRunResult,
+};
+use super::{Engine, invalid_configuration_result, source_bytes_limit_result};
 
 /// One private production boundary reached while driving the tokenizer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HtmlTokenizerSessionBoundary {
-    /// At least one new token committed and the Engine yielded before
-    /// consuming more source. No tree-directed control is owed by this
-    /// boundary itself.
+    /// The selected appropriate RAWTEXT end tag emitted and the Engine yielded
+    /// before consuming any post-close source. The coordinator may dispatch
+    /// every newly retained token before resuming.
     TokenAvailable,
     /// A context-dependent start tag committed at its exact post-tag boundary.
     /// Later source has not been consumed yet.
@@ -61,6 +70,11 @@ pub(crate) struct HtmlTokenizerSession<'a> {
     engine: Option<Engine<'a>>,
     immediate_result: Option<HtmlTokenizerRunResult>,
     terminal_completion: Option<HtmlTokenizerCompletion>,
+    /// The exact predecessor completion returned by `Engine::run()` at the
+    /// context-dependent boundary. Batch mode publishes it unchanged;
+    /// coordinated mode discards it only after successfully applying the
+    /// selected tree feedback to the still-live Engine.
+    suspended_completion: Option<HtmlTokenizerCompletion>,
     suspended_mode: Option<HtmlTokenizerMode>,
 }
 
@@ -73,6 +87,7 @@ impl<'a> HtmlTokenizerSession<'a> {
                 engine: None,
                 immediate_result: Some(invalid_configuration_result(source, limits, failure)),
                 terminal_completion: None,
+                suspended_completion: None,
                 suspended_mode: None,
             };
         }
@@ -83,6 +98,7 @@ impl<'a> HtmlTokenizerSession<'a> {
                 engine: None,
                 immediate_result: Some(source_bytes_limit_result(source, limits, source_len)),
                 terminal_completion: None,
+                suspended_completion: None,
                 suspended_mode: None,
             };
         }
@@ -91,16 +107,17 @@ impl<'a> HtmlTokenizerSession<'a> {
             engine: Some(Engine::new(source, limits)),
             immediate_result: None,
             terminal_completion: None,
+            suspended_completion: None,
             suspended_mode: None,
         }
     }
 
-    /// Drives until exactly one private pull boundary is reached.
+    /// Drives until the existing Engine stops, or until TC-S9's private
+    /// post-RAWTEXT-close yield is observed.
     ///
-    /// If a context-dependent mode is already suspended, calling this again
-    /// does not consume source; the same suspension is returned until the
-    /// coordinator either applies the selected control or terminalizes the run
-    /// with the batch-compatible policy.
+    /// A context-dependent unsupported completion is interpreted as a private
+    /// suspension only while this session is alive. Its exact completion value
+    /// is retained so batch-compatible finalization can publish it unchanged.
     pub(crate) fn drive_to_boundary(&mut self) -> HtmlTokenizerSessionBoundary {
         if self.immediate_result.is_some() || self.terminal_completion.is_some() {
             return HtmlTokenizerSessionBoundary::Terminal;
@@ -110,16 +127,24 @@ impl<'a> HtmlTokenizerSession<'a> {
         }
 
         let engine = self.engine.as_mut().expect("live tokenizer engine");
-        match engine.run_until_boundary() {
-            EngineBoundary::TokenAvailable => HtmlTokenizerSessionBoundary::TokenAvailable,
-            EngineBoundary::Suspended(mode) => {
-                self.suspended_mode = Some(mode);
-                HtmlTokenizerSessionBoundary::Suspended(mode)
-            }
-            EngineBoundary::Terminal(completion) => {
-                self.terminal_completion = Some(completion);
-                HtmlTokenizerSessionBoundary::Terminal
-            }
+        let completion = engine.run();
+
+        // This flag is set only by the selected appropriate RAWTEXT close.
+        // `Engine::run()` represented the internal yield with an ephemeral
+        // unsupported stop so its existing stop/unwind machinery remains the
+        // single path. The cause is deliberately discarded here and never
+        // reaches a tokenizer result.
+        if engine.take_raw_text_close_yield() {
+            return HtmlTokenizerSessionBoundary::TokenAvailable;
+        }
+
+        if let Some(mode) = context_dependent_suspension(&completion) {
+            self.suspended_mode = Some(mode);
+            self.suspended_completion = Some(completion);
+            HtmlTokenizerSessionBoundary::Suspended(mode)
+        } else {
+            self.terminal_completion = Some(completion);
+            HtmlTokenizerSessionBoundary::Terminal
         }
     }
 
@@ -155,15 +180,16 @@ impl<'a> HtmlTokenizerSession<'a> {
             return Err(HtmlTokenizerSessionControlError::RawTextActivationInvariant);
         }
         self.suspended_mode = None;
+        self.suspended_completion = None;
         Ok(())
     }
 
     /// Consumes the session using the established no-tree-feedback policy.
     ///
-    /// A pending or later context-dependent boundary becomes the exact same
-    /// deferred unsupported capability the batch tokenizer produced before
-    /// TC-S9. Ordinary token yields are drained immediately. This is used by
-    /// both `tokenize()` and coordinator finalization after a tree-side stop.
+    /// A pending or later context-dependent boundary publishes the exact
+    /// completion that the predecessor Engine already produced. The private
+    /// appropriate-close yield is simply drained. This is used by both
+    /// `tokenize()` and coordinator finalization after a tree-side stop.
     pub(crate) fn finish_batch_compatible(mut self) -> HtmlTokenizerRunResult {
         if let Some(result) = self.immediate_result.take() {
             return result;
@@ -178,24 +204,23 @@ impl<'a> HtmlTokenizerSession<'a> {
                     .into_result(completion);
             }
 
-            if let Some(mode) = self.suspended_mode.take() {
+            if self.suspended_mode.is_some() {
                 let completion = self
-                    .engine
-                    .as_mut()
-                    .expect("suspended session has engine")
-                    .batch_completion_for_suspended_context(mode);
+                    .suspended_completion
+                    .take()
+                    .expect("suspended mode retains predecessor completion");
                 return self
                     .engine
                     .take()
-                    .expect("batch-terminal session has engine")
+                    .expect("suspended session has engine")
                     .into_result(completion);
             }
 
             match self.drive_to_boundary() {
                 HtmlTokenizerSessionBoundary::TokenAvailable => {}
                 HtmlTokenizerSessionBoundary::Suspended(_) => {
-                    // The next iteration materializes the predecessor deferred
-                    // unsupported boundary without consuming later source.
+                    // The next iteration returns the exact predecessor
+                    // deferred-unsupported result.
                 }
                 HtmlTokenizerSessionBoundary::Terminal => {}
             }
@@ -223,5 +248,21 @@ impl<'a> HtmlTokenizerSession<'a> {
             .take()
             .expect("terminal session has engine")
             .into_result(completion))
+    }
+}
+
+/// Recognizes only the exact existing context-dependent deferred stop. This is
+/// classification of retained tokenizer completion evidence, not source or
+/// token reinterpretation.
+fn context_dependent_suspension(completion: &HtmlTokenizerCompletion) -> Option<HtmlTokenizerMode> {
+    let HtmlTokenizerCompletion::Incomplete(HtmlTokenizerIncompleteCause::UnsupportedCapability(
+        unsupported,
+    )) = completion
+    else {
+        return None;
+    };
+    match unsupported.capability() {
+        HtmlTokenizerCapability::ContextDependentTokenizerMode { mode } => Some(mode),
+        _ => None,
     }
 }
