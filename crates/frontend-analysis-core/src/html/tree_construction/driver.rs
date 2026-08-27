@@ -232,11 +232,11 @@ pub(crate) fn construct_html_document_shell(
                 // tag, returned its lexical state to Data, and yielded before
                 // post-close source. Tree dispatch above has now consumed that
                 // exact close and restored InHead.
-                let close_token_index = produced_len
-                    .checked_sub(1)
-                    .ok_or(HtmlDocumentShellConstructionError::Coordination(
+                let close_token_index = produced_len.checked_sub(1).ok_or(
+                    HtmlDocumentShellConstructionError::Coordination(
                         HtmlTreeCoordinatorError::FeedbackTokenWasNotLastProducedAtBoundary,
-                    ))?;
+                    ),
+                )?;
                 coordinated_raw_text_close_tokens.push(close_token_index);
             }
             HtmlTokenizerSessionBoundary::Suspended(mode) => {
