@@ -13,3 +13,17 @@ tools/unicode/upstream-manifest.json text eol=lf
 tools/unicode/generate_ecmascript_unicode.py text eol=lf
 tools/unicode/verify_generated_ecmascript_unicode.py text eol=lf
 crates/frontend-analysis-core/src/ecmascript/unicode_generated.rs text eol=lf
+
+# WHATWG HTML Named Character Reference evidence is retained byte-for-byte.
+tools/html/named_character_references/inputs/entities.json -text -whitespace
+tools/html/named_character_references/WHATWG-LICENSE.txt -text -whitespace
+
+# Project-authored HTML Named Character Reference data tooling uses LF bytes.
+tools/html/named_character_references/README.md text eol=lf
+tools/html/named_character_references/UPSTREAM-LICENSING.md text eol=lf
+tools/html/named_character_references/upstream-manifest.json text eol=lf
+tools/html/named_character_references/generate_named_character_references.py text eol=lf
+tools/html/named_character_references/verify_generated_named_character_references.py text eol=lf
+tools/html/named_character_references/tests/test_generate_named_character_references.py text eol=lf
+crates/frontend-analysis-core/src/html/tokenizer/named_character_references_generated.rs text eol=lf
+crates/frontend-analysis-core/src/html/tokenizer/named_character_references_data_tests.rs text eol=lf
