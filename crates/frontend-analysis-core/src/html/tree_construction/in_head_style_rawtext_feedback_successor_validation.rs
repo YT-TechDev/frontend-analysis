@@ -287,12 +287,7 @@ impl CandidateTokenizer {
     fn next_raw_text(&mut self) -> Result<Token, LowerLayerStop> {
         let text = self.source.as_str();
         if self.cursor == text.len() {
-            return Ok(self.token(
-                TokenClass::Eof,
-                self.cursor,
-                self.cursor,
-                LexState::RawText,
-            ));
+            return Ok(self.token(TokenClass::Eof, self.cursor, self.cursor, LexState::RawText));
         }
 
         if let Some(end) = plain_style_end_at(text, self.cursor) {
@@ -525,7 +520,10 @@ fn run_candidate(
                 };
             }
             (InsertionMode::InHead, TokenClass::StartBodySentinel)
-                if tree.style.as_ref().is_some_and(|style| style.close.is_some()) =>
+                if tree
+                    .style
+                    .as_ref()
+                    .is_some_and(|style| style.close.is_some()) =>
             {
                 events.push(Event::PostCloseSentinel {
                     state: token.state_at_emission,
@@ -543,7 +541,10 @@ fn run_candidate(
                 };
             }
             (InsertionMode::InHead, TokenClass::Eof)
-                if tree.style.as_ref().is_some_and(|style| style.close.is_some()) =>
+                if tree
+                    .style
+                    .as_ref()
+                    .is_some_and(|style| style.close.is_some()) =>
             {
                 return Observation {
                     source_id: source.id(),
@@ -578,7 +579,9 @@ fn run_candidate(
                 requested,
                 cursor: tokenizer.cursor,
             });
-            let applied = pending_feedback.take().expect("outstanding feedback request");
+            let applied = pending_feedback
+                .take()
+                .expect("outstanding feedback request");
             let from = tokenizer.state;
             tokenizer.set_state(applied);
             events.push(Event::FeedbackApplied {
@@ -617,7 +620,10 @@ fn assert_gold(observation: &Observation, gold: &Gold) {
     assert_eq!(observation.tree.mode, InsertionMode::InHead);
     assert_eq!(observation.tree.original_mode, None);
     assert_eq!(observation.tree.open, vec![NodeId(0), NodeId(1)]);
-    assert_eq!(observation.tree.next_id, 3, "only style allocates an element");
+    assert_eq!(
+        observation.tree.next_id, 3,
+        "only style allocates an element"
+    );
     assert_eq!(observation.tree.elements.len(), 3);
 
     let style_element = &observation.tree.elements[2];
@@ -625,14 +631,19 @@ fn assert_gold(observation: &Observation, gold: &Gold) {
     assert_eq!(style_element.name, Name::Style);
     assert_eq!(style_element.parent, Some(NodeId(1)));
     match &style_element.origin {
-        Origin::Authored(origin) => assert_evidence(origin, observation.source_id, &gold.style_start),
+        Origin::Authored(origin) => {
+            assert_evidence(origin, observation.source_id, &gold.style_start)
+        }
         Origin::CandidateContext => panic!("style must have authored origin"),
     }
 
     let style = observation.tree.style.as_ref().expect("style record");
     assert_evidence(&style.start, observation.source_id, &gold.style_start);
     assert_eq!(style.text, gold.text);
-    assert_eq!(style.contributions.len(), usize::from(gold.text_contribution.is_some()));
+    assert_eq!(
+        style.contributions.len(),
+        usize::from(gold.text_contribution.is_some())
+    );
     if let Some(expected) = &gold.text_contribution {
         assert_evidence(&style.contributions[0], observation.source_id, expected);
     }
@@ -860,10 +871,12 @@ fn r1_empty_style_proves_complete_feedback_round_trip() {
             cursor: 7
         }
     )));
-    assert!(actual
-        .events
-        .iter()
-        .any(|event| matches!(event, Event::TokenizerReturnedToData { .. })));
+    assert!(
+        actual
+            .events
+            .iter()
+            .any(|event| matches!(event, Event::TokenizerReturnedToData { .. }))
+    );
 }
 
 #[test]
@@ -898,9 +911,11 @@ fn r2_f1_f3_tag_shaped_raw_text_falsifies_completed_data_vector_and_reinterpreta
 
     let eager = eager_all_data_classes(&source, 0);
     assert!(eager.contains(&TokenClass::StartOtherB));
-    assert!(!produced_classes(&actual)
-        .iter()
-        .any(|(_, class)| *class == TokenClass::StartOtherB));
+    assert!(
+        !produced_classes(&actual)
+            .iter()
+            .any(|(_, class)| *class == TokenClass::StartOtherB)
+    );
 
     // The eager history has a `<b>` token boundary [7, 10), while the
     // coordinated history has one RAWTEXT contribution [7, 11). Repairing the
@@ -1053,10 +1068,12 @@ fn r6_eof_in_raw_text_restores_tree_without_fabricating_close_or_data_transition
         },
     );
     assert_eq!(validate_candidate_freeze(&actual), Ok(()));
-    assert!(!actual
-        .events
-        .iter()
-        .any(|event| matches!(event, Event::TokenizerReturnedToData { .. })));
+    assert!(
+        !actual
+            .events
+            .iter()
+            .any(|event| matches!(event, Event::TokenizerReturnedToData { .. }))
+    );
 }
 
 #[test]
@@ -1103,8 +1120,20 @@ fn r8_source_id_perturbation_changes_provenance_not_semantics() {
     );
     assert_ne!(first_observation.source_id, second_observation.source_id);
     assert_ne!(
-        first_observation.tree.style.as_ref().unwrap().start.source_id,
-        second_observation.tree.style.as_ref().unwrap().start.source_id
+        first_observation
+            .tree
+            .style
+            .as_ref()
+            .unwrap()
+            .start
+            .source_id,
+        second_observation
+            .tree
+            .style
+            .as_ref()
+            .unwrap()
+            .start
+            .source_id
     );
 }
 
