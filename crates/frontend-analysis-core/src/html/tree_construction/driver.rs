@@ -144,6 +144,8 @@ pub(crate) fn construct_html_document_shell(
     let mut session = HtmlTreeSession::new()?;
     let mut next_token_index = 0usize;
     let mut stop = None;
+    let mut coordinated_raw_text_entry_tokens = Vec::new();
+    let mut coordinated_raw_text_close_tokens = Vec::new();
 
     let tokenizer_run: HtmlTokenizerRunResult = 'production: loop {
         let boundary = tokenizer.drive_to_boundary();
@@ -189,10 +191,13 @@ pub(crate) fn construct_html_document_shell(
                     // Causal two-phase Style start:
                     // tree request -> tokenizer apply -> tree acknowledgement.
                     // Only after acknowledgement may the next outer drive
-                    // consume later source.
+                    // consume later source. The token index is retained only
+                    // as private freeze evidence that this exact transition
+                    // really crossed the coordinator boundary.
                     match feedback {
                         HtmlTreeTokenizerFeedback::EnterRawText => tokenizer.apply_raw_text()?,
                     }
+                    coordinated_raw_text_entry_tokens.push(next_token_index);
                     session.acknowledge_tokenizer_feedback(feedback)?;
                     next_token_index += 1;
                     continue 'production;
@@ -222,9 +227,17 @@ pub(crate) fn construct_html_document_shell(
 
         match boundary {
             HtmlTokenizerSessionBoundary::TokenAvailable => {
-                // The selected appropriate RAWTEXT close yielded before any
-                // post-close source. Tree dispatch above has now consumed the
-                // close and restored InHead, so production may resume.
+                // This boundary exists only after the tokenizer itself
+                // recognized and emitted the selected appropriate RAWTEXT end
+                // tag, returned its lexical state to Data, and yielded before
+                // post-close source. Tree dispatch above has now consumed that
+                // exact close and restored InHead.
+                let close_token_index = produced_len
+                    .checked_sub(1)
+                    .ok_or(HtmlDocumentShellConstructionError::Coordination(
+                        HtmlTreeCoordinatorError::FeedbackTokenWasNotLastProducedAtBoundary,
+                    ))?;
+                coordinated_raw_text_close_tokens.push(close_token_index);
             }
             HtmlTokenizerSessionBoundary::Suspended(mode) => {
                 return Err(HtmlDocumentShellConstructionError::Coordination(
@@ -238,7 +251,9 @@ pub(crate) fn construct_html_document_shell(
     };
 
     let completion = effective_completion(&stop, &tokenizer_run);
-    let parts = session.finish(completion);
+    let mut parts = session.finish(completion);
+    parts.coordinated_raw_text_entry_tokens = coordinated_raw_text_entry_tokens;
+    parts.coordinated_raw_text_close_tokens = coordinated_raw_text_close_tokens;
     Ok(freeze(source, tokenizer_run, parts)?)
 }
 
