@@ -1,0 +1,39 @@
+name: Temporary TC-S9 rustfmt artifact
+
+on:
+  push:
+    branches:
+      - tmp-tc-s9-rustfmt-88d78e
+
+permissions:
+  contents: read
+
+jobs:
+  format:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Install exact Rust toolchain
+        run: rustup toolchain install 1.97.1 --profile minimal --component rustfmt
+      - name: Format workspace
+        run: cargo +1.97.1 fmt --all
+      - name: Package exact TC-S9 paths
+        run: |
+          tar -czf tc-s9-formatted.tar.gz \
+            crates/frontend-analysis-core/src/html/tokenizer/producer/mod.rs \
+            crates/frontend-analysis-core/src/html/tokenizer/producer/session.rs \
+            crates/frontend-analysis-core/src/html/tokenizer/producer/state.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/driver.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/session.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/result.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/in_head_style_rawtext_feedback_successor_production.rs \
+            crates/frontend-analysis-core/src/html/tree_construction/mod.rs
+      - name: Upload formatted artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tc-s9-formatted
+          path: tc-s9-formatted.tar.gz
+          if-no-files-found: error
