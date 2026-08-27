@@ -345,7 +345,10 @@ fn classify(
     if token.is_style_tag() {
         match (mode, token) {
             (
-                InsertionMode::InHead,
+                InsertionMode::Initial
+                | InsertionMode::BeforeHtml
+                | InsertionMode::BeforeHead
+                | InsertionMode::InHead,
                 AdmittedToken::StartTag {
                     name: AdmittedElementName::Style,
                     ..

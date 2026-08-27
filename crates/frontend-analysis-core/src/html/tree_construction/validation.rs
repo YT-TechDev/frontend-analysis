@@ -355,6 +355,20 @@ fn project_tree(analysis: &HtmlDocumentShellAnalysis, id: HtmlConstructedNodeId)
             },
             children,
         },
+        HtmlTreeNodeKind::Element(HtmlElement::Style(style)) => GoldNode::Element {
+            name: "style",
+            origin: GoldOrigin::Authored(
+                (
+                    style.complete().range().start(),
+                    style.complete().range().end(),
+                ),
+                (
+                    style.raw_name().range().start(),
+                    style.raw_name().range().end(),
+                ),
+            ),
+            children,
+        },
         HtmlTreeNodeKind::Text(text) => GoldNode::Text {
             // Leaked back as a `&'static str` is impossible, so the comparison
             // below uses the owned projection instead; this arm exists only so
@@ -473,6 +487,9 @@ fn project_diagnostics(analysis: &HtmlDocumentShellAnalysis) -> Vec<GoldDiagnost
             }
             HtmlTreeDiagnosticCode::UnmatchedParagraphEndTag => {
                 panic!("the TC-S1 predecessor GOLD never produces a TC-S5 Paragraph diagnostic")
+            }
+            HtmlTreeDiagnosticCode::StyleEndOfFileInText => {
+                panic!("the TC-S1 predecessor GOLD never produces a TC-S9 Style diagnostic")
             }
         })
         .collect()
@@ -792,6 +809,9 @@ fn synthesized_and_root_nodes_carry_no_authored_source() {
                             case.id
                         ),
                     }
+                }
+                HtmlTreeNodeKind::Element(HtmlElement::Style(_)) => {
+                    unreachable!("no TC-S1 GOLD case constructs a TC-S9 Style")
                 }
                 HtmlTreeNodeKind::Element(HtmlElement::Shell(shell)) => match shell.origin() {
                     HtmlShellElementOrigin::Synthesized(_) => assert!(
@@ -1615,6 +1635,12 @@ fn valid_parts(fixture: &FreezeFixture) -> HtmlDocumentShellParts {
         // TC-S1 shell parts open no selected ordinary element.
         final_open_selected_ordinary: Vec::new(),
         final_open_paragraph: None,
+        final_open_style: None,
+        final_style_text_mode_active: false,
+        final_style_original_in_head_retained: false,
+        pending_tokenizer_feedback: false,
+        coordinated_raw_text_entry_tokens: Vec::new(),
+        coordinated_raw_text_close_tokens: Vec::new(),
     }
 }
 

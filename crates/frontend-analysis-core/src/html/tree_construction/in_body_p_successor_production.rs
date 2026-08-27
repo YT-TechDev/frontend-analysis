@@ -342,6 +342,9 @@ fn node_signatures(analysis: &HtmlDocumentShellAnalysis) -> Vec<NodeSignature> {
                     };
                     NodeMeaning::Paragraph(origin)
                 }
+                HtmlTreeNodeKind::Element(HtmlElement::Style(_)) => {
+                    panic!("TC-S5 predecessor fixtures must not construct a TC-S9 Style")
+                }
                 HtmlTreeNodeKind::Text(text) => NodeMeaning::Text(
                     text.interpreted().to_owned(),
                     text.contributions()

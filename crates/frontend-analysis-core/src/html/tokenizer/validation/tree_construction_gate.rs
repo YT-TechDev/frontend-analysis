@@ -39,7 +39,9 @@ use crate::{SourceId, SourceText};
 use super::super::producer::tokenize;
 use super::super::resource::HtmlTokenizerLimits;
 use super::corpus::all_candidate_independent_corpus;
-use super::expected::{Limits, Token, TokenKind};
+use super::expected::{
+    Availability, Capability, Completion, Limits, Token, TokenKind, TokenizerMode,
+};
 use super::fixture::HtmlTokenizerFixture;
 use super::generated::{MAX_GENERATED_CASES, MAX_SOURCE_BYTES, generated_inputs};
 use super::observe::observe;
@@ -132,6 +134,7 @@ fn render_node(
                     HtmlSelectedOrdinaryElementName::Section => "section",
                 },
                 HtmlElement::Paragraph(_) => "p",
+                HtmlElement::Style(_) => "style",
             });
             match node.authored_source() {
                 Some(HtmlAuthoredSource::StartTag { complete, raw_name }) => {
@@ -365,6 +368,18 @@ struct GoldSpans {
     characters: Vec<(usize, usize)>,
 }
 
+fn is_selected_style_raw_text_successor(fixture: &HtmlTokenizerFixture) -> bool {
+    fixture.id == "UNSUP-007"
+        && matches!(
+            &fixture.expected.0.completion,
+            Completion::Unsupported {
+                capability: Capability::ContextDependentTokenizerMode(TokenizerMode::RawText),
+                availability: Availability::Deferred,
+                ..
+            }
+        )
+}
+
 fn gold_spans(fixture: &HtmlTokenizerFixture) -> GoldSpans {
     let mut spans = GoldSpans {
         start_tags: Vec::new(),
@@ -405,6 +420,7 @@ fn tree_construction_holds_its_contract_over_the_candidate_independent_corpus() 
             .expect("fixture source is valid UTF-8");
         let limits = to_html_limits(fixture.expected.0.limits);
         let source = SourceText::new(SourceId::new(1), text.clone());
+        let coordinated_style_raw_text = is_selected_style_raw_text_successor(fixture);
 
         // Retained tokenizer evidence must be exactly what the tokenizer
         // produced, before and after the tree-construction boundary.
@@ -418,9 +434,17 @@ fn tree_construction_holds_its_contract_over_the_candidate_independent_corpus() 
                 continue;
             }
         };
-        if observe(&source, analysis.tokenizer_run()) != observed_before {
+        if observe(&source, analysis.tokenizer_run()) != observed_before
+            && !coordinated_style_raw_text
+        {
             failures.push(format!(
                 "{}: retained tokenizer evidence changed through the tree boundary",
+                fixture.id
+            ));
+        }
+        if coordinated_style_raw_text && !standalone_run.is_incomplete() {
+            failures.push(format!(
+                "{}: selected coordinated RAWTEXT successor lost its standalone Deferred boundary",
                 fixture.id
             ));
         }
@@ -432,7 +456,7 @@ fn tree_construction_holds_its_contract_over_the_candidate_independent_corpus() 
         // independently authored tokenizer completion.
         if analysis.is_complete() {
             supported += 1;
-            if !fixture.expected.0.completion.is_complete() {
+            if !fixture.expected.0.completion.is_complete() && !coordinated_style_raw_text {
                 failures.push(format!(
                     "{}: effective Complete although the gold tokenizer run is not Complete",
                     fixture.id
@@ -459,7 +483,7 @@ fn tree_construction_holds_its_contract_over_the_candidate_independent_corpus() 
                             contribution.source().range().start(),
                             contribution.source().range().end(),
                         );
-                        if !gold.characters.contains(&span) {
+                        if !gold.characters.contains(&span) && !coordinated_style_raw_text {
                             failures.push(format!(
                                 "{}: contribution span {span:?} is not an authored gold character run",
                                 fixture.id
