@@ -710,10 +710,12 @@ fn reject_whitespace_sensitive_characters(
     }
 }
 
+/// Frozen predecessor terminal outcome used by the TC-S1–TC-S8 direct driver
+/// tests. TC-S9 feedback is coordinator-private and deliberately not added
+/// here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum TokenOutcome {
     Consumed,
-    TokenizerFeedbackRequested(HtmlTreeTokenizerFeedback),
     StoppedParsing,
     Unsupported(HtmlTreeCapability),
 }
@@ -756,6 +758,7 @@ pub(crate) enum HtmlTreeSessionError {
     TokenizerFeedbackAcknowledgedWithoutPending,
     TokenizerFeedbackAcknowledgementMismatch,
     TokenizerFeedbackRequestedOutsideInHead,
+    TokenizerFeedbackRequiresCoordinator,
     OriginalInsertionModeAlreadyRetained,
     MissingOriginalInsertionMode,
     OriginalInsertionModeWasNotInHead,
@@ -914,10 +917,6 @@ impl HtmlTreeSession {
         }
     }
 
-    /// Completes the tree half of the TC-S9 two-phase Style start only after
-    /// the coordinator has successfully applied the requested tokenizer
-    /// control. No later source can have been requested while this obligation
-    /// was pending.
     pub(super) fn acknowledge_tokenizer_feedback(
         &mut self,
         feedback: HtmlTreeTokenizerFeedback,
@@ -1151,14 +1150,13 @@ impl HtmlTreeSession {
         trigger: &HtmlTreeTokenTrigger,
         token: &AdmittedToken<'_>,
     ) -> Result<HtmlConstructedNodeId, HtmlTreeSessionError> {
-        let parent =
-            match name {
-                HtmlShellElementName::Html => self.root,
-                HtmlShellElementName::Head | HtmlShellElementName::Body => *self
-                    .open_elements
-                    .last()
-                    .ok_or(HtmlTreeSessionError::MissingInsertionParent)?,
-            };
+        let parent = match name {
+            HtmlShellElementName::Html => self.root,
+            HtmlShellElementName::Head | HtmlShellElementName::Body => *self
+                .open_elements
+                .last()
+                .ok_or(HtmlTreeSessionError::MissingInsertionParent)?,
+        };
         if self.node(parent).is_none() {
             return Err(HtmlTreeSessionError::UnknownConstructedNode(parent));
         }
@@ -1186,7 +1184,6 @@ impl HtmlTreeSession {
             .identities
             .reserve()
             .ok_or(HtmlTreeSessionError::ConstructedIdentityExhausted)?;
-
         let node = HtmlTreeNode::new(
             reserved,
             Some(parent),
@@ -1199,7 +1196,6 @@ impl HtmlTreeSession {
         self.nodes.push(node);
         self.open_elements.push(reserved);
         self.identities.commit(reserved);
-
         let kind = match provenance {
             ElementProvenance::AuthoredByTriggerToken => {
                 HtmlTreeActionKind::InsertedAuthoredShellElement {
@@ -1773,7 +1769,6 @@ impl HtmlTreeSession {
         if plan.intervening_current_first.is_empty() {
             return Err(HtmlTreeSessionError::SelectedOrdinaryRecoveryTargetIsCurrent(name));
         }
-
         self.open_elements.truncate(plan.target_open_element);
         self.record_diagnostic(
             HtmlTreeDiagnosticCode::MisnestedSelectedOrdinaryEndTag,
@@ -1848,7 +1843,6 @@ impl HtmlTreeSession {
             .copied()
             .filter(|child| self.is_text(*child));
         let contribution = HtmlTextContribution::new((*source).clone(), (*interpreted).to_owned());
-
         if let Some(text_id) = adjacent_text {
             self.node_mut(text_id)
                 .ok_or(HtmlTreeSessionError::UnknownConstructedNode(text_id))?
@@ -1863,7 +1857,6 @@ impl HtmlTreeSession {
             );
             return Ok(());
         }
-
         let reserved = self
             .identities
             .reserve()
