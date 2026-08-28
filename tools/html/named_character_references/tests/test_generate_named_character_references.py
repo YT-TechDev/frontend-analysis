@@ -50,6 +50,160 @@ def crate_rust_sources() -> list[Path]:
     return sorted(CRATE_SRC.rglob("*.rs"))
 
 
+def rust_spans(text: str) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+    """Comment spans and string-literal spans in one Rust source file.
+
+    A deliberately small lexical pass, not a Rust parser: it recognizes line
+    comments, nested block comments, ordinary and raw string literals, and
+    character literals — exactly the forms this repository uses — so that the
+    checks below can tell a semantic construct from a mere textual mention of
+    one. Anything it does not recognize is left as ordinary code, which is the
+    conservative direction: the guard may look at too much, never too little.
+    """
+    comments: list[tuple[int, int]] = []
+    strings: list[tuple[int, int]] = []
+    index = 0
+    length = len(text)
+    while index < length:
+        character = text[index]
+        if text.startswith("//", index):
+            end = text.find("\n", index)
+            end = length if end == -1 else end
+            comments.append((index, end))
+            index = end
+            continue
+        if text.startswith("/*", index):
+            depth = 1
+            end = index + 2
+            while end < length and depth:
+                if text.startswith("/*", end):
+                    depth += 1
+                    end += 2
+                elif text.startswith("*/", end):
+                    depth -= 1
+                    end += 2
+                else:
+                    end += 1
+            comments.append((index, end))
+            index = end
+            continue
+        if character == "r":
+            hashes = index + 1
+            while hashes < length and text[hashes] == "#":
+                hashes += 1
+            if hashes < length and text[hashes] == '"':
+                terminator = '"' + "#" * (hashes - index - 1)
+                end = text.find(terminator, hashes + 1)
+                end = length if end == -1 else end + len(terminator)
+                strings.append((index, end))
+                index = end
+                continue
+        if character == '"':
+            end = index + 1
+            while end < length:
+                if text[end] == "\\":
+                    end += 2
+                    continue
+                if text[end] == '"':
+                    end += 1
+                    break
+                end += 1
+            strings.append((index, end))
+            index = end
+            continue
+        if character == "'":
+            # A character literal, including `'"'` and `'\''`; anything else
+            # starting with `'` is a lifetime and is ordinary code.
+            if text.startswith("'\\", index):
+                end = index + 2
+                while end < length and text[end] != "'":
+                    end += 1
+                index = end + 1
+                continue
+            if index + 2 < length and text[index + 2] == "'":
+                index += 3
+                continue
+        index += 1
+    return comments, strings
+
+
+def blank_spans(text: str, spans: list[tuple[int, int]]) -> str:
+    """Replaces `spans` with spaces, preserving newlines and every offset."""
+    characters = list(text)
+    for start, end in spans:
+        for position in range(start, min(end, len(characters))):
+            if characters[position] != "\n":
+                characters[position] = " "
+    return "".join(characters)
+
+
+def scannable_source(text: str) -> str:
+    """Rust source with comments blanked and string literals intact.
+
+    Comments go because a commented-out construct is a mention, not code.
+    Strings stay because the checks below need to read a `#[path]` value and an
+    `include!` argument; a match that merely *starts* inside a string literal
+    is filtered separately.
+    """
+    comments, _ = rust_spans(text)
+    return blank_spans(text, comments)
+
+
+def within(position: int, spans: list[tuple[int, int]]) -> bool:
+    return any(start <= position < end for start, end in spans)
+
+
+def attribute_gates_compilation(attribute: str) -> bool:
+    """True when `attribute` can remove the item it decorates from a build.
+
+    Both `#[cfg(...)]` and any `#[cfg_attr(..., cfg(...))]` do, and
+    `cfg_attr` nests, so this walks the attached-attribute positions rather
+    than matching one spelling. `#[cfg_attr(pred, allow(...))]` attaches no
+    `cfg` and therefore gates nothing. Whitespace is removed first, so
+    formatting variants are all the same input here.
+    """
+    text = "".join(attribute.split())
+    if not text.startswith("#") or "[" not in text or not text.endswith("]"):
+        return False
+    return _attaches_cfg(text[text.index("[") + 1 : -1])
+
+
+def _attaches_cfg(attribute: str) -> bool:
+    name, arguments = _split_call(attribute)
+    if name == "cfg":
+        return True
+    if name == "cfg_attr" and arguments is not None:
+        # The first argument is the predicate; every later one is an
+        # attribute that `cfg_attr` attaches when that predicate holds.
+        return any(_attaches_cfg(part) for part in _split_arguments(arguments)[1:])
+    return False
+
+
+def _split_call(attribute: str) -> tuple[str, str | None]:
+    if "(" not in attribute or not attribute.endswith(")"):
+        return attribute, None
+    open_paren = attribute.index("(")
+    return attribute[:open_paren], attribute[open_paren + 1 : -1]
+
+
+def _split_arguments(arguments: str) -> list[str]:
+    parts: list[str] = []
+    depth = 0
+    current: list[str] = []
+    for character in arguments:
+        if character == "(":
+            depth += 1
+        elif character == ")":
+            depth -= 1
+        if character == "," and depth == 0:
+            parts.append("".join(current))
+            current = []
+            continue
+        current.append(character)
+    parts.append("".join(current))
+    return [part for part in parts if part]
+
+
 def generated_identifier_names() -> frozenset[str]:
     """The real identifier keys carried by the generated table."""
     return frozenset(GENERATED_ROW.findall(GENERATED.read_text(encoding="utf-8")))
@@ -69,17 +223,33 @@ def rust_module_declarations(path: Path) -> list[tuple[str, list[str]]]:
 
     Returns one entry per declaration rather than a mapping, so a duplicate
     declaration of the same module is visible instead of silently collapsing.
-    Doc comments and blank lines are neutral; any other statement ends the
-    attribute run that a declaration may claim.
+    Comments are blanked first, so a commented-out declaration or attribute is
+    not mistaken for one. An attribute spanning several lines is joined until
+    its brackets balance, so splitting one across lines cannot hide it from
+    the declaration it decorates.
     """
     declarations: list[tuple[str, list[str]]] = []
     attributes: list[str] = []
-    for raw in path.read_text(encoding="utf-8").splitlines():
+    pending = ""
+    depth = 0
+    for raw in scannable_source(path.read_text(encoding="utf-8")).splitlines():
         line = raw.strip()
-        if not line or line.startswith("//"):
+        if pending:
+            pending = f"{pending} {line}"
+            depth += line.count("[") - line.count("]")
+            if depth <= 0:
+                attributes.append(pending)
+                pending = ""
+                depth = 0
             continue
-        if line.startswith("#["):
-            attributes.append(line)
+        if not line:
+            continue
+        if line.startswith("#"):
+            depth = line.count("[") - line.count("]")
+            if depth > 0:
+                pending = line
+            else:
+                attributes.append(line)
             continue
         match = MOD_DECLARATION.fullmatch(line)
         if match:
@@ -598,18 +768,21 @@ class NamedCharacterReferenceDataTests(unittest.TestCase):
         invariant. The invariant that replaces it is deliberately no weaker,
         and rejects obvious equivalent spellings of each bypass:
 
-        - the generated table is declared exactly once, unconditionally, in
-          the tokenizer module;
+        - the generated table is declared exactly once in the tokenizer
+          module, under no attribute that can gate it out of a production
+          build — `#[cfg(...)]` and `#[cfg_attr(..., cfg(...))]` alike;
         - the generated Rust data tests stay `#[cfg(test)]`-only;
         - no duplicate declaration of either module exists anywhere else in
           the crate;
         - no `include!` invocation anywhere in the crate reaches the generated
           data, whatever path spelling or macro nesting it uses;
         - no `#[path]` attribute aliases the generated data, whatever
-          attribute formatting it uses; and
+          attribute formatting it uses;
         - no other crate file carries the generated rows, detected by the real
           identifiers themselves rather than by the marker comment, so
-          stripping the marker from a copy does not hide it.
+          stripping the marker from a copy does not hide it; and
+        - a construct only counts when it is code. A commented-out `include!`
+          or `#[path]` is a mention, not indirection, and is accepted.
 
         This is a bounded repository-local guard, not a Rust parser.
         """
@@ -638,7 +811,7 @@ class NamedCharacterReferenceDataTests(unittest.TestCase):
             [
                 attribute
                 for attribute in generated[0][1]
-                if attribute.startswith("#[cfg(")
+                if attribute_gates_compilation(attribute)
             ],
             "the generated table must be unconditionally production-visible",
         )
@@ -655,36 +828,46 @@ class NamedCharacterReferenceDataTests(unittest.TestCase):
             "the generated Rust data tests remain test-only",
         )
 
-        # 2/3. No textual indirection reaches the generated data.
+        # 2/3. No *code* indirection reaches the generated data. Comments are
+        #      blanked and a match starting inside a string literal is skipped,
+        #      so a mere mention is not mistaken for indirection; the argument
+        #      and path text themselves stay readable.
+        names = generated_identifier_names()
+        self.assertEqual(len(names), generator.EXPECTED_ENTRY_COUNT)
         for path in sources:
-            text = path.read_text(encoding="utf-8")
-            for match in INCLUDE_MACRO.finditer(text):
-                window = text[match.end() : match.end() + 200]
+            raw = path.read_text(encoding="utf-8")
+            _, strings = rust_spans(raw)
+            scan = scannable_source(raw)
+            for match in INCLUDE_MACRO.finditer(scan):
+                if within(match.start(), strings):
+                    continue
+                window = scan[match.end() : match.end() + 200]
                 self.assertNotIn(
                     "named_character_reference",
                     window,
                     f"{path}: include! must not reach the generated data",
                 )
-            for alias in PATH_ATTRIBUTE.findall(text):
+            for match in PATH_ATTRIBUTE.finditer(scan):
+                if within(match.start(), strings):
+                    continue
                 self.assertNotIn(
                     "named_character_reference",
-                    alias,
+                    match.group(1),
                     f"{path}: #[path] must not alias the generated data",
                 )
 
-        # 4. Exactly one file carries the generated rows.
-        names = generated_identifier_names()
-        self.assertEqual(len(names), generator.EXPECTED_ENTRY_COUNT)
-        self.assertIn(TABLE_MARKER, GENERATED.read_text(encoding="utf-8"))
-        for path in sources:
+            # 4. Exactly one file carries the generated rows. Commented-out
+            #    rows do not count; real ones do.
             if path == GENERATED:
                 continue
-            carried = generated_rows_in(path.read_text(encoding="utf-8"), names)
+            carried = generated_rows_in(scan, names)
             self.assertLessEqual(
                 len(carried),
                 MAX_INCIDENTAL_GENERATED_ROWS,
                 f"{path}: a second copy of the generated table",
             )
+
+        self.assertIn(TABLE_MARKER, GENERATED.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
