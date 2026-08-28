@@ -28,20 +28,21 @@ TOKENIZER_MOD = ROOT / "crates/frontend-analysis-core/src/html/tokenizer/mod.rs"
 CRATE_SRC = ROOT / "crates/frontend-analysis-core/src"
 TABLE_MARKER = "// BEGIN NAMED CHARACTER REFERENCES"
 
-# The guard below is a bounded, repository-local structural/textual check, not
-# a Rust parser. It is tolerant of whitespace, attribute formatting, and
-# quoting variation so that obvious equivalent spellings of a bypass are
-# rejected rather than only the one literal form.
-MOD_DECLARATION = re.compile(
-    r"(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;"
-)
-INCLUDE_MACRO = re.compile(r"include\s*!", re.S)
-ATTRIBUTE_START = re.compile(r"#!?\[")
-# A `path = "..."` name-value attribute, on whitespace-collapsed text, with or
-# without a raw-string literal.
-PATH_VALUE = re.compile(r'path=r?#*"([^"]*)"#*')
+# One bounded, repository-local structural scanner backs every check below.
+# It is not a Rust parser: it knows comments, string literals, character
+# literals, balanced delimiters, attributes, `mod` declarations, and the
+# constant-string forms `include!` accepts here — exactly the syntax this guard
+# reasons about, and nothing else. Every check shares this one lexical model so
+# that no two of them can disagree about where a string ends.
 OPENERS = "([{"
 CLOSERS = ")]}"
+MOD_DECLARATION = re.compile(
+    r"(?<![A-Za-z0-9_])(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;"
+)
+INCLUDE_MACRO = re.compile(r"(?<![A-Za-z0-9_])include\s*!")
+ATTRIBUTE_START = re.compile(r"#!?\[")
+PATH_NAME = re.compile(r"\s*path\s*=")
+CONCAT_MACRO_NAMES = frozenset({"concat"})
 # One generated row: an ASCII identifier key mapped to a decoded string.
 GENERATED_ROW = re.compile(r"\(\s*\"([A-Za-z][A-Za-z0-9]*;?)\"\s*,\s*\"[^\"]*\"\s*\)")
 # How much of the real table a single non-generated file may mention in row
@@ -55,15 +56,14 @@ def crate_rust_sources() -> list[Path]:
     return sorted(CRATE_SRC.rglob("*.rs"))
 
 
-def rust_spans(text: str) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
-    """Comment spans and string-literal spans in one Rust source file.
+def lexical_spans(text: str) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+    """Comment spans and string-literal spans in a fragment of Rust source.
 
-    A deliberately small lexical pass, not a Rust parser: it recognizes line
-    comments, nested block comments, ordinary and raw string literals, and
-    character literals — exactly the forms this repository uses — so that the
-    checks below can tell a semantic construct from a mere textual mention of
-    one. Anything it does not recognize is left as ordinary code, which is the
-    conservative direction: the guard may look at too much, never too little.
+    Recognizes line comments, nested block comments, ordinary and raw string
+    literals with any hash count, and character literals — the forms this
+    repository uses. Anything it does not recognize is left as ordinary code,
+    the conservative direction: the guard may look at too much, never too
+    little.
     """
     comments: list[tuple[int, int]] = []
     strings: list[tuple[int, int]] = []
@@ -92,7 +92,7 @@ def rust_spans(text: str) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]
             comments.append((index, end))
             index = end
             continue
-        if character == "r":
+        if character == "r" and not _is_identifier_continuation(text, index - 1):
             hashes = index + 1
             while hashes < length and text[hashes] == "#":
                 hashes += 1
@@ -132,6 +132,12 @@ def rust_spans(text: str) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]
     return comments, strings
 
 
+def _is_identifier_continuation(text: str, position: int) -> bool:
+    return 0 <= position < len(text) and (
+        text[position].isalnum() or text[position] == "_"
+    )
+
+
 def blank_spans(text: str, spans: list[tuple[int, int]]) -> str:
     """Replaces `spans` with spaces, preserving newlines and every offset."""
     characters = list(text)
@@ -140,22 +146,6 @@ def blank_spans(text: str, spans: list[tuple[int, int]]) -> str:
             if characters[position] != "\n":
                 characters[position] = " "
     return "".join(characters)
-
-
-def scannable_source(text: str) -> str:
-    """Rust source with comments blanked and string literals intact.
-
-    Comments go because a commented-out construct is a mention, not code.
-    Strings stay because the checks below need to read a `#[path]` value and an
-    `include!` argument; a match that merely *starts* inside a string literal
-    is filtered separately.
-    """
-    comments, _ = rust_spans(text)
-    return blank_spans(text, comments)
-
-
-def within(position: int, spans: list[tuple[int, int]]) -> bool:
-    return any(start <= position < end for start, end in spans)
 
 
 def span_mask(text: str, spans: list[tuple[int, int]]) -> bytearray:
@@ -167,68 +157,193 @@ def span_mask(text: str, spans: list[tuple[int, int]]) -> bytearray:
     return mask
 
 
-def balanced_end(text: str, start: int, string_positions: bytearray) -> int:
-    """End offset of the delimiter group opening at `start`.
+class RustSource:
+    """The one lexical/structural view every check in this guard shares.
 
-    Counts `(`, `[` and `{` against their partners, ignoring anything inside a
-    string literal so a delimiter in a path or message cannot unbalance the
-    scan. This is what replaces a fixed character-distance window: a construct
-    is inspected in full, however long it happens to be.
+    `code` is the source with comments blanked to spaces and every offset
+    preserved, so a commented-out construct is simply absent. `in_string`
+    reports the string literals that survive in it, so a construct merely
+    quoted is skipped and — crucially — so that string *content* can never
+    control structural delimiter depth.
     """
-    depth = 0
-    index = start
-    length = len(text)
-    while index < length:
-        if string_positions[index]:
+
+    def __init__(self, text: str) -> None:
+        comments, strings = lexical_spans(text)
+        self.code = blank_spans(text, comments)
+        self._strings = span_mask(text, strings)
+
+    def in_string(self, position: int) -> bool:
+        return bool(self._strings[position])
+
+    def balanced_end(self, start: int) -> int:
+        """End offset of the delimiter group opening at `start`.
+
+        Counts `(`, `[` and `{` against their partners while ignoring string
+        literals, so no bracket, quote or comma written inside a string can
+        close a group early. This is what replaces any fixed distance: a
+        construct is always inspected in full, however long it is.
+        """
+        depth = 0
+        index = start
+        length = len(self.code)
+        while index < length:
+            if self.in_string(index):
+                index += 1
+                continue
+            character = self.code[index]
+            if character in OPENERS:
+                depth += 1
+            elif character in CLOSERS:
+                depth -= 1
+                if depth <= 0:
+                    return index + 1
             index += 1
+        return length
+
+    def attributes(self) -> list[tuple[int, int, str]]:
+        """Every `#[...]` / `#![...]` attribute, as `(start, end, text)`."""
+        found: list[tuple[int, int, str]] = []
+        for match in ATTRIBUTE_START.finditer(self.code):
+            if self.in_string(match.start()):
+                continue
+            end = self.balanced_end(match.end() - 1)
+            found.append((match.start(), end, self.code[match.start() : end]))
+        return found
+
+    def module_declarations(self) -> list[tuple[str, list[str]]]:
+        """Every `mod <name>;`, with the attributes structurally attached to it.
+
+        Attributes are matched by balanced brackets and then associated by
+        adjacency — only whitespace may separate an attribute from the next
+        attribute or from the declaration. Counting brackets per line would let
+        a `]` inside a string end the attribute early and orphan it; this
+        cannot.
+        """
+        attributes = self.attributes()
+        declarations: list[tuple[str, list[str]]] = []
+        for match in MOD_DECLARATION.finditer(self.code):
+            if self.in_string(match.start()):
+                continue
+            attached: list[str] = []
+            cursor = match.start()
+            for start, end, text in reversed(attributes):
+                if end > cursor:
+                    continue
+                if self.code[end:cursor].strip():
+                    break
+                attached.append(text)
+                cursor = start
+            declarations.append((match.group(1), list(reversed(attached))))
+        return declarations
+
+    def include_arguments(self) -> list[str]:
+        """The complete argument region of every `include!` invocation."""
+        regions: list[str] = []
+        length = len(self.code)
+        for match in INCLUDE_MACRO.finditer(self.code):
+            if self.in_string(match.start()):
+                continue
+            index = match.end()
+            while index < length and self.code[index].isspace():
+                index += 1
+            if index >= length or self.code[index] not in OPENERS:
+                continue
+            end = self.balanced_end(index)
+            regions.append(self.code[index + 1 : end - 1])
+        return regions
+
+
+def split_call(text: str) -> tuple[str, str | None]:
+    """`name(args)` -> `(name, args)`; anything else -> `(text, None)`.
+
+    The delimiter may be any of `()`, `[]` or `{}`, and is located by balanced
+    scanning over the same lexical model, so a delimiter inside a string is
+    never mistaken for the call's own.
+    """
+    stripped = text.strip()
+    source = RustSource(stripped)
+    for index, character in enumerate(stripped):
+        if source.in_string(index):
             continue
-        character = text[index]
+        if character in OPENERS:
+            end = source.balanced_end(index)
+            if stripped[end:].strip():
+                return stripped, None
+            return stripped[:index], stripped[index + 1 : end - 1]
+    return stripped, None
+
+
+def split_arguments(arguments: str) -> list[str]:
+    """Splits an argument list at its own top-level commas.
+
+    Uses the shared lexical model rather than a private quote counter, so a
+    comma, parenthesis or bracket inside an ordinary or raw string literal is
+    argument *content* and never structure.
+    """
+    source = RustSource(arguments)
+    parts: list[str] = []
+    depth = 0
+    start = 0
+    for index, character in enumerate(arguments):
+        if source.in_string(index):
+            continue
         if character in OPENERS:
             depth += 1
         elif character in CLOSERS:
             depth -= 1
-            if depth <= 0:
-                return index + 1
-        index += 1
-    return length
+        elif character == "," and depth == 0:
+            parts.append(arguments[start:index])
+            start = index + 1
+    parts.append(arguments[start:])
+    return [part for part in parts if part.strip()]
 
 
-def include_argument_regions(scan: str, string_positions: bytearray) -> list[str]:
-    """The complete argument region of every `include!` invocation in `scan`.
+def macro_name(name: str) -> str:
+    """`std::concat!` -> `concat`; a plain path's last segment, without `!`."""
+    return name.strip().rstrip("!").strip().split("::")[-1].strip()
 
-    `scan` has comments blanked, so intervening comments are whitespace and an
-    invocation mentioned only in a comment is not here at all. An invocation
-    whose `include` sits inside a string literal is a mention too, and is
-    skipped. Everything else is returned whole — no distance limit.
+
+def string_literal_value(literal: str) -> str | None:
+    """The content of one complete string literal, ordinary or raw.
+
+    `None` unless the whole fragment is exactly one literal, so a fragment
+    that merely contains a literal is never mistaken for one.
     """
-    regions: list[str] = []
-    length = len(scan)
-    for match in INCLUDE_MACRO.finditer(scan):
-        if string_positions[match.start()]:
-            continue
-        index = match.end()
-        while index < length and scan[index].isspace():
-            index += 1
-        if index >= length or scan[index] not in OPENERS:
-            continue
-        regions.append(scan[index : balanced_end(scan, index, string_positions)])
-    return regions
+    text = literal.strip()
+    if not text:
+        return None
+    _, strings = lexical_spans(text)
+    if len(strings) != 1 or strings[0] != (0, len(text)):
+        return None
+    if text.startswith('"'):
+        return text[1:-1]
+    hashes = 1
+    while hashes < len(text) and text[hashes] == "#":
+        hashes += 1
+    return text[hashes + 1 : len(text) - hashes]
 
 
-def rust_attributes(scan: str, string_positions: bytearray) -> list[str]:
-    """Every `#[...]` / `#![...]` attribute in `scan`, each one complete.
+def constant_string_value(expression: str) -> str | None:
+    """The compile-time value of the bounded constant-string forms covered here.
 
-    Balanced to its own closing bracket, so an attribute spanning several lines
-    is one entry. Attributes blanked as comments or sitting inside a string
-    literal are mentions and never appear here.
+    Exactly a string literal — ordinary or raw — or a `concat!` of such forms,
+    nested to any depth. `env!`, `option_env!`, `stringify!`, user macros and
+    arbitrary expressions are deliberately *not* evaluated: this is a bounded
+    repository-local evaluator, not a Rust interpreter. Those return `None`,
+    and the caller treats an unevaluable `include!` as unproven authority
+    rather than as harmless.
     """
-    attributes: list[str] = []
-    for match in ATTRIBUTE_START.finditer(scan):
-        if string_positions[match.start()]:
-            continue
-        bracket = match.end() - 1
-        attributes.append(scan[match.start() : balanced_end(scan, bracket, string_positions)])
-    return attributes
+    text = expression.strip()
+    literal = string_literal_value(text)
+    if literal is not None:
+        return literal
+    name, arguments = split_call(text)
+    if arguments is None or macro_name(name) not in CONCAT_MACRO_NAMES:
+        return None
+    values = [constant_string_value(part) for part in split_arguments(arguments)]
+    if any(value is None for value in values):
+        return None
+    return "".join(values)
 
 
 def attribute_attached_paths(attribute: str) -> list[str]:
@@ -240,93 +355,51 @@ def attribute_attached_paths(attribute: str) -> list[str]:
     `cfg_attr` attaching anything else attaches no path and is left alone: the
     theorem is semantic path indirection, not that `cfg_attr` is forbidden.
     """
-    text = "".join(attribute.split())
+    text = attribute.strip()
     if not text.startswith("#") or "[" not in text or not text.endswith("]"):
         return []
     return _attached_paths(text[text.index("[") + 1 : -1])
 
 
 def _attached_paths(attribute: str) -> list[str]:
-    name, arguments = _split_call(attribute)
-    if name == "cfg_attr" and arguments is not None:
+    name, arguments = split_call(attribute)
+    if arguments is not None and macro_name(name) == "cfg_attr":
         return [
             alias
-            for part in _split_arguments(arguments)[1:]
+            for part in split_arguments(arguments)[1:]
             for alias in _attached_paths(part)
         ]
-    match = PATH_VALUE.fullmatch(attribute)
-    return [match.group(1)] if match else []
+    match = PATH_NAME.match(attribute)
+    if match is None:
+        return []
+    value = string_literal_value(attribute[match.end() :])
+    return [] if value is None else [value]
 
 
 def attribute_gates_compilation(attribute: str) -> bool:
     """True when `attribute` can remove the item it decorates from a build.
 
-    Both `#[cfg(...)]` and any `#[cfg_attr(..., cfg(...))]` do, and
-    `cfg_attr` nests, so this walks the attached-attribute positions rather
-    than matching one spelling. `#[cfg_attr(pred, allow(...))]` attaches no
-    `cfg` and therefore gates nothing. Whitespace is removed first, so
-    formatting variants are all the same input here.
+    Both `#[cfg(...)]` and any `#[cfg_attr(..., cfg(...))]` do, and `cfg_attr`
+    nests, so this walks the attached-attribute positions rather than matching
+    one spelling. `#[cfg_attr(pred, allow(...))]` attaches no `cfg` and
+    therefore gates nothing.
     """
-    text = "".join(attribute.split())
+    text = attribute.strip()
     if not text.startswith("#") or "[" not in text or not text.endswith("]"):
         return False
     return _attaches_cfg(text[text.index("[") + 1 : -1])
 
 
 def _attaches_cfg(attribute: str) -> bool:
-    name, arguments = _split_call(attribute)
-    if name == "cfg":
+    name, arguments = split_call(attribute)
+    identifier = macro_name(name)
+    if identifier == "cfg":
         return True
-    if name == "cfg_attr" and arguments is not None:
+    if identifier == "cfg_attr" and arguments is not None:
         # The first argument is the predicate; every later one is an
         # attribute that `cfg_attr` attaches when that predicate holds.
-        return any(_attaches_cfg(part) for part in _split_arguments(arguments)[1:])
+        return any(_attaches_cfg(part) for part in split_arguments(arguments)[1:])
     return False
-
-
-def _split_call(attribute: str) -> tuple[str, str | None]:
-    if "(" not in attribute or not attribute.endswith(")"):
-        return attribute, None
-    open_paren = attribute.index("(")
-    return attribute[:open_paren], attribute[open_paren + 1 : -1]
-
-
-def _split_arguments(arguments: str) -> list[str]:
-    """Splits an attribute's arguments at top-level commas.
-
-    String literals are stepped over, so a comma or parenthesis inside a path
-    or feature name does not split or unbalance the arguments.
-    """
-    parts: list[str] = []
-    depth = 0
-    current: list[str] = []
-    in_string = False
-    escaped = False
-    for character in arguments:
-        if in_string:
-            current.append(character)
-            if escaped:
-                escaped = False
-            elif character == "\\":
-                escaped = True
-            elif character == '"':
-                in_string = False
-            continue
-        if character == '"':
-            in_string = True
-            current.append(character)
-            continue
-        if character == "(":
-            depth += 1
-        elif character == ")":
-            depth -= 1
-        if character == "," and depth == 0:
-            parts.append("".join(current))
-            current = []
-            continue
-        current.append(character)
-    parts.append("".join(current))
-    return [part for part in parts if part]
 
 
 def generated_identifier_names() -> frozenset[str]:
@@ -341,46 +414,6 @@ def generated_rows_in(text: str, names: frozenset[str]) -> set[str]:
     comment, so stripping the marker from a copy does not hide it.
     """
     return {name for name in GENERATED_ROW.findall(text) if name in names}
-
-
-def rust_module_declarations(path: Path) -> list[tuple[str, list[str]]]:
-    """Every `mod <name>;` declaration in `path`, with its own attributes.
-
-    Returns one entry per declaration rather than a mapping, so a duplicate
-    declaration of the same module is visible instead of silently collapsing.
-    Comments are blanked first, so a commented-out declaration or attribute is
-    not mistaken for one. An attribute spanning several lines is joined until
-    its brackets balance, so splitting one across lines cannot hide it from
-    the declaration it decorates.
-    """
-    declarations: list[tuple[str, list[str]]] = []
-    attributes: list[str] = []
-    pending = ""
-    depth = 0
-    for raw in scannable_source(path.read_text(encoding="utf-8")).splitlines():
-        line = raw.strip()
-        if pending:
-            pending = f"{pending} {line}"
-            depth += line.count("[") - line.count("]")
-            if depth <= 0:
-                attributes.append(pending)
-                pending = ""
-                depth = 0
-            continue
-        if not line:
-            continue
-        if line.startswith("#"):
-            depth = line.count("[") - line.count("]")
-            if depth > 0:
-                pending = line
-            else:
-                attributes.append(line)
-            continue
-        match = MOD_DECLARATION.fullmatch(line)
-        if match:
-            declarations.append((match.group(1), attributes))
-        attributes = []
-    return declarations
 
 
 def load_module(name: str, path: Path):
@@ -901,7 +934,11 @@ class NamedCharacterReferenceDataTests(unittest.TestCase):
           the crate;
         - no `include!` invocation anywhere in the crate reaches the generated
           data. The whole balanced argument region is inspected, so no amount
-          of intervening comment or whitespace can carry the path out of view;
+          of intervening comment or whitespace can carry the path out of view,
+          and its bounded compile-time value is evaluated, so splitting the
+          path across `concat!` fragments does not hide it. An `include!`
+          whose argument this guard cannot evaluate is unproven authority and
+          is rejected rather than assumed harmless;
         - no attribute aliases the generated data through `path`, whether
           written directly or attached by `cfg_attr` — including recursively,
           and whatever the formatting;
@@ -921,7 +958,9 @@ class NamedCharacterReferenceDataTests(unittest.TestCase):
         declarations = [
             (path, name, attributes)
             for path in sources
-            for name, attributes in rust_module_declarations(path)
+            for name, attributes in RustSource(
+                path.read_text(encoding="utf-8")
+            ).module_declarations()
         ]
 
         generated = [
@@ -964,18 +1003,21 @@ class NamedCharacterReferenceDataTests(unittest.TestCase):
         names = generated_identifier_names()
         self.assertEqual(len(names), generator.EXPECTED_ENTRY_COUNT)
         for path in sources:
-            raw = path.read_text(encoding="utf-8")
-            comments, strings = rust_spans(raw)
-            scan = blank_spans(raw, comments)
-            string_positions = span_mask(raw, strings)
+            source = RustSource(path.read_text(encoding="utf-8"))
 
-            for region in include_argument_regions(scan, string_positions):
+            for argument in source.include_arguments():
+                included = constant_string_value(argument)
+                self.assertIsNotNone(
+                    included,
+                    f"{path}: include! argument is not a form this guard can "
+                    f"evaluate, so its source authority is unproven: {argument!r}",
+                )
                 self.assertNotIn(
                     "named_character_reference",
-                    region,
+                    included,
                     f"{path}: include! must not reach the generated data",
                 )
-            for attribute in rust_attributes(scan, string_positions):
+            for _, _, attribute in source.attributes():
                 for alias in attribute_attached_paths(attribute):
                     self.assertNotIn(
                         "named_character_reference",
@@ -987,7 +1029,7 @@ class NamedCharacterReferenceDataTests(unittest.TestCase):
             #    rows do not count; real ones do.
             if path == GENERATED:
                 continue
-            carried = generated_rows_in(scan, names)
+            carried = generated_rows_in(source.code, names)
             self.assertLessEqual(
                 len(carried),
                 MAX_INCIDENTAL_GENERATED_ROWS,
