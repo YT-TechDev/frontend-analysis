@@ -5,6 +5,7 @@ import copy
 import hashlib
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -23,6 +24,35 @@ GENERATED = (
     / "crates/frontend-analysis-core/src/html/tokenizer/"
     "named_character_references_generated.rs"
 )
+TOKENIZER_MOD = ROOT / "crates/frontend-analysis-core/src/html/tokenizer/mod.rs"
+
+MOD_DECLARATION = re.compile(
+    r"(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;"
+)
+
+
+def rust_module_declarations(path: Path) -> list[tuple[str, list[str]]]:
+    """Every `mod <name>;` declaration in `path`, with its own attributes.
+
+    Returns one entry per declaration rather than a mapping, so a duplicate
+    declaration of the same module is visible instead of silently collapsing.
+    Doc comments and blank lines are neutral; any other statement ends the
+    attribute run that a declaration may claim.
+    """
+    declarations: list[tuple[str, list[str]]] = []
+    attributes: list[str] = []
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("//"):
+            continue
+        if line.startswith("#["):
+            attributes.append(line)
+            continue
+        match = MOD_DECLARATION.fullmatch(line)
+        if match:
+            declarations.append((match.group(1), attributes))
+        attributes = []
+    return declarations
 
 
 def load_module(name: str, path: Path):
@@ -524,18 +554,68 @@ class NamedCharacterReferenceDataTests(unittest.TestCase):
         )
         self.assertNotIn("tools/html/named_character_references/** -text", text)
 
-    def test_generated_data_is_wired_only_under_cfg_test(self) -> None:
-        tokenizer = (
-            ROOT / "crates/frontend-analysis-core/src/html/tokenizer/mod.rs"
-        ).read_text(encoding="utf-8")
-        for module_name in (
-            "named_character_references_data_tests",
-            "named_character_references_generated",
-        ):
-            self.assertEqual(
-                tokenizer.count(f"#[cfg(test)]\nmod {module_name};"),
-                1,
-            )
+    def test_generated_data_wiring_matches_the_post_tc_s10_boundary(self) -> None:
+        """The generated semantic table is production-visible exactly once.
+
+        #392 established the complete generated table behind a
+        production-hard-zero gate, so the table itself was wired
+        `#[cfg(test)]`-only and production tokenizer behavior was unchanged.
+        TC-S10 is the separately approved first production consumer of that
+        same generated table, so test-only wiring is no longer the durable
+        invariant. The invariant that replaces it is deliberately no weaker:
+
+        - the generated table is declared exactly once, unconditionally;
+        - the generated Rust data tests stay `#[cfg(test)]`-only;
+        - no second generated-data module, copied table, `include!`
+          indirection, or `#[path]` alias exists to satisfy wiring; and
+        - the generated file remains the single production data authority.
+        """
+        declarations = rust_module_declarations(TOKENIZER_MOD)
+
+        generated = [
+            attributes
+            for name, attributes in declarations
+            if name == "named_character_references_generated"
+        ]
+        self.assertEqual(
+            len(generated),
+            1,
+            "the generated table must be declared exactly once",
+        )
+        self.assertFalse(
+            [attribute for attribute in generated[0] if attribute.startswith("#[cfg(")],
+            "the generated table must be unconditionally production-visible",
+        )
+
+        data_tests = [
+            attributes
+            for name, attributes in declarations
+            if name == "named_character_references_data_tests"
+        ]
+        self.assertEqual(len(data_tests), 1)
+        self.assertIn(
+            "#[cfg(test)]",
+            data_tests[0],
+            "the generated Rust data tests remain test-only",
+        )
+
+        # No second semantic copy anywhere in the crate: exactly one file
+        # carries the generated table, and nothing reaches it by textual
+        # inclusion or module aliasing.
+        crate_sources = sorted(
+            (ROOT / "crates/frontend-analysis-core/src").rglob("*.rs")
+        )
+        carrying_the_table = [
+            path
+            for path in crate_sources
+            if "// BEGIN NAMED CHARACTER REFERENCES"
+            in path.read_text(encoding="utf-8")
+        ]
+        self.assertEqual(carrying_the_table, [GENERATED])
+        for path in crate_sources:
+            text = path.read_text(encoding="utf-8")
+            self.assertNotIn(f'include!("{GENERATED.name}")', text)
+            self.assertNotIn(f'#[path = "{GENERATED.name}"]', text)
 
 
 if __name__ == "__main__":

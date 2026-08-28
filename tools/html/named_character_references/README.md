@@ -25,7 +25,7 @@ The one-time upstream acquisition step is deliberately outside the scripts.
 Neither script performs network I/O, invokes an external parser, or imports
 the other script.
 
-Generate the checked-in test-only Rust table:
+Generate the checked-in Rust table:
 
 ```bash
 python3 tools/html/named_character_references/generate_named_character_references.py
@@ -62,5 +62,19 @@ exact name without the one leading `&` -> decoded Unicode string
 
 It selects no trie, perfect hash, prefix search, cursor/lookahead API, tokenizer
 state, diagnostic behavior, resource model, or tree/tokenizer coordination.
-Both the generated table and its Rust data tests are wired only under
-`cfg(test)`. Production tokenizer behavior remains unchanged by this data gate.
+
+## Wiring lifecycle
+
+This data gate was established with the generated table wired only under
+`cfg(test)`, so production tokenizer behavior was unchanged by the gate
+itself. TC-S10 is the separately approved first production consumer of that
+same table: the generated semantic table is now production-visible, while the
+generated Rust data tests remain `cfg(test)`-only.
+
+The promotion changed the table's wiring, not the data boundary. The generated
+bytes, the retained WHATWG evidence, the manifest, the generator, the verifier,
+and the deterministic complete-equality contract above are all unchanged, and
+the generated table remains the single production data authority — no duplicate
+or hand-maintained copy exists. Being consumed in production still selects no
+tokenizer architecture: how a runtime matcher uses this mapping stays that
+matcher's own decision, made outside this directory.
