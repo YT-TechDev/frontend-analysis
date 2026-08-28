@@ -130,32 +130,43 @@ fn title_text(analysis: &HtmlDocumentShellAnalysis) -> TextNodeProjection {
     nodes.into_iter().next().expect("checked non-empty")
 }
 
-/// Tokenizer diagnostics as `(code, context, handling, start, end)`.
-fn tokenizer_diagnostics(
-    analysis: &HtmlDocumentShellAnalysis,
-) -> Vec<(
+/// The durable subject a diagnostic relates itself to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Subject {
+    InputLocation,
+    EmittedToken(usize),
+}
+
+/// One tokenizer diagnostic as `(code, context, handling, subject, start, end)`.
+type DiagnosticProjection = (
     HtmlTokenizerDiagnosticCode,
     HtmlTokenizerDiagnosticContext,
     HtmlTokenizerDiagnosticHandling,
+    Subject,
     usize,
     usize,
-)> {
+);
+
+fn tokenizer_diagnostics(analysis: &HtmlDocumentShellAnalysis) -> Vec<DiagnosticProjection> {
     analysis
         .tokenizer_run()
         .diagnostics()
         .iter()
         .map(|diagnostic| {
-            assert!(
-                matches!(
-                    diagnostic.subject(),
-                    HtmlTokenizerDiagnosticSubject::InputLocation
-                ),
-                "selected character-reference diagnostics observe input positions"
-            );
+            let subject = match diagnostic.subject() {
+                HtmlTokenizerDiagnosticSubject::InputLocation => Subject::InputLocation,
+                HtmlTokenizerDiagnosticSubject::EmittedToken { token_index } => {
+                    Subject::EmittedToken(*token_index)
+                }
+                HtmlTokenizerDiagnosticSubject::AbandonedInput { .. } => {
+                    panic!("no selected TC-S10 diagnostic abandons input")
+                }
+            };
             (
                 diagnostic.code(),
                 diagnostic.context(),
                 diagnostic.handling(),
+                subject,
                 diagnostic.location().range().start(),
                 diagnostic.location().range().end(),
             )
@@ -405,17 +416,29 @@ fn pf3_maximum_match_distinguishes_notit_from_notin() {
 #[test]
 fn pf3_a_semicolonless_match_reports_the_missing_semicolon_at_its_own_last_scalar() {
     let analysis = analyze("<title>&notit;</title>");
+    // The durable relation is the resolved Character token this diagnostic is
+    // about — token 1, the `¬` emitted from `&not` — while the anchor stays
+    // the matched identifier's own last authored scalar.
     assert_eq!(
         tokenizer_diagnostics(&analysis),
         vec![(
             HtmlTokenizerDiagnosticCode::MissingSemicolonAfterCharacterReference,
             HtmlTokenizerDiagnosticContext::NamedCharacterReference,
             HtmlTokenizerDiagnosticHandling::Continued,
+            Subject::EmittedToken(1),
             // `&notit;` — the `t` of the matched `not`, at index 3 from the
             // `&` at index 7. Never the later unconsumed `i`, `t`, or `;`.
             10,
             11,
         )]
+    );
+    // The referenced token really is the resolved reference, not the tag.
+    assert_eq!(tokens(&analysis)[1], ("chars", 7, 11, "\u{ac}".to_owned()));
+    // MissingSemicolon was not added to the predecessor end-tag
+    // emission-conditioned subset; it stays observation-conditioned.
+    assert!(
+        !HtmlTokenizerDiagnosticCode::MissingSemicolonAfterCharacterReference
+            .is_emission_conditioned()
     );
     // A fully terminated match reports nothing.
     assert!(tokenizer_diagnostics(&analyze("<title>&notin;</title>")).is_empty());
@@ -439,6 +462,7 @@ fn pf4_maximum_match_lookahead_commits_no_early_preprocessing_observation() {
                 HtmlTokenizerDiagnosticCode::MissingSemicolonAfterCharacterReference,
                 HtmlTokenizerDiagnosticContext::NamedCharacterReference,
                 HtmlTokenizerDiagnosticHandling::Continued,
+                Subject::EmittedToken(1),
                 10,
                 11,
             ),
@@ -446,6 +470,7 @@ fn pf4_maximum_match_lookahead_commits_no_early_preprocessing_observation() {
                 HtmlTokenizerDiagnosticCode::ControlCharacterInInputStream,
                 HtmlTokenizerDiagnosticContext::InputPreprocessing,
                 HtmlTokenizerDiagnosticHandling::Continued,
+                Subject::InputLocation,
                 11,
                 12,
             ),
@@ -559,6 +584,9 @@ fn pf8_an_unresolved_reference_keeps_its_own_contribution_boundary() {
             HtmlTokenizerDiagnosticCode::UnknownNamedCharacterReference,
             HtmlTokenizerDiagnosticContext::AmbiguousAmpersand,
             HtmlTokenizerDiagnosticHandling::Continued,
+            // Purely an input observation: nothing was resolved, so there is
+            // no emitted token for it to be about.
+            Subject::InputLocation,
             // The authored `;` observed in Ambiguous Ampersand.
             13,
             14,
@@ -601,7 +629,11 @@ fn pf9_the_numeric_branch_is_a_narrow_boundary_reached_after_successful_entry() 
         tokenizer_unsupported(&analysis),
         Some((
             HtmlTokenizerCapability::NumericCharacterReferenceInRcdata,
-            HtmlTokenizerCapabilityAvailability::Deferred,
+            // Unsupported, not Deferred: this bounded machine refuses the
+            // Numeric branch outright. It is a different claim from the
+            // standalone context-dependent boundaries, which stay Deferred
+            // because tree feedback really can discharge them.
+            HtmlTokenizerCapabilityAvailability::Unsupported,
             8,
             9,
         ))
@@ -727,6 +759,45 @@ fn pf12_the_selected_discharge_is_title_specific_and_not_general_rcdata() {
                 HtmlTreeNodeKind::Element(HtmlElement::Title(_))
             ))
     );
+}
+
+#[test]
+fn pf12_direct_rcdata_activation_rejects_a_suspended_textarea() {
+    // The tree's `EnterRcdataForTitle` boundary is only half of the dual
+    // boundary. Driving the private tokenizer session directly — the exact
+    // way a future coordinator mistake would — must still be refused, because
+    // `textarea` shares the durable `Rcdata` mode vocabulary with `title` and
+    // a mode match is therefore not the selected boundary.
+    let source = SourceText::new(SourceId::new(1), "<textarea>&amp;x</textarea>".to_owned());
+    let mut tokenizer = HtmlTokenizerSession::new(&source, limits());
+    assert_eq!(
+        tokenizer.drive_to_boundary(),
+        HtmlTokenizerSessionBoundary::Suspended(HtmlTokenizerMode::Rcdata),
+        "textarea really does suspend under the same durable mode"
+    );
+    assert_eq!(tokenizer.tokens().len(), 1);
+
+    assert!(
+        tokenizer.apply_rcdata().is_err(),
+        "the tokenizer refuses RCDATA activation over a suspended textarea"
+    );
+    // The refusal changed nothing: still suspended, still one token, and no
+    // later source was produced under any lexical mode.
+    assert_eq!(
+        tokenizer.drive_to_boundary(),
+        HtmlTokenizerSessionBoundary::Suspended(HtmlTokenizerMode::Rcdata)
+    );
+    assert_eq!(tokenizer.tokens().len(), 1);
+
+    // The same operation over a suspended `<title>` is accepted, so the
+    // refusal above is element-specific and not a disabled control.
+    let title = SourceText::new(SourceId::new(1), "<title>&amp;x</title>".to_owned());
+    let mut accepted = HtmlTokenizerSession::new(&title, limits());
+    assert_eq!(
+        accepted.drive_to_boundary(),
+        HtmlTokenizerSessionBoundary::Suspended(HtmlTokenizerMode::Rcdata)
+    );
+    accepted.apply_rcdata().expect("title activates");
 }
 
 #[test]
@@ -1113,6 +1184,42 @@ fn prior_valid_evidence_survives_a_named_refusal() {
     );
     assert_eq!(title_text(&analysis).0, "ab");
     assert_eq!(analysis.tokenizer_run().coverage().processed_end(), 10);
+}
+
+#[test]
+fn an_unknown_name_diagnostic_survives_a_refused_unresolved_run_emission() {
+    // `<title>&bogus;</title>`: the authored `;` observation is complete on
+    // its own, so the `UnknownNamedCharacterReference` diagnostic commits
+    // before the unresolved `&bogus` run is flushed. With room for only the
+    // Title start tag, that flush is refused — and the already-valid
+    // observation-conditioned diagnostic must still be retained.
+    let constrained = HtmlTokenizerLimits::new(4_096, 32_768, 1, 4_096, 256, 16_384, 4_096);
+    let analysis = analyze_with("<title>&bogus;</title>", 1, constrained);
+
+    let limit = tokenizer_resource_limit(&analysis);
+    assert_eq!(limit.resource(), HtmlTokenizerResource::EmittedTokens);
+    assert_eq!(limit.limit(), 1);
+    assert_eq!(limit.attempted(), 2);
+
+    // The diagnostic survived the later refusal, at its exact authored `;`.
+    assert_eq!(
+        tokenizer_diagnostics(&analysis),
+        vec![(
+            HtmlTokenizerDiagnosticCode::UnknownNamedCharacterReference,
+            HtmlTokenizerDiagnosticContext::AmbiguousAmpersand,
+            HtmlTokenizerDiagnosticHandling::Continued,
+            Subject::InputLocation,
+            13,
+            14,
+        )]
+    );
+    // Only the Title start tag committed: the unresolved run really was
+    // refused, so this is not the ordinary success path in disguise.
+    assert_eq!(analysis.tokenizer_run().tokens().len(), 1);
+    assert!(title_text_nodes(&analysis, title_id(&analysis)).is_empty());
+    // Coverage still includes the observed `;` that caused the diagnostic.
+    assert_eq!(analysis.tokenizer_run().coverage().processed_end(), 14);
+    assert!(!analysis.is_complete());
 }
 
 #[test]

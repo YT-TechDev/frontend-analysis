@@ -25,10 +25,43 @@ GENERATED = (
     "named_character_references_generated.rs"
 )
 TOKENIZER_MOD = ROOT / "crates/frontend-analysis-core/src/html/tokenizer/mod.rs"
+CRATE_SRC = ROOT / "crates/frontend-analysis-core/src"
+TABLE_MARKER = "// BEGIN NAMED CHARACTER REFERENCES"
 
+# The guard below is a bounded, repository-local structural/textual check, not
+# a Rust parser. It is tolerant of whitespace, attribute formatting, and
+# quoting variation so that obvious equivalent spellings of a bypass are
+# rejected rather than only the one literal form.
 MOD_DECLARATION = re.compile(
     r"(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;"
 )
+INCLUDE_MACRO = re.compile(r"include\s*!", re.S)
+PATH_ATTRIBUTE = re.compile(r"#\s*\[\s*path\s*=\s*\"([^\"]*)\"", re.S)
+# One generated row: an ASCII identifier key mapped to a decoded string.
+GENERATED_ROW = re.compile(r"\(\s*\"([A-Za-z][A-Za-z0-9]*;?)\"\s*,\s*\"[^\"]*\"\s*\)")
+# How much of the real table a single non-generated file may mention in row
+# form before it is treated as a second copy. The generated data's own Rust
+# tests legitimately pin a handful of challenge cells; nothing else in the
+# crate should come close, and a table copy carries orders of magnitude more.
+MAX_INCIDENTAL_GENERATED_ROWS = 32
+
+
+def crate_rust_sources() -> list[Path]:
+    return sorted(CRATE_SRC.rglob("*.rs"))
+
+
+def generated_identifier_names() -> frozenset[str]:
+    """The real identifier keys carried by the generated table."""
+    return frozenset(GENERATED_ROW.findall(GENERATED.read_text(encoding="utf-8")))
+
+
+def generated_rows_in(text: str, names: frozenset[str]) -> set[str]:
+    """Real generated identifiers appearing in row form in `text`.
+
+    Keyed on the actual generated identifiers rather than on the marker
+    comment, so stripping the marker from a copy does not hide it.
+    """
+    return {name for name in GENERATED_ROW.findall(text) if name in names}
 
 
 def rust_module_declarations(path: Path) -> list[tuple[str, list[str]]]:
@@ -555,67 +588,103 @@ class NamedCharacterReferenceDataTests(unittest.TestCase):
         self.assertNotIn("tools/html/named_character_references/** -text", text)
 
     def test_generated_data_wiring_matches_the_post_tc_s10_boundary(self) -> None:
-        """The generated semantic table is production-visible exactly once.
+        """The generated semantic table is the single production authority.
 
         #392 established the complete generated table behind a
         production-hard-zero gate, so the table itself was wired
         `#[cfg(test)]`-only and production tokenizer behavior was unchanged.
         TC-S10 is the separately approved first production consumer of that
         same generated table, so test-only wiring is no longer the durable
-        invariant. The invariant that replaces it is deliberately no weaker:
+        invariant. The invariant that replaces it is deliberately no weaker,
+        and rejects obvious equivalent spellings of each bypass:
 
-        - the generated table is declared exactly once, unconditionally;
+        - the generated table is declared exactly once, unconditionally, in
+          the tokenizer module;
         - the generated Rust data tests stay `#[cfg(test)]`-only;
-        - no second generated-data module, copied table, `include!`
-          indirection, or `#[path]` alias exists to satisfy wiring; and
-        - the generated file remains the single production data authority.
+        - no duplicate declaration of either module exists anywhere else in
+          the crate;
+        - no `include!` invocation anywhere in the crate reaches the generated
+          data, whatever path spelling or macro nesting it uses;
+        - no `#[path]` attribute aliases the generated data, whatever
+          attribute formatting it uses; and
+        - no other crate file carries the generated rows, detected by the real
+          identifiers themselves rather than by the marker comment, so
+          stripping the marker from a copy does not hide it.
+
+        This is a bounded repository-local guard, not a Rust parser.
         """
-        declarations = rust_module_declarations(TOKENIZER_MOD)
+        sources = crate_rust_sources()
+        self.assertIn(GENERATED, sources)
+
+        # 1. Module wiring, scanned crate-wide rather than in one file, so a
+        #    duplicate declaration elsewhere cannot hide.
+        declarations = [
+            (path, name, attributes)
+            for path in sources
+            for name, attributes in rust_module_declarations(path)
+        ]
 
         generated = [
-            attributes
-            for name, attributes in declarations
-            if name == "named_character_references_generated"
+            (path, attributes)
+            for path, name, attributes in declarations
+            if name == GENERATED.stem
         ]
         self.assertEqual(
-            len(generated),
-            1,
-            "the generated table must be declared exactly once",
+            [path for path, _ in generated],
+            [TOKENIZER_MOD],
+            "the generated table is declared exactly once, in the tokenizer module",
         )
         self.assertFalse(
-            [attribute for attribute in generated[0] if attribute.startswith("#[cfg(")],
+            [
+                attribute
+                for attribute in generated[0][1]
+                if attribute.startswith("#[cfg(")
+            ],
             "the generated table must be unconditionally production-visible",
         )
 
         data_tests = [
-            attributes
-            for name, attributes in declarations
+            (path, attributes)
+            for path, name, attributes in declarations
             if name == "named_character_references_data_tests"
         ]
-        self.assertEqual(len(data_tests), 1)
+        self.assertEqual([path for path, _ in data_tests], [TOKENIZER_MOD])
         self.assertIn(
             "#[cfg(test)]",
-            data_tests[0],
+            data_tests[0][1],
             "the generated Rust data tests remain test-only",
         )
 
-        # No second semantic copy anywhere in the crate: exactly one file
-        # carries the generated table, and nothing reaches it by textual
-        # inclusion or module aliasing.
-        crate_sources = sorted(
-            (ROOT / "crates/frontend-analysis-core/src").rglob("*.rs")
-        )
-        carrying_the_table = [
-            path
-            for path in crate_sources
-            if "// BEGIN NAMED CHARACTER REFERENCES"
-            in path.read_text(encoding="utf-8")
-        ]
-        self.assertEqual(carrying_the_table, [GENERATED])
-        for path in crate_sources:
+        # 2/3. No textual indirection reaches the generated data.
+        for path in sources:
             text = path.read_text(encoding="utf-8")
-            self.assertNotIn(f'include!("{GENERATED.name}")', text)
-            self.assertNotIn(f'#[path = "{GENERATED.name}"]', text)
+            for match in INCLUDE_MACRO.finditer(text):
+                window = text[match.end() : match.end() + 200]
+                self.assertNotIn(
+                    "named_character_reference",
+                    window,
+                    f"{path}: include! must not reach the generated data",
+                )
+            for alias in PATH_ATTRIBUTE.findall(text):
+                self.assertNotIn(
+                    "named_character_reference",
+                    alias,
+                    f"{path}: #[path] must not alias the generated data",
+                )
+
+        # 4. Exactly one file carries the generated rows.
+        names = generated_identifier_names()
+        self.assertEqual(len(names), generator.EXPECTED_ENTRY_COUNT)
+        self.assertIn(TABLE_MARKER, GENERATED.read_text(encoding="utf-8"))
+        for path in sources:
+            if path == GENERATED:
+                continue
+            carried = generated_rows_in(path.read_text(encoding="utf-8"), names)
+            self.assertLessEqual(
+                len(carried),
+                MAX_INCIDENTAL_GENERATED_ROWS,
+                f"{path}: a second copy of the generated table",
+            )
 
 
 if __name__ == "__main__":

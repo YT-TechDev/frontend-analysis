@@ -1797,28 +1797,37 @@ impl<'a> Engine<'a> {
         Ok(())
     }
 
-    /// Commits one diagnostic whose `Diagnostics` capacity this same atomic
-    /// operation already secured through
-    /// [`Self::preflight_pending_emission_diagnostics`].
+    /// Builds one diagnostic's durable evidence without mutating anything.
     ///
-    /// This is the narrow preflight/commit split TC-S10's resource atomicity
-    /// requires, not a general transaction or rollback facility: it applies
-    /// only where no counted resource can be consumed between the preflight
-    /// and this commit, so the commit itself has no fallible step left. It
-    /// exists so a semantic result can never emit while its required
-    /// diagnostic turns out to be unaffordable afterwards.
-    fn commit_preflighted_diagnostic(
-        &mut self,
+    /// Half of the narrow preflight/commit split TC-S10's resource atomicity
+    /// requires — not a general transaction or rollback facility. Every
+    /// fallible step of a diagnostic (anchor validity, source identity,
+    /// subject/region containment) happens here, so the paired commit below
+    /// has no fallible step left and cannot fail after authoritative source
+    /// has already been consumed.
+    fn prepare_diagnostic(
+        &self,
         code: HtmlTokenizerDiagnosticCode,
         at: (usize, usize),
         context: HtmlTokenizerDiagnosticContext,
         handling: HtmlTokenizerDiagnosticHandling,
         subject: HtmlTokenizerDiagnosticSubject,
+    ) -> Option<HtmlTokenizerDiagnostic> {
+        let anchor = self.source.anchor(at.0, at.1).ok()?;
+        HtmlTokenizerDiagnostic::new(self.source, code, anchor, context, handling, subject).ok()
+    }
+
+    /// Commits a diagnostic already built by [`Self::prepare_diagnostic`]
+    /// whose `Diagnostics` capacity this same atomic operation already
+    /// secured through [`Self::preflight_pending_emission_diagnostics`].
+    ///
+    /// Infallible by construction: no counted resource can be consumed and no
+    /// evidence can fail to build between those two steps and this one.
+    fn commit_prepared_diagnostic(
+        &mut self,
+        diagnostic: HtmlTokenizerDiagnostic,
+        at: (usize, usize),
     ) {
-        let anchor = self.anchor(at.0, at.1);
-        let diagnostic =
-            HtmlTokenizerDiagnostic::new(self.source, code, anchor, context, handling, subject)
-                .expect("valid preflighted diagnostic evidence");
         self.diagnostics.push(diagnostic);
         self.processed_end = self.processed_end.max(at.1);
         self.min_processed_end = self.min_processed_end.max(at.1);
@@ -1958,6 +1967,19 @@ fn context_dependent_mode(interpreted_name: &str) -> Option<super::result::HtmlT
 /// Constructs the typed `Step::Stop` for a checked counter/resource
 /// accounting addition that would overflow `usize`, per the #111
 /// `HtmlTokenizerInvariantFailure::CounterOverflow` contract.
+/// The typed posture for durable evidence that cannot be constructed.
+///
+/// Reaching it means an internal offset relation was already wrong — every
+/// range TC-S10 builds comes from positions the single forward cursor
+/// actually visited. It is reported as an internal invariant failure rather
+/// than panicking, and it is always reached *before* authoritative source is
+/// committed, never after.
+fn source_evidence_stop() -> Step {
+    Step::Stop(HtmlTokenizerIncompleteCause::InternalInvariantFailure(
+        HtmlTokenizerInvariantFailure::SourceEvidenceConstruction,
+    ))
+}
+
 fn counter_overflow_stop() -> Step {
     Step::Stop(HtmlTokenizerIncompleteCause::InternalInvariantFailure(
         HtmlTokenizerInvariantFailure::CounterOverflow,

@@ -42,7 +42,7 @@ use super::named_character_reference::{self, NamedMatch};
 use super::state::State;
 use super::{
     DataRun, Engine, Step, context_dependent_mode, invalid_configuration_result,
-    source_bytes_limit_result,
+    source_bytes_limit_result, source_evidence_stop,
 };
 
 /// One private production boundary reached while driving the tokenizer.
@@ -568,10 +568,23 @@ impl<'a> Engine<'a> {
         Ok(())
     }
 
+    /// The one element whose RCDATA lifecycle TC-S10 selects.
+    ///
+    /// `HtmlTokenizerMode::Rcdata` is a durable *mode* vocabulary shared with
+    /// `textarea`, so mode classification alone is not the selected boundary.
+    const SELECTED_RCDATA_ELEMENT: &'static str = "title";
+
     /// Activates the selected RCDATA episode only from the exact existing
     /// post-start-tag suspended boundary. The retained emitted start tag
     /// remains the tokenizer-owned appropriate-end-tag authority for this
     /// episode.
+    ///
+    /// The tokenizer checks the selected element itself rather than trusting
+    /// the caller's request. The tree's `EnterRcdataForTitle` boundary already
+    /// refuses every other element, but a durable RCDATA mode is shared with
+    /// `textarea`, so a suspended `<textarea>` must be rejected here too. Both
+    /// halves of that dual boundary are independently enforced, and neither is
+    /// a generic mode switch.
     pub(super) fn activate_rcdata_from_suspended_start(&mut self) -> bool {
         let Some(token_index) = self.tokens.len().checked_sub(1) else {
             return false;
@@ -580,6 +593,7 @@ impl<'a> Engine<'a> {
             return false;
         };
         if tag.kind() != HtmlTagKind::Start
+            || tag.name().interpreted() != Self::SELECTED_RCDATA_ELEMENT
             || context_dependent_mode(tag.name().interpreted()) != Some(HtmlTokenizerMode::Rcdata)
             || self.state != State::Data
             || self.tag.is_some()
@@ -775,10 +789,9 @@ impl<'a> Engine<'a> {
                 // Character Reference entry already succeeded and the
                 // authored `&` is committed coverage; the `#` alone is the
                 // narrow Numeric-branch trigger.
-                let trigger = self.discovery_trigger((start, end));
-                self.unsupported_input_stop(
+                self.selected_rcdata_unsupported_stop(
                     HtmlTokenizerCapability::NumericCharacterReferenceInRcdata,
-                    trigger,
+                    (start, end),
                 )
             }
             InputUnit::Scalar { .. } | InputUnit::Eof { .. } => {
@@ -846,6 +859,7 @@ impl<'a> Engine<'a> {
         let match_end = first_at + found.name_len;
         let boundary = (self.processed_end, self.processed_end);
 
+        // Phase 1 — every fallible resource decision, in the accepted order.
         if let Err(stop) = self.try_reserve_retained(value_bytes, ampersand_start) {
             return stop;
         }
@@ -859,11 +873,47 @@ impl<'a> Engine<'a> {
             return stop;
         }
 
-        // Authoritative consumption of the already-selected match. The first
-        // identifier unit is the current unit; every remaining one advances
-        // through the ordinary single-forward-owner cursor lifecycle, one
-        // unit at a time. There is no multi-unit rollback, no endpoint jump,
-        // no source search, and no reparse.
+        // Phase 2 — every fallible *evidence construction*, still before any
+        // authoritative source is committed. Decoded scalars are output only:
+        // they are never fed back as tokenizer input, so a decoded `<` or
+        // `</title>` stays interpreted text and recursive decoding cannot
+        // occur.
+        let Ok(anchor) = self.source.anchor(ampersand_start, match_end) else {
+            return source_evidence_stop();
+        };
+        let Ok(character) = HtmlCharacterToken::new(anchor, found.value.to_owned()) else {
+            return source_evidence_stop();
+        };
+        // The resolved token's index is already determined: nothing else can
+        // emit between here and its commit below, so the diagnostic can name
+        // it before either exists.
+        let resolved_token_index = self.tokens.len();
+        // Anchored to the last authored ASCII scalar of the *matched*
+        // identifier — never to the later source the match deliberately did
+        // not consume.
+        let missing_semicolon_at = (match_end.saturating_sub(1), match_end);
+        let missing_semicolon = if found.ends_with_semicolon {
+            None
+        } else {
+            let Some(diagnostic) = self.prepare_diagnostic(
+                HtmlTokenizerDiagnosticCode::MissingSemicolonAfterCharacterReference,
+                missing_semicolon_at,
+                HtmlTokenizerDiagnosticContext::NamedCharacterReference,
+                HtmlTokenizerDiagnosticHandling::Continued,
+                HtmlTokenizerDiagnosticSubject::EmittedToken {
+                    token_index: resolved_token_index,
+                },
+            ) else {
+                return source_evidence_stop();
+            };
+            Some(diagnostic)
+        };
+
+        // Phase 3 — authoritative consumption of the already-selected match.
+        // The first identifier unit is the current unit; every remaining one
+        // advances through the ordinary single-forward-owner cursor lifecycle,
+        // one unit at a time. There is no multi-unit rollback, no endpoint
+        // jump, no source search, and no reparse.
         for _ in 1..found.name_len {
             let (consumed, diagnostic) = self.cursor.advance();
             debug_assert!(
@@ -875,30 +925,12 @@ impl<'a> Engine<'a> {
         }
         self.processed_end = self.processed_end.max(match_end);
 
-        if !found.ends_with_semicolon {
-            // Anchored to the last authored ASCII scalar of the *matched*
-            // identifier — never to the later source the match deliberately
-            // did not consume.
-            let last = match_end - 1;
-            self.commit_preflighted_diagnostic(
-                HtmlTokenizerDiagnosticCode::MissingSemicolonAfterCharacterReference,
-                (last, match_end),
-                HtmlTokenizerDiagnosticContext::NamedCharacterReference,
-                HtmlTokenizerDiagnosticHandling::Continued,
-                HtmlTokenizerDiagnosticSubject::InputLocation,
-            );
+        // Phase 4 — commit already-built evidence. Nothing here can fail.
+        if let Some(diagnostic) = missing_semicolon {
+            self.commit_prepared_diagnostic(diagnostic, missing_semicolon_at);
         }
-
-        // Decoded scalars are output only. They are appended to the run's
-        // emitted evidence and are never fed back as tokenizer input, so a
-        // decoded `<` or `</title>` stays interpreted text and recursive
-        // decoding cannot occur.
-        let anchor = self.anchor(ampersand_start, match_end);
-        let token = HtmlToken::Character(
-            HtmlCharacterToken::new(anchor, found.value.to_owned())
-                .expect("valid resolved named character-reference token"),
-        );
-        self.commit_token(token, committed);
+        self.commit_token(HtmlToken::Character(character), committed);
+        debug_assert_eq!(self.tokens.len() - 1, resolved_token_index);
         self.state = State::Rcdata;
         Step::Continue
     }
@@ -917,25 +949,31 @@ impl<'a> Engine<'a> {
                 end,
             } => {
                 // The authored `;` observation is what makes the reference
-                // unknown. The unresolved contribution is flushed first so it
-                // keeps its own exact boundary, and the same `;` is then
-                // reconsumed as ordinary RCDATA text: tree-level coalescing
-                // may merge the final text, but the two contributions stay
+                // unknown, and that observation is complete on its own: this
+                // diagnostic is observation-conditioned, so it commits first
+                // and stays valid even if the later unresolved-run emission is
+                // refused. Only after a successful flush — which keeps the
+                // unresolved contribution's own exact boundary — does the same
+                // `;` reconsume as ordinary RCDATA text. Tree-level coalescing
+                // may merge the final text; the two contributions stay
                 // separately inspectable.
                 let boundary = (self.processed_end, self.processed_end);
                 if let Err(stop) = self.preflight_pending_emission_diagnostics(1, boundary) {
                     return stop;
                 }
-                if let Err(stop) = self.flush_data_run() {
-                    return stop;
-                }
-                self.commit_preflighted_diagnostic(
+                let Some(diagnostic) = self.prepare_diagnostic(
                     HtmlTokenizerDiagnosticCode::UnknownNamedCharacterReference,
                     (start, end),
                     HtmlTokenizerDiagnosticContext::AmbiguousAmpersand,
                     HtmlTokenizerDiagnosticHandling::Continued,
                     HtmlTokenizerDiagnosticSubject::InputLocation,
-                );
+                ) else {
+                    return source_evidence_stop();
+                };
+                self.commit_prepared_diagnostic(diagnostic, (start, end));
+                if let Err(stop) = self.flush_data_run() {
+                    return stop;
+                }
                 self.state = State::Rcdata;
                 self.pending_reconsume = true;
                 Step::Continue
@@ -949,18 +987,35 @@ impl<'a> Engine<'a> {
     }
 
     fn rcdata_null_unsupported_stop(&mut self, natural: (usize, usize)) -> Step {
+        // Prior valid evidence is preserved before the refusal is published.
         if let Err(stop) = self.flush_data_run() {
             return stop;
         }
+        self.selected_rcdata_unsupported_stop(HtmlTokenizerCapability::RcdataNullRecovery, natural)
+    }
+
+    /// Publishes one of the two narrow boundaries TC-S10 deliberately does not
+    /// select, at the exact authored trigger.
+    ///
+    /// Both are `Unsupported`, not `Deferred`: this bounded machine refuses the
+    /// branch outright rather than promising a later resumption of the same
+    /// coordinated run. That is a different claim from the standalone
+    /// `ContextDependentTokenizerMode` boundaries, which remain `Deferred`
+    /// because tree feedback really can discharge them.
+    fn selected_rcdata_unsupported_stop(
+        &mut self,
+        capability: HtmlTokenizerCapability,
+        natural: (usize, usize),
+    ) -> Step {
         let trigger = self.discovery_trigger(natural);
         let anchor = self.anchor(trigger.0, trigger.1);
         let unsupported = HtmlTokenizerUnsupportedCapability::new(
             self.source,
-            HtmlTokenizerCapability::RcdataNullRecovery,
+            capability,
             HtmlTokenizerCapabilityAvailability::Unsupported,
             HtmlTokenizerUnsupportedTrigger::Input(anchor),
         )
-        .expect("valid selected RCDATA NUL unsupported evidence");
+        .expect("valid selected RCDATA unsupported evidence");
         Step::Stop(HtmlTokenizerIncompleteCause::UnsupportedCapability(
             unsupported,
         ))
