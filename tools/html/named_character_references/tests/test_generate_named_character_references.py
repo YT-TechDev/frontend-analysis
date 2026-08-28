@@ -36,7 +36,12 @@ MOD_DECLARATION = re.compile(
     r"(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;"
 )
 INCLUDE_MACRO = re.compile(r"include\s*!", re.S)
-PATH_ATTRIBUTE = re.compile(r"#\s*\[\s*path\s*=\s*\"([^\"]*)\"", re.S)
+ATTRIBUTE_START = re.compile(r"#!?\[")
+# A `path = "..."` name-value attribute, on whitespace-collapsed text, with or
+# without a raw-string literal.
+PATH_VALUE = re.compile(r'path=r?#*"([^"]*)"#*')
+OPENERS = "([{"
+CLOSERS = ")]}"
 # One generated row: an ASCII identifier key mapped to a decoded string.
 GENERATED_ROW = re.compile(r"\(\s*\"([A-Za-z][A-Za-z0-9]*;?)\"\s*,\s*\"[^\"]*\"\s*\)")
 # How much of the real table a single non-generated file may mention in row
@@ -153,6 +158,106 @@ def within(position: int, spans: list[tuple[int, int]]) -> bool:
     return any(start <= position < end for start, end in spans)
 
 
+def span_mask(text: str, spans: list[tuple[int, int]]) -> bytearray:
+    """A per-character flag for `spans`, so membership is a constant-time test."""
+    mask = bytearray(len(text))
+    for start, end in spans:
+        for position in range(start, min(end, len(text))):
+            mask[position] = 1
+    return mask
+
+
+def balanced_end(text: str, start: int, string_positions: bytearray) -> int:
+    """End offset of the delimiter group opening at `start`.
+
+    Counts `(`, `[` and `{` against their partners, ignoring anything inside a
+    string literal so a delimiter in a path or message cannot unbalance the
+    scan. This is what replaces a fixed character-distance window: a construct
+    is inspected in full, however long it happens to be.
+    """
+    depth = 0
+    index = start
+    length = len(text)
+    while index < length:
+        if string_positions[index]:
+            index += 1
+            continue
+        character = text[index]
+        if character in OPENERS:
+            depth += 1
+        elif character in CLOSERS:
+            depth -= 1
+            if depth <= 0:
+                return index + 1
+        index += 1
+    return length
+
+
+def include_argument_regions(scan: str, string_positions: bytearray) -> list[str]:
+    """The complete argument region of every `include!` invocation in `scan`.
+
+    `scan` has comments blanked, so intervening comments are whitespace and an
+    invocation mentioned only in a comment is not here at all. An invocation
+    whose `include` sits inside a string literal is a mention too, and is
+    skipped. Everything else is returned whole — no distance limit.
+    """
+    regions: list[str] = []
+    length = len(scan)
+    for match in INCLUDE_MACRO.finditer(scan):
+        if string_positions[match.start()]:
+            continue
+        index = match.end()
+        while index < length and scan[index].isspace():
+            index += 1
+        if index >= length or scan[index] not in OPENERS:
+            continue
+        regions.append(scan[index : balanced_end(scan, index, string_positions)])
+    return regions
+
+
+def rust_attributes(scan: str, string_positions: bytearray) -> list[str]:
+    """Every `#[...]` / `#![...]` attribute in `scan`, each one complete.
+
+    Balanced to its own closing bracket, so an attribute spanning several lines
+    is one entry. Attributes blanked as comments or sitting inside a string
+    literal are mentions and never appear here.
+    """
+    attributes: list[str] = []
+    for match in ATTRIBUTE_START.finditer(scan):
+        if string_positions[match.start()]:
+            continue
+        bracket = match.end() - 1
+        attributes.append(scan[match.start() : balanced_end(scan, bracket, string_positions)])
+    return attributes
+
+
+def attribute_attached_paths(attribute: str) -> list[str]:
+    """Every `path = "..."` value this attribute attaches to its item.
+
+    A direct `#[path = "..."]` attaches one, and `cfg_attr` attaches whatever
+    sits in its attribute positions — including, recursively, another
+    `cfg_attr`. Both reach the same second module authority, so both count.
+    `cfg_attr` attaching anything else attaches no path and is left alone: the
+    theorem is semantic path indirection, not that `cfg_attr` is forbidden.
+    """
+    text = "".join(attribute.split())
+    if not text.startswith("#") or "[" not in text or not text.endswith("]"):
+        return []
+    return _attached_paths(text[text.index("[") + 1 : -1])
+
+
+def _attached_paths(attribute: str) -> list[str]:
+    name, arguments = _split_call(attribute)
+    if name == "cfg_attr" and arguments is not None:
+        return [
+            alias
+            for part in _split_arguments(arguments)[1:]
+            for alias in _attached_paths(part)
+        ]
+    match = PATH_VALUE.fullmatch(attribute)
+    return [match.group(1)] if match else []
+
+
 def attribute_gates_compilation(attribute: str) -> bool:
     """True when `attribute` can remove the item it decorates from a build.
 
@@ -187,10 +292,30 @@ def _split_call(attribute: str) -> tuple[str, str | None]:
 
 
 def _split_arguments(arguments: str) -> list[str]:
+    """Splits an attribute's arguments at top-level commas.
+
+    String literals are stepped over, so a comma or parenthesis inside a path
+    or feature name does not split or unbalance the arguments.
+    """
     parts: list[str] = []
     depth = 0
     current: list[str] = []
+    in_string = False
+    escaped = False
     for character in arguments:
+        if in_string:
+            current.append(character)
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                in_string = False
+            continue
+        if character == '"':
+            in_string = True
+            current.append(character)
+            continue
         if character == "(":
             depth += 1
         elif character == ")":
@@ -775,9 +900,11 @@ class NamedCharacterReferenceDataTests(unittest.TestCase):
         - no duplicate declaration of either module exists anywhere else in
           the crate;
         - no `include!` invocation anywhere in the crate reaches the generated
-          data, whatever path spelling or macro nesting it uses;
-        - no `#[path]` attribute aliases the generated data, whatever
-          attribute formatting it uses;
+          data. The whole balanced argument region is inspected, so no amount
+          of intervening comment or whitespace can carry the path out of view;
+        - no attribute aliases the generated data through `path`, whether
+          written directly or attached by `cfg_attr` — including recursively,
+          and whatever the formatting;
         - no other crate file carries the generated rows, detected by the real
           identifiers themselves rather than by the marker comment, so
           stripping the marker from a copy does not hide it; and
@@ -829,32 +956,32 @@ class NamedCharacterReferenceDataTests(unittest.TestCase):
         )
 
         # 2/3. No *code* indirection reaches the generated data. Comments are
-        #      blanked and a match starting inside a string literal is skipped,
-        #      so a mere mention is not mistaken for indirection; the argument
-        #      and path text themselves stay readable.
+        #      blanked and constructs inside string literals are skipped, so a
+        #      mere mention is not mistaken for indirection; the argument and
+        #      path text themselves stay readable. Both constructs are scanned
+        #      by balanced delimiters, never by a distance from where they
+        #      start.
         names = generated_identifier_names()
         self.assertEqual(len(names), generator.EXPECTED_ENTRY_COUNT)
         for path in sources:
             raw = path.read_text(encoding="utf-8")
-            _, strings = rust_spans(raw)
-            scan = scannable_source(raw)
-            for match in INCLUDE_MACRO.finditer(scan):
-                if within(match.start(), strings):
-                    continue
-                window = scan[match.end() : match.end() + 200]
+            comments, strings = rust_spans(raw)
+            scan = blank_spans(raw, comments)
+            string_positions = span_mask(raw, strings)
+
+            for region in include_argument_regions(scan, string_positions):
                 self.assertNotIn(
                     "named_character_reference",
-                    window,
+                    region,
                     f"{path}: include! must not reach the generated data",
                 )
-            for match in PATH_ATTRIBUTE.finditer(scan):
-                if within(match.start(), strings):
-                    continue
-                self.assertNotIn(
-                    "named_character_reference",
-                    match.group(1),
-                    f"{path}: #[path] must not alias the generated data",
-                )
+            for attribute in rust_attributes(scan, string_positions):
+                for alias in attribute_attached_paths(attribute):
+                    self.assertNotIn(
+                        "named_character_reference",
+                        alias,
+                        f"{path}: path must not alias the generated data",
+                    )
 
             # 4. Exactly one file carries the generated rows. Commented-out
             #    rows do not count; real ones do.
