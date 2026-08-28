@@ -256,6 +256,9 @@ fn project_tree(
         HtmlTreeNodeKind::Element(HtmlElement::Style(_)) => {
             panic!("TC-S4 predecessor fixtures must not construct a TC-S9 Style")
         }
+        HtmlTreeNodeKind::Element(HtmlElement::Title(_)) => {
+            panic!("TC-S4 predecessor fixtures must not construct a TC-S10 Title")
+        }
         HtmlTreeNodeKind::Text(text) => ExpectedNode::Text {
             interpreted: text.interpreted().to_owned(),
             contributions: text
@@ -317,6 +320,11 @@ fn project_actions(analysis: &HtmlDocumentShellAnalysis) -> Vec<(ExpectedAction,
                 | HtmlTreeActionKind::ClosedStyleElementByAuthoredEndTag { .. }
                 | HtmlTreeActionKind::PoppedStyleElementAtEndOfFile { .. } => {
                     panic!("TC-S4 predecessor fixtures must not record a TC-S9 Style action")
+                }
+                HtmlTreeActionKind::InsertedAuthoredTitleElement { .. }
+                | HtmlTreeActionKind::ClosedTitleElementByAuthoredEndTag { .. }
+                | HtmlTreeActionKind::PoppedTitleElementAtEndOfFile { .. } => {
+                    panic!("TC-S4 predecessor fixtures must not record a TC-S10 Title action")
                 }
                 HtmlTreeActionKind::ReprocessedToken => ExpectedAction::Reprocessed,
                 HtmlTreeActionKind::StoppedParsing => ExpectedAction::Stopped,
@@ -2165,11 +2173,14 @@ fn fixture_a_parts(fixture: &LifecycleFixture) -> HtmlDocumentShellParts {
         final_open_selected_ordinary: Vec::new(),
         final_open_paragraph: None,
         final_open_style: None,
-        final_style_text_mode_active: false,
-        final_style_original_in_head_retained: false,
+        final_open_title: None,
+        final_text_mode_active: false,
+        final_original_insertion_mode_retained: false,
         pending_tokenizer_feedback: false,
         coordinated_raw_text_entry_tokens: Vec::new(),
         coordinated_raw_text_close_tokens: Vec::new(),
+        coordinated_rcdata_entry_tokens: Vec::new(),
+        coordinated_rcdata_close_tokens: Vec::new(),
     }
 }
 
@@ -2259,11 +2270,14 @@ fn fixture_b_parts(fixture: &LifecycleFixture) -> HtmlDocumentShellParts {
         final_open_selected_ordinary: Vec::new(),
         final_open_paragraph: None,
         final_open_style: None,
-        final_style_text_mode_active: false,
-        final_style_original_in_head_retained: false,
+        final_open_title: None,
+        final_text_mode_active: false,
+        final_original_insertion_mode_retained: false,
         pending_tokenizer_feedback: false,
         coordinated_raw_text_entry_tokens: Vec::new(),
         coordinated_raw_text_close_tokens: Vec::new(),
+        coordinated_rcdata_entry_tokens: Vec::new(),
+        coordinated_rcdata_close_tokens: Vec::new(),
     }
 }
 
@@ -2353,11 +2367,14 @@ fn fixture_c_parts(fixture: &LifecycleFixture) -> HtmlDocumentShellParts {
         final_open_selected_ordinary: vec![outer_section],
         final_open_paragraph: None,
         final_open_style: None,
-        final_style_text_mode_active: false,
-        final_style_original_in_head_retained: false,
+        final_open_title: None,
+        final_text_mode_active: false,
+        final_original_insertion_mode_retained: false,
         pending_tokenizer_feedback: false,
         coordinated_raw_text_entry_tokens: Vec::new(),
         coordinated_raw_text_close_tokens: Vec::new(),
+        coordinated_rcdata_entry_tokens: Vec::new(),
+        coordinated_rcdata_close_tokens: Vec::new(),
         completion: HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::LowerLayerIncomplete),
     }
 }
@@ -3065,11 +3082,14 @@ fn fixture_e_parts(fixture: &LifecycleFixture) -> HtmlDocumentShellParts {
         final_open_selected_ordinary: vec![outer_section, outer_div],
         final_open_paragraph: None,
         final_open_style: None,
-        final_style_text_mode_active: false,
-        final_style_original_in_head_retained: false,
+        final_open_title: None,
+        final_text_mode_active: false,
+        final_original_insertion_mode_retained: false,
         pending_tokenizer_feedback: false,
         coordinated_raw_text_entry_tokens: Vec::new(),
         coordinated_raw_text_close_tokens: Vec::new(),
+        coordinated_rcdata_entry_tokens: Vec::new(),
+        coordinated_rcdata_close_tokens: Vec::new(),
     }
 }
 
@@ -3184,11 +3204,14 @@ fn fixture_h_parts(fixture: &LifecycleFixture) -> HtmlDocumentShellParts {
         final_open_selected_ordinary: vec![outer_section],
         final_open_paragraph: None,
         final_open_style: None,
-        final_style_text_mode_active: false,
-        final_style_original_in_head_retained: false,
+        final_open_title: None,
+        final_text_mode_active: false,
+        final_original_insertion_mode_retained: false,
         pending_tokenizer_feedback: false,
         coordinated_raw_text_entry_tokens: Vec::new(),
         coordinated_raw_text_close_tokens: Vec::new(),
+        coordinated_rcdata_entry_tokens: Vec::new(),
+        coordinated_rcdata_close_tokens: Vec::new(),
     }
 }
 
@@ -3293,11 +3316,14 @@ fn fixture_f_parts(fixture: &LifecycleFixture) -> HtmlDocumentShellParts {
         final_open_selected_ordinary: vec![section_id],
         final_open_paragraph: None,
         final_open_style: None,
-        final_style_text_mode_active: false,
-        final_style_original_in_head_retained: false,
+        final_open_title: None,
+        final_text_mode_active: false,
+        final_original_insertion_mode_retained: false,
         pending_tokenizer_feedback: false,
         coordinated_raw_text_entry_tokens: Vec::new(),
         coordinated_raw_text_close_tokens: Vec::new(),
+        coordinated_rcdata_entry_tokens: Vec::new(),
+        coordinated_rcdata_close_tokens: Vec::new(),
     }
 }
 
@@ -3450,11 +3476,14 @@ fn freeze_rejects_an_unmatched_end_while_a_same_name_target_is_open() {
         final_open_selected_ordinary: vec![section_id],
         final_open_paragraph: None,
         final_open_style: None,
-        final_style_text_mode_active: false,
-        final_style_original_in_head_retained: false,
+        final_open_title: None,
+        final_text_mode_active: false,
+        final_original_insertion_mode_retained: false,
         pending_tokenizer_feedback: false,
         coordinated_raw_text_entry_tokens: Vec::new(),
         coordinated_raw_text_close_tokens: Vec::new(),
+        coordinated_rcdata_entry_tokens: Vec::new(),
+        coordinated_rcdata_close_tokens: Vec::new(),
     };
     assert!(matches!(
         freeze_parts(&fixture, parts),

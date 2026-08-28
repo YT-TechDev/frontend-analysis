@@ -186,6 +186,12 @@ fn observe_diagnostic(diagnostic: &super::super::diagnostic::HtmlTokenizerDiagno
             HtmlTokenizerDiagnosticCode::EndTagWithAttributes => {
                 DiagnosticCode::EndTagWithAttributes
             }
+            HtmlTokenizerDiagnosticCode::MissingSemicolonAfterCharacterReference => {
+                DiagnosticCode::MissingSemicolonAfterCharacterReference
+            }
+            HtmlTokenizerDiagnosticCode::UnknownNamedCharacterReference => {
+                DiagnosticCode::UnknownNamedCharacterReference
+            }
             HtmlTokenizerDiagnosticCode::EndTagWithTrailingSolidus => {
                 DiagnosticCode::EndTagWithTrailingSolidus
             }
@@ -220,6 +226,12 @@ fn observe_diagnostic(diagnostic: &super::super::diagnostic::HtmlTokenizerDiagno
             }
             HtmlTokenizerDiagnosticContext::AfterAttributeValueQuoted => {
                 DiagnosticContext::AfterAttributeValueQuoted
+            }
+            HtmlTokenizerDiagnosticContext::NamedCharacterReference => {
+                DiagnosticContext::NamedCharacterReference
+            }
+            HtmlTokenizerDiagnosticContext::AmbiguousAmpersand => {
+                DiagnosticContext::AmbiguousAmpersand
             }
             HtmlTokenizerDiagnosticContext::SelfClosingStartTag => {
                 DiagnosticContext::SelfClosingStartTag
@@ -312,6 +324,12 @@ fn observe_completion(completion: &HtmlTokenizerCompletion) -> Completion {
                         }
                         HtmlTokenizerCapability::TreeConstructionControlledState => {
                             Capability::TreeConstructionControlledState
+                        }
+                        HtmlTokenizerCapability::NumericCharacterReferenceInRcdata => {
+                            Capability::NumericCharacterReferenceInRcdata
+                        }
+                        HtmlTokenizerCapability::RcdataNullRecovery => {
+                            Capability::RcdataNullRecovery
                         }
                         HtmlTokenizerCapability::ForeignContentControl => {
                             Capability::ForeignContentControl

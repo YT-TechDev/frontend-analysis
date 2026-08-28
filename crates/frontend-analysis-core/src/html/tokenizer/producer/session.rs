@@ -5,7 +5,14 @@
 //! progression, preprocessing, lexical state, token emission, diagnostics,
 //! resource accounting, and final run validation. This module only wraps that
 //! Engine with a private suspend/resume lifecycle and provides the selected
-//! RAWTEXT lexical state handlers.
+//! RAWTEXT lexical state handlers, plus TC-S10's selected RCDATA and
+//! Character Reference handlers.
+//!
+//! TC-S10 adds a second, deliberately separate control ([`
+//! HtmlTokenizerSession::apply_rcdata`]) rather than one mode-parameterized
+//! entry point: the selected capability is a bounded Title discharge, and a
+//! generic tokenizer-mode control surface is exactly what the accepted
+//! placement refuses.
 //!
 //! The existing batch `tokenize()` entry point drains this same session under
 //! the predecessor no-tree-feedback policy. A context-dependent start tag
@@ -17,8 +24,12 @@
 //! contract, browser-adapter boundary, or product-level cancellation API.
 
 use crate::SourceText;
-use crate::html::token::{HtmlTagKind, HtmlToken};
+use crate::html::token::{HtmlCharacterToken, HtmlTagKind, HtmlToken};
 
+use super::super::diagnostic::{
+    HtmlTokenizerDiagnosticCode, HtmlTokenizerDiagnosticContext, HtmlTokenizerDiagnosticHandling,
+    HtmlTokenizerDiagnosticSubject,
+};
 use super::super::resource::HtmlTokenizerLimits;
 use super::super::result::{
     HtmlTokenizerCapability, HtmlTokenizerCapabilityAvailability, HtmlTokenizerCompletion,
@@ -27,6 +38,7 @@ use super::super::result::{
 };
 use super::builder::TagBuilder;
 use super::cursor::InputUnit;
+use super::named_character_reference::{self, NamedMatch};
 use super::state::State;
 use super::{
     DataRun, Engine, Step, context_dependent_mode, invalid_configuration_result,
@@ -36,8 +48,8 @@ use super::{
 /// One private production boundary reached while driving the tokenizer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HtmlTokenizerSessionBoundary {
-    /// The selected appropriate RAWTEXT end tag committed and the Engine
-    /// yielded before consuming any post-close source.
+    /// The selected appropriate RAWTEXT or RCDATA end tag committed and the
+    /// Engine yielded before consuming any post-close source.
     TokenAvailable,
     /// A context-dependent start tag committed at its exact post-tag boundary;
     /// no later source has been consumed.
@@ -55,6 +67,9 @@ pub(crate) enum HtmlTokenizerSessionControlError {
     RawTextRequestedWithoutSuspension,
     RawTextRequestedForDifferentMode(HtmlTokenizerMode),
     RawTextActivationInvariant,
+    RcdataRequestedWithoutSuspension,
+    RcdataRequestedForDifferentMode(HtmlTokenizerMode),
+    RcdataActivationInvariant,
     ResultRequestedBeforeTerminal,
     ResultRequestedWithOutstandingSuspension(HtmlTokenizerMode),
 }
@@ -134,7 +149,7 @@ impl<'a> HtmlTokenizerSession<'a> {
         let engine = self.engine.as_mut().expect("live tokenizer engine");
         let completion = engine.run();
 
-        if is_private_raw_text_close_yield(&completion) {
+        if is_private_text_mode_close_yield(&completion) {
             return HtmlTokenizerSessionBoundary::TokenAvailable;
         }
 
@@ -176,6 +191,35 @@ impl<'a> HtmlTokenizerSession<'a> {
             .activate_raw_text_from_suspended_start()
         {
             return Err(HtmlTokenizerSessionControlError::RawTextActivationInvariant);
+        }
+        self.suspended_mode = None;
+        self.suspended_completion = None;
+        Ok(())
+    }
+
+    /// Applies the one TC-S10 tree-directed lexical control.
+    ///
+    /// Deliberately a separate operation from [`Self::apply_raw_text`], with
+    /// no tokenizer-mode operand: the tree asks for the selected Title RCDATA
+    /// entry it owns the semantics of, and the coordinator maps that request
+    /// onto exactly this control. Appropriate-end-tag identity again comes
+    /// from the Engine's own retained emitted start tag; no expected close
+    /// spelling, source range, or source slice is accepted from tree
+    /// construction.
+    pub(crate) fn apply_rcdata(&mut self) -> Result<(), HtmlTokenizerSessionControlError> {
+        let Some(mode) = self.suspended_mode else {
+            return Err(HtmlTokenizerSessionControlError::RcdataRequestedWithoutSuspension);
+        };
+        if mode != HtmlTokenizerMode::Rcdata {
+            return Err(HtmlTokenizerSessionControlError::RcdataRequestedForDifferentMode(mode));
+        }
+        if !self
+            .engine
+            .as_mut()
+            .expect("suspended tokenizer engine")
+            .activate_rcdata_from_suspended_start()
+        {
+            return Err(HtmlTokenizerSessionControlError::RcdataActivationInvariant);
         }
         self.suspended_mode = None;
         self.suspended_completion = None;
@@ -263,11 +307,11 @@ fn context_dependent_suspension(completion: &HtmlTokenizerCompletion) -> Option<
     }
 }
 
-/// TC-S9 uses the already-existing private `TreeConstructionControlledState`
-/// capability only as an internal Engine-yield marker after an appropriate
-/// RAWTEXT end tag has emitted. It is consumed here and never frozen into a
-/// tokenizer result.
-fn is_private_raw_text_close_yield(completion: &HtmlTokenizerCompletion) -> bool {
+/// TC-S9 and TC-S10 use the already-existing private
+/// `TreeConstructionControlledState` capability only as an internal
+/// Engine-yield marker after an appropriate RAWTEXT or RCDATA end tag has
+/// emitted. It is consumed here and never frozen into a tokenizer result.
+fn is_private_text_mode_close_yield(completion: &HtmlTokenizerCompletion) -> bool {
     let HtmlTokenizerCompletion::Incomplete(HtmlTokenizerIncompleteCause::UnsupportedCapability(
         unsupported,
     )) = completion
@@ -441,10 +485,12 @@ impl<'a> Engine<'a> {
     }
 
     /// Called by the parent Engine's ordinary `finish_tag()` after the
-    /// selected appropriate RAWTEXT end-tag token has committed.
-    pub(super) fn raw_text_close_yield(&mut self, boundary_at: usize) -> Step {
+    /// selected appropriate RAWTEXT or RCDATA end-tag token has committed.
+    pub(super) fn text_mode_close_yield(&mut self, boundary_at: usize) -> Step {
         self.raw_text_start_tag_index = None;
         self.raw_text_closing_tag = false;
+        self.rcdata_start_tag_index = None;
+        self.rcdata_closing_tag = false;
         let boundary = self.anchor(boundary_at, boundary_at);
         let unsupported = HtmlTokenizerUnsupportedCapability::new(
             self.source,
@@ -455,7 +501,7 @@ impl<'a> Engine<'a> {
                 boundary,
             },
         )
-        .expect("valid private RAWTEXT close yield");
+        .expect("valid private text-mode close yield");
         Step::Stop(HtmlTokenizerIncompleteCause::UnsupportedCapability(
             unsupported,
         ))
@@ -520,6 +566,404 @@ impl<'a> Engine<'a> {
             }
         }
         Ok(())
+    }
+
+    /// Activates the selected RCDATA episode only from the exact existing
+    /// post-start-tag suspended boundary. The retained emitted start tag
+    /// remains the tokenizer-owned appropriate-end-tag authority for this
+    /// episode.
+    pub(super) fn activate_rcdata_from_suspended_start(&mut self) -> bool {
+        let Some(token_index) = self.tokens.len().checked_sub(1) else {
+            return false;
+        };
+        let Some(HtmlToken::Tag(tag)) = self.tokens.get(token_index) else {
+            return false;
+        };
+        if tag.kind() != HtmlTagKind::Start
+            || context_dependent_mode(tag.name().interpreted()) != Some(HtmlTokenizerMode::Rcdata)
+            || self.state != State::Data
+            || self.tag.is_some()
+            || self.pending_reconsume
+        {
+            return false;
+        }
+        self.rcdata_start_tag_index = Some(token_index);
+        self.rcdata_closing_tag = false;
+        self.state = State::Rcdata;
+        true
+    }
+
+    pub(super) fn step_rcdata(&mut self, unit: InputUnit) -> Step {
+        match unit {
+            InputUnit::Eof { at } => {
+                if let Err(stop) = self.flush_data_run() {
+                    return stop;
+                }
+                self.emit_eof(at)
+            }
+            InputUnit::Scalar {
+                ch: '<',
+                start,
+                end,
+            } => {
+                self.tag_open_start = start;
+                self.tag_open_delimiter_end = end;
+                self.state = State::RcdataLessThanSign;
+                Step::Continue
+            }
+            InputUnit::Scalar {
+                ch: '&',
+                start,
+                end,
+            } => {
+                // Each authored contribution keeps its own exact source
+                // evidence: flushing here is what lets one coalesced final
+                // text node still expose `a`, `&amp;`, `b` as three ordered
+                // contributions instead of one fabricated span.
+                if let Err(stop) = self.flush_data_run() {
+                    return stop;
+                }
+                self.character_reference_ampersand = (start, end);
+                self.state = State::CharacterReference;
+                Step::Continue
+            }
+            InputUnit::Scalar {
+                ch: '\0',
+                start,
+                end,
+            } => {
+                // RCDATA NUL recovery is deliberately outside TC-S10. Prior
+                // valid evidence is preserved by the flush inside the stop;
+                // no U+FFFD is produced and no recovery diagnostic is
+                // claimed.
+                self.rcdata_null_unsupported_stop((start, end))
+            }
+            InputUnit::Scalar { ch, start, end } => {
+                if let Err(stop) = self.push_data_char(ch, start, end) {
+                    return stop;
+                }
+                Step::Continue
+            }
+        }
+    }
+
+    pub(super) fn step_rcdata_less_than_sign(&mut self, unit: InputUnit) -> Step {
+        match unit {
+            InputUnit::Scalar { ch: '/', end, .. } => {
+                self.tag_open_delimiter_end = end;
+                self.state = State::RcdataEndTagOpen;
+                Step::Continue
+            }
+            InputUnit::Scalar { .. } | InputUnit::Eof { .. } => {
+                let less_than_end = self.tag_open_start + '<'.len_utf8();
+                if let Err(stop) = self.push_data_char('<', self.tag_open_start, less_than_end) {
+                    return stop;
+                }
+                self.state = State::Rcdata;
+                self.pending_reconsume = true;
+                Step::Continue
+            }
+        }
+    }
+
+    pub(super) fn step_rcdata_end_tag_open(&mut self, unit: InputUnit) -> Step {
+        match unit {
+            InputUnit::Scalar { ch, .. } if ch.is_ascii_alphabetic() => {
+                self.tag = Some(TagBuilder::new(
+                    HtmlTagKind::End,
+                    self.tag_open_start,
+                    (self.tag_open_start, self.tag_open_delimiter_end),
+                    unit.start(),
+                    self.diagnostics.len(),
+                ));
+                self.state = State::RcdataEndTagName;
+                self.pending_reconsume = true;
+                Step::Continue
+            }
+            InputUnit::Scalar { .. } | InputUnit::Eof { .. } => {
+                if let Err(stop) = self.push_raw_text_opening_literal() {
+                    return stop;
+                }
+                self.state = State::Rcdata;
+                self.pending_reconsume = true;
+                Step::Continue
+            }
+        }
+    }
+
+    pub(super) fn step_rcdata_end_tag_name(&mut self, unit: InputUnit) -> Step {
+        match unit {
+            InputUnit::Scalar { ch, start, end } if ch.is_ascii_alphabetic() => {
+                if let Err(stop) = self.try_reserve_retained(ch.len_utf8(), start) {
+                    return stop;
+                }
+                self.tag
+                    .as_mut()
+                    .expect("RCDATA end-tag candidate active")
+                    .push_name(ch, end);
+                Step::Continue
+            }
+            InputUnit::Scalar { ch, start, end }
+                if self.rcdata_candidate_is_appropriate()
+                    && matches!(ch, '\t' | '\n' | '\u{000c}' | ' ' | '/' | '>') =>
+            {
+                if let Err(stop) = self.flush_data_run() {
+                    return stop;
+                }
+                self.tag
+                    .as_mut()
+                    .expect("appropriate RCDATA end-tag candidate active")
+                    .interpreted_name
+                    .make_ascii_lowercase();
+                self.rcdata_closing_tag = true;
+                match ch {
+                    '\t' | '\n' | '\u{000c}' | ' ' => {
+                        self.state = State::BeforeAttributeName;
+                        Step::Continue
+                    }
+                    '/' => {
+                        self.pending_solidus = Some((start, end));
+                        self.state = State::SelfClosingStartTag;
+                        Step::Continue
+                    }
+                    '>' => self.finish_tag((start, end)),
+                    _ => unreachable!("guarded RCDATA delimiter"),
+                }
+            }
+            InputUnit::Scalar { .. } | InputUnit::Eof { .. } => {
+                if let Err(stop) = self.fallback_raw_text_end_tag_candidate() {
+                    return stop;
+                }
+                self.state = State::Rcdata;
+                self.pending_reconsume = true;
+                Step::Continue
+            }
+        }
+    }
+
+    fn rcdata_candidate_is_appropriate(&self) -> bool {
+        let Some(start_index) = self.rcdata_start_tag_index else {
+            return false;
+        };
+        let Some(HtmlToken::Tag(start)) = self.tokens.get(start_index) else {
+            return false;
+        };
+        let Some(candidate) = self.tag.as_ref() else {
+            return false;
+        };
+        start.kind() == HtmlTagKind::Start
+            && candidate.kind == HtmlTagKind::End
+            && candidate
+                .interpreted_name
+                .eq_ignore_ascii_case(start.name().interpreted())
+    }
+
+    // ---- Character Reference ---------------------------------------------
+
+    pub(super) fn step_character_reference(&mut self, unit: InputUnit) -> Step {
+        match unit {
+            InputUnit::Scalar { ch, .. } if ch.is_ascii_alphanumeric() => {
+                self.state = State::NamedCharacterReference;
+                self.pending_reconsume = true;
+                Step::Continue
+            }
+            InputUnit::Scalar {
+                ch: '#',
+                start,
+                end,
+            } => {
+                // Character Reference entry already succeeded and the
+                // authored `&` is committed coverage; the `#` alone is the
+                // narrow Numeric-branch trigger.
+                let trigger = self.discovery_trigger((start, end));
+                self.unsupported_input_stop(
+                    HtmlTokenizerCapability::NumericCharacterReferenceInRcdata,
+                    trigger,
+                )
+            }
+            InputUnit::Scalar { .. } | InputUnit::Eof { .. } => {
+                let (start, end) = self.character_reference_ampersand;
+                if let Err(stop) = self.push_data_char('&', start, end) {
+                    return stop;
+                }
+                self.state = State::Rcdata;
+                self.pending_reconsume = true;
+                Step::Continue
+            }
+        }
+    }
+
+    /// One dispatch, one transition: the whole maximum-match discovery is a
+    /// single attempted specification-state transition, and the authoritative
+    /// consumption that commits an already-selected match never becomes one
+    /// transition per consumed byte.
+    pub(super) fn step_named_character_reference(&mut self, unit: InputUnit) -> Step {
+        let first = match unit {
+            InputUnit::Scalar { ch, .. } if ch.is_ascii() => ch as u8,
+            // Only an ASCII alphanumeric dispatches here. Anything else can
+            // match no identifier at all, which is exactly the ambiguous
+            // path — no guess, no fabricated match.
+            InputUnit::Scalar { .. } | InputUnit::Eof { .. } => {
+                self.state = State::AmbiguousAmpersand;
+                self.pending_reconsume = true;
+                return Step::Continue;
+            }
+        };
+        // The already materialized first identifier unit plus a bounded
+        // borrowed view of raw source the cursor has not consumed. Nothing
+        // here advances, preprocesses, retains, or diagnoses.
+        let window = named_character_reference::LOOKAHEAD_BYTES;
+        let rest = self.cursor.unconsumed_bytes(window);
+        let Some(found) = named_character_reference::maximum_match(first, rest) else {
+            let (start, end) = self.character_reference_ampersand;
+            if let Err(stop) = self.push_data_char('&', start, end) {
+                return stop;
+            }
+            self.state = State::AmbiguousAmpersand;
+            self.pending_reconsume = true;
+            return Step::Continue;
+        };
+        self.commit_named_character_reference(found, unit.start())
+    }
+
+    /// Commits one resolved Named Character Reference as a single
+    /// resource-atomic semantic effect.
+    ///
+    /// Every fallible resource decision happens *before* the remaining
+    /// matched source is committed, in the accepted deterministic order
+    /// `RetainedInterpretedBytes -> EmittedTokens -> Diagnostics`, and the
+    /// diagnostics check is made only when the semantic result actually
+    /// requires a diagnostic. A refusal therefore commits no matched source,
+    /// no resolved token and no missing-semicolon diagnostic, and leaves
+    /// prior valid evidence and the already-committed coverage boundary
+    /// exactly as they were. Once consumption succeeds, no fallible step
+    /// remains.
+    fn commit_named_character_reference(&mut self, found: NamedMatch, first_at: usize) -> Step {
+        let (ampersand_start, _) = self.character_reference_ampersand;
+        let value_bytes = found.value.len();
+        // Identifier bytes are ASCII by construction, so the match end is
+        // exact arithmetic over consumed units, not a reconstructed endpoint.
+        let match_end = first_at + found.name_len;
+        let boundary = (self.processed_end, self.processed_end);
+
+        if let Err(stop) = self.try_reserve_retained(value_bytes, ampersand_start) {
+            return stop;
+        }
+        let committed = match self.preflight_token_emission(value_bytes, boundary) {
+            Ok(committed) => committed,
+            Err(stop) => return stop,
+        };
+        if !found.ends_with_semicolon
+            && let Err(stop) = self.preflight_pending_emission_diagnostics(1, boundary)
+        {
+            return stop;
+        }
+
+        // Authoritative consumption of the already-selected match. The first
+        // identifier unit is the current unit; every remaining one advances
+        // through the ordinary single-forward-owner cursor lifecycle, one
+        // unit at a time. There is no multi-unit rollback, no endpoint jump,
+        // no source search, and no reparse.
+        for _ in 1..found.name_len {
+            let (consumed, diagnostic) = self.cursor.advance();
+            debug_assert!(
+                diagnostic.is_none(),
+                "identifier bytes are ASCII alphanumerics or ';' and carry no \
+                 preprocessing observation"
+            );
+            self.current = consumed;
+        }
+        self.processed_end = self.processed_end.max(match_end);
+
+        if !found.ends_with_semicolon {
+            // Anchored to the last authored ASCII scalar of the *matched*
+            // identifier — never to the later source the match deliberately
+            // did not consume.
+            let last = match_end - 1;
+            self.commit_preflighted_diagnostic(
+                HtmlTokenizerDiagnosticCode::MissingSemicolonAfterCharacterReference,
+                (last, match_end),
+                HtmlTokenizerDiagnosticContext::NamedCharacterReference,
+                HtmlTokenizerDiagnosticHandling::Continued,
+                HtmlTokenizerDiagnosticSubject::InputLocation,
+            );
+        }
+
+        // Decoded scalars are output only. They are appended to the run's
+        // emitted evidence and are never fed back as tokenizer input, so a
+        // decoded `<` or `</title>` stays interpreted text and recursive
+        // decoding cannot occur.
+        let anchor = self.anchor(ampersand_start, match_end);
+        let token = HtmlToken::Character(
+            HtmlCharacterToken::new(anchor, found.value.to_owned())
+                .expect("valid resolved named character-reference token"),
+        );
+        self.commit_token(token, committed);
+        self.state = State::Rcdata;
+        Step::Continue
+    }
+
+    pub(super) fn step_ambiguous_ampersand(&mut self, unit: InputUnit) -> Step {
+        match unit {
+            InputUnit::Scalar { ch, start, end } if ch.is_ascii_alphanumeric() => {
+                if let Err(stop) = self.push_data_char(ch, start, end) {
+                    return stop;
+                }
+                Step::Continue
+            }
+            InputUnit::Scalar {
+                ch: ';',
+                start,
+                end,
+            } => {
+                // The authored `;` observation is what makes the reference
+                // unknown. The unresolved contribution is flushed first so it
+                // keeps its own exact boundary, and the same `;` is then
+                // reconsumed as ordinary RCDATA text: tree-level coalescing
+                // may merge the final text, but the two contributions stay
+                // separately inspectable.
+                let boundary = (self.processed_end, self.processed_end);
+                if let Err(stop) = self.preflight_pending_emission_diagnostics(1, boundary) {
+                    return stop;
+                }
+                if let Err(stop) = self.flush_data_run() {
+                    return stop;
+                }
+                self.commit_preflighted_diagnostic(
+                    HtmlTokenizerDiagnosticCode::UnknownNamedCharacterReference,
+                    (start, end),
+                    HtmlTokenizerDiagnosticContext::AmbiguousAmpersand,
+                    HtmlTokenizerDiagnosticHandling::Continued,
+                    HtmlTokenizerDiagnosticSubject::InputLocation,
+                );
+                self.state = State::Rcdata;
+                self.pending_reconsume = true;
+                Step::Continue
+            }
+            InputUnit::Scalar { .. } | InputUnit::Eof { .. } => {
+                self.state = State::Rcdata;
+                self.pending_reconsume = true;
+                Step::Continue
+            }
+        }
+    }
+
+    fn rcdata_null_unsupported_stop(&mut self, natural: (usize, usize)) -> Step {
+        if let Err(stop) = self.flush_data_run() {
+            return stop;
+        }
+        let trigger = self.discovery_trigger(natural);
+        let anchor = self.anchor(trigger.0, trigger.1);
+        let unsupported = HtmlTokenizerUnsupportedCapability::new(
+            self.source,
+            HtmlTokenizerCapability::RcdataNullRecovery,
+            HtmlTokenizerCapabilityAvailability::Unsupported,
+            HtmlTokenizerUnsupportedTrigger::Input(anchor),
+        )
+        .expect("valid selected RCDATA NUL unsupported evidence");
+        Step::Stop(HtmlTokenizerIncompleteCause::UnsupportedCapability(
+            unsupported,
+        ))
     }
 
     fn raw_text_unproved_input_stop(&mut self, trigger: (usize, usize)) -> Step {

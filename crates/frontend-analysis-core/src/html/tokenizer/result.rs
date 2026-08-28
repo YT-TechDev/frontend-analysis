@@ -108,6 +108,25 @@ pub(crate) enum HtmlTokenizerCapability {
     },
     TreeConstructionControlledState,
     ForeignContentControl,
+    /// The Numeric branch reached from Character Reference processing inside
+    /// the selected TC-S10 RCDATA lifecycle.
+    ///
+    /// Deliberately narrow. Reaching it proves Title admission, RCDATA entry,
+    /// and Character Reference entry all *succeeded*: the authored `&` is
+    /// already committed coverage and the authored `#` is the exact
+    /// unsupported trigger. It never means RCDATA processing or Character
+    /// Reference processing as a whole is unsupported, and it deliberately
+    /// does not widen [`HtmlCharacterReferenceContext`], whose `Data` and
+    /// `AttributeValue` meanings remain exactly what the predecessor froze.
+    NumericCharacterReferenceInRcdata,
+    /// The NUL-specific recovery branch of the selected TC-S10 RCDATA
+    /// lifecycle.
+    ///
+    /// TC-S10 selects ordinary RCDATA text and Named Character References
+    /// only. At an authored NUL the tokenizer preserves prior valid evidence
+    /// and stops at the NUL boundary: it emits no U+FFFD, records no
+    /// RCDATA-NUL recovery diagnostic, and claims no general RCDATA recovery.
+    RcdataNullRecovery,
 }
 
 #[derive(Clone)]

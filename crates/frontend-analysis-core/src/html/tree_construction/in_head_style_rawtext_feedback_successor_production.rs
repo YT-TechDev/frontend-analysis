@@ -677,24 +677,27 @@ fn p14_freeze_rejects_outstanding_feedback_and_missing_coordination() {
 fn p14_freeze_rejects_wrong_terminal_tree_state_and_close_trigger() {
     let fixture = coordinated_parts("<style>x</style>");
 
+    // The Text insertion-mode final facts are now the shared TC-S9/TC-S10
+    // invariant, so a Style run that lies about them is rejected by the one
+    // shared check rather than by a Style-only flag.
     let mut text_mode = coordinated_parts("<style>x</style>").parts;
-    text_mode.final_style_text_mode_active = true;
+    text_mode.final_text_mode_active = true;
     assert!(matches!(
         freeze_fixture(&fixture, text_mode),
-        Err(HtmlTreeFreezeError::FinalStyleStateMismatch)
+        Err(HtmlTreeFreezeError::FinalTextModeStateMismatch)
     ));
 
     let mut retained_original = coordinated_parts("<style>x</style>").parts;
-    retained_original.final_style_original_in_head_retained = true;
+    retained_original.final_original_insertion_mode_retained = true;
     assert!(matches!(
         freeze_fixture(&fixture, retained_original),
-        Err(HtmlTreeFreezeError::FinalStyleStateMismatch)
+        Err(HtmlTreeFreezeError::FinalTextModeStateMismatch)
     ));
 
     let mut claimed_open = coordinated_parts("<style>x</style>").parts;
     claimed_open.final_open_style = Some(style_node_id(&claimed_open));
-    claimed_open.final_style_text_mode_active = true;
-    claimed_open.final_style_original_in_head_retained = true;
+    claimed_open.final_text_mode_active = true;
+    claimed_open.final_original_insertion_mode_retained = true;
     assert!(freeze_fixture(&fixture, claimed_open).is_err());
 
     let mut wrong_close = coordinated_parts("<style>x</style>").parts;
@@ -822,13 +825,13 @@ fn p14_complete_claim_cannot_upgrade_a_lower_layer_resource_stop() {
     ));
 }
 
+/// TC-S9's own negative space. `<title>` moved out of it when TC-S10 selected
+/// the InHead Title RCDATA lifecycle; every other context-dependent element,
+/// including the *other* RCDATA element `<textarea>`, is still refused before
+/// any Style node exists.
 #[test]
 fn negative_space_has_no_general_rcdata_script_or_plaintext_entry() {
-    for source in [
-        "<title>x</title>",
-        "<textarea>x</textarea>",
-        "<script>x</script>",
-    ] {
+    for source in ["<textarea>x</textarea>", "<script>x</script>"] {
         let analysis = analyze(source);
         assert_eq!(
             tree_unsupported(&analysis),

@@ -135,6 +135,7 @@ fn render_node(
                 },
                 HtmlElement::Paragraph(_) => "p",
                 HtmlElement::Style(_) => "style",
+                HtmlElement::Title(_) => "title",
             });
             match node.authored_source() {
                 Some(HtmlAuthoredSource::StartTag { complete, raw_name }) => {
@@ -368,16 +369,38 @@ struct GoldSpans {
     characters: Vec<(usize, usize)>,
 }
 
-fn is_selected_style_raw_text_successor(fixture: &HtmlTokenizerFixture) -> bool {
-    fixture.id == "UNSUP-007"
-        && matches!(
+/// The exact corpus fixtures whose *coordinated* run is discharged by a
+/// selected tree-directed Text-mode lifecycle.
+///
+/// Exactly two: TC-S9's `<style>` RAWTEXT successor and TC-S10's `<title>`
+/// RCDATA successor. `UNSUP-006` (`<textarea>x`) is deliberately absent — it
+/// is an RCDATA element neither successor selects, so its coordinated run must
+/// still match its standalone gold exactly. That omission is this gate's
+/// negative-space proof that a durable RCDATA tokenizer mode is not general
+/// RCDATA enablement.
+///
+/// Each fixture's *standalone* gold is unchanged either way: the assertions
+/// below re-prove that its deferred boundary still exists.
+fn is_selected_coordinated_text_mode_successor(fixture: &HtmlTokenizerFixture) -> bool {
+    match fixture.id {
+        "UNSUP-007" => matches!(
             &fixture.expected.0.completion,
             Completion::Unsupported {
                 capability: Capability::ContextDependentTokenizerMode(TokenizerMode::RawText),
                 availability: Availability::Deferred,
                 ..
             }
-        )
+        ),
+        "UNSUP-005" => matches!(
+            &fixture.expected.0.completion,
+            Completion::Unsupported {
+                capability: Capability::ContextDependentTokenizerMode(TokenizerMode::Rcdata),
+                availability: Availability::Deferred,
+                ..
+            }
+        ),
+        _ => false,
+    }
 }
 
 fn gold_spans(fixture: &HtmlTokenizerFixture) -> GoldSpans {
@@ -420,7 +443,7 @@ fn tree_construction_holds_its_contract_over_the_candidate_independent_corpus() 
             .expect("fixture source is valid UTF-8");
         let limits = to_html_limits(fixture.expected.0.limits);
         let source = SourceText::new(SourceId::new(1), text.clone());
-        let coordinated_style_raw_text = is_selected_style_raw_text_successor(fixture);
+        let coordinated_text_mode = is_selected_coordinated_text_mode_successor(fixture);
 
         // Retained tokenizer evidence must be exactly what the tokenizer
         // produced, before and after the tree-construction boundary.
@@ -434,17 +457,15 @@ fn tree_construction_holds_its_contract_over_the_candidate_independent_corpus() 
                 continue;
             }
         };
-        if observe(&source, analysis.tokenizer_run()) != observed_before
-            && !coordinated_style_raw_text
-        {
+        if observe(&source, analysis.tokenizer_run()) != observed_before && !coordinated_text_mode {
             failures.push(format!(
                 "{}: retained tokenizer evidence changed through the tree boundary",
                 fixture.id
             ));
         }
-        if coordinated_style_raw_text && !standalone_run.is_incomplete() {
+        if coordinated_text_mode && !standalone_run.is_incomplete() {
             failures.push(format!(
-                "{}: selected coordinated RAWTEXT successor lost its standalone Deferred boundary",
+                "{}: selected coordinated Text-mode successor lost its standalone deferred boundary",
                 fixture.id
             ));
         }
@@ -456,7 +477,7 @@ fn tree_construction_holds_its_contract_over_the_candidate_independent_corpus() 
         // independently authored tokenizer completion.
         if analysis.is_complete() {
             supported += 1;
-            if !fixture.expected.0.completion.is_complete() && !coordinated_style_raw_text {
+            if !fixture.expected.0.completion.is_complete() && !coordinated_text_mode {
                 failures.push(format!(
                     "{}: effective Complete although the gold tokenizer run is not Complete",
                     fixture.id
@@ -483,7 +504,7 @@ fn tree_construction_holds_its_contract_over_the_candidate_independent_corpus() 
                             contribution.source().range().start(),
                             contribution.source().range().end(),
                         );
-                        if !gold.characters.contains(&span) && !coordinated_style_raw_text {
+                        if !gold.characters.contains(&span) && !coordinated_text_mode {
                             failures.push(format!(
                                 "{}: contribution span {span:?} is not an authored gold character run",
                                 fixture.id

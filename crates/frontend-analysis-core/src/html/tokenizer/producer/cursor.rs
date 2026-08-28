@@ -70,6 +70,28 @@ impl<'a> Cursor<'a> {
         }
     }
 
+    /// A bounded, borrowed, strictly non-committing view of raw source bytes
+    /// the authoritative cursor has not consumed yet.
+    ///
+    /// This is the only observation TC-S10's Named Character Reference
+    /// maximum match needs beyond the already-materialized current unit. It
+    /// is pure: it advances no position, materializes no input unit, performs
+    /// no CR/CRLF normalization, produces no preprocessing observation, and
+    /// retains nothing. It therefore cannot become a second source authority
+    /// — every byte it reveals is still consumed afterwards through
+    /// [`Self::advance`] like any other input.
+    ///
+    /// Raw bytes, not `&str`, so a `max_len` cut inside a multi-byte scalar
+    /// is representable without slicing on a non-boundary. The only consumer
+    /// matches ASCII alphanumerics and `;`, which are never continuation
+    /// bytes, so a truncated trailing scalar can never extend a match.
+    pub(super) fn unconsumed_bytes(&self, max_len: usize) -> &'a [u8] {
+        let text = self.source.as_str().as_bytes();
+        let start = self.next_raw_offset.min(text.len());
+        let end = start.saturating_add(max_len).min(text.len());
+        &text[start..end]
+    }
+
     /// Decodes exactly one input unit at the current raw offset and advances
     /// with checked movement. Returns the unit together with an optional
     /// preprocessing diagnostic code discovered while materializing it.

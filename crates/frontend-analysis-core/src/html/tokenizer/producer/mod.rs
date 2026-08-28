@@ -1,13 +1,15 @@
 //! The crate-private bounded lossless HTML tokenizer production engine.
 //!
-//! Implements the #109-approved Data-context state subset and TC-S9's
-//! selected RAWTEXT extension over a known-valid-UTF-8 `SourceText` using an
+//! Implements the #109-approved Data-context state subset, TC-S9's selected
+//! RAWTEXT extension, and TC-S10's selected RCDATA + Named Character
+//! Reference extension over a known-valid-UTF-8 `SourceText` using an
 //! iterative, non-recursive, single-forward-owner cursor. Transition
 //! accounting, resource accounting, diagnostics, and completion follow the
 //! corrected #111/#112 contracts.
 
 mod builder;
 mod cursor;
+mod named_character_reference;
 mod session;
 mod state;
 
@@ -159,6 +161,18 @@ struct Engine<'a> {
     /// True only after RAWTEXT end-tag-name recognition proved an appropriate
     /// candidate and ordinary tag finalization is finishing that exact token.
     raw_text_closing_tag: bool,
+    /// The TC-S10 counterpart of [`Self::raw_text_start_tag_index`]. Kept
+    /// separate rather than shared so neither selected episode can silently
+    /// borrow the other's appropriate-end-tag authority.
+    rcdata_start_tag_index: Option<usize>,
+    /// True only after RCDATA end-tag-name recognition proved an appropriate
+    /// candidate and ordinary tag finalization is finishing that exact token.
+    rcdata_closing_tag: bool,
+    /// The exact authored `&` that entered Character Reference processing,
+    /// retained as offsets only. It is the resolved reference token's source
+    /// start and the literal `&` fallback's exact evidence; it is never
+    /// reconstructed by searching or rescanning source.
+    character_reference_ampersand: (usize, usize),
 }
 
 impl<'a> Engine<'a> {
@@ -186,6 +200,9 @@ impl<'a> Engine<'a> {
             transition_steps: 0,
             raw_text_start_tag_index: None,
             raw_text_closing_tag: false,
+            rcdata_start_tag_index: None,
+            rcdata_closing_tag: false,
+            character_reference_ampersand: (0, 0),
         }
     }
 
@@ -217,7 +234,14 @@ impl<'a> Engine<'a> {
             match step {
                 Step::Continue => {
                     if !self.pending_reconsume {
-                        self.processed_end = unit.end();
+                        // Monotonic: a dispatch may legitimately have already
+                        // committed coverage beyond this unit's own end. The
+                        // selected Named Character Reference commit consumes
+                        // the rest of its already-discovered match inside one
+                        // dispatch, so `unit` is only that match's first
+                        // identifier byte. Coverage is never rolled back on a
+                        // `Continue`; deliberate rollbacks are `Stop` paths.
+                        self.processed_end = self.processed_end.max(unit.end());
                     }
                 }
                 Step::Complete => return HtmlTokenizerCompletion::Complete,
@@ -388,6 +412,13 @@ impl<'a> Engine<'a> {
             State::RawTextLessThanSign => self.step_raw_text_less_than_sign(unit),
             State::RawTextEndTagOpen => self.step_raw_text_end_tag_open(unit),
             State::RawTextEndTagName => self.step_raw_text_end_tag_name(unit),
+            State::Rcdata => self.step_rcdata(unit),
+            State::RcdataLessThanSign => self.step_rcdata_less_than_sign(unit),
+            State::RcdataEndTagOpen => self.step_rcdata_end_tag_open(unit),
+            State::RcdataEndTagName => self.step_rcdata_end_tag_name(unit),
+            State::CharacterReference => self.step_character_reference(unit),
+            State::NamedCharacterReference => self.step_named_character_reference(unit),
+            State::AmbiguousAmpersand => self.step_ambiguous_ampersand(unit),
         }
     }
 
@@ -1492,7 +1523,8 @@ impl<'a> Engine<'a> {
         } else {
             None
         };
-        let finishing_raw_text_close = self.raw_text_closing_tag && !is_start_tag;
+        let finishing_text_mode_close =
+            (self.raw_text_closing_tag || self.rcdata_closing_tag) && !is_start_tag;
         let close_end = close_delimiter.1;
         let token = HtmlToken::Tag(builder::finalize_tag(self.source, tag, close_delimiter));
         self.commit_token(token, committed);
@@ -1501,9 +1533,9 @@ impl<'a> Engine<'a> {
             self.materialize_pending_emission_diagnostics(pending_diagnostics, token_index);
         }
         self.state = State::Data;
-        if finishing_raw_text_close {
+        if finishing_text_mode_close {
             self.processed_end = close_end;
-            return self.raw_text_close_yield(close_end);
+            return self.text_mode_close_yield(close_end);
         }
         match context_mode {
             Some(mode) => {
@@ -1763,6 +1795,33 @@ impl<'a> Engine<'a> {
         self.processed_end = self.processed_end.max(at.1);
         self.min_processed_end = self.min_processed_end.max(at.1);
         Ok(())
+    }
+
+    /// Commits one diagnostic whose `Diagnostics` capacity this same atomic
+    /// operation already secured through
+    /// [`Self::preflight_pending_emission_diagnostics`].
+    ///
+    /// This is the narrow preflight/commit split TC-S10's resource atomicity
+    /// requires, not a general transaction or rollback facility: it applies
+    /// only where no counted resource can be consumed between the preflight
+    /// and this commit, so the commit itself has no fallible step left. It
+    /// exists so a semantic result can never emit while its required
+    /// diagnostic turns out to be unaffordable afterwards.
+    fn commit_preflighted_diagnostic(
+        &mut self,
+        code: HtmlTokenizerDiagnosticCode,
+        at: (usize, usize),
+        context: HtmlTokenizerDiagnosticContext,
+        handling: HtmlTokenizerDiagnosticHandling,
+        subject: HtmlTokenizerDiagnosticSubject,
+    ) {
+        let anchor = self.anchor(at.0, at.1);
+        let diagnostic =
+            HtmlTokenizerDiagnostic::new(self.source, code, anchor, context, handling, subject)
+                .expect("valid preflighted diagnostic evidence");
+        self.diagnostics.push(diagnostic);
+        self.processed_end = self.processed_end.max(at.1);
+        self.min_processed_end = self.min_processed_end.max(at.1);
     }
 
     fn append_preprocessing_diagnostic(

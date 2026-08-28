@@ -1,4 +1,4 @@
-//! The private HTML tree-construction session through TC-S9.
+//! The private HTML tree-construction session through TC-S10.
 //!
 //! The session exclusively owns every piece of mutable tree-construction
 //! state for exactly one run: insertion mode, retained original insertion mode
@@ -12,8 +12,11 @@
 //! - the session never calls the tokenizer and holds no tokenizer cursor or
 //!   lexical `State`; it is driven token by token by [`super::driver`];
 //! - TC-S9 emits only the semantic [`HtmlTreeTokenizerFeedback::EnterRawText`]
-//!   request. The Core coordinator maps that request to tokenizer control and
-//!   acknowledges successful application before later source may be produced;
+//!   request and TC-S10 only the semantic
+//!   [`HtmlTreeTokenizerFeedback::EnterRcdataForTitle`] request. Both name the
+//!   selected element lifecycle the tree owns, never a tokenizer mode. The
+//!   Core coordinator maps each request to tokenizer control and acknowledges
+//!   successful application before later source may be produced;
 //! - the session never escapes to a consumer — it is consumed by
 //!   [`Self::finish`] into [`HtmlDocumentShellParts`], which the driver hands
 //!   to [`super::result::freeze`];
@@ -41,8 +44,8 @@ use super::result::{
     HtmlParagraphClosure, HtmlParagraphElement, HtmlParagraphElementOrigin,
     HtmlParagraphSynthesisCause, HtmlSelectedOrdinaryElement, HtmlSelectedOrdinaryElementName,
     HtmlShellClosure, HtmlShellElement, HtmlShellElementName, HtmlShellElementOrigin,
-    HtmlStyleElement, HtmlSynthesisCause, HtmlTextContribution, HtmlTextNode, HtmlTreeAction,
-    HtmlTreeActionKind, HtmlTreeCapability, HtmlTreeCompletion, HtmlTreeDiagnostic,
+    HtmlStyleElement, HtmlSynthesisCause, HtmlTextContribution, HtmlTextNode, HtmlTitleElement,
+    HtmlTreeAction, HtmlTreeActionKind, HtmlTreeCapability, HtmlTreeCompletion, HtmlTreeDiagnostic,
     HtmlTreeDiagnosticCode, HtmlTreeNode, HtmlTreeNodeKind, HtmlTreeRecovery, HtmlTreeTokenTrigger,
 };
 
@@ -65,10 +68,17 @@ pub(super) enum HtmlDocumentMode {
     Quirks,
 }
 
-/// The only tree-to-tokenizer semantic request authorized by TC-S9.
+/// The only tree-to-tokenizer semantic requests authorized by TC-S9 and
+/// TC-S10.
+///
+/// Each variant names a selected element lifecycle, not a tokenizer mode.
+/// There is deliberately no mode-carrying request: a generic
+/// `SwitchTokenizer(mode)` surface would hand the tree lexical authority it
+/// does not own, and would read as general RCDATA/RAWTEXT enablement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum HtmlTreeTokenizerFeedback {
     EnterRawText,
+    EnterRcdataForTitle,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,6 +87,18 @@ pub(super) enum AdmittedElementName {
     SelectedOrdinary(HtmlSelectedOrdinaryElementName),
     Paragraph,
     Style,
+    Title,
+}
+
+/// Which selected element the Text insertion mode currently holds.
+///
+/// A read-only projection of actual open state, not a second stack. Style and
+/// Title share the Text machinery but remain separate closed domains, so this
+/// distinguishes them without merging them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TextModeElement {
+    Style,
+    Title,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -149,6 +171,19 @@ impl AdmittedToken<'_> {
         )
     }
 
+    fn is_title_tag(&self) -> bool {
+        matches!(
+            self,
+            Self::StartTag {
+                name: AdmittedElementName::Title,
+                ..
+            } | Self::EndTag {
+                name: AdmittedElementName::Title,
+                ..
+            }
+        )
+    }
+
     fn is_shell_tag(&self) -> bool {
         matches!(
             self,
@@ -191,6 +226,7 @@ pub(super) fn admit(token: &HtmlToken) -> Result<AdmittedToken<'_>, HtmlTreeCapa
                     }
                     AdmittedElementName::Paragraph => HtmlTreeCapability::ParagraphTagAttribute,
                     AdmittedElementName::Style => HtmlTreeCapability::StyleTagAttribute,
+                    AdmittedElementName::Title => HtmlTreeCapability::TitleTagAttribute,
                 });
             }
             if tag.self_closing_solidus().is_some() {
@@ -201,6 +237,7 @@ pub(super) fn admit(token: &HtmlToken) -> Result<AdmittedToken<'_>, HtmlTreeCapa
                     }
                     AdmittedElementName::Paragraph => HtmlTreeCapability::SelfClosingParagraphTag,
                     AdmittedElementName::Style => HtmlTreeCapability::SelfClosingStyleTag,
+                    AdmittedElementName::Title => HtmlTreeCapability::SelfClosingTitleTag,
                 });
             }
             match tag.kind() {
@@ -234,6 +271,7 @@ fn admitted_element_name(interpreted: &str) -> Option<AdmittedElementName> {
         )),
         "p" => Some(AdmittedElementName::Paragraph),
         "style" => Some(AdmittedElementName::Style),
+        "title" => Some(AdmittedElementName::Title),
         _ => None,
     }
 }
@@ -302,6 +340,9 @@ enum Effect {
     InsertStyleElement,
     CloseStyleElement,
     PopStyleElementAtEndOfFile,
+    InsertTitleElement,
+    CloseTitleElement,
+    PopTitleElementAtEndOfFile,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -340,8 +381,31 @@ fn classify(
     mode: InsertionMode,
     open_selected_ordinary: &[HtmlSelectedOrdinaryElementName],
     paragraph_is_current: bool,
+    text_mode_element: Option<TextModeElement>,
     token: &AdmittedToken<'_>,
 ) -> Result<ModeStep, HtmlTreeCapability> {
+    if token.is_title_tag() {
+        match (mode, token) {
+            (
+                InsertionMode::Initial
+                | InsertionMode::BeforeHtml
+                | InsertionMode::BeforeHead
+                | InsertionMode::InHead,
+                AdmittedToken::StartTag {
+                    name: AdmittedElementName::Title,
+                    ..
+                },
+            )
+            | (
+                InsertionMode::Text,
+                AdmittedToken::EndTag {
+                    name: AdmittedElementName::Title,
+                    ..
+                },
+            ) => {}
+            _ => return Err(HtmlTreeCapability::TitleTagOutsideSelectedLifecycle),
+        }
+    }
     if token.is_style_tag() {
         match (mode, token) {
             (
@@ -429,6 +493,13 @@ fn classify(
                     effect: Effect::InsertStyleElement,
                     feedback: HtmlTreeTokenizerFeedback::EnterRawText,
                 }),
+                AdmittedToken::StartTag {
+                    name: AdmittedElementName::Title,
+                    ..
+                } => Ok(ModeStep::RequestTokenizerFeedback {
+                    effect: Effect::InsertTitleElement,
+                    feedback: HtmlTreeTokenizerFeedback::EnterRcdataForTitle,
+                }),
                 AdmittedToken::EndTag {
                     name: AdmittedElementName::Shell(HtmlShellElementName::Head),
                     ..
@@ -458,12 +529,34 @@ fn classify(
             AdmittedToken::EndTag {
                 name: AdmittedElementName::Style,
                 ..
-            } => Ok(ModeStep::ConsumeRestoringOriginal {
-                effect: Effect::CloseStyleElement,
-            }),
-            AdmittedToken::EndOfFile { .. } => Ok(ModeStep::ReprocessRestoringOriginal {
-                effect: Effect::PopStyleElementAtEndOfFile,
-            }),
+            } => match text_mode_element {
+                Some(TextModeElement::Style) => Ok(ModeStep::ConsumeRestoringOriginal {
+                    effect: Effect::CloseStyleElement,
+                }),
+                Some(TextModeElement::Title) | None => {
+                    Err(HtmlTreeCapability::StyleTagOutsideSelectedLifecycle)
+                }
+            },
+            AdmittedToken::EndTag {
+                name: AdmittedElementName::Title,
+                ..
+            } => match text_mode_element {
+                Some(TextModeElement::Title) => Ok(ModeStep::ConsumeRestoringOriginal {
+                    effect: Effect::CloseTitleElement,
+                }),
+                Some(TextModeElement::Style) | None => {
+                    Err(HtmlTreeCapability::TitleTagOutsideSelectedLifecycle)
+                }
+            },
+            AdmittedToken::EndOfFile { .. } => match text_mode_element {
+                Some(TextModeElement::Style) => Ok(ModeStep::ReprocessRestoringOriginal {
+                    effect: Effect::PopStyleElementAtEndOfFile,
+                }),
+                Some(TextModeElement::Title) => Ok(ModeStep::ReprocessRestoringOriginal {
+                    effect: Effect::PopTitleElementAtEndOfFile,
+                }),
+                None => Err(HtmlTreeCapability::UnprovedShellEndTagPosition),
+            },
             AdmittedToken::StartTag { .. } => {
                 Err(HtmlTreeCapability::UnprovedShellStartTagPosition)
             }
@@ -622,6 +715,14 @@ fn classify(
                     name: AdmittedElementName::Style,
                     ..
                 } => unreachable!("Style firewall handled before the mode match"),
+                AdmittedToken::StartTag {
+                    name: AdmittedElementName::Title,
+                    ..
+                }
+                | AdmittedToken::EndTag {
+                    name: AdmittedElementName::Title,
+                    ..
+                } => unreachable!("Title firewall handled before the mode match"),
                 AdmittedToken::EndOfFile { .. } => Ok(ModeStep::Stop {
                     effect: (!open_selected_ordinary.is_empty())
                         .then_some(Effect::RecordOpenSelectedOrdinaryElementAtEndOfFile),
@@ -692,7 +793,7 @@ fn selected_end_target(
 
 fn is_implied_end_element(element: &HtmlElement) -> bool {
     match element {
-        HtmlElement::Shell(_) | HtmlElement::Style(_) => false,
+        HtmlElement::Shell(_) | HtmlElement::Style(_) | HtmlElement::Title(_) => false,
         HtmlElement::SelectedOrdinary(selected) => match selected.name() {
             HtmlSelectedOrdinaryElementName::Div | HtmlSelectedOrdinaryElementName::Section => {
                 false
@@ -767,6 +868,12 @@ pub(crate) enum HtmlTreeSessionError {
     OriginalInsertionModeWasNotInHead,
     StyleElementAlreadyOpen,
     StyleElementIsNotCurrent,
+    TitleElementAlreadyOpen,
+    TitleElementIsNotCurrent,
+    /// The Text insertion mode was reached without a selected Text-mode
+    /// element current. Text is only ever entered by acknowledging Style or
+    /// Title feedback, and is left by popping that exact element.
+    TextModeWithoutSelectedTextElement,
 }
 
 impl std::fmt::Display for HtmlTreeSessionError {
@@ -858,10 +965,15 @@ impl HtmlTreeSession {
         }
         let open_selected_ordinary = self.open_selected_ordinary_names();
         let paragraph_is_current = self.open_paragraph()?.is_some();
+        let text_mode_element = self.open_text_mode_element();
+        if self.mode == InsertionMode::Text && text_mode_element.is_none() {
+            return Err(HtmlTreeSessionError::TextModeWithoutSelectedTextElement);
+        }
         let step = match classify(
             self.mode,
             &open_selected_ordinary,
             paragraph_is_current,
+            text_mode_element,
             token,
         ) {
             Ok(step) => step,
@@ -955,6 +1067,11 @@ impl HtmlTreeSession {
             .iter()
             .copied()
             .find(|id| self.is_style(*id));
+        let final_open_title = self
+            .open_elements
+            .iter()
+            .copied()
+            .find(|id| self.is_title(*id));
         HtmlDocumentShellParts {
             nodes: self.nodes,
             root: self.root,
@@ -967,12 +1084,15 @@ impl HtmlTreeSession {
             final_open_selected_ordinary,
             final_open_paragraph,
             final_open_style,
-            final_style_text_mode_active: self.mode == InsertionMode::Text,
-            final_style_original_in_head_retained: self.original_insertion_mode
+            final_open_title,
+            final_text_mode_active: self.mode == InsertionMode::Text,
+            final_original_insertion_mode_retained: self.original_insertion_mode
                 == Some(InsertionMode::InHead),
             pending_tokenizer_feedback: self.pending_tokenizer_feedback.is_some(),
             coordinated_raw_text_entry_tokens: Vec::new(),
             coordinated_raw_text_close_tokens: Vec::new(),
+            coordinated_rcdata_entry_tokens: Vec::new(),
+            coordinated_rcdata_close_tokens: Vec::new(),
         }
     }
 
@@ -1143,6 +1263,9 @@ impl HtmlTreeSession {
             Effect::InsertStyleElement => self.insert_style_element(trigger, token),
             Effect::CloseStyleElement => self.close_style_element(trigger),
             Effect::PopStyleElementAtEndOfFile => self.pop_style_element_at_eof(trigger),
+            Effect::InsertTitleElement => self.insert_title_element(trigger, token),
+            Effect::CloseTitleElement => self.close_title_element(trigger),
+            Effect::PopTitleElementAtEndOfFile => self.pop_title_element_at_eof(trigger),
         }
     }
 
@@ -1310,6 +1433,108 @@ impl HtmlTreeSession {
         self.open_elements.pop();
         self.record_action(
             HtmlTreeActionKind::PoppedStyleElementAtEndOfFile { node: style },
+            trigger,
+        );
+        Ok(())
+    }
+
+    fn insert_title_element(
+        &mut self,
+        trigger: &HtmlTreeTokenTrigger,
+        token: &AdmittedToken<'_>,
+    ) -> Result<(), HtmlTreeSessionError> {
+        if self
+            .open_elements
+            .iter()
+            .copied()
+            .any(|id| self.is_title(id))
+        {
+            return Err(HtmlTreeSessionError::TitleElementAlreadyOpen);
+        }
+        let AdmittedToken::StartTag {
+            name: AdmittedElementName::Title,
+            complete,
+            raw_name,
+        } = token
+        else {
+            return Err(HtmlTreeSessionError::AuthoredInsertionWithoutStartTag);
+        };
+        let parent = *self
+            .open_elements
+            .last()
+            .ok_or(HtmlTreeSessionError::MissingInsertionParent)?;
+        if Some(parent) != self.head_element {
+            return Err(HtmlTreeSessionError::MissingInsertionParent);
+        }
+        let parent_storage_index = self
+            .nodes
+            .iter()
+            .position(|node| node.id() == parent)
+            .ok_or(HtmlTreeSessionError::UnknownConstructedNode(parent))?;
+        let reserved = self
+            .identities
+            .reserve()
+            .ok_or(HtmlTreeSessionError::ConstructedIdentityExhausted)?;
+        let element = HtmlTitleElement::new((*complete).clone(), (*raw_name).clone());
+        let node = HtmlTreeNode::new(
+            reserved,
+            Some(parent),
+            Vec::new(),
+            HtmlTreeNodeKind::Element(HtmlElement::Title(element)),
+        );
+        self.nodes[parent_storage_index].push_child(reserved);
+        self.nodes.push(node);
+        self.open_elements.push(reserved);
+        self.identities.commit(reserved);
+        self.record_action(
+            HtmlTreeActionKind::InsertedAuthoredTitleElement { node: reserved },
+            trigger,
+        );
+        Ok(())
+    }
+
+    fn close_title_element(
+        &mut self,
+        trigger: &HtmlTreeTokenTrigger,
+    ) -> Result<(), HtmlTreeSessionError> {
+        let title = *self
+            .open_elements
+            .last()
+            .ok_or(HtmlTreeSessionError::TitleElementIsNotCurrent)?;
+        if !self.is_title(title) {
+            return Err(HtmlTreeSessionError::TitleElementIsNotCurrent);
+        }
+        self.open_elements.pop();
+        self.record_action(
+            HtmlTreeActionKind::ClosedTitleElementByAuthoredEndTag { node: title },
+            trigger,
+        );
+        Ok(())
+    }
+
+    /// Text-mode EOF recovery: pop the open Title and restore the retained
+    /// original insertion mode. No authored close is fabricated — the caller
+    /// redispatches the *same* retained EOF token, and no closing-tag source
+    /// evidence is created here.
+    fn pop_title_element_at_eof(
+        &mut self,
+        trigger: &HtmlTreeTokenTrigger,
+    ) -> Result<(), HtmlTreeSessionError> {
+        let title = *self
+            .open_elements
+            .last()
+            .ok_or(HtmlTreeSessionError::TitleElementIsNotCurrent)?;
+        if !self.is_title(title) {
+            return Err(HtmlTreeSessionError::TitleElementIsNotCurrent);
+        }
+        self.record_diagnostic(
+            HtmlTreeDiagnosticCode::TitleEndOfFileInText,
+            trigger,
+            HtmlTreeRecovery::PoppedTitleAtEndOfFileAndRestoredInHead,
+        );
+        self.open_elements.pop();
+        self.record_action(
+            HtmlTreeActionKind::PoppedTitleElementAtEndOfFile { node: title },
             trigger,
         );
         Ok(())
@@ -1985,6 +2210,26 @@ impl HtmlTreeSession {
             self.node(id).map(HtmlTreeNode::kind),
             Some(HtmlTreeNodeKind::Element(HtmlElement::Style(_)))
         )
+    }
+
+    fn is_title(&self, id: HtmlConstructedNodeId) -> bool {
+        matches!(
+            self.node(id).map(HtmlTreeNode::kind),
+            Some(HtmlTreeNodeKind::Element(HtmlElement::Title(_)))
+        )
+    }
+
+    /// Which selected element the Text insertion mode currently holds, read
+    /// from the current node alone.
+    fn open_text_mode_element(&self) -> Option<TextModeElement> {
+        let current = *self.open_elements.last()?;
+        if self.is_style(current) {
+            Some(TextModeElement::Style)
+        } else if self.is_title(current) {
+            Some(TextModeElement::Title)
+        } else {
+            None
+        }
     }
 
     fn is_paragraph(&self, id: HtmlConstructedNodeId) -> bool {

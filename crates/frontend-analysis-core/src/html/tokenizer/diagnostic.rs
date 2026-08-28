@@ -41,6 +41,8 @@ pub(crate) enum HtmlTokenizerDiagnosticCode {
     DuplicateAttribute,
     EndTagWithAttributes,
     EndTagWithTrailingSolidus,
+    MissingSemicolonAfterCharacterReference,
+    UnknownNamedCharacterReference,
 }
 
 impl HtmlTokenizerDiagnosticCode {
@@ -72,6 +74,8 @@ pub(crate) enum HtmlTokenizerDiagnosticContext {
     AttributeValueUnquoted,
     AfterAttributeValueQuoted,
     SelfClosingStartTag,
+    NamedCharacterReference,
+    AmbiguousAmpersand,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
