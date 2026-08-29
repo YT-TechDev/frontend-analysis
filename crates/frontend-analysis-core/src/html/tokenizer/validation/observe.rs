@@ -189,6 +189,12 @@ fn observe_diagnostic(diagnostic: &super::super::diagnostic::HtmlTokenizerDiagno
             HtmlTokenizerDiagnosticCode::EndTagWithTrailingSolidus => {
                 DiagnosticCode::EndTagWithTrailingSolidus
             }
+            HtmlTokenizerDiagnosticCode::MissingSemicolonAfterCharacterReference => {
+                DiagnosticCode::MissingSemicolonAfterCharacterReference
+            }
+            HtmlTokenizerDiagnosticCode::UnknownNamedCharacterReference => {
+                DiagnosticCode::UnknownNamedCharacterReference
+            }
         },
         location: anchor_span(diagnostic.location()),
         context: match diagnostic.context() {
@@ -223,6 +229,12 @@ fn observe_diagnostic(diagnostic: &super::super::diagnostic::HtmlTokenizerDiagno
             }
             HtmlTokenizerDiagnosticContext::SelfClosingStartTag => {
                 DiagnosticContext::SelfClosingStartTag
+            }
+            HtmlTokenizerDiagnosticContext::NamedCharacterReference => {
+                DiagnosticContext::NamedCharacterReference
+            }
+            HtmlTokenizerDiagnosticContext::AmbiguousAmpersand => {
+                DiagnosticContext::AmbiguousAmpersand
             }
         },
         handling: match diagnostic.handling() {
@@ -315,6 +327,12 @@ fn observe_completion(completion: &HtmlTokenizerCompletion) -> Completion {
                         }
                         HtmlTokenizerCapability::ForeignContentControl => {
                             Capability::ForeignContentControl
+                        }
+                        HtmlTokenizerCapability::NumericCharacterReferenceInRcdata => {
+                            Capability::NumericCharacterReferenceInRcdata
+                        }
+                        HtmlTokenizerCapability::RcdataNullRecovery => {
+                            Capability::RcdataNullRecovery
                         }
                     },
                     availability: match unsupported.availability() {

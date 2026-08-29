@@ -14,6 +14,13 @@
 //! acknowledges that applied feedback back to the tree session. Neither side
 //! owns the other's private state representation.
 //!
+//! TC-S10 reuses that same seam for the selected InHead `<title>` RCDATA
+//! lifecycle through [`HtmlTreeTokenizerFeedback::EnterRcdataForTitle`]. Each
+//! request names the element whose requirement it discharges rather than a
+//! tokenizer mode, and the coordinator remembers which selected Text-mode
+//! episode it started so an appropriate-close yield is attributed to that
+//! episode instead of being inferred from the closing token's tag name.
+//!
 //! The existing batch tokenizer and the predecessor [`drive_token`] helper
 //! remain compatible sibling entry points. TC-S9 feedback is represented only
 //! by a coordinator-private outcome so predecessor production tests and
@@ -23,8 +30,9 @@
 //! The driver also owns same-token redispatch: the token-driving core retains
 //! one admitted token and its trigger across every session dispatch that token
 //! needs, so the session itself performs only one insertion-mode rule
-//! evaluation per call. TC-S9 reuses that exact mechanism for Text-mode EOF:
-//! no second EOF token is requested.
+//! evaluation per call. TC-S9 and TC-S10 reuse that exact mechanism for
+//! Text-mode EOF: no second EOF token is requested and no authored closing
+//! evidence is fabricated.
 
 use std::error::Error;
 use std::fmt;
@@ -91,6 +99,11 @@ pub(crate) enum HtmlTreeCoordinatorError {
         mode: HtmlTokenizerMode,
     },
     FeedbackTokenWasNotLastProducedAtBoundary,
+    /// The tokenizer yielded an appropriate Text-mode close that this
+    /// coordinator never started.
+    TextModeCloseWithoutCoordinatedEpisode {
+        close_token_index: usize,
+    },
 }
 
 enum Stop {
@@ -118,6 +131,9 @@ pub(crate) fn construct_html_document_shell(
     let mut stop = None;
     let mut coordinated_raw_text_entry_tokens = Vec::new();
     let mut coordinated_raw_text_close_tokens = Vec::new();
+    let mut coordinated_rcdata_entry_tokens = Vec::new();
+    let mut coordinated_rcdata_close_tokens = Vec::new();
+    let mut active_text_mode_episode: Option<HtmlTreeTokenizerFeedback> = None;
 
     let tokenizer_run: HtmlTokenizerRunResult = 'production: loop {
         let boundary = tokenizer.drive_to_boundary();
@@ -150,6 +166,9 @@ pub(crate) fn construct_html_document_shell(
                         HtmlTreeTokenizerFeedback::EnterRawText => {
                             HtmlTokenizerSessionBoundary::Suspended(HtmlTokenizerMode::RawText)
                         }
+                        HtmlTreeTokenizerFeedback::EnterRcdataForTitle => {
+                            HtmlTokenizerSessionBoundary::Suspended(HtmlTokenizerMode::Rcdata)
+                        }
                     };
                     if boundary != expected_boundary {
                         return Err(HtmlDocumentShellConstructionError::Coordination(
@@ -160,9 +179,20 @@ pub(crate) fn construct_html_document_shell(
                     }
 
                     match feedback {
-                        HtmlTreeTokenizerFeedback::EnterRawText => tokenizer.apply_raw_text()?,
+                        HtmlTreeTokenizerFeedback::EnterRawText => {
+                            tokenizer.apply_raw_text()?;
+                            coordinated_raw_text_entry_tokens.push(next_token_index);
+                        }
+                        HtmlTreeTokenizerFeedback::EnterRcdataForTitle => {
+                            tokenizer.apply_title_rcdata()?;
+                            coordinated_rcdata_entry_tokens.push(next_token_index);
+                        }
                     }
-                    coordinated_raw_text_entry_tokens.push(next_token_index);
+                    // The coordinator remembers which selected Text-mode
+                    // episode it started, so the appropriate-close yield below
+                    // is attributed to that episode rather than inferred from
+                    // the closing token's own tag name.
+                    active_text_mode_episode = Some(feedback);
                     session.acknowledge_tokenizer_feedback(feedback)?;
                     next_token_index += 1;
                     continue 'production;
@@ -194,7 +224,21 @@ pub(crate) fn construct_html_document_shell(
                         HtmlTreeCoordinatorError::FeedbackTokenWasNotLastProducedAtBoundary,
                     ),
                 )?;
-                coordinated_raw_text_close_tokens.push(close_token_index);
+                match active_text_mode_episode.take() {
+                    Some(HtmlTreeTokenizerFeedback::EnterRawText) => {
+                        coordinated_raw_text_close_tokens.push(close_token_index);
+                    }
+                    Some(HtmlTreeTokenizerFeedback::EnterRcdataForTitle) => {
+                        coordinated_rcdata_close_tokens.push(close_token_index);
+                    }
+                    None => {
+                        return Err(HtmlDocumentShellConstructionError::Coordination(
+                            HtmlTreeCoordinatorError::TextModeCloseWithoutCoordinatedEpisode {
+                                close_token_index,
+                            },
+                        ));
+                    }
+                }
             }
             HtmlTokenizerSessionBoundary::Suspended(mode) => {
                 return Err(HtmlDocumentShellConstructionError::Coordination(
@@ -211,6 +255,8 @@ pub(crate) fn construct_html_document_shell(
     let mut parts = session.finish(completion);
     parts.coordinated_raw_text_entry_tokens = coordinated_raw_text_entry_tokens;
     parts.coordinated_raw_text_close_tokens = coordinated_raw_text_close_tokens;
+    parts.coordinated_rcdata_entry_tokens = coordinated_rcdata_entry_tokens;
+    parts.coordinated_rcdata_close_tokens = coordinated_rcdata_close_tokens;
     Ok(freeze(source, tokenizer_run, parts)?)
 }
 

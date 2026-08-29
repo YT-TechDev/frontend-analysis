@@ -121,6 +121,8 @@ pub(super) enum DiagnosticCode {
     DuplicateAttribute,
     EndTagWithAttributes,
     EndTagWithTrailingSolidus,
+    MissingSemicolonAfterCharacterReference,
+    UnknownNamedCharacterReference,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -139,6 +141,8 @@ pub(super) enum DiagnosticContext {
     AttributeValueUnquoted,
     AfterAttributeValueQuoted,
     SelfClosingStartTag,
+    NamedCharacterReference,
+    AmbiguousAmpersand,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -208,6 +212,8 @@ pub(super) enum Capability {
     ContextDependentTokenizerMode(TokenizerMode),
     TreeConstructionControlledState,
     ForeignContentControl,
+    NumericCharacterReferenceInRcdata,
+    RcdataNullRecovery,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
