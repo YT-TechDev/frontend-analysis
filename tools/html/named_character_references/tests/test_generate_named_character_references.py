@@ -57,7 +57,7 @@ class NamedCharacterReferenceDataTests(unittest.TestCase):
         return GENERATED.read_text(encoding="utf-8").splitlines()
 
     def table_row_start(self, lines: list[str]) -> int:
-        declaration = "pub(super) const NAMED_CHARACTER_REFERENCES: &[(&str, &str)] = &["
+        declaration = "const NAMED_CHARACTER_REFERENCES: &[(&str, &str)] = &["
         return lines.index(declaration) + 1
 
     def table_row_end(self, lines: list[str]) -> int:
@@ -384,7 +384,7 @@ class NamedCharacterReferenceDataTests(unittest.TestCase):
         self.assertEqual(first, GENERATED.read_bytes())
         self.assertEqual(
             hashlib.sha256(first).hexdigest(),
-            "0fb26ff21c34626bad20db5e62ea6b2d5e71ed0d1725df6d6d03642ecbb76c69",
+            "ecacc368c8c3c6ddf9023b1e55aceb1cd3f583bbe543b6d83808f21b456c6fce",
         )
 
     def test_generated_header_records_all_required_authority(self) -> None:
@@ -436,9 +436,9 @@ class NamedCharacterReferenceDataTests(unittest.TestCase):
     def test_generated_metadata_mutation_fails_semantic_verification(self) -> None:
         lines = self.generated_lines()
         index = lines.index(
-            "pub(super) const NAMED_CHARACTER_REFERENCE_ENTRY_COUNT: usize = 2231;"
+            "const NAMED_CHARACTER_REFERENCE_ENTRY_COUNT: usize = 2231;"
         )
-        lines[index] = "pub(super) const NAMED_CHARACTER_REFERENCE_ENTRY_COUNT: usize = 2230;"
+        lines[index] = "const NAMED_CHARACTER_REFERENCE_ENTRY_COUNT: usize = 2230;"
         with self.assertRaisesRegex(verifier.VerificationError, "metadata differs"):
             self.verify_generated_mutation(self.encoded_lines(lines))
 
@@ -524,18 +524,157 @@ class NamedCharacterReferenceDataTests(unittest.TestCase):
         )
         self.assertNotIn("tools/html/named_character_references/** -text", text)
 
-    def test_generated_data_is_wired_only_under_cfg_test(self) -> None:
-        tokenizer = (
-            ROOT / "crates/frontend-analysis-core/src/html/tokenizer/mod.rs"
-        ).read_text(encoding="utf-8")
-        for module_name in (
-            "named_character_references_data_tests",
-            "named_character_references_generated",
-        ):
-            self.assertEqual(
-                tokenizer.count(f"#[cfg(test)]\nmod {module_name};"),
-                1,
+    def seal_index(self, lines: list[str]) -> int:
+        return lines.index(generator.OWNERSHIP_REGISTRATION_ITEM)
+
+    def test_canonical_output_declares_the_fixed_ownership_registration_once(self) -> None:
+        lines = self.generated_lines()
+        self.assertEqual(lines.count(generator.OWNERSHIP_REGISTRATION_ITEM), 1)
+        self.assertEqual(lines.count(generator.OWNERSHIP_REGISTRATION_BEGIN), 1)
+        self.assertEqual(lines.count(generator.OWNERSHIP_REGISTRATION_END), 1)
+        seal = self.seal_index(lines)
+        self.assertEqual(lines[seal - 1], generator.OWNERSHIP_REGISTRATION_BEGIN)
+        self.assertEqual(lines[seal + 1], generator.OWNERSHIP_REGISTRATION_END)
+        self.assertEqual(
+            generator.OWNERSHIP_REGISTRATION_ITEM,
+            "impl OwnershipRegistration for OwnerToken {}",
+        )
+
+    def test_registration_is_fixed_and_independent_of_retained_data(self) -> None:
+        # The seal carries no data, so a different retained dataset must render
+        # exactly the same registration item.
+        source = self.source_object()
+        del source["&Afr;"]
+        del source["&zwnj;"]
+        manifest = MANIFEST.read_bytes()
+        full = generator.render_rust(
+            generator.parse_and_validate_entities(ENTITIES.read_bytes()), manifest
+        )
+        reduced_dataset = generator.Dataset(
+            generator.parse_and_validate_entities(ENTITIES.read_bytes()).entries[:16],
+            2,
+            0,
+            10,
+            ("ApplyFunction;",),
+        )
+        reduced = generator.render_rust(reduced_dataset, manifest)
+        item = generator.OWNERSHIP_REGISTRATION_ITEM.encode("utf-8")
+        self.assertEqual(full.count(item), 1)
+        self.assertEqual(reduced.count(item), 1)
+
+    def test_canonical_output_declares_no_public_visibility(self) -> None:
+        # The generated source is lexically included inside the private owner,
+        # so no declaration in it may widen the owner's raw-data boundary.
+        for line in self.generated_lines():
+            self.assertFalse(
+                line.startswith(("pub ", "pub(")),
+                f"generated declaration must stay private: {line}",
             )
+
+    def test_generated_missing_registration_fails_canonical_grammar(self) -> None:
+        lines = self.generated_lines()
+        del lines[self.seal_index(lines)]
+        with self.assertRaisesRegex(
+            verifier.VerificationError, "ownership registration item"
+        ):
+            verifier.parse_generated_rust(self.encoded_lines(lines))
+
+    def test_generated_wrong_registration_trait_fails_canonical_grammar(self) -> None:
+        lines = self.generated_lines()
+        seal = self.seal_index(lines)
+        lines[seal] = "impl OtherRegistration for OwnerToken {}"
+        with self.assertRaisesRegex(
+            verifier.VerificationError, "ownership registration item"
+        ):
+            verifier.parse_generated_rust(self.encoded_lines(lines))
+
+    def test_generated_wrong_registration_token_fails_canonical_grammar(self) -> None:
+        lines = self.generated_lines()
+        seal = self.seal_index(lines)
+        lines[seal] = "impl OwnershipRegistration for OtherToken {}"
+        with self.assertRaisesRegex(
+            verifier.VerificationError, "ownership registration item"
+        ):
+            verifier.parse_generated_rust(self.encoded_lines(lines))
+
+    def test_generated_registration_carrying_data_fails_canonical_grammar(self) -> None:
+        lines = self.generated_lines()
+        seal = self.seal_index(lines)
+        lines[seal] = "impl OwnershipRegistration for OwnerToken { const ROWS: () = (); }"
+        with self.assertRaisesRegex(
+            verifier.VerificationError, "ownership registration item"
+        ):
+            verifier.parse_generated_rust(self.encoded_lines(lines))
+
+    def test_generated_duplicate_registration_fails_canonical_grammar(self) -> None:
+        lines = self.generated_lines()
+        seal = self.seal_index(lines)
+        lines.insert(seal + 1, generator.OWNERSHIP_REGISTRATION_ITEM)
+        with self.assertRaisesRegex(
+            verifier.VerificationError, "ownership registration end marker"
+        ):
+            verifier.parse_generated_rust(self.encoded_lines(lines))
+
+    def test_generated_trailing_registration_fails_canonical_closure(self) -> None:
+        lines = self.generated_lines()
+        lines.append(generator.OWNERSHIP_REGISTRATION_ITEM)
+        with self.assertRaisesRegex(
+            verifier.VerificationError, "unexpected content outside canonical"
+        ):
+            verifier.parse_generated_rust(self.encoded_lines(lines))
+
+    def test_generated_widened_table_visibility_fails_canonical_grammar(self) -> None:
+        lines = self.generated_lines()
+        index = lines.index("const NAMED_CHARACTER_REFERENCES: &[(&str, &str)] = &[")
+        lines[index] = f"pub(super) {lines[index]}"
+        with self.assertRaisesRegex(
+            verifier.VerificationError, "table declaration"
+        ):
+            verifier.parse_generated_rust(self.encoded_lines(lines))
+
+    def test_generated_widened_provenance_visibility_fails_canonical_grammar(self) -> None:
+        lines = self.generated_lines()
+        index = lines.index("const RETAINED_ENTITIES_SHA256: &str =")
+        lines[index] = f"pub(crate) {lines[index]}"
+        with self.assertRaisesRegex(
+            verifier.VerificationError, "entities hash declaration"
+        ):
+            verifier.parse_generated_rust(self.encoded_lines(lines))
+
+    def test_generated_widened_metadata_visibility_fails_canonical_grammar(self) -> None:
+        lines = self.generated_lines()
+        index = lines.index("const NAMED_CHARACTER_REFERENCE_TWO_SCALAR_ENTRY_COUNT: usize = 93;")
+        lines[index] = f"pub {lines[index]}"
+        with self.assertRaisesRegex(
+            verifier.VerificationError, "two-scalar count constant"
+        ):
+            verifier.parse_generated_rust(self.encoded_lines(lines))
+
+    def test_regenerating_the_seal_is_deterministic_and_stale_output_fails_check(self) -> None:
+        first = generator.generate(ROOT)
+        self.assertEqual(first, generator.generate(ROOT))
+        self.assertEqual(first, GENERATED.read_bytes())
+        stale = first.replace(
+            generator.OWNERSHIP_REGISTRATION_ITEM.encode("utf-8"), b"", 1
+        )
+        self.assertNotEqual(stale, first)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.temporary_root(temporary, ENTITIES.read_bytes())
+            (root / generator.OUTPUT_PATH).write_bytes(stale)
+            # The generator resolves its repository root from its own location,
+            # so exercise --check through a copy inside the temporary tree.
+            relocated = root / "tools/html/named_character_references" / GENERATOR.name
+            relocated.write_bytes(GENERATOR.read_bytes())
+            completed = subprocess.run(
+                [sys.executable, str(relocated), "--check"],
+                cwd=root,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(completed.returncode, 1, completed.stderr)
+            self.assertIn("stale", completed.stderr)
+            self.assertEqual((root / generator.OUTPUT_PATH).read_bytes(), stale)
 
 
 if __name__ == "__main__":
