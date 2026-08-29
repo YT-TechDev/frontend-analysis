@@ -677,24 +677,36 @@ fn p14_freeze_rejects_outstanding_feedback_and_missing_coordination() {
 fn p14_freeze_rejects_wrong_terminal_tree_state_and_close_trigger() {
     let fixture = coordinated_parts("<style>x</style>");
 
+    // `Text` is one insertion mode with one retained original insertion mode,
+    // so these two facts are now shared across the selected Text-mode element
+    // domains and are refused by the shared final-state check. The Style
+    // replay's own `FinalStyleStateMismatch` still guards the Style-specific
+    // fact, asserted separately below.
     let mut text_mode = coordinated_parts("<style>x</style>").parts;
-    text_mode.final_style_text_mode_active = true;
+    text_mode.final_text_mode_active = true;
     assert!(matches!(
         freeze_fixture(&fixture, text_mode),
-        Err(HtmlTreeFreezeError::FinalStyleStateMismatch)
+        Err(HtmlTreeFreezeError::FinalTextModeStateMismatch)
     ));
 
     let mut retained_original = coordinated_parts("<style>x</style>").parts;
-    retained_original.final_style_original_in_head_retained = true;
+    retained_original.final_original_insertion_mode_retained = true;
     assert!(matches!(
         freeze_fixture(&fixture, retained_original),
+        Err(HtmlTreeFreezeError::FinalTextModeStateMismatch)
+    ));
+
+    let mut claimed_style_open = coordinated_parts("<style>x</style>").parts;
+    claimed_style_open.final_open_style = Some(style_node_id(&claimed_style_open));
+    assert!(matches!(
+        freeze_fixture(&fixture, claimed_style_open),
         Err(HtmlTreeFreezeError::FinalStyleStateMismatch)
     ));
 
     let mut claimed_open = coordinated_parts("<style>x</style>").parts;
     claimed_open.final_open_style = Some(style_node_id(&claimed_open));
-    claimed_open.final_style_text_mode_active = true;
-    claimed_open.final_style_original_in_head_retained = true;
+    claimed_open.final_text_mode_active = true;
+    claimed_open.final_original_insertion_mode_retained = true;
     assert!(freeze_fixture(&fixture, claimed_open).is_err());
 
     let mut wrong_close = coordinated_parts("<style>x</style>").parts;
@@ -824,11 +836,11 @@ fn p14_complete_claim_cannot_upgrade_a_lower_layer_resource_stop() {
 
 #[test]
 fn negative_space_has_no_general_rcdata_script_or_plaintext_entry() {
-    for source in [
-        "<title>x</title>",
-        "<textarea>x</textarea>",
-        "<script>x</script>",
-    ] {
+    // `<title>` left this list because TC-S10 selected it, not because the
+    // TC-S9 claim weakened: `<textarea>` is the RCDATA element that stays
+    // refused, so a shared durable `Rcdata` tokenizer mode still authorizes
+    // nothing on its own.
+    for source in ["<textarea>x</textarea>", "<script>x</script>"] {
         let analysis = analyze(source);
         assert_eq!(
             tree_unsupported(&analysis),
@@ -844,4 +856,20 @@ fn negative_space_has_no_general_rcdata_script_or_plaintext_entry() {
                 ))
         );
     }
+
+    // RAWTEXT entry itself remains Style-only. The TC-S10 selected `<title>`
+    // is now constructed, but through its own Title domain and its own RCDATA
+    // coordination: it constructs no Style node and records no Style action.
+    let title = analyze("<title>x</title>");
+    assert!(tree_unsupported(&title).is_none());
+    assert!(title.nodes_in_creation_order().iter().all(|node| !matches!(
+        node.kind(),
+        HtmlTreeNodeKind::Element(HtmlElement::Style(_))
+    )));
+    assert!(title.actions().iter().all(|action| !matches!(
+        action.kind(),
+        HtmlTreeActionKind::InsertedAuthoredStyleElement { .. }
+            | HtmlTreeActionKind::ClosedStyleElementByAuthoredEndTag { .. }
+            | HtmlTreeActionKind::PoppedStyleElementAtEndOfFile { .. }
+    )));
 }

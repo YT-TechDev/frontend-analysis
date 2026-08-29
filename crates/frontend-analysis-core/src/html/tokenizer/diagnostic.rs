@@ -41,6 +41,14 @@ pub(crate) enum HtmlTokenizerDiagnosticCode {
     DuplicateAttribute,
     EndTagWithAttributes,
     EndTagWithTrailingSolidus,
+    /// The TC-S10 selected maximum match resolved a generated identifier that
+    /// did not end in the authored `;`. Observation-conditioned: the parse
+    /// error is true once the match is selected and its resolution commits.
+    MissingSemicolonAfterCharacterReference,
+    /// The TC-S10 selected Ambiguous Ampersand state observed the authored
+    /// `;` that ended a run completing no generated identifier. The same `;`
+    /// is then processed normally, so this code claims no consumption of it.
+    UnknownNamedCharacterReference,
 }
 
 impl HtmlTokenizerDiagnosticCode {
@@ -72,6 +80,10 @@ pub(crate) enum HtmlTokenizerDiagnosticContext {
     AttributeValueUnquoted,
     AfterAttributeValueQuoted,
     SelfClosingStartTag,
+    /// The TC-S10 selected Named Character Reference state.
+    NamedCharacterReference,
+    /// The TC-S10 selected Ambiguous Ampersand state.
+    AmbiguousAmpersand,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

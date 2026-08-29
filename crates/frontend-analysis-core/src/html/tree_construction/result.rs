@@ -394,6 +394,43 @@ impl fmt::Debug for HtmlStyleElement {
     }
 }
 
+/// Authored-only selected Title element meaning for TC-S10.
+///
+/// A separate closed domain from [`HtmlStyleElement`]: Title is an RCDATA
+/// element whose text may carry resolved Named Character References, while
+/// Style is a RAWTEXT element whose text never does. They are deliberately
+/// not one generic "text element".
+#[derive(Clone)]
+pub(crate) struct HtmlTitleElement {
+    complete: SourceAnchor,
+    raw_name: SourceAnchor,
+}
+
+impl HtmlTitleElement {
+    pub(super) fn new(complete: SourceAnchor, raw_name: SourceAnchor) -> Self {
+        Self { complete, raw_name }
+    }
+
+    pub(crate) fn complete(&self) -> &SourceAnchor {
+        &self.complete
+    }
+
+    pub(crate) fn raw_name(&self) -> &SourceAnchor {
+        &self.raw_name
+    }
+}
+
+impl fmt::Debug for HtmlTitleElement {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("HtmlTitleElement")
+            .field("source_id", &self.complete.source_id())
+            .field("complete_range", &self.complete.range())
+            .field("raw_name_range", &self.raw_name.range())
+            .finish()
+    }
+}
+
 /// The interpreted name of a constructed element, in whichever closed domain
 /// owns it.
 ///
@@ -406,18 +443,20 @@ pub(crate) enum HtmlElementName {
     SelectedOrdinary(HtmlSelectedOrdinaryElementName),
     Paragraph,
     Style,
+    Title,
 }
 
 /// What kind of element a constructed element node is.
 ///
-/// Shell, selected ordinary, Paragraph, and Style meaning are separate closed
-/// domains.
+/// Shell, selected ordinary, Paragraph, Style, and Title meaning are separate
+/// closed domains.
 #[derive(Debug, Clone)]
 pub(crate) enum HtmlElement {
     Shell(HtmlShellElement),
     SelectedOrdinary(HtmlSelectedOrdinaryElement),
     Paragraph(HtmlParagraphElement),
     Style(HtmlStyleElement),
+    Title(HtmlTitleElement),
 }
 
 impl HtmlElement {
@@ -427,6 +466,7 @@ impl HtmlElement {
             Self::SelectedOrdinary(element) => HtmlElementName::SelectedOrdinary(element.name()),
             Self::Paragraph(_) => HtmlElementName::Paragraph,
             Self::Style(_) => HtmlElementName::Style,
+            Self::Title(_) => HtmlElementName::Title,
         }
     }
 
@@ -434,7 +474,9 @@ impl HtmlElement {
     pub(crate) fn shell(&self) -> Option<&HtmlShellElement> {
         match self {
             Self::Shell(element) => Some(element),
-            Self::SelectedOrdinary(_) | Self::Paragraph(_) | Self::Style(_) => None,
+            Self::SelectedOrdinary(_) | Self::Paragraph(_) | Self::Style(_) | Self::Title(_) => {
+                None
+            }
         }
     }
 
@@ -442,7 +484,7 @@ impl HtmlElement {
     pub(crate) fn selected_ordinary(&self) -> Option<&HtmlSelectedOrdinaryElement> {
         match self {
             Self::SelectedOrdinary(element) => Some(element),
-            Self::Shell(_) | Self::Paragraph(_) | Self::Style(_) => None,
+            Self::Shell(_) | Self::Paragraph(_) | Self::Style(_) | Self::Title(_) => None,
         }
     }
 
@@ -450,14 +492,25 @@ impl HtmlElement {
     pub(crate) fn paragraph(&self) -> Option<&HtmlParagraphElement> {
         match self {
             Self::Paragraph(element) => Some(element),
-            Self::Shell(_) | Self::SelectedOrdinary(_) | Self::Style(_) => None,
+            Self::Shell(_) | Self::SelectedOrdinary(_) | Self::Style(_) | Self::Title(_) => None,
         }
     }
 
     pub(crate) fn style(&self) -> Option<&HtmlStyleElement> {
         match self {
             Self::Style(element) => Some(element),
-            Self::Shell(_) | Self::SelectedOrdinary(_) | Self::Paragraph(_) => None,
+            Self::Shell(_) | Self::SelectedOrdinary(_) | Self::Paragraph(_) | Self::Title(_) => {
+                None
+            }
+        }
+    }
+
+    pub(crate) fn title(&self) -> Option<&HtmlTitleElement> {
+        match self {
+            Self::Title(element) => Some(element),
+            Self::Shell(_) | Self::SelectedOrdinary(_) | Self::Paragraph(_) | Self::Style(_) => {
+                None
+            }
         }
     }
 }
@@ -644,6 +697,12 @@ impl HtmlTreeNode {
                     raw_name: style.raw_name(),
                 })
             }
+            HtmlTreeNodeKind::Element(HtmlElement::Title(title)) => {
+                Some(HtmlAuthoredSource::StartTag {
+                    complete: title.complete(),
+                    raw_name: title.raw_name(),
+                })
+            }
             HtmlTreeNodeKind::Text(text) => {
                 Some(HtmlAuthoredSource::Characters(text.contributions()))
             }
@@ -813,6 +872,15 @@ pub(crate) enum HtmlTreeActionKind {
     PoppedStyleElementAtEndOfFile {
         node: HtmlConstructedNodeId,
     },
+    InsertedAuthoredTitleElement {
+        node: HtmlConstructedNodeId,
+    },
+    ClosedTitleElementByAuthoredEndTag {
+        node: HtmlConstructedNodeId,
+    },
+    PoppedTitleElementAtEndOfFile {
+        node: HtmlConstructedNodeId,
+    },
     ClosedShellElement {
         node: HtmlConstructedNodeId,
         name: HtmlShellElementName,
@@ -845,6 +913,9 @@ impl HtmlTreeActionKind {
             | Self::InsertedAuthoredStyleElement { node }
             | Self::ClosedStyleElementByAuthoredEndTag { node }
             | Self::PoppedStyleElementAtEndOfFile { node }
+            | Self::InsertedAuthoredTitleElement { node }
+            | Self::ClosedTitleElementByAuthoredEndTag { node }
+            | Self::PoppedTitleElementAtEndOfFile { node }
             | Self::ClosedShellElement { node, .. } => Some(*node),
             Self::IgnoredUnmatchedSelectedOrdinaryEndTag { .. }
             | Self::AcknowledgedShellEndTag { .. }
@@ -901,6 +972,7 @@ pub(crate) enum HtmlTreeDiagnosticCode {
     OpenSelectedOrdinaryElementAtEndOfFile,
     UnmatchedParagraphEndTag,
     StyleEndOfFileInText,
+    TitleEndOfFileInText,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -914,6 +986,7 @@ pub(crate) enum HtmlTreeRecovery {
     StoppedParsingWithOpenSelectedOrdinaryElements,
     SynthesizedParagraphElementAndClosedIt,
     PoppedStyleAtEndOfFileAndRestoredInHead,
+    PoppedTitleAtEndOfFileAndRestoredInHead,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -936,6 +1009,9 @@ pub(crate) enum HtmlTreeCapability {
     StyleTagAttribute,
     SelfClosingStyleTag,
     StyleTagOutsideSelectedLifecycle,
+    TitleTagAttribute,
+    SelfClosingTitleTag,
+    TitleTagOutsideSelectedLifecycle,
 }
 
 #[derive(Debug, Clone)]
@@ -1098,11 +1174,17 @@ pub(super) struct HtmlDocumentShellParts {
     pub(super) final_open_selected_ordinary: Vec<HtmlConstructedNodeId>,
     pub(super) final_open_paragraph: Option<HtmlConstructedNodeId>,
     pub(super) final_open_style: Option<HtmlConstructedNodeId>,
-    pub(super) final_style_text_mode_active: bool,
-    pub(super) final_style_original_in_head_retained: bool,
+    pub(super) final_open_title: Option<HtmlConstructedNodeId>,
+    /// `Text` is one insertion mode shared by every selected Text-mode
+    /// element, so this fact and the retained original insertion mode below
+    /// are genuinely shared rather than Style-specific.
+    pub(super) final_text_mode_active: bool,
+    pub(super) final_original_insertion_mode_retained: bool,
     pub(super) pending_tokenizer_feedback: bool,
     pub(super) coordinated_raw_text_entry_tokens: Vec<usize>,
     pub(super) coordinated_raw_text_close_tokens: Vec<usize>,
+    pub(super) coordinated_rcdata_entry_tokens: Vec<usize>,
+    pub(super) coordinated_rcdata_close_tokens: Vec<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1386,6 +1468,58 @@ pub(crate) enum HtmlTreeFreezeError {
     OrphanStyleEndOfFileDiagnostic {
         token_index: usize,
     },
+    TitleActionSubjectIsNotTitle(HtmlConstructedNodeId),
+    DuplicateTitleInsertion(HtmlConstructedNodeId),
+    TitleInsertionInventoryMismatch(HtmlConstructedNodeId),
+    TitleInsertionTriggerMismatch {
+        node: HtmlConstructedNodeId,
+        token_index: usize,
+    },
+    TitleParentIsNotHead(HtmlConstructedNodeId),
+    TitleHasNonTextChild {
+        title: HtmlConstructedNodeId,
+        child: HtmlConstructedNodeId,
+    },
+    TitleCoordinationEntryMismatch {
+        actions: Vec<usize>,
+        coordinated: Vec<usize>,
+    },
+    TitleAuthoredCloseTriggerMismatch {
+        node: HtmlConstructedNodeId,
+        token_index: usize,
+    },
+    TitleCoordinationCloseMismatch {
+        actions: Vec<usize>,
+        coordinated: Vec<usize>,
+    },
+    TitleEndOfFileTriggerMismatch {
+        node: HtmlConstructedNodeId,
+        token_index: usize,
+    },
+    TitleEndOfFileDiagnosticMismatch {
+        token_index: usize,
+    },
+    TitleEndOfFileRedispatchMismatch {
+        token_index: usize,
+    },
+    TitleTextTokenMismatch {
+        token_index: usize,
+    },
+    TitleTextParentMismatch {
+        node: HtmlConstructedNodeId,
+        title: HtmlConstructedNodeId,
+    },
+    NonLifoTitleInteraction(HtmlConstructedNodeId),
+    FinalOpenTitleIsNotTitle(HtmlConstructedNodeId),
+    FinalTitleStateMismatch,
+    CompleteTitleStateMismatch,
+    OrphanTitleEndOfFileDiagnostic {
+        token_index: usize,
+    },
+    /// Two selected Text-mode elements cannot be open at once: `Text` is one
+    /// insertion mode with one retained original insertion mode.
+    ConcurrentTextModeElements,
+    FinalTextModeStateMismatch,
 }
 
 impl fmt::Display for HtmlTreeFreezeError {
@@ -1416,12 +1550,19 @@ pub(super) fn freeze(
         final_open_selected_ordinary,
         final_open_paragraph,
         final_open_style,
-        final_style_text_mode_active,
-        final_style_original_in_head_retained,
+        final_open_title,
+        final_text_mode_active,
+        final_original_insertion_mode_retained,
         pending_tokenizer_feedback,
         coordinated_raw_text_entry_tokens,
         coordinated_raw_text_close_tokens,
+        coordinated_rcdata_entry_tokens,
+        coordinated_rcdata_close_tokens,
     } = parts;
+
+    if pending_tokenizer_feedback {
+        return Err(HtmlTreeFreezeError::OutstandingTokenizerFeedback);
+    }
 
     validate_identity_inventory(&nodes, admitted_creation_events)?;
     validate_structure(&nodes, root)?;
@@ -1450,20 +1591,36 @@ pub(super) fn freeze(
         &final_open_selected_ordinary,
         final_open_paragraph,
     )?;
-    validate_style_lifecycle(StyleLifecycleValidation {
+    validate_text_mode_lifecycle(TextModeLifecycleValidation {
+        element: TextModeElement::Style,
         nodes: &nodes,
         actions: &actions,
         diagnostics: &diagnostics,
         tokenizer_run: &tokenizer_run,
         processed_tokens,
         completion: &completion,
-        final_open_style,
-        final_style_text_mode_active,
-        final_style_original_in_head_retained,
-        pending_tokenizer_feedback,
+        final_open: final_open_style,
         coordinated_entries: &coordinated_raw_text_entry_tokens,
         coordinated_closes: &coordinated_raw_text_close_tokens,
     })?;
+    validate_text_mode_lifecycle(TextModeLifecycleValidation {
+        element: TextModeElement::Title,
+        nodes: &nodes,
+        actions: &actions,
+        diagnostics: &diagnostics,
+        tokenizer_run: &tokenizer_run,
+        processed_tokens,
+        completion: &completion,
+        final_open: final_open_title,
+        coordinated_entries: &coordinated_rcdata_entry_tokens,
+        coordinated_closes: &coordinated_rcdata_close_tokens,
+    })?;
+    validate_final_text_mode_state(
+        final_open_style,
+        final_open_title,
+        final_text_mode_active,
+        final_original_insertion_mode_retained,
+    )?;
     validate_diagnostic_evidence(source, &diagnostics, tokenizer_run.tokens().len())?;
     validate_completion(
         source,
@@ -1643,6 +1800,7 @@ fn validate_node_evidence(
                         HtmlParagraphElementOrigin::Synthesized(_) => None,
                     },
                     HtmlElement::Style(style) => Some((style.complete(), style.raw_name())),
+                    HtmlElement::Title(title) => Some((title.complete(), title.raw_name())),
                 };
                 if let Some((complete, raw_name)) = authored {
                     validate_evidence(source, HtmlTreeEvidenceRole::AuthoredCompleteTag, complete)?;
@@ -1714,65 +1872,336 @@ fn validate_action_evidence(
     Ok(())
 }
 
-struct StyleLifecycleValidation<'a> {
+/// Which selected Text-mode element domain a replay is validating.
+///
+/// Style (TC-S9) and Title (TC-S10) stay separate closed element domains with
+/// their own nodes, actions, diagnostics, and freeze evidence. What they
+/// genuinely share is the *shape* of the coordinated Text-mode episode:
+/// insert under `head`, coordinate entry, accept only character tokens until
+/// the appropriate authored close or EOF, then leave Text. That shape is
+/// replayed once here; every failure is still reported in the element's own
+/// vocabulary, so no Style evidence can stand in for Title evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TextModeElement {
+    Style,
+    Title,
+}
+
+/// One recognized Text-mode lifecycle action, in element-agnostic form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TextModeAction {
+    Inserted(HtmlConstructedNodeId),
+    ClosedByAuthoredEndTag(HtmlConstructedNodeId),
+    PoppedAtEndOfFile(HtmlConstructedNodeId),
+}
+
+impl TextModeElement {
+    /// The interpreted authored tag name this domain admits.
+    fn tag_name(self) -> &'static str {
+        match self {
+            Self::Style => "style",
+            Self::Title => "title",
+        }
+    }
+
+    /// The element's own EOF-in-Text diagnostic code and recovery.
+    fn end_of_file_diagnostic(self) -> (HtmlTreeDiagnosticCode, HtmlTreeRecovery) {
+        match self {
+            Self::Style => (
+                HtmlTreeDiagnosticCode::StyleEndOfFileInText,
+                HtmlTreeRecovery::PoppedStyleAtEndOfFileAndRestoredInHead,
+            ),
+            Self::Title => (
+                HtmlTreeDiagnosticCode::TitleEndOfFileInText,
+                HtmlTreeRecovery::PoppedTitleAtEndOfFileAndRestoredInHead,
+            ),
+        }
+    }
+
+    /// The element's authored evidence, when `id` belongs to this domain.
+    fn anchors(self, nodes: &[HtmlTreeNode], id: HtmlConstructedNodeId) -> Option<TextAnchors<'_>> {
+        match (self, find(nodes, id)?.kind()) {
+            (Self::Style, HtmlTreeNodeKind::Element(HtmlElement::Style(style))) => {
+                Some(TextAnchors {
+                    complete: style.complete(),
+                    raw_name: style.raw_name(),
+                })
+            }
+            (Self::Title, HtmlTreeNodeKind::Element(HtmlElement::Title(title))) => {
+                Some(TextAnchors {
+                    complete: title.complete(),
+                    raw_name: title.raw_name(),
+                })
+            }
+            _ => None,
+        }
+    }
+
+    /// Recognizes only this domain's own lifecycle actions.
+    fn recognize(self, kind: &HtmlTreeActionKind) -> Option<TextModeAction> {
+        match (self, kind) {
+            (Self::Style, HtmlTreeActionKind::InsertedAuthoredStyleElement { node })
+            | (Self::Title, HtmlTreeActionKind::InsertedAuthoredTitleElement { node }) => {
+                Some(TextModeAction::Inserted(*node))
+            }
+            (Self::Style, HtmlTreeActionKind::ClosedStyleElementByAuthoredEndTag { node })
+            | (Self::Title, HtmlTreeActionKind::ClosedTitleElementByAuthoredEndTag { node }) => {
+                Some(TextModeAction::ClosedByAuthoredEndTag(*node))
+            }
+            (Self::Style, HtmlTreeActionKind::PoppedStyleElementAtEndOfFile { node })
+            | (Self::Title, HtmlTreeActionKind::PoppedTitleElementAtEndOfFile { node }) => {
+                Some(TextModeAction::PoppedAtEndOfFile(*node))
+            }
+            _ => None,
+        }
+    }
+
+    fn action_subject_mismatch(self, node: HtmlConstructedNodeId) -> HtmlTreeFreezeError {
+        match self {
+            Self::Style => HtmlTreeFreezeError::StyleActionSubjectIsNotStyle(node),
+            Self::Title => HtmlTreeFreezeError::TitleActionSubjectIsNotTitle(node),
+        }
+    }
+
+    fn duplicate_insertion(self, node: HtmlConstructedNodeId) -> HtmlTreeFreezeError {
+        match self {
+            Self::Style => HtmlTreeFreezeError::DuplicateStyleInsertion(node),
+            Self::Title => HtmlTreeFreezeError::DuplicateTitleInsertion(node),
+        }
+    }
+
+    fn insertion_inventory_mismatch(self, node: HtmlConstructedNodeId) -> HtmlTreeFreezeError {
+        match self {
+            Self::Style => HtmlTreeFreezeError::StyleInsertionInventoryMismatch(node),
+            Self::Title => HtmlTreeFreezeError::TitleInsertionInventoryMismatch(node),
+        }
+    }
+
+    fn insertion_trigger_mismatch(
+        self,
+        node: HtmlConstructedNodeId,
+        token_index: usize,
+    ) -> HtmlTreeFreezeError {
+        match self {
+            Self::Style => HtmlTreeFreezeError::StyleInsertionTriggerMismatch { node, token_index },
+            Self::Title => HtmlTreeFreezeError::TitleInsertionTriggerMismatch { node, token_index },
+        }
+    }
+
+    fn parent_is_not_head(self, node: HtmlConstructedNodeId) -> HtmlTreeFreezeError {
+        match self {
+            Self::Style => HtmlTreeFreezeError::StyleParentIsNotHead(node),
+            Self::Title => HtmlTreeFreezeError::TitleParentIsNotHead(node),
+        }
+    }
+
+    fn has_non_text_child(
+        self,
+        element: HtmlConstructedNodeId,
+        child: HtmlConstructedNodeId,
+    ) -> HtmlTreeFreezeError {
+        match self {
+            Self::Style => HtmlTreeFreezeError::StyleHasNonTextChild {
+                style: element,
+                child,
+            },
+            Self::Title => HtmlTreeFreezeError::TitleHasNonTextChild {
+                title: element,
+                child,
+            },
+        }
+    }
+
+    fn coordination_entry_mismatch(
+        self,
+        actions: Vec<usize>,
+        coordinated: Vec<usize>,
+    ) -> HtmlTreeFreezeError {
+        match self {
+            Self::Style => HtmlTreeFreezeError::StyleCoordinationEntryMismatch {
+                actions,
+                coordinated,
+            },
+            Self::Title => HtmlTreeFreezeError::TitleCoordinationEntryMismatch {
+                actions,
+                coordinated,
+            },
+        }
+    }
+
+    fn authored_close_trigger_mismatch(
+        self,
+        node: HtmlConstructedNodeId,
+        token_index: usize,
+    ) -> HtmlTreeFreezeError {
+        match self {
+            Self::Style => {
+                HtmlTreeFreezeError::StyleAuthoredCloseTriggerMismatch { node, token_index }
+            }
+            Self::Title => {
+                HtmlTreeFreezeError::TitleAuthoredCloseTriggerMismatch { node, token_index }
+            }
+        }
+    }
+
+    fn coordination_close_mismatch(
+        self,
+        actions: Vec<usize>,
+        coordinated: Vec<usize>,
+    ) -> HtmlTreeFreezeError {
+        match self {
+            Self::Style => HtmlTreeFreezeError::StyleCoordinationCloseMismatch {
+                actions,
+                coordinated,
+            },
+            Self::Title => HtmlTreeFreezeError::TitleCoordinationCloseMismatch {
+                actions,
+                coordinated,
+            },
+        }
+    }
+
+    fn end_of_file_trigger_mismatch(
+        self,
+        node: HtmlConstructedNodeId,
+        token_index: usize,
+    ) -> HtmlTreeFreezeError {
+        match self {
+            Self::Style => HtmlTreeFreezeError::StyleEndOfFileTriggerMismatch { node, token_index },
+            Self::Title => HtmlTreeFreezeError::TitleEndOfFileTriggerMismatch { node, token_index },
+        }
+    }
+
+    fn end_of_file_diagnostic_mismatch(self, token_index: usize) -> HtmlTreeFreezeError {
+        match self {
+            Self::Style => HtmlTreeFreezeError::StyleEndOfFileDiagnosticMismatch { token_index },
+            Self::Title => HtmlTreeFreezeError::TitleEndOfFileDiagnosticMismatch { token_index },
+        }
+    }
+
+    fn end_of_file_redispatch_mismatch(self, token_index: usize) -> HtmlTreeFreezeError {
+        match self {
+            Self::Style => HtmlTreeFreezeError::StyleEndOfFileRedispatchMismatch { token_index },
+            Self::Title => HtmlTreeFreezeError::TitleEndOfFileRedispatchMismatch { token_index },
+        }
+    }
+
+    fn text_token_mismatch(self, token_index: usize) -> HtmlTreeFreezeError {
+        match self {
+            Self::Style => HtmlTreeFreezeError::StyleTextTokenMismatch { token_index },
+            Self::Title => HtmlTreeFreezeError::TitleTextTokenMismatch { token_index },
+        }
+    }
+
+    fn text_parent_mismatch(
+        self,
+        node: HtmlConstructedNodeId,
+        element: HtmlConstructedNodeId,
+    ) -> HtmlTreeFreezeError {
+        match self {
+            Self::Style => HtmlTreeFreezeError::StyleTextParentMismatch {
+                node,
+                style: element,
+            },
+            Self::Title => HtmlTreeFreezeError::TitleTextParentMismatch {
+                node,
+                title: element,
+            },
+        }
+    }
+
+    fn non_lifo_interaction(self, node: HtmlConstructedNodeId) -> HtmlTreeFreezeError {
+        match self {
+            Self::Style => HtmlTreeFreezeError::NonLifoStyleInteraction(node),
+            Self::Title => HtmlTreeFreezeError::NonLifoTitleInteraction(node),
+        }
+    }
+
+    fn final_open_is_foreign(self, node: HtmlConstructedNodeId) -> HtmlTreeFreezeError {
+        match self {
+            Self::Style => HtmlTreeFreezeError::FinalOpenStyleIsNotStyle(node),
+            Self::Title => HtmlTreeFreezeError::FinalOpenTitleIsNotTitle(node),
+        }
+    }
+
+    fn final_state_mismatch(self) -> HtmlTreeFreezeError {
+        match self {
+            Self::Style => HtmlTreeFreezeError::FinalStyleStateMismatch,
+            Self::Title => HtmlTreeFreezeError::FinalTitleStateMismatch,
+        }
+    }
+
+    fn complete_state_mismatch(self) -> HtmlTreeFreezeError {
+        match self {
+            Self::Style => HtmlTreeFreezeError::CompleteStyleStateMismatch,
+            Self::Title => HtmlTreeFreezeError::CompleteTitleStateMismatch,
+        }
+    }
+
+    fn orphan_end_of_file_diagnostic(self, token_index: usize) -> HtmlTreeFreezeError {
+        match self {
+            Self::Style => HtmlTreeFreezeError::OrphanStyleEndOfFileDiagnostic { token_index },
+            Self::Title => HtmlTreeFreezeError::OrphanTitleEndOfFileDiagnostic { token_index },
+        }
+    }
+}
+
+/// One Text-mode element's authored evidence, borrowed for replay.
+struct TextAnchors<'a> {
+    complete: &'a SourceAnchor,
+    raw_name: &'a SourceAnchor,
+}
+
+struct TextModeLifecycleValidation<'a> {
+    element: TextModeElement,
     nodes: &'a [HtmlTreeNode],
     actions: &'a [HtmlTreeAction],
     diagnostics: &'a [HtmlTreeDiagnostic],
     tokenizer_run: &'a HtmlTokenizerRunResult,
     processed_tokens: usize,
     completion: &'a HtmlTreeCompletion,
-    final_open_style: Option<HtmlConstructedNodeId>,
-    final_style_text_mode_active: bool,
-    final_style_original_in_head_retained: bool,
-    pending_tokenizer_feedback: bool,
+    final_open: Option<HtmlConstructedNodeId>,
     coordinated_entries: &'a [usize],
     coordinated_closes: &'a [usize],
 }
 
-fn validate_style_lifecycle(
-    input: StyleLifecycleValidation<'_>,
+fn validate_text_mode_lifecycle(
+    input: TextModeLifecycleValidation<'_>,
 ) -> Result<(), HtmlTreeFreezeError> {
-    let StyleLifecycleValidation {
+    let TextModeLifecycleValidation {
+        element,
         nodes,
         actions,
         diagnostics,
         tokenizer_run,
         processed_tokens,
         completion,
-        final_open_style,
-        final_style_text_mode_active,
-        final_style_original_in_head_retained,
-        pending_tokenizer_feedback,
+        final_open,
         coordinated_entries,
         coordinated_closes,
     } = input;
-    if pending_tokenizer_feedback {
-        return Err(HtmlTreeFreezeError::OutstandingTokenizerFeedback);
-    }
 
-    let style_nodes: Vec<HtmlConstructedNodeId> = nodes
+    let element_nodes: Vec<HtmlConstructedNodeId> = nodes
         .iter()
-        .filter_map(|node| style(nodes, node.id()).map(|_| node.id()))
+        .filter(|node| element.anchors(nodes, node.id()).is_some())
+        .map(HtmlTreeNode::id)
         .collect();
-    for id in &style_nodes {
-        let node = find(nodes, *id).expect("style inventory is stored");
+    for id in &element_nodes {
+        let node = find(nodes, *id).expect("text-mode inventory is stored");
         let Some(parent) = node.parent() else {
-            return Err(HtmlTreeFreezeError::StyleParentIsNotHead(*id));
+            return Err(element.parent_is_not_head(*id));
         };
         if !find(nodes, parent)
             .is_some_and(|node| is_shell_element(node, HtmlShellElementName::Head))
         {
-            return Err(HtmlTreeFreezeError::StyleParentIsNotHead(*id));
+            return Err(element.parent_is_not_head(*id));
         }
         for child in node.children() {
             if !matches!(
                 find(nodes, *child).map(HtmlTreeNode::kind),
                 Some(HtmlTreeNodeKind::Text(_))
             ) {
-                return Err(HtmlTreeFreezeError::StyleHasNonTextChild {
-                    style: *id,
-                    child: *child,
-                });
+                return Err(element.has_non_text_child(*id, *child));
             }
         }
     }
@@ -1783,201 +2212,170 @@ fn validate_style_lifecycle(
     let mut insertion_tokens = Vec::new();
     let mut close_tokens = Vec::new();
     let mut matched_eof_diagnostics = Vec::new();
+    let (eof_code, eof_recovery) = element.end_of_file_diagnostic();
 
     for (action_index, action) in actions.iter().enumerate() {
         let token_index = action.trigger().token_index();
-        match action.kind() {
-            HtmlTreeActionKind::InsertedAuthoredStyleElement { node } => {
-                let Some(element) = style(nodes, *node) else {
-                    return Err(HtmlTreeFreezeError::StyleActionSubjectIsNotStyle(*node));
+        match element.recognize(action.kind()) {
+            Some(TextModeAction::Inserted(node)) => {
+                let Some(anchors) = element.anchors(nodes, node) else {
+                    return Err(element.action_subject_mismatch(node));
                 };
-                if inserted.contains(node) {
-                    return Err(HtmlTreeFreezeError::DuplicateStyleInsertion(*node));
+                if inserted.contains(&node) {
+                    return Err(element.duplicate_insertion(node));
                 }
                 if replayed_open.is_some()
-                    || !style_start_matches(element, action.trigger(), tokenizer_run)
+                    || !text_mode_start_matches(element, &anchors, action.trigger(), tokenizer_run)
                 {
-                    return Err(HtmlTreeFreezeError::StyleInsertionTriggerMismatch {
-                        node: *node,
-                        token_index,
-                    });
+                    return Err(element.insertion_trigger_mismatch(node, token_index));
                 }
-                inserted.push(*node);
+                inserted.push(node);
                 insertion_tokens.push(token_index);
-                replayed_open = Some(*node);
+                replayed_open = Some(node);
                 episode_start = Some(token_index);
             }
-            HtmlTreeActionKind::InsertedTextNode { node }
-            | HtmlTreeActionKind::AppendedToTextNode { node }
-                if replayed_open.is_some() =>
-            {
-                let style_id = replayed_open.expect("guarded style open");
-                if find(nodes, *node).and_then(HtmlTreeNode::parent) != Some(style_id) {
-                    return Err(HtmlTreeFreezeError::StyleTextParentMismatch {
-                        node: *node,
-                        style: style_id,
-                    });
-                }
-                if !text_action_matches(*node, action.trigger(), tokenizer_run, nodes) {
-                    return Err(HtmlTreeFreezeError::StyleTextTokenMismatch { token_index });
-                }
-            }
-            HtmlTreeActionKind::ClosedStyleElementByAuthoredEndTag { node } => {
-                if replayed_open != Some(*node)
-                    || !is_plain_style_trigger(action.trigger(), tokenizer_run, HtmlTagKind::End)
+            Some(TextModeAction::ClosedByAuthoredEndTag(node)) => {
+                if replayed_open != Some(node)
+                    || !is_plain_text_mode_trigger(
+                        element,
+                        action.trigger(),
+                        tokenizer_run,
+                        HtmlTagKind::End,
+                    )
                 {
-                    return Err(HtmlTreeFreezeError::StyleAuthoredCloseTriggerMismatch {
-                        node: *node,
-                        token_index,
-                    });
+                    return Err(element.authored_close_trigger_mismatch(node, token_index));
                 }
-                let start =
-                    episode_start.ok_or(HtmlTreeFreezeError::NonLifoStyleInteraction(*node))?;
-                validate_raw_text_character_interval(tokenizer_run, start, token_index)?;
+                let start = episode_start.ok_or(element.non_lifo_interaction(node))?;
+                validate_text_mode_character_interval(element, tokenizer_run, start, token_index)?;
                 close_tokens.push(token_index);
                 replayed_open = None;
                 episode_start = None;
             }
-            HtmlTreeActionKind::PoppedStyleElementAtEndOfFile { node } => {
-                if replayed_open != Some(*node)
+            Some(TextModeAction::PoppedAtEndOfFile(node)) => {
+                if replayed_open != Some(node)
                     || !is_end_of_file_trigger(action.trigger(), tokenizer_run)
                 {
-                    return Err(HtmlTreeFreezeError::StyleEndOfFileTriggerMismatch {
-                        node: *node,
-                        token_index,
-                    });
+                    return Err(element.end_of_file_trigger_mismatch(node, token_index));
                 }
-                let start =
-                    episode_start.ok_or(HtmlTreeFreezeError::NonLifoStyleInteraction(*node))?;
-                validate_raw_text_character_interval(tokenizer_run, start, token_index)?;
+                let start = episode_start.ok_or(element.non_lifo_interaction(node))?;
+                validate_text_mode_character_interval(element, tokenizer_run, start, token_index)?;
                 let eof_diags: Vec<(usize, &HtmlTreeDiagnostic)> = diagnostics
                     .iter()
                     .enumerate()
                     .filter(|(_, diagnostic)| {
-                        diagnostic.code() == HtmlTreeDiagnosticCode::StyleEndOfFileInText
+                        diagnostic.code() == eof_code
                             && diagnostic.trigger().token_index() == token_index
                     })
                     .collect();
-                if !matches!(eof_diags.as_slice(), [(index, diagnostic)] if diagnostic.recovery() == HtmlTreeRecovery::PoppedStyleAtEndOfFileAndRestoredInHead && same_trigger(diagnostic.trigger(), action.trigger()))
+                if !matches!(eof_diags.as_slice(), [(index, diagnostic)] if diagnostic.recovery() == eof_recovery && same_trigger(diagnostic.trigger(), action.trigger()))
                 {
-                    return Err(HtmlTreeFreezeError::StyleEndOfFileDiagnosticMismatch {
-                        token_index,
-                    });
+                    return Err(element.end_of_file_diagnostic_mismatch(token_index));
                 }
                 matched_eof_diagnostics.push(eof_diags[0].0);
                 let Some(next) = actions.get(action_index + 1) else {
-                    return Err(HtmlTreeFreezeError::StyleEndOfFileRedispatchMismatch {
-                        token_index,
-                    });
+                    return Err(element.end_of_file_redispatch_mismatch(token_index));
                 };
                 if !matches!(next.kind(), HtmlTreeActionKind::ReprocessedToken)
                     || !same_trigger(next.trigger(), action.trigger())
                 {
-                    return Err(HtmlTreeFreezeError::StyleEndOfFileRedispatchMismatch {
-                        token_index,
-                    });
+                    return Err(element.end_of_file_redispatch_mismatch(token_index));
                 }
                 replayed_open = None;
                 episode_start = None;
             }
-            HtmlTreeActionKind::ReprocessedToken if replayed_open.is_some() => {
-                return Err(HtmlTreeFreezeError::NonLifoStyleInteraction(
-                    replayed_open.expect("guarded style open"),
-                ));
+            None => {
+                let Some(open) = replayed_open else {
+                    continue;
+                };
+                // While this episode is open, the only admissible actions are
+                // its own text insertions. Anything else — including the other
+                // Text-mode domain's lifecycle — is a non-LIFO interleaving.
+                match action.kind() {
+                    HtmlTreeActionKind::InsertedTextNode { node }
+                    | HtmlTreeActionKind::AppendedToTextNode { node } => {
+                        if find(nodes, *node).and_then(HtmlTreeNode::parent) != Some(open) {
+                            return Err(element.text_parent_mismatch(*node, open));
+                        }
+                        if !text_action_matches(*node, action.trigger(), tokenizer_run, nodes) {
+                            return Err(element.text_token_mismatch(token_index));
+                        }
+                    }
+                    _ => return Err(element.non_lifo_interaction(open)),
+                }
             }
-            HtmlTreeActionKind::InsertedAuthoredShellElement { .. }
-            | HtmlTreeActionKind::InsertedSynthesizedShellElement { .. }
-            | HtmlTreeActionKind::InsertedAuthoredSelectedOrdinaryElement { .. }
-            | HtmlTreeActionKind::ClosedSelectedOrdinaryElement { .. }
-            | HtmlTreeActionKind::PoppedSelectedOrdinaryElementByAncestorEndTag { .. }
-            | HtmlTreeActionKind::InsertedAuthoredParagraphElement { .. }
-            | HtmlTreeActionKind::InsertedSynthesizedParagraphElement { .. }
-            | HtmlTreeActionKind::ClosedParagraphElement { .. }
-            | HtmlTreeActionKind::PoppedParagraphElementBySelectedOrdinaryEndTag { .. }
-            | HtmlTreeActionKind::ClosedShellElement { .. }
-            | HtmlTreeActionKind::AcknowledgedShellEndTag { .. }
-            | HtmlTreeActionKind::DuplicateShellStartTagCreatedNoNode { .. }
-            | HtmlTreeActionKind::IgnoredUnmatchedSelectedOrdinaryEndTag { .. }
-            | HtmlTreeActionKind::StoppedParsing
-                if replayed_open.is_some() =>
-            {
-                return Err(HtmlTreeFreezeError::NonLifoStyleInteraction(
-                    replayed_open.expect("guarded style open"),
-                ));
-            }
-            _ => {}
         }
     }
 
-    for node in style_nodes {
+    for node in element_nodes {
         if inserted
             .iter()
             .filter(|inserted| **inserted == node)
             .count()
             != 1
         {
-            return Err(HtmlTreeFreezeError::StyleInsertionInventoryMismatch(node));
+            return Err(element.insertion_inventory_mismatch(node));
         }
     }
     if insertion_tokens != coordinated_entries {
-        return Err(HtmlTreeFreezeError::StyleCoordinationEntryMismatch {
-            actions: insertion_tokens,
-            coordinated: coordinated_entries.to_vec(),
-        });
+        return Err(
+            element.coordination_entry_mismatch(insertion_tokens, coordinated_entries.to_vec())
+        );
     }
     if close_tokens != coordinated_closes {
-        return Err(HtmlTreeFreezeError::StyleCoordinationCloseMismatch {
-            actions: close_tokens,
-            coordinated: coordinated_closes.to_vec(),
-        });
+        return Err(element.coordination_close_mismatch(close_tokens, coordinated_closes.to_vec()));
     }
     for (index, diagnostic) in diagnostics.iter().enumerate() {
-        if diagnostic.code() == HtmlTreeDiagnosticCode::StyleEndOfFileInText
-            && !matched_eof_diagnostics.contains(&index)
-        {
-            return Err(HtmlTreeFreezeError::OrphanStyleEndOfFileDiagnostic {
-                token_index: diagnostic.trigger().token_index(),
-            });
+        if diagnostic.code() == eof_code && !matched_eof_diagnostics.contains(&index) {
+            return Err(element.orphan_end_of_file_diagnostic(diagnostic.trigger().token_index()));
         }
     }
-    if let Some(actual) = final_open_style
-        && style(nodes, actual).is_none()
+    if let Some(actual) = final_open
+        && element.anchors(nodes, actual).is_none()
     {
-        return Err(HtmlTreeFreezeError::FinalOpenStyleIsNotStyle(actual));
+        return Err(element.final_open_is_foreign(actual));
     }
-    if replayed_open != final_open_style {
-        return Err(HtmlTreeFreezeError::FinalStyleStateMismatch);
+    if replayed_open != final_open {
+        return Err(element.final_state_mismatch());
     }
-    let state_matches = match final_open_style {
-        Some(_) => final_style_text_mode_active && final_style_original_in_head_retained,
-        None => !final_style_text_mode_active && !final_style_original_in_head_retained,
-    };
-    if !state_matches {
-        return Err(HtmlTreeFreezeError::FinalStyleStateMismatch);
-    }
-    if matches!(completion, HtmlTreeCompletion::Complete) && final_open_style.is_some() {
-        return Err(HtmlTreeFreezeError::CompleteStyleStateMismatch);
+    if matches!(completion, HtmlTreeCompletion::Complete) && final_open.is_some() {
+        return Err(element.complete_state_mismatch());
     }
     if let Some(start) = episode_start {
         let end = processed_tokens.min(tokenizer_run.tokens().len());
         for token in tokenizer_run.tokens().iter().take(end).skip(start + 1) {
             if !matches!(token, HtmlToken::Character(_)) {
-                return Err(HtmlTreeFreezeError::StyleTextTokenMismatch { token_index: start });
+                return Err(element.text_token_mismatch(start));
             }
         }
     }
     Ok(())
 }
 
-fn style(nodes: &[HtmlTreeNode], id: HtmlConstructedNodeId) -> Option<&HtmlStyleElement> {
-    match find(nodes, id)?.kind() {
-        HtmlTreeNodeKind::Element(HtmlElement::Style(style)) => Some(style),
-        _ => None,
+/// The shared final Text-mode facts, checked once across both domains.
+///
+/// `Text` is one insertion mode and one retained original insertion mode, so
+/// these two facts cannot belong to either element domain alone. Exactly one
+/// selected Text element may be open, and the retained mode facts must agree
+/// with that.
+fn validate_final_text_mode_state(
+    final_open_style: Option<HtmlConstructedNodeId>,
+    final_open_title: Option<HtmlConstructedNodeId>,
+    final_text_mode_active: bool,
+    final_original_insertion_mode_retained: bool,
+) -> Result<(), HtmlTreeFreezeError> {
+    if final_open_style.is_some() && final_open_title.is_some() {
+        return Err(HtmlTreeFreezeError::ConcurrentTextModeElements);
     }
+    let open = final_open_style.is_some() || final_open_title.is_some();
+    if final_text_mode_active != open || final_original_insertion_mode_retained != open {
+        return Err(HtmlTreeFreezeError::FinalTextModeStateMismatch);
+    }
+    Ok(())
 }
 
-fn style_start_matches(
-    style: &HtmlStyleElement,
+fn text_mode_start_matches(
+    element: TextModeElement,
+    anchors: &TextAnchors<'_>,
     trigger: &HtmlTreeTokenTrigger,
     tokenizer_run: &HtmlTokenizerRunResult,
 ) -> bool {
@@ -1985,15 +2383,16 @@ fn style_start_matches(
         return false;
     };
     tag.kind() == HtmlTagKind::Start
-        && tag.name().interpreted() == "style"
+        && tag.name().interpreted() == element.tag_name()
         && tag.attributes().is_empty()
         && tag.self_closing_solidus().is_none()
         && exact_anchor(trigger.authored_boundary(), Some(tag.complete()))
-        && exact_anchor(Some(style.complete()), Some(tag.complete()))
-        && exact_anchor(Some(style.raw_name()), Some(tag.name().source()))
+        && exact_anchor(Some(anchors.complete), Some(tag.complete()))
+        && exact_anchor(Some(anchors.raw_name), Some(tag.name().source()))
 }
 
-fn is_plain_style_trigger(
+fn is_plain_text_mode_trigger(
+    element: TextModeElement,
     trigger: &HtmlTreeTokenTrigger,
     tokenizer_run: &HtmlTokenizerRunResult,
     kind: HtmlTagKind,
@@ -2002,7 +2401,7 @@ fn is_plain_style_trigger(
         return false;
     };
     tag.kind() == kind
-        && tag.name().interpreted() == "style"
+        && tag.name().interpreted() == element.tag_name()
         && tag.attributes().is_empty()
         && tag.self_closing_solidus().is_none()
         && exact_anchor(trigger.authored_boundary(), Some(tag.complete()))
@@ -2030,15 +2429,21 @@ fn text_action_matches(
     })
 }
 
-fn validate_raw_text_character_interval(
+/// Every token strictly between a Text-mode episode's entry and its terminal
+/// token must be a character token.
+///
+/// This is what keeps a decoded Named Character Reference *text*: a resolved
+/// reference reaches the tree as an ordinary character token, and any markup
+/// token appearing inside the episode — which is exactly what re-tokenizing
+/// decoded output would produce — is refused here.
+fn validate_text_mode_character_interval(
+    element: TextModeElement,
     tokenizer_run: &HtmlTokenizerRunResult,
     start: usize,
     terminal: usize,
 ) -> Result<(), HtmlTreeFreezeError> {
     if start >= terminal || terminal >= tokenizer_run.tokens().len() {
-        return Err(HtmlTreeFreezeError::StyleTextTokenMismatch {
-            token_index: terminal,
-        });
+        return Err(element.text_token_mismatch(terminal));
     }
     for (index, token) in tokenizer_run
         .tokens()
@@ -2048,7 +2453,7 @@ fn validate_raw_text_character_interval(
         .skip(start + 1)
     {
         if !matches!(token, HtmlToken::Character(_)) {
-            return Err(HtmlTreeFreezeError::StyleTextTokenMismatch { token_index: index });
+            return Err(element.text_token_mismatch(index));
         }
     }
     Ok(())

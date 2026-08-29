@@ -108,6 +108,13 @@ pub(crate) enum HtmlTokenizerCapability {
     },
     TreeConstructionControlledState,
     ForeignContentControl,
+    /// TC-S10 selects ordinary RCDATA text plus Named Character References.
+    /// The Numeric branch is reached but deliberately not selected, so it is
+    /// refused outright at the authored `#` rather than deferred.
+    NumericCharacterReferenceInRcdata,
+    /// The RCDATA NUL recovery branch is likewise reached but not selected.
+    /// No scalar is committed and no replacement output is claimed.
+    RcdataNullRecovery,
 }
 
 #[derive(Clone)]

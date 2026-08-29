@@ -1,13 +1,15 @@
 //! The crate-private bounded lossless HTML tokenizer production engine.
 //!
-//! Implements the #109-approved Data-context state subset and TC-S9's
-//! selected RAWTEXT extension over a known-valid-UTF-8 `SourceText` using an
+//! Implements the #109-approved Data-context state subset, TC-S9's selected
+//! RAWTEXT extension, and TC-S10's selected RCDATA + Named Character
+//! Reference extension over a known-valid-UTF-8 `SourceText` using an
 //! iterative, non-recursive, single-forward-owner cursor. Transition
 //! accounting, resource accounting, diagnostics, and completion follow the
 //! corrected #111/#112 contracts.
 
 mod builder;
 mod cursor;
+mod named_character_reference;
 mod session;
 mod state;
 
@@ -154,11 +156,37 @@ struct Engine<'a> {
     peak_attributes_per_tag: usize,
     transition_steps: usize,
     /// Retained emitted start-tag index that owns appropriate-end-tag meaning
-    /// during the selected RAWTEXT episode. Never supplied by tree state.
-    raw_text_start_tag_index: Option<usize>,
-    /// True only after RAWTEXT end-tag-name recognition proved an appropriate
-    /// candidate and ordinary tag finalization is finishing that exact token.
-    raw_text_closing_tag: bool,
+    /// during the selected RAWTEXT (TC-S9) or RCDATA (TC-S10) episode. Never
+    /// supplied by tree state. Appropriate-end-tag identity is one shared
+    /// lexical concept across both text modes, so it is one field rather than
+    /// two parallel ones; which mode is active remains `self.state`.
+    text_mode_start_tag_index: Option<usize>,
+    /// True only after RAWTEXT/RCDATA end-tag-name recognition proved an
+    /// appropriate candidate and ordinary tag finalization is finishing that
+    /// exact token.
+    text_mode_closing_tag: bool,
+    /// The exact authored `&` span that entered the selected character
+    /// reference state. Retained only for the duration of one reference: it
+    /// is authored evidence, never interpreted output or a matching buffer.
+    character_reference_start: (usize, usize),
+    /// The selected maximum match whose remaining authored scalars the
+    /// [`State::NamedCharacterReference`] state is consuming, together with
+    /// the still-unconsumed byte offset within its generated identifier.
+    /// Holds no copied candidate: the identifier is a `&'static str` owned by
+    /// the compiler-sealed canonical generated data.
+    pending_named_reference: Option<PendingNamedReference>,
+}
+
+/// The bounded plan for one already-selected maximum match.
+///
+/// This is a decision, not a buffer: it retains the generated identifier by
+/// static reference plus authored offsets, so it contributes nothing to
+/// `TemporaryBufferBytes`.
+#[derive(Debug, Clone, Copy)]
+struct PendingNamedReference {
+    selected: named_character_reference::NamedCharacterReferenceMatch,
+    /// Bytes of the generated identifier already consumed authoritatively.
+    consumed_name_bytes: usize,
 }
 
 impl<'a> Engine<'a> {
@@ -184,8 +212,10 @@ impl<'a> Engine<'a> {
             committed_retained_bytes: 0,
             peak_attributes_per_tag: 0,
             transition_steps: 0,
-            raw_text_start_tag_index: None,
-            raw_text_closing_tag: false,
+            text_mode_start_tag_index: None,
+            text_mode_closing_tag: false,
+            character_reference_start: (0, 0),
+            pending_named_reference: None,
         }
     }
 
@@ -388,6 +418,13 @@ impl<'a> Engine<'a> {
             State::RawTextLessThanSign => self.step_raw_text_less_than_sign(unit),
             State::RawTextEndTagOpen => self.step_raw_text_end_tag_open(unit),
             State::RawTextEndTagName => self.step_raw_text_end_tag_name(unit),
+            State::Rcdata => self.step_rcdata(unit),
+            State::RcdataLessThanSign => self.step_rcdata_less_than_sign(unit),
+            State::RcdataEndTagOpen => self.step_rcdata_end_tag_open(unit),
+            State::RcdataEndTagName => self.step_rcdata_end_tag_name(unit),
+            State::CharacterReference => self.step_character_reference(unit),
+            State::NamedCharacterReference => self.step_named_character_reference(unit),
+            State::AmbiguousAmpersand => self.step_ambiguous_ampersand(unit),
         }
     }
 
@@ -1492,7 +1529,7 @@ impl<'a> Engine<'a> {
         } else {
             None
         };
-        let finishing_raw_text_close = self.raw_text_closing_tag && !is_start_tag;
+        let finishing_text_mode_close = self.text_mode_closing_tag && !is_start_tag;
         let close_end = close_delimiter.1;
         let token = HtmlToken::Tag(builder::finalize_tag(self.source, tag, close_delimiter));
         self.commit_token(token, committed);
@@ -1501,9 +1538,9 @@ impl<'a> Engine<'a> {
             self.materialize_pending_emission_diagnostics(pending_diagnostics, token_index);
         }
         self.state = State::Data;
-        if finishing_raw_text_close {
+        if finishing_text_mode_close {
             self.processed_end = close_end;
-            return self.raw_text_close_yield(close_end);
+            return self.text_mode_close_yield(close_end);
         }
         match context_mode {
             Some(mode) => {
@@ -1894,6 +1931,18 @@ fn context_dependent_mode(interpreted_name: &str) -> Option<super::result::HtmlT
         "plaintext" => Some(HtmlTokenizerMode::Plaintext),
         _ => None,
     }
+}
+
+/// Constructs the typed `Step::Stop` for an internal invariant the engine
+/// itself guarantees, so a violation stops honestly instead of panicking.
+///
+/// Reserved for conditions no authored input can produce: TC-S10 uses it only
+/// where the authoritative cursor would have to disagree with a maximum match
+/// already verified byte-for-byte against the very same source.
+fn internal_invariant_stop(failure: HtmlTokenizerInvariantFailure) -> Step {
+    Step::Stop(HtmlTokenizerIncompleteCause::InternalInvariantFailure(
+        failure,
+    ))
 }
 
 /// Constructs the typed `Step::Stop` for a checked counter/resource

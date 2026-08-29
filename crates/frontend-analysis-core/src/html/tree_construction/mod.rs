@@ -32,7 +32,12 @@
 //! bounded open state and result-owned replay: Body-end consumes into
 //! `AfterBody`; Html-end reprocesses the same admitted token there before the
 //! existing acknowledgement moves to `AfterAfterBody`. The driver remains
-//! stack- and tag-agnostic.
+//! stack- and tag-agnostic. TC-S9 (Issue #388) then adds the first
+//! tree-directed tokenizer feedback through the selected InHead `<style>`
+//! RAWTEXT lifecycle, and TC-S10 (Issue #394) reuses that seam for the
+//! selected InHead `<title>` RCDATA + Named Character Reference lifecycle.
+//! Style and Title stay separate closed element domains; only the `Text`
+//! insertion-mode facts they genuinely share are generalized.
 //!
 //! ```text
 //! &SourceText + HtmlTokenizerLimits
@@ -106,6 +111,8 @@ mod in_body_p_successor_validation;
 mod in_head_style_rawtext_feedback_successor_production;
 #[cfg(test)]
 mod in_head_style_rawtext_feedback_successor_validation;
+#[cfg(test)]
+mod in_head_title_rcdata_named_reference_successor_production;
 #[cfg(test)]
 mod in_head_title_rcdata_named_reference_successor_validation;
 #[cfg(test)]

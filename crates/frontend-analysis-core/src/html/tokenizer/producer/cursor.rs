@@ -70,6 +70,29 @@ impl<'a> Cursor<'a> {
         }
     }
 
+    /// Borrows at most `limit` still-unconsumed raw bytes, without consuming,
+    /// preprocessing, decoding, or interpreting any of them.
+    ///
+    /// This is the bounded, non-committing lookahead the TC-S10 selected
+    /// Named Character Reference maximum match needs. It takes `&self`, so
+    /// non-commitment is structural: it cannot advance the authoritative
+    /// cursor, materialize an input unit, raise a preprocessing diagnostic,
+    /// or retain anything.
+    ///
+    /// Raw bytes are deliberately returned as bytes. The only consumer
+    /// compares them against generated Named Character Reference identifiers,
+    /// which are ASCII, and every byte of a multi-byte UTF-8 sequence is
+    /// `>= 0x80` and therefore can never equal an ASCII identifier byte. This
+    /// borrow is consequently never an alternative UTF-8 decoding authority,
+    /// and it never reinterprets CR/CRLF: normalization stays with
+    /// [`Self::advance`], the single authoritative input-unit lifecycle.
+    pub(super) fn peek_unconsumed_bytes(&self, limit: usize) -> &'a [u8] {
+        let bytes = self.source.as_str().as_bytes();
+        let start = self.next_raw_offset.min(bytes.len());
+        let end = start.saturating_add(limit).min(bytes.len());
+        &bytes[start..end]
+    }
+
     /// Decodes exactly one input unit at the current raw offset and advances
     /// with checked movement. Returns the unit together with an optional
     /// preprocessing diagnostic code discovered while materializing it.
