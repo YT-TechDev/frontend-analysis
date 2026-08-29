@@ -13,6 +13,13 @@
 //! therefore still materializes the exact established deferred unsupported
 //! result when no tree coordination is present.
 //!
+//! The two selected episodes are separately owned. RAWTEXT and RCDATA each
+//! retain their own start tag, their own appropriate-close marker, and their
+//! own activation control, so neither lifecycle can be opened, closed, or
+//! validated under the other's theorem. Only helpers that carry no episode
+//! identity — the `</` literal push, the end-tag-candidate fallback, and the
+//! private close-yield marker — are shared.
+//!
 //! This module is crate-private implementation infrastructure. It is not a
 //! public iterator, async stream, parser-control protocol, serialization
 //! contract, browser-adapter boundary, or product-level cancellation API.
@@ -21,8 +28,8 @@ use crate::SourceText;
 use crate::html::token::{HtmlCharacterToken, HtmlTagKind, HtmlToken};
 
 use super::super::diagnostic::{
-    HtmlTokenizerDiagnosticCode, HtmlTokenizerDiagnosticContext, HtmlTokenizerDiagnosticHandling,
-    HtmlTokenizerDiagnosticSubject,
+    HtmlTokenizerDiagnostic, HtmlTokenizerDiagnosticCode, HtmlTokenizerDiagnosticContext,
+    HtmlTokenizerDiagnosticHandling, HtmlTokenizerDiagnosticSubject,
 };
 use super::super::resource::{HtmlTokenizerInvariantFailure, HtmlTokenizerLimits};
 use super::super::result::{
@@ -35,7 +42,7 @@ use super::cursor::InputUnit;
 use super::named_character_reference;
 use super::state::State;
 use super::{
-    DataRun, Engine, PendingNamedReference, Step, context_dependent_mode, internal_invariant_stop,
+    DataRun, Engine, Step, context_dependent_mode, internal_invariant_stop,
     invalid_configuration_result, source_bytes_limit_result,
 };
 
@@ -342,8 +349,11 @@ impl<'a> Engine<'a> {
         {
             return false;
         }
-        self.text_mode_start_tag_index = Some(token_index);
-        self.text_mode_closing_tag = false;
+        if self.raw_text_start_tag_index.is_some() || self.rcdata_start_tag_index.is_some() {
+            return false;
+        }
+        self.raw_text_start_tag_index = Some(token_index);
+        self.raw_text_closing_tag = false;
         self.state = State::RawText;
         true
     }
@@ -444,7 +454,7 @@ impl<'a> Engine<'a> {
                 Step::Continue
             }
             InputUnit::Scalar { ch, start, end }
-                if self.text_mode_candidate_is_appropriate()
+                if self.raw_text_candidate_is_appropriate()
                     && matches!(ch, '\t' | '\n' | '\u{000c}' | ' ' | '/' | '>') =>
             {
                 if let Err(stop) = self.flush_data_run() {
@@ -455,7 +465,7 @@ impl<'a> Engine<'a> {
                     .expect("appropriate RAWTEXT end-tag candidate active")
                     .interpreted_name
                     .make_ascii_lowercase();
-                self.text_mode_closing_tag = true;
+                self.raw_text_closing_tag = true;
                 match ch {
                     '\t' | '\n' | '\u{000c}' | ' ' => {
                         self.state = State::BeforeAttributeName;
@@ -485,9 +495,25 @@ impl<'a> Engine<'a> {
     /// selected appropriate RAWTEXT (TC-S9) or RCDATA (TC-S10) end-tag token
     /// has committed. The tokenizer has already returned to Data; this only
     /// yields so the coordinator can attribute the close to its episode.
-    pub(super) fn text_mode_close_yield(&mut self, boundary_at: usize) -> Step {
-        self.text_mode_start_tag_index = None;
-        self.text_mode_closing_tag = false;
+    pub(super) fn raw_text_close_yield(&mut self, boundary_at: usize) -> Step {
+        self.raw_text_start_tag_index = None;
+        self.raw_text_closing_tag = false;
+        self.text_mode_close_yield_marker(boundary_at)
+    }
+
+    /// The TC-S10 RCDATA counterpart. Separate from the RAWTEXT yield so each
+    /// episode clears only its own lexical lifecycle state.
+    pub(super) fn rcdata_close_yield(&mut self, boundary_at: usize) -> Step {
+        self.rcdata_start_tag_index = None;
+        self.rcdata_closing_tag = false;
+        self.text_mode_close_yield_marker(boundary_at)
+    }
+
+    /// Builds the private Engine-yield marker both selected episodes use.
+    ///
+    /// A pure constructor over already-committed token evidence: it owns no
+    /// episode identity, which is exactly why it can be shared.
+    fn text_mode_close_yield_marker(&mut self, boundary_at: usize) -> Step {
         let boundary = self.anchor(boundary_at, boundary_at);
         let unsupported = HtmlTokenizerUnsupportedCapability::new(
             self.source,
@@ -504,8 +530,23 @@ impl<'a> Engine<'a> {
         ))
     }
 
-    fn text_mode_candidate_is_appropriate(&self) -> bool {
-        let Some(start_index) = self.text_mode_start_tag_index else {
+    fn raw_text_candidate_is_appropriate(&self) -> bool {
+        self.candidate_matches_episode_start(self.raw_text_start_tag_index)
+    }
+
+    /// The TC-S10 RCDATA episode's own appropriate-end-tag identity.
+    fn rcdata_candidate_is_appropriate(&self) -> bool {
+        self.candidate_matches_episode_start(self.rcdata_start_tag_index)
+    }
+
+    /// Whether the active end-tag candidate is the appropriate close for the
+    /// episode whose retained start tag is `start_tag_index`.
+    ///
+    /// A pure comparison against retained token evidence. The *identity* it is
+    /// asked about is supplied by the caller's own episode, so a Style episode
+    /// can never be closed by asking the Title question or the reverse.
+    fn candidate_matches_episode_start(&self, start_tag_index: Option<usize>) -> bool {
+        let Some(start_index) = start_tag_index else {
             return false;
         };
         let Some(HtmlToken::Tag(start)) = self.tokens.get(start_index) else {
@@ -588,8 +629,11 @@ impl<'a> Engine<'a> {
         {
             return false;
         }
-        self.text_mode_start_tag_index = Some(token_index);
-        self.text_mode_closing_tag = false;
+        if self.raw_text_start_tag_index.is_some() || self.rcdata_start_tag_index.is_some() {
+            return false;
+        }
+        self.rcdata_start_tag_index = Some(token_index);
+        self.rcdata_closing_tag = false;
         self.state = State::Rcdata;
         true
     }
@@ -706,7 +750,7 @@ impl<'a> Engine<'a> {
                 Step::Continue
             }
             InputUnit::Scalar { ch, start, end }
-                if self.text_mode_candidate_is_appropriate()
+                if self.rcdata_candidate_is_appropriate()
                     && matches!(ch, '\t' | '\n' | '\u{000c}' | ' ' | '/' | '>') =>
             {
                 if let Err(stop) = self.flush_data_run() {
@@ -717,7 +761,7 @@ impl<'a> Engine<'a> {
                     .expect("appropriate RCDATA end-tag candidate active")
                     .interpreted_name
                     .make_ascii_lowercase();
-                self.text_mode_closing_tag = true;
+                self.rcdata_closing_tag = true;
                 match ch {
                     '\t' | '\n' | '\u{000c}' | ' ' => {
                         self.state = State::BeforeAttributeName;
@@ -746,6 +790,10 @@ impl<'a> Engine<'a> {
     /// The character reference state, with the RCDATA return state.
     ///
     /// `unit` is the already-materialized scalar following the authored `&`.
+    /// This dispatch decides *which* branch the reference takes and costs one
+    /// transition; it deliberately performs no discovery and consumes no
+    /// further source, so the whole selected Named operation stays one
+    /// transition of its own.
     pub(super) fn step_character_reference(&mut self, unit: InputUnit) -> Step {
         match unit {
             InputUnit::Scalar {
@@ -762,23 +810,12 @@ impl<'a> Engine<'a> {
                 )
             }
             InputUnit::Scalar { ch, .. } if ch.is_ascii_alphanumeric() => {
-                let borrowed = self
-                    .cursor
-                    .peek_unconsumed_bytes(named_character_reference::maximum_lookahead_bytes());
-                match named_character_reference::maximum_match(ch, borrowed) {
-                    Some(selected) => self.begin_selected_named_reference(selected),
-                    None => {
-                        // No generated identifier completes: the authored
-                        // text is preserved exactly, starting with the `&`
-                        // that entered this state.
-                        if let Err(stop) = self.flush_character_reference_ampersand() {
-                            return stop;
-                        }
-                        self.state = State::AmbiguousAmpersand;
-                        self.pending_reconsume = true;
-                        Step::Continue
-                    }
-                }
+                // Reconsume the same scalar in the Named state, so discovery,
+                // preparation, matched-source consumption and commit are one
+                // indivisible transition rather than one per authored scalar.
+                self.state = State::NamedCharacterReference;
+                self.pending_reconsume = true;
+                Step::Continue
             }
             InputUnit::Scalar { .. } | InputUnit::Eof { .. } => {
                 // Nothing that can begin a reference follows: the authored
@@ -794,36 +831,146 @@ impl<'a> Engine<'a> {
         }
     }
 
-    /// Consumes the remaining authored scalars of an already-selected maximum
-    /// match, one dispatched unit at a time through the ordinary
-    /// authoritative cursor lifecycle, and commits the reference on the last.
+    /// The whole selected Named Character Reference operation, as one
+    /// transition-level step.
     ///
-    /// The cursor is never jumped to a computed endpoint and the source is
-    /// never searched, sliced, or retokenized: each unit arrives from the
-    /// same single forward owner every other state uses.
+    /// The lifecycle is fixed and ordered:
+    ///
+    /// ```text
+    /// bounded non-committing discovery
+    ///         ↓
+    /// semantic/resource preparation      (every fallible resource decision)
+    ///         ↓
+    /// candidate evidence construction    (every fallible construction)
+    ///         ↓
+    /// authoritative matched-source consumption
+    ///         ↓
+    /// infallible semantic commit
+    /// ```
+    ///
+    /// Nothing after consumption can refuse: the token and any required
+    /// diagnostic already exist as values, and their capacity was reserved
+    /// before a single scalar of the identifier was consumed. A refusal
+    /// therefore always happens with the identifier wholly unconsumed, so no
+    /// resource exhaustion can expose authored identifier bytes inside
+    /// committed coverage with no evidence to explain them.
+    ///
+    /// `unit` is the reconsumed first identifier scalar; the cursor sits
+    /// immediately after it.
     pub(super) fn step_named_character_reference(&mut self, unit: InputUnit) -> Step {
-        let Some(mut pending) = self.pending_named_reference else {
-            return internal_invariant_stop(HtmlTokenizerInvariantFailure::BuilderState);
-        };
-        let name = pending.selected.name.as_bytes();
-        let Some(expected) = name.get(pending.consumed_name_bytes).copied() else {
-            return internal_invariant_stop(HtmlTokenizerInvariantFailure::BuilderState);
-        };
-        let InputUnit::Scalar { ch, .. } = unit else {
+        let InputUnit::Scalar { ch: first, .. } = unit else {
             return internal_invariant_stop(HtmlTokenizerInvariantFailure::CursorState);
         };
-        // The borrowed bytes this identifier was matched against came from
-        // this very cursor, so disagreement here is impossible for any
-        // authored input; stopping honestly is still cheaper than trusting it.
-        if !ch.is_ascii() || u32::from(expected) != u32::from(ch) {
+
+        // 1. Bounded, non-committing discovery.
+        let borrowed = self
+            .cursor
+            .peek_unconsumed_bytes(named_character_reference::maximum_lookahead_bytes());
+        let Some(selected) = named_character_reference::maximum_match(first, borrowed) else {
+            return self.begin_ambiguous_ampersand_run(unit);
+        };
+        if !selected.is_plainly_consumable() {
+            // Checked, not assumed: the infallible consumption below relies on
+            // every matched byte being an ASCII scalar the authoritative
+            // cursor returns unchanged and without a preprocessing
+            // diagnostic. Nothing is consumed or committed at this point.
             return internal_invariant_stop(HtmlTokenizerInvariantFailure::CursorState);
         }
-        pending.consumed_name_bytes += 1;
-        if pending.consumed_name_bytes < name.len() {
-            self.pending_named_reference = Some(pending);
-            return Step::Continue;
+        let ampersand_start = self.character_reference_start.0;
+        let name_end = self.character_reference_start.1 + selected.name.len();
+        let at = (self.processed_end, self.processed_end);
+
+        // 2. Preparation: every fallible resource decision, in the accepted
+        //    order, before any authored identifier scalar is consumed.
+        if let Err(stop) = self.try_reserve_retained(selected.value.len(), ampersand_start) {
+            return stop;
         }
-        self.commit_selected_named_reference(pending.selected, unit.end())
+        // Ordinary RCDATA text observed before the `&` is *prior* evidence,
+        // not part of this entity: it ends at the `&`, the stop path would
+        // flush it anyway, and emitting it separately keeps every
+        // `EmittedTokens` refusal a single one-token attempt.
+        if let Err(stop) = self.flush_data_run() {
+            return stop;
+        }
+        let committed = match self.preflight_token_emission(selected.value.len(), at) {
+            Ok(committed) => committed,
+            Err(stop) => return stop,
+        };
+        if !selected.ends_with_semicolon()
+            && let Err(stop) = self.preflight_pending_emission_diagnostics(1, at)
+        {
+            return stop;
+        }
+
+        // 3. Candidate evidence construction: every fallible construction.
+        let anchor = self.anchor(ampersand_start, name_end);
+        let Ok(character) = HtmlCharacterToken::new(anchor, selected.value.to_owned()) else {
+            return internal_invariant_stop(
+                HtmlTokenizerInvariantFailure::SourceEvidenceConstruction,
+            );
+        };
+        let token = HtmlToken::Character(character);
+        let missing_semicolon = if selected.ends_with_semicolon() {
+            None
+        } else {
+            // The resolved reference will occupy exactly this index, because
+            // the pending run was already flushed above and nothing else can
+            // emit before the commit below.
+            let token_index = self.tokens.len();
+            let location = (name_end - 1, name_end);
+            let Ok(diagnostic) = HtmlTokenizerDiagnostic::new(
+                self.source,
+                HtmlTokenizerDiagnosticCode::MissingSemicolonAfterCharacterReference,
+                self.anchor(location.0, location.1),
+                HtmlTokenizerDiagnosticContext::NamedCharacterReference,
+                HtmlTokenizerDiagnosticHandling::Continued,
+                HtmlTokenizerDiagnosticSubject::EmittedToken { token_index },
+            ) else {
+                return internal_invariant_stop(
+                    HtmlTokenizerInvariantFailure::SourceEvidenceConstruction,
+                );
+            };
+            Some((diagnostic, location))
+        };
+
+        // 4. Authoritative matched-source consumption. Charged to this one
+        //    transition, never per scalar.
+        let consumed_end = self.consume_discovered_source(selected.name.len() - 1);
+        if consumed_end != name_end {
+            return internal_invariant_stop(HtmlTokenizerInvariantFailure::CursorState);
+        }
+
+        // 5. Infallible semantic commit.
+        self.processed_end = self.processed_end.max(name_end);
+        self.commit_token(token, committed);
+        if let Some((diagnostic, location)) = missing_semicolon {
+            self.commit_prepared_diagnostic(diagnostic, location);
+        }
+        self.state = State::Rcdata;
+        Step::Continue
+    }
+
+    /// Opens the unresolved Ambiguous Ampersand candidate as its own run.
+    ///
+    /// The candidate is a distinct semantic unit, so any ordinary RCDATA text
+    /// observed before the `&` is flushed first and the candidate starts a
+    /// fresh run at the authored `&`. That is what lets the run close at its
+    /// own boundary, before the delimiter is reconsumed in RCDATA.
+    fn begin_ambiguous_ampersand_run(&mut self, unit: InputUnit) -> Step {
+        let InputUnit::Scalar { ch, start, end } = unit else {
+            return internal_invariant_stop(HtmlTokenizerInvariantFailure::CursorState);
+        };
+        if let Err(stop) = self.flush_data_run() {
+            return stop;
+        }
+        if let Err(stop) = self.flush_character_reference_ampersand() {
+            return stop;
+        }
+        if let Err(stop) = self.push_data_char(ch, start, end) {
+            return stop;
+        }
+        self.state = State::AmbiguousAmpersand;
+        Step::Continue
     }
 
     pub(super) fn step_ambiguous_ampersand(&mut self, unit: InputUnit) -> Step {
@@ -839,10 +986,10 @@ impl<'a> Engine<'a> {
                 start,
                 end,
             } => {
-                // Observation-conditioned, and recorded before the authored
-                // `;` is reconsumed: the parse error is true once the run is
-                // observed to complete no generated identifier. The `;`
-                // itself is never consumed as part of a nonexistent entity.
+                // Observation-conditioned, and recorded before the candidate
+                // run is closed: the parse error is true once the run is
+                // observed to complete no generated identifier, and it must
+                // survive a refused flush of that run.
                 if let Err(stop) = self.append_diagnostic(
                     HtmlTokenizerDiagnosticCode::UnknownNamedCharacterReference,
                     (start, end),
@@ -852,16 +999,27 @@ impl<'a> Engine<'a> {
                 ) {
                     return stop;
                 }
-                self.state = State::Rcdata;
-                self.pending_reconsume = true;
-                Step::Continue
+                self.close_ambiguous_ampersand_run()
             }
             InputUnit::Scalar { .. } | InputUnit::Eof { .. } => {
-                self.state = State::Rcdata;
-                self.pending_reconsume = true;
-                Step::Continue
+                self.close_ambiguous_ampersand_run()
             }
         }
+    }
+
+    /// Closes the unresolved candidate at its own boundary and reconsumes the
+    /// delimiter in RCDATA.
+    ///
+    /// The delimiter is never consumed as part of the candidate: it stays
+    /// authored input and belongs to whatever contribution follows. A refused
+    /// close leaves the candidate run intact and consumes nothing.
+    fn close_ambiguous_ampersand_run(&mut self) -> Step {
+        if let Err(stop) = self.flush_data_run() {
+            return stop;
+        }
+        self.state = State::Rcdata;
+        self.pending_reconsume = true;
+        Step::Continue
     }
 
     /// Flushes the authored `&` that entered the character reference state
@@ -869,101 +1027,6 @@ impl<'a> Engine<'a> {
     fn flush_character_reference_ampersand(&mut self) -> Result<(), Step> {
         let (start, end) = self.character_reference_start;
         self.push_data_char('&', start, end)
-    }
-
-    /// Preflights the whole selected resolution before anything commits.
-    ///
-    /// Every fallible resource decision happens here, in the accepted order —
-    /// `RetainedInterpretedBytes`, then `EmittedTokens`, then `Diagnostics`
-    /// only when the result requires one — so a refusal at any of them leaves
-    /// no partial entity: no authored scalar of the identifier beyond the
-    /// already-committed `&` is consumed, no token is emitted, no diagnostic
-    /// is recorded, and every earlier valid evidence survives untouched.
-    fn begin_selected_named_reference(
-        &mut self,
-        selected: named_character_reference::NamedCharacterReferenceMatch,
-    ) -> Step {
-        let at = (self.processed_end, self.processed_end);
-        if let Err(stop) =
-            self.try_reserve_retained(selected.value.len(), self.character_reference_start.0)
-        {
-            return stop;
-        }
-        // Ordinary RCDATA text observed before the `&` is its own token, so
-        // the reference keeps exactly one authored origin of its own. It is
-        // flushed here, before the reference's own capacity is reserved,
-        // because it is *prior* evidence rather than part of the entity: it
-        // ends at the `&`, it would be flushed by the stop path anyway, and
-        // emitting it separately keeps every `EmittedTokens` refusal a single
-        // one-token attempt, as the frozen run contract requires.
-        if let Err(stop) = self.flush_data_run() {
-            return stop;
-        }
-        if let Err(stop) = self.preflight_token_emission(selected.value.len(), at) {
-            return stop;
-        }
-        if !selected.ends_with_semicolon()
-            && let Err(stop) = self.preflight_pending_emission_diagnostics(1, at)
-        {
-            return stop;
-        }
-        self.pending_named_reference = Some(PendingNamedReference {
-            selected,
-            // The first identifier scalar was materialized and consumed by
-            // the run loop before this state was chosen.
-            consumed_name_bytes: 1,
-        });
-        if selected.name.len() == 1 {
-            return self
-                .commit_selected_named_reference(selected, self.character_reference_start.1 + 1);
-        }
-        self.state = State::NamedCharacterReference;
-        Step::Continue
-    }
-
-    /// Commits an already-preflighted, already-consumed maximum match.
-    ///
-    /// The decoded value is output only: it becomes one character token and
-    /// is never reintroduced as tokenizer input, so a decoded `<` or `&` can
-    /// never be retokenized as markup or as another reference.
-    fn commit_selected_named_reference(
-        &mut self,
-        selected: named_character_reference::NamedCharacterReferenceMatch,
-        name_end: usize,
-    ) -> Step {
-        let ampersand_start = self.character_reference_start.0;
-        let anchor = self.anchor(ampersand_start, name_end);
-        let Ok(character) = HtmlCharacterToken::new(anchor, selected.value.to_owned()) else {
-            return internal_invariant_stop(
-                HtmlTokenizerInvariantFailure::SourceEvidenceConstruction,
-            );
-        };
-        // Every authored scalar of the identifier has now been consumed
-        // through the authoritative cursor, so committed coverage advances
-        // before any evidence that must sit inside it is recorded.
-        self.processed_end = self.processed_end.max(name_end);
-        if let Err(stop) = self.try_push_token(
-            HtmlToken::Character(character),
-            (ampersand_start, ampersand_start),
-        ) {
-            return stop;
-        }
-        if !selected.ends_with_semicolon() {
-            let token_index = self.tokens.len() - 1;
-            let last_scalar_start = name_end - 1;
-            if let Err(stop) = self.append_diagnostic(
-                HtmlTokenizerDiagnosticCode::MissingSemicolonAfterCharacterReference,
-                (last_scalar_start, name_end),
-                HtmlTokenizerDiagnosticContext::NamedCharacterReference,
-                HtmlTokenizerDiagnosticHandling::Continued,
-                HtmlTokenizerDiagnosticSubject::EmittedToken { token_index },
-            ) {
-                return stop;
-            }
-        }
-        self.pending_named_reference = None;
-        self.state = State::Rcdata;
-        Step::Continue
     }
 
     fn rcdata_unsupported_input_stop(

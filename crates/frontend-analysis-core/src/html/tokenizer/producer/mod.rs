@@ -156,37 +156,22 @@ struct Engine<'a> {
     peak_attributes_per_tag: usize,
     transition_steps: usize,
     /// Retained emitted start-tag index that owns appropriate-end-tag meaning
-    /// during the selected RAWTEXT (TC-S9) or RCDATA (TC-S10) episode. Never
-    /// supplied by tree state. Appropriate-end-tag identity is one shared
-    /// lexical concept across both text modes, so it is one field rather than
-    /// two parallel ones; which mode is active remains `self.state`.
-    text_mode_start_tag_index: Option<usize>,
-    /// True only after RAWTEXT/RCDATA end-tag-name recognition proved an
-    /// appropriate candidate and ordinary tag finalization is finishing that
-    /// exact token.
-    text_mode_closing_tag: bool,
+    /// during the selected TC-S9 RAWTEXT episode. Never supplied by tree
+    /// state, and deliberately not shared with the RCDATA episode below: the
+    /// two are distinct lexical lifecycles, and one field could let a Title
+    /// episode be closed under the Style theorem or the reverse.
+    raw_text_start_tag_index: Option<usize>,
+    /// True only after RAWTEXT end-tag-name recognition proved an appropriate
+    /// candidate and ordinary tag finalization is finishing that exact token.
+    raw_text_closing_tag: bool,
+    /// The TC-S10 RCDATA episode's own retained start-tag index.
+    rcdata_start_tag_index: Option<usize>,
+    /// The TC-S10 RCDATA episode's own appropriate-close marker.
+    rcdata_closing_tag: bool,
     /// The exact authored `&` span that entered the selected character
     /// reference state. Retained only for the duration of one reference: it
     /// is authored evidence, never interpreted output or a matching buffer.
     character_reference_start: (usize, usize),
-    /// The selected maximum match whose remaining authored scalars the
-    /// [`State::NamedCharacterReference`] state is consuming, together with
-    /// the still-unconsumed byte offset within its generated identifier.
-    /// Holds no copied candidate: the identifier is a `&'static str` owned by
-    /// the compiler-sealed canonical generated data.
-    pending_named_reference: Option<PendingNamedReference>,
-}
-
-/// The bounded plan for one already-selected maximum match.
-///
-/// This is a decision, not a buffer: it retains the generated identifier by
-/// static reference plus authored offsets, so it contributes nothing to
-/// `TemporaryBufferBytes`.
-#[derive(Debug, Clone, Copy)]
-struct PendingNamedReference {
-    selected: named_character_reference::NamedCharacterReferenceMatch,
-    /// Bytes of the generated identifier already consumed authoritatively.
-    consumed_name_bytes: usize,
 }
 
 impl<'a> Engine<'a> {
@@ -212,10 +197,11 @@ impl<'a> Engine<'a> {
             committed_retained_bytes: 0,
             peak_attributes_per_tag: 0,
             transition_steps: 0,
-            text_mode_start_tag_index: None,
-            text_mode_closing_tag: false,
+            raw_text_start_tag_index: None,
+            raw_text_closing_tag: false,
+            rcdata_start_tag_index: None,
+            rcdata_closing_tag: false,
             character_reference_start: (0, 0),
-            pending_named_reference: None,
         }
     }
 
@@ -247,7 +233,16 @@ impl<'a> Engine<'a> {
             match step {
                 Step::Continue => {
                     if !self.pending_reconsume {
-                        self.processed_end = unit.end();
+                        // Monotone, because one dispatch may authoritatively
+                        // consume more than the unit it was handed: the
+                        // TC-S10 selected Named Character Reference consumes
+                        // its whole matched identifier as a single
+                        // transition-level operation and advances coverage to
+                        // the identifier's end. Every predecessor state
+                        // consumes exactly its dispatched unit, for which
+                        // `max` is the identity; the only deliberate coverage
+                        // rollback in this engine is on a `Step::Stop` path.
+                        self.processed_end = self.processed_end.max(unit.end());
                     }
                 }
                 Step::Complete => return HtmlTokenizerCompletion::Complete,
@@ -1529,7 +1524,10 @@ impl<'a> Engine<'a> {
         } else {
             None
         };
-        let finishing_text_mode_close = self.text_mode_closing_tag && !is_start_tag;
+        // Each selected episode owns its own appropriate-close marker, so a
+        // finished end tag is attributed to the lifecycle that opened it.
+        let finishing_raw_text_close = self.raw_text_closing_tag && !is_start_tag;
+        let finishing_rcdata_close = self.rcdata_closing_tag && !is_start_tag;
         let close_end = close_delimiter.1;
         let token = HtmlToken::Tag(builder::finalize_tag(self.source, tag, close_delimiter));
         self.commit_token(token, committed);
@@ -1538,9 +1536,13 @@ impl<'a> Engine<'a> {
             self.materialize_pending_emission_diagnostics(pending_diagnostics, token_index);
         }
         self.state = State::Data;
-        if finishing_text_mode_close {
+        if finishing_raw_text_close {
             self.processed_end = close_end;
-            return self.text_mode_close_yield(close_end);
+            return self.raw_text_close_yield(close_end);
+        }
+        if finishing_rcdata_close {
+            self.processed_end = close_end;
+            return self.rcdata_close_yield(close_end);
         }
         match context_mode {
             Some(mode) => {
@@ -1741,6 +1743,58 @@ impl<'a> Engine<'a> {
             ));
         }
         checked_counter_add(self.committed_retained_bytes, token_bytes)
+    }
+
+    /// Consumes `byte_length` bytes of already-discovered selected source
+    /// through the single authoritative cursor, returning the resulting
+    /// processed end.
+    ///
+    /// This is the private authoritative consumption primitive the TC-S10
+    /// selected Named operation needs, and it is deliberately *not* a cursor
+    /// endpoint jump, an alternate preprocessing path, a second UTF-8
+    /// decoder, or a source rescan: it advances the same cursor, one input
+    /// unit at a time, exactly as every other state does. What it does not do
+    /// is charge an outer transition per scalar — the matched identifier is
+    /// one transition-level operation, not one per authored byte.
+    ///
+    /// Infallible by construction, on two preconditions the caller has
+    /// already established: these exact bytes were matched against this same
+    /// cursor's unconsumed borrow, and every canonical identifier byte is
+    /// ASCII alphanumeric or `;`, so none CR-normalizes and none raises a
+    /// preprocessing diagnostic. Both are pinned by
+    /// `named_character_reference`'s exhaustive canonical-table tests, and the
+    /// second is re-checked at runtime before consumption begins.
+    fn consume_discovered_source(&mut self, byte_length: usize) -> usize {
+        // The base is the unit this dispatch was handed, not `processed_end`:
+        // the operation is entered by reconsuming its first scalar, so
+        // coverage still lags that scalar by design at this point. Consuming
+        // nothing must therefore still report the first scalar's end.
+        let mut end = self.current.end();
+        for _ in 0..byte_length {
+            let (unit, _) = self.cursor.advance();
+            // Keep the engine's notion of the last materialized unit truthful,
+            // exactly as the run loop does for the units it advances itself.
+            self.current = unit;
+            end = unit.end();
+        }
+        end
+    }
+
+    /// Appends a diagnostic whose capacity was reserved, and whose evidence
+    /// was constructed, earlier in the same semantic operation.
+    ///
+    /// Infallible: the counterpart to [`Self::commit_token`] for the
+    /// diagnostic half of a prepared commit. It performs only the bookkeeping
+    /// [`Self::append_diagnostic_with_subject`] does after its own fallible
+    /// checks have already passed.
+    fn commit_prepared_diagnostic(
+        &mut self,
+        diagnostic: HtmlTokenizerDiagnostic,
+        at: (usize, usize),
+    ) {
+        self.diagnostics.push(diagnostic);
+        self.processed_end = self.processed_end.max(at.1);
+        self.min_processed_end = self.min_processed_end.max(at.1);
     }
 
     /// Applies a token emission already validated by

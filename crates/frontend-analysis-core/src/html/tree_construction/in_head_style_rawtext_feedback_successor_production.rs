@@ -834,6 +834,47 @@ fn p14_complete_claim_cannot_upgrade_a_lower_layer_resource_stop() {
     ));
 }
 
+/// Falsifies: the TC-S9 Style lifecycle being satisfiable by TC-S10 Title
+/// facts.
+///
+/// Style RAWTEXT and Title RCDATA are separate durable lifecycles with
+/// separate replays. A Style episode's evidence must never be accepted as
+/// Title evidence, and this fixture holds only Style evidence, so every Title
+/// claim over it must be refused in Title's own vocabulary.
+#[test]
+fn p15_title_facts_cannot_satisfy_the_style_lifecycle() {
+    let fixture = coordinated_parts("<style>x</style>");
+
+    // A Style node is not a Title, whatever the final-state facts claim.
+    let mut claimed_title = coordinated_parts("<style>x</style>").parts;
+    claimed_title.final_open_title = Some(style_node_id(&claimed_title));
+    assert!(matches!(
+        freeze_fixture(&fixture, claimed_title),
+        Err(HtmlTreeFreezeError::FinalOpenTitleIsNotTitle(_))
+    ));
+
+    // A RAWTEXT episode's coordination is not an RCDATA episode's.
+    let mut cross_coordinated = coordinated_parts("<style>x</style>").parts;
+    cross_coordinated.coordinated_rcdata_entry_tokens =
+        cross_coordinated.coordinated_raw_text_entry_tokens.clone();
+    assert!(matches!(
+        freeze_fixture(&fixture, cross_coordinated),
+        Err(HtmlTreeFreezeError::TitleCoordinationEntryMismatch { .. })
+    ));
+
+    let mut cross_close = coordinated_parts("<style>x</style>").parts;
+    cross_close.coordinated_rcdata_close_tokens =
+        cross_close.coordinated_raw_text_close_tokens.clone();
+    assert!(matches!(
+        freeze_fixture(&fixture, cross_close),
+        Err(HtmlTreeFreezeError::TitleCoordinationCloseMismatch { .. })
+    ));
+
+    // The honest Style fixture still freezes, so the refusals above are the
+    // cross-domain claims and not the fixture itself.
+    assert!(freeze_fixture(&fixture, coordinated_parts("<style>x</style>").parts).is_ok());
+}
+
 #[test]
 fn negative_space_has_no_general_rcdata_script_or_plaintext_entry() {
     // `<title>` left this list because TC-S10 selected it, not because the

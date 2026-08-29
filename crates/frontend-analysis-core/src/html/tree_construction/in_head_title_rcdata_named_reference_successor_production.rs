@@ -517,10 +517,14 @@ fn pf10_decoded_output_is_never_fed_back_as_tokenizer_input() {
 fn pf11_an_unresolved_name_preserves_authored_text_and_reconsumes_its_semicolon() {
     let analysis = analyze("<title>&nope;x</title>");
     assert_eq!(title_text(&analysis), "&nope;x");
-    // The whole authored run, semicolon included, is ordinary text.
+    // The unresolved candidate closes at its own boundary. The authored `;`
+    // is never consumed as part of a nonexistent entity: it stays authored
+    // input, is reconsumed in RCDATA, and belongs to the *following*
+    // contribution. Collapsing these two into one `(7, 14)` range would erase
+    // the boundary the selected lifecycle is defined by.
     assert_eq!(
         title_contributions(&analysis),
-        vec![((7, 14), "&nope;x".to_owned())]
+        vec![((7, 12), "&nope".to_owned()), ((12, 14), ";x".to_owned())]
     );
     assert_eq!(
         tokenizer_diagnostics(analysis.tokenizer_run()),
@@ -532,10 +536,72 @@ fn pf11_an_unresolved_name_preserves_authored_text_and_reconsumes_its_semicolon(
         )]
     );
 
-    // Without a `;`, the ambiguous run carries no diagnostic at all.
+    // Without a `;`, the ambiguous run carries no diagnostic at all, and the
+    // delimiter still belongs to the following contribution.
     let unterminated = analyze("<title>&nope </title>");
     assert_eq!(title_text(&unterminated), "&nope ");
+    assert_eq!(
+        title_contributions(&unterminated),
+        vec![((7, 12), "&nope".to_owned()), ((12, 13), " ".to_owned())]
+    );
     assert!(unterminated.tokenizer_run().diagnostics().is_empty());
+
+    // Ordinary RCDATA text observed before the `&` is prior evidence and is
+    // its own contribution, so the unresolved candidate keeps its own
+    // authored origin exactly as a resolved reference does.
+    let preceded = analyze("<title>abc&bogus;</title>");
+    assert_eq!(
+        title_contributions(&preceded),
+        vec![
+            ((7, 10), "abc".to_owned()),
+            ((10, 16), "&bogus".to_owned()),
+            ((16, 17), ";".to_owned()),
+        ]
+    );
+}
+
+/// Falsifies: an unresolved candidate whose emission refusal takes the
+/// authored delimiter, or the prior text, down with it.
+#[test]
+fn pf11b_an_unresolved_candidate_refuses_transactionally() {
+    // Room for the `<title>` tag and the prior `abc` run only, so closing the
+    // unresolved candidate is refused.
+    let constrained = HtmlTokenizerLimits::new(4_096, 32_768, 2, 4_096, 256, 16_384, 4_096);
+    let analysis = analyze_with("<title>abc&bogus;</title>", 1, constrained);
+    let run = analysis.tokenizer_run();
+    assert_eq!(
+        resource_stop(run),
+        Some(HtmlTokenizerResource::EmittedTokens)
+    );
+    // Prior evidence survives, and no token merges the candidate with the
+    // authored delimiter.
+    assert_eq!(character_tokens(run), vec![((7, 10), "abc".to_owned())]);
+    // The observation-conditioned diagnostic was recorded *before* the
+    // refused close, so it survives it. Recording it also commits its own
+    // observed location to the processed prefix, which is the established
+    // engine rule for every diagnostic — hence coverage ends at the `;`.
+    assert_eq!(
+        tokenizer_diagnostics(run),
+        vec![(
+            super::super::tokenizer::diagnostic::HtmlTokenizerDiagnosticCode::
+                UnknownNamedCharacterReference,
+            (16, 17)
+        )]
+    );
+    assert_eq!(run.coverage().processed_end(), 17);
+
+    // The same refusal with no diagnostic in play: the candidate's own
+    // emission is what is refused, and the authored delimiter is untouched,
+    // so coverage stops exactly at the candidate's boundary.
+    let analysis = analyze_with("<title>abc&bogus </title>", 1, constrained);
+    let run = analysis.tokenizer_run();
+    assert_eq!(
+        resource_stop(run),
+        Some(HtmlTokenizerResource::EmittedTokens)
+    );
+    assert_eq!(character_tokens(run), vec![((7, 10), "abc".to_owned())]);
+    assert!(run.diagnostics().is_empty());
+    assert_eq!(run.coverage().processed_end(), 16);
 }
 
 /// Falsifies: a missing-semicolon diagnostic anchored anywhere but the final
@@ -1008,25 +1074,179 @@ fn pf26_a_diagnostic_refusal_commits_no_part_of_the_reference() {
     assert_eq!(title_text(&clean), "&");
 }
 
-/// Falsifies: transition-step accounting that varies with the matcher rather
-/// than with authored input units.
+/// Falsifies: any selected authored source consumed before every semantic
+/// candidate and preflight is ready.
+///
+/// The selected Named transaction is ordered preflight -> construct -> consume
+/// -> infallible commit, so committed coverage can never land *strictly
+/// inside* a matched identifier: either the transaction refused, and coverage
+/// stops at the authored `&` that caused entry with no reference evidence at
+/// all, or it committed, and the identifier is whole. This sweeps every
+/// selected preflight boundary rather than trusting any single one.
 #[test]
-fn pf27_transition_steps_stay_deterministic_and_input_proportional() {
-    let a = analyze("<title>&notin;</title>");
-    let b = analyze("<title>&notit;</title>");
-    // Both authored sources are the same byte length and both are fully
-    // processed, so speculative discovery must have cost no transition step of
-    // its own.
-    assert_eq!(a.tokenizer_run().usage().source_bytes(), 22);
-    assert_eq!(b.tokenizer_run().usage().source_bytes(), 22);
-    assert_eq!(
-        a.tokenizer_run().usage().transition_steps(),
-        b.tokenizer_run().usage().transition_steps()
-    );
-    for text in ["<title>&notin;</title>", "<title>&notit;</title>"] {
+fn pf26b_no_selected_source_is_consumed_before_the_transaction_is_ready() {
+    struct Case {
+        text: &'static str,
+        ampersand_end: usize,
+        identifier_end: usize,
+        reference_start: usize,
+        needs_diagnostic: bool,
+    }
+    let cases = [
+        Case {
+            text: "<title>abc&acE;</title>",
+            ampersand_end: 11,
+            identifier_end: 15,
+            reference_start: 10,
+            needs_diagnostic: false,
+        },
+        Case {
+            // Semicolonless, so the transaction additionally reserves and
+            // constructs a missing-semicolon diagnostic before consuming.
+            text: "<title>&not</title>",
+            ampersand_end: 8,
+            identifier_end: 11,
+            reference_start: 7,
+            needs_diagnostic: true,
+        },
+    ];
+
+    let mut refusals = 0usize;
+    let mut commits = 0usize;
+    for case in &cases {
+        for retained in [0usize, 1, 5, 6, 7, 8, 9, 10, 11, 12, 4_096] {
+            for tokens in [0usize, 1, 2, 3, 4_096] {
+                for diagnostics in [0usize, 1, 4_096] {
+                    let limits = HtmlTokenizerLimits::new(
+                        4_096,
+                        32_768,
+                        tokens,
+                        diagnostics,
+                        256,
+                        retained,
+                        4_096,
+                    );
+                    let analysis = analyze_with(case.text, 1, limits);
+                    let run = analysis.tokenizer_run();
+                    let covered = run.coverage().processed_end();
+                    let label = format!(
+                        "{:?} retained={retained} tokens={tokens} diagnostics={diagnostics}",
+                        case.text
+                    );
+                    assert!(
+                        covered <= case.ampersand_end || covered >= case.identifier_end,
+                        "{label}: coverage {covered} landed inside the matched identifier"
+                    );
+
+                    let reference = character_tokens(run)
+                        .into_iter()
+                        .find(|(range, _)| range.0 == case.reference_start);
+                    if covered <= case.ampersand_end {
+                        refusals += 1;
+                        // Refused: no reference evidence of any kind exists.
+                        assert!(
+                            reference.is_none(),
+                            "{label}: a refused reference still emitted a token"
+                        );
+                        if case.needs_diagnostic {
+                            assert!(
+                                run.diagnostics().is_empty(),
+                                "{label}: a refused reference still recorded its diagnostic"
+                            );
+                        }
+                    } else if let Some((range, _)) = reference {
+                        commits += 1;
+                        // Committed: whole, never partial.
+                        assert_eq!(
+                            range,
+                            (case.reference_start, case.identifier_end),
+                            "{label}: a committed reference is not its whole authored span"
+                        );
+                        // And complete: the diagnostic the result requires was
+                        // reserved and constructed before consumption, so a
+                        // committed reference can never be missing it.
+                        if case.needs_diagnostic {
+                            assert!(
+                                !run.diagnostics().is_empty(),
+                                "{label}: a committed reference lost its required diagnostic"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(refusals > 0 && commits > 0, "the sweep must exercise both");
+}
+
+/// Falsifies: charging one outer transition per authored scalar of a matched
+/// identifier.
+///
+/// The selected Named operation is one transition-level step: bounded
+/// discovery plus bounded matched-source consumption. Its cost must therefore
+/// be independent of how long the resolved identifier is. Per-scalar charging
+/// makes these three diverge by exactly the identifier lengths.
+#[test]
+fn pf27_a_resolved_identifier_costs_one_transition_level_operation() {
+    let short = analyze("<title>&gt;</title>");
+    let medium = analyze("<title>&notin;</title>");
+    let longest = analyze("<title>&CounterClockwiseContourIntegral;</title>");
+
+    // Identifier lengths of 3, 6 and 32 authored bytes.
+    assert_eq!(short.tokenizer_run().usage().source_bytes(), 19);
+    assert_eq!(medium.tokenizer_run().usage().source_bytes(), 22);
+    assert_eq!(longest.tokenizer_run().usage().source_bytes(), 48);
+
+    let steps = short.tokenizer_run().usage().transition_steps();
+    assert_eq!(medium.tokenizer_run().usage().transition_steps(), steps);
+    assert_eq!(longest.tokenizer_run().usage().transition_steps(), steps);
+
+    // Deterministic across repeats.
+    for text in [
+        "<title>&gt;</title>",
+        "<title>&notin;</title>",
+        "<title>&CounterClockwiseContourIntegral;</title>",
+    ] {
         assert_eq!(
             analyze(text).tokenizer_run().usage().transition_steps(),
             analyze(text).tokenizer_run().usage().transition_steps()
+        );
+    }
+}
+
+/// Falsifies: a `TransitionSteps` refusal that exposes authored identifier
+/// scalars inside committed coverage with no evidence to explain them.
+///
+/// This is the FA400-01 reproducer. On the rejected head, a step budget of 14
+/// over `<title>abc&notin;</title>` covered through `<title>abc&no` while only
+/// `abc` had token evidence. Because the whole selected identifier is now one
+/// transition-level operation, every budget either stops before the identifier
+/// begins or commits it whole.
+#[test]
+fn pf27b_a_transition_step_refusal_never_splits_a_matched_identifier() {
+    let text = "<title>abc&notin;</title>";
+    // `&` ends at 11; the identifier spans 11..17.
+    const AMPERSAND_END: usize = 11;
+    const IDENTIFIER_END: usize = 17;
+
+    for steps in 1..=40 {
+        let limits = HtmlTokenizerLimits::new(4_096, steps, 4_096, 4_096, 256, 16_384, 4_096);
+        let analysis = analyze_with(text, 1, limits);
+        let run = analysis.tokenizer_run();
+        let covered = run.coverage().processed_end();
+        assert!(
+            covered <= AMPERSAND_END || covered >= IDENTIFIER_END,
+            "step budget {steps} covered {covered}, splitting the matched identifier"
+        );
+        // Whenever coverage passed the identifier, its resolved evidence
+        // exists; whenever it did not, no part of the identifier is claimed.
+        let resolved = character_tokens(run)
+            .into_iter()
+            .any(|(range, _)| range == (10, IDENTIFIER_END));
+        assert_eq!(
+            resolved,
+            covered >= IDENTIFIER_END,
+            "step budget {steps} disagrees about the resolved reference at coverage {covered}"
         );
     }
 }
@@ -1285,6 +1505,106 @@ fn pf31_freeze_rejects_replayed_lifecycle_corruption() {
 // ---------------------------------------------------------------------------
 // Predecessor regression controls
 // ---------------------------------------------------------------------------
+
+/// Falsifies: the TC-S10 Title lifecycle being satisfiable by TC-S9 Style
+/// facts, in the direction the sibling TC-S9 test does not cover.
+#[test]
+fn pf36_style_facts_cannot_satisfy_the_title_lifecycle() {
+    let fixture = coordinated_parts("<title>x</title>");
+
+    // A Title node is not a Style.
+    let mut claimed_style = coordinated_parts("<title>x</title>").parts;
+    claimed_style.final_open_style = Some(title_node_id(&claimed_style));
+    assert!(matches!(
+        freeze_fixture(&fixture, claimed_style),
+        Err(HtmlTreeFreezeError::FinalOpenStyleIsNotStyle(_))
+    ));
+
+    // An RCDATA episode's coordination is not a RAWTEXT episode's.
+    let mut cross_coordinated = coordinated_parts("<title>x</title>").parts;
+    cross_coordinated.coordinated_raw_text_entry_tokens =
+        cross_coordinated.coordinated_rcdata_entry_tokens.clone();
+    assert!(matches!(
+        freeze_fixture(&fixture, cross_coordinated),
+        Err(HtmlTreeFreezeError::StyleCoordinationEntryMismatch { .. })
+    ));
+
+    let mut cross_close = coordinated_parts("<title>x</title>").parts;
+    cross_close.coordinated_raw_text_close_tokens =
+        cross_close.coordinated_rcdata_close_tokens.clone();
+    assert!(matches!(
+        freeze_fixture(&fixture, cross_close),
+        Err(HtmlTreeFreezeError::StyleCoordinationCloseMismatch { .. })
+    ));
+
+    // A Title EOF episode's diagnostic is Title's own: it can never be
+    // matched by the Style replay, which would leave it orphaned there.
+    let eof_fixture = coordinated_parts("<title>x");
+    assert!(freeze_fixture(&eof_fixture, coordinated_parts("<title>x").parts).is_ok());
+    assert!(
+        eof_fixture
+            .parts
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code() == HtmlTreeDiagnosticCode::TitleEndOfFileInText)
+    );
+
+    assert!(freeze_fixture(&fixture, coordinated_parts("<title>x</title>").parts).is_ok());
+}
+
+/// Falsifies: one shared lexical episode standing in for both selected
+/// tokenizer lifecycles.
+///
+/// RAWTEXT and RCDATA are separate lexical episodes with separate retained
+/// start tags and separate appropriate-close markers. Neither control may
+/// open the other's episode, and neither may open a second episode while one
+/// is already running.
+#[test]
+fn pf37_the_two_lexical_episodes_are_separately_owned() {
+    // The RAWTEXT control cannot open a suspended Title, and vice versa.
+    let title = SourceText::new(SourceId::new(1), "<title>abc</title>".to_owned());
+    let mut tokenizer = HtmlTokenizerSession::new(&title, limits());
+    tokenizer.drive_to_boundary();
+    assert!(tokenizer.apply_raw_text().is_err());
+    // The refusal left the RCDATA suspension intact and opened nothing.
+    tokenizer.apply_title_rcdata().expect("selected activation");
+
+    // With an episode already running, neither control may open another.
+    assert!(tokenizer.apply_raw_text().is_err());
+    assert!(tokenizer.apply_title_rcdata().is_err());
+
+    // An appropriate close belongs to the episode that opened it: a
+    // `</style>` inside a Title episode is text, never a close, and the
+    // authored `</title>` still closes it.
+    let mixed = analyze("<title>a</style>b</title>");
+    assert_eq!(title_text(&mixed), "a</style>b");
+    assert!(mixed.actions().iter().any(|action| matches!(
+        action.kind(),
+        HtmlTreeActionKind::ClosedTitleElementByAuthoredEndTag { .. }
+    )));
+
+    // And symmetrically, a `</title>` inside a Style episode is text.
+    let style = analyze("<style>a</title>b</style>");
+    let style_id = style
+        .nodes_in_creation_order()
+        .into_iter()
+        .find_map(|node| match node.kind() {
+            HtmlTreeNodeKind::Element(HtmlElement::Style(_)) => Some(node.id()),
+            _ => None,
+        })
+        .expect("Style node");
+    let style_text: String = style
+        .node(style_id)
+        .expect("Style node")
+        .children()
+        .iter()
+        .map(|child| match style.node(*child).expect("child").kind() {
+            HtmlTreeNodeKind::Text(text) => text.interpreted().to_owned(),
+            other => panic!("a Style child must be text, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(style_text, "a</title>b");
+}
 
 /// Falsifies: TC-S10 disturbing the accepted TC-S9 Style lifecycle.
 #[test]

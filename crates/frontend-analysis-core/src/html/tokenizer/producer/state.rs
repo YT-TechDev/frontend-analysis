@@ -31,10 +31,16 @@ pub(super) enum State {
     RcdataEndTagOpen,
     RcdataEndTagName,
     /// Entered from RCDATA on an authored `&`, which has already been
-    /// consumed by the single forward cursor but not yet interpreted.
+    /// consumed by the single forward cursor but not yet interpreted. This
+    /// state only chooses the branch; it discovers and consumes nothing.
     CharacterReference,
-    /// The selected maximum match has been discovered non-committingly and
-    /// its remaining authored scalars are being consumed.
+    /// The whole selected Named operation: bounded non-committing discovery,
+    /// preparation, evidence construction, matched-source consumption and
+    /// commit, as one transition-level step. It is entered by reconsuming the
+    /// first identifier scalar, so a matched identifier never costs one outer
+    /// transition per authored byte.
     NamedCharacterReference,
+    /// The unresolved candidate run, which closes at its own boundary before
+    /// the authored delimiter is reconsumed in RCDATA.
     AmbiguousAmpersand,
 }
