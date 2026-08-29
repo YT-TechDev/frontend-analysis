@@ -69,6 +69,10 @@ fn repository_context() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
 }
 
+fn rustc_binary_name() -> &'static str {
+    if cfg!(windows) { "rustc.exe" } else { "rustc" }
+}
+
 /// One concrete compiler executable, resolved once in repository context.
 ///
 /// ## Why this type exists
@@ -97,35 +101,128 @@ impl ResolvedCompiler {
     /// Resolves the repository-pinned compiler and proves it is the accepted
     /// version. Panics rather than returning a compiler it cannot vouch for.
     fn repository_pinned() -> Self {
-        let resolved = Self::resolve();
-        if let Err(reason) = resolved.verify_accepted_version() {
-            panic!("the repository-pinned compiler could not be established: {reason}");
-        }
-        resolved
+        Self::resolve().unwrap_or_else(|reason| {
+            panic!("the repository-pinned compiler could not be established: {reason}")
+        })
     }
 
-    /// Resolves without verifying, so the falsification cells can inspect the
-    /// resolution and the verification separately.
-    fn resolve() -> Self {
-        let launcher = std::env::var("RUSTC").unwrap_or_else(|_| String::from("rustc"));
-        let sysroot = Command::new(&launcher)
+    /// Selects the repository-context launcher and resolves it to one verified,
+    /// concrete compiler. No launcher spelling is ever stored as fixture
+    /// identity.
+    fn resolve() -> Result<Self, String> {
+        Self::resolve_selected_launcher(std::env::var_os("RUSTC").map(PathBuf::from))
+    }
+
+    /// The test seam for the exact launcher-selection rule used by [`Self::resolve`].
+    ///
+    /// An explicit absolute `RUSTC` is accepted as an initial launcher. The
+    /// ordinary bare `rustc` spelling is also accepted because Cargo/rustup may
+    /// deliberately provide it; it is executed only in repository context and
+    /// is never retained. Other relative spellings are rejected rather than
+    /// given cwd-dependent meaning.
+    fn resolve_selected_launcher(explicit_rustc: Option<PathBuf>) -> Result<Self, String> {
+        let launcher = match explicit_rustc {
+            Some(path) => {
+                if !path.is_absolute() && path != Path::new(rustc_binary_name()) {
+                    return Err(format!(
+                        "RUSTC must be absolute or the bare {} repository-context launcher, got {}",
+                        rustc_binary_name(),
+                        path.display()
+                    ));
+                }
+                path
+            }
+            None => PathBuf::from(rustc_binary_name()),
+        };
+        Self::resolve_from_launcher(&launcher)
+    }
+
+    /// Resolves one initial launcher to `<sysroot>/bin/rustc`, validates every
+    /// resolution stage, canonicalizes the concrete path, and verifies that
+    /// exact executable as stable Rust 1.97.1. Any failure stops before fixture
+    /// evidence can be accepted; there is deliberately no launcher fallback.
+    fn resolve_from_launcher(launcher: &Path) -> Result<Self, String> {
+        let output = Command::new(launcher)
             .current_dir(repository_context())
+            .env_remove("RUSTUP_TOOLCHAIN")
             .arg("--print")
             .arg("sysroot")
             .output()
-            .expect("a Rust compiler must be invocable from the repository");
-        let sysroot = String::from_utf8_lossy(&sysroot.stdout).trim().to_owned();
-        let concrete = Path::new(&sysroot).join("bin").join("rustc");
-        Self {
-            // A non-`rustup` environment may have no sysroot-local binary; the
-            // launcher is then the only candidate, and verification still
-            // decides whether it is acceptable.
-            executable: if concrete.is_file() {
-                concrete
-            } else {
-                PathBuf::from(launcher)
-            },
+            .map_err(|error| {
+                format!(
+                    "{} could not report its sysroot in repository context: {error}",
+                    launcher.display()
+                )
+            })?;
+        if !output.status.success() {
+            return Err(format!(
+                "{} --print sysroot failed with {}",
+                launcher.display(),
+                output.status
+            ));
         }
+
+        let stdout = String::from_utf8(output.stdout).map_err(|error| {
+            format!(
+                "{} --print sysroot emitted non-UTF-8 stdout: {error}",
+                launcher.display()
+            )
+        })?;
+        let mut lines = stdout.lines();
+        let sysroot_text = lines.next().unwrap_or_default();
+        if sysroot_text.is_empty() {
+            return Err(format!(
+                "{} --print sysroot emitted an empty sysroot",
+                launcher.display()
+            ));
+        }
+        if lines.next().is_some() {
+            return Err(format!(
+                "{} --print sysroot emitted more than one line",
+                launcher.display()
+            ));
+        }
+
+        let sysroot = PathBuf::from(sysroot_text);
+        if !sysroot.is_absolute() {
+            return Err(format!(
+                "{} --print sysroot emitted a relative path: {}",
+                launcher.display(),
+                sysroot.display()
+            ));
+        }
+
+        let concrete = sysroot.join("bin").join(rustc_binary_name());
+        let metadata = fs::metadata(&concrete).map_err(|error| {
+            format!(
+                "resolved compiler {} is unavailable: {error}",
+                concrete.display()
+            )
+        })?;
+        if !metadata.is_file() {
+            return Err(format!(
+                "resolved compiler {} is not a regular file",
+                concrete.display()
+            ));
+        }
+        let executable = fs::canonicalize(&concrete).map_err(|error| {
+            format!(
+                "resolved compiler {} could not be canonicalized: {error}",
+                concrete.display()
+            )
+        })?;
+        if !executable.is_absolute() {
+            return Err(format!(
+                "resolved compiler did not become absolute: {}",
+                executable.display()
+            ));
+        }
+
+        let resolved = Self { executable };
+        resolved.verify_accepted_version().map_err(|reason| {
+            format!("resolved concrete compiler failed exact-version verification: {reason}")
+        })?;
+        Ok(resolved)
     }
 
     /// A compiler invocation that carries this exact identity.
@@ -144,11 +241,12 @@ impl ResolvedCompiler {
         command
     }
 
-    /// This compiler's own version string, asked from `directory`.
+    /// This compiler's first `--version` line, asked from `directory`.
     ///
     /// The directory is a parameter so the falsification cells can ask the same
     /// question from inside a fixture directory and prove the answer does not
-    /// change.
+    /// change. A nonzero command, empty first line, or non-UTF-8 stdout is not a
+    /// compiler identity.
     fn version_from(&self, directory: &Path) -> Result<String, String> {
         let output = self
             .command()
@@ -158,24 +256,60 @@ impl ResolvedCompiler {
             .map_err(|error| format!("{} is not invocable: {error}", self.executable.display()))?;
         if !output.status.success() {
             return Err(format!(
-                "{} did not report a version",
+                "{} did not report a version successfully",
                 self.executable.display()
             ));
         }
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        let stdout = String::from_utf8(output.stdout).map_err(|error| {
+            format!(
+                "{} emitted non-UTF-8 version stdout: {error}",
+                self.executable.display()
+            )
+        })?;
+        let first_line = stdout
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .trim_end_matches('\r');
+        if first_line.is_empty() {
+            return Err(format!(
+                "{} reported an empty version line",
+                self.executable.display()
+            ));
+        }
+        Ok(first_line.to_owned())
     }
 
     /// `Ok` only when this exact executable is the accepted stable compiler.
     fn verify_accepted_version(&self) -> Result<(), String> {
         let version = self.version_from(repository_context())?;
-        if version.contains(ACCEPTED_RUSTC_VERSION) {
+        if is_accepted_rustc_version_line(&version) {
             Ok(())
         } else {
             Err(format!(
-                "{} reports {version:?}, which is not Rust {ACCEPTED_RUSTC_VERSION}",
+                "{} reports {version:?}, which is not stable Rust {ACCEPTED_RUSTC_VERSION}",
                 self.executable.display()
             ))
         }
+    }
+}
+
+/// Exact bounded parser for the only accepted `rustc --version` identity.
+///
+/// The line must begin exactly with `rustc 1.97.1`, and the version token must
+/// end there or be followed by whitespace. This rejects prefix collisions such
+/// as `1.97.10`, channel suffixes such as `-nightly`/`-beta`, and arbitrary
+/// wrapper prefixes while deliberately not overfitting the commit/date prose.
+fn is_accepted_rustc_version_line(line: &str) -> bool {
+    let Some(after_rustc) = line.strip_prefix("rustc ") else {
+        return false;
+    };
+    let Some(after_version) = after_rustc.strip_prefix(ACCEPTED_RUSTC_VERSION) else {
+        return false;
+    };
+    match after_version.chars().next() {
+        None => true,
+        Some(character) => character.is_whitespace(),
     }
 }
 
@@ -544,9 +678,10 @@ fn f1a_the_resolved_compiler_identity_is_independent_of_fixture_cwd() {
         "the resolved compiler identity changed with the working directory"
     );
     assert!(
-        from_fixture.contains(ACCEPTED_RUSTC_VERSION),
-        "fixtures would be compiled by {from_fixture:?}, not Rust {ACCEPTED_RUSTC_VERSION}"
+        is_accepted_rustc_version_line(&from_fixture),
+        "fixtures would be compiled by {from_fixture:?}, not stable Rust {ACCEPTED_RUSTC_VERSION}"
     );
+    assert!(compiler.executable.is_absolute());
 }
 
 #[test]
@@ -613,7 +748,7 @@ fn f1e_a_fixture_directory_cannot_redirect_the_harness_to_an_ambient_compiler() 
     // fixture directory, without the toolchain variable Cargo happens to set.
     // On a host whose default toolchain differs from the pin, this is a
     // *different compiler* — which is exactly the trap being closed.
-    let ambient = Command::new("rustc")
+    let ambient = Command::new(rustc_binary_name())
         .current_dir(&fixture.directory)
         .env_remove("RUSTUP_TOOLCHAIN")
         .arg("--version")
@@ -627,9 +762,284 @@ fn f1e_a_fixture_directory_cannot_redirect_the_harness_to_an_ambient_compiler() 
         .version_from(&fixture.directory)
         .expect("the resolved compiler reports a version from the fixture directory");
     assert!(
-        resolved.contains(ACCEPTED_RUSTC_VERSION),
+        is_accepted_rustc_version_line(&resolved),
         "the harness fell back to an ambient compiler: resolved {resolved:?}, \
          while the ambient spelling in the fixture directory reports {ambient:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// F1-R1 — exact stable 1.97.1 version identity regressions
+// ---------------------------------------------------------------------------
+
+#[test]
+fn r1a_exact_stable_1_97_1_version_is_accepted() {
+    let fixture = Fixture::new("r1a");
+    let Some(wrapper) =
+        wrapper_reporting_version(&fixture.directory, "rustc 1.97.1 (8bab26f4f 2026-07-14)")
+    else {
+        return;
+    };
+    assert!(
+        ResolvedCompiler {
+            executable: wrapper
+        }
+        .verify_accepted_version()
+        .is_ok()
+    );
+
+    let Some(crlf) = write_wrapper(
+        &fixture.directory,
+        "r1a-crlf-rustc",
+        "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf 'rustc 1.97.1 (8bab26f4f 2026-07-14)\\r\\n'\n  exit 0\nfi\nexit 1\n",
+    ) else {
+        return;
+    };
+    assert!(
+        ResolvedCompiler { executable: crlf }
+            .verify_accepted_version()
+            .is_ok(),
+        "CRLF on the first official version line must not change identity"
+    );
+}
+
+#[test]
+fn r1b_1_97_10_prefix_collision_is_rejected() {
+    assert_version_wrapper_is_rejected("r1b", "rustc 1.97.10 (prefix-collision)");
+}
+
+#[test]
+fn r1c_nightly_suffix_is_rejected() {
+    assert_version_wrapper_is_rejected("r1c", "rustc 1.97.1-nightly (nightly)");
+}
+
+#[test]
+fn r1d_beta_suffix_is_rejected() {
+    assert_version_wrapper_is_rejected("r1d", "rustc 1.97.1-beta (beta)");
+}
+
+#[test]
+fn r1e_arbitrary_rustc_prefix_is_rejected() {
+    assert_version_wrapper_is_rejected("r1e", "some-rustc 1.97.1 (wrapper)");
+}
+
+#[test]
+fn r1f_empty_malformed_and_stderr_only_version_output_are_rejected() {
+    let fixture = Fixture::new("r1f");
+    for (name, script) in [
+        (
+            "r1f-empty",
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf '\\n'\n  exit 0\nfi\nexit 1\n",
+        ),
+        (
+            "r1f-malformed",
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf 'not a rustc version\\n'\n  exit 0\nfi\nexit 1\n",
+        ),
+        (
+            "r1f-stderr-only",
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf 'rustc 1.97.1 (fake)\\n' >&2\n  exit 0\nfi\nexit 1\n",
+        ),
+    ] {
+        let Some(wrapper) = write_wrapper(&fixture.directory, name, script) else {
+            return;
+        };
+        assert!(
+            ResolvedCompiler {
+                executable: wrapper
+            }
+            .verify_accepted_version()
+            .is_err(),
+            "{name} unexpectedly established compiler identity"
+        );
+    }
+}
+
+#[test]
+fn r1g_nonzero_version_command_is_rejected() {
+    let fixture = Fixture::new("r1g");
+    let Some(wrapper) = write_wrapper(
+        &fixture.directory,
+        "r1g-rustc",
+        "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf 'rustc 1.97.1 (fake)\\n'\n  exit 23\nfi\nexit 1\n",
+    ) else {
+        return;
+    };
+    assert!(
+        ResolvedCompiler {
+            executable: wrapper
+        }
+        .verify_accepted_version()
+        .is_err()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// F1-R2 — fail-closed resolver regressions
+// ---------------------------------------------------------------------------
+
+#[test]
+fn r2a_nonzero_sysroot_command_fails_resolution() {
+    let fixture = Fixture::new("r2a");
+    let Some((sysroot, _concrete)) = fake_sysroot_with_version(
+        &fixture.directory,
+        "r2a valid sysroot",
+        "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    ) else {
+        return;
+    };
+    let script = format!(
+        "#!/bin/sh\nif [ \"$1\" = \"--print\" ] && [ \"$2\" = \"sysroot\" ]; then\n  printf '%s\\n' {}\n  exit 17\nfi\nexit 1\n",
+        shell_single_quote(sysroot.to_string_lossy().as_ref())
+    );
+    let Some(launcher) = write_wrapper(&fixture.directory, "r2a-launcher", &script) else {
+        return;
+    };
+    let error = ResolvedCompiler::resolve_from_launcher(&launcher)
+        .expect_err("a nonzero sysroot command must stop at the subprocess-status boundary");
+    assert!(
+        error.contains("--print sysroot failed"),
+        "nonzero sysroot status was ignored and failed for a later reason instead: {error}"
+    );
+}
+
+#[test]
+fn r2b_empty_sysroot_stdout_fails_resolution() {
+    let fixture = Fixture::new("r2b");
+    let Some(launcher) = write_wrapper(
+        &fixture.directory,
+        "r2b-launcher",
+        "#!/bin/sh\nif [ \"$1\" = \"--print\" ] && [ \"$2\" = \"sysroot\" ]; then\n  exit 0\nfi\nexit 1\n",
+    ) else {
+        return;
+    };
+    let error = ResolvedCompiler::resolve_from_launcher(&launcher)
+        .expect_err("empty sysroot stdout must stop at the stdout-validation boundary");
+    assert!(
+        error.contains("empty sysroot"),
+        "empty sysroot stdout was silently reinterpreted and failed later instead: {error}"
+    );
+}
+
+#[test]
+fn r2c_missing_concrete_rustc_fails_resolution_without_launcher_fallback() {
+    let fixture = Fixture::new("r2c");
+    let sysroot = fixture.directory.join("sysroot without concrete compiler");
+    fs::create_dir_all(sysroot.join("bin")).expect("fake sysroot bin");
+    let Some(launcher) = launcher_for_sysroot(
+        &fixture.directory,
+        "r2c-launcher",
+        &sysroot,
+        "rustc 1.97.1 (launcher must never be fallback)",
+    ) else {
+        return;
+    };
+    assert!(
+        ResolvedCompiler::resolve_from_launcher(&launcher).is_err(),
+        "missing <sysroot>/bin/rustc fell back to the launcher"
+    );
+}
+
+#[test]
+fn r2d_deleted_concrete_rustc_fails_the_next_exact_identity_invocation() {
+    let fixture = Fixture::new("r2d");
+    let Some((sysroot, _concrete)) = fake_sysroot_with_version(
+        &fixture.directory,
+        "r2d sysroot",
+        "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    ) else {
+        return;
+    };
+    let Some(launcher) = launcher_for_sysroot(
+        &fixture.directory,
+        "r2d-launcher",
+        &sysroot,
+        "rustc 0.0.0 (launcher)",
+    ) else {
+        return;
+    };
+    let resolved = ResolvedCompiler::resolve_from_launcher(&launcher)
+        .expect("fake concrete compiler initially resolves");
+    fs::remove_file(&resolved.executable).expect("remove resolved concrete compiler");
+    assert!(
+        resolved.version_from(repository_context()).is_err(),
+        "a deleted concrete compiler was silently re-resolved through the launcher"
+    );
+}
+
+#[test]
+fn r2e_explicit_relative_rustc_is_rejected_instead_of_becoming_cwd_sensitive() {
+    let verdict =
+        ResolvedCompiler::resolve_selected_launcher(Some(PathBuf::from("relative/compiler/rustc")));
+    assert!(verdict.is_err());
+}
+
+#[test]
+fn r2f_only_the_concrete_sysroot_compiler_defines_identity() {
+    let fixture = Fixture::new("r2f");
+
+    // The initial launcher deliberately reports the wrong version, while the
+    // concrete rustc under a sysroot path containing spaces reports the pinned
+    // version. Resolution must accept and store only the concrete path.
+    let Some((accepted_sysroot, accepted_concrete)) = fake_sysroot_with_version(
+        &fixture.directory,
+        "accepted sysroot with spaces",
+        "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    ) else {
+        return;
+    };
+    let Some(wrong_launcher) = launcher_for_sysroot(
+        &fixture.directory,
+        "r2f-wrong-launcher",
+        &accepted_sysroot,
+        "rustc 1.0.0 (ambient-like launcher)",
+    ) else {
+        return;
+    };
+    let resolved = ResolvedCompiler::resolve_from_launcher(&wrong_launcher)
+        .expect("concrete pinned compiler, not launcher version, defines identity");
+    assert_eq!(
+        resolved.executable,
+        fs::canonicalize(&accepted_concrete).expect("canonical fake concrete compiler")
+    );
+    assert!(resolved.executable.is_absolute());
+    assert!(resolved.verify_accepted_version().is_ok());
+
+    // Inverse pressure: a launcher that itself says 1.97.1 cannot launder a
+    // concrete `1.97.10` compiler. This attacks both resolver identity and the
+    // old substring check through the real resolve path.
+    let Some((wrong_sysroot, _wrong_concrete)) = fake_sysroot_with_version(
+        &fixture.directory,
+        "wrong concrete sysroot",
+        "rustc 1.97.10 (prefix-collision)",
+    ) else {
+        return;
+    };
+    let Some(deceptive_launcher) = launcher_for_sysroot(
+        &fixture.directory,
+        "r2f-deceptive-launcher",
+        &wrong_sysroot,
+        "rustc 1.97.1 (launcher-only identity)",
+    ) else {
+        return;
+    };
+    assert!(
+        ResolvedCompiler::resolve_from_launcher(&deceptive_launcher).is_err(),
+        "resolver verified the launcher instead of the stored concrete compiler"
+    );
+}
+
+fn assert_version_wrapper_is_rejected(name: &str, version: &str) {
+    let fixture = Fixture::new(name);
+    let Some(wrapper) = wrapper_reporting_version(&fixture.directory, version) else {
+        return;
+    };
+    assert!(
+        ResolvedCompiler {
+            executable: wrapper
+        }
+        .verify_accepted_version()
+        .is_err(),
+        "version {version:?} unexpectedly established stable Rust {ACCEPTED_RUSTC_VERSION}"
     );
 }
 
@@ -637,10 +1047,67 @@ fn f1e_a_fixture_directory_cannot_redirect_the_harness_to_an_ambient_compiler() 
 /// everything else. `None` when this platform cannot mark a file executable,
 /// in which case the calling cell declines rather than asserting nothing.
 fn wrapper_reporting_version(directory: &Path, version: &str) -> Option<PathBuf> {
-    let path = directory.join("impostor-rustc");
-    fs::write(&path, format!("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo '{version}'\n  exit 0\nfi\nexit 1\n")).ok()?;
-    make_executable(&path)?;
-    Some(path)
+    let script = format!(
+        "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf '%s\\n' {}\n  exit 0\nfi\nexit 1\n",
+        shell_single_quote(version)
+    );
+    write_wrapper(directory, "impostor-rustc", &script)
+}
+
+fn fake_sysroot_with_version(
+    directory: &Path,
+    name: &str,
+    version: &str,
+) -> Option<(PathBuf, PathBuf)> {
+    let sysroot = directory.join(name);
+    let bin = sysroot.join("bin");
+    fs::create_dir_all(&bin).ok()?;
+    let concrete = bin.join(rustc_binary_name());
+    let script = format!(
+        "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf '%s\\n' {}\n  exit 0\nfi\nexit 1\n",
+        shell_single_quote(version)
+    );
+    write_executable(&concrete, &script)?;
+    Some((sysroot, concrete))
+}
+
+fn launcher_for_sysroot(
+    directory: &Path,
+    name: &str,
+    sysroot: &Path,
+    launcher_version: &str,
+) -> Option<PathBuf> {
+    let sysroot = sysroot.to_string_lossy();
+    let script = format!(
+        "#!/bin/sh\n\
+         if [ \"$1\" = \"--print\" ] && [ \"$2\" = \"sysroot\" ]; then\n\
+           printf '%s\\n' {}\n\
+           exit 0\n\
+         fi\n\
+         if [ \"$1\" = \"--version\" ]; then\n\
+           printf '%s\\n' {}\n\
+           exit 0\n\
+         fi\n\
+         exit 1\n",
+        shell_single_quote(sysroot.as_ref()),
+        shell_single_quote(launcher_version)
+    );
+    write_wrapper(directory, name, &script)
+}
+
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+fn write_wrapper(directory: &Path, name: &str, script: &str) -> Option<PathBuf> {
+    let path = directory.join(name);
+    write_executable(&path, script)
+}
+
+fn write_executable(path: &Path, contents: &str) -> Option<PathBuf> {
+    fs::write(path, contents).ok()?;
+    make_executable(path)?;
+    Some(path.to_path_buf())
 }
 
 #[cfg(unix)]
