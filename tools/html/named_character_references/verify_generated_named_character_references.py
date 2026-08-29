@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Independently verify retained WHATWG entities against generated Rust data."""
+"""Independently verify retained WHATWG entities against generated Rust data.
+
+The canonical generated representation is this script's own semantic and
+provenance subject, so it is parsed exactly and fails closed on anything it
+cannot account for. It parses no other repository Rust, resolves no module
+wiring, and evaluates no `cfg`, `#[path]`, or `include!` semantics.
+"""
 from __future__ import annotations
 
 import hashlib
@@ -31,6 +37,13 @@ PINNED_SEMICOLONLESS_COUNT = 106
 PINNED_TWO_SCALAR_COUNT = 93
 PINNED_MAXIMUM_NAME_BYTES = 32
 PINNED_MAXIMUM_NAMES = ("CounterClockwiseContourIntegral;",)
+
+# The canonical generated source is lexically included inside the private owner
+# module, so it declares no visibility of its own and carries exactly one fixed
+# ownership registration naming the owner's private authority.
+EXPECTED_REGISTRATION_BEGIN = "// BEGIN CANONICAL OWNERSHIP REGISTRATION"
+EXPECTED_REGISTRATION_ITEM = "impl OwnershipRegistration for OwnerToken {}"
+EXPECTED_REGISTRATION_END = "// END CANONICAL OWNERSHIP REGISTRATION"
 
 _SOURCE_NAME = re.compile(r"&[A-Za-z0-9]+;?", flags=re.ASCII)
 _GENERATED_NAME = r"[A-Za-z0-9]+;?"
@@ -382,16 +395,26 @@ def parse_generated_rust(data: bytes) -> GeneratedData:
         "manifest hash header",
     )
     index = _consume_exact(lines, index, "", "header separator")
+    index = _consume_exact(
+        lines, index, EXPECTED_REGISTRATION_BEGIN, "ownership registration begin marker"
+    )
+    index = _consume_exact(
+        lines, index, EXPECTED_REGISTRATION_ITEM, "ownership registration item"
+    )
+    index = _consume_exact(
+        lines, index, EXPECTED_REGISTRATION_END, "ownership registration end marker"
+    )
+    index = _consume_exact(lines, index, "", "ownership registration separator")
     constant_snapshot, index = _consume_capture(
         lines,
         index,
-        r'pub\(super\) const WHATWG_HTML_SNAPSHOT: &str = "([0-9a-f]{40})";',
+        r'const WHATWG_HTML_SNAPSHOT: &str = "([0-9a-f]{40})";',
         "snapshot constant",
     )
     index = _consume_exact(
         lines,
         index,
-        "pub(super) const RETAINED_ENTITIES_SHA256: &str =",
+        "const RETAINED_ENTITIES_SHA256: &str =",
         "entities hash declaration",
     )
     constant_entities_sha256, index = _consume_capture(
@@ -403,7 +426,7 @@ def parse_generated_rust(data: bytes) -> GeneratedData:
     index = _consume_exact(
         lines,
         index,
-        "pub(super) const UPSTREAM_MANIFEST_SHA256: &str =",
+        "const UPSTREAM_MANIFEST_SHA256: &str =",
         "manifest hash declaration",
     )
     constant_manifest_sha256, index = _consume_capture(
@@ -415,32 +438,32 @@ def parse_generated_rust(data: bytes) -> GeneratedData:
     entry_count_text, index = _consume_capture(
         lines,
         index,
-        r"pub\(super\) const NAMED_CHARACTER_REFERENCE_ENTRY_COUNT: usize = ([0-9]+);",
+        r"const NAMED_CHARACTER_REFERENCE_ENTRY_COUNT: usize = ([0-9]+);",
         "entry count constant",
     )
     semicolonless_text, index = _consume_capture(
         lines,
         index,
-        r"pub\(super\) const NAMED_CHARACTER_REFERENCE_SEMICOLONLESS_ENTRY_COUNT: usize = ([0-9]+);",
+        r"const NAMED_CHARACTER_REFERENCE_SEMICOLONLESS_ENTRY_COUNT: usize = ([0-9]+);",
         "semicolonless count constant",
     )
     two_scalar_text, index = _consume_capture(
         lines,
         index,
-        r"pub\(super\) const NAMED_CHARACTER_REFERENCE_TWO_SCALAR_ENTRY_COUNT: usize = ([0-9]+);",
+        r"const NAMED_CHARACTER_REFERENCE_TWO_SCALAR_ENTRY_COUNT: usize = ([0-9]+);",
         "two-scalar count constant",
     )
     maximum_length_text, index = _consume_capture(
         lines,
         index,
-        r"pub\(super\) const NAMED_CHARACTER_REFERENCE_MAXIMUM_NAME_BYTE_LENGTH: usize = ([0-9]+);",
+        r"const NAMED_CHARACTER_REFERENCE_MAXIMUM_NAME_BYTE_LENGTH: usize = ([0-9]+);",
         "maximum length constant",
     )
     index = _consume_exact(lines, index, "", "metadata separator")
     index = _consume_exact(
         lines,
         index,
-        "pub(super) const NAMED_CHARACTER_REFERENCE_MAXIMUM_NAMES: &[&str] =",
+        "const NAMED_CHARACTER_REFERENCE_MAXIMUM_NAMES: &[&str] =",
         "maximum names declaration",
     )
     if index >= len(lines):
@@ -457,7 +480,7 @@ def parse_generated_rust(data: bytes) -> GeneratedData:
     index = _consume_exact(
         lines,
         index,
-        "pub(super) const NAMED_CHARACTER_REFERENCES: &[(&str, &str)] = &[",
+        "const NAMED_CHARACTER_REFERENCES: &[(&str, &str)] = &[",
         "table declaration",
     )
 

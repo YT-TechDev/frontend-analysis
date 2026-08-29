@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Generate the frozen WHATWG Named Character Reference semantic table."""
+"""Generate the frozen WHATWG Named Character Reference semantic table.
+
+The output is a lexical artifact included inside the hand-written private
+owner module. It renders private declarations plus one fixed ownership
+registration; it never parses repository Rust or resolves module wiring.
+"""
 from __future__ import annotations
 
 import argparse
@@ -29,6 +34,14 @@ OUTPUT_PATH = Path(
     "crates/frontend-analysis-core/src/html/tokenizer/"
     "named_character_references_generated.rs"
 )
+
+# The canonical generated source is lexically included inside the hand-written
+# private owner module, so it names that owner's private registration authority
+# directly. The registration item is fixed: it carries no data and never varies
+# with the retained evidence.
+OWNERSHIP_REGISTRATION_BEGIN = "// BEGIN CANONICAL OWNERSHIP REGISTRATION"
+OWNERSHIP_REGISTRATION_ITEM = "impl OwnershipRegistration for OwnerToken {}"
+OWNERSHIP_REGISTRATION_END = "// END CANONICAL OWNERSHIP REGISTRATION"
 
 EXPECTED_ENTRY_COUNT = 2_231
 EXPECTED_SEMICOLONLESS_COUNT = 106
@@ -393,28 +406,32 @@ def render_rust(dataset: Dataset, manifest_bytes: bytes) -> bytes:
         f"// retained entities.json SHA-256: {DATASET_SHA256}",
         f"// upstream-manifest.json SHA-256: {manifest_sha256}",
         "",
-        f'pub(super) const WHATWG_HTML_SNAPSHOT: &str = "{WHATWG_HTML_SNAPSHOT}";',
-        "pub(super) const RETAINED_ENTITIES_SHA256: &str =",
+        OWNERSHIP_REGISTRATION_BEGIN,
+        OWNERSHIP_REGISTRATION_ITEM,
+        OWNERSHIP_REGISTRATION_END,
+        "",
+        f'const WHATWG_HTML_SNAPSHOT: &str = "{WHATWG_HTML_SNAPSHOT}";',
+        "const RETAINED_ENTITIES_SHA256: &str =",
         f'    "{DATASET_SHA256}";',
-        "pub(super) const UPSTREAM_MANIFEST_SHA256: &str =",
+        "const UPSTREAM_MANIFEST_SHA256: &str =",
         f'    "{manifest_sha256}";',
-        "pub(super) const NAMED_CHARACTER_REFERENCE_ENTRY_COUNT: usize = "
+        "const NAMED_CHARACTER_REFERENCE_ENTRY_COUNT: usize = "
         f"{len(dataset.entries)};",
-        "pub(super) const NAMED_CHARACTER_REFERENCE_SEMICOLONLESS_ENTRY_COUNT: usize = "
+        "const NAMED_CHARACTER_REFERENCE_SEMICOLONLESS_ENTRY_COUNT: usize = "
         f"{dataset.semicolonless_count};",
-        "pub(super) const NAMED_CHARACTER_REFERENCE_TWO_SCALAR_ENTRY_COUNT: usize = "
+        "const NAMED_CHARACTER_REFERENCE_TWO_SCALAR_ENTRY_COUNT: usize = "
         f"{dataset.two_scalar_count};",
-        "pub(super) const NAMED_CHARACTER_REFERENCE_MAXIMUM_NAME_BYTE_LENGTH: usize = "
+        "const NAMED_CHARACTER_REFERENCE_MAXIMUM_NAME_BYTE_LENGTH: usize = "
         f"{dataset.maximum_key_byte_length};",
         "",
-        "pub(super) const NAMED_CHARACTER_REFERENCE_MAXIMUM_NAMES: &[&str] =",
+        "const NAMED_CHARACTER_REFERENCE_MAXIMUM_NAMES: &[&str] =",
         "    &[" + ", ".join(json.dumps(name) for name in dataset.maximum_keys) + "];",
     ]
     lines.extend(
         [
             "",
             "// BEGIN NAMED CHARACTER REFERENCES",
-            "pub(super) const NAMED_CHARACTER_REFERENCES: &[(&str, &str)] = &[",
+            "const NAMED_CHARACTER_REFERENCES: &[(&str, &str)] = &[",
         ]
     )
     for item in dataset.entries:
