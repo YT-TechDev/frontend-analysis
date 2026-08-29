@@ -7,6 +7,8 @@ pub(crate) mod tokenizer;
 pub(crate) mod tree_construction;
 
 #[cfg(test)]
+mod compiler_sealed_ownership_validation;
+#[cfg(test)]
 mod token_contract_matrix_tests;
 #[cfg(test)]
 mod token_tests;
