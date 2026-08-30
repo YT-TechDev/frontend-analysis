@@ -155,6 +155,9 @@ pub(super) enum CompletionState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct GoldObservation {
+    pub(super) source: SourceId,
+    pub(super) run: RunId,
+    pub(super) profile: &'static str,
     pub(super) context: ContextId,
     pub(super) completion: CompletionState,
     pub(super) outcome: GoldOutcome,
@@ -163,6 +166,9 @@ pub(super) struct GoldObservation {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct GoldRun {
+    pub(super) source: SourceId,
+    pub(super) run: RunId,
+    pub(super) profile: &'static str,
     pub(super) upstream: CompletionState,
     pub(super) qualifier: CompletionState,
     pub(super) observations: Vec<GoldObservation>,
@@ -331,7 +337,7 @@ pub(super) struct GoldFixture {
     pub(super) id: &'static str,
     pub(super) source: &'static str,
     pub(super) program: GoldProgram,
-    pub(super) authored: Vec<LiteralRangeExpectation>,
+    pub(super) authored: Vec<AuthoredFactExpectation>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

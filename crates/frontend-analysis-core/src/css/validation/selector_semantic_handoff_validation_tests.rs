@@ -1,10 +1,11 @@
 use super::selector_semantic_handoff_gold::{
-    AuthoredRange, CompletionState, ContextId, FunctionKind, GoldFixture, GoldObservation,
-    GoldOutcome, GoldProgram, GoldRun, IndeterminateReason, InvalidReason, LiteralRangeExpectation,
-    LiteralRangeFailure, MemberId, NestingPresenceDisposition, RejectedNestingEffect,
-    RejectedNestingPresenceExpectation, RejectedNestingPresenceFailure, RelationshipOrigin,
-    RelationshipTarget, RunId, SelectorFact, SimpleKind, SourceId, UnitId, UnsupportedFeature,
-    authored, derived, validate_rejected_nesting_presence, verify_literal_range,
+    AuthoredFactExpectation, AuthoredProgramProvenanceFailure, AuthoredRange, CompletionState,
+    ContextId, FunctionKind, GoldFixture, GoldObservation, GoldOutcome, GoldProgram, GoldRun,
+    IndeterminateReason, InvalidReason, LiteralRangeExpectation, LiteralRangeFailure, MemberId,
+    NestingPresenceDisposition, RejectedNestingEffect, RejectedNestingPresenceExpectation,
+    RejectedNestingPresenceFailure, RelationshipOrigin, RelationshipTarget, RunId, SelectorFact,
+    SimpleKind, SourceId, UnitId, UnsupportedFeature, authored, derived,
+    validate_program_authored_provenance, validate_rejected_nesting_presence, verify_literal_range,
 };
 use super::selector_semantic_handoff_reference::{
     BlockingOutcome, ConsumerBudget, ConsumerOutcome, ConsumerRunCompletion,
@@ -14,6 +15,19 @@ use super::selector_semantic_handoff_reference::{
 
 fn range(start: usize, end: usize) -> AuthoredRange {
     AuthoredRange::new(start, end)
+}
+
+fn authored_fact(
+    fact_index: usize,
+    start: usize,
+    end: usize,
+    spelling: &'static str,
+) -> AuthoredFactExpectation {
+    AuthoredFactExpectation {
+        fact_index,
+        range: range(start, end),
+        spelling,
+    }
 }
 
 fn program(context: u32, facts: Vec<SelectorFact>) -> GoldProgram {
@@ -28,10 +42,29 @@ fn program(context: u32, facts: Vec<SelectorFact>) -> GoldProgram {
 
 fn qualified(program: GoldProgram) -> GoldObservation {
     GoldObservation {
+        source: program.source,
+        run: program.run,
+        profile: program.profile,
         context: program.context,
         completion: CompletionState::Complete,
         outcome: GoldOutcome::Qualified,
         program: Some(program),
+    }
+}
+
+fn nonqualified(
+    context: u32,
+    completion: CompletionState,
+    outcome: GoldOutcome,
+) -> GoldObservation {
+    GoldObservation {
+        source: SourceId(1),
+        run: RunId(1),
+        profile: "CoreV1",
+        context: ContextId(context),
+        completion,
+        outcome,
+        program: None,
     }
 }
 
@@ -69,6 +102,9 @@ fn complete_members(result: ConsumerOutcome) -> Vec<(MemberId, Specificity)> {
 
 fn run(observations: Vec<GoldObservation>) -> GoldRun {
     GoldRun {
+        source: SourceId(1),
+        run: RunId(1),
+        profile: "CoreV1",
         upstream: CompletionState::Complete,
         qualifier: CompletionState::Complete,
         observations,
@@ -145,14 +181,13 @@ fn rejected_forgiving_ampersand_fixture() -> GoldFixture {
             ],
         ),
         authored: vec![
-            LiteralRangeExpectation {
-                range: range(6, 11),
-                spelling: ":bad&",
-            },
-            LiteralRangeExpectation {
-                range: range(10, 11),
-                spelling: "&",
-            },
+            authored_fact(0, 0, 16, ".a:is(:bad&, .b)"),
+            authored_fact(1, 0, 2, ".a"),
+            authored_fact(2, 2, 6, ":is("),
+            authored_fact(3, 6, 11, ":bad&"),
+            authored_fact(4, 10, 11, "&"),
+            authored_fact(5, 13, 15, ".b"),
+            authored_fact(6, 13, 15, ".b"),
         ],
     }
 }
@@ -220,35 +255,41 @@ fn authored_ranges_are_handwritten_and_literal_checked() {
             ],
         ),
         authored: vec![
-            LiteralRangeExpectation {
-                range: range(0, 12),
-                spelling: ".a:is(#b, c)",
-            },
-            LiteralRangeExpectation {
-                range: range(0, 2),
-                spelling: ".a",
-            },
-            LiteralRangeExpectation {
-                range: range(2, 6),
-                spelling: ":is(",
-            },
-            LiteralRangeExpectation {
-                range: range(6, 8),
-                spelling: "#b",
-            },
-            LiteralRangeExpectation {
-                range: range(10, 11),
-                spelling: "c",
-            },
+            authored_fact(0, 0, 12, ".a:is(#b, c)"),
+            authored_fact(1, 0, 2, ".a"),
+            authored_fact(2, 2, 6, ":is("),
+            authored_fact(3, 6, 8, "#b"),
+            authored_fact(4, 6, 8, "#b"),
+            authored_fact(6, 10, 11, "c"),
+            authored_fact(7, 10, 11, "c"),
         ],
     };
 
     assert_eq!(fixture.id, "CSS-HANDOFF-RANGE-IS-001");
     assert_eq!(fixture.program.source, SourceId(1));
     assert_eq!(fixture.program.context, ContextId(1));
-    for expectation in fixture.authored {
-        assert_eq!(verify_literal_range(fixture.source, expectation), Ok(()));
-    }
+    assert_eq!(
+        validate_program_authored_provenance(&fixture.program, fixture.source, &fixture.authored),
+        Ok(())
+    );
+
+    let mut corrupted = fixture.program.clone();
+    let SelectorFact::OpenFunction {
+        range: actual_range,
+        ..
+    } = &mut corrupted.facts[2]
+    else {
+        panic!("fact 2 is the authored function opener");
+    };
+    *actual_range = range(3, 6);
+    assert_eq!(
+        validate_program_authored_provenance(&corrupted, fixture.source, &fixture.authored),
+        Err(AuthoredProgramProvenanceFailure::RangeMismatch {
+            fact_index: 2,
+            expected: range(2, 6),
+            actual: range(3, 6),
+        })
+    );
 }
 
 #[test]
@@ -266,10 +307,11 @@ fn authored_ranges_use_utf8_byte_offsets_after_multibyte_scalars() {
                     close(1),
                 ],
             ),
-            authored: vec![LiteralRangeExpectation {
-                range: range(2, 4),
-                spelling: "#x",
-            }],
+            authored: vec![
+                authored_fact(0, 0, 4, "é#x"),
+                authored_fact(1, 0, 2, "é"),
+                authored_fact(2, 2, 4, "#x"),
+            ],
         },
         GoldFixture {
             id: "CSS-HANDOFF-RANGE-UTF8-CLASS-002",
@@ -283,17 +325,23 @@ fn authored_ranges_use_utf8_byte_offsets_after_multibyte_scalars() {
                     close(1),
                 ],
             ),
-            authored: vec![LiteralRangeExpectation {
-                range: range(5, 7),
-                spelling: ".x",
-            }],
+            authored: vec![
+                authored_fact(0, 0, 7, "éあ.x"),
+                authored_fact(1, 0, 5, "éあ"),
+                authored_fact(2, 5, 7, ".x"),
+            ],
         },
     ];
 
     for fixture in fixtures {
-        for expectation in fixture.authored {
-            assert_eq!(verify_literal_range(fixture.source, expectation), Ok(()));
-        }
+        assert_eq!(
+            validate_program_authored_provenance(
+                &fixture.program,
+                fixture.source,
+                &fixture.authored,
+            ),
+            Ok(())
+        );
         assert!(matches!(
             fold_program(&fixture.program, ConsumerBudget { limit: usize::MAX }).outcome,
             ConsumerOutcome::Complete(_)
@@ -365,12 +413,7 @@ fn invalid_unsupported_and_indeterminate_remain_distinct() {
             BlockingOutcome::Indeterminate,
         ),
     ] {
-        let observation = GoldObservation {
-            context: ContextId(1),
-            completion: CompletionState::Complete,
-            outcome,
-            program: None,
-        };
+        let observation = nonqualified(1, CompletionState::Complete, outcome);
         assert_eq!(
             fold_observation(&observation, ConsumerBudget { limit: 1 }).outcome,
             ConsumerOutcome::Blocked(expected)
@@ -384,18 +427,11 @@ fn incomplete_upstream_or_qualifier_cannot_upgrade_to_complete() {
         1,
         vec![open(1, 0, 1), atom(1, SimpleKind::Type, 0, 1), close(1)],
     ));
-    for run in [
-        GoldRun {
-            upstream: CompletionState::Incomplete,
-            qualifier: CompletionState::Complete,
-            observations: vec![observation.clone()],
-        },
-        GoldRun {
-            upstream: CompletionState::Complete,
-            qualifier: CompletionState::Incomplete,
-            observations: vec![observation.clone()],
-        },
-    ] {
+    let mut upstream_incomplete = run(vec![observation.clone()]);
+    upstream_incomplete.upstream = CompletionState::Incomplete;
+    let mut qualifier_incomplete = run(vec![observation.clone()]);
+    qualifier_incomplete.qualifier = CompletionState::Incomplete;
+    for run in [upstream_incomplete, qualifier_incomplete] {
         let resolved = resolve_retained_run(&run, ConsumerBudget { limit: usize::MAX })
             .expect("authoritative incompleteness is a consumer outcome, not a graph error");
         assert_eq!(resolved.completion(), ConsumerRunCompletion::Incomplete);
@@ -414,10 +450,10 @@ fn semantic_program_commit_is_atomic() {
     let mut committed = Vec::new();
     let mut budget = RetentionBudget { limit: 2, used: 0 };
     let refusal = commit_observation(&mut committed, observation, &mut budget)
-        .expect_err("three facts must not partially fit a budget of two");
+        .expect_err("one observation plus three facts must not partially fit a budget of two");
     assert!(committed.is_empty());
     assert_eq!(budget.used, 0);
-    assert_eq!(refusal.required, 3);
+    assert_eq!(refusal.required, 4);
     assert_eq!(refusal.remaining, 2);
 }
 
@@ -433,7 +469,61 @@ fn retention_refusal_preserves_previously_committed_prefix() {
     commit_observation(&mut committed, first.clone(), &mut budget).expect("first fits");
     assert!(commit_observation(&mut committed, second, &mut budget).is_err());
     assert_eq!(committed, vec![first]);
-    assert_eq!(budget.used, 2);
+    assert_eq!(budget.used, 3);
+}
+
+#[test]
+fn retained_observation_identity_is_never_zero_cost() {
+    for outcome in [
+        GoldOutcome::Invalid(InvalidReason::SelectedGrammar),
+        GoldOutcome::Unsupported(UnsupportedFeature::PseudoElement),
+        GoldOutcome::Indeterminate(IndeterminateReason::MissingNamespaceEnvironment),
+    ] {
+        let observation = nonqualified(1, CompletionState::Complete, outcome);
+        let mut committed = Vec::new();
+        let mut zero = RetentionBudget { limit: 0, used: 0 };
+        let refusal = commit_observation(&mut committed, observation.clone(), &mut zero)
+            .expect_err("a retained observation must consume at least one unit");
+        assert_eq!(refusal.required, 1);
+        assert_eq!(refusal.remaining, 0);
+        assert!(committed.is_empty());
+        assert_eq!(zero.used, 0);
+
+        let mut one = RetentionBudget { limit: 1, used: 0 };
+        commit_observation(&mut committed, observation, &mut one)
+            .expect("one no-program observation fits one retained unit");
+        assert_eq!(one.used, 1);
+        assert_eq!(committed.len(), 1);
+    }
+
+    let zero_fact = qualified(program(9, Vec::new()));
+    let mut committed = Vec::new();
+    let mut zero = RetentionBudget { limit: 0, used: 0 };
+    let refusal = commit_observation(&mut committed, zero_fact, &mut zero)
+        .expect_err("a zero-fact qualified observation is still retained evidence");
+    assert_eq!(refusal.required, 1);
+    assert_eq!(refusal.remaining, 0);
+    assert!(committed.is_empty());
+
+    let first = nonqualified(
+        1,
+        CompletionState::Complete,
+        GoldOutcome::Invalid(InvalidReason::SelectedGrammar),
+    );
+    let second = nonqualified(
+        2,
+        CompletionState::Complete,
+        GoldOutcome::Invalid(InvalidReason::SelectedGrammar),
+    );
+    let mut committed = Vec::new();
+    let mut one = RetentionBudget { limit: 1, used: 0 };
+    commit_observation(&mut committed, first.clone(), &mut one).expect("first fits");
+    let refusal = commit_observation(&mut committed, second, &mut one)
+        .expect_err("the retained budget cannot reset for a second no-program observation");
+    assert_eq!(refusal.required, 1);
+    assert_eq!(refusal.remaining, 0);
+    assert_eq!(one.used, 1);
+    assert_eq!(committed, vec![first]);
 }
 
 #[test]
@@ -443,7 +533,7 @@ fn retention_and_consumer_resource_budgets_are_independent() {
         vec![open(1, 0, 2), atom(1, SimpleKind::Class, 0, 2), close(1)],
     ));
     let mut committed = Vec::new();
-    let mut retention = RetentionBudget { limit: 3, used: 0 };
+    let mut retention = RetentionBudget { limit: 4, used: 0 };
     commit_observation(&mut committed, observation.clone(), &mut retention)
         .expect("retention fits");
     let before = retention;
@@ -584,7 +674,7 @@ fn dependency_consumer_budget_does_not_mutate_retained_evidence_or_resources() {
     let parent = retained_class_and_id_parent(1);
     let child = parent_relationship_child(2, 1);
     let mut committed = Vec::new();
-    let mut retention = RetentionBudget { limit: 10, used: 0 };
+    let mut retention = RetentionBudget { limit: 12, used: 0 };
     commit_observation(&mut committed, parent, &mut retention).expect("parent retention fits");
     commit_observation(&mut committed, child, &mut retention).expect("child retention fits");
     let retained_before = committed.clone();
@@ -688,6 +778,63 @@ fn retained_parent_members_are_folded_maximized_and_resolved_by_context() {
 }
 
 #[test]
+fn nonqualified_parent_observations_are_bound_to_enclosing_run_identity() {
+    let child = parent_relationship_child(3, 2);
+    for (source, run_id, profile) in [
+        (SourceId(9), RunId(1), "CoreV1"),
+        (SourceId(1), RunId(9), "CoreV1"),
+        (SourceId(1), RunId(1), "OtherProfile"),
+    ] {
+        let foreign_parent = GoldObservation {
+            source,
+            run: run_id,
+            profile,
+            context: ContextId(2),
+            completion: CompletionState::Complete,
+            outcome: GoldOutcome::Invalid(InvalidReason::SelectedGrammar),
+            program: None,
+        };
+        assert_eq!(
+            resolve_retained_run(
+                &run(vec![foreign_parent, child.clone()]),
+                ConsumerBudget { limit: usize::MAX },
+            ),
+            Err(DependencyResolutionError::ObservationIdentityMismatch {
+                context: ContextId(2),
+                expected_source: SourceId(1),
+                actual_source: source,
+                expected_run: RunId(1),
+                actual_run: run_id,
+                expected_profile: "CoreV1",
+                actual_profile: profile,
+            })
+        );
+    }
+
+    let local_parent = nonqualified(
+        2,
+        CompletionState::Complete,
+        GoldOutcome::Invalid(InvalidReason::SelectedGrammar),
+    );
+    let resolved = resolve_retained_run(
+        &run(vec![local_parent, child]),
+        ConsumerBudget { limit: usize::MAX },
+    )
+    .expect("same-domain non-qualified parent remains a resolvable structural dependency");
+    assert_eq!(
+        resolved.dependency(ContextId(2)),
+        Some(DependencyStatus::Invalid)
+    );
+    assert_eq!(
+        resolved
+            .result(ContextId(3))
+            .expect("child result exists")
+            .outcome,
+        ConsumerOutcome::Blocked(BlockingOutcome::Invalid)
+    );
+}
+
+#[test]
 fn relationship_facts_reject_missing_future_self_and_cyclic_dependencies() {
     let missing = run(vec![parent_relationship_child(2, 99)]);
     assert_eq!(
@@ -763,18 +910,20 @@ fn two_authored_nesting_occurrences_contribute_twice() {
             .count(),
         2
     );
-    for expectation in [
-        LiteralRangeExpectation {
-            range: range(0, 1),
-            spelling: "&",
-        },
-        LiteralRangeExpectation {
-            range: range(4, 5),
-            spelling: "&",
-        },
-    ] {
-        assert_eq!(verify_literal_range("& + &", expectation), Ok(()));
-    }
+    assert_eq!(
+        validate_program_authored_provenance(
+            child.program.as_ref().expect("child program exists"),
+            "& + &",
+            &[
+                authored_fact(0, 0, 5, "& + &"),
+                authored_fact(1, 0, 1, "&"),
+                authored_fact(2, 0, 1, "&"),
+                authored_fact(3, 4, 5, "&"),
+                authored_fact(4, 4, 5, "&"),
+            ],
+        ),
+        Ok(())
+    );
 
     let resolved = resolve_retained_run(
         &run(vec![retained_class_and_id_parent(1), child]),
@@ -849,18 +998,20 @@ fn where_ampersand_preserves_presence_but_replaces_specificity_with_zero() {
             .iter()
             .any(|fact| matches!(fact, SelectorFact::NestingPresence { .. }))
     );
-    for expectation in [
-        LiteralRangeExpectation {
-            range: range(0, 7),
-            spelling: ":where(",
-        },
-        LiteralRangeExpectation {
-            range: range(7, 8),
-            spelling: "&",
-        },
-    ] {
-        assert_eq!(verify_literal_range(":where(&)", expectation), Ok(()));
-    }
+    assert_eq!(
+        validate_program_authored_provenance(
+            child.program.as_ref().expect("child program exists"),
+            ":where(&)",
+            &[
+                authored_fact(0, 0, 9, ":where(&)"),
+                authored_fact(1, 0, 7, ":where("),
+                authored_fact(2, 7, 8, "&"),
+                authored_fact(3, 7, 8, "&"),
+                authored_fact(4, 7, 8, "&"),
+            ],
+        ),
+        Ok(())
+    );
     let resolved = resolve_retained_run(
         &run(vec![retained_class_and_id_parent(1), child]),
         ConsumerBudget { limit: usize::MAX },
@@ -944,6 +1095,22 @@ fn scope_and_nesting_order_resolve_same_relative_grammar_to_distinct_targets() {
         ],
     ));
 
+    for child in [&scope_outside_nested_style, &scope_inside_ancestor_style] {
+        assert_eq!(
+            validate_program_authored_provenance(
+                child.program.as_ref().expect("child program exists"),
+                "& .b",
+                &[
+                    authored_fact(0, 0, 4, "& .b"),
+                    authored_fact(1, 0, 1, "&"),
+                    authored_fact(2, 0, 1, "&"),
+                    authored_fact(3, 2, 4, ".b"),
+                ],
+            ),
+            Ok(())
+        );
+    }
+
     let parent_target = resolve_retained_run(
         &run(vec![retained_parent.clone(), scope_outside_nested_style]),
         ConsumerBudget { limit: usize::MAX },
@@ -1000,69 +1167,157 @@ fn identical_spelling_in_distinct_contexts_remains_distinguishable() {
     assert_eq!(left_result.outcome, right_result.outcome);
 }
 
-fn function_program(kind: FunctionKind) -> GoldProgram {
-    program(
-        1,
-        vec![
-            open(1, 0, 12),
-            atom(1, SimpleKind::Class, 0, 2),
-            SelectorFact::OpenFunction {
-                unit: UnitId(2),
-                kind,
-                range: range(2, 6),
-            },
-            open(2, 6, 8),
-            atom(3, SimpleKind::Id, 6, 8),
-            close(2),
-            open(3, 10, 11),
-            atom(4, SimpleKind::Type, 10, 11),
-            close(3),
-            SelectorFact::CloseFunction { unit: UnitId(2) },
-            close(1),
+fn function_fixture(kind: FunctionKind) -> GoldFixture {
+    let (id, source, function_end, function_spelling, id_start, id_end, type_start, type_end) =
+        match kind {
+            FunctionKind::Is => (
+                "CSS-HANDOFF-FUNCTION-IS-001",
+                ".a:is(#b, c)",
+                6,
+                ":is(",
+                6,
+                8,
+                10,
+                11,
+            ),
+            FunctionKind::Not => (
+                "CSS-HANDOFF-FUNCTION-NOT-001",
+                ".a:not(#b, c)",
+                7,
+                ":not(",
+                7,
+                9,
+                11,
+                12,
+            ),
+            FunctionKind::Has => (
+                "CSS-HANDOFF-FUNCTION-HAS-001",
+                ".a:has(> #b, + c)",
+                7,
+                ":has(",
+                9,
+                11,
+                15,
+                16,
+            ),
+            FunctionKind::Where => (
+                "CSS-HANDOFF-FUNCTION-WHERE-001",
+                ".a:where(#b, c)",
+                9,
+                ":where(",
+                9,
+                11,
+                13,
+                14,
+            ),
+        };
+    let source_end = source.len();
+    GoldFixture {
+        id,
+        source,
+        program: program(
+            1,
+            vec![
+                open(1, 0, source_end),
+                atom(1, SimpleKind::Class, 0, 2),
+                SelectorFact::OpenFunction {
+                    unit: UnitId(2),
+                    kind,
+                    range: range(2, function_end),
+                },
+                open(2, id_start, id_end),
+                atom(3, SimpleKind::Id, id_start, id_end),
+                close(2),
+                open(3, type_start, type_end),
+                atom(4, SimpleKind::Type, type_start, type_end),
+                close(3),
+                SelectorFact::CloseFunction { unit: UnitId(2) },
+                close(1),
+            ],
+        ),
+        authored: vec![
+            authored_fact(0, 0, source_end, source),
+            authored_fact(1, 0, 2, ".a"),
+            authored_fact(2, 2, function_end, function_spelling),
+            authored_fact(3, id_start, id_end, "#b"),
+            authored_fact(4, id_start, id_end, "#b"),
+            authored_fact(6, type_start, type_end, "c"),
+            authored_fact(7, type_start, type_end, "c"),
         ],
-    )
+    }
 }
 
 #[test]
 fn source_only_fold_covers_basic_and_selected_function_specificity() {
-    let basic = program(
-        1,
-        vec![
-            open(1, 0, 7),
-            atom(1, SimpleKind::Universal, 0, 1),
-            atom(2, SimpleKind::Class, 1, 3),
-            atom(3, SimpleKind::Attribute, 3, 6),
-            atom(4, SimpleKind::IdentifierPseudoClass, 6, 7),
-            close(1),
+    let basic = GoldFixture {
+        id: "CSS-HANDOFF-BASIC-ATOMS-001",
+        source: "*.a[b]:",
+        program: program(
+            1,
+            vec![
+                open(1, 0, 7),
+                atom(1, SimpleKind::Universal, 0, 1),
+                atom(2, SimpleKind::Class, 1, 3),
+                atom(3, SimpleKind::Attribute, 3, 6),
+                atom(4, SimpleKind::IdentifierPseudoClass, 6, 7),
+                close(1),
+            ],
+        ),
+        authored: vec![
+            authored_fact(0, 0, 7, "*.a[b]:"),
+            authored_fact(1, 0, 1, "*"),
+            authored_fact(2, 1, 3, ".a"),
+            authored_fact(3, 3, 6, "[b]"),
+            authored_fact(4, 6, 7, ":"),
         ],
+    };
+    assert_eq!(
+        validate_program_authored_provenance(&basic.program, basic.source, &basic.authored),
+        Ok(())
     );
     assert_eq!(
-        complete_members(fold_program(&basic, ConsumerBudget { limit: usize::MAX }).outcome)[0].1,
+        complete_members(fold_program(&basic.program, ConsumerBudget { limit: usize::MAX }).outcome)
+            [0]
+            .1,
         specificity(0, 3, 0)
     );
 
     for kind in [FunctionKind::Is, FunctionKind::Not, FunctionKind::Has] {
+        let fixture = function_fixture(kind);
+        assert_eq!(
+            validate_program_authored_provenance(
+                &fixture.program,
+                fixture.source,
+                &fixture.authored,
+            ),
+            Ok(())
+        );
         assert_eq!(
             complete_members(
-                fold_program(
-                    &function_program(kind),
-                    ConsumerBudget { limit: usize::MAX }
-                )
-                .outcome
+                fold_program(&fixture.program, ConsumerBudget { limit: usize::MAX }).outcome
             )[0]
-            .1,
+                .1,
             specificity(1, 1, 0)
         );
     }
+    let where_fixture = function_fixture(FunctionKind::Where);
+    assert_eq!(
+        validate_program_authored_provenance(
+            &where_fixture.program,
+            where_fixture.source,
+            &where_fixture.authored,
+        ),
+        Ok(())
+    );
     assert_eq!(
         complete_members(
             fold_program(
-                &function_program(FunctionKind::Where),
+                &where_fixture.program,
                 ConsumerBudget { limit: usize::MAX },
             )
             .outcome
         )[0]
-        .1,
+            .1,
         specificity(0, 1, 0)
     );
 }
@@ -1099,12 +1354,7 @@ fn unsupported_and_namespace_indeterminate_are_not_promoted() {
             BlockingOutcome::Indeterminate,
         ),
     ] {
-        let observation = GoldObservation {
-            context: ContextId(4),
-            completion: CompletionState::Complete,
-            outcome,
-            program: None,
-        };
+        let observation = nonqualified(4, CompletionState::Complete, outcome);
         assert_eq!(
             fold_observation(&observation, ConsumerBudget { limit: usize::MAX }).outcome,
             ConsumerOutcome::Blocked(expected)
@@ -1126,45 +1376,36 @@ fn parent_failure_category_is_preserved_through_structural_dependency() {
             close(1),
         ],
     ));
-    let incomplete_parent = GoldObservation {
-        context: ContextId(2),
-        completion: CompletionState::Incomplete,
-        outcome: GoldOutcome::Qualified,
-        program: Some(program(
-            2,
-            vec![open(1, 0, 2), atom(1, SimpleKind::Class, 0, 2), close(1)],
-        )),
-    };
+    let mut incomplete_parent = qualified(program(
+        2,
+        vec![open(1, 0, 2), atom(1, SimpleKind::Class, 0, 2), close(1)],
+    ));
+    incomplete_parent.completion = CompletionState::Incomplete;
     for (parent, dependency, expected) in [
         (
-            GoldObservation {
-                context: ContextId(2),
-                completion: CompletionState::Complete,
-                outcome: GoldOutcome::Invalid(InvalidReason::SelectedGrammar),
-                program: None,
-            },
+            nonqualified(
+                2,
+                CompletionState::Complete,
+                GoldOutcome::Invalid(InvalidReason::SelectedGrammar),
+            ),
             DependencyStatus::Invalid,
             ConsumerOutcome::Blocked(BlockingOutcome::Invalid),
         ),
         (
-            GoldObservation {
-                context: ContextId(2),
-                completion: CompletionState::Complete,
-                outcome: GoldOutcome::Unsupported(UnsupportedFeature::PseudoElement),
-                program: None,
-            },
+            nonqualified(
+                2,
+                CompletionState::Complete,
+                GoldOutcome::Unsupported(UnsupportedFeature::PseudoElement),
+            ),
             DependencyStatus::Unsupported,
             ConsumerOutcome::Blocked(BlockingOutcome::Unsupported),
         ),
         (
-            GoldObservation {
-                context: ContextId(2),
-                completion: CompletionState::Complete,
-                outcome: GoldOutcome::Indeterminate(
-                    IndeterminateReason::MissingNamespaceEnvironment,
-                ),
-                program: None,
-            },
+            nonqualified(
+                2,
+                CompletionState::Complete,
+                GoldOutcome::Indeterminate(IndeterminateReason::MissingNamespaceEnvironment),
+            ),
             DependencyStatus::Indeterminate,
             ConsumerOutcome::Blocked(BlockingOutcome::Indeterminate),
         ),
@@ -1245,9 +1486,10 @@ fn parent_consumer_exhaustion_propagates_incomplete_through_the_resolver() {
 #[test]
 fn invalid_forgiving_ampersand_can_suppress_implied_nesting_without_contribution() {
     let fixture = rejected_forgiving_ampersand_fixture();
-    for expectation in &fixture.authored {
-        assert_eq!(verify_literal_range(fixture.source, *expectation), Ok(()));
-    }
+    assert_eq!(
+        validate_program_authored_provenance(&fixture.program, fixture.source, &fixture.authored),
+        Ok(())
+    );
     let evidence =
         validate_rejected_nesting_presence(&fixture.program, rejected_ampersand_expectation())
             .expect("the rejected member retains exact authored non-contributing presence");

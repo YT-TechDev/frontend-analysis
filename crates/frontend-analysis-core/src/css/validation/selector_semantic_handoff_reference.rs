@@ -42,6 +42,15 @@ pub(super) enum DependencyStatus {
 pub(super) enum DependencyResolutionError {
     DuplicateContext(ContextId),
     QualifiedWithoutProgram(ContextId),
+    ObservationIdentityMismatch {
+        context: ContextId,
+        expected_source: SourceId,
+        actual_source: SourceId,
+        expected_run: RunId,
+        actual_run: RunId,
+        expected_profile: &'static str,
+        actual_profile: &'static str,
+    },
     ProgramContextMismatch {
         observation: ContextId,
         program: ContextId,
@@ -465,7 +474,7 @@ pub(super) fn resolve_retained_run(
         ));
     }
 
-    let positions = match observation_positions(&run.observations, &mut budget) {
+    let positions = match observation_positions(run, &mut budget) {
         Ok(positions) => positions,
         Err(PreparationFailure::BudgetExhausted) => {
             return Ok(incomplete_resolved_run(
@@ -554,14 +563,11 @@ enum PreparationFailure {
 }
 
 fn observation_positions(
-    observations: &[GoldObservation],
+    run: &GoldRun,
     budget: &mut ConsumerBudgetState,
 ) -> Result<BTreeMap<ContextId, usize>, PreparationFailure> {
     let mut positions = BTreeMap::new();
-    // The first qualified retained program establishes the validation run's
-    // source/run/profile identity domain. ContextId remains run-local only.
-    let mut identity_domain: Option<(SourceId, RunId, &'static str)> = None;
-    for (position, observation) in observations.iter().enumerate() {
+    for (position, observation) in run.observations.iter().enumerate() {
         if !budget.charge() {
             return Err(PreparationFailure::BudgetExhausted);
         }
@@ -570,31 +576,40 @@ fn observation_positions(
                 DependencyResolutionError::DuplicateContext(observation.context),
             ));
         }
+        if observation.source != run.source
+            || observation.run != run.run
+            || observation.profile != run.profile
+        {
+            return Err(PreparationFailure::Dependency(
+                DependencyResolutionError::ObservationIdentityMismatch {
+                    context: observation.context,
+                    expected_source: run.source,
+                    actual_source: observation.source,
+                    expected_run: run.run,
+                    actual_run: observation.run,
+                    expected_profile: run.profile,
+                    actual_profile: observation.profile,
+                },
+            ));
+        }
 
         match (observation.outcome, observation.program.as_ref()) {
             (GoldOutcome::Qualified, Some(program)) if program.context == observation.context => {
-                match identity_domain {
-                    None => {
-                        identity_domain = Some((program.source, program.run, program.profile));
-                    }
-                    Some((expected_source, expected_run, expected_profile))
-                        if program.source != expected_source
-                            || program.run != expected_run
-                            || program.profile != expected_profile =>
-                    {
-                        return Err(PreparationFailure::Dependency(
-                            DependencyResolutionError::ProgramIdentityMismatch {
-                                context: observation.context,
-                                expected_source,
-                                actual_source: program.source,
-                                expected_run,
-                                actual_run: program.run,
-                                expected_profile,
-                                actual_profile: program.profile,
-                            },
-                        ));
-                    }
-                    Some(_) => {}
+                if program.source != run.source
+                    || program.run != run.run
+                    || program.profile != run.profile
+                {
+                    return Err(PreparationFailure::Dependency(
+                        DependencyResolutionError::ProgramIdentityMismatch {
+                            context: observation.context,
+                            expected_source: run.source,
+                            actual_source: program.source,
+                            expected_run: run.run,
+                            actual_run: program.run,
+                            expected_profile: run.profile,
+                            actual_profile: program.profile,
+                        },
+                    ));
                 }
             }
             (GoldOutcome::Qualified, Some(program)) => {
@@ -726,11 +741,19 @@ pub(super) fn commit_observation(
     observation: GoldObservation,
     budget: &mut RetentionBudget,
 ) -> Result<(), RetentionRefusal> {
-    let required = observation
-        .program
-        .as_ref()
-        .map_or(0usize, |program| program.facts.len());
     let remaining = budget.limit.saturating_sub(budget.used);
+    let required = match observation.program.as_ref() {
+        Some(program) => match program.facts.len().checked_add(1) {
+            Some(required) => required,
+            None => {
+                return Err(RetentionRefusal {
+                    required: usize::MAX,
+                    remaining,
+                });
+            }
+        },
+        None => 1,
+    };
     if required > remaining {
         return Err(RetentionRefusal {
             required,
@@ -815,6 +838,9 @@ fn retained_parent_dependency_rejects_cross_source_run_or_profile_identity() {
 
     fn qualified_program(program: GoldProgram) -> GoldObservation {
         GoldObservation {
+            source: SourceId(1),
+            run: RunId(1),
+            profile: "CoreV1",
             context: program.context,
             completion: CompletionState::Complete,
             outcome: GoldOutcome::Qualified,
@@ -864,6 +890,9 @@ fn retained_parent_dependency_rejects_cross_source_run_or_profile_identity() {
 
     fn retained(parent: GoldObservation, child: GoldObservation) -> GoldRun {
         GoldRun {
+            source: SourceId(1),
+            run: RunId(1),
+            profile: "CoreV1",
             upstream: CompletionState::Complete,
             qualifier: CompletionState::Complete,
             observations: vec![parent, child],
