@@ -134,10 +134,7 @@ fn relationship_specificity(
     }
 }
 
-fn add_to_current(
-    containers: &mut [Container],
-    value: Specificity,
-) -> Result<(), ConsumerOutcome> {
+fn add_to_current(containers: &mut [Container], value: Specificity) -> Result<(), ConsumerOutcome> {
     let Some(container) = containers.last_mut() else {
         return Err(ConsumerOutcome::Incomplete);
     };
