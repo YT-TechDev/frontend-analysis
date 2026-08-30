@@ -5,6 +5,13 @@
 
 #![allow(dead_code)]
 
+pub(super) const CSSWG_REVISION: &str = "8fe035fe18fe98a62becff96df0e55dc3a5c1033";
+pub(super) const SELECTORS_4_BLOB: &str = "3b81851cdaf8ea6eec5f63e6867822de0bad9410";
+pub(super) const CSS_NESTING_1_BLOB: &str = "41db452e107401cab5b8394b85213f007287a14e";
+pub(super) const CSS_SYNTAX_3_BLOB: &str = "62ece32e4f48299395f23db4a37336b25d21fe1e";
+pub(super) const CSS_NAMESPACES_3_BLOB: &str = "9442ce15f4af6b7240f86eb44a4edd2ab116d958";
+pub(super) const CSS_CASCADE_6_BLOB: &str = "8cd75053a1babf221f724781334180a842bf1d7b";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct SourceId(pub(super) u32);
 
