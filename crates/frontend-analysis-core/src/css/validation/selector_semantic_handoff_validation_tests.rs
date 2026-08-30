@@ -402,7 +402,11 @@ fn identical_spelling_in_distinct_contexts_remains_distinguishable() {
     );
     let right = program(
         11,
-        vec![open(1, 20, 25), atom(1, SimpleKind::Class, 20, 25), close(1)],
+        vec![
+            open(1, 20, 25),
+            atom(1, SimpleKind::Class, 20, 25),
+            close(1),
+        ],
     );
     assert_ne!(left.context, right.context);
     assert_ne!(left.facts, right.facts);
