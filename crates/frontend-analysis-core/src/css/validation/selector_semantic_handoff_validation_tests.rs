@@ -1276,9 +1276,10 @@ fn source_only_fold_covers_basic_and_selected_function_specificity() {
         Ok(())
     );
     assert_eq!(
-        complete_members(fold_program(&basic.program, ConsumerBudget { limit: usize::MAX }).outcome)
-            [0]
-            .1,
+        complete_members(
+            fold_program(&basic.program, ConsumerBudget { limit: usize::MAX }).outcome
+        )[0]
+        .1,
         specificity(0, 3, 0)
     );
 
@@ -1296,7 +1297,7 @@ fn source_only_fold_covers_basic_and_selected_function_specificity() {
             complete_members(
                 fold_program(&fixture.program, ConsumerBudget { limit: usize::MAX }).outcome
             )[0]
-                .1,
+            .1,
             specificity(1, 1, 0)
         );
     }
@@ -1311,13 +1312,9 @@ fn source_only_fold_covers_basic_and_selected_function_specificity() {
     );
     assert_eq!(
         complete_members(
-            fold_program(
-                &where_fixture.program,
-                ConsumerBudget { limit: usize::MAX },
-            )
-            .outcome
+            fold_program(&where_fixture.program, ConsumerBudget { limit: usize::MAX },).outcome
         )[0]
-            .1,
+        .1,
         specificity(0, 1, 0)
     );
 }
