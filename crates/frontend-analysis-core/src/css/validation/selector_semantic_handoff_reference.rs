@@ -193,9 +193,22 @@ pub(super) fn fold_program(
                     }
                 }
             }
-            SelectorFact::Simple { kind, .. } => add_to_current(&mut containers, simple_specificity(kind)),
+            SelectorFact::RejectedForgivingMember { .. } => {
+                if containers.len() > 1 && containers.last().is_some_and(|container| container.current.is_none()) {
+                    Ok(())
+                } else {
+                    Err(ConsumerOutcome::Incomplete)
+                }
+            }
+            SelectorFact::Simple { kind, .. } => {
+                add_to_current(&mut containers, simple_specificity(kind))
+            }
             SelectorFact::OpenFunction { unit, kind, .. } => {
-                if containers.last().and_then(|container| container.current).is_none() {
+                if containers
+                    .last()
+                    .and_then(|container| container.current)
+                    .is_none()
+                {
                     Err(ConsumerOutcome::Incomplete)
                 } else {
                     containers.push(Container::function(kind, unit));
@@ -268,15 +281,15 @@ pub(super) fn fold_observation(
                 steps: 0,
             },
         },
-        GoldOutcome::Invalid => ConsumerResult {
+        GoldOutcome::Invalid(_) => ConsumerResult {
             outcome: ConsumerOutcome::Blocked(BlockingOutcome::Invalid),
             steps: 0,
         },
-        GoldOutcome::Unsupported => ConsumerResult {
+        GoldOutcome::Unsupported(_) => ConsumerResult {
             outcome: ConsumerOutcome::Blocked(BlockingOutcome::Unsupported),
             steps: 0,
         },
-        GoldOutcome::Indeterminate => ConsumerResult {
+        GoldOutcome::Indeterminate(_) => ConsumerResult {
             outcome: ConsumerOutcome::Blocked(BlockingOutcome::Indeterminate),
             steps: 0,
         },
