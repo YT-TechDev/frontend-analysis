@@ -655,14 +655,7 @@ fn scope_relationship_adds_zero_specificity_and_ignores_scope_prelude() {
 fn scope_and_nesting_order_resolve_same_relative_grammar_to_distinct_targets() {
     let retained_parent = qualified(program(
         1,
-        vec![
-            open(1, 0, 2),
-            atom(1, SimpleKind::Class, 0, 2),
-            close(1),
-            open(2, 4, 6),
-            atom(2, SimpleKind::Id, 4, 6),
-            close(2),
-        ],
+        vec![open(1, 0, 2), atom(1, SimpleKind::Class, 0, 2), close(1)],
     ));
 
     // @scope { .a { & .b {} } }: the qualified style parent is nearest.
@@ -723,7 +716,7 @@ fn scope_and_nesting_order_resolve_same_relative_grammar_to_distinct_targets() {
                 .clone()
         )[0]
         .1,
-        specificity(1, 1, 0)
+        specificity(0, 2, 0)
     );
     assert_eq!(
         complete_members(
