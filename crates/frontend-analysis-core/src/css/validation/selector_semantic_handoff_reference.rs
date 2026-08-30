@@ -6,8 +6,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::selector_semantic_handoff_gold::{
     AuthoredRange, CompletionState, ContextId, FunctionKind, GoldObservation, GoldOutcome,
-    GoldProgram, GoldRun, InvalidReason, MemberId, RelationshipOrigin, RelationshipTarget, RunId,
-    SelectorFact, SimpleKind, SourceId, UnitId,
+    GoldProgram, GoldRun, InvalidReason, MemberId, NestingPresenceDisposition, RelationshipOrigin,
+    RelationshipTarget, RunId, SelectorFact, SimpleKind, SourceId, UnitId,
 };
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -380,7 +380,28 @@ fn fold_program_with_dependencies(
                     }
                 }
             }
-            SelectorFact::NestingPresence { .. } => Ok(()),
+            SelectorFact::NestingPresence {
+                member,
+                disposition: NestingPresenceDisposition::Contributing,
+                ..
+            } => {
+                if containers
+                    .last()
+                    .and_then(|container| container.current)
+                    .is_some_and(|(current_member, _)| current_member == member)
+                {
+                    Ok(())
+                } else {
+                    Err(ConsumerOutcome::Incomplete)
+                }
+            }
+            // Rejected forgiving-member placement is independently owned by
+            // validate_rejected_nesting_presence; the specificity fold keeps
+            // its required retained presence deliberately non-contributing.
+            SelectorFact::NestingPresence {
+                disposition: NestingPresenceDisposition::NonContributingPresenceOnly,
+                ..
+            } => Ok(()),
             SelectorFact::Relationship { target, .. } => {
                 match relationship_specificity(target, dependencies, budget) {
                     Ok(value) => add_to_current(&mut containers, value),
@@ -1016,4 +1037,141 @@ fn relationship_discovery_does_not_revisit_zero_work_observations() {
         .expect("relationship discovery has no observation-level work left to revisit");
     assert!(edges.is_empty());
     assert_eq!(budget.used, 2);
+}
+
+#[test]
+fn contributing_nesting_presence_requires_current_member_identity() {
+    fn presence(member: u32) -> SelectorFact {
+        SelectorFact::NestingPresence {
+            member: MemberId(member),
+            unit: UnitId(1),
+            origin: RelationshipOrigin::Authored(AuthoredRange::new(0, 1)),
+            disposition: NestingPresenceDisposition::Contributing,
+        }
+    }
+
+    fn test_program(facts: Vec<SelectorFact>) -> GoldProgram {
+        GoldProgram {
+            source: SourceId(1),
+            run: RunId(1),
+            profile: "CoreV1",
+            context: ContextId(1),
+            facts,
+        }
+    }
+
+    let valid = fold_program(
+        &test_program(vec![
+            SelectorFact::OpenMember {
+                member: MemberId(1),
+                range: AuthoredRange::new(0, 1),
+            },
+            presence(1),
+            SelectorFact::CloseMember {
+                member: MemberId(1),
+            },
+        ]),
+        ConsumerBudget { limit: usize::MAX },
+    );
+    assert_eq!(
+        valid.outcome,
+        ConsumerOutcome::Complete(vec![(MemberId(1), Specificity::ZERO)])
+    );
+    assert_eq!(valid.steps, 3);
+
+    let wrong_member = fold_program(
+        &test_program(vec![
+            SelectorFact::OpenMember {
+                member: MemberId(1),
+                range: AuthoredRange::new(0, 1),
+            },
+            presence(2),
+            SelectorFact::CloseMember {
+                member: MemberId(1),
+            },
+        ]),
+        ConsumerBudget { limit: usize::MAX },
+    );
+    assert_eq!(wrong_member.outcome, ConsumerOutcome::Incomplete);
+    assert_eq!(wrong_member.steps, 2);
+
+    let orphan = fold_program(
+        &test_program(vec![presence(1)]),
+        ConsumerBudget { limit: usize::MAX },
+    );
+    assert_eq!(orphan.outcome, ConsumerOutcome::Incomplete);
+    assert_eq!(orphan.steps, 1);
+
+    let after_close = fold_program(
+        &test_program(vec![
+            SelectorFact::OpenMember {
+                member: MemberId(1),
+                range: AuthoredRange::new(0, 1),
+            },
+            SelectorFact::CloseMember {
+                member: MemberId(1),
+            },
+            presence(1),
+        ]),
+        ConsumerBudget { limit: usize::MAX },
+    );
+    assert_eq!(after_close.outcome, ConsumerOutcome::Incomplete);
+    assert_eq!(after_close.steps, 3);
+}
+
+#[test]
+fn contributing_nesting_presence_uses_innermost_function_member_identity() {
+    fn nested_program(presence_member: u32) -> GoldProgram {
+        GoldProgram {
+            source: SourceId(1),
+            run: RunId(1),
+            profile: "CoreV1",
+            context: ContextId(1),
+            facts: vec![
+                SelectorFact::OpenMember {
+                    member: MemberId(1),
+                    range: AuthoredRange::new(0, 9),
+                },
+                SelectorFact::OpenFunction {
+                    unit: UnitId(1),
+                    kind: FunctionKind::Where,
+                    range: AuthoredRange::new(0, 7),
+                },
+                SelectorFact::OpenMember {
+                    member: MemberId(2),
+                    range: AuthoredRange::new(7, 8),
+                },
+                SelectorFact::NestingPresence {
+                    member: MemberId(presence_member),
+                    unit: UnitId(2),
+                    origin: RelationshipOrigin::Authored(AuthoredRange::new(7, 8)),
+                    disposition: NestingPresenceDisposition::Contributing,
+                },
+                SelectorFact::CloseMember {
+                    member: MemberId(2),
+                },
+                SelectorFact::CloseFunction { unit: UnitId(1) },
+                SelectorFact::CloseMember {
+                    member: MemberId(1),
+                },
+            ],
+        }
+    }
+
+    let valid = fold_program(
+        &nested_program(2),
+        ConsumerBudget { limit: usize::MAX },
+    );
+    assert_eq!(
+        valid.outcome,
+        ConsumerOutcome::Complete(vec![(MemberId(1), Specificity::ZERO)])
+    );
+    assert_eq!(valid.steps, 7);
+
+    let wrong_outer_member = fold_program(
+        &nested_program(1),
+        ConsumerBudget { limit: usize::MAX },
+    );
+    assert_eq!(wrong_outer_member.outcome, ConsumerOutcome::Incomplete);
+    assert_eq!(wrong_outer_member.steps, 4);
 }
