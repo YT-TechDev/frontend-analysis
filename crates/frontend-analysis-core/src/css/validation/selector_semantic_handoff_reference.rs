@@ -1158,20 +1158,14 @@ fn contributing_nesting_presence_uses_innermost_function_member_identity() {
         }
     }
 
-    let valid = fold_program(
-        &nested_program(2),
-        ConsumerBudget { limit: usize::MAX },
-    );
+    let valid = fold_program(&nested_program(2), ConsumerBudget { limit: usize::MAX });
     assert_eq!(
         valid.outcome,
         ConsumerOutcome::Complete(vec![(MemberId(1), Specificity::ZERO)])
     );
     assert_eq!(valid.steps, 7);
 
-    let wrong_outer_member = fold_program(
-        &nested_program(1),
-        ConsumerBudget { limit: usize::MAX },
-    );
+    let wrong_outer_member = fold_program(&nested_program(1), ConsumerBudget { limit: usize::MAX });
     assert_eq!(wrong_outer_member.outcome, ConsumerOutcome::Incomplete);
     assert_eq!(wrong_outer_member.steps, 4);
 }
