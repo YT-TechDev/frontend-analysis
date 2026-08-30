@@ -77,16 +77,52 @@ pub(super) struct ConsumerBudget {
     pub(super) limit: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ConsumerBudgetState {
+    // Validation-only work units prove bounded ownership; they do not select
+    // future production accounting granularity or representation.
+    limit: usize,
+    used: usize,
+}
+
+impl ConsumerBudgetState {
+    fn new(budget: ConsumerBudget) -> Self {
+        Self {
+            limit: budget.limit,
+            used: 0,
+        }
+    }
+
+    fn charge(&mut self) -> bool {
+        if self.used >= self.limit {
+            return false;
+        }
+        self.used += 1;
+        true
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ConsumerResult {
     pub(super) outcome: ConsumerOutcome,
     pub(super) steps: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ConsumerRunCompletion {
+    Complete,
+    Incomplete,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ResolvedRun {
+    completion: ConsumerRunCompletion,
+    known_contexts: Option<BTreeMap<ContextId, usize>>,
+    // A refused run retains only its deterministic evaluated prefix. An
+    // absent suffix was never granted consumer work and cannot be Complete.
     results: Vec<(ContextId, ConsumerResult)>,
     dependencies: BTreeMap<ContextId, DependencyStatus>,
+    used: usize,
 }
 
 impl ResolvedRun {
@@ -98,6 +134,26 @@ impl ResolvedRun {
 
     pub(super) fn dependency(&self, context: ContextId) -> Option<DependencyStatus> {
         self.dependencies.get(&context).copied()
+    }
+
+    pub(super) fn completion(&self) -> ConsumerRunCompletion {
+        self.completion
+    }
+
+    pub(super) fn used(&self) -> usize {
+        self.used
+    }
+
+    pub(super) fn outcome(&self, context: ContextId) -> Option<ConsumerOutcome> {
+        if let Some(result) = self.result(context) {
+            return Some(result.outcome.clone());
+        }
+        (self.completion == ConsumerRunCompletion::Incomplete
+            && self
+                .known_contexts
+                .as_ref()
+                .is_some_and(|contexts| contexts.contains_key(&context)))
+        .then_some(ConsumerOutcome::Incomplete)
     }
 }
 
@@ -143,33 +199,45 @@ fn simple_specificity(kind: SimpleKind) -> Specificity {
     }
 }
 
-fn max_specificity(values: &[(MemberId, Specificity)]) -> Specificity {
-    values
-        .iter()
-        .map(|(_, value)| *value)
-        .max()
-        .unwrap_or(Specificity::ZERO)
+fn max_specificity(
+    values: &[(MemberId, Specificity)],
+    budget: &mut ConsumerBudgetState,
+) -> Result<Specificity, ConsumerOutcome> {
+    let mut maximum = Specificity::ZERO;
+    for (_, value) in values {
+        if !budget.charge() {
+            return Err(ConsumerOutcome::Incomplete);
+        }
+        maximum = maximum.max(*value);
+    }
+    Ok(maximum)
 }
 
 fn relationship_specificity(
     target: RelationshipTarget,
     dependencies: &BTreeMap<ContextId, DependencyStatus>,
+    budget: &mut ConsumerBudgetState,
 ) -> Result<Specificity, ConsumerOutcome> {
     match target {
         RelationshipTarget::ScopeRoot(_) | RelationshipTarget::Zero => Ok(Specificity::ZERO),
-        RelationshipTarget::ParentSelectorList(context) => match dependencies.get(&context) {
-            Some(DependencyStatus::Resolved(value)) => Ok(*value),
-            Some(DependencyStatus::Invalid) => {
-                Err(ConsumerOutcome::Blocked(BlockingOutcome::Invalid))
+        RelationshipTarget::ParentSelectorList(context) => {
+            if !budget.charge() {
+                return Err(ConsumerOutcome::Incomplete);
             }
-            Some(DependencyStatus::Unsupported) => {
-                Err(ConsumerOutcome::Blocked(BlockingOutcome::Unsupported))
+            match dependencies.get(&context) {
+                Some(DependencyStatus::Resolved(value)) => Ok(*value),
+                Some(DependencyStatus::Invalid) => {
+                    Err(ConsumerOutcome::Blocked(BlockingOutcome::Invalid))
+                }
+                Some(DependencyStatus::Unsupported) => {
+                    Err(ConsumerOutcome::Blocked(BlockingOutcome::Unsupported))
+                }
+                Some(DependencyStatus::Indeterminate) => {
+                    Err(ConsumerOutcome::Blocked(BlockingOutcome::Indeterminate))
+                }
+                Some(DependencyStatus::Incomplete) | None => Err(ConsumerOutcome::Incomplete),
             }
-            Some(DependencyStatus::Indeterminate) => {
-                Err(ConsumerOutcome::Blocked(BlockingOutcome::Indeterminate))
-            }
-            Some(DependencyStatus::Incomplete) | None => Err(ConsumerOutcome::Incomplete),
-        },
+        }
     }
 }
 
@@ -187,26 +255,25 @@ fn add_to_current(containers: &mut [Container], value: Specificity) -> Result<()
 fn fold_program_with_dependencies(
     program: &GoldProgram,
     dependencies: &BTreeMap<ContextId, DependencyStatus>,
-    budget: ConsumerBudget,
+    budget: &mut ConsumerBudgetState,
 ) -> ConsumerResult {
     let mut containers = vec![Container::root()];
-    let mut steps = 0usize;
+    let started_at = budget.used;
 
     for fact in &program.facts {
-        if steps == budget.limit {
+        if !budget.charge() {
             return ConsumerResult {
                 outcome: ConsumerOutcome::Incomplete,
-                steps,
+                steps: budget.used - started_at,
             };
         }
-        steps += 1;
 
         let result = match *fact {
             SelectorFact::OpenMember { member, .. } => {
                 let Some(container) = containers.last_mut() else {
                     return ConsumerResult {
                         outcome: ConsumerOutcome::Incomplete,
-                        steps,
+                        steps: budget.used - started_at,
                     };
                 };
                 if container.current.is_some() {
@@ -220,7 +287,7 @@ fn fold_program_with_dependencies(
                 let Some(container) = containers.last_mut() else {
                     return ConsumerResult {
                         outcome: ConsumerOutcome::Incomplete,
-                        steps,
+                        steps: budget.used - started_at,
                     };
                 };
                 match container.current.take() {
@@ -267,7 +334,7 @@ fn fold_program_with_dependencies(
                     let Some(function) = containers.pop() else {
                         return ConsumerResult {
                             outcome: ConsumerOutcome::Incomplete,
-                            steps,
+                            steps: budget.used - started_at,
                         };
                     };
                     match function.kind {
@@ -277,7 +344,15 @@ fn fold_program_with_dependencies(
                             let contribution = match kind {
                                 FunctionKind::Where => Specificity::ZERO,
                                 FunctionKind::Is | FunctionKind::Not | FunctionKind::Has => {
-                                    max_specificity(&function.completed)
+                                    match max_specificity(&function.completed, budget) {
+                                        Ok(value) => value,
+                                        Err(outcome) => {
+                                            return ConsumerResult {
+                                                outcome,
+                                                steps: budget.used - started_at,
+                                            };
+                                        }
+                                    }
                                 }
                             };
                             add_to_current(&mut containers, contribution)
@@ -288,7 +363,7 @@ fn fold_program_with_dependencies(
             }
             SelectorFact::NestingPresence { .. } => Ok(()),
             SelectorFact::Relationship { target, .. } => {
-                match relationship_specificity(target, dependencies) {
+                match relationship_specificity(target, dependencies, budget) {
                     Ok(value) => add_to_current(&mut containers, value),
                     Err(outcome) => Err(outcome),
                 }
@@ -296,66 +371,70 @@ fn fold_program_with_dependencies(
         };
 
         if let Err(outcome) = result {
-            return ConsumerResult { outcome, steps };
+            return ConsumerResult {
+                outcome,
+                steps: budget.used - started_at,
+            };
         }
     }
 
     if containers.len() != 1 || containers[0].current.is_some() {
         return ConsumerResult {
             outcome: ConsumerOutcome::Incomplete,
-            steps,
+            steps: budget.used - started_at,
         };
     }
 
     ConsumerResult {
         outcome: ConsumerOutcome::Complete(containers.pop().expect("root exists").completed),
-        steps,
+        steps: budget.used - started_at,
     }
 }
 
 pub(super) fn fold_program(program: &GoldProgram, budget: ConsumerBudget) -> ConsumerResult {
-    fold_program_with_dependencies(program, &BTreeMap::new(), budget)
+    let mut budget = ConsumerBudgetState::new(budget);
+    fold_program_with_dependencies(program, &BTreeMap::new(), &mut budget)
 }
 
 pub(super) fn fold_observation(
     observation: &GoldObservation,
     budget: ConsumerBudget,
 ) -> ConsumerResult {
-    fold_observation_with_dependencies(observation, &BTreeMap::new(), budget)
+    let mut budget = ConsumerBudgetState::new(budget);
+    fold_observation_with_dependencies(observation, &BTreeMap::new(), &mut budget)
 }
 
 fn fold_observation_with_dependencies(
     observation: &GoldObservation,
     dependencies: &BTreeMap<ContextId, DependencyStatus>,
-    budget: ConsumerBudget,
+    budget: &mut ConsumerBudgetState,
 ) -> ConsumerResult {
-    if observation.completion == CompletionState::Incomplete {
+    let started_at = budget.used;
+    if !budget.charge() {
         return ConsumerResult {
             outcome: ConsumerOutcome::Incomplete,
             steps: 0,
         };
     }
+    if observation.completion == CompletionState::Incomplete {
+        return ConsumerResult {
+            outcome: ConsumerOutcome::Incomplete,
+            steps: budget.used - started_at,
+        };
+    }
 
-    match observation.outcome {
+    let outcome = match observation.outcome {
         GoldOutcome::Qualified => match observation.program.as_ref() {
-            Some(program) => fold_program_with_dependencies(program, dependencies, budget),
-            None => ConsumerResult {
-                outcome: ConsumerOutcome::Incomplete,
-                steps: 0,
-            },
+            Some(program) => fold_program_with_dependencies(program, dependencies, budget).outcome,
+            None => ConsumerOutcome::Incomplete,
         },
-        GoldOutcome::Invalid(_) => ConsumerResult {
-            outcome: ConsumerOutcome::Blocked(BlockingOutcome::Invalid),
-            steps: 0,
-        },
-        GoldOutcome::Unsupported(_) => ConsumerResult {
-            outcome: ConsumerOutcome::Blocked(BlockingOutcome::Unsupported),
-            steps: 0,
-        },
-        GoldOutcome::Indeterminate(_) => ConsumerResult {
-            outcome: ConsumerOutcome::Blocked(BlockingOutcome::Indeterminate),
-            steps: 0,
-        },
+        GoldOutcome::Invalid(_) => ConsumerOutcome::Blocked(BlockingOutcome::Invalid),
+        GoldOutcome::Unsupported(_) => ConsumerOutcome::Blocked(BlockingOutcome::Unsupported),
+        GoldOutcome::Indeterminate(_) => ConsumerOutcome::Blocked(BlockingOutcome::Indeterminate),
+    };
+    ConsumerResult {
+        outcome,
+        steps: budget.used - started_at,
     }
 }
 
@@ -363,61 +442,140 @@ pub(super) fn resolve_retained_run(
     run: &GoldRun,
     budget: ConsumerBudget,
 ) -> Result<ResolvedRun, DependencyResolutionError> {
-    let positions = observation_positions(&run.observations)?;
-    let edges = relationship_edges(&run.observations)?;
-    validate_relationship_edges(&positions, &edges)?;
-
-    let run_incomplete =
-        run.upstream == CompletionState::Incomplete || run.qualifier == CompletionState::Incomplete;
+    let mut budget = ConsumerBudgetState::new(budget);
     let mut dependencies = BTreeMap::new();
-    let mut results = Vec::with_capacity(run.observations.len());
+    let mut results = Vec::new();
+
+    if run.upstream == CompletionState::Incomplete || run.qualifier == CompletionState::Incomplete {
+        return Ok(incomplete_resolved_run(
+            &budget,
+            None,
+            results,
+            dependencies,
+        ));
+    }
+
+    let positions = match observation_positions(&run.observations, &mut budget) {
+        Ok(positions) => positions,
+        Err(PreparationFailure::BudgetExhausted) => {
+            return Ok(incomplete_resolved_run(
+                &budget,
+                None,
+                results,
+                dependencies,
+            ));
+        }
+        Err(PreparationFailure::Dependency(error)) => return Err(error),
+    };
+    let edges = match relationship_edges(&run.observations, &mut budget) {
+        Ok(edges) => edges,
+        Err(PreparationFailure::BudgetExhausted) => {
+            return Ok(incomplete_resolved_run(
+                &budget,
+                Some(positions),
+                results,
+                dependencies,
+            ));
+        }
+        Err(PreparationFailure::Dependency(error)) => return Err(error),
+    };
+    match validate_relationship_edges(&positions, &edges, &mut budget) {
+        Ok(()) => {}
+        Err(PreparationFailure::BudgetExhausted) => {
+            return Ok(incomplete_resolved_run(
+                &budget,
+                Some(positions),
+                results,
+                dependencies,
+            ));
+        }
+        Err(PreparationFailure::Dependency(error)) => return Err(error),
+    }
 
     for observation in &run.observations {
-        let result = if run_incomplete {
-            ConsumerResult {
-                outcome: ConsumerOutcome::Incomplete,
-                steps: 0,
-            }
-        } else {
-            fold_observation_with_dependencies(observation, &dependencies, budget)
+        let result = fold_observation_with_dependencies(observation, &dependencies, &mut budget);
+        let result_incomplete = result.outcome == ConsumerOutcome::Incomplete;
+        let dependency = match dependency_from_result(&result, &mut budget) {
+            Ok(dependency) => dependency,
+            Err(ConsumerOutcome::Incomplete) => DependencyStatus::Incomplete,
+            Err(_) => unreachable!("dependency aggregation only refuses for consumer budget"),
         };
-        dependencies.insert(observation.context, dependency_from_result(&result));
+        let dependency_incomplete = dependency == DependencyStatus::Incomplete;
+        dependencies.insert(observation.context, dependency);
         results.push((observation.context, result));
+        if result_incomplete || dependency_incomplete {
+            return Ok(incomplete_resolved_run(
+                &budget,
+                Some(positions),
+                results,
+                dependencies,
+            ));
+        }
     }
 
     Ok(ResolvedRun {
+        completion: ConsumerRunCompletion::Complete,
+        known_contexts: Some(positions),
         results,
         dependencies,
+        used: budget.used,
     })
+}
+
+fn incomplete_resolved_run(
+    budget: &ConsumerBudgetState,
+    known_contexts: Option<BTreeMap<ContextId, usize>>,
+    results: Vec<(ContextId, ConsumerResult)>,
+    dependencies: BTreeMap<ContextId, DependencyStatus>,
+) -> ResolvedRun {
+    ResolvedRun {
+        completion: ConsumerRunCompletion::Incomplete,
+        known_contexts,
+        results,
+        dependencies,
+        used: budget.used,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PreparationFailure {
+    BudgetExhausted,
+    Dependency(DependencyResolutionError),
 }
 
 fn observation_positions(
     observations: &[GoldObservation],
-) -> Result<BTreeMap<ContextId, usize>, DependencyResolutionError> {
+    budget: &mut ConsumerBudgetState,
+) -> Result<BTreeMap<ContextId, usize>, PreparationFailure> {
     let mut positions = BTreeMap::new();
     for (position, observation) in observations.iter().enumerate() {
+        if !budget.charge() {
+            return Err(PreparationFailure::BudgetExhausted);
+        }
         if positions.insert(observation.context, position).is_some() {
-            return Err(DependencyResolutionError::DuplicateContext(
-                observation.context,
+            return Err(PreparationFailure::Dependency(
+                DependencyResolutionError::DuplicateContext(observation.context),
             ));
         }
 
         match (observation.outcome, observation.program.as_ref()) {
             (GoldOutcome::Qualified, Some(program)) if program.context == observation.context => {}
             (GoldOutcome::Qualified, Some(program)) => {
-                return Err(DependencyResolutionError::ProgramContextMismatch {
-                    observation: observation.context,
-                    program: program.context,
-                });
+                return Err(PreparationFailure::Dependency(
+                    DependencyResolutionError::ProgramContextMismatch {
+                        observation: observation.context,
+                        program: program.context,
+                    },
+                ));
             }
             (GoldOutcome::Qualified, None) => {
-                return Err(DependencyResolutionError::QualifiedWithoutProgram(
-                    observation.context,
+                return Err(PreparationFailure::Dependency(
+                    DependencyResolutionError::QualifiedWithoutProgram(observation.context),
                 ));
             }
             (_, Some(_)) => {
-                return Err(DependencyResolutionError::ProgramForNonQualifiedContext(
-                    observation.context,
+                return Err(PreparationFailure::Dependency(
+                    DependencyResolutionError::ProgramForNonQualifiedContext(observation.context),
                 ));
             }
             (_, None) => {}
@@ -428,19 +586,17 @@ fn observation_positions(
 
 fn relationship_edges(
     observations: &[GoldObservation],
-) -> Result<Vec<(ContextId, ContextId)>, DependencyResolutionError> {
+    budget: &mut ConsumerBudgetState,
+) -> Result<Vec<(ContextId, ContextId)>, PreparationFailure> {
     let mut edges = Vec::new();
     for observation in observations {
         let Some(program) = observation.program.as_ref() else {
             continue;
         };
-        if program.context != observation.context {
-            return Err(DependencyResolutionError::ProgramContextMismatch {
-                observation: observation.context,
-                program: program.context,
-            });
-        }
         for fact in &program.facts {
+            if !budget.charge() {
+                return Err(PreparationFailure::BudgetExhausted);
+            }
             if let SelectorFact::Relationship {
                 target: RelationshipTarget::ParentSelectorList(parent),
                 ..
@@ -456,41 +612,63 @@ fn relationship_edges(
 fn validate_relationship_edges(
     positions: &BTreeMap<ContextId, usize>,
     edges: &[(ContextId, ContextId)],
-) -> Result<(), DependencyResolutionError> {
+    budget: &mut ConsumerBudgetState,
+) -> Result<(), PreparationFailure> {
     for (child, parent) in edges {
+        if !budget.charge() {
+            return Err(PreparationFailure::BudgetExhausted);
+        }
         if child == parent {
-            return Err(DependencyResolutionError::SelfDependency(*child));
+            return Err(PreparationFailure::Dependency(
+                DependencyResolutionError::SelfDependency(*child),
+            ));
         }
         if !positions.contains_key(parent) {
-            return Err(DependencyResolutionError::MissingContext {
-                child: *child,
-                parent: *parent,
-            });
+            return Err(PreparationFailure::Dependency(
+                DependencyResolutionError::MissingContext {
+                    child: *child,
+                    parent: *parent,
+                },
+            ));
         }
     }
 
-    if !dependency_graph_is_acyclic(edges) {
-        return Err(DependencyResolutionError::Cycle);
+    if !dependency_graph_is_acyclic(edges, budget)? {
+        return Err(PreparationFailure::Dependency(
+            DependencyResolutionError::Cycle,
+        ));
     }
 
     for (child, parent) in edges {
+        if !budget.charge() {
+            return Err(PreparationFailure::BudgetExhausted);
+        }
         if positions[parent] >= positions[child] {
-            return Err(DependencyResolutionError::FutureContext {
-                child: *child,
-                parent: *parent,
-            });
+            return Err(PreparationFailure::Dependency(
+                DependencyResolutionError::FutureContext {
+                    child: *child,
+                    parent: *parent,
+                },
+            ));
         }
     }
     Ok(())
 }
 
-fn dependency_from_result(result: &ConsumerResult) -> DependencyStatus {
+fn dependency_from_result(
+    result: &ConsumerResult,
+    budget: &mut ConsumerBudgetState,
+) -> Result<DependencyStatus, ConsumerOutcome> {
     match &result.outcome {
-        ConsumerOutcome::Complete(members) => DependencyStatus::Resolved(max_specificity(members)),
-        ConsumerOutcome::Blocked(BlockingOutcome::Invalid) => DependencyStatus::Invalid,
-        ConsumerOutcome::Blocked(BlockingOutcome::Unsupported) => DependencyStatus::Unsupported,
-        ConsumerOutcome::Blocked(BlockingOutcome::Indeterminate) => DependencyStatus::Indeterminate,
-        ConsumerOutcome::Incomplete => DependencyStatus::Incomplete,
+        ConsumerOutcome::Complete(members) => {
+            max_specificity(members, budget).map(DependencyStatus::Resolved)
+        }
+        ConsumerOutcome::Blocked(BlockingOutcome::Invalid) => Ok(DependencyStatus::Invalid),
+        ConsumerOutcome::Blocked(BlockingOutcome::Unsupported) => Ok(DependencyStatus::Unsupported),
+        ConsumerOutcome::Blocked(BlockingOutcome::Indeterminate) => {
+            Ok(DependencyStatus::Indeterminate)
+        }
+        ConsumerOutcome::Incomplete => Ok(DependencyStatus::Incomplete),
     }
 }
 
@@ -528,39 +706,54 @@ pub(super) fn commit_observation(
     Ok(())
 }
 
-pub(super) fn dependency_graph_is_acyclic(edges: &[(ContextId, ContextId)]) -> bool {
+fn dependency_graph_is_acyclic(
+    edges: &[(ContextId, ContextId)],
+    budget: &mut ConsumerBudgetState,
+) -> Result<bool, PreparationFailure> {
     fn visit(
         node: ContextId,
         adjacency: &BTreeMap<ContextId, Vec<ContextId>>,
         visiting: &mut BTreeSet<ContextId>,
         visited: &mut BTreeSet<ContextId>,
-    ) -> bool {
+        budget: &mut ConsumerBudgetState,
+    ) -> Result<bool, PreparationFailure> {
+        if !budget.charge() {
+            return Err(PreparationFailure::BudgetExhausted);
+        }
         if visited.contains(&node) {
-            return true;
+            return Ok(true);
         }
         if !visiting.insert(node) {
-            return false;
+            return Ok(false);
         }
         if let Some(parents) = adjacency.get(&node) {
             for parent in parents {
-                if !visit(*parent, adjacency, visiting, visited) {
-                    return false;
+                if !budget.charge() {
+                    return Err(PreparationFailure::BudgetExhausted);
+                }
+                if !visit(*parent, adjacency, visiting, visited, budget)? {
+                    return Ok(false);
                 }
             }
         }
         visiting.remove(&node);
         visited.insert(node);
-        true
+        Ok(true)
     }
 
     let mut adjacency = BTreeMap::<ContextId, Vec<ContextId>>::new();
     for (child, parent) in edges {
+        if !budget.charge() {
+            return Err(PreparationFailure::BudgetExhausted);
+        }
         adjacency.entry(*child).or_default().push(*parent);
     }
     let mut visiting = BTreeSet::new();
     let mut visited = BTreeSet::new();
-    adjacency
-        .keys()
-        .copied()
-        .all(|node| visit(node, &adjacency, &mut visiting, &mut visited))
+    for node in adjacency.keys().copied() {
+        if !visit(node, &adjacency, &mut visiting, &mut visited, budget)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }

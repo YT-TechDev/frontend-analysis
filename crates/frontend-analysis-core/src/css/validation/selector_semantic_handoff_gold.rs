@@ -103,8 +103,9 @@ pub(super) enum SelectorFact {
         unit: UnitId,
     },
     NestingPresence {
+        member: MemberId,
         unit: UnitId,
-        range: AuthoredRange,
+        origin: RelationshipOrigin,
         disposition: NestingPresenceDisposition,
     },
     Relationship {
@@ -211,6 +212,160 @@ pub(super) struct GoldFixture {
     pub(super) source: &'static str,
     pub(super) program: GoldProgram,
     pub(super) authored: Vec<LiteralRangeExpectation>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct RejectedNestingPresenceExpectation {
+    pub(super) member: MemberId,
+    pub(super) rejected_range: AuthoredRange,
+    pub(super) unit: UnitId,
+    pub(super) presence_range: AuthoredRange,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RejectedNestingEffect {
+    SuppressesImpliedNesting,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct RejectedNestingPresenceEvidence {
+    pub(super) member: MemberId,
+    pub(super) unit: UnitId,
+    pub(super) authored_range: AuthoredRange,
+    pub(super) disposition: NestingPresenceDisposition,
+    pub(super) effect: RejectedNestingEffect,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RejectedNestingPresenceFailure {
+    RejectedMemberMissing,
+    RejectedMemberAmbiguous,
+    RejectedMemberRangeMismatch {
+        expected: AuthoredRange,
+        actual: AuthoredRange,
+    },
+    PresenceMissing,
+    PresenceAmbiguous,
+    PresenceMemberMismatch {
+        expected: MemberId,
+        actual: MemberId,
+    },
+    PresenceUnitMismatch {
+        expected: UnitId,
+        actual: UnitId,
+    },
+    PresenceMustBeAuthored,
+    PresenceRangeMismatch {
+        expected: AuthoredRange,
+        actual: AuthoredRange,
+    },
+    PresenceMustBeNonContributing,
+    ContributingRelationshipInRejectedMember,
+}
+
+pub(super) fn validate_rejected_nesting_presence(
+    program: &GoldProgram,
+    expectation: RejectedNestingPresenceExpectation,
+) -> Result<RejectedNestingPresenceEvidence, RejectedNestingPresenceFailure> {
+    let rejected_members = program
+        .facts
+        .iter()
+        .enumerate()
+        .filter_map(|(position, fact)| match fact {
+            SelectorFact::RejectedForgivingMember { member, range }
+                if *member == expectation.member =>
+            {
+                Some((position, *range))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    let [(rejected_position, rejected_range)] = rejected_members.as_slice() else {
+        return Err(if rejected_members.is_empty() {
+            RejectedNestingPresenceFailure::RejectedMemberMissing
+        } else {
+            RejectedNestingPresenceFailure::RejectedMemberAmbiguous
+        });
+    };
+    if *rejected_range != expectation.rejected_range {
+        return Err(
+            RejectedNestingPresenceFailure::RejectedMemberRangeMismatch {
+                expected: expectation.rejected_range,
+                actual: *rejected_range,
+            },
+        );
+    }
+
+    let rejected_facts = program.facts[rejected_position + 1..]
+        .iter()
+        .take_while(|fact| {
+            !matches!(
+                fact,
+                SelectorFact::RejectedForgivingMember { .. }
+                    | SelectorFact::OpenMember { .. }
+                    | SelectorFact::CloseFunction { .. }
+            )
+        })
+        .collect::<Vec<_>>();
+    if rejected_facts
+        .iter()
+        .any(|fact| matches!(fact, SelectorFact::Relationship { .. }))
+    {
+        return Err(RejectedNestingPresenceFailure::ContributingRelationshipInRejectedMember);
+    }
+
+    let presences = rejected_facts
+        .iter()
+        .filter_map(|fact| match fact {
+            SelectorFact::NestingPresence {
+                member,
+                unit,
+                origin,
+                disposition,
+            } => Some((*member, *unit, *origin, *disposition)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let [(member, unit, origin, disposition)] = presences.as_slice() else {
+        return Err(if presences.is_empty() {
+            RejectedNestingPresenceFailure::PresenceMissing
+        } else {
+            RejectedNestingPresenceFailure::PresenceAmbiguous
+        });
+    };
+    if *member != expectation.member {
+        return Err(RejectedNestingPresenceFailure::PresenceMemberMismatch {
+            expected: expectation.member,
+            actual: *member,
+        });
+    }
+    if *unit != expectation.unit {
+        return Err(RejectedNestingPresenceFailure::PresenceUnitMismatch {
+            expected: expectation.unit,
+            actual: *unit,
+        });
+    }
+    let RelationshipOrigin::Authored(authored_range) = origin else {
+        return Err(RejectedNestingPresenceFailure::PresenceMustBeAuthored);
+    };
+    if *authored_range != expectation.presence_range {
+        return Err(RejectedNestingPresenceFailure::PresenceRangeMismatch {
+            expected: expectation.presence_range,
+            actual: *authored_range,
+        });
+    }
+    if *disposition != NestingPresenceDisposition::NonContributingPresenceOnly {
+        return Err(RejectedNestingPresenceFailure::PresenceMustBeNonContributing);
+    }
+
+    Ok(RejectedNestingPresenceEvidence {
+        member: *member,
+        unit: *unit,
+        authored_range: *authored_range,
+        disposition: *disposition,
+        effect: RejectedNestingEffect::SuppressesImpliedNesting,
+    })
 }
 
 pub(super) fn authored(range: AuthoredRange) -> RelationshipOrigin {

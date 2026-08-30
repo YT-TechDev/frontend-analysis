@@ -1,14 +1,15 @@
 use super::selector_semantic_handoff_gold::{
     AuthoredRange, CompletionState, ContextId, FunctionKind, GoldFixture, GoldObservation,
     GoldOutcome, GoldProgram, GoldRun, IndeterminateReason, InvalidReason, LiteralRangeExpectation,
-    LiteralRangeFailure, MemberId, NestingPresenceDisposition, RelationshipOrigin,
+    LiteralRangeFailure, MemberId, NestingPresenceDisposition, RejectedNestingEffect,
+    RejectedNestingPresenceExpectation, RejectedNestingPresenceFailure, RelationshipOrigin,
     RelationshipTarget, RunId, SelectorFact, SimpleKind, SourceId, UnitId, UnsupportedFeature,
-    authored, derived, verify_literal_range,
+    authored, derived, validate_rejected_nesting_presence, verify_literal_range,
 };
 use super::selector_semantic_handoff_reference::{
-    BlockingOutcome, ConsumerBudget, ConsumerOutcome, DependencyResolutionError, DependencyStatus,
-    RetentionBudget, Specificity, commit_observation, fold_observation, fold_program,
-    resolve_retained_run,
+    BlockingOutcome, ConsumerBudget, ConsumerOutcome, ConsumerRunCompletion,
+    DependencyResolutionError, DependencyStatus, RetentionBudget, Specificity, commit_observation,
+    fold_observation, fold_program, resolve_retained_run,
 };
 
 fn range(start: usize, end: usize) -> AuthoredRange {
@@ -94,8 +95,9 @@ fn parent_relationship_child(context: u32, parent: u32) -> GoldObservation {
         vec![
             open(1, 0, 1),
             SelectorFact::NestingPresence {
+                member: MemberId(1),
                 unit: UnitId(1),
-                range: range(0, 1),
+                origin: authored(range(0, 1)),
                 disposition: NestingPresenceDisposition::Contributing,
             },
             SelectorFact::Relationship {
@@ -105,6 +107,63 @@ fn parent_relationship_child(context: u32, parent: u32) -> GoldObservation {
             close(1),
         ],
     ))
+}
+
+fn minimal_independent_observation(context: u32) -> GoldObservation {
+    qualified(program(context, vec![open(1, 0, 1), close(1)]))
+}
+
+fn rejected_forgiving_ampersand_fixture() -> GoldFixture {
+    GoldFixture {
+        id: "CSS-HANDOFF-REJECTED-AMPERSAND-001",
+        source: ".a:is(:bad&, .b)",
+        program: program(
+            3,
+            vec![
+                open(1, 0, 16),
+                atom(1, SimpleKind::Class, 0, 2),
+                SelectorFact::OpenFunction {
+                    unit: UnitId(2),
+                    kind: FunctionKind::Is,
+                    range: range(2, 6),
+                },
+                SelectorFact::RejectedForgivingMember {
+                    member: MemberId(2),
+                    range: range(6, 11),
+                },
+                SelectorFact::NestingPresence {
+                    member: MemberId(2),
+                    unit: UnitId(3),
+                    origin: authored(range(10, 11)),
+                    disposition: NestingPresenceDisposition::NonContributingPresenceOnly,
+                },
+                open(3, 13, 15),
+                atom(4, SimpleKind::Class, 13, 15),
+                close(3),
+                SelectorFact::CloseFunction { unit: UnitId(2) },
+                close(1),
+            ],
+        ),
+        authored: vec![
+            LiteralRangeExpectation {
+                range: range(6, 11),
+                spelling: ":bad&",
+            },
+            LiteralRangeExpectation {
+                range: range(10, 11),
+                spelling: "&",
+            },
+        ],
+    }
+}
+
+fn rejected_ampersand_expectation() -> RejectedNestingPresenceExpectation {
+    RejectedNestingPresenceExpectation {
+        member: MemberId(2),
+        rejected_range: range(6, 11),
+        unit: UnitId(3),
+        presence_range: range(10, 11),
+    }
 }
 
 #[test]
@@ -279,11 +338,15 @@ fn reference_fold_is_source_token_and_parser_free_by_signature() {
         vec![open(1, 0, 1), atom(1, SimpleKind::Type, 0, 1), close(1)],
     );
     let result = fold(&gold, ConsumerBudget { limit: 3 });
+    assert_eq!(result.steps, 3);
     assert_eq!(
         complete_members(result.outcome),
         vec![(MemberId(1), specificity(0, 0, 1))]
     );
-    assert!(resolve(&run(vec![qualified(gold)]), ConsumerBudget { limit: 3 }).is_ok());
+    let resolved = resolve(&run(vec![qualified(gold)]), ConsumerBudget { limit: 9 })
+        .expect("source-free retained resolution completes within its run budget");
+    assert_eq!(resolved.completion(), ConsumerRunCompletion::Complete);
+    assert_eq!(resolved.used(), 9);
 }
 
 #[test]
@@ -309,7 +372,7 @@ fn invalid_unsupported_and_indeterminate_remain_distinct() {
             program: None,
         };
         assert_eq!(
-            fold_observation(&observation, ConsumerBudget { limit: 0 }).outcome,
+            fold_observation(&observation, ConsumerBudget { limit: 1 }).outcome,
             ConsumerOutcome::Blocked(expected)
         );
     }
@@ -333,15 +396,12 @@ fn incomplete_upstream_or_qualifier_cannot_upgrade_to_complete() {
             observations: vec![observation.clone()],
         },
     ] {
-        assert_eq!(
-            resolve_retained_run(&run, ConsumerBudget { limit: usize::MAX })
-                .expect("an incomplete run still has structurally valid retained evidence")
-                .result(ContextId(1))
-                .expect("context result exists")
-                .outcome
-                .clone(),
-            ConsumerOutcome::Incomplete
-        );
+        let resolved = resolve_retained_run(&run, ConsumerBudget { limit: usize::MAX })
+            .expect("authoritative incompleteness is a consumer outcome, not a graph error");
+        assert_eq!(resolved.completion(), ConsumerRunCompletion::Incomplete);
+        assert_eq!(resolved.used(), 0);
+        assert!(resolved.result(ContextId(1)).is_none());
+        assert_eq!(resolved.dependency(ContextId(1)), None);
     }
 }
 
@@ -390,6 +450,189 @@ fn retention_and_consumer_resource_budgets_are_independent() {
     let result = fold_observation(&observation, ConsumerBudget { limit: 1 });
     assert_eq!(result.outcome, ConsumerOutcome::Incomplete);
     assert_eq!(retention, before);
+}
+
+#[test]
+fn zero_budget_refuses_before_non_empty_dependency_graph_work() {
+    let retained = run(vec![
+        retained_class_and_id_parent(1),
+        parent_relationship_child(2, 1),
+    ]);
+    let resolved = resolve_retained_run(&retained, ConsumerBudget { limit: 0 })
+        .expect("budget refusal is consumer incompleteness, not a graph error");
+    assert_eq!(resolved.completion(), ConsumerRunCompletion::Incomplete);
+    assert_eq!(resolved.used(), 0);
+    assert!(resolved.result(ContextId(1)).is_none());
+    assert!(resolved.result(ContextId(2)).is_none());
+}
+
+#[test]
+fn dependency_preparation_and_all_observations_share_one_aggregate_budget() {
+    let retained = run(vec![
+        minimal_independent_observation(1),
+        minimal_independent_observation(2),
+        minimal_independent_observation(3),
+    ]);
+
+    let complete = resolve_retained_run(&retained, ConsumerBudget { limit: usize::MAX })
+        .expect("independent observations form a valid empty dependency graph");
+    assert_eq!(complete.completion(), ConsumerRunCompletion::Complete);
+    assert_eq!(complete.used(), 21);
+    assert_eq!(
+        complete.result(ContextId(1)).expect("first result").steps,
+        3
+    );
+    assert_eq!(
+        complete.result(ContextId(2)).expect("second result").steps,
+        3
+    );
+    assert_eq!(
+        complete.result(ContextId(3)).expect("third result").steps,
+        3
+    );
+
+    let preparation_exhausted = resolve_retained_run(&retained, ConsumerBudget { limit: 8 })
+        .expect("budgeted graph preparation may refuse before folding");
+    assert_eq!(
+        preparation_exhausted.completion(),
+        ConsumerRunCompletion::Incomplete
+    );
+    assert_eq!(preparation_exhausted.used(), 8);
+    assert!(
+        preparation_exhausted.result(ContextId(1)).is_none(),
+        "relationship discovery and graph preparation cannot run for free"
+    );
+
+    let exhausted = resolve_retained_run(&retained, ConsumerBudget { limit: 13 })
+        .expect("aggregate exhaustion is consumer incompleteness");
+    assert_eq!(exhausted.completion(), ConsumerRunCompletion::Incomplete);
+    assert_eq!(exhausted.used(), 13);
+    assert!(matches!(
+        exhausted
+            .result(ContextId(1))
+            .expect("the completed prefix is retained")
+            .outcome,
+        ConsumerOutcome::Complete(_)
+    ));
+    assert_eq!(
+        exhausted
+            .result(ContextId(2))
+            .expect("the first refused suffix observation is explicit")
+            .outcome,
+        ConsumerOutcome::Incomplete
+    );
+    assert_eq!(
+        exhausted
+            .result(ContextId(2))
+            .expect("second result exists")
+            .steps,
+        0
+    );
+    assert!(exhausted.result(ContextId(3)).is_none());
+    assert_eq!(
+        exhausted.outcome(ContextId(3)),
+        Some(ConsumerOutcome::Incomplete)
+    );
+}
+
+#[test]
+fn graph_parent_and_child_consume_the_same_remaining_budget() {
+    let retained = run(vec![
+        retained_class_and_id_parent(1),
+        parent_relationship_child(2, 1),
+    ]);
+
+    let complete = resolve_retained_run(&retained, ConsumerBudget { limit: usize::MAX })
+        .expect("the retained parent relationship is structurally valid");
+    assert_eq!(complete.completion(), ConsumerRunCompletion::Complete);
+    assert_eq!(complete.used(), 34);
+    assert_eq!(
+        complete.result(ContextId(1)).expect("parent result").steps,
+        7
+    );
+    assert_eq!(
+        complete.result(ContextId(2)).expect("child result").steps,
+        6
+    );
+
+    let exhausted = resolve_retained_run(&retained, ConsumerBudget { limit: 32 })
+        .expect("shared-budget exhaustion is consumer incompleteness");
+    assert_eq!(exhausted.completion(), ConsumerRunCompletion::Incomplete);
+    assert_eq!(exhausted.used(), 32);
+    assert!(matches!(
+        exhausted
+            .result(ContextId(1))
+            .expect("parent completed before exhaustion")
+            .outcome,
+        ConsumerOutcome::Complete(_)
+    ));
+    assert_eq!(
+        exhausted
+            .result(ContextId(2))
+            .expect("child consumes only the remaining run budget")
+            .outcome,
+        ConsumerOutcome::Incomplete
+    );
+    assert_eq!(
+        exhausted.result(ContextId(2)).expect("child result").steps,
+        5
+    );
+}
+
+#[test]
+fn dependency_consumer_budget_does_not_mutate_retained_evidence_or_resources() {
+    let parent = retained_class_and_id_parent(1);
+    let child = parent_relationship_child(2, 1);
+    let mut committed = Vec::new();
+    let mut retention = RetentionBudget { limit: 10, used: 0 };
+    commit_observation(&mut committed, parent, &mut retention).expect("parent retention fits");
+    commit_observation(&mut committed, child, &mut retention).expect("child retention fits");
+    let retained_before = committed.clone();
+    let retention_before = retention;
+    let retained_run = run(committed.clone());
+
+    let zero = resolve_retained_run(&retained_run, ConsumerBudget { limit: 0 })
+        .expect("zero consumer budget is an incomplete run");
+    let complete = resolve_retained_run(&retained_run, ConsumerBudget { limit: usize::MAX })
+        .expect("unbounded validation budget completes the retained run");
+
+    assert_eq!(zero.completion(), ConsumerRunCompletion::Incomplete);
+    assert_eq!(complete.completion(), ConsumerRunCompletion::Complete);
+    assert_eq!(committed, retained_before);
+    assert_eq!(retention, retention_before);
+    assert_eq!(retained_run.upstream, CompletionState::Complete);
+    assert_eq!(retained_run.qualifier, CompletionState::Complete);
+}
+
+#[test]
+fn run_wide_consumer_accounting_and_result_prefix_are_deterministic() {
+    let retained = run(vec![
+        retained_class_and_id_parent(1),
+        parent_relationship_child(2, 1),
+    ]);
+    let first = resolve_retained_run(&retained, ConsumerBudget { limit: 32 })
+        .expect("first replay has a valid graph");
+    let second = resolve_retained_run(&retained, ConsumerBudget { limit: 32 })
+        .expect("second replay has a valid graph");
+    assert_eq!(first, second);
+    assert_eq!(first.completion(), ConsumerRunCompletion::Incomplete);
+    assert_eq!(first.used(), 32);
+    assert!(first.result(ContextId(1)).is_some());
+    assert!(first.result(ContextId(2)).is_some());
+
+    for limit in 0..=34 {
+        let bounded = resolve_retained_run(&retained, ConsumerBudget { limit })
+            .expect("the graph remains structurally valid at every consumer limit");
+        assert!(bounded.used() <= limit);
+        assert_eq!(
+            bounded.completion(),
+            if limit < 34 {
+                ConsumerRunCompletion::Incomplete
+            } else {
+                ConsumerRunCompletion::Complete
+            }
+        );
+    }
 }
 
 #[test]
@@ -490,8 +733,9 @@ fn two_authored_nesting_occurrences_contribute_twice() {
         vec![
             open(1, 0, 5),
             SelectorFact::NestingPresence {
+                member: MemberId(1),
                 unit: UnitId(1),
-                range: range(0, 1),
+                origin: authored(range(0, 1)),
                 disposition: NestingPresenceDisposition::Contributing,
             },
             SelectorFact::Relationship {
@@ -499,8 +743,9 @@ fn two_authored_nesting_occurrences_contribute_twice() {
                 origin: authored(range(0, 1)),
             },
             SelectorFact::NestingPresence {
+                member: MemberId(1),
                 unit: UnitId(2),
-                range: range(4, 5),
+                origin: authored(range(4, 5)),
                 disposition: NestingPresenceDisposition::Contributing,
             },
             SelectorFact::Relationship {
@@ -581,8 +826,9 @@ fn where_ampersand_preserves_presence_but_replaces_specificity_with_zero() {
             },
             open(2, 7, 8),
             SelectorFact::NestingPresence {
+                member: MemberId(2),
                 unit: UnitId(2),
-                range: range(7, 8),
+                origin: authored(range(7, 8)),
                 disposition: NestingPresenceDisposition::Contributing,
             },
             SelectorFact::Relationship {
@@ -664,8 +910,9 @@ fn scope_and_nesting_order_resolve_same_relative_grammar_to_distinct_targets() {
         vec![
             open(1, 0, 4),
             SelectorFact::NestingPresence {
+                member: MemberId(1),
                 unit: UnitId(1),
-                range: range(0, 1),
+                origin: authored(range(0, 1)),
                 disposition: NestingPresenceDisposition::Contributing,
             },
             SelectorFact::Relationship {
@@ -683,8 +930,9 @@ fn scope_and_nesting_order_resolve_same_relative_grammar_to_distinct_targets() {
         vec![
             open(1, 0, 4),
             SelectorFact::NestingPresence {
+                member: MemberId(1),
                 unit: UnitId(1),
-                range: range(0, 1),
+                origin: authored(range(0, 1)),
                 disposition: NestingPresenceDisposition::Contributing,
             },
             SelectorFact::Relationship {
@@ -932,14 +1180,24 @@ fn parent_failure_category_is_preserved_through_structural_dependency() {
         )
         .expect("the relationship targets an earlier retained parent");
         assert_eq!(resolved.dependency(ContextId(2)), Some(dependency));
-        assert_eq!(
-            resolved
-                .result(ContextId(3))
-                .expect("child result exists")
-                .outcome
-                .clone(),
-            expected
-        );
+        if dependency == DependencyStatus::Incomplete {
+            assert_eq!(resolved.completion(), ConsumerRunCompletion::Incomplete);
+            assert!(resolved.result(ContextId(3)).is_none());
+            assert_eq!(
+                resolved.outcome(ContextId(3)),
+                Some(ConsumerOutcome::Incomplete)
+            );
+        } else {
+            assert_eq!(resolved.completion(), ConsumerRunCompletion::Complete);
+            assert_eq!(
+                resolved
+                    .result(ContextId(3))
+                    .expect("child result exists")
+                    .outcome
+                    .clone(),
+                expected
+            );
+        }
     }
 }
 
@@ -950,54 +1208,199 @@ fn parent_consumer_exhaustion_propagates_incomplete_through_the_resolver() {
             retained_class_and_id_parent(2),
             parent_relationship_child(3, 2),
         ]),
-        ConsumerBudget { limit: 5 },
+        ConsumerBudget { limit: 24 },
     )
     .expect("the dependency graph is structurally valid");
 
+    assert_eq!(resolved.completion(), ConsumerRunCompletion::Incomplete);
+    assert_eq!(resolved.used(), 24);
     assert_eq!(
         resolved.dependency(ContextId(2)),
         Some(DependencyStatus::Incomplete)
     );
     assert_eq!(
         resolved
-            .result(ContextId(3))
-            .expect("child result exists")
-            .outcome
-            .clone(),
+            .result(ContextId(2))
+            .expect("parent records its exhausted fold")
+            .outcome,
         ConsumerOutcome::Incomplete
+    );
+    assert_eq!(
+        resolved
+            .result(ContextId(2))
+            .expect("parent result exists")
+            .steps,
+        6
+    );
+    assert!(
+        resolved.result(ContextId(3)).is_none(),
+        "the child cannot receive a precomputed or fresh-budget parent answer"
+    );
+    assert_eq!(
+        resolved.outcome(ContextId(3)),
+        Some(ConsumerOutcome::Incomplete)
     );
 }
 
 #[test]
 fn invalid_forgiving_ampersand_can_suppress_implied_nesting_without_contribution() {
-    let gold = program(
-        3,
-        vec![
-            open(1, 0, 16),
-            atom(1, SimpleKind::Class, 0, 2),
-            SelectorFact::OpenFunction {
-                unit: UnitId(2),
-                kind: FunctionKind::Is,
-                range: range(2, 6),
-            },
-            SelectorFact::RejectedForgivingMember {
-                member: MemberId(2),
-                range: range(6, 11),
-            },
-            SelectorFact::NestingPresence {
-                unit: UnitId(3),
-                range: range(10, 11),
-                disposition: NestingPresenceDisposition::NonContributingPresenceOnly,
-            },
-            open(3, 13, 15),
-            atom(4, SimpleKind::Class, 13, 15),
-            close(3),
-            SelectorFact::CloseFunction { unit: UnitId(2) },
-            close(1),
-        ],
+    let fixture = rejected_forgiving_ampersand_fixture();
+    for expectation in &fixture.authored {
+        assert_eq!(verify_literal_range(fixture.source, *expectation), Ok(()));
+    }
+    let evidence =
+        validate_rejected_nesting_presence(&fixture.program, rejected_ampersand_expectation())
+            .expect("the rejected member retains exact authored non-contributing presence");
+    assert_eq!(evidence.member, MemberId(2));
+    assert_eq!(evidence.unit, UnitId(3));
+    assert_eq!(evidence.authored_range, range(10, 11));
+    assert_eq!(
+        evidence.disposition,
+        NestingPresenceDisposition::NonContributingPresenceOnly
     );
-    let first = fold_program(&gold, ConsumerBudget { limit: usize::MAX });
-    let second = fold_program(&gold, ConsumerBudget { limit: usize::MAX });
+    assert_eq!(
+        evidence.effect,
+        RejectedNestingEffect::SuppressesImpliedNesting
+    );
+
+    let first = fold_program(&fixture.program, ConsumerBudget { limit: usize::MAX });
+    let second = fold_program(&fixture.program, ConsumerBudget { limit: usize::MAX });
     assert_eq!(first, second);
     assert_eq!(complete_members(first.outcome)[0].1, specificity(0, 2, 0));
+}
+
+#[test]
+fn rejected_forgiving_ampersand_presence_cannot_be_deleted() {
+    let mut fixture = rejected_forgiving_ampersand_fixture();
+    fixture
+        .program
+        .facts
+        .retain(|fact| !matches!(fact, SelectorFact::NestingPresence { .. }));
+    assert_eq!(
+        validate_rejected_nesting_presence(&fixture.program, rejected_ampersand_expectation(),),
+        Err(RejectedNestingPresenceFailure::PresenceMissing)
+    );
+}
+
+#[test]
+fn rejected_forgiving_ampersand_presence_cannot_contribute_or_gain_a_relationship() {
+    let mut contributing = rejected_forgiving_ampersand_fixture();
+    let presence = contributing
+        .program
+        .facts
+        .iter_mut()
+        .find(|fact| matches!(fact, SelectorFact::NestingPresence { .. }))
+        .expect("fixture has rejected-member presence");
+    let SelectorFact::NestingPresence { disposition, .. } = presence else {
+        unreachable!("selected fact is nesting presence");
+    };
+    *disposition = NestingPresenceDisposition::Contributing;
+    assert_eq!(
+        validate_rejected_nesting_presence(&contributing.program, rejected_ampersand_expectation(),),
+        Err(RejectedNestingPresenceFailure::PresenceMustBeNonContributing)
+    );
+
+    let mut relationship = rejected_forgiving_ampersand_fixture();
+    let presence_position = relationship
+        .program
+        .facts
+        .iter()
+        .position(|fact| matches!(fact, SelectorFact::NestingPresence { .. }))
+        .expect("fixture has rejected-member presence");
+    relationship.program.facts.insert(
+        presence_position + 1,
+        SelectorFact::Relationship {
+            target: RelationshipTarget::ParentSelectorList(ContextId(1)),
+            origin: authored(range(10, 11)),
+        },
+    );
+    assert_eq!(
+        validate_rejected_nesting_presence(&relationship.program, rejected_ampersand_expectation(),),
+        Err(RejectedNestingPresenceFailure::ContributingRelationshipInRejectedMember)
+    );
+}
+
+#[test]
+fn rejected_forgiving_ampersand_presence_cannot_move_to_another_member() {
+    let mut wrong_presence_member = rejected_forgiving_ampersand_fixture();
+    let presence = wrong_presence_member
+        .program
+        .facts
+        .iter_mut()
+        .find(|fact| matches!(fact, SelectorFact::NestingPresence { .. }))
+        .expect("fixture has rejected-member presence");
+    let SelectorFact::NestingPresence { member, .. } = presence else {
+        unreachable!("selected fact is nesting presence");
+    };
+    *member = MemberId(3);
+    assert_eq!(
+        validate_rejected_nesting_presence(
+            &wrong_presence_member.program,
+            rejected_ampersand_expectation(),
+        ),
+        Err(RejectedNestingPresenceFailure::PresenceMemberMismatch {
+            expected: MemberId(2),
+            actual: MemberId(3),
+        })
+    );
+
+    let mut lost_rejected_identity = rejected_forgiving_ampersand_fixture();
+    let rejected = lost_rejected_identity
+        .program
+        .facts
+        .iter_mut()
+        .find(|fact| matches!(fact, SelectorFact::RejectedForgivingMember { .. }))
+        .expect("fixture has rejected member");
+    let SelectorFact::RejectedForgivingMember { member, .. } = rejected else {
+        unreachable!("selected fact is rejected member");
+    };
+    *member = MemberId(9);
+    assert_eq!(
+        validate_rejected_nesting_presence(
+            &lost_rejected_identity.program,
+            rejected_ampersand_expectation(),
+        ),
+        Err(RejectedNestingPresenceFailure::RejectedMemberMissing)
+    );
+}
+
+#[test]
+fn rejected_forgiving_ampersand_presence_requires_exact_authored_provenance() {
+    let mut wrong_range = rejected_forgiving_ampersand_fixture();
+    let presence = wrong_range
+        .program
+        .facts
+        .iter_mut()
+        .find(|fact| matches!(fact, SelectorFact::NestingPresence { .. }))
+        .expect("fixture has rejected-member presence");
+    let SelectorFact::NestingPresence { origin, .. } = presence else {
+        unreachable!("selected fact is nesting presence");
+    };
+    *origin = authored(range(9, 10));
+    assert_eq!(
+        validate_rejected_nesting_presence(&wrong_range.program, rejected_ampersand_expectation(),),
+        Err(RejectedNestingPresenceFailure::PresenceRangeMismatch {
+            expected: range(10, 11),
+            actual: range(9, 10),
+        })
+    );
+
+    let mut derived_origin = rejected_forgiving_ampersand_fixture();
+    let presence = derived_origin
+        .program
+        .facts
+        .iter_mut()
+        .find(|fact| matches!(fact, SelectorFact::NestingPresence { .. }))
+        .expect("fixture has rejected-member presence");
+    let SelectorFact::NestingPresence { origin, .. } = presence else {
+        unreachable!("selected fact is nesting presence");
+    };
+    *origin = derived();
+    assert_eq!(
+        validate_rejected_nesting_presence(
+            &derived_origin.program,
+            rejected_ampersand_expectation(),
+        ),
+        Err(RejectedNestingPresenceFailure::PresenceMustBeAuthored)
+    );
 }
