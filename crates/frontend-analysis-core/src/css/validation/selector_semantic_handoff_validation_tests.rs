@@ -2,9 +2,10 @@ use std::collections::BTreeMap;
 
 use super::selector_semantic_handoff_gold::{
     AuthoredRange, CompletionState, ContextId, FunctionKind, GoldFixture, GoldObservation,
-    GoldOutcome, GoldProgram, GoldRun, LiteralRangeExpectation, MemberId,
-    NestingPresenceDisposition, RelationshipOrigin, RelationshipTarget, RunId, SelectorFact,
-    SimpleKind, SourceId, UnitId, authored, derived,
+    GoldOutcome, GoldProgram, GoldRun, IndeterminateReason, InvalidReason,
+    LiteralRangeExpectation, MemberId, NestingPresenceDisposition, RelationshipOrigin,
+    RelationshipTarget, RunId, SelectorFact, SimpleKind, SourceId, UnitId, UnsupportedFeature,
+    authored, derived,
 };
 use super::selector_semantic_handoff_reference::{
     BlockingOutcome, ConsumerBudget, ConsumerOutcome, DependencyStatus, RetentionBudget,
@@ -86,6 +87,7 @@ fn semantic_units_keep_source_run_context_member_identity_and_order() {
 
     assert_eq!(gold.source, SourceId(1));
     assert_eq!(gold.run, RunId(1));
+    assert_eq!(gold.profile, "CoreV1");
     assert_eq!(gold.context, ContextId(7));
     let result = fold_program(
         &gold,
@@ -201,10 +203,16 @@ fn reference_fold_is_source_token_and_parser_free_by_signature() {
 #[test]
 fn invalid_unsupported_and_indeterminate_remain_distinct() {
     for (outcome, expected) in [
-        (GoldOutcome::Invalid, BlockingOutcome::Invalid),
-        (GoldOutcome::Unsupported, BlockingOutcome::Unsupported),
         (
-            GoldOutcome::Indeterminate,
+            GoldOutcome::Invalid(InvalidReason::SelectedGrammar),
+            BlockingOutcome::Invalid,
+        ),
+        (
+            GoldOutcome::Unsupported(UnsupportedFeature::PseudoElement),
+            BlockingOutcome::Unsupported,
+        ),
+        (
+            GoldOutcome::Indeterminate(IndeterminateReason::MissingNamespaceEnvironment),
             BlockingOutcome::Indeterminate,
         ),
     ] {
@@ -562,9 +570,12 @@ fn selector_list_output_stays_per_member_not_match_effective() {
 #[test]
 fn unsupported_and_namespace_indeterminate_are_not_promoted() {
     for (outcome, expected) in [
-        (GoldOutcome::Unsupported, BlockingOutcome::Unsupported),
         (
-            GoldOutcome::Indeterminate,
+            GoldOutcome::Unsupported(UnsupportedFeature::FunctionalPseudoClass),
+            BlockingOutcome::Unsupported,
+        ),
+        (
+            GoldOutcome::Indeterminate(IndeterminateReason::MissingNamespaceEnvironment),
             BlockingOutcome::Indeterminate,
         ),
     ] {
@@ -640,14 +651,18 @@ fn invalid_forgiving_ampersand_can_suppress_implied_nesting_without_contribution
                 kind: FunctionKind::Is,
                 range: range(2, 6),
             },
+            SelectorFact::RejectedForgivingMember {
+                member: MemberId(2),
+                range: range(6, 11),
+            },
             SelectorFact::NestingPresence {
                 unit: UnitId(3),
                 range: range(10, 11),
                 disposition: NestingPresenceDisposition::NonContributingPresenceOnly,
             },
-            open(2, 13, 15),
+            open(3, 13, 15),
             atom(4, SimpleKind::Class, 13, 15),
-            close(2),
+            close(3),
             SelectorFact::CloseFunction { unit: UnitId(2) },
             close(1),
         ],
