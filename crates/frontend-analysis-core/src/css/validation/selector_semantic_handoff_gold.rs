@@ -155,6 +155,7 @@ pub(super) enum CompletionState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct GoldObservation {
     pub(super) context: ContextId,
+    pub(super) completion: CompletionState,
     pub(super) outcome: GoldOutcome,
     pub(super) program: Option<GoldProgram>,
 }
@@ -170,6 +171,38 @@ pub(super) struct GoldRun {
 pub(super) struct LiteralRangeExpectation {
     pub(super) range: AuthoredRange,
     pub(super) spelling: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum LiteralRangeFailure {
+    Reversed,
+    OutOfBounds,
+    InvalidStartBoundary,
+    InvalidEndBoundary,
+    SpellingMismatch,
+}
+
+pub(super) fn verify_literal_range(
+    source: &str,
+    expectation: LiteralRangeExpectation,
+) -> Result<(), LiteralRangeFailure> {
+    let range = expectation.range;
+    if range.start > range.end {
+        return Err(LiteralRangeFailure::Reversed);
+    }
+    if range.end > source.len() {
+        return Err(LiteralRangeFailure::OutOfBounds);
+    }
+    if !source.is_char_boundary(range.start) {
+        return Err(LiteralRangeFailure::InvalidStartBoundary);
+    }
+    if !source.is_char_boundary(range.end) {
+        return Err(LiteralRangeFailure::InvalidEndBoundary);
+    }
+    if &source[range.start..range.end] != expectation.spelling {
+        return Err(LiteralRangeFailure::SpellingMismatch);
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

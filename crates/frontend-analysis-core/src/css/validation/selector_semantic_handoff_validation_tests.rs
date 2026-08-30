@@ -1,15 +1,14 @@
-use std::collections::BTreeMap;
-
 use super::selector_semantic_handoff_gold::{
     AuthoredRange, CompletionState, ContextId, FunctionKind, GoldFixture, GoldObservation,
     GoldOutcome, GoldProgram, GoldRun, IndeterminateReason, InvalidReason, LiteralRangeExpectation,
-    MemberId, NestingPresenceDisposition, RelationshipOrigin, RelationshipTarget, RunId,
-    SelectorFact, SimpleKind, SourceId, UnitId, UnsupportedFeature, authored, derived,
+    LiteralRangeFailure, MemberId, NestingPresenceDisposition, RelationshipOrigin,
+    RelationshipTarget, RunId, SelectorFact, SimpleKind, SourceId, UnitId, UnsupportedFeature,
+    authored, derived, verify_literal_range,
 };
 use super::selector_semantic_handoff_reference::{
-    BlockingOutcome, ConsumerBudget, ConsumerOutcome, DependencyStatus, RetentionBudget,
-    Specificity, commit_observation, dependency_graph_is_acyclic, fold_observation, fold_program,
-    fold_run,
+    BlockingOutcome, ConsumerBudget, ConsumerOutcome, DependencyResolutionError, DependencyStatus,
+    RetentionBudget, Specificity, commit_observation, fold_observation, fold_program,
+    resolve_retained_run,
 };
 
 fn range(start: usize, end: usize) -> AuthoredRange {
@@ -29,6 +28,7 @@ fn program(context: u32, facts: Vec<SelectorFact>) -> GoldProgram {
 fn qualified(program: GoldProgram) -> GoldObservation {
     GoldObservation {
         context: program.context,
+        completion: CompletionState::Complete,
         outcome: GoldOutcome::Qualified,
         program: Some(program),
     }
@@ -66,8 +66,45 @@ fn complete_members(result: ConsumerOutcome) -> Vec<(MemberId, Specificity)> {
     }
 }
 
-fn empty_dependencies() -> BTreeMap<ContextId, DependencyStatus> {
-    BTreeMap::new()
+fn run(observations: Vec<GoldObservation>) -> GoldRun {
+    GoldRun {
+        upstream: CompletionState::Complete,
+        qualifier: CompletionState::Complete,
+        observations,
+    }
+}
+
+fn retained_class_and_id_parent(context: u32) -> GoldObservation {
+    qualified(program(
+        context,
+        vec![
+            open(1, 0, 2),
+            atom(1, SimpleKind::Class, 0, 2),
+            close(1),
+            open(2, 4, 6),
+            atom(2, SimpleKind::Id, 4, 6),
+            close(2),
+        ],
+    ))
+}
+
+fn parent_relationship_child(context: u32, parent: u32) -> GoldObservation {
+    qualified(program(
+        context,
+        vec![
+            open(1, 0, 1),
+            SelectorFact::NestingPresence {
+                unit: UnitId(1),
+                range: range(0, 1),
+                disposition: NestingPresenceDisposition::Contributing,
+            },
+            SelectorFact::Relationship {
+                target: RelationshipTarget::ParentSelectorList(ContextId(parent)),
+                origin: authored(range(0, 1)),
+            },
+            close(1),
+        ],
+    ))
 }
 
 #[test]
@@ -88,11 +125,7 @@ fn semantic_units_keep_source_run_context_member_identity_and_order() {
     assert_eq!(gold.run, RunId(1));
     assert_eq!(gold.profile, "CoreV1");
     assert_eq!(gold.context, ContextId(7));
-    let result = fold_program(
-        &gold,
-        &empty_dependencies(),
-        ConsumerBudget { limit: usize::MAX },
-    );
+    let result = fold_program(&gold, ConsumerBudget { limit: usize::MAX });
     assert_eq!(
         complete_members(result.outcome),
         vec![
@@ -155,15 +188,69 @@ fn authored_ranges_are_handwritten_and_literal_checked() {
     assert_eq!(fixture.program.source, SourceId(1));
     assert_eq!(fixture.program.context, ContextId(1));
     for expectation in fixture.authored {
-        assert!(expectation.range.start <= expectation.range.end);
-        assert!(expectation.range.end <= fixture.source.len());
-        assert!(fixture.source.is_char_boundary(expectation.range.start));
-        assert!(fixture.source.is_char_boundary(expectation.range.end));
-        assert_eq!(
-            &fixture.source[expectation.range.start..expectation.range.end],
-            expectation.spelling
-        );
+        assert_eq!(verify_literal_range(fixture.source, expectation), Ok(()));
     }
+}
+
+#[test]
+fn authored_ranges_use_utf8_byte_offsets_after_multibyte_scalars() {
+    let fixtures = [
+        GoldFixture {
+            id: "CSS-HANDOFF-RANGE-UTF8-ID-001",
+            source: "é#x",
+            program: program(
+                20,
+                vec![
+                    open(1, 0, 4),
+                    atom(1, SimpleKind::Type, 0, 2),
+                    atom(2, SimpleKind::Id, 2, 4),
+                    close(1),
+                ],
+            ),
+            authored: vec![LiteralRangeExpectation {
+                range: range(2, 4),
+                spelling: "#x",
+            }],
+        },
+        GoldFixture {
+            id: "CSS-HANDOFF-RANGE-UTF8-CLASS-002",
+            source: "éあ.x",
+            program: program(
+                21,
+                vec![
+                    open(1, 0, 7),
+                    atom(1, SimpleKind::Type, 0, 5),
+                    atom(2, SimpleKind::Class, 5, 7),
+                    close(1),
+                ],
+            ),
+            authored: vec![LiteralRangeExpectation {
+                range: range(5, 7),
+                spelling: ".x",
+            }],
+        },
+    ];
+
+    for fixture in fixtures {
+        for expectation in fixture.authored {
+            assert_eq!(verify_literal_range(fixture.source, expectation), Ok(()));
+        }
+        assert!(matches!(
+            fold_program(&fixture.program, ConsumerBudget { limit: usize::MAX }).outcome,
+            ConsumerOutcome::Complete(_)
+        ));
+    }
+
+    assert_eq!(
+        verify_literal_range(
+            "é#x",
+            LiteralRangeExpectation {
+                range: range(1, 3),
+                spelling: "#x",
+            },
+        ),
+        Err(LiteralRangeFailure::InvalidStartBoundary)
+    );
 }
 
 #[test]
@@ -178,18 +265,25 @@ fn authored_and_derived_relationship_identity_are_disjoint() {
 fn reference_fold_is_source_token_and_parser_free_by_signature() {
     let fold: fn(
         &GoldProgram,
-        &BTreeMap<ContextId, DependencyStatus>,
         ConsumerBudget,
     ) -> super::selector_semantic_handoff_reference::ConsumerResult = fold_program;
+    let resolve: fn(
+        &GoldRun,
+        ConsumerBudget,
+    ) -> Result<
+        super::selector_semantic_handoff_reference::ResolvedRun,
+        DependencyResolutionError,
+    > = resolve_retained_run;
     let gold = program(
         1,
         vec![open(1, 0, 1), atom(1, SimpleKind::Type, 0, 1), close(1)],
     );
-    let result = fold(&gold, &empty_dependencies(), ConsumerBudget { limit: 3 });
+    let result = fold(&gold, ConsumerBudget { limit: 3 });
     assert_eq!(
         complete_members(result.outcome),
         vec![(MemberId(1), specificity(0, 0, 1))]
     );
+    assert!(resolve(&run(vec![qualified(gold)]), ConsumerBudget { limit: 3 }).is_ok());
 }
 
 #[test]
@@ -210,16 +304,12 @@ fn invalid_unsupported_and_indeterminate_remain_distinct() {
     ] {
         let observation = GoldObservation {
             context: ContextId(1),
+            completion: CompletionState::Complete,
             outcome,
             program: None,
         };
         assert_eq!(
-            fold_observation(
-                &observation,
-                &empty_dependencies(),
-                ConsumerBudget { limit: 0 }
-            )
-            .outcome,
+            fold_observation(&observation, ConsumerBudget { limit: 0 }).outcome,
             ConsumerOutcome::Blocked(expected)
         );
     }
@@ -244,12 +334,12 @@ fn incomplete_upstream_or_qualifier_cannot_upgrade_to_complete() {
         },
     ] {
         assert_eq!(
-            fold_run(
-                &run,
-                &empty_dependencies(),
-                ConsumerBudget { limit: usize::MAX }
-            )[0]
-            .outcome,
+            resolve_retained_run(&run, ConsumerBudget { limit: usize::MAX })
+                .expect("an incomplete run still has structurally valid retained evidence")
+                .result(ContextId(1))
+                .expect("context result exists")
+                .outcome
+                .clone(),
             ConsumerOutcome::Incomplete
         );
     }
@@ -297,25 +387,249 @@ fn retention_and_consumer_resource_budgets_are_independent() {
     commit_observation(&mut committed, observation.clone(), &mut retention)
         .expect("retention fits");
     let before = retention;
-    let result = fold_observation(
-        &observation,
-        &empty_dependencies(),
-        ConsumerBudget { limit: 1 },
-    );
+    let result = fold_observation(&observation, ConsumerBudget { limit: 1 });
     assert_eq!(result.outcome, ConsumerOutcome::Incomplete);
     assert_eq!(retention, before);
 }
 
 #[test]
-fn parent_dependencies_are_explicit_earlier_and_acyclic() {
-    let edges = [(ContextId(3), ContextId(2)), (ContextId(2), ContextId(1))];
-    assert!(edges.iter().all(|(child, parent)| child.0 > parent.0));
-    assert!(dependency_graph_is_acyclic(&edges));
-    assert!(!dependency_graph_is_acyclic(&[
-        (ContextId(3), ContextId(2)),
-        (ContextId(2), ContextId(1)),
-        (ContextId(1), ContextId(3)),
-    ]));
+fn retained_parent_members_are_folded_maximized_and_resolved_by_context() {
+    let parent = retained_class_and_id_parent(1);
+    let child = parent_relationship_child(2, 1);
+
+    assert_eq!(
+        fold_program(
+            child
+                .program
+                .as_ref()
+                .expect("qualified child has a program"),
+            ConsumerBudget { limit: usize::MAX },
+        )
+        .outcome,
+        ConsumerOutcome::Incomplete,
+        "the public validation fold has no caller-supplied dependency-answer input"
+    );
+
+    let resolved = resolve_retained_run(
+        &run(vec![parent, child]),
+        ConsumerBudget { limit: usize::MAX },
+    )
+    .expect("the relationship points to an earlier retained context");
+    assert_eq!(
+        complete_members(
+            resolved
+                .result(ContextId(1))
+                .expect("parent result exists")
+                .outcome
+                .clone()
+        ),
+        vec![
+            (MemberId(1), specificity(0, 1, 0)),
+            (MemberId(2), specificity(1, 0, 0)),
+        ]
+    );
+    assert_eq!(
+        resolved.dependency(ContextId(1)),
+        Some(DependencyStatus::Resolved(specificity(1, 0, 0)))
+    );
+    assert_eq!(
+        complete_members(
+            resolved
+                .result(ContextId(2))
+                .expect("child result exists")
+                .outcome
+                .clone()
+        ),
+        vec![(MemberId(1), specificity(1, 0, 0))]
+    );
+}
+
+#[test]
+fn relationship_facts_reject_missing_future_self_and_cyclic_dependencies() {
+    let missing = run(vec![parent_relationship_child(2, 99)]);
+    assert_eq!(
+        resolve_retained_run(&missing, ConsumerBudget { limit: usize::MAX }),
+        Err(DependencyResolutionError::MissingContext {
+            child: ContextId(2),
+            parent: ContextId(99),
+        })
+    );
+
+    let future = run(vec![
+        parent_relationship_child(1, 2),
+        retained_class_and_id_parent(2),
+    ]);
+    assert_eq!(
+        resolve_retained_run(&future, ConsumerBudget { limit: usize::MAX }),
+        Err(DependencyResolutionError::FutureContext {
+            child: ContextId(1),
+            parent: ContextId(2),
+        })
+    );
+
+    let itself = run(vec![parent_relationship_child(1, 1)]);
+    assert_eq!(
+        resolve_retained_run(&itself, ConsumerBudget { limit: usize::MAX }),
+        Err(DependencyResolutionError::SelfDependency(ContextId(1)))
+    );
+
+    let cycle = run(vec![
+        parent_relationship_child(1, 2),
+        parent_relationship_child(2, 1),
+    ]);
+    assert_eq!(
+        resolve_retained_run(&cycle, ConsumerBudget { limit: usize::MAX }),
+        Err(DependencyResolutionError::Cycle)
+    );
+}
+
+#[test]
+fn two_authored_nesting_occurrences_contribute_twice() {
+    let child = qualified(program(
+        2,
+        vec![
+            open(1, 0, 5),
+            SelectorFact::NestingPresence {
+                unit: UnitId(1),
+                range: range(0, 1),
+                disposition: NestingPresenceDisposition::Contributing,
+            },
+            SelectorFact::Relationship {
+                target: RelationshipTarget::ParentSelectorList(ContextId(1)),
+                origin: authored(range(0, 1)),
+            },
+            SelectorFact::NestingPresence {
+                unit: UnitId(2),
+                range: range(4, 5),
+                disposition: NestingPresenceDisposition::Contributing,
+            },
+            SelectorFact::Relationship {
+                target: RelationshipTarget::ParentSelectorList(ContextId(1)),
+                origin: authored(range(4, 5)),
+            },
+            close(1),
+        ],
+    ));
+    let facts = &child.program.as_ref().expect("child program exists").facts;
+    assert_eq!(
+        facts
+            .iter()
+            .filter(|fact| matches!(fact, SelectorFact::NestingPresence { .. }))
+            .count(),
+        2
+    );
+    for expectation in [
+        LiteralRangeExpectation {
+            range: range(0, 1),
+            spelling: "&",
+        },
+        LiteralRangeExpectation {
+            range: range(4, 5),
+            spelling: "&",
+        },
+    ] {
+        assert_eq!(verify_literal_range("& + &", expectation), Ok(()));
+    }
+
+    let resolved = resolve_retained_run(
+        &run(vec![retained_class_and_id_parent(1), child]),
+        ConsumerBudget { limit: usize::MAX },
+    )
+    .expect("both relationships resolve through the retained parent");
+    let value = complete_members(
+        resolved
+            .result(ContextId(2))
+            .expect("child result exists")
+            .outcome
+            .clone(),
+    )[0]
+    .1;
+    assert_eq!(value, specificity(2, 0, 0));
+
+    let collapsed = resolve_retained_run(
+        &run(vec![
+            retained_class_and_id_parent(1),
+            parent_relationship_child(2, 1),
+        ]),
+        ConsumerBudget { limit: usize::MAX },
+    )
+    .expect("one retained occurrence is structurally valid");
+    assert_ne!(
+        complete_members(
+            collapsed
+                .result(ContextId(2))
+                .expect("collapsed child result exists")
+                .outcome
+                .clone()
+        )[0]
+        .1,
+        specificity(2, 0, 0),
+        "collapsing two authored ampersands cannot satisfy the gold result"
+    );
+}
+
+#[test]
+fn where_ampersand_preserves_presence_but_replaces_specificity_with_zero() {
+    let child = qualified(program(
+        2,
+        vec![
+            open(1, 0, 9),
+            SelectorFact::OpenFunction {
+                unit: UnitId(1),
+                kind: FunctionKind::Where,
+                range: range(0, 7),
+            },
+            open(2, 7, 8),
+            SelectorFact::NestingPresence {
+                unit: UnitId(2),
+                range: range(7, 8),
+                disposition: NestingPresenceDisposition::Contributing,
+            },
+            SelectorFact::Relationship {
+                target: RelationshipTarget::ParentSelectorList(ContextId(1)),
+                origin: authored(range(7, 8)),
+            },
+            close(2),
+            SelectorFact::CloseFunction { unit: UnitId(1) },
+            close(1),
+        ],
+    ));
+    assert!(
+        child
+            .program
+            .as_ref()
+            .expect("child program exists")
+            .facts
+            .iter()
+            .any(|fact| matches!(fact, SelectorFact::NestingPresence { .. }))
+    );
+    for expectation in [
+        LiteralRangeExpectation {
+            range: range(0, 7),
+            spelling: ":where(",
+        },
+        LiteralRangeExpectation {
+            range: range(7, 8),
+            spelling: "&",
+        },
+    ] {
+        assert_eq!(verify_literal_range(":where(&)", expectation), Ok(()));
+    }
+    let resolved = resolve_retained_run(
+        &run(vec![retained_class_and_id_parent(1), child]),
+        ConsumerBudget { limit: usize::MAX },
+    )
+    .expect(":where relationship resolves structurally");
+    assert_eq!(
+        complete_members(
+            resolved
+                .result(ContextId(2))
+                .expect("child result exists")
+                .outcome
+                .clone()
+        ),
+        vec![(MemberId(1), Specificity::ZERO)]
+    );
 }
 
 #[test]
@@ -332,21 +646,28 @@ fn scope_relationship_adds_zero_specificity_and_ignores_scope_prelude() {
             close(1),
         ],
     );
-    let members = complete_members(
-        fold_program(
-            &gold,
-            &empty_dependencies(),
-            ConsumerBudget { limit: usize::MAX },
-        )
-        .outcome,
-    );
+    let members =
+        complete_members(fold_program(&gold, ConsumerBudget { limit: usize::MAX }).outcome);
     assert_eq!(members, vec![(MemberId(1), specificity(0, 0, 1))]);
 }
 
 #[test]
-fn same_relative_grammar_can_resolve_to_parent_or_scope_target() {
-    let nested = program(
-        3,
+fn scope_and_nesting_order_resolve_same_relative_grammar_to_distinct_targets() {
+    let retained_parent = qualified(program(
+        1,
+        vec![
+            open(1, 0, 2),
+            atom(1, SimpleKind::Class, 0, 2),
+            close(1),
+            open(2, 4, 6),
+            atom(2, SimpleKind::Id, 4, 6),
+            close(2),
+        ],
+    ));
+
+    // @scope { .a { & .b {} } }: the qualified style parent is nearest.
+    let scope_outside_nested_style = qualified(program(
+        2,
         vec![
             open(1, 0, 4),
             SelectorFact::NestingPresence {
@@ -355,15 +676,17 @@ fn same_relative_grammar_can_resolve_to_parent_or_scope_target() {
                 disposition: NestingPresenceDisposition::Contributing,
             },
             SelectorFact::Relationship {
-                target: RelationshipTarget::ParentSelectorList(ContextId(2)),
+                target: RelationshipTarget::ParentSelectorList(ContextId(1)),
                 origin: authored(range(0, 1)),
             },
             atom(2, SimpleKind::Class, 2, 4),
             close(1),
         ],
-    );
-    let scoped = program(
-        3,
+    ));
+
+    // .a { @scope { & .b {} } }: the intervening scope boundary is nearest.
+    let scope_inside_ancestor_style = qualified(program(
+        2,
         vec![
             open(1, 0, 4),
             SelectorFact::NestingPresence {
@@ -372,26 +695,47 @@ fn same_relative_grammar_can_resolve_to_parent_or_scope_target() {
                 disposition: NestingPresenceDisposition::Contributing,
             },
             SelectorFact::Relationship {
-                target: RelationshipTarget::ScopeRoot(ContextId(2)),
+                target: RelationshipTarget::ScopeRoot(ContextId(50)),
                 origin: authored(range(0, 1)),
             },
             atom(2, SimpleKind::Class, 2, 4),
             close(1),
         ],
+    ));
+
+    let parent_target = resolve_retained_run(
+        &run(vec![retained_parent.clone(), scope_outside_nested_style]),
+        ConsumerBudget { limit: usize::MAX },
+    )
+    .expect("earlier parent dependency resolves from retained evidence");
+    let scope_target = resolve_retained_run(
+        &run(vec![retained_parent, scope_inside_ancestor_style]),
+        ConsumerBudget { limit: usize::MAX },
+    )
+    .expect("scope-root relationships require no parent specificity answer");
+
+    assert_eq!(
+        complete_members(
+            parent_target
+                .result(ContextId(2))
+                .expect("child result exists")
+                .outcome
+                .clone()
+        )[0]
+        .1,
+        specificity(1, 1, 0)
     );
-    let mut dependencies = BTreeMap::new();
-    dependencies.insert(
-        ContextId(2),
-        DependencyStatus::Resolved(specificity(0, 1, 0)),
+    assert_eq!(
+        complete_members(
+            scope_target
+                .result(ContextId(2))
+                .expect("child result exists")
+                .outcome
+                .clone()
+        )[0]
+        .1,
+        specificity(0, 1, 0)
     );
-    let nested_value = complete_members(
-        fold_program(&nested, &dependencies, ConsumerBudget { limit: usize::MAX }).outcome,
-    );
-    let scoped_value = complete_members(
-        fold_program(&scoped, &dependencies, ConsumerBudget { limit: usize::MAX }).outcome,
-    );
-    assert_eq!(nested_value[0].1, specificity(0, 2, 0));
-    assert_eq!(scoped_value[0].1, specificity(0, 1, 0));
 }
 
 #[test]
@@ -410,16 +754,8 @@ fn identical_spelling_in_distinct_contexts_remains_distinguishable() {
     );
     assert_ne!(left.context, right.context);
     assert_ne!(left.facts, right.facts);
-    let left_result = fold_program(
-        &left,
-        &empty_dependencies(),
-        ConsumerBudget { limit: usize::MAX },
-    );
-    let right_result = fold_program(
-        &right,
-        &empty_dependencies(),
-        ConsumerBudget { limit: usize::MAX },
-    );
+    let left_result = fold_program(&left, ConsumerBudget { limit: usize::MAX });
+    let right_result = fold_program(&right, ConsumerBudget { limit: usize::MAX });
     assert_eq!(left_result.outcome, right_result.outcome);
 }
 
@@ -460,15 +796,7 @@ fn source_only_fold_covers_basic_and_selected_function_specificity() {
         ],
     );
     assert_eq!(
-        complete_members(
-            fold_program(
-                &basic,
-                &empty_dependencies(),
-                ConsumerBudget { limit: usize::MAX },
-            )
-            .outcome
-        )[0]
-        .1,
+        complete_members(fold_program(&basic, ConsumerBudget { limit: usize::MAX }).outcome)[0].1,
         specificity(0, 3, 0)
     );
 
@@ -477,8 +805,7 @@ fn source_only_fold_covers_basic_and_selected_function_specificity() {
             complete_members(
                 fold_program(
                     &function_program(kind),
-                    &empty_dependencies(),
-                    ConsumerBudget { limit: usize::MAX },
+                    ConsumerBudget { limit: usize::MAX }
                 )
                 .outcome
             )[0]
@@ -490,7 +817,6 @@ fn source_only_fold_covers_basic_and_selected_function_specificity() {
         complete_members(
             fold_program(
                 &function_program(FunctionKind::Where),
-                &empty_dependencies(),
                 ConsumerBudget { limit: usize::MAX },
             )
             .outcome
@@ -513,14 +839,8 @@ fn selector_list_output_stays_per_member_not_match_effective() {
             close(2),
         ],
     );
-    let members = complete_members(
-        fold_program(
-            &gold,
-            &empty_dependencies(),
-            ConsumerBudget { limit: usize::MAX },
-        )
-        .outcome,
-    );
+    let members =
+        complete_members(fold_program(&gold, ConsumerBudget { limit: usize::MAX }).outcome);
     assert_eq!(members.len(), 2);
     assert_eq!(members[0].1, specificity(0, 0, 1));
     assert_eq!(members[1].1, specificity(1, 0, 0));
@@ -540,16 +860,12 @@ fn unsupported_and_namespace_indeterminate_are_not_promoted() {
     ] {
         let observation = GoldObservation {
             context: ContextId(4),
+            completion: CompletionState::Complete,
             outcome,
             program: None,
         };
         assert_eq!(
-            fold_observation(
-                &observation,
-                &empty_dependencies(),
-                ConsumerBudget { limit: usize::MAX }
-            )
-            .outcome,
+            fold_observation(&observation, ConsumerBudget { limit: usize::MAX }).outcome,
             ConsumerOutcome::Blocked(expected)
         );
     }
@@ -557,7 +873,7 @@ fn unsupported_and_namespace_indeterminate_are_not_promoted() {
 
 #[test]
 fn parent_failure_category_is_preserved_through_structural_dependency() {
-    let gold = program(
+    let child = qualified(program(
         3,
         vec![
             open(1, 0, 2),
@@ -568,29 +884,95 @@ fn parent_failure_category_is_preserved_through_structural_dependency() {
             atom(1, SimpleKind::Class, 0, 2),
             close(1),
         ],
-    );
-    for (dependency, expected) in [
+    ));
+    let incomplete_parent = GoldObservation {
+        context: ContextId(2),
+        completion: CompletionState::Incomplete,
+        outcome: GoldOutcome::Qualified,
+        program: Some(program(
+            2,
+            vec![open(1, 0, 2), atom(1, SimpleKind::Class, 0, 2), close(1)],
+        )),
+    };
+    for (parent, dependency, expected) in [
         (
+            GoldObservation {
+                context: ContextId(2),
+                completion: CompletionState::Complete,
+                outcome: GoldOutcome::Invalid(InvalidReason::SelectedGrammar),
+                program: None,
+            },
             DependencyStatus::Invalid,
             ConsumerOutcome::Blocked(BlockingOutcome::Invalid),
         ),
         (
+            GoldObservation {
+                context: ContextId(2),
+                completion: CompletionState::Complete,
+                outcome: GoldOutcome::Unsupported(UnsupportedFeature::PseudoElement),
+                program: None,
+            },
             DependencyStatus::Unsupported,
             ConsumerOutcome::Blocked(BlockingOutcome::Unsupported),
         ),
         (
+            GoldObservation {
+                context: ContextId(2),
+                completion: CompletionState::Complete,
+                outcome: GoldOutcome::Indeterminate(
+                    IndeterminateReason::MissingNamespaceEnvironment,
+                ),
+                program: None,
+            },
             DependencyStatus::Indeterminate,
             ConsumerOutcome::Blocked(BlockingOutcome::Indeterminate),
         ),
-        (DependencyStatus::Incomplete, ConsumerOutcome::Incomplete),
+        (
+            incomplete_parent,
+            DependencyStatus::Incomplete,
+            ConsumerOutcome::Incomplete,
+        ),
     ] {
-        let mut dependencies = BTreeMap::new();
-        dependencies.insert(ContextId(2), dependency);
+        let resolved = resolve_retained_run(
+            &run(vec![parent, child.clone()]),
+            ConsumerBudget { limit: usize::MAX },
+        )
+        .expect("the relationship targets an earlier retained parent");
+        assert_eq!(resolved.dependency(ContextId(2)), Some(dependency));
         assert_eq!(
-            fold_program(&gold, &dependencies, ConsumerBudget { limit: usize::MAX }).outcome,
+            resolved
+                .result(ContextId(3))
+                .expect("child result exists")
+                .outcome
+                .clone(),
             expected
         );
     }
+}
+
+#[test]
+fn parent_consumer_exhaustion_propagates_incomplete_through_the_resolver() {
+    let resolved = resolve_retained_run(
+        &run(vec![
+            retained_class_and_id_parent(2),
+            parent_relationship_child(3, 2),
+        ]),
+        ConsumerBudget { limit: 5 },
+    )
+    .expect("the dependency graph is structurally valid");
+
+    assert_eq!(
+        resolved.dependency(ContextId(2)),
+        Some(DependencyStatus::Incomplete)
+    );
+    assert_eq!(
+        resolved
+            .result(ContextId(3))
+            .expect("child result exists")
+            .outcome
+            .clone(),
+        ConsumerOutcome::Incomplete
+    );
 }
 
 #[test]
@@ -621,13 +1003,8 @@ fn invalid_forgiving_ampersand_can_suppress_implied_nesting_without_contribution
             close(1),
         ],
     );
-    let mut dependencies = BTreeMap::new();
-    dependencies.insert(
-        ContextId(2),
-        DependencyStatus::Resolved(specificity(1, 0, 0)),
-    );
-    let first = fold_program(&gold, &dependencies, ConsumerBudget { limit: usize::MAX });
-    let second = fold_program(&gold, &dependencies, ConsumerBudget { limit: usize::MAX });
+    let first = fold_program(&gold, ConsumerBudget { limit: usize::MAX });
+    let second = fold_program(&gold, ConsumerBudget { limit: usize::MAX });
     assert_eq!(first, second);
     assert_eq!(complete_members(first.outcome)[0].1, specificity(0, 2, 0));
 }

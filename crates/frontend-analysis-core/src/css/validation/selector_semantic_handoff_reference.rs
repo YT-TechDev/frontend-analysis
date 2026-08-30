@@ -38,6 +38,27 @@ pub(super) enum DependencyStatus {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum DependencyResolutionError {
+    DuplicateContext(ContextId),
+    QualifiedWithoutProgram(ContextId),
+    ProgramContextMismatch {
+        observation: ContextId,
+        program: ContextId,
+    },
+    ProgramForNonQualifiedContext(ContextId),
+    MissingContext {
+        child: ContextId,
+        parent: ContextId,
+    },
+    FutureContext {
+        child: ContextId,
+        parent: ContextId,
+    },
+    SelfDependency(ContextId),
+    Cycle,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum BlockingOutcome {
     Invalid,
     Unsupported,
@@ -60,6 +81,24 @@ pub(super) struct ConsumerBudget {
 pub(super) struct ConsumerResult {
     pub(super) outcome: ConsumerOutcome,
     pub(super) steps: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ResolvedRun {
+    results: Vec<(ContextId, ConsumerResult)>,
+    dependencies: BTreeMap<ContextId, DependencyStatus>,
+}
+
+impl ResolvedRun {
+    pub(super) fn result(&self, context: ContextId) -> Option<&ConsumerResult> {
+        self.results
+            .iter()
+            .find_map(|(candidate, result)| (*candidate == context).then_some(result))
+    }
+
+    pub(super) fn dependency(&self, context: ContextId) -> Option<DependencyStatus> {
+        self.dependencies.get(&context).copied()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,7 +184,7 @@ fn add_to_current(containers: &mut [Container], value: Specificity) -> Result<()
     Ok(())
 }
 
-pub(super) fn fold_program(
+fn fold_program_with_dependencies(
     program: &GoldProgram,
     dependencies: &BTreeMap<ContextId, DependencyStatus>,
     budget: ConsumerBudget,
@@ -274,14 +313,32 @@ pub(super) fn fold_program(
     }
 }
 
+pub(super) fn fold_program(program: &GoldProgram, budget: ConsumerBudget) -> ConsumerResult {
+    fold_program_with_dependencies(program, &BTreeMap::new(), budget)
+}
+
 pub(super) fn fold_observation(
+    observation: &GoldObservation,
+    budget: ConsumerBudget,
+) -> ConsumerResult {
+    fold_observation_with_dependencies(observation, &BTreeMap::new(), budget)
+}
+
+fn fold_observation_with_dependencies(
     observation: &GoldObservation,
     dependencies: &BTreeMap<ContextId, DependencyStatus>,
     budget: ConsumerBudget,
 ) -> ConsumerResult {
+    if observation.completion == CompletionState::Incomplete {
+        return ConsumerResult {
+            outcome: ConsumerOutcome::Incomplete,
+            steps: 0,
+        };
+    }
+
     match observation.outcome {
         GoldOutcome::Qualified => match observation.program.as_ref() {
-            Some(program) => fold_program(program, dependencies, budget),
+            Some(program) => fold_program_with_dependencies(program, dependencies, budget),
             None => ConsumerResult {
                 outcome: ConsumerOutcome::Incomplete,
                 steps: 0,
@@ -302,26 +359,139 @@ pub(super) fn fold_observation(
     }
 }
 
-pub(super) fn fold_run(
+pub(super) fn resolve_retained_run(
     run: &GoldRun,
-    dependencies: &BTreeMap<ContextId, DependencyStatus>,
     budget: ConsumerBudget,
-) -> Vec<ConsumerResult> {
-    if run.upstream == CompletionState::Incomplete || run.qualifier == CompletionState::Incomplete {
-        return run
-            .observations
-            .iter()
-            .map(|_| ConsumerResult {
+) -> Result<ResolvedRun, DependencyResolutionError> {
+    let positions = observation_positions(&run.observations)?;
+    let edges = relationship_edges(&run.observations)?;
+    validate_relationship_edges(&positions, &edges)?;
+
+    let run_incomplete =
+        run.upstream == CompletionState::Incomplete || run.qualifier == CompletionState::Incomplete;
+    let mut dependencies = BTreeMap::new();
+    let mut results = Vec::with_capacity(run.observations.len());
+
+    for observation in &run.observations {
+        let result = if run_incomplete {
+            ConsumerResult {
                 outcome: ConsumerOutcome::Incomplete,
                 steps: 0,
-            })
-            .collect();
+            }
+        } else {
+            fold_observation_with_dependencies(observation, &dependencies, budget)
+        };
+        dependencies.insert(observation.context, dependency_from_result(&result));
+        results.push((observation.context, result));
     }
 
-    run.observations
-        .iter()
-        .map(|observation| fold_observation(observation, dependencies, budget))
-        .collect()
+    Ok(ResolvedRun {
+        results,
+        dependencies,
+    })
+}
+
+fn observation_positions(
+    observations: &[GoldObservation],
+) -> Result<BTreeMap<ContextId, usize>, DependencyResolutionError> {
+    let mut positions = BTreeMap::new();
+    for (position, observation) in observations.iter().enumerate() {
+        if positions.insert(observation.context, position).is_some() {
+            return Err(DependencyResolutionError::DuplicateContext(
+                observation.context,
+            ));
+        }
+
+        match (observation.outcome, observation.program.as_ref()) {
+            (GoldOutcome::Qualified, Some(program)) if program.context == observation.context => {}
+            (GoldOutcome::Qualified, Some(program)) => {
+                return Err(DependencyResolutionError::ProgramContextMismatch {
+                    observation: observation.context,
+                    program: program.context,
+                });
+            }
+            (GoldOutcome::Qualified, None) => {
+                return Err(DependencyResolutionError::QualifiedWithoutProgram(
+                    observation.context,
+                ));
+            }
+            (_, Some(_)) => {
+                return Err(DependencyResolutionError::ProgramForNonQualifiedContext(
+                    observation.context,
+                ));
+            }
+            (_, None) => {}
+        }
+    }
+    Ok(positions)
+}
+
+fn relationship_edges(
+    observations: &[GoldObservation],
+) -> Result<Vec<(ContextId, ContextId)>, DependencyResolutionError> {
+    let mut edges = Vec::new();
+    for observation in observations {
+        let Some(program) = observation.program.as_ref() else {
+            continue;
+        };
+        if program.context != observation.context {
+            return Err(DependencyResolutionError::ProgramContextMismatch {
+                observation: observation.context,
+                program: program.context,
+            });
+        }
+        for fact in &program.facts {
+            if let SelectorFact::Relationship {
+                target: RelationshipTarget::ParentSelectorList(parent),
+                ..
+            } = fact
+            {
+                edges.push((observation.context, *parent));
+            }
+        }
+    }
+    Ok(edges)
+}
+
+fn validate_relationship_edges(
+    positions: &BTreeMap<ContextId, usize>,
+    edges: &[(ContextId, ContextId)],
+) -> Result<(), DependencyResolutionError> {
+    for (child, parent) in edges {
+        if child == parent {
+            return Err(DependencyResolutionError::SelfDependency(*child));
+        }
+        if !positions.contains_key(parent) {
+            return Err(DependencyResolutionError::MissingContext {
+                child: *child,
+                parent: *parent,
+            });
+        }
+    }
+
+    if !dependency_graph_is_acyclic(edges) {
+        return Err(DependencyResolutionError::Cycle);
+    }
+
+    for (child, parent) in edges {
+        if positions[parent] >= positions[child] {
+            return Err(DependencyResolutionError::FutureContext {
+                child: *child,
+                parent: *parent,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn dependency_from_result(result: &ConsumerResult) -> DependencyStatus {
+    match &result.outcome {
+        ConsumerOutcome::Complete(members) => DependencyStatus::Resolved(max_specificity(members)),
+        ConsumerOutcome::Blocked(BlockingOutcome::Invalid) => DependencyStatus::Invalid,
+        ConsumerOutcome::Blocked(BlockingOutcome::Unsupported) => DependencyStatus::Unsupported,
+        ConsumerOutcome::Blocked(BlockingOutcome::Indeterminate) => DependencyStatus::Indeterminate,
+        ConsumerOutcome::Incomplete => DependencyStatus::Incomplete,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
