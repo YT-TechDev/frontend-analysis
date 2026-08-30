@@ -4,7 +4,7 @@ use super::selector_semantic_handoff_gold::{
     AuthoredRange, CompletionState, ContextId, FunctionKind, GoldFixture, GoldObservation,
     GoldOutcome, GoldProgram, GoldRun, LiteralRangeExpectation, MemberId,
     NestingPresenceDisposition, RelationshipOrigin, RelationshipTarget, RunId, SelectorFact,
-    SimpleKind, UnitId, authored, derived,
+    SimpleKind, SourceId, UnitId, authored, derived,
 };
 use super::selector_semantic_handoff_reference::{
     BlockingOutcome, ConsumerBudget, ConsumerOutcome, DependencyStatus, RetentionBudget,
@@ -18,6 +18,7 @@ fn range(start: usize, end: usize) -> AuthoredRange {
 
 fn program(context: u32, facts: Vec<SelectorFact>) -> GoldProgram {
     GoldProgram {
+        source: SourceId(1),
         run: RunId(1),
         profile: "CoreV1",
         context: ContextId(context),
@@ -70,7 +71,7 @@ fn empty_dependencies() -> BTreeMap<ContextId, DependencyStatus> {
 }
 
 #[test]
-fn semantic_units_keep_run_context_member_identity_and_order() {
+fn semantic_units_keep_source_run_context_member_identity_and_order() {
     let gold = program(
         7,
         vec![
@@ -83,6 +84,7 @@ fn semantic_units_keep_run_context_member_identity_and_order() {
         ],
     );
 
+    assert_eq!(gold.source, SourceId(1));
     assert_eq!(gold.run, RunId(1));
     assert_eq!(gold.context, ContextId(7));
     let result = fold_program(
@@ -92,7 +94,10 @@ fn semantic_units_keep_run_context_member_identity_and_order() {
     );
     assert_eq!(
         complete_members(result.outcome),
-        vec![(MemberId(1), specificity(0, 0, 1)), (MemberId(2), specificity(1, 0, 0))]
+        vec![
+            (MemberId(1), specificity(0, 0, 1)),
+            (MemberId(2), specificity(1, 0, 0)),
+        ]
     );
 }
 
@@ -122,15 +127,31 @@ fn authored_ranges_are_handwritten_and_literal_checked() {
             ],
         ),
         authored: vec![
-            LiteralRangeExpectation { range: range(0, 12), spelling: ".a:is(#b, c)" },
-            LiteralRangeExpectation { range: range(0, 2), spelling: ".a" },
-            LiteralRangeExpectation { range: range(2, 6), spelling: ":is(" },
-            LiteralRangeExpectation { range: range(6, 8), spelling: "#b" },
-            LiteralRangeExpectation { range: range(10, 11), spelling: "c" },
+            LiteralRangeExpectation {
+                range: range(0, 12),
+                spelling: ".a:is(#b, c)",
+            },
+            LiteralRangeExpectation {
+                range: range(0, 2),
+                spelling: ".a",
+            },
+            LiteralRangeExpectation {
+                range: range(2, 6),
+                spelling: ":is(",
+            },
+            LiteralRangeExpectation {
+                range: range(6, 8),
+                spelling: "#b",
+            },
+            LiteralRangeExpectation {
+                range: range(10, 11),
+                spelling: "c",
+            },
         ],
     };
 
     assert_eq!(fixture.id, "CSS-HANDOFF-RANGE-IS-001");
+    assert_eq!(fixture.program.source, SourceId(1));
     assert_eq!(fixture.program.context, ContextId(1));
     for expectation in fixture.authored {
         assert!(expectation.range.start <= expectation.range.end);
@@ -148,7 +169,10 @@ fn authored_ranges_are_handwritten_and_literal_checked() {
 fn authored_and_derived_relationship_identity_are_disjoint() {
     let authored_origin = authored(range(10, 11));
     let derived_origin = derived();
-    assert!(matches!(authored_origin, RelationshipOrigin::Authored(_)));
+    assert!(matches!(
+        authored_origin,
+        RelationshipOrigin::Authored(_)
+    ));
     assert_eq!(derived_origin, RelationshipOrigin::Derived);
 }
 
@@ -159,9 +183,19 @@ fn reference_fold_is_source_token_and_parser_free_by_signature() {
         &BTreeMap<ContextId, DependencyStatus>,
         ConsumerBudget,
     ) -> super::selector_semantic_handoff_reference::ConsumerResult = fold_program;
-    let gold = program(1, vec![open(1, 0, 1), atom(1, SimpleKind::Type, 0, 1), close(1)]);
+    let gold = program(
+        1,
+        vec![
+            open(1, 0, 1),
+            atom(1, SimpleKind::Type, 0, 1),
+            close(1),
+        ],
+    );
     let result = fold(&gold, &empty_dependencies(), ConsumerBudget { limit: 3 });
-    assert_eq!(complete_members(result.outcome), vec![(MemberId(1), specificity(0, 0, 1))]);
+    assert_eq!(
+        complete_members(result.outcome),
+        vec![(MemberId(1), specificity(0, 0, 1))]
+    );
 }
 
 #[test]
@@ -169,7 +203,10 @@ fn invalid_unsupported_and_indeterminate_remain_distinct() {
     for (outcome, expected) in [
         (GoldOutcome::Invalid, BlockingOutcome::Invalid),
         (GoldOutcome::Unsupported, BlockingOutcome::Unsupported),
-        (GoldOutcome::Indeterminate, BlockingOutcome::Indeterminate),
+        (
+            GoldOutcome::Indeterminate,
+            BlockingOutcome::Indeterminate,
+        ),
     ] {
         let observation = GoldObservation {
             context: ContextId(1),
@@ -190,7 +227,14 @@ fn invalid_unsupported_and_indeterminate_remain_distinct() {
 
 #[test]
 fn incomplete_upstream_or_qualifier_cannot_upgrade_to_complete() {
-    let observation = qualified(program(1, vec![open(1, 0, 1), atom(1, SimpleKind::Type, 0, 1), close(1)]));
+    let observation = qualified(program(
+        1,
+        vec![
+            open(1, 0, 1),
+            atom(1, SimpleKind::Type, 0, 1),
+            close(1),
+        ],
+    ));
     for run in [
         GoldRun {
             upstream: CompletionState::Incomplete,
@@ -219,7 +263,11 @@ fn incomplete_upstream_or_qualifier_cannot_upgrade_to_complete() {
 fn semantic_program_commit_is_atomic() {
     let observation = qualified(program(
         2,
-        vec![open(1, 0, 2), atom(1, SimpleKind::Class, 0, 2), close(1)],
+        vec![
+            open(1, 0, 2),
+            atom(1, SimpleKind::Class, 0, 2),
+            close(1),
+        ],
     ));
     let mut committed = Vec::new();
     let mut budget = RetentionBudget { limit: 2, used: 0 };
@@ -234,7 +282,14 @@ fn semantic_program_commit_is_atomic() {
 #[test]
 fn retention_refusal_preserves_previously_committed_prefix() {
     let first = qualified(program(1, vec![open(1, 0, 1), close(1)]));
-    let second = qualified(program(2, vec![open(2, 0, 2), atom(2, SimpleKind::Class, 0, 2), close(2)]));
+    let second = qualified(program(
+        2,
+        vec![
+            open(2, 0, 2),
+            atom(2, SimpleKind::Class, 0, 2),
+            close(2),
+        ],
+    ));
     let mut committed = Vec::new();
     let mut budget = RetentionBudget { limit: 4, used: 0 };
     commit_observation(&mut committed, first.clone(), &mut budget).expect("first fits");
@@ -247,11 +302,16 @@ fn retention_refusal_preserves_previously_committed_prefix() {
 fn retention_and_consumer_resource_budgets_are_independent() {
     let observation = qualified(program(
         1,
-        vec![open(1, 0, 2), atom(1, SimpleKind::Class, 0, 2), close(1)],
+        vec![
+            open(1, 0, 2),
+            atom(1, SimpleKind::Class, 0, 2),
+            close(1),
+        ],
     ));
     let mut committed = Vec::new();
     let mut retention = RetentionBudget { limit: 3, used: 0 };
-    commit_observation(&mut committed, observation.clone(), &mut retention).expect("retention fits");
+    commit_observation(&mut committed, observation.clone(), &mut retention)
+        .expect("retention fits");
     let before = retention;
     let result = fold_observation(
         &observation,
@@ -264,7 +324,10 @@ fn retention_and_consumer_resource_budgets_are_independent() {
 
 #[test]
 fn parent_dependencies_are_explicit_earlier_and_acyclic() {
-    let edges = [(ContextId(3), ContextId(2)), (ContextId(2), ContextId(1))];
+    let edges = [
+        (ContextId(3), ContextId(2)),
+        (ContextId(2), ContextId(1)),
+    ];
     assert!(edges.iter().all(|(child, parent)| child.0 > parent.0));
     assert!(dependency_graph_is_acyclic(&edges));
     assert!(!dependency_graph_is_acyclic(&[
@@ -336,12 +399,25 @@ fn same_relative_grammar_can_resolve_to_parent_or_scope_target() {
         ],
     );
     let mut dependencies = BTreeMap::new();
-    dependencies.insert(ContextId(2), DependencyStatus::Resolved(specificity(0, 1, 0)));
+    dependencies.insert(
+        ContextId(2),
+        DependencyStatus::Resolved(specificity(0, 1, 0)),
+    );
     let nested_value = complete_members(
-        fold_program(&nested, &dependencies, ConsumerBudget { limit: usize::MAX }).outcome,
+        fold_program(
+            &nested,
+            &dependencies,
+            ConsumerBudget { limit: usize::MAX },
+        )
+        .outcome,
     );
     let scoped_value = complete_members(
-        fold_program(&scoped, &dependencies, ConsumerBudget { limit: usize::MAX }).outcome,
+        fold_program(
+            &scoped,
+            &dependencies,
+            ConsumerBudget { limit: usize::MAX },
+        )
+        .outcome,
     );
     assert_eq!(nested_value[0].1, specificity(0, 2, 0));
     assert_eq!(scoped_value[0].1, specificity(0, 1, 0));
@@ -349,12 +425,34 @@ fn same_relative_grammar_can_resolve_to_parent_or_scope_target() {
 
 #[test]
 fn identical_spelling_in_distinct_contexts_remains_distinguishable() {
-    let left = program(10, vec![open(1, 0, 5), atom(1, SimpleKind::Class, 0, 5), close(1)]);
-    let right = program(11, vec![open(1, 20, 25), atom(1, SimpleKind::Class, 20, 25), close(1)]);
+    let left = program(
+        10,
+        vec![
+            open(1, 0, 5),
+            atom(1, SimpleKind::Class, 0, 5),
+            close(1),
+        ],
+    );
+    let right = program(
+        11,
+        vec![
+            open(1, 20, 25),
+            atom(1, SimpleKind::Class, 20, 25),
+            close(1),
+        ],
+    );
     assert_ne!(left.context, right.context);
     assert_ne!(left.facts, right.facts);
-    let left_result = fold_program(&left, &empty_dependencies(), ConsumerBudget { limit: usize::MAX });
-    let right_result = fold_program(&right, &empty_dependencies(), ConsumerBudget { limit: usize::MAX });
+    let left_result = fold_program(
+        &left,
+        &empty_dependencies(),
+        ConsumerBudget { limit: usize::MAX },
+    );
+    let right_result = fold_program(
+        &right,
+        &empty_dependencies(),
+        ConsumerBudget { limit: usize::MAX },
+    );
     assert_eq!(left_result.outcome, right_result.outcome);
 }
 
@@ -364,7 +462,11 @@ fn function_program(kind: FunctionKind) -> GoldProgram {
         vec![
             open(1, 0, 12),
             atom(1, SimpleKind::Class, 0, 2),
-            SelectorFact::OpenFunction { unit: UnitId(2), kind, range: range(2, 6) },
+            SelectorFact::OpenFunction {
+                unit: UnitId(2),
+                kind,
+                range: range(2, 6),
+            },
             open(2, 6, 8),
             atom(3, SimpleKind::Id, 6, 8),
             close(2),
@@ -392,9 +494,14 @@ fn source_only_fold_covers_basic_and_selected_function_specificity() {
     );
     assert_eq!(
         complete_members(
-            fold_program(&basic, &empty_dependencies(), ConsumerBudget { limit: usize::MAX }).outcome
+            fold_program(
+                &basic,
+                &empty_dependencies(),
+                ConsumerBudget { limit: usize::MAX },
+            )
+            .outcome
         )[0]
-        .1,
+            .1,
         specificity(0, 3, 0)
     );
 
@@ -408,7 +515,7 @@ fn source_only_fold_covers_basic_and_selected_function_specificity() {
                 )
                 .outcome
             )[0]
-            .1,
+                .1,
             specificity(1, 1, 0)
         );
     }
@@ -421,7 +528,7 @@ fn source_only_fold_covers_basic_and_selected_function_specificity() {
             )
             .outcome
         )[0]
-        .1,
+            .1,
         specificity(0, 1, 0)
     );
 }
@@ -440,7 +547,12 @@ fn selector_list_output_stays_per_member_not_match_effective() {
         ],
     );
     let members = complete_members(
-        fold_program(&gold, &empty_dependencies(), ConsumerBudget { limit: usize::MAX }).outcome,
+        fold_program(
+            &gold,
+            &empty_dependencies(),
+            ConsumerBudget { limit: usize::MAX },
+        )
+        .outcome,
     );
     assert_eq!(members.len(), 2);
     assert_eq!(members[0].1, specificity(0, 0, 1));
@@ -451,9 +563,16 @@ fn selector_list_output_stays_per_member_not_match_effective() {
 fn unsupported_and_namespace_indeterminate_are_not_promoted() {
     for (outcome, expected) in [
         (GoldOutcome::Unsupported, BlockingOutcome::Unsupported),
-        (GoldOutcome::Indeterminate, BlockingOutcome::Indeterminate),
+        (
+            GoldOutcome::Indeterminate,
+            BlockingOutcome::Indeterminate,
+        ),
     ] {
-        let observation = GoldObservation { context: ContextId(4), outcome, program: None };
+        let observation = GoldObservation {
+            context: ContextId(4),
+            outcome,
+            program: None,
+        };
         assert_eq!(
             fold_observation(
                 &observation,
@@ -481,7 +600,10 @@ fn parent_failure_category_is_preserved_through_structural_dependency() {
         ],
     );
     for (dependency, expected) in [
-        (DependencyStatus::Invalid, ConsumerOutcome::Blocked(BlockingOutcome::Invalid)),
+        (
+            DependencyStatus::Invalid,
+            ConsumerOutcome::Blocked(BlockingOutcome::Invalid),
+        ),
         (
             DependencyStatus::Unsupported,
             ConsumerOutcome::Blocked(BlockingOutcome::Unsupported),
@@ -495,7 +617,12 @@ fn parent_failure_category_is_preserved_through_structural_dependency() {
         let mut dependencies = BTreeMap::new();
         dependencies.insert(ContextId(2), dependency);
         assert_eq!(
-            fold_program(&gold, &dependencies, ConsumerBudget { limit: usize::MAX }).outcome,
+            fold_program(
+                &gold,
+                &dependencies,
+                ConsumerBudget { limit: usize::MAX }
+            )
+            .outcome,
             expected
         );
     }
@@ -526,9 +653,23 @@ fn invalid_forgiving_ampersand_can_suppress_implied_nesting_without_contribution
         ],
     );
     let mut dependencies = BTreeMap::new();
-    dependencies.insert(ContextId(2), DependencyStatus::Resolved(specificity(1, 0, 0)));
-    let first = fold_program(&gold, &dependencies, ConsumerBudget { limit: usize::MAX });
-    let second = fold_program(&gold, &dependencies, ConsumerBudget { limit: usize::MAX });
+    dependencies.insert(
+        ContextId(2),
+        DependencyStatus::Resolved(specificity(1, 0, 0)),
+    );
+    let first = fold_program(
+        &gold,
+        &dependencies,
+        ConsumerBudget { limit: usize::MAX },
+    );
+    let second = fold_program(
+        &gold,
+        &dependencies,
+        ConsumerBudget { limit: usize::MAX },
+    );
     assert_eq!(first, second);
-    assert_eq!(complete_members(first.outcome)[0].1, specificity(0, 2, 0));
+    assert_eq!(
+        complete_members(first.outcome)[0].1,
+        specificity(0, 2, 0)
+    );
 }
