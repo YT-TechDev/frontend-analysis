@@ -215,9 +215,15 @@ pub(super) struct AuthoredFactExpectation {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum AuthoredProgramProvenanceFailure {
-    DuplicateExpectation { fact_index: usize },
-    MissingExpectation { fact_index: usize },
-    ExpectationForNonAuthoredFact { fact_index: usize },
+    DuplicateExpectation {
+        fact_index: usize,
+    },
+    MissingExpectation {
+        fact_index: usize,
+    },
+    ExpectationForNonAuthoredFact {
+        fact_index: usize,
+    },
     RangeMismatch {
         fact_index: usize,
         expected: AuthoredRange,
@@ -309,9 +315,11 @@ pub(super) fn validate_program_authored_provenance(
             .and_then(authored_range_for_fact)
             .is_none()
         {
-            return Err(AuthoredProgramProvenanceFailure::ExpectationForNonAuthoredFact {
-                fact_index: expectation.fact_index,
-            });
+            return Err(
+                AuthoredProgramProvenanceFailure::ExpectationForNonAuthoredFact {
+                    fact_index: expectation.fact_index,
+                },
+            );
         }
     }
 
