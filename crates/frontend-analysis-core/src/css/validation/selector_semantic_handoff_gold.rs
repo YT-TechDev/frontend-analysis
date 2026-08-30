@@ -78,6 +78,10 @@ pub(super) enum SelectorFact {
     CloseMember {
         member: MemberId,
     },
+    RejectedForgivingMember {
+        member: MemberId,
+        range: AuthoredRange,
+    },
     Simple {
         unit: UnitId,
         kind: SimpleKind,
@@ -112,11 +116,27 @@ pub(super) struct GoldProgram {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum InvalidReason {
+    SelectedGrammar,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum UnsupportedFeature {
+    FunctionalPseudoClass,
+    PseudoElement,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum IndeterminateReason {
+    MissingNamespaceEnvironment,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum GoldOutcome {
     Qualified,
-    Invalid,
-    Unsupported,
-    Indeterminate,
+    Invalid(InvalidReason),
+    Unsupported(UnsupportedFeature),
+    Indeterminate(IndeterminateReason),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
