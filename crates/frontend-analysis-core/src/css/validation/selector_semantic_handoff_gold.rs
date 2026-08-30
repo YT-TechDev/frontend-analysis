@@ -187,3 +187,18 @@ pub(super) fn authored(range: AuthoredRange) -> RelationshipOrigin {
 pub(super) fn derived() -> RelationshipOrigin {
     RelationshipOrigin::Derived
 }
+
+#[test]
+fn csswg_authority_is_frozen_to_immutable_git_objects() {
+    for id in [
+        CSSWG_REVISION,
+        SELECTORS_4_BLOB,
+        CSS_NESTING_1_BLOB,
+        CSS_SYNTAX_3_BLOB,
+        CSS_NAMESPACES_3_BLOB,
+        CSS_CASCADE_6_BLOB,
+    ] {
+        assert_eq!(id.len(), 40);
+        assert!(id.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    }
+}
