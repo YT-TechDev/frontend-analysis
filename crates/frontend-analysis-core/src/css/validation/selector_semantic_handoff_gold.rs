@@ -206,6 +206,118 @@ pub(super) fn verify_literal_range(
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct AuthoredFactExpectation {
+    pub(super) fact_index: usize,
+    pub(super) range: AuthoredRange,
+    pub(super) spelling: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum AuthoredProgramProvenanceFailure {
+    DuplicateExpectation { fact_index: usize },
+    MissingExpectation { fact_index: usize },
+    ExpectationForNonAuthoredFact { fact_index: usize },
+    RangeMismatch {
+        fact_index: usize,
+        expected: AuthoredRange,
+        actual: AuthoredRange,
+    },
+    Literal {
+        fact_index: usize,
+        failure: LiteralRangeFailure,
+    },
+}
+
+fn authored_range_for_fact(fact: &SelectorFact) -> Option<AuthoredRange> {
+    match *fact {
+        SelectorFact::OpenMember { range, .. }
+        | SelectorFact::RejectedForgivingMember { range, .. }
+        | SelectorFact::Simple { range, .. }
+        | SelectorFact::OpenFunction { range, .. } => Some(range),
+        SelectorFact::NestingPresence {
+            origin: RelationshipOrigin::Authored(range),
+            ..
+        }
+        | SelectorFact::Relationship {
+            origin: RelationshipOrigin::Authored(range),
+            ..
+        } => Some(range),
+        SelectorFact::CloseMember { .. }
+        | SelectorFact::CloseFunction { .. }
+        | SelectorFact::NestingPresence {
+            origin: RelationshipOrigin::Derived,
+            ..
+        }
+        | SelectorFact::Relationship {
+            origin: RelationshipOrigin::Derived,
+            ..
+        } => None,
+    }
+}
+
+pub(super) fn validate_program_authored_provenance(
+    program: &GoldProgram,
+    source: &str,
+    expectations: &[AuthoredFactExpectation],
+) -> Result<(), AuthoredProgramProvenanceFailure> {
+    for (position, expectation) in expectations.iter().enumerate() {
+        if expectations[..position]
+            .iter()
+            .any(|earlier| earlier.fact_index == expectation.fact_index)
+        {
+            return Err(AuthoredProgramProvenanceFailure::DuplicateExpectation {
+                fact_index: expectation.fact_index,
+            });
+        }
+    }
+
+    for (fact_index, fact) in program.facts.iter().enumerate() {
+        let Some(actual_range) = authored_range_for_fact(fact) else {
+            continue;
+        };
+        let Some(expectation) = expectations
+            .iter()
+            .find(|expectation| expectation.fact_index == fact_index)
+        else {
+            return Err(AuthoredProgramProvenanceFailure::MissingExpectation { fact_index });
+        };
+        if actual_range != expectation.range {
+            return Err(AuthoredProgramProvenanceFailure::RangeMismatch {
+                fact_index,
+                expected: expectation.range,
+                actual: actual_range,
+            });
+        }
+        verify_literal_range(
+            source,
+            LiteralRangeExpectation {
+                range: actual_range,
+                spelling: expectation.spelling,
+            },
+        )
+        .map_err(|failure| AuthoredProgramProvenanceFailure::Literal {
+            fact_index,
+            failure,
+        })?;
+    }
+
+    for expectation in expectations {
+        if program
+            .facts
+            .get(expectation.fact_index)
+            .and_then(authored_range_for_fact)
+            .is_none()
+        {
+            return Err(AuthoredProgramProvenanceFailure::ExpectationForNonAuthoredFact {
+                fact_index: expectation.fact_index,
+            });
+        }
+    }
+
+    Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct GoldFixture {
     pub(super) id: &'static str,
@@ -374,6 +486,135 @@ pub(super) fn authored(range: AuthoredRange) -> RelationshipOrigin {
 
 pub(super) fn derived() -> RelationshipOrigin {
     RelationshipOrigin::Derived
+}
+
+#[test]
+fn actual_semantic_fact_provenance_is_exhaustively_linked_to_utf8_source() {
+    let program = GoldProgram {
+        source: SourceId(1),
+        run: RunId(1),
+        profile: "CoreV1",
+        context: ContextId(20),
+        facts: vec![
+            SelectorFact::OpenMember {
+                member: MemberId(1),
+                range: AuthoredRange::new(0, 4),
+            },
+            SelectorFact::Simple {
+                unit: UnitId(1),
+                kind: SimpleKind::Type,
+                range: AuthoredRange::new(0, 2),
+            },
+            SelectorFact::Simple {
+                unit: UnitId(2),
+                kind: SimpleKind::Id,
+                range: AuthoredRange::new(2, 4),
+            },
+            SelectorFact::CloseMember {
+                member: MemberId(1),
+            },
+        ],
+    };
+    let expectations = [
+        AuthoredFactExpectation {
+            fact_index: 0,
+            range: AuthoredRange::new(0, 4),
+            spelling: "é#x",
+        },
+        AuthoredFactExpectation {
+            fact_index: 1,
+            range: AuthoredRange::new(0, 2),
+            spelling: "é",
+        },
+        AuthoredFactExpectation {
+            fact_index: 2,
+            range: AuthoredRange::new(2, 4),
+            spelling: "#x",
+        },
+    ];
+    assert_eq!(
+        validate_program_authored_provenance(&program, "é#x", &expectations),
+        Ok(())
+    );
+
+    let mut corrupted = program.clone();
+    let SelectorFact::Simple { range, .. } = &mut corrupted.facts[2] else {
+        panic!("fact 2 is the authored ID fact");
+    };
+    *range = AuthoredRange::new(1, 3);
+    assert_eq!(
+        validate_program_authored_provenance(&corrupted, "é#x", &expectations),
+        Err(AuthoredProgramProvenanceFailure::RangeMismatch {
+            fact_index: 2,
+            expected: AuthoredRange::new(2, 4),
+            actual: AuthoredRange::new(1, 3),
+        })
+    );
+
+    let mut scalar_expectations = expectations;
+    scalar_expectations[2].range = AuthoredRange::new(1, 3);
+    assert_eq!(
+        validate_program_authored_provenance(&corrupted, "é#x", &scalar_expectations),
+        Err(AuthoredProgramProvenanceFailure::Literal {
+            fact_index: 2,
+            failure: LiteralRangeFailure::InvalidStartBoundary,
+        })
+    );
+
+    assert_eq!(
+        validate_program_authored_provenance(&program, "é#x", &expectations[..2]),
+        Err(AuthoredProgramProvenanceFailure::MissingExpectation { fact_index: 2 })
+    );
+}
+
+#[test]
+fn actual_semantic_fact_provenance_handles_multiple_multibyte_scalars() {
+    let program = GoldProgram {
+        source: SourceId(1),
+        run: RunId(1),
+        profile: "CoreV1",
+        context: ContextId(21),
+        facts: vec![
+            SelectorFact::OpenMember {
+                member: MemberId(1),
+                range: AuthoredRange::new(0, 7),
+            },
+            SelectorFact::Simple {
+                unit: UnitId(1),
+                kind: SimpleKind::Type,
+                range: AuthoredRange::new(0, 5),
+            },
+            SelectorFact::Simple {
+                unit: UnitId(2),
+                kind: SimpleKind::Class,
+                range: AuthoredRange::new(5, 7),
+            },
+            SelectorFact::CloseMember {
+                member: MemberId(1),
+            },
+        ],
+    };
+    let expectations = [
+        AuthoredFactExpectation {
+            fact_index: 0,
+            range: AuthoredRange::new(0, 7),
+            spelling: "éあ.x",
+        },
+        AuthoredFactExpectation {
+            fact_index: 1,
+            range: AuthoredRange::new(0, 5),
+            spelling: "éあ",
+        },
+        AuthoredFactExpectation {
+            fact_index: 2,
+            range: AuthoredRange::new(5, 7),
+            spelling: ".x",
+        },
+    ];
+    assert_eq!(
+        validate_program_authored_provenance(&program, "éあ.x", &expectations),
+        Ok(())
+    );
 }
 
 #[test]

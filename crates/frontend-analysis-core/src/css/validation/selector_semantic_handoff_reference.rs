@@ -5,8 +5,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::selector_semantic_handoff_gold::{
-    CompletionState, ContextId, FunctionKind, GoldObservation, GoldOutcome, GoldProgram, GoldRun,
-    MemberId, RelationshipTarget, SelectorFact, SimpleKind, UnitId,
+    AuthoredRange, CompletionState, ContextId, FunctionKind, GoldObservation, GoldOutcome,
+    GoldProgram, GoldRun, MemberId, RelationshipOrigin, RelationshipTarget, RunId, SelectorFact,
+    SimpleKind, SourceId, UnitId,
 };
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -44,6 +45,15 @@ pub(super) enum DependencyResolutionError {
     ProgramContextMismatch {
         observation: ContextId,
         program: ContextId,
+    },
+    ProgramIdentityMismatch {
+        context: ContextId,
+        expected_source: SourceId,
+        actual_source: SourceId,
+        expected_run: RunId,
+        actual_run: RunId,
+        expected_profile: &'static str,
+        actual_profile: &'static str,
     },
     ProgramForNonQualifiedContext(ContextId),
     MissingContext {
@@ -548,6 +558,9 @@ fn observation_positions(
     budget: &mut ConsumerBudgetState,
 ) -> Result<BTreeMap<ContextId, usize>, PreparationFailure> {
     let mut positions = BTreeMap::new();
+    // The first qualified retained program establishes the validation run's
+    // source/run/profile identity domain. ContextId remains run-local only.
+    let mut identity_domain: Option<(SourceId, RunId, &'static str)> = None;
     for (position, observation) in observations.iter().enumerate() {
         if !budget.charge() {
             return Err(PreparationFailure::BudgetExhausted);
@@ -559,7 +572,31 @@ fn observation_positions(
         }
 
         match (observation.outcome, observation.program.as_ref()) {
-            (GoldOutcome::Qualified, Some(program)) if program.context == observation.context => {}
+            (GoldOutcome::Qualified, Some(program)) if program.context == observation.context => {
+                match identity_domain {
+                    None => {
+                        identity_domain = Some((program.source, program.run, program.profile));
+                    }
+                    Some((expected_source, expected_run, expected_profile))
+                        if program.source != expected_source
+                            || program.run != expected_run
+                            || program.profile != expected_profile =>
+                    {
+                        return Err(PreparationFailure::Dependency(
+                            DependencyResolutionError::ProgramIdentityMismatch {
+                                context: observation.context,
+                                expected_source,
+                                actual_source: program.source,
+                                expected_run,
+                                actual_run: program.run,
+                                expected_profile,
+                                actual_profile: program.profile,
+                            },
+                        ));
+                    }
+                    Some(_) => {}
+                }
+            }
             (GoldOutcome::Qualified, Some(program)) => {
                 return Err(PreparationFailure::Dependency(
                     DependencyResolutionError::ProgramContextMismatch {
@@ -756,4 +793,135 @@ fn dependency_graph_is_acyclic(
         }
     }
     Ok(true)
+}
+
+#[test]
+fn retained_parent_dependency_rejects_cross_source_run_or_profile_identity() {
+    fn program_with_identity(
+        source: u32,
+        run: u32,
+        profile: &'static str,
+        context: u32,
+        facts: Vec<SelectorFact>,
+    ) -> GoldProgram {
+        GoldProgram {
+            source: SourceId(source),
+            run: RunId(run),
+            profile,
+            context: ContextId(context),
+            facts,
+        }
+    }
+
+    fn qualified_program(program: GoldProgram) -> GoldObservation {
+        GoldObservation {
+            context: program.context,
+            completion: CompletionState::Complete,
+            outcome: GoldOutcome::Qualified,
+            program: Some(program),
+        }
+    }
+
+    fn parent() -> GoldObservation {
+        qualified_program(program_with_identity(
+            1,
+            1,
+            "CoreV1",
+            1,
+            vec![
+                SelectorFact::OpenMember {
+                    member: MemberId(1),
+                    range: AuthoredRange::new(0, 1),
+                },
+                SelectorFact::CloseMember {
+                    member: MemberId(1),
+                },
+            ],
+        ))
+    }
+
+    fn child(source: u32, run: u32, profile: &'static str) -> GoldObservation {
+        qualified_program(program_with_identity(
+            source,
+            run,
+            profile,
+            2,
+            vec![
+                SelectorFact::OpenMember {
+                    member: MemberId(1),
+                    range: AuthoredRange::new(0, 1),
+                },
+                SelectorFact::Relationship {
+                    target: RelationshipTarget::ParentSelectorList(ContextId(1)),
+                    origin: RelationshipOrigin::Derived,
+                },
+                SelectorFact::CloseMember {
+                    member: MemberId(1),
+                },
+            ],
+        ))
+    }
+
+    fn retained(parent: GoldObservation, child: GoldObservation) -> GoldRun {
+        GoldRun {
+            upstream: CompletionState::Complete,
+            qualifier: CompletionState::Complete,
+            observations: vec![parent, child],
+        }
+    }
+
+    let valid = resolve_retained_run(
+        &retained(parent(), child(1, 1, "CoreV1")),
+        ConsumerBudget { limit: usize::MAX },
+    )
+    .expect("one retained source/run/profile identity domain is valid");
+    assert_eq!(valid.completion(), ConsumerRunCompletion::Complete);
+
+    assert_eq!(
+        resolve_retained_run(
+            &retained(parent(), child(9, 1, "CoreV1")),
+            ConsumerBudget { limit: usize::MAX },
+        ),
+        Err(DependencyResolutionError::ProgramIdentityMismatch {
+            context: ContextId(2),
+            expected_source: SourceId(1),
+            actual_source: SourceId(9),
+            expected_run: RunId(1),
+            actual_run: RunId(1),
+            expected_profile: "CoreV1",
+            actual_profile: "CoreV1",
+        })
+    );
+
+    assert_eq!(
+        resolve_retained_run(
+            &retained(parent(), child(1, 9, "CoreV1")),
+            ConsumerBudget { limit: usize::MAX },
+        ),
+        Err(DependencyResolutionError::ProgramIdentityMismatch {
+            context: ContextId(2),
+            expected_source: SourceId(1),
+            actual_source: SourceId(1),
+            expected_run: RunId(1),
+            actual_run: RunId(9),
+            expected_profile: "CoreV1",
+            actual_profile: "CoreV1",
+        })
+    );
+
+    assert_eq!(
+        resolve_retained_run(
+            &retained(parent(), child(1, 1, "OtherProfile")),
+            ConsumerBudget { limit: usize::MAX },
+        ),
+        Err(DependencyResolutionError::ProgramIdentityMismatch {
+            context: ContextId(2),
+            expected_source: SourceId(1),
+            actual_source: SourceId(1),
+            expected_run: RunId(1),
+            actual_run: RunId(1),
+            expected_profile: "CoreV1",
+            actual_profile: "OtherProfile",
+        })
+    );
 }
