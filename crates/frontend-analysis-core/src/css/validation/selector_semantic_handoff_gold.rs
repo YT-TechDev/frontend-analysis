@@ -6,6 +6,9 @@
 #![allow(dead_code)]
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) struct SourceId(pub(super) u32);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct RunId(pub(super) u32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -101,6 +104,7 @@ pub(super) enum SelectorFact {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct GoldProgram {
+    pub(super) source: SourceId,
     pub(super) run: RunId,
     pub(super) profile: &'static str,
     pub(super) context: ContextId,
