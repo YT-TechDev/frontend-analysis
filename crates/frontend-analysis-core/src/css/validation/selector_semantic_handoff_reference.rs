@@ -120,7 +120,9 @@ fn relationship_specificity(
         RelationshipTarget::ScopeRoot(_) | RelationshipTarget::Zero => Ok(Specificity::ZERO),
         RelationshipTarget::ParentSelectorList(context) => match dependencies.get(&context) {
             Some(DependencyStatus::Resolved(value)) => Ok(*value),
-            Some(DependencyStatus::Invalid) => Err(ConsumerOutcome::Blocked(BlockingOutcome::Invalid)),
+            Some(DependencyStatus::Invalid) => {
+                Err(ConsumerOutcome::Blocked(BlockingOutcome::Invalid))
+            }
             Some(DependencyStatus::Unsupported) => {
                 Err(ConsumerOutcome::Blocked(BlockingOutcome::Unsupported))
             }
@@ -132,7 +134,10 @@ fn relationship_specificity(
     }
 }
 
-fn add_to_current(containers: &mut [Container], value: Specificity) -> Result<(), ConsumerOutcome> {
+fn add_to_current(
+    containers: &mut [Container],
+    value: Specificity,
+) -> Result<(), ConsumerOutcome> {
     let Some(container) = containers.last_mut() else {
         return Err(ConsumerOutcome::Incomplete);
     };
@@ -194,7 +199,11 @@ pub(super) fn fold_program(
                 }
             }
             SelectorFact::RejectedForgivingMember { .. } => {
-                if containers.len() > 1 && containers.last().is_some_and(|container| container.current.is_none()) {
+                if containers.len() > 1
+                    && containers
+                        .last()
+                        .is_some_and(|container| container.current.is_none())
+                {
                     Ok(())
                 } else {
                     Err(ConsumerOutcome::Incomplete)
