@@ -6,8 +6,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::selector_semantic_handoff_gold::{
     AuthoredRange, CompletionState, ContextId, FunctionKind, GoldObservation, GoldOutcome,
-    GoldProgram, GoldRun, MemberId, RelationshipOrigin, RelationshipTarget, RunId, SelectorFact,
-    SimpleKind, SourceId, UnitId,
+    GoldProgram, GoldRun, InvalidReason, MemberId, RelationshipOrigin, RelationshipTarget, RunId,
+    SelectorFact, SimpleKind, SourceId, UnitId,
 };
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -474,8 +474,11 @@ pub(super) fn resolve_retained_run(
         ));
     }
 
-    let positions = match observation_positions(run, &mut budget) {
-        Ok(positions) => positions,
+    let PreparedObservations {
+        positions,
+        relationship_programs,
+    } = match prepare_observations(run, &mut budget) {
+        Ok(prepared) => prepared,
         Err(PreparationFailure::BudgetExhausted) => {
             return Ok(incomplete_resolved_run(
                 &budget,
@@ -486,7 +489,7 @@ pub(super) fn resolve_retained_run(
         }
         Err(PreparationFailure::Dependency(error)) => return Err(error),
     };
-    let edges = match relationship_edges(&run.observations, &mut budget) {
+    let edges = match relationship_edges(&relationship_programs, &mut budget) {
         Ok(edges) => edges,
         Err(PreparationFailure::BudgetExhausted) => {
             return Ok(incomplete_resolved_run(
@@ -562,11 +565,21 @@ enum PreparationFailure {
     Dependency(DependencyResolutionError),
 }
 
-fn observation_positions(
-    run: &GoldRun,
+struct PreparedObservations<'a> {
+    positions: BTreeMap<ContextId, usize>,
+    // Only non-empty qualified programs survive preparation. Program absence
+    // and zero-fact programs are discharged while their observation-level
+    // preparation charge is owned, so relationship discovery cannot revisit
+    // an unbounded zero-charge observation suffix.
+    relationship_programs: Vec<(ContextId, &'a [SelectorFact])>,
+}
+
+fn prepare_observations<'a>(
+    run: &'a GoldRun,
     budget: &mut ConsumerBudgetState,
-) -> Result<BTreeMap<ContextId, usize>, PreparationFailure> {
+) -> Result<PreparedObservations<'a>, PreparationFailure> {
     let mut positions = BTreeMap::new();
+    let mut relationship_programs = Vec::new();
     for (position, observation) in run.observations.iter().enumerate() {
         if !budget.charge() {
             return Err(PreparationFailure::BudgetExhausted);
@@ -611,6 +624,9 @@ fn observation_positions(
                         },
                     ));
                 }
+                if !program.facts.is_empty() {
+                    relationship_programs.push((observation.context, program.facts.as_slice()));
+                }
             }
             (GoldOutcome::Qualified, Some(program)) => {
                 return Err(PreparationFailure::Dependency(
@@ -633,19 +649,19 @@ fn observation_positions(
             (_, None) => {}
         }
     }
-    Ok(positions)
+    Ok(PreparedObservations {
+        positions,
+        relationship_programs,
+    })
 }
 
 fn relationship_edges(
-    observations: &[GoldObservation],
+    programs: &[(ContextId, &[SelectorFact])],
     budget: &mut ConsumerBudgetState,
 ) -> Result<Vec<(ContextId, ContextId)>, PreparationFailure> {
     let mut edges = Vec::new();
-    for observation in observations {
-        let Some(program) = observation.program.as_ref() else {
-            continue;
-        };
-        for fact in &program.facts {
+    for (context, facts) in programs {
+        for fact in *facts {
             if !budget.charge() {
                 return Err(PreparationFailure::BudgetExhausted);
             }
@@ -654,7 +670,7 @@ fn relationship_edges(
                 ..
             } = fact
             {
-                edges.push((observation.context, *parent));
+                edges.push((*context, *parent));
             }
         }
     }
@@ -953,4 +969,51 @@ fn retained_parent_dependency_rejects_cross_source_run_or_profile_identity() {
             actual_profile: "OtherProfile",
         })
     );
+}
+
+#[test]
+fn relationship_discovery_does_not_revisit_zero_work_observations() {
+    let run = GoldRun {
+        source: SourceId(1),
+        run: RunId(1),
+        profile: "CoreV1",
+        upstream: CompletionState::Complete,
+        qualifier: CompletionState::Complete,
+        observations: vec![
+            GoldObservation {
+                source: SourceId(1),
+                run: RunId(1),
+                profile: "CoreV1",
+                context: ContextId(1),
+                completion: CompletionState::Complete,
+                outcome: GoldOutcome::Invalid(InvalidReason::SelectedGrammar),
+                program: None,
+            },
+            GoldObservation {
+                source: SourceId(1),
+                run: RunId(1),
+                profile: "CoreV1",
+                context: ContextId(2),
+                completion: CompletionState::Complete,
+                outcome: GoldOutcome::Qualified,
+                program: Some(GoldProgram {
+                    source: SourceId(1),
+                    run: RunId(1),
+                    profile: "CoreV1",
+                    context: ContextId(2),
+                    facts: Vec::new(),
+                }),
+            },
+        ],
+    };
+    let mut budget = ConsumerBudgetState::new(ConsumerBudget { limit: 2 });
+    let prepared = prepare_observations(&run, &mut budget)
+        .expect("both zero-work observations are discharged by charged preparation");
+
+    assert_eq!(budget.used, 2);
+    assert!(prepared.relationship_programs.is_empty());
+    let edges = relationship_edges(&prepared.relationship_programs, &mut budget)
+        .expect("relationship discovery has no observation-level work left to revisit");
+    assert!(edges.is_empty());
+    assert_eq!(budget.used, 2);
 }
