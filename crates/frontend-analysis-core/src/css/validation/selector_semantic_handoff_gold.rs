@@ -518,9 +518,7 @@ pub(super) fn validate_rejected_nesting_presences(
     for expectation in expectations {
         let (fact_index, item) = validate_rejected_nesting_presence_claim(program, *expectation)?;
         if claimed_positions.contains(&fact_index) {
-            return Err(RejectedNestingPresenceFailure::PresenceClaimedMoreThanOnce {
-                fact_index,
-            });
+            return Err(RejectedNestingPresenceFailure::PresenceClaimedMoreThanOnce { fact_index });
         }
         claimed_positions.push(fact_index);
         evidence.push(item);
@@ -690,9 +688,7 @@ fn rejected_nesting_presence_population_supports_exact_multiple_ownership() {
     assert_eq!(evidence[1].member, MemberId(3));
     assert_eq!(
         validate_rejected_nesting_presences(&program, &[first, first]),
-        Err(RejectedNestingPresenceFailure::PresenceClaimedMoreThanOnce {
-            fact_index: 1,
-        })
+        Err(RejectedNestingPresenceFailure::PresenceClaimedMoreThanOnce { fact_index: 1 })
     );
 }
 
