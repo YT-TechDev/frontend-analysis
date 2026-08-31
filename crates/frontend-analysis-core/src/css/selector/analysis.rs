@@ -76,7 +76,7 @@ mod tests {
             &source,
             tokenizer_limits(),
             parser_limits(),
-            CssSelectorLimits::new(100_000, 64, 1024).unwrap(),
+            CssSelectorLimits::new(100_000, 64, 1024, 65_536).unwrap(),
         )
         .unwrap();
 
