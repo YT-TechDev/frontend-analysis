@@ -142,53 +142,12 @@ pub(crate) fn run(
             &mut resources,
         )?;
 
-        let mut staged_facts = match execution {
-            CandidateExecution::Qualified(facts) => Some(facts),
-            CandidateExecution::Outcome(outcome) => {
-                let retained_delta = resources.retained_delta(0)?;
-                let observation_preflight = resources.preflight_observation(record.header())?;
-                let ObservationPreflight::Allowed {
-                    attempted: observation_attempted,
-                } = observation_preflight
-                else {
-                    let ObservationPreflight::Refused(evidence) = observation_preflight else {
-                        unreachable!()
-                    };
-                    return build_incomplete(
-                        parser_result,
-                        observations,
-                        resources.usage(),
-                        evidence,
-                    );
-                };
-                let retained_preflight =
-                    resources.preflight_retained_semantic(record.header(), retained_delta)?;
-                let RetainedPreflight::Allowed {
-                    attempted: retained_attempted,
-                } = retained_preflight
-                else {
-                    let RetainedPreflight::Refused(evidence) = retained_preflight else {
-                        unreachable!()
-                    };
-                    return build_incomplete(
-                        parser_result,
-                        observations,
-                        resources.usage(),
-                        evidence,
-                    );
-                };
-
-                let observation = CssSelectorQualificationObservation::new(
-                    &parser_result,
-                    record.id(),
-                    grammar_context,
-                    outcome,
-                    None,
-                )?;
-                observations.push(observation);
-                resources.commit_persistent(observation_attempted, retained_attempted);
-                continue;
-            }
+        let (outcome, mut staged_facts) = match execution {
+            CandidateExecution::Qualified(facts) => (
+                CssSelectorQualificationOutcome::QualifiedBySelectedGrammar,
+                Some(facts),
+            ),
+            CandidateExecution::Outcome(outcome) => (outcome, None),
             CandidateExecution::ResourceLimit(evidence) => {
                 return build_incomplete(parser_result, observations, resources.usage(), evidence);
             }
@@ -198,24 +157,15 @@ pub(crate) fn run(
             && facts
                 .iter()
                 .any(|fact| matches!(fact, CssSelectorSemanticFact::Relationship { .. }))
-        {
-            match resolve_staged_relationships(
+            && let Some(evidence) = resolve_staged_relationships(
                 parser_result.context_records(),
                 record.id(),
                 record.header(),
                 facts,
                 &mut resources,
-            )? {
-                Some(evidence) => {
-                    return build_incomplete(
-                        parser_result,
-                        observations,
-                        resources.usage(),
-                        evidence,
-                    );
-                }
-                None => {}
-            }
+            )?
+        {
+            return build_incomplete(parser_result, observations, resources.usage(), evidence);
         }
 
         let fact_count = staged_facts.as_ref().map_or(0, Vec::len);
@@ -223,52 +173,48 @@ pub(crate) fn run(
 
         // Persistent refusal precedence is load-bearing: Observations is
         // preflighted before RetainedSemanticUnits and neither mutates usage.
-        let observation_preflight = resources.preflight_observation(record.header())?;
-        let ObservationPreflight::Allowed {
-            attempted: observation_attempted,
-        } = observation_preflight
-        else {
-            let ObservationPreflight::Refused(evidence) = observation_preflight else {
-                unreachable!()
-            };
-            return build_incomplete(parser_result, observations, resources.usage(), evidence);
+        let observation_attempted = match resources.preflight_observation(record.header())? {
+            ObservationPreflight::Allowed { attempted } => attempted,
+            ObservationPreflight::Refused(evidence) => {
+                return build_incomplete(parser_result, observations, resources.usage(), evidence);
+            }
         };
-
-        let retained_preflight =
-            resources.preflight_retained_semantic(record.header(), retained_delta)?;
-        let RetainedPreflight::Allowed {
-            attempted: retained_attempted,
-        } = retained_preflight
-        else {
-            let RetainedPreflight::Refused(evidence) = retained_preflight else {
-                unreachable!()
+        let retained_attempted =
+            match resources.preflight_retained_semantic(record.header(), retained_delta)? {
+                RetainedPreflight::Allowed { attempted } => attempted,
+                RetainedPreflight::Refused(evidence) => {
+                    return build_incomplete(
+                        parser_result,
+                        observations,
+                        resources.usage(),
+                        evidence,
+                    );
+                }
             };
-            return build_incomplete(parser_result, observations, resources.usage(), evidence);
-        };
 
         // All normal resource refusals have succeeded before the fallible
         // attachment/invariant validation required by #405.
-        let facts = staged_facts.take().ok_or_else(|| {
-            CssSelectorProducerError::InternalInvariantFailure(
-                CssSelectorProducerInvariantViolation::MissingSemanticMember,
-            )
-        })?;
-        let program = CssSelectorSemanticProgram::from_authoritative_staging(
-            record.id(),
-            record.header(),
-            facts,
-        )
-        .map_err(|error| {
-            CssSelectorProducerError::InternalInvariantFailure(
-                CssSelectorProducerInvariantViolation::HandoffContract(error),
-            )
-        })?;
+        let semantic_program = match staged_facts.take() {
+            Some(facts) => Some(
+                CssSelectorSemanticProgram::from_authoritative_staging(
+                    record.id(),
+                    record.header(),
+                    facts,
+                )
+                .map_err(|error| {
+                    CssSelectorProducerError::InternalInvariantFailure(
+                        CssSelectorProducerInvariantViolation::HandoffContract(error),
+                    )
+                })?,
+            ),
+            None => None,
+        };
         let observation = CssSelectorQualificationObservation::new(
             &parser_result,
             record.id(),
             grammar_context,
-            CssSelectorQualificationOutcome::QualifiedBySelectedGrammar,
-            Some(program),
+            outcome,
+            semantic_program,
         )?;
 
         // Non-refusing durable commit region.
@@ -304,7 +250,6 @@ fn build_incomplete(
     .map_err(Into::into)
 }
 
-#[derive(Debug)]
 enum CandidateExecution {
     Qualified(Vec<CssSelectorSemanticFact>),
     Outcome(CssSelectorQualificationOutcome),
@@ -710,7 +655,6 @@ impl ListFrame {
     }
 }
 
-#[derive(Debug, Default)]
 struct SemanticBuilder {
     facts: Vec<CssSelectorSemanticFact>,
     next_member: usize,
@@ -1172,7 +1116,7 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
             Err(MachineFault::ResourceLimit(_)) | Err(MachineFault::Internal(_)) => {}
         }
         result?;
-        let closer = self.previous_anchor()?;
+        let closer = self.previous_anchor()?.clone();
         let range = self.semantic_anchor(opener.range().start(), closer.range().end())?;
         self.stage_simple(CssSelectorSemanticSimpleKind::Attribute, range)?;
         self.mark_simple(false)
@@ -1421,12 +1365,14 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
             ));
         }
 
-        let frame = self.frames.last().ok_or({
-            CssSelectorProducerError::InternalInvariantFailure(
+        let frame = self
+            .frames
+            .last()
+            .cloned()
+            .ok_or(CssSelectorProducerError::InternalInvariantFailure(
                 CssSelectorProducerInvariantViolation::MissingRootFrame,
-            )
-        })?;
-        let classification = self.member_end_classification_for(frame);
+            ))?;
+        let classification = self.member_end_classification_for(&frame);
         match classification {
             MemberEnd::Qualified => {
                 self.finalize_qualified_member(0)
@@ -1451,7 +1397,7 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
             MemberEnd::Empty => Ok(CandidateExecution::Outcome(
                 CssSelectorQualificationOutcome::InvalidForSelectedGrammar {
                     reason: CssSelectorInvalidReason::EmptySelectorList,
-                    subject: frame.function_subject.clone(),
+                    subject: frame.function_subject,
                 },
             )),
         }
@@ -2165,8 +2111,9 @@ mod tests {
         let limits = CssSelectorLimits::new(100_000, 64, usize::MAX, usize::MAX).unwrap();
         let mut tracker = ResourceTracker::new(&source, limits);
         tracker.retained_semantic_units = usize::MAX;
+        let header = source.anchor(0, 1).unwrap();
         assert!(matches!(
-            tracker.preflight_retained_semantic(source.anchor(0, 1).unwrap().borrow(), 1),
+            tracker.preflight_retained_semantic(&header, 1),
             Err(CssSelectorProducerError::InternalInvariantFailure(
                 CssSelectorProducerInvariantViolation::ResourceContract(
                     CssSelectorResourceContractError::AccountingOverflow { .. }
