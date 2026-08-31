@@ -1,9 +1,10 @@
-//! Selector qualification semantic-stage result contracts (#182).
+//! Selector qualification semantic-stage result contracts (#182/#405).
 //!
 //! The result owns the unchanged upstream parser result so run-local
 //! `CssParserContextId` observations cannot outlive the structural evidence
-//! they reference. This module defines representation and invariants only;
-//! it contains no selector qualification algorithm.
+//! they reference. #405 additionally binds each qualified observation to one
+//! complete linear semantic program and independently reconciles retained
+//! semantic resource accounting.
 
 use std::error::Error;
 use std::fmt;
@@ -15,6 +16,7 @@ use super::super::parser::result::CssParserRunResult;
 use super::context::{
     CssSelectorContextContractError, CssSelectorGrammarContext, derive_selector_grammar_context,
 };
+use super::handoff::{CssSelectorHandoffInvariantViolation, CssSelectorSemanticProgram};
 use super::profile::CssSelectorGrammarProfile;
 use super::resource::{
     CssSelectorInvalidConfiguration, CssSelectorResourceKind, CssSelectorResourceLimitEvidence,
@@ -153,6 +155,7 @@ pub(crate) struct CssSelectorQualificationObservation {
     context_header: SourceAnchor,
     grammar_context: CssSelectorGrammarContext,
     outcome: CssSelectorQualificationOutcome,
+    semantic_program: Option<CssSelectorSemanticProgram>,
 }
 
 impl CssSelectorQualificationObservation {
@@ -161,6 +164,7 @@ impl CssSelectorQualificationObservation {
         context_id: CssParserContextId,
         grammar_context: CssSelectorGrammarContext,
         outcome: CssSelectorQualificationOutcome,
+        semantic_program: Option<CssSelectorSemanticProgram>,
     ) -> Result<Self, CssSelectorRunError> {
         let records = parser_result.context_records();
         let record = records
@@ -194,12 +198,19 @@ impl CssSelectorQualificationObservation {
         }
 
         validate_outcome_subject(context_id, record.header(), &outcome)?;
+        validate_program_attachment(
+            context_id,
+            record.header(),
+            &outcome,
+            semantic_program.as_ref(),
+        )?;
 
         Ok(Self {
             context_id,
             context_header: record.header().clone(),
             grammar_context,
             outcome,
+            semantic_program,
         })
     }
 
@@ -214,6 +225,10 @@ impl CssSelectorQualificationObservation {
     pub(crate) const fn outcome(&self) -> &CssSelectorQualificationOutcome {
         &self.outcome
     }
+
+    pub(crate) const fn semantic_program(&self) -> Option<&CssSelectorSemanticProgram> {
+        self.semantic_program.as_ref()
+    }
 }
 
 impl PartialEq for CssSelectorQualificationObservation {
@@ -222,6 +237,7 @@ impl PartialEq for CssSelectorQualificationObservation {
             && same_anchor(&self.context_header, &other.context_header)
             && self.grammar_context == other.grammar_context
             && self.outcome == other.outcome
+            && self.semantic_program == other.semantic_program
     }
 }
 
@@ -349,6 +365,15 @@ pub(crate) enum CssSelectorInvariantViolation {
     ObservationSubjectOutsideHeader {
         context: CssParserContextId,
     },
+    SemanticProgramPresenceMismatch {
+        context: CssParserContextId,
+        qualified: bool,
+        program_present: bool,
+    },
+    SemanticProgramContractViolation {
+        context: CssParserContextId,
+        error: CssSelectorHandoffInvariantViolation,
+    },
     ObservationContextOrderMismatch {
         observation_index: usize,
         expected: CssParserContextId,
@@ -361,6 +386,11 @@ pub(crate) enum CssSelectorInvariantViolation {
         expected: usize,
         actual: usize,
     },
+    ResourceRetainedSemanticUnitsMismatch {
+        expected: usize,
+        actual: usize,
+    },
+    RetainedSemanticAccountingOverflow,
     CompletionTerminationMismatch,
     CompleteRunMissingObservation {
         expected: usize,
@@ -432,6 +462,12 @@ fn validate_run_result(
             ));
         }
         validate_outcome_subject(expected, expected_record.header(), observation.outcome())?;
+        validate_program_attachment(
+            expected,
+            expected_record.header(),
+            observation.outcome(),
+            observation.semantic_program(),
+        )?;
     }
 
     let actual_observations = resources.value(CssSelectorResourceKind::Observations);
@@ -440,6 +476,17 @@ fn validate_run_result(
             CssSelectorInvariantViolation::ResourceObservationCountMismatch {
                 expected: observations.len(),
                 actual: actual_observations,
+            },
+        ));
+    }
+
+    let expected_retained = expected_retained_semantic_units(observations)?;
+    let actual_retained = resources.value(CssSelectorResourceKind::RetainedSemanticUnits);
+    if actual_retained != expected_retained {
+        return Err(invariant(
+            CssSelectorInvariantViolation::ResourceRetainedSemanticUnitsMismatch {
+                expected: expected_retained,
+                actual: actual_retained,
             },
         ));
     }
@@ -505,6 +552,59 @@ fn validate_run_result(
         }
     }
 
+    Ok(())
+}
+
+fn expected_retained_semantic_units(
+    observations: &[CssSelectorQualificationObservation],
+) -> Result<usize, CssSelectorRunError> {
+    let mut expected = 0usize;
+    for observation in observations {
+        let fact_count = observation
+            .semantic_program()
+            .map_or(0usize, CssSelectorSemanticProgram::fact_count);
+        let delta = 1usize.checked_add(fact_count).ok_or_else(|| {
+            invariant(CssSelectorInvariantViolation::RetainedSemanticAccountingOverflow)
+        })?;
+        expected = expected.checked_add(delta).ok_or_else(|| {
+            invariant(CssSelectorInvariantViolation::RetainedSemanticAccountingOverflow)
+        })?;
+    }
+    Ok(expected)
+}
+
+fn validate_program_attachment(
+    context_id: CssParserContextId,
+    header: &SourceAnchor,
+    outcome: &CssSelectorQualificationOutcome,
+    semantic_program: Option<&CssSelectorSemanticProgram>,
+) -> Result<(), CssSelectorRunError> {
+    let qualified = matches!(
+        outcome,
+        CssSelectorQualificationOutcome::QualifiedBySelectedGrammar
+    );
+    if qualified != semantic_program.is_some() {
+        return Err(invariant(
+            CssSelectorInvariantViolation::SemanticProgramPresenceMismatch {
+                context: context_id,
+                qualified,
+                program_present: semantic_program.is_some(),
+            },
+        ));
+    }
+
+    if let Some(program) = semantic_program {
+        program
+            .validate_for_observation(context_id, header)
+            .map_err(|error| {
+                invariant(
+                    CssSelectorInvariantViolation::SemanticProgramContractViolation {
+                        context: context_id,
+                        error,
+                    },
+                )
+            })?;
+    }
     Ok(())
 }
 
@@ -594,23 +694,50 @@ mod tests {
         run_parser(source, tokenizer, parser_limits()).unwrap()
     }
 
+    fn zero_fact_program(
+        parser: &CssParserRunResult,
+        context: CssParserContextId,
+    ) -> CssSelectorSemanticProgram {
+        let record = &parser.context_records()[context.index()];
+        CssSelectorSemanticProgram::from_authoritative_staging(
+            context,
+            record.header(),
+            Vec::new(),
+        )
+        .unwrap()
+    }
+
+    fn qualified_observation(
+        parser: &CssParserRunResult,
+        context: CssParserContextId,
+        grammar_context: CssSelectorGrammarContext,
+    ) -> CssSelectorQualificationObservation {
+        CssSelectorQualificationObservation::new(
+            parser,
+            context,
+            grammar_context,
+            CssSelectorQualificationOutcome::QualifiedBySelectedGrammar,
+            Some(zero_fact_program(parser, context)),
+        )
+        .unwrap()
+    }
+
     #[test]
     fn observation_is_bound_to_existing_qualified_context_and_derived_mode() {
         let source = SourceText::new(SourceId::new(30), "a{p:v;}".to_owned());
         let parser = parse(&source);
-        let observation = CssSelectorQualificationObservation::new(
+        let observation = qualified_observation(
             &parser,
             CssParserContextId::new(0),
             CssSelectorGrammarContext::NormalSelectorList,
-            CssSelectorQualificationOutcome::QualifiedBySelectedGrammar,
-        )
-        .unwrap();
+        );
 
         assert_eq!(observation.context_id(), CssParserContextId::new(0));
         assert_eq!(
             observation.grammar_context(),
             CssSelectorGrammarContext::NormalSelectorList
         );
+        assert!(observation.semantic_program().is_some());
     }
 
     #[test]
@@ -628,6 +755,7 @@ mod tests {
                     reason: CssSelectorInvalidReason::UnexpectedToken,
                     subject: body_subject,
                 },
+                None,
             ),
             Err(CssSelectorRunError::InternalInvariantFailure(
                 CssSelectorInvariantViolation::ObservationSubjectOutsideHeader { .. }
@@ -636,29 +764,125 @@ mod tests {
     }
 
     #[test]
-    fn complete_result_owns_unchanged_parser_result_and_one_observation_per_qualified_context() {
+    fn qualified_program_biconditional_and_owning_context_fail_closed() {
+        let source = SourceText::new(SourceId::new(37), "a{}b{}".to_owned());
+        let parser = parse(&source);
+        let c0 = CssParserContextId::new(0);
+        let c1 = CssParserContextId::new(1);
+
+        assert!(matches!(
+            CssSelectorQualificationObservation::new(
+                &parser,
+                c0,
+                CssSelectorGrammarContext::NormalSelectorList,
+                CssSelectorQualificationOutcome::QualifiedBySelectedGrammar,
+                None,
+            ),
+            Err(CssSelectorRunError::InternalInvariantFailure(
+                CssSelectorInvariantViolation::SemanticProgramPresenceMismatch { .. }
+            ))
+        ));
+
+        let program = zero_fact_program(&parser, c0);
+        assert!(matches!(
+            CssSelectorQualificationObservation::new(
+                &parser,
+                c0,
+                CssSelectorGrammarContext::NormalSelectorList,
+                CssSelectorQualificationOutcome::InvalidForSelectedGrammar {
+                    reason: CssSelectorInvalidReason::UnexpectedToken,
+                    subject: parser.context_records()[0].header().clone(),
+                },
+                Some(program.clone()),
+            ),
+            Err(CssSelectorRunError::InternalInvariantFailure(
+                CssSelectorInvariantViolation::SemanticProgramPresenceMismatch { .. }
+            ))
+        ));
+
+        assert!(matches!(
+            CssSelectorQualificationObservation::new(
+                &parser,
+                c1,
+                CssSelectorGrammarContext::NormalSelectorList,
+                CssSelectorQualificationOutcome::QualifiedBySelectedGrammar,
+                Some(program),
+            ),
+            Err(CssSelectorRunError::InternalInvariantFailure(
+                CssSelectorInvariantViolation::SemanticProgramContractViolation {
+                    error: CssSelectorHandoffInvariantViolation::OwningContextMismatch { .. },
+                    ..
+                }
+            ))
+        ));
+    }
+
+    #[test]
+    fn complete_result_owns_unchanged_parser_result_and_reconciles_retention() {
         let source = SourceText::new(SourceId::new(32), "a{p:v;}".to_owned());
         let parser = parse(&source);
-        let observation = CssSelectorQualificationObservation::new(
+        let observation = qualified_observation(
             &parser,
             CssParserContextId::new(0),
             CssSelectorGrammarContext::NormalSelectorList,
-            CssSelectorQualificationOutcome::QualifiedBySelectedGrammar,
-        )
-        .unwrap();
+        );
         let result = CssSelectorQualificationRunResult::new(
             parser,
             CssSelectorGrammarProfile::CoreV1,
             vec![observation],
             CssSelectorExecutionCompletion::Complete,
             CssSelectorTermination::AllRetainedQualifiedContextsProcessed,
-            CssSelectorResourceUsage::new(1, 1, 1),
+            CssSelectorResourceUsage::new(1, 1, 1, 1),
         )
         .unwrap();
 
         assert_eq!(result.profile(), CssSelectorGrammarProfile::CoreV1);
         assert_eq!(result.observations().len(), 1);
         assert_eq!(result.upstream_parser_result().context_records().len(), 1);
+    }
+
+    #[test]
+    fn run_result_independently_rejects_program_and_retention_mismatch() {
+        let source = SourceText::new(SourceId::new(38), "a{}".to_owned());
+        let parser = parse(&source);
+        let mut observation = qualified_observation(
+            &parser,
+            CssParserContextId::new(0),
+            CssSelectorGrammarContext::NormalSelectorList,
+        );
+        observation.semantic_program = None;
+        assert!(matches!(
+            CssSelectorQualificationRunResult::new(
+                parser.clone(),
+                CssSelectorGrammarProfile::CoreV1,
+                vec![observation],
+                CssSelectorExecutionCompletion::Complete,
+                CssSelectorTermination::AllRetainedQualifiedContextsProcessed,
+                CssSelectorResourceUsage::new(1, 1, 1, 1),
+            ),
+            Err(CssSelectorRunError::InternalInvariantFailure(
+                CssSelectorInvariantViolation::SemanticProgramPresenceMismatch { .. }
+            ))
+        ));
+
+        let observation = qualified_observation(
+            &parser,
+            CssParserContextId::new(0),
+            CssSelectorGrammarContext::NormalSelectorList,
+        );
+        assert!(matches!(
+            CssSelectorQualificationRunResult::new(
+                parser,
+                CssSelectorGrammarProfile::CoreV1,
+                vec![observation],
+                CssSelectorExecutionCompletion::Complete,
+                CssSelectorTermination::AllRetainedQualifiedContextsProcessed,
+                CssSelectorResourceUsage::new(1, 1, 1, 0),
+            ),
+            Err(CssSelectorRunError::InternalInvariantFailure(
+                CssSelectorInvariantViolation::ResourceRetainedSemanticUnitsMismatch { .. }
+            ))
+        ));
     }
 
     #[test]
@@ -676,6 +900,7 @@ mod tests {
                     reason: CssSelectorInvalidReason::UnexpectedToken,
                     subject: different.anchor(0, 1).unwrap(),
                 },
+                None,
             ),
             Err(CssSelectorRunError::InternalInvariantFailure(
                 CssSelectorInvariantViolation::ObservationSubjectSourceContentMismatch { .. }
@@ -689,13 +914,11 @@ mod tests {
         let different = SourceText::new(SourceId::new(36), "b{}".to_owned());
         let source_parser = parse(&source);
         let different_parser = parse(&different);
-        let observation = CssSelectorQualificationObservation::new(
+        let observation = qualified_observation(
             &source_parser,
             CssParserContextId::new(0),
             CssSelectorGrammarContext::NormalSelectorList,
-            CssSelectorQualificationOutcome::QualifiedBySelectedGrammar,
-        )
-        .unwrap();
+        );
 
         assert!(matches!(
             CssSelectorQualificationRunResult::new(
@@ -704,7 +927,7 @@ mod tests {
                 vec![observation],
                 CssSelectorExecutionCompletion::Complete,
                 CssSelectorTermination::AllRetainedQualifiedContextsProcessed,
-                CssSelectorResourceUsage::new(1, 1, 1),
+                CssSelectorResourceUsage::new(1, 1, 1, 1),
             ),
             Err(CssSelectorRunError::InternalInvariantFailure(
                 CssSelectorInvariantViolation::ObservationProvenanceMismatch { .. }
@@ -717,13 +940,11 @@ mod tests {
         let source = SourceText::new(SourceId::new(35), "a{}b{}".to_owned());
         let different = SourceText::new(SourceId::new(35), "x{}y{}".to_owned());
         let parser = parse(&source);
-        let first = CssSelectorQualificationObservation::new(
+        let first = qualified_observation(
             &parser,
             CssParserContextId::new(0),
             CssSelectorGrammarContext::NormalSelectorList,
-            CssSelectorQualificationOutcome::QualifiedBySelectedGrammar,
-        )
-        .unwrap();
+        );
         let refusal = CssSelectorResourceLimitEvidence::new(
             &different,
             CssSelectorResourceKind::AlgorithmSteps,
@@ -740,7 +961,7 @@ mod tests {
                 vec![first],
                 CssSelectorExecutionCompletion::Incomplete,
                 CssSelectorTermination::ResourceLimit(refusal),
-                CssSelectorResourceUsage::new(1, 1, 1),
+                CssSelectorResourceUsage::new(1, 1, 1, 1),
             ),
             Err(CssSelectorRunError::InternalInvariantFailure(
                 CssSelectorInvariantViolation::ResourceLimitSourceContentMismatch { .. }
@@ -752,13 +973,11 @@ mod tests {
     fn resource_limited_result_preserves_prior_observation_prefix() {
         let source = SourceText::new(SourceId::new(33), "a{}b{}".to_owned());
         let parser = parse(&source);
-        let first = CssSelectorQualificationObservation::new(
+        let first = qualified_observation(
             &parser,
             CssParserContextId::new(0),
             CssSelectorGrammarContext::NormalSelectorList,
-            CssSelectorQualificationOutcome::QualifiedBySelectedGrammar,
-        )
-        .unwrap();
+        );
         let refusal_location = source.anchor(3, 3).unwrap();
         let refusal = CssSelectorResourceLimitEvidence::new(
             &source,
@@ -775,7 +994,7 @@ mod tests {
             vec![first],
             CssSelectorExecutionCompletion::Incomplete,
             CssSelectorTermination::ResourceLimit(refusal),
-            CssSelectorResourceUsage::new(1, 1, 1),
+            CssSelectorResourceUsage::new(1, 1, 1, 1),
         )
         .unwrap();
 
