@@ -46,7 +46,10 @@ fn selector_limits() -> CssSelectorLimits {
     CssSelectorLimits::new(500_000, 256, 16 * 1024, 512 * 1024).unwrap()
 }
 
-fn run(source_id: u64, source: &str) -> crate::css::selector::result::CssSelectorQualificationRunResult {
+fn run(
+    source_id: u64,
+    source: &str,
+) -> crate::css::selector::result::CssSelectorQualificationRunResult {
     let source = SourceText::new(SourceId::new(source_id), source.to_owned());
     let parser = analyze_css_source(&source, tokenizer_limits(), parser_limits()).unwrap();
     run_selector(&source, parser, selector_limits()).unwrap()
@@ -140,21 +143,23 @@ fn map_program(program: &CssSelectorSemanticProgram) -> Vec<SelectorFact> {
         .facts()
         .iter()
         .map(|fact| match fact {
-            CssSelectorSemanticFact::OpenMember { member, range: source } => {
-                SelectorFact::OpenMember {
-                    member: MemberId(member.value() as u32),
-                    range: range(source.range().start(), source.range().end()),
-                }
-            }
+            CssSelectorSemanticFact::OpenMember {
+                member,
+                range: source,
+            } => SelectorFact::OpenMember {
+                member: MemberId(member.value() as u32),
+                range: range(source.range().start(), source.range().end()),
+            },
             CssSelectorSemanticFact::CloseMember { member } => SelectorFact::CloseMember {
                 member: MemberId(member.value() as u32),
             },
-            CssSelectorSemanticFact::RejectedForgivingMember { member, range: source } => {
-                SelectorFact::RejectedForgivingMember {
-                    member: MemberId(member.value() as u32),
-                    range: range(source.range().start(), source.range().end()),
-                }
-            }
+            CssSelectorSemanticFact::RejectedForgivingMember {
+                member,
+                range: source,
+            } => SelectorFact::RejectedForgivingMember {
+                member: MemberId(member.value() as u32),
+                range: range(source.range().start(), source.range().end()),
+            },
             CssSelectorSemanticFact::Simple {
                 unit,
                 kind,
@@ -388,12 +393,16 @@ fn forgiving_rejection_preserves_only_noncontributing_nesting_presence() {
     }));
 
     let without_nesting = run(50_008, ":is(>>x, .b){}");
-    assert!(facts(&without_nesting, 0).iter().any(|fact| {
-        matches!(fact, SelectorFact::RejectedForgivingMember { .. })
-    }));
-    assert!(!facts(&without_nesting, 0)
-        .iter()
-        .any(|fact| matches!(fact, SelectorFact::NestingPresence { .. })));
+    assert!(
+        facts(&without_nesting, 0)
+            .iter()
+            .any(|fact| { matches!(fact, SelectorFact::RejectedForgivingMember { .. }) })
+    );
+    assert!(
+        !facts(&without_nesting, 0)
+            .iter()
+            .any(|fact| matches!(fact, SelectorFact::NestingPresence { .. }))
+    );
 }
 
 #[test]
