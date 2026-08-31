@@ -430,13 +430,13 @@ fn unsupported_and_indeterminate_faults_are_not_swallowed_or_attached() {
 
 #[test]
 fn parent_scope_and_implied_relationships_use_direct_structural_parent_order() {
-    let scope_outside = run(50_011, "@scope{.a{& .b{}}}");
-    let child_facts = facts(&scope_outside, 1);
+    let scope_outside = run(50_011, ".outer{@scope{.a{& .b{}}}}");
+    let child_facts = facts(&scope_outside, 2);
     assert!(child_facts.iter().any(|fact| matches!(
         fact,
         SelectorFact::Relationship {
-            target: RelationshipTarget::ParentSelectorList(ContextId(1)),
-            origin: RelationshipOrigin::Authored(AuthoredRange { start: 10, end: 11 }),
+            target: RelationshipTarget::ParentSelectorList(ContextId(2)),
+            origin: RelationshipOrigin::Authored(AuthoredRange { start: 17, end: 18 }),
         }
     )));
 
