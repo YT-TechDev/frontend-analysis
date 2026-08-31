@@ -1,10 +1,11 @@
-//! Bounded production CSS selector qualification for `CoreV1` (#184).
+//! Bounded production CSS selector qualification for `CoreV1` (#184/#405).
 //!
 //! Grammar meaning is derived only from the Core-validated parser result and
 //! the retained tokenizer lexical items selected by `QualifiedRuleBlock`
-//! headers. `SourceText` is borrowed solely to construct exact zero-length
-//! resource-limit point evidence; authored bytes are never searched, rescanned,
-//! retokenized, or reconstructed here.
+//! headers. `SourceText` is borrowed to construct resource-limit points and
+//! exact semantic anchors only from endpoints already owned by authoritative
+//! recognition. Authored bytes are never searched, rescanned, retokenized, or
+//! reconstructed here.
 
 use std::error::Error;
 use std::fmt;
@@ -16,6 +17,13 @@ use super::super::parser::result::CssParserRunResult;
 use super::super::token::{CssHashType, CssLexicalItem, CssToken, CssTokenKind};
 use super::context::{
     CssSelectorContextContractError, CssSelectorGrammarContext, derive_selector_grammar_context,
+};
+use super::handoff::{
+    CssSelectorHandoffInvariantViolation, CssSelectorNestingPresenceDisposition,
+    CssSelectorRelationshipResolutionError, CssSelectorSemanticFact,
+    CssSelectorSemanticFunctionKind, CssSelectorSemanticMemberId, CssSelectorSemanticProgram,
+    CssSelectorSemanticRelationshipOrigin, CssSelectorSemanticRelationshipTarget,
+    CssSelectorSemanticSimpleKind, CssSelectorSemanticUnitId, resolve_relationship_target,
 };
 use super::lexical::{CssSelectorLexicalWindowCursor, CssSelectorLexicalWindowError};
 use super::profile::{
@@ -44,13 +52,19 @@ pub(crate) enum CssSelectorProducerError {
 pub(crate) enum CssSelectorProducerInvariantViolation {
     ContextContract(CssSelectorContextContractError),
     LexicalWindow(CssSelectorLexicalWindowError),
+    HandoffContract(CssSelectorHandoffInvariantViolation),
     ResourceContract(CssSelectorResourceContractError),
     ResourcePointRange(SourceRangeError),
+    SemanticRange(SourceRangeError),
     ResultContract(CssSelectorInvariantViolation),
     ActiveDepthUnderflow,
     MissingCurrentToken,
     MissingFunctionFrame,
     MissingRootFrame,
+    MissingSemanticMember,
+    MissingFunctionSemanticUnit,
+    SemanticOpenFactMismatch,
+    SemanticIdentityOverflow,
     UnexpectedTypeDispatch,
     UnexpectedFaultConversion,
     UpstreamSourceMismatch,
@@ -128,28 +142,138 @@ pub(crate) fn run(
             &mut resources,
         )?;
 
-        let outcome = match execution {
-            CandidateExecution::Outcome(outcome) => outcome,
-            CandidateExecution::ResourceLimit(evidence) => {
-                return build_incomplete(parser_result, observations, resources.usage(), evidence);
-            }
-        };
+        let mut staged_facts = match execution {
+            CandidateExecution::Qualified(facts) => Some(facts),
+            CandidateExecution::Outcome(outcome) => {
+                let retained_delta = resources.retained_delta(0)?;
+                let observation_preflight = resources.preflight_observation(record.header())?;
+                let ObservationPreflight::Allowed {
+                    attempted: observation_attempted,
+                } = observation_preflight
+                else {
+                    let ObservationPreflight::Refused(evidence) = observation_preflight else {
+                        unreachable!()
+                    };
+                    return build_incomplete(
+                        parser_result,
+                        observations,
+                        resources.usage(),
+                        evidence,
+                    );
+                };
+                let retained_preflight =
+                    resources.preflight_retained_semantic(record.header(), retained_delta)?;
+                let RetainedPreflight::Allowed {
+                    attempted: retained_attempted,
+                } = retained_preflight
+                else {
+                    let RetainedPreflight::Refused(evidence) = retained_preflight else {
+                        unreachable!()
+                    };
+                    return build_incomplete(
+                        parser_result,
+                        observations,
+                        resources.usage(),
+                        evidence,
+                    );
+                };
 
-        match resources.preflight_observation(record.header())? {
-            ObservationPreflight::Allowed { attempted } => {
                 let observation = CssSelectorQualificationObservation::new(
                     &parser_result,
                     record.id(),
                     grammar_context,
                     outcome,
+                    None,
                 )?;
                 observations.push(observation);
-                resources.commit_observation(attempted);
+                resources.commit_persistent(observation_attempted, retained_attempted);
+                continue;
             }
-            ObservationPreflight::Refused(evidence) => {
+            CandidateExecution::ResourceLimit(evidence) => {
                 return build_incomplete(parser_result, observations, resources.usage(), evidence);
             }
+        };
+
+        if let Some(facts) = staged_facts.as_mut()
+            && facts
+                .iter()
+                .any(|fact| matches!(fact, CssSelectorSemanticFact::Relationship { .. }))
+        {
+            match resolve_staged_relationships(
+                parser_result.context_records(),
+                record.id(),
+                record.header(),
+                facts,
+                &mut resources,
+            )? {
+                Some(evidence) => {
+                    return build_incomplete(
+                        parser_result,
+                        observations,
+                        resources.usage(),
+                        evidence,
+                    );
+                }
+                None => {}
+            }
         }
+
+        let fact_count = staged_facts.as_ref().map_or(0, Vec::len);
+        let retained_delta = resources.retained_delta(fact_count)?;
+
+        // Persistent refusal precedence is load-bearing: Observations is
+        // preflighted before RetainedSemanticUnits and neither mutates usage.
+        let observation_preflight = resources.preflight_observation(record.header())?;
+        let ObservationPreflight::Allowed {
+            attempted: observation_attempted,
+        } = observation_preflight
+        else {
+            let ObservationPreflight::Refused(evidence) = observation_preflight else {
+                unreachable!()
+            };
+            return build_incomplete(parser_result, observations, resources.usage(), evidence);
+        };
+
+        let retained_preflight =
+            resources.preflight_retained_semantic(record.header(), retained_delta)?;
+        let RetainedPreflight::Allowed {
+            attempted: retained_attempted,
+        } = retained_preflight
+        else {
+            let RetainedPreflight::Refused(evidence) = retained_preflight else {
+                unreachable!()
+            };
+            return build_incomplete(parser_result, observations, resources.usage(), evidence);
+        };
+
+        // All normal resource refusals have succeeded before the fallible
+        // attachment/invariant validation required by #405.
+        let facts = staged_facts.take().ok_or_else(|| {
+            CssSelectorProducerError::InternalInvariantFailure(
+                CssSelectorProducerInvariantViolation::MissingSemanticMember,
+            )
+        })?;
+        let program = CssSelectorSemanticProgram::from_authoritative_staging(
+            record.id(),
+            record.header(),
+            facts,
+        )
+        .map_err(|error| {
+            CssSelectorProducerError::InternalInvariantFailure(
+                CssSelectorProducerInvariantViolation::HandoffContract(error),
+            )
+        })?;
+        let observation = CssSelectorQualificationObservation::new(
+            &parser_result,
+            record.id(),
+            grammar_context,
+            CssSelectorQualificationOutcome::QualifiedBySelectedGrammar,
+            Some(program),
+        )?;
+
+        // Non-refusing durable commit region.
+        observations.push(observation);
+        resources.commit_persistent(observation_attempted, retained_attempted);
     }
 
     CssSelectorQualificationRunResult::new(
@@ -182,6 +306,7 @@ fn build_incomplete(
 
 #[derive(Debug)]
 enum CandidateExecution {
+    Qualified(Vec<CssSelectorSemanticFact>),
     Outcome(CssSelectorQualificationOutcome),
     ResourceLimit(CssSelectorResourceLimitEvidence),
 }
@@ -202,7 +327,53 @@ fn qualify_candidate(
         }
     }
 
-    SelectorMachine::new(header, tokens, grammar_context, resources).execute()
+    SelectorMachine::new(header, tokens, grammar_context, resources)?.execute()
+}
+
+#[derive(Debug)]
+enum RelationshipChargeStop {
+    ResourceLimit(CssSelectorResourceLimitEvidence),
+    Internal(CssSelectorProducerError),
+}
+
+fn resolve_staged_relationships(
+    records: &[super::super::parser::context::CssParserContextRecord],
+    owning_context: super::super::parser::context::CssParserContextId,
+    header: &SourceAnchor,
+    facts: &mut [CssSelectorSemanticFact],
+    resources: &mut ResourceTracker<'_>,
+) -> Result<Option<CssSelectorResourceLimitEvidence>, CssSelectorProducerError> {
+    let target = match resolve_relationship_target(records, owning_context, |_parent_id| {
+        match resources.charge_algorithm_step(header, header) {
+            Ok(Some(evidence)) => Err(RelationshipChargeStop::ResourceLimit(evidence)),
+            Ok(None) => Ok(()),
+            Err(error) => Err(RelationshipChargeStop::Internal(error)),
+        }
+    }) {
+        Ok(target) => target,
+        Err(CssSelectorRelationshipResolutionError::Handoff(error)) => {
+            return Err(CssSelectorProducerError::InternalInvariantFailure(
+                CssSelectorProducerInvariantViolation::HandoffContract(error),
+            ));
+        }
+        Err(CssSelectorRelationshipResolutionError::Charge(
+            RelationshipChargeStop::ResourceLimit(evidence),
+        )) => return Ok(Some(evidence)),
+        Err(CssSelectorRelationshipResolutionError::Charge(RelationshipChargeStop::Internal(
+            error,
+        ))) => return Err(error),
+    };
+
+    for fact in facts {
+        if let CssSelectorSemanticFact::Relationship {
+            target: staged_target,
+            ..
+        } = fact
+        {
+            *staged_target = target;
+        }
+    }
+    Ok(None)
 }
 
 struct ResourceTracker<'a> {
@@ -212,6 +383,7 @@ struct ResourceTracker<'a> {
     active_depth: usize,
     peak_depth: usize,
     observations: usize,
+    retained_semantic_units: usize,
 }
 
 impl<'a> ResourceTracker<'a> {
@@ -223,11 +395,17 @@ impl<'a> ResourceTracker<'a> {
             active_depth: 0,
             peak_depth: 0,
             observations: 0,
+            retained_semantic_units: 0,
         }
     }
 
     const fn usage(&self) -> CssSelectorResourceUsage {
-        CssSelectorResourceUsage::new(self.algorithm_steps, self.peak_depth, self.observations)
+        CssSelectorResourceUsage::new(
+            self.algorithm_steps,
+            self.peak_depth,
+            self.observations,
+            self.retained_semantic_units,
+        )
     }
 
     fn charge_algorithm_step(
@@ -282,6 +460,10 @@ impl<'a> ResourceTracker<'a> {
         Ok(())
     }
 
+    fn retained_delta(&self, fact_count: usize) -> Result<usize, CssSelectorProducerError> {
+        self.checked_add(1, fact_count)
+    }
+
     fn preflight_observation(
         &self,
         header: &SourceAnchor,
@@ -300,14 +482,48 @@ impl<'a> ResourceTracker<'a> {
         Ok(ObservationPreflight::Allowed { attempted })
     }
 
-    fn commit_observation(&mut self, attempted: usize) {
-        self.observations = attempted;
+    fn preflight_retained_semantic(
+        &self,
+        header: &SourceAnchor,
+        delta: usize,
+    ) -> Result<RetainedPreflight, CssSelectorProducerError> {
+        let attempted = self.checked_add(self.retained_semantic_units, delta)?;
+        let limit = self
+            .limits
+            .limit(CssSelectorResourceKind::RetainedSemanticUnits);
+        if attempted > limit {
+            return Ok(RetainedPreflight::Refused(self.evidence(
+                header,
+                CssSelectorResourceKind::RetainedSemanticUnits,
+                limit,
+                attempted,
+                header,
+            )?));
+        }
+        Ok(RetainedPreflight::Allowed { attempted })
+    }
+
+    fn commit_persistent(&mut self, observation_attempted: usize, retained_attempted: usize) {
+        self.observations = observation_attempted;
+        self.retained_semantic_units = retained_attempted;
     }
 
     fn checked_add(&self, current: usize, delta: usize) -> Result<usize, CssSelectorProducerError> {
         checked_resource_add(current, delta).map_err(|error| {
             CssSelectorProducerError::InternalInvariantFailure(
                 CssSelectorProducerInvariantViolation::ResourceContract(error),
+            )
+        })
+    }
+
+    fn semantic_anchor(
+        &self,
+        start: usize,
+        end: usize,
+    ) -> Result<SourceAnchor, CssSelectorProducerError> {
+        self.source.anchor(start, end).map_err(|error| {
+            CssSelectorProducerError::InternalInvariantFailure(
+                CssSelectorProducerInvariantViolation::SemanticRange(error),
             )
         })
     }
@@ -342,6 +558,11 @@ impl<'a> ResourceTracker<'a> {
 }
 
 enum ObservationPreflight {
+    Allowed { attempted: usize },
+    Refused(CssSelectorResourceLimitEvidence),
+}
+
+enum RetainedPreflight {
     Allowed { attempted: usize },
     Refused(CssSelectorResourceLimitEvidence),
 }
@@ -389,18 +610,63 @@ struct MemberState {
 }
 
 #[derive(Debug, Clone)]
+struct SemanticMemberState {
+    member: CssSelectorSemanticMemberId,
+    checkpoint: usize,
+    open_fact_index: Option<usize>,
+    semantic_start: Option<usize>,
+    semantic_end: Option<usize>,
+    authored_start: Option<usize>,
+    authored_end: Option<usize>,
+    nesting_presences: Vec<(CssSelectorSemanticUnitId, SourceAnchor)>,
+}
+
+impl SemanticMemberState {
+    fn new(member: CssSelectorSemanticMemberId, checkpoint: usize) -> Self {
+        Self {
+            member,
+            checkpoint,
+            open_fact_index: None,
+            semantic_start: None,
+            semantic_end: None,
+            authored_start: None,
+            authored_end: None,
+            nesting_presences: Vec::new(),
+        }
+    }
+
+    fn note_authored(&mut self, anchor: &SourceAnchor) {
+        let start = anchor.range().start();
+        let end = anchor.range().end();
+        self.authored_start = Some(self.authored_start.map_or(start, |current| current.min(start)));
+        self.authored_end = Some(self.authored_end.map_or(end, |current| current.max(end)));
+    }
+
+    fn note_semantic_end(&mut self, end: usize) {
+        self.semantic_end = Some(self.semantic_end.map_or(end, |current| current.max(end)));
+    }
+}
+
+#[derive(Debug, Clone)]
 struct ListFrame {
     function: Option<CssSelectorFunctionalPseudoClass>,
     function_subject: SourceAnchor,
+    function_unit: Option<CssSelectorSemanticUnitId>,
     relative: bool,
     forgiving: bool,
+    structural_relative: bool,
     after_comma: bool,
     last_comma: Option<SourceAnchor>,
     member: MemberState,
+    semantic_member: SemanticMemberState,
 }
 
 impl ListFrame {
-    fn root(header: &SourceAnchor, grammar_context: CssSelectorGrammarContext) -> Self {
+    fn root(
+        header: &SourceAnchor,
+        grammar_context: CssSelectorGrammarContext,
+        semantic_member: SemanticMemberState,
+    ) -> Self {
         let relative = matches!(
             grammar_context,
             CssSelectorGrammarContext::NestedRelativeSelectorList { .. }
@@ -409,27 +675,77 @@ impl ListFrame {
         Self {
             function: None,
             function_subject: header.clone(),
+            function_unit: None,
             relative,
             forgiving: false,
+            structural_relative: relative,
             after_comma: false,
             last_comma: None,
             member: MemberState::default(),
+            semantic_member,
         }
     }
 
-    fn function(function: CssSelectorFunctionalPseudoClass, subject: SourceAnchor) -> Self {
+    fn function(
+        function: CssSelectorFunctionalPseudoClass,
+        subject: SourceAnchor,
+        function_unit: CssSelectorSemanticUnitId,
+        semantic_member: SemanticMemberState,
+    ) -> Self {
         Self {
             function: Some(function),
             function_subject: subject,
+            function_unit: Some(function_unit),
             relative: matches!(function, CssSelectorFunctionalPseudoClass::Has),
             forgiving: matches!(
                 function,
                 CssSelectorFunctionalPseudoClass::Is | CssSelectorFunctionalPseudoClass::Where
             ),
+            structural_relative: false,
             after_comma: false,
             last_comma: None,
             member: MemberState::default(),
+            semantic_member,
         }
+    }
+}
+
+#[derive(Debug, Default)]
+struct SemanticBuilder {
+    facts: Vec<CssSelectorSemanticFact>,
+    next_member: usize,
+    next_unit: usize,
+}
+
+impl SemanticBuilder {
+    fn new() -> Self {
+        Self {
+            facts: Vec::new(),
+            next_member: 1,
+            next_unit: 1,
+        }
+    }
+
+    fn allocate_member(
+        &mut self,
+    ) -> Result<CssSelectorSemanticMemberId, CssSelectorProducerError> {
+        let value = self.next_member;
+        self.next_member = self.next_member.checked_add(1).ok_or_else(|| {
+            CssSelectorProducerError::InternalInvariantFailure(
+                CssSelectorProducerInvariantViolation::SemanticIdentityOverflow,
+            )
+        })?;
+        Ok(CssSelectorSemanticMemberId::new(value))
+    }
+
+    fn allocate_unit(&mut self) -> Result<CssSelectorSemanticUnitId, CssSelectorProducerError> {
+        let value = self.next_unit;
+        self.next_unit = self.next_unit.checked_add(1).ok_or_else(|| {
+            CssSelectorProducerError::InternalInvariantFailure(
+                CssSelectorProducerInvariantViolation::SemanticIdentityOverflow,
+            )
+        })?;
+        Ok(CssSelectorSemanticUnitId::new(value))
     }
 }
 
@@ -438,6 +754,7 @@ struct SelectorMachine<'tokens, 'source, 'tracker> {
     tokens: Vec<&'tokens CssToken>,
     cursor: usize,
     frames: Vec<ListFrame>,
+    semantic: SemanticBuilder,
     resources: &'tracker mut ResourceTracker<'source>,
 }
 
@@ -447,14 +764,18 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
         tokens: Vec<&'tokens CssToken>,
         grammar_context: CssSelectorGrammarContext,
         resources: &'tracker mut ResourceTracker<'source>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, CssSelectorProducerError> {
+        let mut semantic = SemanticBuilder::new();
+        let root_member = semantic.allocate_member()?;
+        let root_semantic = SemanticMemberState::new(root_member, semantic.facts.len());
+        Ok(Self {
             header,
             tokens,
             cursor: 0,
-            frames: vec![ListFrame::root(header, grammar_context)],
+            frames: vec![ListFrame::root(header, grammar_context, root_semantic)],
+            semantic,
             resources,
-        }
+        })
     }
 
     fn execute(mut self) -> Result<CandidateExecution, CssSelectorProducerError> {
@@ -480,7 +801,16 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
     }
 
     fn step(&mut self) -> Result<(), MachineFault> {
-        match self.current_kind()? {
+        let kind = self.current_kind()?.clone();
+        if !matches!(
+            kind,
+            CssTokenKind::Whitespace | CssTokenKind::Comma | CssTokenKind::RightParenthesis
+        ) {
+            let anchor = self.current_anchor()?.clone();
+            self.note_authored_for_active_members(&anchor);
+        }
+
+        match kind {
             CssTokenKind::Whitespace => self.consume_whitespace(),
             CssTokenKind::Comma => self.consume_comma(),
             CssTokenKind::RightParenthesis => self.close_function_frame(),
@@ -507,9 +837,11 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
         let comma = self.current_anchor()?.clone();
         let classification = self.member_end_classification()?;
         let forgiving = self.current_frame()?.forgiving;
+        let frame_index = self.frames.len() - 1;
+        let mut semantic_already_reset = false;
 
         match classification {
-            MemberEnd::Qualified => {}
+            MemberEnd::Qualified => self.finalize_qualified_member(frame_index)?,
             MemberEnd::Empty if forgiving => {}
             MemberEnd::Empty => {
                 return Err(MachineFault::Invalid {
@@ -518,8 +850,12 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
                     recovery_open: None,
                 });
             }
-            MemberEnd::TrailingCombinator { subject } if forgiving => {
-                let _ = subject;
+            MemberEnd::TrailingCombinator { .. } if forgiving => {
+                self.rollback_member_for_rejection(frame_index)
+                    .map_err(MachineFault::Internal)?;
+                self.finalize_rejected_member(frame_index)
+                    .map_err(MachineFault::Internal)?;
+                semantic_already_reset = true;
             }
             MemberEnd::TrailingCombinator { subject } => {
                 return Err(MachineFault::Invalid {
@@ -535,6 +871,10 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
         frame.member = MemberState::default();
         frame.after_comma = true;
         frame.last_comma = Some(comma);
+        if !semantic_already_reset {
+            self.reset_semantic_member(frame_index)
+                .map_err(MachineFault::Internal)?;
+        }
         Ok(())
     }
 
@@ -549,19 +889,20 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
 
         let right = self.current_anchor()?.clone();
         let classification = self.member_end_classification()?;
-        let frame = self.current_frame()?.clone();
+        let frame_index = self.frames.len() - 1;
+        let frame_snapshot = self.current_frame()?.clone();
 
         match classification {
-            MemberEnd::Qualified => {}
-            MemberEnd::Empty if frame.forgiving => {}
+            MemberEnd::Qualified => self.finalize_qualified_member(frame_index)?,
+            MemberEnd::Empty if frame_snapshot.forgiving => {}
             MemberEnd::Empty => {
-                let subject = if frame.after_comma {
-                    frame.last_comma.unwrap_or(right)
+                let subject = if frame_snapshot.after_comma {
+                    frame_snapshot.last_comma.unwrap_or(right)
                 } else {
-                    frame.function_subject
+                    frame_snapshot.function_subject
                 };
                 return Err(MachineFault::Invalid {
-                    reason: if frame.after_comma {
+                    reason: if frame_snapshot.after_comma {
                         CssSelectorInvalidReason::UnexpectedComma
                     } else {
                         CssSelectorInvalidReason::InvalidFunctionalPseudoArgument
@@ -570,7 +911,12 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
                     recovery_open: None,
                 });
             }
-            MemberEnd::TrailingCombinator { .. } if frame.forgiving => {}
+            MemberEnd::TrailingCombinator { .. } if frame_snapshot.forgiving => {
+                self.rollback_member_for_rejection(frame_index)
+                    .map_err(MachineFault::Internal)?;
+                self.finalize_rejected_member(frame_index)
+                    .map_err(MachineFault::Internal)?;
+            }
             MemberEnd::TrailingCombinator { subject } => {
                 return Err(MachineFault::Invalid {
                     reason: CssSelectorInvalidReason::UnexpectedCombinator,
@@ -580,11 +926,28 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
             }
         }
 
+        let function_unit = self.frames[frame_index].function_unit.ok_or_else(|| {
+            MachineFault::Internal(CssSelectorProducerError::InternalInvariantFailure(
+                CssSelectorProducerInvariantViolation::MissingFunctionSemanticUnit,
+            ))
+        })?;
         self.consume_current()?;
         self.frames.pop();
         self.resources
             .leave_depth()
             .map_err(MachineFault::Internal)?;
+        self.semantic
+            .facts
+            .push(CssSelectorSemanticFact::CloseFunction {
+                unit: function_unit,
+            });
+        let parent_index = self.frames.len() - 1;
+        self.frames[parent_index]
+            .semantic_member
+            .note_semantic_end(right.range().end());
+        self.frames[parent_index]
+            .semantic_member
+            .note_authored(&right);
         Ok(())
     }
 
@@ -668,48 +1031,67 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
                         subject: self.current_anchor()?.clone(),
                     });
                 }
+                let anchor = self.current_anchor()?.clone();
                 self.consume_current()?;
+                self.stage_simple(CssSelectorSemanticSimpleKind::Type, anchor)?;
                 self.mark_simple(false)?;
                 Ok(())
             }
             CssTokenKind::Delim('*') => {
+                let first = self.current_anchor()?.clone();
                 if self.peek_delim(1, '|') {
-                    let star = self.current_anchor()?.clone();
                     self.consume_current()?;
                     self.consume_current()?;
-                    match self.current_kind_opt() {
-                        Some(CssTokenKind::Ident(_)) | Some(CssTokenKind::Delim('*')) => {
-                            self.consume_current()?;
-                            self.mark_simple(false)?;
-                            Ok(())
+                    let final_anchor = self.current_anchor()?.clone();
+                    let semantic_kind = match self.current_kind_opt() {
+                        Some(CssTokenKind::Ident(_)) => CssSelectorSemanticSimpleKind::Type,
+                        Some(CssTokenKind::Delim('*')) => {
+                            CssSelectorSemanticSimpleKind::Universal
                         }
-                        _ => Err(MachineFault::Invalid {
-                            reason: CssSelectorInvalidReason::UnexpectedToken,
-                            subject: star,
-                            recovery_open: None,
-                        }),
-                    }
+                        _ => {
+                            return Err(MachineFault::Invalid {
+                                reason: CssSelectorInvalidReason::UnexpectedToken,
+                                subject: first,
+                                recovery_open: None,
+                            });
+                        }
+                    };
+                    self.consume_current()?;
+                    let range = self.semantic_anchor(
+                        first.range().start(),
+                        final_anchor.range().end(),
+                    )?;
+                    self.stage_simple(semantic_kind, range)?;
+                    self.mark_simple(false)?;
+                    Ok(())
                 } else {
                     self.consume_current()?;
+                    self.stage_simple(CssSelectorSemanticSimpleKind::Universal, first)?;
                     self.mark_simple(false)?;
                     Ok(())
                 }
             }
             CssTokenKind::Delim('|') => {
-                let pipe = self.current_anchor()?.clone();
+                let first = self.current_anchor()?.clone();
                 self.consume_current()?;
-                match self.current_kind_opt() {
-                    Some(CssTokenKind::Ident(_)) | Some(CssTokenKind::Delim('*')) => {
-                        self.consume_current()?;
-                        self.mark_simple(false)?;
-                        Ok(())
+                let final_anchor = self.current_anchor()?.clone();
+                let semantic_kind = match self.current_kind_opt() {
+                    Some(CssTokenKind::Ident(_)) => CssSelectorSemanticSimpleKind::Type,
+                    Some(CssTokenKind::Delim('*')) => CssSelectorSemanticSimpleKind::Universal,
+                    _ => {
+                        return Err(MachineFault::Invalid {
+                            reason: CssSelectorInvalidReason::UnexpectedToken,
+                            subject: first,
+                            recovery_open: None,
+                        });
                     }
-                    _ => Err(MachineFault::Invalid {
-                        reason: CssSelectorInvalidReason::UnexpectedToken,
-                        subject: pipe,
-                        recovery_open: None,
-                    }),
-                }
+                };
+                self.consume_current()?;
+                let range =
+                    self.semantic_anchor(first.range().start(), final_anchor.range().end())?;
+                self.stage_simple(semantic_kind, range)?;
+                self.mark_simple(false)?;
+                Ok(())
             }
             _ => Err(MachineFault::Internal(
                 CssSelectorProducerError::InternalInvariantFailure(
@@ -729,7 +1111,10 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
                 recovery_open: None,
             });
         }
+        let ident = self.current_anchor()?.clone();
         self.consume_current()?;
+        let range = self.semantic_anchor(dot.range().start(), ident.range().end())?;
+        self.stage_simple(CssSelectorSemanticSimpleKind::Class, range)?;
         self.mark_simple(false)
     }
 
@@ -748,12 +1133,16 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
                 recovery_open: None,
             });
         }
+        let anchor = token.source().clone();
         self.consume_current()?;
+        self.stage_simple(CssSelectorSemanticSimpleKind::Id, anchor)?;
         self.mark_simple(false)
     }
 
     fn consume_nesting_selector(&mut self) -> Result<(), MachineFault> {
+        let anchor = self.current_anchor()?.clone();
         self.consume_current()?;
+        self.stage_nesting(anchor)?;
         self.mark_simple(true)
     }
 
@@ -783,6 +1172,9 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
             Err(MachineFault::ResourceLimit(_)) | Err(MachineFault::Internal(_)) => {}
         }
         result?;
+        let closer = self.previous_anchor()?;
+        let range = self.semantic_anchor(opener.range().start(), closer.range().end())?;
+        self.stage_simple(CssSelectorSemanticSimpleKind::Attribute, range)?;
         self.mark_simple(false)
     }
 
@@ -914,6 +1306,8 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
                     });
                 }
                 self.consume_current()?;
+                let range = self.semantic_anchor(colon.range().start(), subject.range().end())?;
+                self.stage_simple(CssSelectorSemanticSimpleKind::IdentifierPseudoClass, range)?;
                 self.mark_simple(false)
             }
             Some(CssTokenKind::Function(name)) => {
@@ -937,6 +1331,9 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
                 }
 
                 self.consume_current()?;
+                let function_range =
+                    self.semantic_anchor(colon.range().start(), subject.range().end())?;
+                let function_unit = self.stage_open_function(function, function_range)?;
                 self.mark_simple(false)?;
                 if let Some(evidence) = self
                     .resources
@@ -952,7 +1349,18 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
                 {
                     return Err(MachineFault::ResourceLimit(evidence));
                 }
-                self.frames.push(ListFrame::function(function, subject));
+                let member = self
+                    .semantic
+                    .allocate_member()
+                    .map_err(MachineFault::Internal)?;
+                let semantic_member =
+                    SemanticMemberState::new(member, self.semantic.facts.len());
+                self.frames.push(ListFrame::function(
+                    function,
+                    subject,
+                    function_unit,
+                    semantic_member,
+                ));
                 Ok(())
             }
             _ => Err(MachineFault::Invalid {
@@ -1013,31 +1421,40 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
             ));
         }
 
-        let frame = self.frames.pop().ok_or({
+        let frame = self.frames.last().ok_or({
             CssSelectorProducerError::InternalInvariantFailure(
                 CssSelectorProducerInvariantViolation::MissingRootFrame,
             )
         })?;
-        let outcome = match self.member_end_classification_for(&frame) {
-            MemberEnd::Qualified => CssSelectorQualificationOutcome::QualifiedBySelectedGrammar,
-            MemberEnd::TrailingCombinator { subject } => {
+        let classification = self.member_end_classification_for(frame);
+        match classification {
+            MemberEnd::Qualified => {
+                self.finalize_qualified_member(0)
+                    .map_err(machine_fault_to_error)?;
+                Ok(CandidateExecution::Qualified(self.semantic.facts))
+            }
+            MemberEnd::TrailingCombinator { subject } => Ok(CandidateExecution::Outcome(
                 CssSelectorQualificationOutcome::InvalidForSelectedGrammar {
                     reason: CssSelectorInvalidReason::UnexpectedCombinator,
                     subject,
-                }
-            }
-            MemberEnd::Empty if frame.after_comma => {
+                },
+            )),
+            MemberEnd::Empty if frame.after_comma => Ok(CandidateExecution::Outcome(
                 CssSelectorQualificationOutcome::InvalidForSelectedGrammar {
                     reason: CssSelectorInvalidReason::UnexpectedComma,
-                    subject: frame.last_comma.unwrap_or(frame.function_subject),
-                }
-            }
-            MemberEnd::Empty => CssSelectorQualificationOutcome::InvalidForSelectedGrammar {
-                reason: CssSelectorInvalidReason::EmptySelectorList,
-                subject: frame.function_subject,
-            },
-        };
-        Ok(CandidateExecution::Outcome(outcome))
+                    subject: frame
+                        .last_comma
+                        .clone()
+                        .unwrap_or_else(|| frame.function_subject.clone()),
+                },
+            )),
+            MemberEnd::Empty => Ok(CandidateExecution::Outcome(
+                CssSelectorQualificationOutcome::InvalidForSelectedGrammar {
+                    reason: CssSelectorInvalidReason::EmptySelectorList,
+                    subject: frame.function_subject.clone(),
+                },
+            )),
+        }
     }
 
     fn member_end_classification_for(&self, frame: &ListFrame) -> MemberEnd {
@@ -1081,6 +1498,7 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
                 subject,
                 recovery_open,
             } => {
+                self.note_authored_for_active_members(&subject);
                 let Some(forgiving_index) = self.frames.iter().rposition(|frame| frame.forgiving)
                 else {
                     return Ok(FaultResolution::Final(
@@ -1091,6 +1509,7 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
                     ));
                 };
 
+                self.rollback_member_for_rejection(forgiving_index)?;
                 let popped_functions = self.frames.len() - 1 - forgiving_index;
                 for _ in 0..popped_functions {
                     self.resources.leave_depth()?;
@@ -1126,7 +1545,9 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
                         .current_anchor()
                         .map_err(machine_fault_to_error)?
                         .clone();
-                    if let Some(evidence) = self.consume_for_recovery()? {
+                    let frame_index = self.frames.len() - 1;
+                    self.finalize_rejected_member(frame_index)?;
+                    if let Some(evidence) = self.consume_for_recovery(false)? {
                         return Ok(Some(evidence));
                     }
                     let frame = self.current_frame_mut().map_err(machine_fault_to_error)?;
@@ -1136,6 +1557,8 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
                     return Ok(None);
                 }
                 if matches!(kind, CssTokenKind::RightParenthesis) {
+                    let frame_index = self.frames.len() - 1;
+                    self.finalize_rejected_member(frame_index)?;
                     self.current_frame_mut()
                         .map_err(machine_fault_to_error)?
                         .member = MemberState::default();
@@ -1162,7 +1585,7 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
                 }
                 _ => {}
             }
-            if let Some(evidence) = self.consume_for_recovery()? {
+            if let Some(evidence) = self.consume_for_recovery(true)? {
                 return Ok(Some(evidence));
             }
         }
@@ -1172,13 +1595,25 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
 
     fn consume_for_recovery(
         &mut self,
+        retain_as_member_content: bool,
     ) -> Result<Option<CssSelectorResourceLimitEvidence>, CssSelectorProducerError> {
         let anchor = self
             .current_anchor()
             .map_err(machine_fault_to_error)?
             .clone();
+        let kind = self
+            .current_kind()
+            .map_err(machine_fault_to_error)?
+            .clone();
         if let Some(evidence) = self.resources.charge_algorithm_step(self.header, &anchor)? {
             return Ok(Some(evidence));
+        }
+        if retain_as_member_content && !matches!(kind, CssTokenKind::Whitespace) {
+            self.note_authored_for_active_members(&anchor);
+            if matches!(kind, CssTokenKind::Delim('&')) {
+                let unit = self.semantic.allocate_unit()?;
+                self.record_nesting_presence_for_active_members(unit, anchor.clone());
+            }
         }
         self.cursor += 1;
         Ok(None)
@@ -1194,6 +1629,249 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
             return Err(MachineFault::ResourceLimit(evidence));
         }
         self.cursor += 1;
+        Ok(())
+    }
+
+    fn semantic_anchor(&self, start: usize, end: usize) -> Result<SourceAnchor, MachineFault> {
+        self.resources
+            .semantic_anchor(start, end)
+            .map_err(MachineFault::Internal)
+    }
+
+    fn ensure_current_member_open(&mut self, anchor: &SourceAnchor) -> Result<(), MachineFault> {
+        let frame_index = self.frames.len() - 1;
+        let needs_open = self.frames[frame_index]
+            .semantic_member
+            .open_fact_index
+            .is_none();
+        if needs_open {
+            let member = self.frames[frame_index].semantic_member.member;
+            let fact_index = self.semantic.facts.len();
+            self.semantic
+                .facts
+                .push(CssSelectorSemanticFact::OpenMember {
+                    member,
+                    range: anchor.clone(),
+                });
+            let semantic_member = &mut self.frames[frame_index].semantic_member;
+            semantic_member.open_fact_index = Some(fact_index);
+            semantic_member.semantic_start = Some(anchor.range().start());
+            semantic_member.semantic_end = Some(anchor.range().end());
+        } else {
+            self.frames[frame_index]
+                .semantic_member
+                .note_semantic_end(anchor.range().end());
+        }
+        Ok(())
+    }
+
+    fn stage_simple(
+        &mut self,
+        kind: CssSelectorSemanticSimpleKind,
+        range: SourceAnchor,
+    ) -> Result<(), MachineFault> {
+        self.ensure_current_member_open(&range)?;
+        let unit = self
+            .semantic
+            .allocate_unit()
+            .map_err(MachineFault::Internal)?;
+        self.semantic
+            .facts
+            .push(CssSelectorSemanticFact::Simple { unit, kind, range });
+        Ok(())
+    }
+
+    fn stage_open_function(
+        &mut self,
+        function: CssSelectorFunctionalPseudoClass,
+        range: SourceAnchor,
+    ) -> Result<CssSelectorSemanticUnitId, MachineFault> {
+        self.ensure_current_member_open(&range)?;
+        let unit = self
+            .semantic
+            .allocate_unit()
+            .map_err(MachineFault::Internal)?;
+        self.semantic
+            .facts
+            .push(CssSelectorSemanticFact::OpenFunction {
+                unit,
+                kind: semantic_function_kind(function),
+                range,
+            });
+        Ok(unit)
+    }
+
+    fn stage_nesting(&mut self, range: SourceAnchor) -> Result<(), MachineFault> {
+        self.ensure_current_member_open(&range)?;
+        let unit = self
+            .semantic
+            .allocate_unit()
+            .map_err(MachineFault::Internal)?;
+        let member = self.current_frame()?.semantic_member.member;
+        self.record_nesting_presence_for_active_members(unit, range.clone());
+        self.semantic
+            .facts
+            .push(CssSelectorSemanticFact::NestingPresence {
+                member,
+                unit,
+                origin: CssSelectorSemanticRelationshipOrigin::Authored(range.clone()),
+                disposition: CssSelectorNestingPresenceDisposition::Contributing,
+            });
+        self.semantic
+            .facts
+            .push(CssSelectorSemanticFact::Relationship {
+                target: CssSelectorSemanticRelationshipTarget::Zero,
+                origin: CssSelectorSemanticRelationshipOrigin::Authored(range),
+            });
+        Ok(())
+    }
+
+    fn record_nesting_presence_for_active_members(
+        &mut self,
+        unit: CssSelectorSemanticUnitId,
+        range: SourceAnchor,
+    ) {
+        for frame in &mut self.frames {
+            frame
+                .semantic_member
+                .nesting_presences
+                .push((unit, range.clone()));
+        }
+    }
+
+    fn note_authored_for_active_members(&mut self, anchor: &SourceAnchor) {
+        for frame in &mut self.frames {
+            frame.semantic_member.note_authored(anchor);
+        }
+    }
+
+    fn finalize_qualified_member(&mut self, frame_index: usize) -> Result<(), MachineFault> {
+        let semantic_member = &self.frames[frame_index].semantic_member;
+        let member = semantic_member.member;
+        let open_fact_index = semantic_member.open_fact_index.ok_or_else(|| {
+            MachineFault::Internal(CssSelectorProducerError::InternalInvariantFailure(
+                CssSelectorProducerInvariantViolation::MissingSemanticMember,
+            ))
+        })?;
+        let start = semantic_member.semantic_start.ok_or_else(|| {
+            MachineFault::Internal(CssSelectorProducerError::InternalInvariantFailure(
+                CssSelectorProducerInvariantViolation::MissingSemanticMember,
+            ))
+        })?;
+        let end = semantic_member.semantic_end.ok_or_else(|| {
+            MachineFault::Internal(CssSelectorProducerError::InternalInvariantFailure(
+                CssSelectorProducerInvariantViolation::MissingSemanticMember,
+            ))
+        })?;
+        let requires_implied_relationship = self.frames[frame_index].structural_relative
+            && semantic_member.nesting_presences.is_empty();
+        let range = self.semantic_anchor(start, end)?;
+
+        match self.semantic.facts.get_mut(open_fact_index) {
+            Some(CssSelectorSemanticFact::OpenMember {
+                member: actual,
+                range: actual_range,
+            }) if *actual == member => {
+                *actual_range = range;
+            }
+            _ => {
+                return Err(MachineFault::Internal(
+                    CssSelectorProducerError::InternalInvariantFailure(
+                        CssSelectorProducerInvariantViolation::SemanticOpenFactMismatch,
+                    ),
+                ));
+            }
+        }
+
+        if requires_implied_relationship {
+            self.semantic.facts.insert(
+                open_fact_index + 1,
+                CssSelectorSemanticFact::Relationship {
+                    target: CssSelectorSemanticRelationshipTarget::Zero,
+                    origin: CssSelectorSemanticRelationshipOrigin::Derived,
+                },
+            );
+        }
+        self.semantic
+            .facts
+            .push(CssSelectorSemanticFact::CloseMember { member });
+        Ok(())
+    }
+
+    fn rollback_member_for_rejection(
+        &mut self,
+        frame_index: usize,
+    ) -> Result<(), CssSelectorProducerError> {
+        let checkpoint = self
+            .frames
+            .get(frame_index)
+            .ok_or_else(|| {
+                CssSelectorProducerError::InternalInvariantFailure(
+                    CssSelectorProducerInvariantViolation::MissingFunctionFrame,
+                )
+            })?
+            .semantic_member
+            .checkpoint;
+        self.semantic.facts.truncate(checkpoint);
+        let semantic_member = &mut self.frames[frame_index].semantic_member;
+        semantic_member.open_fact_index = None;
+        semantic_member.semantic_start = None;
+        semantic_member.semantic_end = None;
+        Ok(())
+    }
+
+    fn finalize_rejected_member(
+        &mut self,
+        frame_index: usize,
+    ) -> Result<(), CssSelectorProducerError> {
+        let state = self
+            .frames
+            .get(frame_index)
+            .ok_or_else(|| {
+                CssSelectorProducerError::InternalInvariantFailure(
+                    CssSelectorProducerInvariantViolation::MissingFunctionFrame,
+                )
+            })?
+            .semantic_member
+            .clone();
+
+        if let (Some(start), Some(end)) = (state.authored_start, state.authored_end)
+            && start < end
+        {
+            let range = self.resources.semantic_anchor(start, end)?;
+            self.semantic
+                .facts
+                .push(CssSelectorSemanticFact::RejectedForgivingMember {
+                    member: state.member,
+                    range,
+                });
+            for (unit, authored) in state.nesting_presences {
+                self.semantic
+                    .facts
+                    .push(CssSelectorSemanticFact::NestingPresence {
+                        member: state.member,
+                        unit,
+                        origin: CssSelectorSemanticRelationshipOrigin::Authored(authored),
+                        disposition:
+                            CssSelectorNestingPresenceDisposition::NonContributingPresenceOnly,
+                    });
+            }
+        }
+        self.reset_semantic_member(frame_index)
+    }
+
+    fn reset_semantic_member(
+        &mut self,
+        frame_index: usize,
+    ) -> Result<(), CssSelectorProducerError> {
+        let member = self.semantic.allocate_member()?;
+        let checkpoint = self.semantic.facts.len();
+        let frame = self.frames.get_mut(frame_index).ok_or_else(|| {
+            CssSelectorProducerError::InternalInvariantFailure(
+                CssSelectorProducerInvariantViolation::MissingFunctionFrame,
+            )
+        })?;
+        frame.semantic_member = SemanticMemberState::new(member, checkpoint);
         Ok(())
     }
 
@@ -1225,6 +1903,18 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
         Ok(self.current_token()?.source())
     }
 
+    fn previous_anchor(&self) -> Result<&SourceAnchor, MachineFault> {
+        self.cursor
+            .checked_sub(1)
+            .and_then(|index| self.tokens.get(index).copied())
+            .map(CssToken::source)
+            .ok_or({
+                MachineFault::Internal(CssSelectorProducerError::InternalInvariantFailure(
+                    CssSelectorProducerInvariantViolation::MissingCurrentToken,
+                ))
+            })
+    }
+
     fn current_anchor_opt(&self) -> Option<&SourceAnchor> {
         self.tokens.get(self.cursor).map(|token| token.source())
     }
@@ -1250,6 +1940,17 @@ enum MemberEnd {
     Qualified,
     Empty,
     TrailingCombinator { subject: SourceAnchor },
+}
+
+fn semantic_function_kind(
+    function: CssSelectorFunctionalPseudoClass,
+) -> CssSelectorSemanticFunctionKind {
+    match function {
+        CssSelectorFunctionalPseudoClass::Is => CssSelectorSemanticFunctionKind::Is,
+        CssSelectorFunctionalPseudoClass::Where => CssSelectorSemanticFunctionKind::Where,
+        CssSelectorFunctionalPseudoClass::Not => CssSelectorSemanticFunctionKind::Not,
+        CssSelectorFunctionalPseudoClass::Has => CssSelectorSemanticFunctionKind::Has,
+    }
 }
 
 fn machine_fault_to_error(fault: MachineFault) -> CssSelectorProducerError {
@@ -1278,7 +1979,7 @@ mod tests {
     }
 
     fn selector_limits() -> CssSelectorLimits {
-        CssSelectorLimits::new(100_000, 64, 8192).unwrap()
+        CssSelectorLimits::new(100_000, 64, 8192, 100_000).unwrap()
     }
 
     fn qualify(source: &SourceText) -> CssSelectorQualificationRunResult {
@@ -1300,10 +2001,13 @@ mod tests {
             ".a .b{}",
             "a/**/.b{}",
         ] {
+            let source_text = SourceText::new(SourceId::new(10), source.to_owned());
+            let result = qualify(&source_text);
             assert!(matches!(
-                first_outcome(source),
+                result.observations()[0].outcome(),
                 CssSelectorQualificationOutcome::QualifiedBySelectedGrammar
             ));
+            assert!(result.observations()[0].semantic_program().is_some());
         }
     }
 
@@ -1402,10 +2106,10 @@ mod tests {
     }
 
     #[test]
-    fn resource_refusal_preserves_observation_prefix() {
+    fn observation_resource_refusal_preserves_committed_prefix() {
         let source = SourceText::new(SourceId::new(3), "a{}b{}".to_owned());
         let parser = analyze_css_source(&source, tokenizer_limits(), parser_limits()).unwrap();
-        let limits = CssSelectorLimits::new(100_000, 64, 1).unwrap();
+        let limits = CssSelectorLimits::new(100_000, 64, 1, 100_000).unwrap();
         let result = run(&source, parser, limits).unwrap();
         assert_eq!(result.observations().len(), 1);
         assert_eq!(
@@ -1417,5 +2121,58 @@ mod tests {
             CssSelectorTermination::ResourceLimit(evidence)
                 if evidence.kind() == CssSelectorResourceKind::Observations
         ));
+    }
+
+    #[test]
+    fn retained_semantic_refusal_preserves_committed_prefix_and_usage() {
+        let source = SourceText::new(SourceId::new(5), "a{}b{}".to_owned());
+        let parser = analyze_css_source(&source, tokenizer_limits(), parser_limits()).unwrap();
+        let limits = CssSelectorLimits::new(100_000, 64, 8, 4).unwrap();
+        let result = run(&source, parser, limits).unwrap();
+        assert_eq!(result.observations().len(), 1);
+        assert_eq!(
+            result.resources().value(CssSelectorResourceKind::RetainedSemanticUnits),
+            4
+        );
+        assert!(matches!(
+            result.termination(),
+            CssSelectorTermination::ResourceLimit(evidence)
+                if evidence.kind() == CssSelectorResourceKind::RetainedSemanticUnits
+        ));
+    }
+
+    #[test]
+    fn observations_refusal_precedes_retained_semantic_refusal() {
+        let source = SourceText::new(SourceId::new(6), "a{}".to_owned());
+        let parser = analyze_css_source(&source, tokenizer_limits(), parser_limits()).unwrap();
+        let limits = CssSelectorLimits::new(100_000, 64, 0, 0).unwrap();
+        let result = run(&source, parser, limits).unwrap();
+        assert!(result.observations().is_empty());
+        assert!(matches!(
+            result.termination(),
+            CssSelectorTermination::ResourceLimit(evidence)
+                if evidence.kind() == CssSelectorResourceKind::Observations
+        ));
+        assert_eq!(
+            result.resources().value(CssSelectorResourceKind::RetainedSemanticUnits),
+            0
+        );
+    }
+
+    #[test]
+    fn retained_semantic_overflow_is_internal_and_non_mutating() {
+        let source = SourceText::new(SourceId::new(7), "a{}".to_owned());
+        let limits = CssSelectorLimits::new(100_000, 64, usize::MAX, usize::MAX).unwrap();
+        let mut tracker = ResourceTracker::new(&source, limits);
+        tracker.retained_semantic_units = usize::MAX;
+        assert!(matches!(
+            tracker.preflight_retained_semantic(source.anchor(0, 1).unwrap().borrow(), 1),
+            Err(CssSelectorProducerError::InternalInvariantFailure(
+                CssSelectorProducerInvariantViolation::ResourceContract(
+                    CssSelectorResourceContractError::AccountingOverflow { .. }
+                )
+            ))
+        ));
+        assert_eq!(tracker.retained_semantic_units, usize::MAX);
     }
 }
