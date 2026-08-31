@@ -300,7 +300,9 @@ pub(crate) enum CssSelectorSemanticProgramError {
     FactOutsideOpenMember { fact_index: usize },
     NestingPresenceMemberMismatch { fact_index: usize },
     RejectedForgivingMemberOutsideFunction { fact_index: usize },
+    RejectedForgivingMemberOutsideForgivingFunction { fact_index: usize },
     RejectedForgivingMemberInsideOpenMember { fact_index: usize },
+    NestingPresenceMustBeAuthored { fact_index: usize },
     UnownedNonContributingPresence { fact_index: usize },
     NonContributingPresenceMemberMismatch { fact_index: usize },
     ContributingFactInRejectedMember { fact_index: usize },
@@ -322,6 +324,12 @@ impl Error for CssSelectorSemanticProgramError {}
 
 struct StructureFrame {
     function_unit: Option<CssSelectorSemanticUnitId>,
+    /// The selected function this frame opened, or `None` for the root list.
+    ///
+    /// Retained so that structural validation can seal rejected forgiving
+    /// members to selected forgiving functions without consulting authored
+    /// bytes or any producer helper.
+    function_kind: Option<CssSelectorFunctionalPseudoClass>,
     open_member: Option<CssSelectorSemanticMemberId>,
 }
 
@@ -334,6 +342,7 @@ fn validate_program_structure(
 ) -> Result<(), CssSelectorSemanticProgramError> {
     let mut frames = vec![StructureFrame {
         function_unit: None,
+        function_kind: None,
         open_member: None,
     }];
     let mut members: Vec<CssSelectorSemanticMemberId> = Vec::new();
@@ -341,6 +350,22 @@ fn validate_program_structure(
     let mut rejected: Option<CssSelectorSemanticMemberId> = None;
 
     for (fact_index, fact) in facts.iter().enumerate() {
+        // A nesting presence records an authored nesting-selector occurrence,
+        // so a derived origin is malformed retained evidence under either
+        // disposition. This is checked before any other dispatch so neither
+        // the contributing path nor the rejected-member path can admit one.
+        if matches!(
+            fact,
+            CssSelectorSemanticFact::NestingPresence {
+                origin: CssSelectorSemanticRelationshipOrigin::Derived,
+                ..
+            }
+        ) {
+            return Err(
+                CssSelectorSemanticProgramError::NestingPresenceMustBeAuthored { fact_index },
+            );
+        }
+
         if let Some(rejected_member) = rejected {
             match fact {
                 CssSelectorSemanticFact::NestingPresence {
@@ -388,6 +413,7 @@ fn validate_program_structure(
             .ok_or(CssSelectorSemanticProgramError::UnbalancedProgramEnd)?;
         let open_member = frame.open_member;
         let function_unit = frame.function_unit;
+        let function_kind = frame.function_kind;
         match fact {
             CssSelectorSemanticFact::OpenMember { member, .. } => {
                 if open_member.is_some() {
@@ -412,6 +438,22 @@ fn validate_program_structure(
                         },
                     );
                 }
+                // Only `:is()` and `:where()` are forgiving under the selected
+                // CoreV1 semantics, so a rejected member is impossible inside
+                // `:not()` or `:has()`.
+                if !matches!(
+                    function_kind,
+                    Some(
+                        CssSelectorFunctionalPseudoClass::Is
+                            | CssSelectorFunctionalPseudoClass::Where
+                    )
+                ) {
+                    return Err(
+                        CssSelectorSemanticProgramError::RejectedForgivingMemberOutsideForgivingFunction {
+                            fact_index,
+                        },
+                    );
+                }
                 if open_member.is_some() {
                     return Err(
                         CssSelectorSemanticProgramError::RejectedForgivingMemberInsideOpenMember {
@@ -430,7 +472,7 @@ fn validate_program_structure(
                 }
                 claim_unit(&mut units, *unit, fact_index)?;
             }
-            CssSelectorSemanticFact::OpenFunction { unit, .. } => {
+            CssSelectorSemanticFact::OpenFunction { unit, kind, .. } => {
                 if open_member.is_none() {
                     return Err(CssSelectorSemanticProgramError::FactOutsideOpenMember {
                         fact_index,
@@ -439,6 +481,7 @@ fn validate_program_structure(
                 claim_unit(&mut units, *unit, fact_index)?;
                 frames.push(StructureFrame {
                     function_unit: Some(*unit),
+                    function_kind: Some(*kind),
                     open_member: None,
                 });
             }
@@ -737,7 +780,7 @@ mod tests {
             validate_program_structure(&[CssSelectorSemanticFact::NestingPresence {
                 member: member(9),
                 unit: unit(9),
-                origin: CssSelectorSemanticRelationshipOrigin::Derived,
+                origin: CssSelectorSemanticRelationshipOrigin::Authored(anchor(&source, 8, 9)),
                 disposition: CssSelectorSemanticNestingDisposition::NonContributingPresenceOnly,
             }]),
             Err(CssSelectorSemanticProgramError::UnownedNonContributingPresence { fact_index: 0 })
@@ -780,6 +823,139 @@ mod tests {
                     fact_index: 0
                 }
             )
+        );
+    }
+
+    fn function_program(
+        source: &SourceText,
+        kind: CssSelectorFunctionalPseudoClass,
+        inner: Vec<CssSelectorSemanticFact>,
+    ) -> Vec<CssSelectorSemanticFact> {
+        let mut facts = vec![
+            open(source, 1, 0, 14),
+            CssSelectorSemanticFact::OpenFunction {
+                unit: unit(2),
+                kind,
+                range: anchor(source, 2, 6),
+            },
+        ];
+        facts.extend(inner);
+        facts.push(CssSelectorSemanticFact::CloseFunction { unit: unit(2) });
+        facts.push(close(1));
+        facts
+    }
+
+    fn rejected_member(source: &SourceText) -> Vec<CssSelectorSemanticFact> {
+        vec![
+            CssSelectorSemanticFact::RejectedForgivingMember {
+                member: member(2),
+                range: anchor(source, 6, 9),
+            },
+            CssSelectorSemanticFact::NestingPresence {
+                member: member(2),
+                unit: unit(3),
+                origin: CssSelectorSemanticRelationshipOrigin::Authored(anchor(source, 8, 9)),
+                disposition: CssSelectorSemanticNestingDisposition::NonContributingPresenceOnly,
+            },
+        ]
+    }
+
+    #[test]
+    fn rejected_forgiving_members_are_sealed_to_selected_forgiving_functions() {
+        let source = source();
+
+        // Positive controls: the two selected forgiving functions.
+        for kind in [
+            CssSelectorFunctionalPseudoClass::Is,
+            CssSelectorFunctionalPseudoClass::Where,
+        ] {
+            assert_eq!(
+                validate_program_structure(&function_program(
+                    &source,
+                    kind,
+                    rejected_member(&source)
+                )),
+                Ok(()),
+                "{kind:?} is forgiving and may retain a rejected member"
+            );
+        }
+
+        // Negative falsifiers: the unforgiving selected functions never
+        // reject a member, so this retained shape is impossible.
+        for kind in [
+            CssSelectorFunctionalPseudoClass::Not,
+            CssSelectorFunctionalPseudoClass::Has,
+        ] {
+            assert_eq!(
+                validate_program_structure(&function_program(
+                    &source,
+                    kind,
+                    rejected_member(&source)
+                )),
+                Err(
+                    CssSelectorSemanticProgramError::RejectedForgivingMemberOutsideForgivingFunction {
+                        fact_index: 2,
+                    }
+                ),
+                "{kind:?} is not forgiving and must fail closed"
+            );
+        }
+    }
+
+    #[test]
+    fn every_retained_nesting_presence_must_carry_authored_evidence() {
+        let source = source();
+
+        // A derived contributing presence is malformed retained evidence.
+        assert_eq!(
+            validate_program_structure(&[
+                open(&source, 1, 0, 2),
+                CssSelectorSemanticFact::NestingPresence {
+                    member: member(1),
+                    unit: unit(1),
+                    origin: CssSelectorSemanticRelationshipOrigin::Derived,
+                    disposition: CssSelectorSemanticNestingDisposition::Contributing,
+                },
+                close(1),
+            ]),
+            Err(CssSelectorSemanticProgramError::NestingPresenceMustBeAuthored { fact_index: 1 })
+        );
+
+        // So is a derived presence owned by a rejected forgiving member.
+        assert_eq!(
+            validate_program_structure(&function_program(
+                &source,
+                CssSelectorFunctionalPseudoClass::Is,
+                vec![
+                    CssSelectorSemanticFact::RejectedForgivingMember {
+                        member: member(2),
+                        range: anchor(&source, 6, 9),
+                    },
+                    CssSelectorSemanticFact::NestingPresence {
+                        member: member(2),
+                        unit: unit(3),
+                        origin: CssSelectorSemanticRelationshipOrigin::Derived,
+                        disposition:
+                            CssSelectorSemanticNestingDisposition::NonContributingPresenceOnly,
+                    },
+                ],
+            )),
+            Err(CssSelectorSemanticProgramError::NestingPresenceMustBeAuthored { fact_index: 3 })
+        );
+
+        // Positive control: the same shapes with authored evidence stay valid.
+        assert_eq!(
+            validate_program_structure(&[
+                open(&source, 1, 0, 2),
+                CssSelectorSemanticFact::NestingPresence {
+                    member: member(1),
+                    unit: unit(1),
+                    origin: CssSelectorSemanticRelationshipOrigin::Authored(anchor(&source, 0, 1)),
+                    disposition: CssSelectorSemanticNestingDisposition::Contributing,
+                },
+                close(1),
+            ]),
+            Ok(())
         );
     }
 

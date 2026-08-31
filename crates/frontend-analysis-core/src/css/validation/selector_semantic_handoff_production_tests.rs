@@ -949,6 +949,48 @@ fn rejected_forgiving_member_without_a_nesting_selector_retains_no_presence() {
 }
 
 #[test]
+fn a_fault_inside_an_unforgiving_function_never_retains_a_rejected_member() {
+    // FA407-01B regression. `:not()` and `:has()` are not forgiving, so an
+    // authored-invalid member inside one is never rejected-and-recovered.
+    for text in [".a:not(], .b){}", ".a:has(], .b){}"] {
+        let (_, result) = qualify(text, 53_006);
+        assert!(
+            matches!(
+                result.observations()[0].outcome(),
+                CssSelectorQualificationOutcome::InvalidForSelectedGrammar { .. }
+            ),
+            "{text} must stay invalid rather than recover"
+        );
+        assert!(result.observations()[0].semantic_program().is_none());
+    }
+
+    // When an unforgiving function faults inside a forgiving one, the rejected
+    // member is owned by the forgiving ancestor, and the rolled-back inner
+    // function leaves a deliberate identifier gap.
+    let (source, result) = qualify(".a:is(:not(]), .b){}", 53_007);
+    assert_eq!(
+        adapt_observation_program(&source, &result, 0),
+        program(
+            0,
+            vec![
+                open(1, 0, 18),
+                atom(1, SimpleKind::Class, 0, 2),
+                open_function(2, FunctionKind::Is, 2, 6),
+                SelectorFact::RejectedForgivingMember {
+                    member: MemberId(2),
+                    range: range(6, 13),
+                },
+                open(3, 15, 17),
+                atom(3, SimpleKind::Class, 15, 17),
+                close(3),
+                close_function(2),
+                close(1),
+            ],
+        )
+    );
+}
+
+#[test]
 fn rejected_member_nesting_presence_suppresses_implied_nesting() {
     // The only authored `&` lives inside a rejected forgiving member. It is
     // retained as non-contributing evidence and still suppresses the implied
