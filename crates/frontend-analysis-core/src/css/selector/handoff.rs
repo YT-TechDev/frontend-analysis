@@ -209,10 +209,9 @@ impl PartialEq for CssSelectorSemanticFact {
                     && left_kind == right_kind
                     && same_anchor(left_range, right_range)
             }
-            (
-                Fact::CloseFunction { unit: left_unit },
-                Fact::CloseFunction { unit: right_unit },
-            ) => left_unit == right_unit,
+            (Fact::CloseFunction { unit: left_unit }, Fact::CloseFunction { unit: right_unit }) => {
+                left_unit == right_unit
+            }
             (
                 Fact::NestingPresence {
                     member: left_member,
@@ -292,10 +291,12 @@ impl CssSelectorSemanticProgram {
         context_header: &SourceAnchor,
     ) -> Result<(), CssSelectorHandoffInvariantViolation> {
         if self.owning_context != context {
-            return Err(CssSelectorHandoffInvariantViolation::OwningContextMismatch {
-                expected: context,
-                actual: self.owning_context,
-            });
+            return Err(
+                CssSelectorHandoffInvariantViolation::OwningContextMismatch {
+                    expected: context,
+                    actual: self.owning_context,
+                },
+            );
         }
         self.validate_structure()?;
         self.validate_authored_provenance(context_header)
@@ -327,10 +328,12 @@ impl CssSelectorSemanticProgram {
                         },
                     )?;
                     if actual != *member {
-                        return Err(CssSelectorHandoffInvariantViolation::MemberBalanceMismatch {
-                            expected: actual,
-                            actual: *member,
-                        });
+                        return Err(
+                            CssSelectorHandoffInvariantViolation::MemberBalanceMismatch {
+                                expected: actual,
+                                actual: *member,
+                            },
+                        );
                     }
                 }
                 CssSelectorSemanticFact::RejectedForgivingMember { member, .. } => {
@@ -360,10 +363,12 @@ impl CssSelectorSemanticProgram {
                         },
                     )?;
                     if actual != *unit {
-                        return Err(CssSelectorHandoffInvariantViolation::FunctionBalanceMismatch {
-                            expected: actual,
-                            actual: *unit,
-                        });
+                        return Err(
+                            CssSelectorHandoffInvariantViolation::FunctionBalanceMismatch {
+                                expected: actual,
+                                actual: *unit,
+                            },
+                        );
                     }
                 }
                 CssSelectorSemanticFact::NestingPresence {
