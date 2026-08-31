@@ -386,13 +386,21 @@ pub(super) enum RejectedNestingPresenceFailure {
         actual: AuthoredRange,
     },
     PresenceMustBeNonContributing,
+    PresenceClaimedMoreThanOnce {
+        fact_index: usize,
+    },
+    UnownedNonContributingPresence {
+        fact_index: usize,
+        member: MemberId,
+        unit: UnitId,
+    },
     ContributingRelationshipInRejectedMember,
 }
 
-pub(super) fn validate_rejected_nesting_presence(
+fn validate_rejected_nesting_presence_claim(
     program: &GoldProgram,
     expectation: RejectedNestingPresenceExpectation,
-) -> Result<RejectedNestingPresenceEvidence, RejectedNestingPresenceFailure> {
+) -> Result<(usize, RejectedNestingPresenceEvidence), RejectedNestingPresenceFailure> {
     let rejected_members = program
         .facts
         .iter()
@@ -423,37 +431,40 @@ pub(super) fn validate_rejected_nesting_presence(
         );
     }
 
-    let rejected_facts = program.facts[rejected_position + 1..]
-        .iter()
-        .take_while(|fact| {
-            !matches!(
-                fact,
-                SelectorFact::RejectedForgivingMember { .. }
-                    | SelectorFact::OpenMember { .. }
-                    | SelectorFact::CloseFunction { .. }
-            )
-        })
-        .collect::<Vec<_>>();
+    let rejected_start = rejected_position + 1;
+    let mut rejected_facts = Vec::new();
+    for (position, fact) in program.facts.iter().enumerate().skip(rejected_start) {
+        if matches!(
+            fact,
+            SelectorFact::RejectedForgivingMember { .. }
+                | SelectorFact::OpenMember { .. }
+                | SelectorFact::CloseFunction { .. }
+        ) {
+            break;
+        }
+        rejected_facts.push((position, fact));
+    }
     if rejected_facts
         .iter()
-        .any(|fact| matches!(fact, SelectorFact::Relationship { .. }))
+        .any(|(_, fact)| matches!(fact, SelectorFact::Relationship { .. }))
     {
         return Err(RejectedNestingPresenceFailure::ContributingRelationshipInRejectedMember);
     }
 
     let presences = rejected_facts
         .iter()
-        .filter_map(|fact| match fact {
+        .copied()
+        .filter_map(|(position, fact)| match fact {
             SelectorFact::NestingPresence {
                 member,
                 unit,
                 origin,
                 disposition,
-            } => Some((*member, *unit, *origin, *disposition)),
+            } => Some((position, *member, *unit, *origin, *disposition)),
             _ => None,
         })
         .collect::<Vec<_>>();
-    let [(member, unit, origin, disposition)] = presences.as_slice() else {
+    let [(presence_position, member, unit, origin, disposition)] = presences.as_slice() else {
         return Err(if presences.is_empty() {
             RejectedNestingPresenceFailure::PresenceMissing
         } else {
@@ -485,13 +496,69 @@ pub(super) fn validate_rejected_nesting_presence(
         return Err(RejectedNestingPresenceFailure::PresenceMustBeNonContributing);
     }
 
-    Ok(RejectedNestingPresenceEvidence {
-        member: *member,
-        unit: *unit,
-        authored_range: *authored_range,
-        disposition: *disposition,
-        effect: RejectedNestingEffect::SuppressesImpliedNesting,
-    })
+    Ok((
+        *presence_position,
+        RejectedNestingPresenceEvidence {
+            member: *member,
+            unit: *unit,
+            authored_range: *authored_range,
+            disposition: *disposition,
+            effect: RejectedNestingEffect::SuppressesImpliedNesting,
+        },
+    ))
+}
+
+pub(super) fn validate_rejected_nesting_presences(
+    program: &GoldProgram,
+    expectations: &[RejectedNestingPresenceExpectation],
+) -> Result<Vec<RejectedNestingPresenceEvidence>, RejectedNestingPresenceFailure> {
+    let mut claimed_positions = Vec::with_capacity(expectations.len());
+    let mut evidence = Vec::with_capacity(expectations.len());
+
+    for expectation in expectations {
+        let (fact_index, item) = validate_rejected_nesting_presence_claim(program, *expectation)?;
+        if claimed_positions.contains(&fact_index) {
+            return Err(RejectedNestingPresenceFailure::PresenceClaimedMoreThanOnce {
+                fact_index,
+            });
+        }
+        claimed_positions.push(fact_index);
+        evidence.push(item);
+    }
+
+    for (fact_index, fact) in program.facts.iter().enumerate() {
+        let SelectorFact::NestingPresence {
+            member,
+            unit,
+            disposition: NestingPresenceDisposition::NonContributingPresenceOnly,
+            ..
+        } = fact
+        else {
+            continue;
+        };
+        if !claimed_positions.contains(&fact_index) {
+            return Err(
+                RejectedNestingPresenceFailure::UnownedNonContributingPresence {
+                    fact_index,
+                    member: *member,
+                    unit: *unit,
+                },
+            );
+        }
+    }
+
+    Ok(evidence)
+}
+
+pub(super) fn validate_rejected_nesting_presence(
+    program: &GoldProgram,
+    expectation: RejectedNestingPresenceExpectation,
+) -> Result<RejectedNestingPresenceEvidence, RejectedNestingPresenceFailure> {
+    let evidence = validate_rejected_nesting_presences(program, &[expectation])?;
+    let [evidence] = evidence.as_slice() else {
+        return Err(RejectedNestingPresenceFailure::PresenceAmbiguous);
+    };
+    Ok(*evidence)
 }
 
 pub(super) fn authored(range: AuthoredRange) -> RelationshipOrigin {
@@ -500,6 +567,133 @@ pub(super) fn authored(range: AuthoredRange) -> RelationshipOrigin {
 
 pub(super) fn derived() -> RelationshipOrigin {
     RelationshipOrigin::Derived
+}
+
+#[test]
+fn rejected_nesting_presence_population_rejects_surplus_unowned_presence() {
+    let baseline = GoldProgram {
+        source: SourceId(1),
+        run: RunId(1),
+        profile: "CoreV1",
+        context: ContextId(22),
+        facts: vec![
+            SelectorFact::RejectedForgivingMember {
+                member: MemberId(2),
+                range: AuthoredRange::new(0, 4),
+            },
+            SelectorFact::NestingPresence {
+                member: MemberId(2),
+                unit: UnitId(3),
+                origin: RelationshipOrigin::Authored(AuthoredRange::new(3, 4)),
+                disposition: NestingPresenceDisposition::NonContributingPresenceOnly,
+            },
+            SelectorFact::OpenMember {
+                member: MemberId(1),
+                range: AuthoredRange::new(4, 6),
+            },
+            SelectorFact::CloseMember {
+                member: MemberId(1),
+            },
+        ],
+    };
+    let expectation = RejectedNestingPresenceExpectation {
+        member: MemberId(2),
+        rejected_range: AuthoredRange::new(0, 4),
+        unit: UnitId(3),
+        presence_range: AuthoredRange::new(3, 4),
+    };
+    assert!(validate_rejected_nesting_presence(&baseline, expectation).is_ok());
+
+    let mut derived_surplus = baseline.clone();
+    derived_surplus.facts.push(SelectorFact::NestingPresence {
+        member: MemberId(999),
+        unit: UnitId(999),
+        origin: RelationshipOrigin::Derived,
+        disposition: NestingPresenceDisposition::NonContributingPresenceOnly,
+    });
+    assert_eq!(
+        validate_rejected_nesting_presence(&derived_surplus, expectation),
+        Err(
+            RejectedNestingPresenceFailure::UnownedNonContributingPresence {
+                fact_index: 4,
+                member: MemberId(999),
+                unit: UnitId(999),
+            }
+        )
+    );
+
+    let mut duplicate_surplus = baseline;
+    duplicate_surplus.facts.push(SelectorFact::NestingPresence {
+        member: MemberId(2),
+        unit: UnitId(3),
+        origin: RelationshipOrigin::Authored(AuthoredRange::new(3, 4)),
+        disposition: NestingPresenceDisposition::NonContributingPresenceOnly,
+    });
+    assert_eq!(
+        validate_rejected_nesting_presence(&duplicate_surplus, expectation),
+        Err(
+            RejectedNestingPresenceFailure::UnownedNonContributingPresence {
+                fact_index: 4,
+                member: MemberId(2),
+                unit: UnitId(3),
+            }
+        )
+    );
+}
+
+#[test]
+fn rejected_nesting_presence_population_supports_exact_multiple_ownership() {
+    let program = GoldProgram {
+        source: SourceId(1),
+        run: RunId(1),
+        profile: "CoreV1",
+        context: ContextId(23),
+        facts: vec![
+            SelectorFact::RejectedForgivingMember {
+                member: MemberId(2),
+                range: AuthoredRange::new(0, 2),
+            },
+            SelectorFact::NestingPresence {
+                member: MemberId(2),
+                unit: UnitId(2),
+                origin: RelationshipOrigin::Authored(AuthoredRange::new(1, 2)),
+                disposition: NestingPresenceDisposition::NonContributingPresenceOnly,
+            },
+            SelectorFact::RejectedForgivingMember {
+                member: MemberId(3),
+                range: AuthoredRange::new(2, 4),
+            },
+            SelectorFact::NestingPresence {
+                member: MemberId(3),
+                unit: UnitId(3),
+                origin: RelationshipOrigin::Authored(AuthoredRange::new(3, 4)),
+                disposition: NestingPresenceDisposition::NonContributingPresenceOnly,
+            },
+        ],
+    };
+    let first = RejectedNestingPresenceExpectation {
+        member: MemberId(2),
+        rejected_range: AuthoredRange::new(0, 2),
+        unit: UnitId(2),
+        presence_range: AuthoredRange::new(1, 2),
+    };
+    let second = RejectedNestingPresenceExpectation {
+        member: MemberId(3),
+        rejected_range: AuthoredRange::new(2, 4),
+        unit: UnitId(3),
+        presence_range: AuthoredRange::new(3, 4),
+    };
+    let evidence = validate_rejected_nesting_presences(&program, &[first, second])
+        .expect("each non-contributing presence is owned exactly once");
+    assert_eq!(evidence.len(), 2);
+    assert_eq!(evidence[0].member, MemberId(2));
+    assert_eq!(evidence[1].member, MemberId(3));
+    assert_eq!(
+        validate_rejected_nesting_presences(&program, &[first, first]),
+        Err(RejectedNestingPresenceFailure::PresenceClaimedMoreThanOnce {
+            fact_index: 1,
+        })
+    );
 }
 
 #[test]
