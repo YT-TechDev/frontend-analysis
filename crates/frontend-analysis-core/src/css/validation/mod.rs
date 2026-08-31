@@ -61,6 +61,8 @@ mod selector_gold_contract_tests;
 #[cfg(test)]
 mod selector_semantic_handoff_gold;
 #[cfg(test)]
+mod selector_semantic_handoff_production_tests;
+#[cfg(test)]
 mod selector_semantic_handoff_reference;
 #[cfg(test)]
 mod selector_semantic_handoff_validation_tests;
