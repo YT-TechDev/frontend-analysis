@@ -699,12 +699,8 @@ mod tests {
         context: CssParserContextId,
     ) -> CssSelectorSemanticProgram {
         let record = &parser.context_records()[context.index()];
-        CssSelectorSemanticProgram::from_authoritative_staging(
-            context,
-            record.header(),
-            Vec::new(),
-        )
-        .unwrap()
+        CssSelectorSemanticProgram::from_authoritative_staging(context, record.header(), Vec::new())
+            .unwrap()
     }
 
     fn qualified_observation(
