@@ -12,7 +12,6 @@ pub(crate) mod analysis;
 pub(crate) mod context;
 pub(crate) mod handoff;
 pub(crate) mod lexical;
-#[allow(clippy::unnecessary_lazy_evaluations)]
 pub(crate) mod producer;
 pub(crate) mod profile;
 pub(crate) mod resource;
