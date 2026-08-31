@@ -1,4 +1,4 @@
-//! Core-integrated CSS selector qualification operation (#184).
+//! Core-integrated CSS selector qualification operation (#184/#405).
 //!
 //! This is the normal production entry path for `CoreV1`: structural evidence
 //! is first produced and reconciled by the existing `css::analysis` boundary,
@@ -76,7 +76,7 @@ mod tests {
             &source,
             tokenizer_limits(),
             parser_limits(),
-            CssSelectorLimits::new(100_000, 64, 1024).unwrap(),
+            CssSelectorLimits::new(100_000, 64, 1024, 8192).unwrap(),
         )
         .unwrap();
 
