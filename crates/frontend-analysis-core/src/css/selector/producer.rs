@@ -867,11 +867,14 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
             }
         }
 
-        let function_unit = self.frames[frame_index].function_unit.ok_or(
-            MachineFault::Internal(CssSelectorProducerError::InternalInvariantFailure(
-                CssSelectorProducerInvariantViolation::MissingFunctionSemanticUnit,
-            )),
-        )?;
+        let function_unit =
+            self.frames[frame_index]
+                .function_unit
+                .ok_or(MachineFault::Internal(
+                    CssSelectorProducerError::InternalInvariantFailure(
+                        CssSelectorProducerInvariantViolation::MissingFunctionSemanticUnit,
+                    ),
+                ))?;
         self.consume_current()?;
         self.frames.pop();
         self.resources
@@ -1681,16 +1684,20 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
     fn finalize_qualified_member(&mut self, frame_index: usize) -> Result<(), MachineFault> {
         let semantic_member = &self.frames[frame_index].semantic_member;
         let member = semantic_member.member;
-        let open_fact_index = semantic_member.open_fact_index.ok_or(
-            MachineFault::Internal(CssSelectorProducerError::InternalInvariantFailure(
-                CssSelectorProducerInvariantViolation::MissingSemanticMember,
-            )),
-        )?;
-        let start = semantic_member.semantic_start.ok_or(MachineFault::Internal(
-            CssSelectorProducerError::InternalInvariantFailure(
-                CssSelectorProducerInvariantViolation::MissingSemanticMember,
-            ),
-        ))?;
+        let open_fact_index = semantic_member
+            .open_fact_index
+            .ok_or(MachineFault::Internal(
+                CssSelectorProducerError::InternalInvariantFailure(
+                    CssSelectorProducerInvariantViolation::MissingSemanticMember,
+                ),
+            ))?;
+        let start = semantic_member
+            .semantic_start
+            .ok_or(MachineFault::Internal(
+                CssSelectorProducerError::InternalInvariantFailure(
+                    CssSelectorProducerInvariantViolation::MissingSemanticMember,
+                ),
+            ))?;
         let end = semantic_member.semantic_end.ok_or(MachineFault::Internal(
             CssSelectorProducerError::InternalInvariantFailure(
                 CssSelectorProducerInvariantViolation::MissingSemanticMember,
@@ -1795,12 +1802,11 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
     ) -> Result<(), CssSelectorProducerError> {
         let member = self.semantic.allocate_member()?;
         let checkpoint = self.semantic.facts.len();
-        let frame = self
-            .frames
-            .get_mut(frame_index)
-            .ok_or(CssSelectorProducerError::InternalInvariantFailure(
+        let frame = self.frames.get_mut(frame_index).ok_or(
+            CssSelectorProducerError::InternalInvariantFailure(
                 CssSelectorProducerInvariantViolation::MissingFunctionFrame,
-            ))?;
+            ),
+        )?;
         frame.semantic_member = SemanticMemberState::new(member, checkpoint);
         Ok(())
     }
