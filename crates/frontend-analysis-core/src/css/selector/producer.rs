@@ -179,18 +179,14 @@ pub(crate) fn run(
                 return build_incomplete(parser_result, observations, resources.usage(), evidence);
             }
         };
-        let retained_attempted =
-            match resources.preflight_retained_semantic(record.header(), retained_delta)? {
-                RetainedPreflight::Allowed { attempted } => attempted,
-                RetainedPreflight::Refused(evidence) => {
-                    return build_incomplete(
-                        parser_result,
-                        observations,
-                        resources.usage(),
-                        evidence,
-                    );
-                }
-            };
+        let retained_attempted = match resources
+            .preflight_retained_semantic(record.header(), retained_delta)?
+        {
+            RetainedPreflight::Allowed { attempted } => attempted,
+            RetainedPreflight::Refused(evidence) => {
+                return build_incomplete(parser_result, observations, resources.usage(), evidence);
+            }
+        };
 
         // All normal resource refusals have succeeded before the fallible
         // attachment/invariant validation required by #405.
@@ -583,7 +579,10 @@ impl SemanticMemberState {
     fn note_authored(&mut self, anchor: &SourceAnchor) {
         let start = anchor.range().start();
         let end = anchor.range().end();
-        self.authored_start = Some(self.authored_start.map_or(start, |current| current.min(start)));
+        self.authored_start = Some(
+            self.authored_start
+                .map_or(start, |current| current.min(start)),
+        );
         self.authored_end = Some(self.authored_end.map_or(end, |current| current.max(end)));
     }
 
@@ -670,9 +669,7 @@ impl SemanticBuilder {
         }
     }
 
-    fn allocate_member(
-        &mut self,
-    ) -> Result<CssSelectorSemanticMemberId, CssSelectorProducerError> {
+    fn allocate_member(&mut self) -> Result<CssSelectorSemanticMemberId, CssSelectorProducerError> {
         let value = self.next_member;
         self.next_member = self.next_member.checked_add(1).ok_or_else(|| {
             CssSelectorProducerError::InternalInvariantFailure(
@@ -989,9 +986,7 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
                     let final_anchor = self.current_anchor()?.clone();
                     let semantic_kind = match self.current_kind_opt() {
                         Some(CssTokenKind::Ident(_)) => CssSelectorSemanticSimpleKind::Type,
-                        Some(CssTokenKind::Delim('*')) => {
-                            CssSelectorSemanticSimpleKind::Universal
-                        }
+                        Some(CssTokenKind::Delim('*')) => CssSelectorSemanticSimpleKind::Universal,
                         _ => {
                             return Err(MachineFault::Invalid {
                                 reason: CssSelectorInvalidReason::UnexpectedToken,
@@ -1001,10 +996,8 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
                         }
                     };
                     self.consume_current()?;
-                    let range = self.semantic_anchor(
-                        first.range().start(),
-                        final_anchor.range().end(),
-                    )?;
+                    let range =
+                        self.semantic_anchor(first.range().start(), final_anchor.range().end())?;
                     self.stage_simple(semantic_kind, range)?;
                     self.mark_simple(false)?;
                     Ok(())
@@ -1297,8 +1290,7 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
                     .semantic
                     .allocate_member()
                     .map_err(MachineFault::Internal)?;
-                let semantic_member =
-                    SemanticMemberState::new(member, self.semantic.facts.len());
+                let semantic_member = SemanticMemberState::new(member, self.semantic.facts.len());
                 self.frames.push(ListFrame::function(
                     function,
                     subject,
@@ -1365,13 +1357,11 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
             ));
         }
 
-        let frame = self
-            .frames
-            .last()
-            .cloned()
-            .ok_or(CssSelectorProducerError::InternalInvariantFailure(
+        let frame = self.frames.last().cloned().ok_or(
+            CssSelectorProducerError::InternalInvariantFailure(
                 CssSelectorProducerInvariantViolation::MissingRootFrame,
-            ))?;
+            ),
+        )?;
         let classification = self.member_end_classification_for(&frame);
         match classification {
             MemberEnd::Qualified => {
@@ -1547,10 +1537,7 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
             .current_anchor()
             .map_err(machine_fault_to_error)?
             .clone();
-        let kind = self
-            .current_kind()
-            .map_err(machine_fault_to_error)?
-            .clone();
+        let kind = self.current_kind().map_err(machine_fault_to_error)?.clone();
         if let Some(evidence) = self.resources.charge_algorithm_step(self.header, &anchor)? {
             return Ok(Some(evidence));
         }
@@ -2077,7 +2064,9 @@ mod tests {
         let result = run(&source, parser, limits).unwrap();
         assert_eq!(result.observations().len(), 1);
         assert_eq!(
-            result.resources().value(CssSelectorResourceKind::RetainedSemanticUnits),
+            result
+                .resources()
+                .value(CssSelectorResourceKind::RetainedSemanticUnits),
             4
         );
         assert!(matches!(
@@ -2100,7 +2089,9 @@ mod tests {
                 if evidence.kind() == CssSelectorResourceKind::Observations
         ));
         assert_eq!(
-            result.resources().value(CssSelectorResourceKind::RetainedSemanticUnits),
+            result
+                .resources()
+                .value(CssSelectorResourceKind::RetainedSemanticUnits),
             0
         );
     }
