@@ -65,9 +65,9 @@ fn expected_outcome(expected: ExpectedOutcome) -> CssColumnCountQualificationOut
         ExpectedOutcome::Auto => {
             CssColumnCountQualificationOutcome::Qualified(CssColumnCountValue::Auto)
         }
-        ExpectedOutcome::DirectInteger => CssColumnCountQualificationOutcome::Qualified(
-            CssColumnCountValue::DirectIntegerLiteral,
-        ),
+        ExpectedOutcome::DirectInteger => {
+            CssColumnCountQualificationOutcome::Qualified(CssColumnCountValue::DirectIntegerLiteral)
+        }
         ExpectedOutcome::Invalid => {
             CssColumnCountQualificationOutcome::InvalidForSelectedValueGrammar
         }
