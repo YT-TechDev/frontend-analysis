@@ -373,9 +373,9 @@ fn nested_has_max_frames_fail_closed() {
 
     assert_eq!(
         resolve_candidates(&[non_nested], GoldContextId(1)),
-        ReferenceOutcome::Known(vec![
-            super::specificity_input_gold::GoldSpecificity::new(0, 1, 0),
-        ])
+        ReferenceOutcome::Known(vec![super::specificity_input_gold::GoldSpecificity::new(
+            0, 1, 0
+        ),])
     );
 }
 
