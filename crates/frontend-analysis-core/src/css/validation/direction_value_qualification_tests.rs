@@ -66,12 +66,8 @@ fn assert_expected(result: &CssDirectionQualificationRunResult, expected: &[Expe
 
 fn expected_outcome(expected: ExpectedOutcome) -> CssDirectionQualificationOutcome {
     match expected {
-        ExpectedOutcome::Ltr => {
-            CssDirectionQualificationOutcome::Qualified(CssDirectionValue::Ltr)
-        }
-        ExpectedOutcome::Rtl => {
-            CssDirectionQualificationOutcome::Qualified(CssDirectionValue::Rtl)
-        }
+        ExpectedOutcome::Ltr => CssDirectionQualificationOutcome::Qualified(CssDirectionValue::Ltr),
+        ExpectedOutcome::Rtl => CssDirectionQualificationOutcome::Qualified(CssDirectionValue::Rtl),
         ExpectedOutcome::Invalid => {
             CssDirectionQualificationOutcome::InvalidForSelectedValueGrammar
         }
@@ -158,9 +154,11 @@ fn escaped_identifiers_comments_and_priority_use_retained_lexical_meaning() {
     let result = qualify(3, css);
 
     assert_expected(&result, &[ExpectedOutcome::Ltr, ExpectedOutcome::Rtl]);
-    assert!(result.upstream_parser_result().occurrences()[0]
-        .priority()
-        .is_some());
+    assert!(
+        result.upstream_parser_result().occurrences()[0]
+            .priority()
+            .is_some()
+    );
 }
 
 #[test]
