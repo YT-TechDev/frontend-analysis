@@ -162,19 +162,25 @@ fn escaped_identifiers_comments_and_priority_use_retained_lexical_meaning() {
 }
 
 #[test]
-fn deferred_substitution_functions_fail_open_but_ordinary_functions_are_invalid() {
+fn profile_unsupported_functions_fail_open_but_ordinary_functions_are_invalid() {
     let css = concat!(
         "a{direction:var(--dir);}",
         "b{direction:env(dir);}",
         "c{direction:attr(dir);}",
-        "d{direction:foo();}",
-        "e{direction:calc(1);}",
+        "d{direction:first-valid(ltr,rtl);}",
+        "e{direction:toggle(ltr,rtl);}",
+        "f{direction:interpolate(0%,0:ltr,1:rtl);}",
+        "g{direction:foo();}",
+        "h{direction:calc(1);}",
     );
     let result = qualify(4, css);
 
     assert_expected(
         &result,
         &[
+            ExpectedOutcome::UnsupportedFunction,
+            ExpectedOutcome::UnsupportedFunction,
+            ExpectedOutcome::UnsupportedFunction,
             ExpectedOutcome::UnsupportedFunction,
             ExpectedOutcome::UnsupportedFunction,
             ExpectedOutcome::UnsupportedFunction,
