@@ -205,7 +205,7 @@ fn single_property_identifier(
 fn qualify_direction_value(items: &[CssLexicalItem]) -> CssDirectionQualificationOutcome {
     let mut semantic_count = 0usize;
     let mut only_identifier = None;
-    let mut contains_deferred_substitution_function = false;
+    let mut contains_profile_unsupported_function = false;
 
     for item in items {
         let CssLexicalItem::SemanticToken(token) = item else {
@@ -221,7 +221,7 @@ fn qualify_direction_value(items: &[CssLexicalItem]) -> CssDirectionQualificatio
                 only_identifier = Some(value.as_str());
             }
             CssTokenKind::Function(name) => {
-                contains_deferred_substitution_function |= is_deferred_substitution_function(name);
+                contains_profile_unsupported_function |= is_profile_unsupported_function(name);
                 only_identifier = None;
             }
             _ => {
@@ -230,10 +230,12 @@ fn qualify_direction_value(items: &[CssLexicalItem]) -> CssDirectionQualificatio
         }
     }
 
-    // Only functions whose value can be substituted later cross this profile's
-    // parse-time boundary. An ordinary function such as `foo()` is simply a
-    // direct mismatch for the selected `ltr | rtl` grammar.
-    if contains_deferred_substitution_function {
+    // Functions whose value is substituted after parsing and generic
+    // `<whole-value>` functions both cross this slice's selected grammar
+    // boundary. The profile deliberately does not implement those semantics,
+    // while an ordinary function such as `foo()` remains a direct mismatch for
+    // the selected `ltr | rtl` grammar.
+    if contains_profile_unsupported_function {
         return CssDirectionQualificationOutcome::UnsupportedBySelectedValueProfile(
             CssDirectionUnsupportedReason::FunctionValue,
         );
@@ -262,6 +264,10 @@ fn qualify_direction_value(items: &[CssLexicalItem]) -> CssDirectionQualificatio
     CssDirectionQualificationOutcome::InvalidForSelectedValueGrammar
 }
 
+fn is_profile_unsupported_function(name: &str) -> bool {
+    is_deferred_substitution_function(name) || is_whole_value_function(name)
+}
+
 fn is_deferred_substitution_function(name: &str) -> bool {
     [
         "var",
@@ -274,6 +280,12 @@ fn is_deferred_substitution_function(name: &str) -> bool {
     ]
     .iter()
     .any(|function| name.eq_ignore_ascii_case(function))
+}
+
+fn is_whole_value_function(name: &str) -> bool {
+    ["first-valid", "toggle", "interpolate"]
+        .iter()
+        .any(|function| name.eq_ignore_ascii_case(function))
 }
 
 fn is_css_wide_keyword(identifier: &str) -> bool {
