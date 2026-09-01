@@ -464,7 +464,10 @@ fn repeated_and_cross_source_z_index_runs_are_semantically_deterministic() {
     let repeated = qualify(530, css);
     let another_source = qualify(531, css);
 
-    assert_eq!(first.z_index_observations(), repeated.z_index_observations());
+    assert_eq!(
+        first.z_index_observations(),
+        repeated.z_index_observations()
+    );
     assert_eq!(
         first.z_index_observations(),
         another_source.z_index_observations()
