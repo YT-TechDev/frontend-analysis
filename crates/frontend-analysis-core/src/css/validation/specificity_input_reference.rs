@@ -278,10 +278,10 @@ impl Resolver {
                     add_to_current(&mut containers, GoldSpecificity::ZERO)
                 }
                 GoldInstruction::Relationship { target, origin } => {
-                    if origin == GoldRelationshipOrigin::Derived {
-                        if let Err(outcome) = mark_derived_root_relationship(&mut containers) {
-                            return outcome;
-                        }
+                    if origin == GoldRelationshipOrigin::Derived
+                        && let Err(outcome) = mark_derived_root_relationship(&mut containers)
+                    {
+                        return outcome;
                     }
                     match target {
                         GoldRelationshipTarget::Zero => {
