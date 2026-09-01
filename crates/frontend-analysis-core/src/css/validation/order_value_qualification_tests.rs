@@ -338,7 +338,10 @@ fn duplicate_order_declarations_keep_distinct_run_local_placement() {
 
     assert_expected(
         &result,
-        &[ExpectedOutcome::DirectInteger, ExpectedOutcome::DirectInteger],
+        &[
+            ExpectedOutcome::DirectInteger,
+            ExpectedOutcome::DirectInteger,
+        ],
     );
     assert_eq!(result.order_observations()[0].occurrence_index(), 0);
     assert_eq!(result.order_observations()[1].occurrence_index(), 1);
@@ -396,7 +399,10 @@ fn repeated_and_cross_source_order_runs_are_semantically_deterministic() {
     let another_source = qualify(331, css);
 
     assert_eq!(first.order_observations(), repeated.order_observations());
-    assert_eq!(first.order_observations(), another_source.order_observations());
+    assert_eq!(
+        first.order_observations(),
+        another_source.order_observations()
+    );
     assert_eq!(
         first.direction_observations(),
         repeated.direction_observations()
