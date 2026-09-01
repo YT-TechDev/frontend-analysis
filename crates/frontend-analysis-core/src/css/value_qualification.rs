@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419).
+//! semantic Leaves (#413/#414/#416/#419/#422).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -14,7 +14,7 @@ use crate::{SourceAnchor, SourceId};
 
 use super::declaration::CssDeclarationPlacement;
 use super::parser::result::{CssParserExecutionCompletion, CssParserRunResult};
-use super::token::{CssLexicalItem, CssTokenKind};
+use super::token::{CssLexicalItem, CssNumberType, CssTokenKind};
 use super::tokenizer::result::CssTokenizerRunResult;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -153,6 +153,52 @@ impl CssIsolationQualificationObservation {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssOrderValue {
+    DirectIntegerLiteral,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssOrderUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssOrderQualificationOutcome {
+    Qualified(CssOrderValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssOrderUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `order` qualification.
+///
+/// This outcome only qualifies direct authored integer literals. Exact sign,
+/// digits, and source provenance remain in the structurally owning tokenizer
+/// and parser evidence rather than being copied into this observation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssOrderQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssOrderQualificationOutcome,
+}
+
+impl CssOrderQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssOrderQualificationOutcome {
+        self.outcome
+    }
+}
+
 /// Run-owned result for the currently selected bounded CSS value capabilities.
 ///
 /// The exact Core-validated parser result is owned once here. Property-specific
@@ -166,6 +212,7 @@ pub(crate) struct CssValueQualificationRunResult {
     direction_observations: Vec<CssDirectionQualificationObservation>,
     box_sizing_observations: Vec<CssBoxSizingQualificationObservation>,
     isolation_observations: Vec<CssIsolationQualificationObservation>,
+    order_observations: Vec<CssOrderQualificationObservation>,
 }
 
 impl CssValueQualificationRunResult {
@@ -183,6 +230,10 @@ impl CssValueQualificationRunResult {
 
     pub(crate) fn isolation_observations(&self) -> &[CssIsolationQualificationObservation] {
         &self.isolation_observations
+    }
+
+    pub(crate) fn order_observations(&self) -> &[CssOrderQualificationObservation] {
+        &self.order_observations
     }
 
     pub(crate) const fn execution_completion(&self) -> CssParserExecutionCompletion {
@@ -244,12 +295,18 @@ pub(crate) enum CssValueQualificationInvariantViolation {
 pub(crate) fn run(
     parser_result: CssParserRunResult,
 ) -> Result<CssValueQualificationRunResult, CssValueQualificationError> {
-    let (direction_observations, box_sizing_observations, isolation_observations) = {
+    let (
+        direction_observations,
+        box_sizing_observations,
+        isolation_observations,
+        order_observations,
+    ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
         let mut cursor = LexicalWindowCursor::new(tokenizer_result);
         let mut direction_observations = Vec::new();
         let mut box_sizing_observations = Vec::new();
         let mut isolation_observations = Vec::new();
+        let mut order_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
             let property_range = cursor.window_for(occurrence.property_name())?;
@@ -286,6 +343,17 @@ pub(crate) fn run(
                     placement: occurrence.placement(),
                     outcome: qualify_isolation_value(value_items),
                 });
+                continue;
+            }
+
+            if property_name.eq_ignore_ascii_case("order") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                order_observations.push(CssOrderQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_order_value(value_items),
+                });
             }
         }
 
@@ -293,6 +361,7 @@ pub(crate) fn run(
             direction_observations,
             box_sizing_observations,
             isolation_observations,
+            order_observations,
         )
     };
 
@@ -301,6 +370,7 @@ pub(crate) fn run(
         direction_observations,
         box_sizing_observations,
         isolation_observations,
+        order_observations,
     })
 }
 
@@ -337,7 +407,6 @@ enum CssSingleKeywordValue<'a> {
 fn classify_single_keyword_value(items: &[CssLexicalItem]) -> CssSingleKeywordValue<'_> {
     let mut semantic_count = 0usize;
     let mut only_identifier = None;
-    let mut contains_deferred_substitution_function = false;
 
     for item in items {
         let CssLexicalItem::SemanticToken(token) = item else {
@@ -352,10 +421,6 @@ fn classify_single_keyword_value(items: &[CssLexicalItem]) -> CssSingleKeywordVa
             CssTokenKind::Ident(value) if semantic_count == 1 => {
                 only_identifier = Some(value.as_str());
             }
-            CssTokenKind::Function(name) => {
-                contains_deferred_substitution_function |= is_deferred_substitution_function(name);
-                only_identifier = None;
-            }
             _ => {
                 only_identifier = None;
             }
@@ -365,7 +430,7 @@ fn classify_single_keyword_value(items: &[CssLexicalItem]) -> CssSingleKeywordVa
     // Arbitrary substitution functions make parse-time grammar validity
     // deferred wherever they occur. Generic `<whole-value>` functions cross
     // this slice's boundary only when that function occupies the entire value.
-    if contains_deferred_substitution_function || is_entire_whole_value_function(items) {
+    if contains_deferred_substitution_function(items) || is_entire_whole_value_function(items) {
         return CssSingleKeywordValue::UnsupportedFunction;
     }
 
@@ -467,14 +532,25 @@ fn qualify_isolation_value(items: &[CssLexicalItem]) -> CssIsolationQualificatio
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CssValueBlockCloser {
-    Parenthesis,
-    SquareBracket,
-    CurlyBracket,
-}
+fn qualify_order_value(items: &[CssLexicalItem]) -> CssOrderQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssOrderQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssOrderUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
 
-fn is_entire_whole_value_function(items: &[CssLexicalItem]) -> bool {
+    if is_entire_whole_value_function(items) {
+        return CssOrderQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssOrderUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    if entire_function_name(items).is_some() {
+        return CssOrderQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssOrderUnsupportedReason::FunctionValue,
+        );
+    }
+
     let mut tokens = items.iter().filter_map(|item| match item {
         CssLexicalItem::SemanticToken(token)
             if !matches!(token.kind(), CssTokenKind::Whitespace) =>
@@ -484,20 +560,53 @@ fn is_entire_whole_value_function(items: &[CssLexicalItem]) -> bool {
         _ => None,
     });
 
-    let Some(first) = tokens.next() else {
-        return false;
+    let Some(token) = tokens.next() else {
+        return CssOrderQualificationOutcome::InvalidForSelectedValueGrammar;
     };
-    let CssTokenKind::Function(name) = first.kind() else {
-        return false;
-    };
-    if !is_whole_value_function(name) {
-        return false;
+    if tokens.next().is_some() {
+        return CssOrderQualificationOutcome::InvalidForSelectedValueGrammar;
     }
+
+    match token.kind() {
+        CssTokenKind::Number {
+            number_type: CssNumberType::Integer,
+            ..
+        } => CssOrderQualificationOutcome::Qualified(CssOrderValue::DirectIntegerLiteral),
+        CssTokenKind::Ident(identifier) if is_css_wide_keyword(identifier) => {
+            CssOrderQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssOrderUnsupportedReason::CssWideKeyword,
+            )
+        }
+        _ => CssOrderQualificationOutcome::InvalidForSelectedValueGrammar,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CssValueBlockCloser {
+    Parenthesis,
+    SquareBracket,
+    CurlyBracket,
+}
+
+fn entire_function_name(items: &[CssLexicalItem]) -> Option<&str> {
+    let mut tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+
+    let first = tokens.next()?;
+    let CssTokenKind::Function(name) = first.kind() else {
+        return None;
+    };
 
     let mut block_stack = vec![CssValueBlockCloser::Parenthesis];
     for token in tokens {
         if block_stack.is_empty() {
-            return false;
+            return None;
         }
 
         match token.kind() {
@@ -529,7 +638,23 @@ fn is_entire_whole_value_function(items: &[CssLexicalItem]) -> bool {
         }
     }
 
-    true
+    Some(name)
+}
+
+fn is_entire_whole_value_function(items: &[CssLexicalItem]) -> bool {
+    entire_function_name(items).is_some_and(is_whole_value_function)
+}
+
+fn contains_deferred_substitution_function(items: &[CssLexicalItem]) -> bool {
+    items.iter().any(|item| {
+        let CssLexicalItem::SemanticToken(token) = item else {
+            return false;
+        };
+        let CssTokenKind::Function(name) = token.kind() else {
+            return false;
+        };
+        is_deferred_substitution_function(name)
+    })
 }
 
 fn is_deferred_substitution_function(name: &str) -> bool {
