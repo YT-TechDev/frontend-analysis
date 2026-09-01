@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416).
+//! semantic Leaves (#413/#414/#416/#419).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -108,6 +108,51 @@ impl CssBoxSizingQualificationObservation {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssIsolationValue {
+    Auto,
+    Isolate,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssIsolationUnsupportedReason {
+    CssWideKeyword,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssIsolationQualificationOutcome {
+    Qualified(CssIsolationValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssIsolationUnsupportedReason),
+}
+
+/// One selected ordinary declaration's `isolation` value qualification.
+///
+/// Placement and `occurrence_index` remain run-local references into the exact
+/// parser result structurally owned by the enclosing
+/// [`CssValueQualificationRunResult`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssIsolationQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssIsolationQualificationOutcome,
+}
+
+impl CssIsolationQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssIsolationQualificationOutcome {
+        self.outcome
+    }
+}
+
 /// Run-owned result for the currently selected bounded CSS value capabilities.
 ///
 /// The exact Core-validated parser result is owned once here. Property-specific
@@ -120,6 +165,7 @@ pub(crate) struct CssValueQualificationRunResult {
     upstream_parser_result: CssParserRunResult,
     direction_observations: Vec<CssDirectionQualificationObservation>,
     box_sizing_observations: Vec<CssBoxSizingQualificationObservation>,
+    isolation_observations: Vec<CssIsolationQualificationObservation>,
 }
 
 impl CssValueQualificationRunResult {
@@ -133,6 +179,10 @@ impl CssValueQualificationRunResult {
 
     pub(crate) fn box_sizing_observations(&self) -> &[CssBoxSizingQualificationObservation] {
         &self.box_sizing_observations
+    }
+
+    pub(crate) fn isolation_observations(&self) -> &[CssIsolationQualificationObservation] {
+        &self.isolation_observations
     }
 
     pub(crate) const fn execution_completion(&self) -> CssParserExecutionCompletion {
@@ -194,11 +244,12 @@ pub(crate) enum CssValueQualificationInvariantViolation {
 pub(crate) fn run(
     parser_result: CssParserRunResult,
 ) -> Result<CssValueQualificationRunResult, CssValueQualificationError> {
-    let (direction_observations, box_sizing_observations) = {
+    let (direction_observations, box_sizing_observations, isolation_observations) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
         let mut cursor = LexicalWindowCursor::new(tokenizer_result);
         let mut direction_observations = Vec::new();
         let mut box_sizing_observations = Vec::new();
+        let mut isolation_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
             let property_range = cursor.window_for(occurrence.property_name())?;
@@ -224,16 +275,32 @@ pub(crate) fn run(
                     placement: occurrence.placement(),
                     outcome: qualify_box_sizing_value(value_items),
                 });
+                continue;
+            }
+
+            if property_name.eq_ignore_ascii_case("isolation") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                isolation_observations.push(CssIsolationQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_isolation_value(value_items),
+                });
             }
         }
 
-        (direction_observations, box_sizing_observations)
+        (
+            direction_observations,
+            box_sizing_observations,
+            isolation_observations,
+        )
     };
 
     Ok(CssValueQualificationRunResult {
         upstream_parser_result: parser_result,
         direction_observations,
         box_sizing_observations,
+        isolation_observations,
     })
 }
 
@@ -365,6 +432,37 @@ fn qualify_box_sizing_value(items: &[CssLexicalItem]) -> CssBoxSizingQualificati
         }
         CssSingleKeywordValue::Identifier(_) => {
             CssBoxSizingQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+    }
+}
+
+fn qualify_isolation_value(items: &[CssLexicalItem]) -> CssIsolationQualificationOutcome {
+    match classify_single_keyword_value(items) {
+        CssSingleKeywordValue::UnsupportedFunction => {
+            CssIsolationQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssIsolationUnsupportedReason::FunctionValue,
+            )
+        }
+        CssSingleKeywordValue::Invalid => {
+            CssIsolationQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("auto") =>
+        {
+            CssIsolationQualificationOutcome::Qualified(CssIsolationValue::Auto)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("isolate") =>
+        {
+            CssIsolationQualificationOutcome::Qualified(CssIsolationValue::Isolate)
+        }
+        CssSingleKeywordValue::Identifier(identifier) if is_css_wide_keyword(identifier) => {
+            CssIsolationQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssIsolationUnsupportedReason::CssWideKeyword,
+            )
+        }
+        CssSingleKeywordValue::Identifier(_) => {
+            CssIsolationQualificationOutcome::InvalidForSelectedValueGrammar
         }
     }
 }
