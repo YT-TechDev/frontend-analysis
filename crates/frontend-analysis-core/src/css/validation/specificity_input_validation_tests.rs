@@ -299,6 +299,87 @@ fn empty_non_forgiving_max_lists_fail_closed() {
 }
 
 #[test]
+fn nested_has_max_frames_fail_closed() {
+    let direct = GoldCandidate {
+        context: GoldContextId(1),
+        disposition: GoldCandidateDisposition::Program(GoldProgram {
+            owning_context: GoldContextId(1),
+            instructions: vec![
+                GoldInstruction::BeginMember,
+                GoldInstruction::BeginMax(GoldMaxKind::Has),
+                GoldInstruction::BeginMember,
+                GoldInstruction::BeginMax(GoldMaxKind::Has),
+                GoldInstruction::BeginMember,
+                GoldInstruction::Simple(GoldSimpleKind::Class),
+                GoldInstruction::EndMember,
+                GoldInstruction::EndMax(GoldMaxKind::Has),
+                GoldInstruction::EndMember,
+                GoldInstruction::EndMax(GoldMaxKind::Has),
+                GoldInstruction::EndMember,
+            ],
+        }),
+    };
+
+    let through_is = GoldCandidate {
+        context: GoldContextId(1),
+        disposition: GoldCandidateDisposition::Program(GoldProgram {
+            owning_context: GoldContextId(1),
+            instructions: vec![
+                GoldInstruction::BeginMember,
+                GoldInstruction::BeginMax(GoldMaxKind::Has),
+                GoldInstruction::BeginMember,
+                GoldInstruction::BeginMax(GoldMaxKind::Is),
+                GoldInstruction::BeginMember,
+                GoldInstruction::BeginMax(GoldMaxKind::Has),
+                GoldInstruction::BeginMember,
+                GoldInstruction::Simple(GoldSimpleKind::Class),
+                GoldInstruction::EndMember,
+                GoldInstruction::EndMax(GoldMaxKind::Has),
+                GoldInstruction::EndMember,
+                GoldInstruction::EndMax(GoldMaxKind::Is),
+                GoldInstruction::EndMember,
+                GoldInstruction::EndMax(GoldMaxKind::Has),
+                GoldInstruction::EndMember,
+            ],
+        }),
+    };
+
+    for candidate in [direct, through_is] {
+        assert_eq!(
+            resolve_candidates(&[candidate], GoldContextId(1)),
+            ReferenceOutcome::InvalidProgram
+        );
+    }
+
+    let non_nested = GoldCandidate {
+        context: GoldContextId(1),
+        disposition: GoldCandidateDisposition::Program(GoldProgram {
+            owning_context: GoldContextId(1),
+            instructions: vec![
+                GoldInstruction::BeginMember,
+                GoldInstruction::BeginMax(GoldMaxKind::Is),
+                GoldInstruction::BeginMember,
+                GoldInstruction::BeginMax(GoldMaxKind::Has),
+                GoldInstruction::BeginMember,
+                GoldInstruction::Simple(GoldSimpleKind::Class),
+                GoldInstruction::EndMember,
+                GoldInstruction::EndMax(GoldMaxKind::Has),
+                GoldInstruction::EndMember,
+                GoldInstruction::EndMax(GoldMaxKind::Is),
+                GoldInstruction::EndMember,
+            ],
+        }),
+    };
+
+    assert_eq!(
+        resolve_candidates(&[non_nested], GoldContextId(1)),
+        ReferenceOutcome::Known(vec![
+            super::specificity_input_gold::GoldSpecificity::new(0, 1, 0),
+        ])
+    );
+}
+
+#[test]
 fn derived_relationships_cannot_fabricate_authored_ranges_by_type() {
     use super::specificity_input_gold::GoldRelationshipOrigin;
     let derived = GoldRelationshipOrigin::Derived;
