@@ -1,12 +1,11 @@
 use super::specificity_input_fixtures::fixtures;
 use super::specificity_input_gold::{
-    validate_authored_relationship_provenance, GoldCandidate, GoldCandidateDisposition,
-    GoldContextId, GoldExpectedOutcome, GoldInstruction, GoldMaxKind, GoldProgram,
-    GoldQualifierCompletion, GoldQualifierOutcome, GoldQualifierSnapshot, GoldSimpleKind,
-    SidecarCandidatePlan,
-    SidecarCompletion, SidecarEvent, SidecarFailure, SidecarLimits, SidecarResource,
+    GoldCandidate, GoldCandidateDisposition, GoldContextId, GoldExpectedOutcome, GoldInstruction,
+    GoldMaxKind, GoldProgram, GoldQualifierCompletion, GoldQualifierOutcome, GoldQualifierSnapshot,
+    GoldSimpleKind, SidecarCandidatePlan, SidecarCompletion, SidecarEvent, SidecarFailure,
+    SidecarLimits, SidecarResource, validate_authored_relationship_provenance,
 };
-use super::specificity_input_reference::{collect_sidecars, resolve_candidates, ReferenceOutcome};
+use super::specificity_input_reference::{ReferenceOutcome, collect_sidecars, resolve_candidates};
 
 #[test]
 fn v1_through_v20_handwritten_gold_matches_source_free_reference() {
@@ -18,7 +17,9 @@ fn v1_through_v20_handwritten_gold_matches_source_free_reference() {
         }
         let prefix = format!("V{required}");
         assert!(
-            fixtures.iter().any(|fixture| fixture.id.starts_with(&prefix)),
+            fixtures
+                .iter()
+                .any(|fixture| fixture.id.starts_with(&prefix)),
             "missing {prefix} fixture"
         );
     }
@@ -27,10 +28,20 @@ fn v1_through_v20_handwritten_gold_matches_source_free_reference() {
         let actual = resolve_candidates(&fixture.candidates, fixture.target);
         match fixture.expected {
             GoldExpectedOutcome::Known(expected) => {
-                assert_eq!(actual, ReferenceOutcome::Known(expected.to_vec()), "{}", fixture.id);
+                assert_eq!(
+                    actual,
+                    ReferenceOutcome::Known(expected.to_vec()),
+                    "{}",
+                    fixture.id
+                );
             }
             GoldExpectedOutcome::BlockedOnParent(parent) => {
-                assert_eq!(actual, ReferenceOutcome::BlockedOnParent(parent), "{}", fixture.id);
+                assert_eq!(
+                    actual,
+                    ReferenceOutcome::BlockedOnParent(parent),
+                    "{}",
+                    fixture.id
+                );
             }
             GoldExpectedOutcome::DeferredByNormativeAmbiguity => {
                 assert_eq!(
@@ -112,7 +123,10 @@ fn v16_preparation_refusal_preserves_qualifier_and_committed_prefix() {
         result.events.last(),
         Some(SidecarEvent::AncestryPreflight { granted: false })
     ));
-    assert!(!matches!(result.events.last(), Some(SidecarEvent::AncestryInspect)));
+    assert!(!matches!(
+        result.events.last(),
+        Some(SidecarEvent::AncestryInspect)
+    ));
 }
 
 #[test]
@@ -144,7 +158,9 @@ fn v16_retained_input_refusal_preflights_complete_delta_before_commit() {
     assert_eq!(result.completion, SidecarCompletion::Incomplete);
     assert_eq!(
         result.failure,
-        Some(SidecarFailure::Resource(SidecarResource::RetainedInputUnits))
+        Some(SidecarFailure::Resource(
+            SidecarResource::RetainedInputUnits
+        ))
     );
     assert_eq!(result.committed, vec![plans[0].candidate.clone()]);
     assert_eq!(result.retained_input_units, 4);
@@ -178,7 +194,10 @@ fn v18_gold_and_reference_are_source_parser_and_historical_handoff_free() {
 
     for source in files {
         for token in forbidden {
-            assert!(!source.contains(token), "forbidden validation dependency: {token}");
+            assert!(
+                !source.contains(token),
+                "forbidden validation dependency: {token}"
+            );
         }
     }
 }
