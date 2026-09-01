@@ -6,6 +6,7 @@ pub(crate) mod parser;
 pub(crate) mod selector;
 pub(crate) mod token;
 pub(crate) mod tokenizer;
+pub(crate) mod value_qualification;
 
 #[cfg(test)]
 mod token_tests;
