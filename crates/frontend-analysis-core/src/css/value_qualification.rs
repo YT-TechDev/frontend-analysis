@@ -205,7 +205,7 @@ fn single_property_identifier(
 fn qualify_direction_value(items: &[CssLexicalItem]) -> CssDirectionQualificationOutcome {
     let mut semantic_count = 0usize;
     let mut only_identifier = None;
-    let mut contains_profile_unsupported_function = false;
+    let mut contains_deferred_substitution_function = false;
 
     for item in items {
         let CssLexicalItem::SemanticToken(token) = item else {
@@ -221,7 +221,7 @@ fn qualify_direction_value(items: &[CssLexicalItem]) -> CssDirectionQualificatio
                 only_identifier = Some(value.as_str());
             }
             CssTokenKind::Function(name) => {
-                contains_profile_unsupported_function |= is_profile_unsupported_function(name);
+                contains_deferred_substitution_function |= is_deferred_substitution_function(name);
                 only_identifier = None;
             }
             _ => {
@@ -230,12 +230,10 @@ fn qualify_direction_value(items: &[CssLexicalItem]) -> CssDirectionQualificatio
         }
     }
 
-    // Functions whose value is substituted after parsing and generic
-    // `<whole-value>` functions both cross this slice's selected grammar
-    // boundary. The profile deliberately does not implement those semantics,
-    // while an ordinary function such as `foo()` remains a direct mismatch for
-    // the selected `ltr | rtl` grammar.
-    if contains_profile_unsupported_function {
+    // Arbitrary substitution functions make parse-time grammar validity
+    // deferred wherever they occur. Generic `<whole-value>` functions cross
+    // this slice's boundary only when that function occupies the entire value.
+    if contains_deferred_substitution_function || is_entire_whole_value_function(items) {
         return CssDirectionQualificationOutcome::UnsupportedBySelectedValueProfile(
             CssDirectionUnsupportedReason::FunctionValue,
         );
@@ -264,8 +262,69 @@ fn qualify_direction_value(items: &[CssLexicalItem]) -> CssDirectionQualificatio
     CssDirectionQualificationOutcome::InvalidForSelectedValueGrammar
 }
 
-fn is_profile_unsupported_function(name: &str) -> bool {
-    is_deferred_substitution_function(name) || is_whole_value_function(name)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CssValueBlockCloser {
+    Parenthesis,
+    SquareBracket,
+    CurlyBracket,
+}
+
+fn is_entire_whole_value_function(items: &[CssLexicalItem]) -> bool {
+    let mut tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+
+    let Some(first) = tokens.next() else {
+        return false;
+    };
+    let CssTokenKind::Function(name) = first.kind() else {
+        return false;
+    };
+    if !is_whole_value_function(name) {
+        return false;
+    }
+
+    let mut block_stack = vec![CssValueBlockCloser::Parenthesis];
+    for token in tokens {
+        if block_stack.is_empty() {
+            return false;
+        }
+
+        match token.kind() {
+            CssTokenKind::Function(_) | CssTokenKind::LeftParenthesis => {
+                block_stack.push(CssValueBlockCloser::Parenthesis);
+            }
+            CssTokenKind::LeftSquareBracket => {
+                block_stack.push(CssValueBlockCloser::SquareBracket);
+            }
+            CssTokenKind::LeftCurlyBracket => {
+                block_stack.push(CssValueBlockCloser::CurlyBracket);
+            }
+            CssTokenKind::RightParenthesis
+                if block_stack.last() == Some(&CssValueBlockCloser::Parenthesis) =>
+            {
+                block_stack.pop();
+            }
+            CssTokenKind::RightSquareBracket
+                if block_stack.last() == Some(&CssValueBlockCloser::SquareBracket) =>
+            {
+                block_stack.pop();
+            }
+            CssTokenKind::RightCurlyBracket
+                if block_stack.last() == Some(&CssValueBlockCloser::CurlyBracket) =>
+            {
+                block_stack.pop();
+            }
+            _ => {}
+        }
+    }
+
+    true
 }
 
 fn is_deferred_substitution_function(name: &str) -> bool {
