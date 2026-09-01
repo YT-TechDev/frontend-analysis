@@ -14,9 +14,7 @@ use crate::{SourceAnchor, SourceId};
 
 use super::declaration::CssDeclarationPlacement;
 use super::parser::result::{CssParserExecutionCompletion, CssParserRunResult};
-use super::token::{
-    CssLexicalItem, CssNumberSign, CssNumberType, CssNumericValue, CssTokenKind,
-};
+use super::token::{CssLexicalItem, CssNumberSign, CssNumberType, CssNumericValue, CssTokenKind};
 use super::tokenizer::result::CssTokenizerRunResult;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -839,9 +837,9 @@ fn qualify_column_count_value(items: &[CssLexicalItem]) -> CssColumnCountQualifi
         CssTokenKind::Number {
             value,
             number_type: CssNumberType::Integer,
-        } if is_positive_direct_integer(value) => CssColumnCountQualificationOutcome::Qualified(
-            CssColumnCountValue::DirectIntegerLiteral,
-        ),
+        } if is_positive_direct_integer(value) => {
+            CssColumnCountQualificationOutcome::Qualified(CssColumnCountValue::DirectIntegerLiteral)
+        }
         CssTokenKind::Ident(identifier) if is_css_wide_keyword(identifier) => {
             CssColumnCountQualificationOutcome::UnsupportedBySelectedValueProfile(
                 CssColumnCountUnsupportedReason::CssWideKeyword,
