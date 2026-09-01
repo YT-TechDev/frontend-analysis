@@ -275,6 +275,30 @@ fn malformed_empty_max_member_fails_closed_without_rejecting_empty_surviving_max
 }
 
 #[test]
+fn empty_non_forgiving_max_lists_fail_closed() {
+    for kind in [GoldMaxKind::Not, GoldMaxKind::Has] {
+        let candidate = GoldCandidate {
+            context: GoldContextId(1),
+            disposition: GoldCandidateDisposition::Program(GoldProgram {
+                owning_context: GoldContextId(1),
+                instructions: vec![
+                    GoldInstruction::BeginMember,
+                    GoldInstruction::BeginMax(kind),
+                    GoldInstruction::EndMax(kind),
+                    GoldInstruction::EndMember,
+                ],
+            }),
+        };
+
+        assert_eq!(
+            resolve_candidates(&[candidate], GoldContextId(1)),
+            ReferenceOutcome::InvalidProgram,
+            "{kind:?} must not accept an empty selector list"
+        );
+    }
+}
+
+#[test]
 fn derived_relationships_cannot_fabricate_authored_ranges_by_type() {
     use super::specificity_input_gold::GoldRelationshipOrigin;
     let derived = GoldRelationshipOrigin::Derived;
