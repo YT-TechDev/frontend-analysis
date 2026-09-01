@@ -380,6 +380,83 @@ fn nested_has_max_frames_fail_closed() {
 }
 
 #[test]
+fn derived_root_relationship_cardinality_and_placement_fail_closed() {
+    use super::specificity_input_gold::{GoldRelationshipOrigin, GoldRelationshipTarget};
+
+    let parent = minimal_candidate(1, GoldSimpleKind::Id);
+    let relationship = GoldInstruction::Relationship {
+        target: GoldRelationshipTarget::ParentSelectorList(GoldContextId(1)),
+        origin: GoldRelationshipOrigin::Derived,
+    };
+
+    let duplicate_in_one_outer_member = GoldCandidate {
+        context: GoldContextId(2),
+        disposition: GoldCandidateDisposition::Program(GoldProgram {
+            owning_context: GoldContextId(2),
+            instructions: vec![
+                GoldInstruction::BeginMember,
+                relationship,
+                relationship,
+                GoldInstruction::Simple(GoldSimpleKind::Class),
+                GoldInstruction::EndMember,
+            ],
+        }),
+    };
+    assert_eq!(
+        resolve_candidates(
+            &[parent.clone(), duplicate_in_one_outer_member],
+            GoldContextId(2)
+        ),
+        ReferenceOutcome::InvalidProgram
+    );
+
+    let derived_inside_max = GoldCandidate {
+        context: GoldContextId(2),
+        disposition: GoldCandidateDisposition::Program(GoldProgram {
+            owning_context: GoldContextId(2),
+            instructions: vec![
+                GoldInstruction::BeginMember,
+                GoldInstruction::BeginMax(GoldMaxKind::Is),
+                GoldInstruction::BeginMember,
+                relationship,
+                GoldInstruction::Simple(GoldSimpleKind::Class),
+                GoldInstruction::EndMember,
+                GoldInstruction::EndMax(GoldMaxKind::Is),
+                GoldInstruction::EndMember,
+            ],
+        }),
+    };
+    assert_eq!(
+        resolve_candidates(&[parent.clone(), derived_inside_max], GoldContextId(2)),
+        ReferenceOutcome::InvalidProgram
+    );
+
+    let one_per_outer_member = GoldCandidate {
+        context: GoldContextId(2),
+        disposition: GoldCandidateDisposition::Program(GoldProgram {
+            owning_context: GoldContextId(2),
+            instructions: vec![
+                GoldInstruction::BeginMember,
+                relationship,
+                GoldInstruction::Simple(GoldSimpleKind::Class),
+                GoldInstruction::EndMember,
+                GoldInstruction::BeginMember,
+                relationship,
+                GoldInstruction::Simple(GoldSimpleKind::Type),
+                GoldInstruction::EndMember,
+            ],
+        }),
+    };
+    assert_eq!(
+        resolve_candidates(&[parent, one_per_outer_member], GoldContextId(2)),
+        ReferenceOutcome::Known(vec![
+            super::specificity_input_gold::GoldSpecificity::new(1, 1, 0),
+            super::specificity_input_gold::GoldSpecificity::new(1, 0, 1),
+        ])
+    );
+}
+
+#[test]
 fn derived_relationships_cannot_fabricate_authored_ranges_by_type() {
     use super::specificity_input_gold::GoldRelationshipOrigin;
     let derived = GoldRelationshipOrigin::Derived;
