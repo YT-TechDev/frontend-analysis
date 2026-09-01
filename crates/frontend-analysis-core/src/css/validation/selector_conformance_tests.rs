@@ -36,7 +36,7 @@ fn parser_limits() -> CssParserLimits {
 }
 
 fn selector_limits() -> CssSelectorLimits {
-    CssSelectorLimits::new(200_000, 128, 16 * 1024, 128 * 1024).unwrap()
+    CssSelectorLimits::new(200_000, 128, 16 * 1024).unwrap()
 }
 
 fn expected_mode(mode: SelectorGoldMode, actual: CssSelectorGrammarContext) -> bool {
@@ -183,7 +183,7 @@ fn selector_observation_resource_refusal_preserves_committed_prefix() {
         &source,
         tokenizer_limits(),
         parser_limits(),
-        CssSelectorLimits::new(200_000, 128, 1, 128 * 1024).unwrap(),
+        CssSelectorLimits::new(200_000, 128, 1).unwrap(),
     )
     .unwrap();
 
@@ -206,7 +206,7 @@ fn selector_depth_refusal_commits_no_partial_observation() {
         &source,
         tokenizer_limits(),
         parser_limits(),
-        CssSelectorLimits::new(200_000, 0, 16, 128 * 1024).unwrap(),
+        CssSelectorLimits::new(200_000, 0, 16).unwrap(),
     )
     .unwrap();
 
@@ -225,7 +225,7 @@ fn selector_algorithm_step_refusal_commits_no_partial_observation() {
         &source,
         tokenizer_limits(),
         parser_limits(),
-        CssSelectorLimits::new(1, 128, 16, 128 * 1024).unwrap(),
+        CssSelectorLimits::new(1, 128, 16).unwrap(),
     )
     .unwrap();
 

@@ -1,10 +1,8 @@
-//! Selector-semantic resource contracts (#182, extended by #405).
+//! Selector-semantic resource contracts (#182).
 //!
 //! These counters are deliberately independent from parser resources. The
-//! selector producer must never consume parser counters as a hidden execution
-//! budget. #405 adds `RetainedSemanticUnits`, the only selector-owned
-//! persistent dimension bounding retained semantic-handoff evidence; the
-//! existing three dimensions keep their exact #182/#184 meanings.
+//! later selector producer must never consume parser counters as a hidden
+//! execution budget.
 
 use std::error::Error;
 use std::fmt;
@@ -16,7 +14,6 @@ pub(crate) enum CssSelectorResourceKind {
     AlgorithmSteps,
     PeakSelectorDepth,
     Observations,
-    RetainedSemanticUnits,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,20 +21,13 @@ pub(crate) struct CssSelectorLimits {
     max_algorithm_steps: usize,
     max_peak_selector_depth: usize,
     max_observations: usize,
-    max_retained_semantic_units: usize,
 }
 
 impl CssSelectorLimits {
-    /// Configures every selector execution limit explicitly.
-    ///
-    /// `max_retained_semantic_units` is required rather than defaulted: #405
-    /// prohibits a silently unbounded retention budget, so every selector
-    /// execution call site must state the retained-semantic limit it accepts.
     pub(crate) fn new(
         max_algorithm_steps: usize,
         max_peak_selector_depth: usize,
         max_observations: usize,
-        max_retained_semantic_units: usize,
     ) -> Result<Self, CssSelectorInvalidConfiguration> {
         if max_algorithm_steps == 0 {
             return Err(CssSelectorInvalidConfiguration::ZeroAlgorithmSteps);
@@ -46,7 +36,6 @@ impl CssSelectorLimits {
             max_algorithm_steps,
             max_peak_selector_depth,
             max_observations,
-            max_retained_semantic_units,
         })
     }
 
@@ -55,7 +44,6 @@ impl CssSelectorLimits {
             CssSelectorResourceKind::AlgorithmSteps => self.max_algorithm_steps,
             CssSelectorResourceKind::PeakSelectorDepth => self.max_peak_selector_depth,
             CssSelectorResourceKind::Observations => self.max_observations,
-            CssSelectorResourceKind::RetainedSemanticUnits => self.max_retained_semantic_units,
         }
     }
 }
@@ -78,7 +66,6 @@ pub(crate) struct CssSelectorResourceUsage {
     algorithm_steps: usize,
     peak_selector_depth: usize,
     observations: usize,
-    retained_semantic_units: usize,
 }
 
 impl CssSelectorResourceUsage {
@@ -86,13 +73,11 @@ impl CssSelectorResourceUsage {
         algorithm_steps: usize,
         peak_selector_depth: usize,
         observations: usize,
-        retained_semantic_units: usize,
     ) -> Self {
         Self {
             algorithm_steps,
             peak_selector_depth,
             observations,
-            retained_semantic_units,
         }
     }
 
@@ -101,7 +86,6 @@ impl CssSelectorResourceUsage {
             CssSelectorResourceKind::AlgorithmSteps => self.algorithm_steps,
             CssSelectorResourceKind::PeakSelectorDepth => self.peak_selector_depth,
             CssSelectorResourceKind::Observations => self.observations,
-            CssSelectorResourceKind::RetainedSemanticUnits => self.retained_semantic_units,
         }
     }
 }
@@ -231,10 +215,7 @@ impl fmt::Display for CssSelectorResourceContractError {
 
 impl Error for CssSelectorResourceContractError {}
 
-/// Checked accounting primitive for selector resource commitment.
-///
-/// Overflow is an internal resource-contract failure, never a semantic
-/// `ResourceLimit` refusal.
+/// Checked accounting primitive for the future selector producer.
 pub(crate) fn checked_resource_add(
     current: usize,
     delta: usize,
@@ -252,40 +233,20 @@ mod tests {
     #[test]
     fn only_algorithm_steps_must_be_non_zero() {
         assert_eq!(
-            CssSelectorLimits::new(0, 1, 1, 1),
+            CssSelectorLimits::new(0, 1, 1),
             Err(CssSelectorInvalidConfiguration::ZeroAlgorithmSteps)
         );
-        let limits = CssSelectorLimits::new(1, 0, 0, 0).unwrap();
+        let limits = CssSelectorLimits::new(1, 0, 0).unwrap();
         assert_eq!(limits.limit(CssSelectorResourceKind::PeakSelectorDepth), 0);
         assert_eq!(limits.limit(CssSelectorResourceKind::Observations), 0);
-        assert_eq!(
-            limits.limit(CssSelectorResourceKind::RetainedSemanticUnits),
-            0
-        );
-    }
-
-    #[test]
-    fn retained_semantic_limit_is_explicit_and_independently_configured() {
-        let limits = CssSelectorLimits::new(9, 8, 7, 6).unwrap();
-        assert_eq!(limits.limit(CssSelectorResourceKind::AlgorithmSteps), 9);
-        assert_eq!(limits.limit(CssSelectorResourceKind::PeakSelectorDepth), 8);
-        assert_eq!(limits.limit(CssSelectorResourceKind::Observations), 7);
-        assert_eq!(
-            limits.limit(CssSelectorResourceKind::RetainedSemanticUnits),
-            6
-        );
     }
 
     #[test]
     fn resource_dimensions_are_independent() {
-        let usage = CssSelectorResourceUsage::new(7, 3, 2, 5);
+        let usage = CssSelectorResourceUsage::new(7, 3, 2);
         assert_eq!(usage.value(CssSelectorResourceKind::AlgorithmSteps), 7);
         assert_eq!(usage.value(CssSelectorResourceKind::PeakSelectorDepth), 3);
         assert_eq!(usage.value(CssSelectorResourceKind::Observations), 2);
-        assert_eq!(
-            usage.value(CssSelectorResourceKind::RetainedSemanticUnits),
-            5
-        );
     }
 
     #[test]
