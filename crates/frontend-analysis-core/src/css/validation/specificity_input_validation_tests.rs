@@ -1,8 +1,9 @@
 use super::specificity_input_fixtures::fixtures;
 use super::specificity_input_gold::{
     validate_authored_relationship_provenance, GoldCandidate, GoldCandidateDisposition,
-    GoldContextId, GoldExpectedOutcome, GoldInstruction, GoldProgram, GoldQualifierCompletion,
-    GoldQualifierOutcome, GoldQualifierSnapshot, GoldSimpleKind, SidecarCandidatePlan,
+    GoldContextId, GoldExpectedOutcome, GoldInstruction, GoldMaxKind, GoldProgram,
+    GoldQualifierCompletion, GoldQualifierOutcome, GoldQualifierSnapshot, GoldSimpleKind,
+    SidecarCandidatePlan,
     SidecarCompletion, SidecarEvent, SidecarFailure, SidecarLimits, SidecarResource,
 };
 use super::specificity_input_reference::{collect_sidecars, resolve_candidates, ReferenceOutcome};
@@ -180,6 +181,78 @@ fn v18_gold_and_reference_are_source_parser_and_historical_handoff_free() {
             assert!(!source.contains(token), "forbidden validation dependency: {token}");
         }
     }
+}
+
+#[test]
+fn malformed_empty_root_program_fails_closed() {
+    let candidate = GoldCandidate {
+        context: GoldContextId(1),
+        disposition: GoldCandidateDisposition::Program(GoldProgram {
+            owning_context: GoldContextId(1),
+            instructions: vec![],
+        }),
+    };
+
+    assert_eq!(
+        resolve_candidates(&[candidate], GoldContextId(1)),
+        ReferenceOutcome::InvalidProgram
+    );
+}
+
+#[test]
+fn malformed_empty_outer_member_fails_closed() {
+    let candidate = GoldCandidate {
+        context: GoldContextId(1),
+        disposition: GoldCandidateDisposition::Program(GoldProgram {
+            owning_context: GoldContextId(1),
+            instructions: vec![GoldInstruction::BeginMember, GoldInstruction::EndMember],
+        }),
+    };
+
+    assert_eq!(
+        resolve_candidates(&[candidate], GoldContextId(1)),
+        ReferenceOutcome::InvalidProgram
+    );
+}
+
+#[test]
+fn malformed_empty_max_member_fails_closed_without_rejecting_empty_surviving_max() {
+    let candidate = GoldCandidate {
+        context: GoldContextId(1),
+        disposition: GoldCandidateDisposition::Program(GoldProgram {
+            owning_context: GoldContextId(1),
+            instructions: vec![
+                GoldInstruction::BeginMember,
+                GoldInstruction::BeginMax(GoldMaxKind::Is),
+                GoldInstruction::BeginMember,
+                GoldInstruction::EndMember,
+                GoldInstruction::EndMax(GoldMaxKind::Is),
+                GoldInstruction::EndMember,
+            ],
+        }),
+    };
+
+    assert_eq!(
+        resolve_candidates(&[candidate], GoldContextId(1)),
+        ReferenceOutcome::InvalidProgram
+    );
+
+    let surviving_empty_max = GoldCandidate {
+        context: GoldContextId(1),
+        disposition: GoldCandidateDisposition::Program(GoldProgram {
+            owning_context: GoldContextId(1),
+            instructions: vec![
+                GoldInstruction::BeginMember,
+                GoldInstruction::BeginMax(GoldMaxKind::Is),
+                GoldInstruction::EndMax(GoldMaxKind::Is),
+                GoldInstruction::EndMember,
+            ],
+        }),
+    };
+    assert_eq!(
+        resolve_candidates(&[surviving_empty_max], GoldContextId(1)),
+        ReferenceOutcome::Known(vec![super::specificity_input_gold::GoldSpecificity::ZERO])
+    );
 }
 
 #[test]
