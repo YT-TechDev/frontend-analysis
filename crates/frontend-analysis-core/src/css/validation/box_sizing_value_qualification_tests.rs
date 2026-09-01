@@ -177,14 +177,16 @@ fn profile_unsupported_functions_fail_open_but_ordinary_functions_are_invalid() 
         "d{box-sizing:first-valid(content-box,border-box);}",
         "e{box-sizing:cycle(content-box,border-box);}",
         "f{box-sizing:interpolate(0%,0:content-box,1:border-box);}",
-        "g{box-sizing:foo();}",
-        "h{box-sizing:calc(1);}",
+        "g{box-sizing:--sizing();}",
+        "h{box-sizing:foo();}",
+        "i{box-sizing:calc(1);}",
     );
     let result = qualify(103, css);
 
     assert_expected(
         &result,
         &[
+            ExpectedOutcome::UnsupportedFunction,
             ExpectedOutcome::UnsupportedFunction,
             ExpectedOutcome::UnsupportedFunction,
             ExpectedOutcome::UnsupportedFunction,
