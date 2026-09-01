@@ -3,8 +3,8 @@ use crate::css::parser::resource::CssParserLimits;
 use crate::css::parser::result::CssParserExecutionCompletion;
 use crate::css::tokenizer::resource::CssTokenizerLimits;
 use crate::css::value_qualification::{
-    CssDirectionQualificationOutcome, CssDirectionQualificationRunResult,
-    CssDirectionUnsupportedReason, CssDirectionValue, run,
+    CssDirectionQualificationOutcome, CssDirectionUnsupportedReason, CssDirectionValue,
+    CssValueQualificationRunResult, run,
 };
 use crate::{SourceId, SourceText};
 
@@ -40,7 +40,7 @@ fn parser_limits_with_occurrences(max_declaration_occurrences: usize) -> CssPars
     .unwrap()
 }
 
-fn qualify(source_id: u64, css: &str) -> CssDirectionQualificationRunResult {
+fn qualify(source_id: u64, css: &str) -> CssValueQualificationRunResult {
     qualify_with_limits(source_id, css, parser_limits())
 }
 
@@ -48,15 +48,15 @@ fn qualify_with_limits(
     source_id: u64,
     css: &str,
     parser_limits: CssParserLimits,
-) -> CssDirectionQualificationRunResult {
+) -> CssValueQualificationRunResult {
     let source = SourceText::new(SourceId::new(source_id), css.to_owned());
     let parser_result = analyze_css_source(&source, tokenizer_limits(), parser_limits).unwrap();
     run(parser_result).unwrap()
 }
 
-fn assert_expected(result: &CssDirectionQualificationRunResult, expected: &[ExpectedOutcome]) {
+fn assert_expected(result: &CssValueQualificationRunResult, expected: &[ExpectedOutcome]) {
     let actual: Vec<_> = result
-        .observations()
+        .direction_observations()
         .iter()
         .map(|observation| observation.outcome())
         .collect();
@@ -216,11 +216,11 @@ fn duplicate_selected_declarations_keep_distinct_run_local_placement() {
     let result = qualify(5, "a{direction:ltr;}b{direction:ltr;}");
 
     assert_expected(&result, &[ExpectedOutcome::Ltr, ExpectedOutcome::Ltr]);
-    assert_eq!(result.observations()[0].occurrence_index(), 0);
-    assert_eq!(result.observations()[1].occurrence_index(), 1);
+    assert_eq!(result.direction_observations()[0].occurrence_index(), 0);
+    assert_eq!(result.direction_observations()[1].occurrence_index(), 1);
     assert_ne!(
-        result.observations()[0].placement().context_id(),
-        result.observations()[1].placement().context_id(),
+        result.direction_observations()[0].placement().context_id(),
+        result.direction_observations()[1].placement().context_id(),
     );
 }
 
@@ -234,7 +234,7 @@ fn nonordinary_declaration_shaped_contexts_do_not_become_direction_observations(
     ] {
         let result = qualify(source_id, css);
         assert!(
-            result.observations().is_empty(),
+            result.direction_observations().is_empty(),
             "nonordinary declaration context produced a direction observation for {css:?}"
         );
     }
@@ -263,6 +263,12 @@ fn repeated_and_cross_source_runs_are_semantically_deterministic() {
     let repeated = qualify(30, css);
     let another_source = qualify(31, css);
 
-    assert_eq!(first.observations(), repeated.observations());
-    assert_eq!(first.observations(), another_source.observations());
+    assert_eq!(
+        first.direction_observations(),
+        repeated.direction_observations()
+    );
+    assert_eq!(
+        first.direction_observations(),
+        another_source.direction_observations()
+    );
 }

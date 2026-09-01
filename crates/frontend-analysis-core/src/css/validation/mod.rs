@@ -21,6 +21,8 @@ mod parser_gold;
 mod selector_gold;
 
 #[cfg(test)]
+mod box_sizing_value_qualification_tests;
+#[cfg(test)]
 mod conformance_tests;
 #[cfg(test)]
 mod context_conformance_tests;
