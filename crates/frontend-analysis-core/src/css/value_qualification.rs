@@ -446,7 +446,9 @@ fn qualify_isolation_value(items: &[CssLexicalItem]) -> CssIsolationQualificatio
         CssSingleKeywordValue::Invalid => {
             CssIsolationQualificationOutcome::InvalidForSelectedValueGrammar
         }
-        CssSingleKeywordValue::Identifier(identifier) if identifier.eq_ignore_ascii_case("auto") => {
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("auto") =>
+        {
             CssIsolationQualificationOutcome::Qualified(CssIsolationValue::Auto)
         }
         CssSingleKeywordValue::Identifier(identifier)
