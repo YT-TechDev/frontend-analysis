@@ -155,10 +155,11 @@ fn direct_mismatches_are_invalid_without_computed_or_runtime_reasoning() {
             "f{scroll-snap-align:foo();}",
             "g{scroll-snap-align:calc(1);}",
             "h{scroll-snap-align:(start);}",
+            "i{scroll-snap-align:;}",
         ),
     );
 
-    assert_expected(&result, &[ExpectedOutcome::Invalid; 8]);
+    assert_expected(&result, &[ExpectedOutcome::Invalid; 9]);
 }
 
 #[test]
