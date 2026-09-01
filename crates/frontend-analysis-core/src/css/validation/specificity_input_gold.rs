@@ -270,10 +270,7 @@ pub(super) fn validate_authored_relationship_provenance(
 mod provenance_tests {
     use super::*;
 
-    fn fixture_with_authored_ranges(
-        source: &'static str,
-        ranges: &[GoldByteRange],
-    ) -> GoldFixture {
+    fn fixture_with_authored_ranges(source: &'static str, ranges: &[GoldByteRange]) -> GoldFixture {
         let context = GoldContextId(2);
         let mut instructions = vec![GoldInstruction::BeginMember];
         let mut authored_relationships = Vec::new();
