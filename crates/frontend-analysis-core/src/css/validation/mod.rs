@@ -68,3 +68,12 @@ mod selector_semantic_handoff_reference;
 mod selector_semantic_handoff_validation_tests;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod specificity_input_fixtures;
+#[cfg(test)]
+mod specificity_input_gold;
+#[cfg(test)]
+mod specificity_input_reference;
+#[cfg(test)]
+mod specificity_input_validation_tests;
