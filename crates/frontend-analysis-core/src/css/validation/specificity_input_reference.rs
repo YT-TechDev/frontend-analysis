@@ -6,9 +6,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::specificity_input_gold::{
     GoldCandidate, GoldCandidateDisposition, GoldContextId, GoldInstruction, GoldMaxKind,
-    GoldQualifierSnapshot, GoldRelationshipTarget, GoldSimpleKind, GoldSpecificity,
-    SidecarCandidatePlan, SidecarCollection, SidecarCompletion, SidecarEvent, SidecarFailure,
-    SidecarLimits, SidecarResource,
+    GoldQualifierSnapshot, GoldRelationshipOrigin, GoldRelationshipTarget, GoldSimpleKind,
+    GoldSpecificity, SidecarCandidatePlan, SidecarCollection, SidecarCompletion, SidecarEvent,
+    SidecarFailure, SidecarLimits, SidecarResource,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,6 +32,7 @@ struct Container {
     kind: ContainerKind,
     current: Option<GoldSpecificity>,
     current_has_input: bool,
+    current_has_derived_relationship: bool,
     completed: Vec<GoldSpecificity>,
 }
 
@@ -41,6 +42,7 @@ impl Container {
             kind: ContainerKind::Root,
             current: None,
             current_has_input: false,
+            current_has_derived_relationship: false,
             completed: Vec::new(),
         }
     }
@@ -50,6 +52,7 @@ impl Container {
             kind: ContainerKind::Max(kind),
             current: None,
             current_has_input: false,
+            current_has_derived_relationship: false,
             completed: Vec::new(),
         }
     }
@@ -98,6 +101,23 @@ fn add_to_current(
     };
     *current = checked_add(*current, contribution)?;
     container.current_has_input = true;
+    Ok(())
+}
+
+fn mark_derived_root_relationship(containers: &mut [Container]) -> Result<(), ReferenceOutcome> {
+    if containers.len() != 1 {
+        return Err(ReferenceOutcome::InvalidProgram);
+    }
+    let Some(root) = containers.last_mut() else {
+        return Err(ReferenceOutcome::InvalidProgram);
+    };
+    if root.kind != ContainerKind::Root
+        || root.current.is_none()
+        || root.current_has_derived_relationship
+    {
+        return Err(ReferenceOutcome::InvalidProgram);
+    }
+    root.current_has_derived_relationship = true;
     Ok(())
 }
 
@@ -193,6 +213,7 @@ impl Resolver {
                     } else {
                         container.current = Some(GoldSpecificity::ZERO);
                         container.current_has_input = false;
+                        container.current_has_derived_relationship = false;
                         Ok(())
                     }
                 }
@@ -207,6 +228,7 @@ impl Resolver {
                         return ReferenceOutcome::InvalidProgram;
                     };
                     container.current_has_input = false;
+                    container.current_has_derived_relationship = false;
                     container.completed.push(value);
                     Ok(())
                 }
@@ -255,20 +277,27 @@ impl Resolver {
                 GoldInstruction::WhereZero => {
                     add_to_current(&mut containers, GoldSpecificity::ZERO)
                 }
-                GoldInstruction::Relationship { target, .. } => match target {
-                    GoldRelationshipTarget::Zero => {
-                        add_to_current(&mut containers, GoldSpecificity::ZERO)
-                    }
-                    GoldRelationshipTarget::ParentSelectorList(parent) => {
-                        if parent >= program.owning_context {
-                            return ReferenceOutcome::InvalidProgram;
-                        }
-                        match self.parent_specificity(parent) {
-                            Ok(value) => add_to_current(&mut containers, value),
-                            Err(outcome) => return outcome,
+                GoldInstruction::Relationship { target, origin } => {
+                    if origin == GoldRelationshipOrigin::Derived {
+                        if let Err(outcome) = mark_derived_root_relationship(&mut containers) {
+                            return outcome;
                         }
                     }
-                },
+                    match target {
+                        GoldRelationshipTarget::Zero => {
+                            add_to_current(&mut containers, GoldSpecificity::ZERO)
+                        }
+                        GoldRelationshipTarget::ParentSelectorList(parent) => {
+                            if parent >= program.owning_context {
+                                return ReferenceOutcome::InvalidProgram;
+                            }
+                            match self.parent_specificity(parent) {
+                                Ok(value) => add_to_current(&mut containers, value),
+                                Err(outcome) => return outcome,
+                            }
+                        }
+                    }
+                }
             };
 
             if let Err(outcome) = result {
