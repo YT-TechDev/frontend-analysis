@@ -7,8 +7,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::specificity_input_gold::{
     GoldCandidate, GoldCandidateDisposition, GoldContextId, GoldInstruction, GoldMaxKind,
     GoldQualifierSnapshot, GoldRelationshipTarget, GoldSimpleKind, GoldSpecificity,
-    SidecarCandidatePlan, SidecarCollection, SidecarCompletion, SidecarEvent, SidecarLimits,
-    SidecarFailure, SidecarResource,
+    SidecarCandidatePlan, SidecarCollection, SidecarCompletion, SidecarEvent, SidecarFailure,
+    SidecarLimits, SidecarResource,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,9 +71,18 @@ fn checked_add(
     right: GoldSpecificity,
 ) -> Result<GoldSpecificity, ReferenceOutcome> {
     Ok(GoldSpecificity {
-        a: left.a.checked_add(right.a).ok_or(ReferenceOutcome::ArithmeticOverflow)?,
-        b: left.b.checked_add(right.b).ok_or(ReferenceOutcome::ArithmeticOverflow)?,
-        c: left.c.checked_add(right.c).ok_or(ReferenceOutcome::ArithmeticOverflow)?,
+        a: left
+            .a
+            .checked_add(right.a)
+            .ok_or(ReferenceOutcome::ArithmeticOverflow)?,
+        b: left
+            .b
+            .checked_add(right.b)
+            .ok_or(ReferenceOutcome::ArithmeticOverflow)?,
+        c: left
+            .c
+            .checked_add(right.c)
+            .ok_or(ReferenceOutcome::ArithmeticOverflow)?,
     })
 }
 
@@ -108,7 +117,9 @@ impl Resolver {
             match &candidate.disposition {
                 GoldCandidateDisposition::Program(program) => {
                     if program.owning_context != candidate.context
-                        || programs.insert(candidate.context, program.clone()).is_some()
+                        || programs
+                            .insert(candidate.context, program.clone())
+                            .is_some()
                         || deferred.contains(&candidate.context)
                     {
                         return Err(ReferenceOutcome::InvalidProgram);
@@ -221,7 +232,8 @@ impl Resolver {
                         let Some(container) = containers.pop() else {
                             return ReferenceOutcome::InvalidProgram;
                         };
-                        if container.kind != ContainerKind::Max(kind) || container.current.is_some() {
+                        if container.kind != ContainerKind::Max(kind) || container.current.is_some()
+                        {
                             Err(ReferenceOutcome::InvalidProgram)
                         } else {
                             let maximum = container
@@ -305,20 +317,20 @@ pub(super) fn collect_sidecars(
 
     for plan in plans {
         let identity_granted = collection.preparation_steps < limits.preparation_steps;
-        collection
-            .events
-            .push(SidecarEvent::PreparationPreflight {
-                granted: identity_granted,
-            });
+        collection.events.push(SidecarEvent::PreparationPreflight {
+            granted: identity_granted,
+        });
         if !identity_granted {
             collection.completion = SidecarCompletion::Incomplete;
             collection.failure = Some(SidecarFailure::Resource(SidecarResource::PreparationSteps));
             return collection;
         }
         collection.preparation_steps += 1;
-        collection.events.push(SidecarEvent::CandidateIdentityEstablished {
-            context: plan.candidate.context,
-        });
+        collection
+            .events
+            .push(SidecarEvent::CandidateIdentityEstablished {
+                context: plan.candidate.context,
+            });
 
         for _ in 0..plan.additional_preparation_mutations {
             let granted = collection.preparation_steps < limits.preparation_steps;
@@ -327,7 +339,8 @@ pub(super) fn collect_sidecars(
                 .push(SidecarEvent::PreparationPreflight { granted });
             if !granted {
                 collection.completion = SidecarCompletion::Incomplete;
-                collection.failure = Some(SidecarFailure::Resource(SidecarResource::PreparationSteps));
+                collection.failure =
+                    Some(SidecarFailure::Resource(SidecarResource::PreparationSteps));
                 return collection;
             }
             collection.preparation_steps += 1;
@@ -341,7 +354,8 @@ pub(super) fn collect_sidecars(
                 .push(SidecarEvent::AncestryPreflight { granted });
             if !granted {
                 collection.completion = SidecarCompletion::Incomplete;
-                collection.failure = Some(SidecarFailure::Resource(SidecarResource::PreparationSteps));
+                collection.failure =
+                    Some(SidecarFailure::Resource(SidecarResource::PreparationSteps));
                 return collection;
             }
             collection.preparation_steps += 1;
@@ -364,7 +378,9 @@ pub(super) fn collect_sidecars(
             .push(SidecarEvent::RetainedPreflight { required, granted });
         if !granted {
             collection.completion = SidecarCompletion::Incomplete;
-            collection.failure = Some(SidecarFailure::Resource(SidecarResource::RetainedInputUnits));
+            collection.failure = Some(SidecarFailure::Resource(
+                SidecarResource::RetainedInputUnits,
+            ));
             return collection;
         }
 
