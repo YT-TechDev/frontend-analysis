@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -14,7 +14,9 @@ use crate::{SourceAnchor, SourceId};
 
 use super::declaration::CssDeclarationPlacement;
 use super::parser::result::{CssParserExecutionCompletion, CssParserRunResult};
-use super::token::{CssLexicalItem, CssNumberType, CssTokenKind};
+use super::token::{
+    CssLexicalItem, CssNumberSign, CssNumberType, CssNumericValue, CssTokenKind,
+};
 use super::tokenizer::result::CssTokenizerRunResult;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -200,6 +202,53 @@ impl CssOrderQualificationObservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssColumnCountValue {
+    Auto,
+    DirectIntegerLiteral,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssColumnCountUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssColumnCountQualificationOutcome {
+    Qualified(CssColumnCountValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssColumnCountUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `column-count` qualification.
+///
+/// This profile qualifies only direct authored `auto` and direct authored
+/// integer literals proven inside `[1,∞]`. Exact sign, digits, and source
+/// provenance remain in the structurally owning tokenizer and parser evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssColumnCountQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssColumnCountQualificationOutcome,
+}
+
+impl CssColumnCountQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssColumnCountQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssScrollSnapAlignKeyword {
     None,
     Start,
@@ -318,6 +367,7 @@ pub(crate) struct CssValueQualificationRunResult {
     box_sizing_observations: Vec<CssBoxSizingQualificationObservation>,
     isolation_observations: Vec<CssIsolationQualificationObservation>,
     order_observations: Vec<CssOrderQualificationObservation>,
+    column_count_observations: Vec<CssColumnCountQualificationObservation>,
     scroll_snap_align_observations: Vec<CssScrollSnapAlignQualificationObservation>,
     z_index_observations: Vec<CssZIndexQualificationObservation>,
 }
@@ -341,6 +391,10 @@ impl CssValueQualificationRunResult {
 
     pub(crate) fn order_observations(&self) -> &[CssOrderQualificationObservation] {
         &self.order_observations
+    }
+
+    pub(crate) fn column_count_observations(&self) -> &[CssColumnCountQualificationObservation] {
+        &self.column_count_observations
     }
 
     pub(crate) fn scroll_snap_align_observations(
@@ -417,6 +471,7 @@ pub(crate) fn run(
         box_sizing_observations,
         isolation_observations,
         order_observations,
+        column_count_observations,
         scroll_snap_align_observations,
         z_index_observations,
     ) = {
@@ -426,6 +481,7 @@ pub(crate) fn run(
         let mut box_sizing_observations = Vec::new();
         let mut isolation_observations = Vec::new();
         let mut order_observations = Vec::new();
+        let mut column_count_observations = Vec::new();
         let mut scroll_snap_align_observations = Vec::new();
         let mut z_index_observations = Vec::new();
 
@@ -478,6 +534,17 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("column-count") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                column_count_observations.push(CssColumnCountQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_column_count_value(value_items),
+                });
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("z-index") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -505,6 +572,7 @@ pub(crate) fn run(
             box_sizing_observations,
             isolation_observations,
             order_observations,
+            column_count_observations,
             scroll_snap_align_observations,
             z_index_observations,
         )
@@ -516,6 +584,7 @@ pub(crate) fn run(
         box_sizing_observations,
         isolation_observations,
         order_observations,
+        column_count_observations,
         scroll_snap_align_observations,
         z_index_observations,
     })
@@ -726,6 +795,72 @@ fn qualify_order_value(items: &[CssLexicalItem]) -> CssOrderQualificationOutcome
         }
         _ => CssOrderQualificationOutcome::InvalidForSelectedValueGrammar,
     }
+}
+
+fn qualify_column_count_value(items: &[CssLexicalItem]) -> CssColumnCountQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssColumnCountQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssColumnCountUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssColumnCountQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssColumnCountUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    if entire_function_name(items).is_some() {
+        return CssColumnCountQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssColumnCountUnsupportedReason::FunctionValue,
+        );
+    }
+
+    let mut tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+
+    let Some(token) = tokens.next() else {
+        return CssColumnCountQualificationOutcome::InvalidForSelectedValueGrammar;
+    };
+    if tokens.next().is_some() {
+        return CssColumnCountQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    match token.kind() {
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("auto") => {
+            CssColumnCountQualificationOutcome::Qualified(CssColumnCountValue::Auto)
+        }
+        CssTokenKind::Number {
+            value,
+            number_type: CssNumberType::Integer,
+        } if is_positive_direct_integer(value) => CssColumnCountQualificationOutcome::Qualified(
+            CssColumnCountValue::DirectIntegerLiteral,
+        ),
+        CssTokenKind::Ident(identifier) if is_css_wide_keyword(identifier) => {
+            CssColumnCountQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssColumnCountUnsupportedReason::CssWideKeyword,
+            )
+        }
+        _ => CssColumnCountQualificationOutcome::InvalidForSelectedValueGrammar,
+    }
+}
+
+fn is_positive_direct_integer(value: &CssNumericValue) -> bool {
+    if matches!(value.sign(), Some(CssNumberSign::Minus)) {
+        return false;
+    }
+
+    value
+        .decimal()
+        .integer_digits()
+        .bytes()
+        .any(|digit| digit != b'0')
 }
 
 fn qualify_z_index_value(items: &[CssLexicalItem]) -> CssZIndexQualificationOutcome {
