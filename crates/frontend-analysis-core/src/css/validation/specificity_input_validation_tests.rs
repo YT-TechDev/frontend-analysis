@@ -67,8 +67,8 @@ fn qualifier_snapshot() -> GoldQualifierSnapshot {
             GoldQualifierOutcome::Indeterminate,
         ],
         algorithm_steps: 17,
+        peak_selector_depth: 3,
         observations: 4,
-        retained_semantic_units: 9,
     }
 }
 
@@ -112,6 +112,7 @@ fn v16_preparation_refusal_preserves_qualifier_and_committed_prefix() {
     );
 
     assert_eq!(result.qualifier, qualifier);
+    assert_eq!(result.qualifier.peak_selector_depth, 3);
     assert_eq!(result.completion, SidecarCompletion::Incomplete);
     assert_eq!(
         result.failure,
@@ -155,6 +156,7 @@ fn v16_retained_input_refusal_preflights_complete_delta_before_commit() {
     );
 
     assert_eq!(result.qualifier, qualifier);
+    assert_eq!(result.qualifier.peak_selector_depth, 3);
     assert_eq!(result.completion, SidecarCompletion::Incomplete);
     assert_eq!(
         result.failure,
