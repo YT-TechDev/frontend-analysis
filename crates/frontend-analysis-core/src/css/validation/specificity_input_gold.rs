@@ -157,12 +157,14 @@ pub(super) enum ProvenanceFailure {
 }
 
 fn program_for_context(fixture: &GoldFixture, context: GoldContextId) -> Option<&GoldProgram> {
-    fixture.candidates.iter().find_map(|candidate| {
-        (candidate.context == context).then_some(&candidate.disposition)
-    }).and_then(|disposition| match disposition {
-        GoldCandidateDisposition::Program(program) => Some(program),
-        GoldCandidateDisposition::DeferredByNormativeAmbiguity => None,
-    })
+    fixture
+        .candidates
+        .iter()
+        .find_map(|candidate| (candidate.context == context).then_some(&candidate.disposition))
+        .and_then(|disposition| match disposition {
+            GoldCandidateDisposition::Program(program) => Some(program),
+            GoldCandidateDisposition::DeferredByNormativeAmbiguity => None,
+        })
 }
 
 fn authored_relationship_range(instruction: &GoldInstruction) -> Option<GoldByteRange> {
