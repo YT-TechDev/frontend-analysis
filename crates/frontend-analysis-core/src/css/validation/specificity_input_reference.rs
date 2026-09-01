@@ -31,6 +31,7 @@ enum ContainerKind {
 struct Container {
     kind: ContainerKind,
     current: Option<GoldSpecificity>,
+    current_has_input: bool,
     completed: Vec<GoldSpecificity>,
 }
 
@@ -39,6 +40,7 @@ impl Container {
         Self {
             kind: ContainerKind::Root,
             current: None,
+            current_has_input: false,
             completed: Vec::new(),
         }
     }
@@ -47,6 +49,7 @@ impl Container {
         Self {
             kind: ContainerKind::Max(kind),
             current: None,
+            current_has_input: false,
             completed: Vec::new(),
         }
     }
@@ -85,6 +88,7 @@ fn add_to_current(
         return Err(ReferenceOutcome::InvalidProgram);
     };
     *current = checked_add(*current, contribution)?;
+    container.current_has_input = true;
     Ok(())
 }
 
@@ -177,6 +181,7 @@ impl Resolver {
                         Err(ReferenceOutcome::InvalidProgram)
                     } else {
                         container.current = Some(GoldSpecificity::ZERO);
+                        container.current_has_input = false;
                         Ok(())
                     }
                 }
@@ -184,9 +189,13 @@ impl Resolver {
                     let Some(container) = containers.last_mut() else {
                         return ReferenceOutcome::InvalidProgram;
                     };
+                    if !container.current_has_input {
+                        return ReferenceOutcome::InvalidProgram;
+                    }
                     let Some(value) = container.current.take() else {
                         return ReferenceOutcome::InvalidProgram;
                     };
+                    container.current_has_input = false;
                     container.completed.push(value);
                     Ok(())
                 }
@@ -254,6 +263,9 @@ impl Resolver {
         let Some(root) = containers.pop() else {
             return ReferenceOutcome::InvalidProgram;
         };
+        if root.completed.is_empty() {
+            return ReferenceOutcome::InvalidProgram;
+        }
         ReferenceOutcome::Known(root.completed)
     }
 }
