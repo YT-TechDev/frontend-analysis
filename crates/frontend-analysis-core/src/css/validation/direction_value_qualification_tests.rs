@@ -219,12 +219,8 @@ fn duplicate_selected_declarations_keep_distinct_run_local_placement() {
     assert_eq!(result.direction_observations()[0].occurrence_index(), 0);
     assert_eq!(result.direction_observations()[1].occurrence_index(), 1);
     assert_ne!(
-        result.direction_observations()[0]
-            .placement()
-            .context_id(),
-        result.direction_observations()[1]
-            .placement()
-            .context_id(),
+        result.direction_observations()[0].placement().context_id(),
+        result.direction_observations()[1].placement().context_id(),
     );
 }
 
