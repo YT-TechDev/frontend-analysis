@@ -232,10 +232,10 @@ impl Resolver {
                         let Some(container) = containers.pop() else {
                             return ReferenceOutcome::InvalidProgram;
                         };
-                        if container.kind != ContainerKind::Max(kind) || container.current.is_some()
+                        if container.kind != ContainerKind::Max(kind)
+                            || container.current.is_some()
+                            || (container.completed.is_empty() && kind != GoldMaxKind::Is)
                         {
-                            Err(ReferenceOutcome::InvalidProgram)
-                        } else if container.completed.is_empty() && kind != GoldMaxKind::Is {
                             Err(ReferenceOutcome::InvalidProgram)
                         } else {
                             let maximum = container
