@@ -179,10 +179,10 @@ pub(crate) fn run(
     })
 }
 
-fn single_property_identifier<'a>(
-    items: &'a [CssLexicalItem],
+fn single_property_identifier(
+    items: &[CssLexicalItem],
     occurrence_index: usize,
-) -> Result<&'a str, CssDirectionQualificationError> {
+) -> Result<&str, CssDirectionQualificationError> {
     let mut identifier = None;
 
     for item in items {
