@@ -283,7 +283,7 @@ fn is_deferred_substitution_function(name: &str) -> bool {
 }
 
 fn is_whole_value_function(name: &str) -> bool {
-    ["first-valid", "toggle", "interpolate"]
+    ["first-valid", "cycle", "interpolate"]
         .iter()
         .any(|function| name.eq_ignore_ascii_case(function))
 }
