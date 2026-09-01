@@ -70,3 +70,5 @@ mod selector_conformance_tests;
 mod selector_gold_contract_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod z_index_value_qualification_tests;

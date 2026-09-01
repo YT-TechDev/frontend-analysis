@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -257,6 +257,53 @@ impl CssScrollSnapAlignQualificationObservation {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssZIndexValue {
+    Auto,
+    DirectIntegerLiteral,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssZIndexUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssZIndexQualificationOutcome {
+    Qualified(CssZIndexValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssZIndexUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `z-index` qualification.
+///
+/// This profile only qualifies direct authored `auto` and direct authored
+/// integer literals. Exact integer spelling and all source provenance remain in
+/// the structurally owning tokenizer and parser evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssZIndexQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssZIndexQualificationOutcome,
+}
+
+impl CssZIndexQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssZIndexQualificationOutcome {
+        self.outcome
+    }
+}
+
 /// Run-owned result for the currently selected bounded CSS value capabilities.
 ///
 /// The exact Core-validated parser result is owned once here. Property-specific
@@ -272,6 +319,7 @@ pub(crate) struct CssValueQualificationRunResult {
     isolation_observations: Vec<CssIsolationQualificationObservation>,
     order_observations: Vec<CssOrderQualificationObservation>,
     scroll_snap_align_observations: Vec<CssScrollSnapAlignQualificationObservation>,
+    z_index_observations: Vec<CssZIndexQualificationObservation>,
 }
 
 impl CssValueQualificationRunResult {
@@ -299,6 +347,10 @@ impl CssValueQualificationRunResult {
         &self,
     ) -> &[CssScrollSnapAlignQualificationObservation] {
         &self.scroll_snap_align_observations
+    }
+
+    pub(crate) fn z_index_observations(&self) -> &[CssZIndexQualificationObservation] {
+        &self.z_index_observations
     }
 
     pub(crate) const fn execution_completion(&self) -> CssParserExecutionCompletion {
@@ -366,6 +418,7 @@ pub(crate) fn run(
         isolation_observations,
         order_observations,
         scroll_snap_align_observations,
+        z_index_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
         let mut cursor = LexicalWindowCursor::new(tokenizer_result);
@@ -374,6 +427,7 @@ pub(crate) fn run(
         let mut isolation_observations = Vec::new();
         let mut order_observations = Vec::new();
         let mut scroll_snap_align_observations = Vec::new();
+        let mut z_index_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
             let property_range = cursor.window_for(occurrence.property_name())?;
@@ -424,6 +478,17 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("z-index") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                z_index_observations.push(CssZIndexQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_z_index_value(value_items),
+                });
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("scroll-snap-align") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -441,6 +506,7 @@ pub(crate) fn run(
             isolation_observations,
             order_observations,
             scroll_snap_align_observations,
+            z_index_observations,
         )
     };
 
@@ -451,6 +517,7 @@ pub(crate) fn run(
         isolation_observations,
         order_observations,
         scroll_snap_align_observations,
+        z_index_observations,
     })
 }
 
@@ -658,6 +725,58 @@ fn qualify_order_value(items: &[CssLexicalItem]) -> CssOrderQualificationOutcome
             )
         }
         _ => CssOrderQualificationOutcome::InvalidForSelectedValueGrammar,
+    }
+}
+
+fn qualify_z_index_value(items: &[CssLexicalItem]) -> CssZIndexQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssZIndexQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssZIndexUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssZIndexQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssZIndexUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    if entire_function_name(items).is_some() {
+        return CssZIndexQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssZIndexUnsupportedReason::FunctionValue,
+        );
+    }
+
+    let mut tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+
+    let Some(token) = tokens.next() else {
+        return CssZIndexQualificationOutcome::InvalidForSelectedValueGrammar;
+    };
+    if tokens.next().is_some() {
+        return CssZIndexQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    match token.kind() {
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("auto") => {
+            CssZIndexQualificationOutcome::Qualified(CssZIndexValue::Auto)
+        }
+        CssTokenKind::Number {
+            number_type: CssNumberType::Integer,
+            ..
+        } => CssZIndexQualificationOutcome::Qualified(CssZIndexValue::DirectIntegerLiteral),
+        CssTokenKind::Ident(identifier) if is_css_wide_keyword(identifier) => {
+            CssZIndexQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssZIndexUnsupportedReason::CssWideKeyword,
+            )
+        }
+        _ => CssZIndexQualificationOutcome::InvalidForSelectedValueGrammar,
     }
 }
 
