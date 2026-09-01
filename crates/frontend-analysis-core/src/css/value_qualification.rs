@@ -221,8 +221,7 @@ fn qualify_direction_value(items: &[CssLexicalItem]) -> CssDirectionQualificatio
                 only_identifier = Some(value.as_str());
             }
             CssTokenKind::Function(name) => {
-                contains_deferred_substitution_function |=
-                    is_deferred_substitution_function(name);
+                contains_deferred_substitution_function |= is_deferred_substitution_function(name);
                 only_identifier = None;
             }
             _ => {
@@ -264,9 +263,17 @@ fn qualify_direction_value(items: &[CssLexicalItem]) -> CssDirectionQualificatio
 }
 
 fn is_deferred_substitution_function(name: &str) -> bool {
-    ["var", "env", "attr", "if", "inherit", "ident", "random-item"]
-        .iter()
-        .any(|function| name.eq_ignore_ascii_case(function))
+    [
+        "var",
+        "env",
+        "attr",
+        "if",
+        "inherit",
+        "ident",
+        "random-item",
+    ]
+    .iter()
+    .any(|function| name.eq_ignore_ascii_case(function))
 }
 
 fn is_css_wide_keyword(identifier: &str) -> bool {
