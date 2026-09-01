@@ -191,6 +191,27 @@ fn profile_unsupported_functions_fail_open_but_ordinary_functions_are_invalid() 
 }
 
 #[test]
+fn whole_value_functions_require_entire_value_placement() {
+    let css = concat!(
+        "a{direction:ltr first-valid(rtl);}",
+        "b{direction:first-valid(rtl) ltr;}",
+        "c{direction:cycle(ltr,rtl) foo();}",
+        "d{direction:ltr var(--dir);}",
+    );
+    let result = qualify(6, css);
+
+    assert_expected(
+        &result,
+        &[
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::UnsupportedFunction,
+        ],
+    );
+}
+
+#[test]
 fn duplicate_selected_declarations_keep_distinct_run_local_placement() {
     let result = qualify(5, "a{direction:ltr;}b{direction:ltr;}");
 
