@@ -134,6 +134,11 @@ pub(super) enum ProvenanceFailure {
         context: GoldContextId,
         instruction_index: usize,
     },
+    DuplicateAuthoredRange {
+        context: GoldContextId,
+        instruction_index: usize,
+        range: GoldByteRange,
+    },
     MissingProgram(GoldContextId),
     MissingExpectation {
         context: GoldContextId,
@@ -190,6 +195,7 @@ pub(super) fn validate_authored_relationship_provenance(
         }
     }
 
+    let mut seen_authored_ranges = BTreeSet::new();
     for candidate in &fixture.candidates {
         let GoldCandidateDisposition::Program(program) = &candidate.disposition else {
             continue;
@@ -198,6 +204,13 @@ pub(super) fn validate_authored_relationship_provenance(
             let Some(actual_range) = authored_relationship_range(instruction) else {
                 continue;
             };
+            if !seen_authored_ranges.insert((actual_range.start, actual_range.end)) {
+                return Err(ProvenanceFailure::DuplicateAuthoredRange {
+                    context: candidate.context,
+                    instruction_index,
+                    range: actual_range,
+                });
+            }
             let Some(expectation) = fixture.authored_relationships.iter().find(|expectation| {
                 expectation.context == candidate.context
                     && expectation.instruction_index == instruction_index
@@ -251,6 +264,73 @@ pub(super) fn validate_authored_relationship_provenance(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod provenance_tests {
+    use super::*;
+
+    fn fixture_with_authored_ranges(
+        source: &'static str,
+        ranges: &[GoldByteRange],
+    ) -> GoldFixture {
+        let context = GoldContextId(2);
+        let mut instructions = vec![GoldInstruction::BeginMember];
+        let mut authored_relationships = Vec::new();
+        for range in ranges {
+            let instruction_index = instructions.len();
+            instructions.push(GoldInstruction::Relationship {
+                target: GoldRelationshipTarget::ParentSelectorList(GoldContextId(1)),
+                origin: GoldRelationshipOrigin::Authored(*range),
+            });
+            authored_relationships.push(AuthoredRelationshipExpectation {
+                context,
+                instruction_index,
+                range: *range,
+            });
+        }
+        instructions.push(GoldInstruction::EndMember);
+
+        GoldFixture {
+            id: "provenance-test",
+            source,
+            target: context,
+            candidates: vec![GoldCandidate {
+                context,
+                disposition: GoldCandidateDisposition::Program(GoldProgram {
+                    owning_context: context,
+                    instructions,
+                }),
+            }],
+            expected: GoldExpectedOutcome::BlockedOnParent(GoldContextId(1)),
+            authored_relationships,
+        }
+    }
+
+    #[test]
+    fn duplicate_authored_byte_occurrence_fails_closed() {
+        let range = GoldByteRange::new(5, 6);
+        let fixture = fixture_with_authored_ranges("#a { &.x {} }", &[range, range]);
+
+        assert_eq!(
+            validate_authored_relationship_provenance(&fixture),
+            Err(ProvenanceFailure::DuplicateAuthoredRange {
+                context: GoldContextId(2),
+                instruction_index: 2,
+                range,
+            })
+        );
+    }
+
+    #[test]
+    fn distinct_adjacent_authored_occurrences_remain_valid() {
+        let fixture = fixture_with_authored_ranges(
+            "#a { &&.x {} }",
+            &[GoldByteRange::new(5, 6), GoldByteRange::new(6, 7)],
+        );
+
+        assert_eq!(validate_authored_relationship_provenance(&fixture), Ok(()));
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
