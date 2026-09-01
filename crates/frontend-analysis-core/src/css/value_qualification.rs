@@ -701,9 +701,7 @@ fn qualify_scroll_snap_align_value(
                         CssScrollSnapAlignValue::Single(keyword),
                     )
                 })
-                .unwrap_or(
-                    CssScrollSnapAlignQualificationOutcome::InvalidForSelectedValueGrammar,
-                ),
+                .unwrap_or(CssScrollSnapAlignQualificationOutcome::InvalidForSelectedValueGrammar),
             _ => CssScrollSnapAlignQualificationOutcome::InvalidForSelectedValueGrammar,
         },
         [first, second] => match (first.kind(), second.kind()) {
