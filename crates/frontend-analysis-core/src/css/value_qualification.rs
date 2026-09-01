@@ -205,7 +205,7 @@ fn single_property_identifier(
 fn qualify_direction_value(items: &[CssLexicalItem]) -> CssDirectionQualificationOutcome {
     let mut semantic_count = 0usize;
     let mut only_identifier = None;
-    let mut contains_function = false;
+    let mut contains_deferred_substitution_function = false;
 
     for item in items {
         let CssLexicalItem::SemanticToken(token) = item else {
@@ -220,8 +220,9 @@ fn qualify_direction_value(items: &[CssLexicalItem]) -> CssDirectionQualificatio
             CssTokenKind::Ident(value) if semantic_count == 1 => {
                 only_identifier = Some(value.as_str());
             }
-            CssTokenKind::Function(_) => {
-                contains_function = true;
+            CssTokenKind::Function(name) => {
+                contains_deferred_substitution_function |=
+                    is_deferred_substitution_function(name);
                 only_identifier = None;
             }
             _ => {
@@ -230,10 +231,10 @@ fn qualify_direction_value(items: &[CssLexicalItem]) -> CssDirectionQualificatio
         }
     }
 
-    // Function-valued forms include substitution/deferred mechanisms such as
-    // `var()`. This first profile cannot honestly reject them against the
-    // property grammar before their separate semantics are available.
-    if contains_function {
+    // Only functions whose value can be substituted later cross this profile's
+    // parse-time boundary. An ordinary function such as `foo()` is simply a
+    // direct mismatch for the selected `ltr | rtl` grammar.
+    if contains_deferred_substitution_function {
         return CssDirectionQualificationOutcome::UnsupportedBySelectedValueProfile(
             CssDirectionUnsupportedReason::FunctionValue,
         );
@@ -260,6 +261,12 @@ fn qualify_direction_value(items: &[CssLexicalItem]) -> CssDirectionQualificatio
     }
 
     CssDirectionQualificationOutcome::InvalidForSelectedValueGrammar
+}
+
+fn is_deferred_substitution_function(name: &str) -> bool {
+    ["var", "env", "attr", "if", "inherit", "ident", "random-item"]
+        .iter()
+        .any(|function| name.eq_ignore_ascii_case(function))
 }
 
 fn is_css_wide_keyword(identifier: &str) -> bool {
