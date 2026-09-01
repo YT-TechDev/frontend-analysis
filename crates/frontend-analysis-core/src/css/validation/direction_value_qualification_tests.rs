@@ -162,11 +162,13 @@ fn escaped_identifiers_comments_and_priority_use_retained_lexical_meaning() {
 }
 
 #[test]
-fn function_values_fail_open_to_the_profile_boundary() {
+fn deferred_substitution_functions_fail_open_but_ordinary_functions_are_invalid() {
     let css = concat!(
         "a{direction:var(--dir);}",
         "b{direction:env(dir);}",
-        "c{direction:foo();}",
+        "c{direction:attr(dir);}",
+        "d{direction:foo();}",
+        "e{direction:calc(1);}",
     );
     let result = qualify(4, css);
 
@@ -176,6 +178,8 @@ fn function_values_fail_open_to_the_profile_boundary() {
             ExpectedOutcome::UnsupportedFunction,
             ExpectedOutcome::UnsupportedFunction,
             ExpectedOutcome::UnsupportedFunction,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
         ],
     );
 }
