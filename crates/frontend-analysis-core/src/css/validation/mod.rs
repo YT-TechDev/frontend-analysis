@@ -49,6 +49,8 @@ mod keyframe_conformance_tests;
 #[cfg(test)]
 mod keyframe_lifecycle_validation_tests;
 #[cfg(test)]
+mod order_value_qualification_tests;
+#[cfg(test)]
 mod page_conformance_tests;
 #[cfg(test)]
 mod page_lifecycle_validation_tests;
