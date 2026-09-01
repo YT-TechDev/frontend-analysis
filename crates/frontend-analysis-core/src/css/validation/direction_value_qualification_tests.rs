@@ -168,7 +168,7 @@ fn profile_unsupported_functions_fail_open_but_ordinary_functions_are_invalid() 
         "b{direction:env(dir);}",
         "c{direction:attr(dir);}",
         "d{direction:first-valid(ltr,rtl);}",
-        "e{direction:toggle(ltr,rtl);}",
+        "e{direction:cycle(ltr,rtl);}",
         "f{direction:interpolate(0%,0:ltr,1:rtl);}",
         "g{direction:foo();}",
         "h{direction:calc(1);}",
