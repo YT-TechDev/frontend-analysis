@@ -242,10 +242,7 @@ fn one_run_owns_upstream_evidence_for_both_selected_properties() {
 
 #[test]
 fn duplicate_selected_declarations_keep_distinct_run_local_placement() {
-    let result = qualify(
-        106,
-        "a{box-sizing:content-box;}b{box-sizing:content-box;}",
-    );
+    let result = qualify(106, "a{box-sizing:content-box;}b{box-sizing:content-box;}");
 
     assert_expected(
         &result,
@@ -254,12 +251,8 @@ fn duplicate_selected_declarations_keep_distinct_run_local_placement() {
     assert_eq!(result.box_sizing_observations()[0].occurrence_index(), 0);
     assert_eq!(result.box_sizing_observations()[1].occurrence_index(), 1);
     assert_ne!(
-        result.box_sizing_observations()[0]
-            .placement()
-            .context_id(),
-        result.box_sizing_observations()[1]
-            .placement()
-            .context_id(),
+        result.box_sizing_observations()[0].placement().context_id(),
+        result.box_sizing_observations()[1].placement().context_id(),
     );
 }
 
