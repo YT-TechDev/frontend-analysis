@@ -1,35 +1,21 @@
-//! Bounded production CSS selector qualification for `CoreV1` (#184, #405).
+//! Bounded production CSS selector qualification for `CoreV1` (#184).
 //!
 //! Grammar meaning is derived only from the Core-validated parser result and
 //! the retained tokenizer lexical items selected by `QualifiedRuleBlock`
-//! headers. `SourceText` is borrowed to construct exact zero-length
-//! resource-limit point evidence and, per the #404 authority amendment, exact
-//! retained semantic anchors joined from endpoints already established by
-//! authoritative recognition. Authored bytes are never searched, rescanned,
+//! headers. `SourceText` is borrowed solely to construct exact zero-length
+//! resource-limit point evidence; authored bytes are never searched, rescanned,
 //! retokenized, or reconstructed here.
-//!
-//! #405 stages one ordered semantic-handoff program per candidate while
-//! `SelectorMachine` still owns the grammar and recovery meaning of the
-//! evidence, then commits it atomically with its qualified observation. There
-//! is no second grammar pass and no downstream source or token replay.
 
 use std::error::Error;
 use std::fmt;
 
 use crate::{SourceAnchor, SourceRangeError, SourceText};
 
-use super::super::parser::context::{CssParserContextId, CssParserContextKind};
+use super::super::parser::context::CssParserContextKind;
 use super::super::parser::result::CssParserRunResult;
 use super::super::token::{CssHashType, CssLexicalItem, CssToken, CssTokenKind};
 use super::context::{
     CssSelectorContextContractError, CssSelectorGrammarContext, derive_selector_grammar_context,
-};
-use super::handoff::{
-    CssSelectorRelationshipCharge, CssSelectorRelationshipResolution, CssSelectorSemanticFact,
-    CssSelectorSemanticMemberId, CssSelectorSemanticNestingDisposition, CssSelectorSemanticProgram,
-    CssSelectorSemanticRelationshipError, CssSelectorSemanticRelationshipOrigin,
-    CssSelectorSemanticRelationshipTarget, CssSelectorSemanticSimpleKind,
-    CssSelectorSemanticUnitId, resolve_relationship_target,
 };
 use super::lexical::{CssSelectorLexicalWindowCursor, CssSelectorLexicalWindowError};
 use super::profile::{
@@ -61,17 +47,10 @@ pub(crate) enum CssSelectorProducerInvariantViolation {
     ResourceContract(CssSelectorResourceContractError),
     ResourcePointRange(SourceRangeError),
     ResultContract(CssSelectorInvariantViolation),
-    SemanticAnchorRange(SourceRangeError),
-    SemanticRelationship(CssSelectorSemanticRelationshipError),
     ActiveDepthUnderflow,
     MissingCurrentToken,
     MissingFunctionFrame,
     MissingRootFrame,
-    MissingSemanticFunctionUnit,
-    MissingSemanticMemberExtent,
-    MissingSemanticOpenMember,
-    MissingSemanticRefusalEvidence,
-    SemanticIdentityOverflow,
     UnexpectedTypeDispatch,
     UnexpectedFaultConversion,
     UpstreamSourceMismatch,
@@ -84,14 +63,6 @@ impl fmt::Display for CssSelectorProducerError {
 }
 
 impl Error for CssSelectorProducerError {}
-
-impl From<CssSelectorSemanticRelationshipError> for CssSelectorProducerError {
-    fn from(error: CssSelectorSemanticRelationshipError) -> Self {
-        Self::InternalInvariantFailure(CssSelectorProducerInvariantViolation::SemanticRelationship(
-            error,
-        ))
-    }
-}
 
 impl From<CssSelectorRunError> for CssSelectorProducerError {
     fn from(error: CssSelectorRunError) -> Self {
@@ -157,79 +128,28 @@ pub(crate) fn run(
             &mut resources,
         )?;
 
-        let (outcome, staged) = match execution {
-            CandidateExecution::Outcome { outcome, staged } => (outcome, staged),
+        let outcome = match execution {
+            CandidateExecution::Outcome(outcome) => outcome,
             CandidateExecution::ResourceLimit(evidence) => {
                 return build_incomplete(parser_result, observations, resources.usage(), evidence);
             }
         };
 
-        // Charged semantic relationship resolution completes the candidate
-        // program before any durable resource is preflighted (#404).
-        let semantic_program = match staged {
-            None => None,
-            Some(staged) => {
-                let mut refusal = None;
-                let resolution = resolve_relationship_target::<CssSelectorProducerError, _>(
-                    parser_result.context_records(),
-                    record,
-                    || match resources.charge_relationship_inspection(record.header())? {
-                        Some(evidence) => {
-                            refusal = Some(evidence);
-                            Ok(CssSelectorRelationshipCharge::Refused)
-                        }
-                        None => Ok(CssSelectorRelationshipCharge::Granted),
-                    },
+        match resources.preflight_observation(record.header())? {
+            ObservationPreflight::Allowed { attempted } => {
+                let observation = CssSelectorQualificationObservation::new(
+                    &parser_result,
+                    record.id(),
+                    grammar_context,
+                    outcome,
                 )?;
-                match resolution {
-                    CssSelectorRelationshipResolution::Refused => {
-                        let evidence = refusal.ok_or({
-                            CssSelectorProducerError::InternalInvariantFailure(
-                                CssSelectorProducerInvariantViolation::MissingSemanticRefusalEvidence,
-                            )
-                        })?;
-                        return build_incomplete(
-                            parser_result,
-                            observations,
-                            resources.usage(),
-                            evidence,
-                        );
-                    }
-                    CssSelectorRelationshipResolution::Target(target) => {
-                        Some(staged.finish(record.id(), target))
-                    }
-                }
+                observations.push(observation);
+                resources.commit_observation(attempted);
             }
-        };
-
-        let retained_delta = retained_semantic_units(semantic_program.as_ref())?;
-        let observations_attempted = match resources.preflight_observation(record.header())? {
-            ObservationPreflight::Allowed { attempted } => attempted,
             ObservationPreflight::Refused(evidence) => {
                 return build_incomplete(parser_result, observations, resources.usage(), evidence);
             }
-        };
-        let retained_attempted = match resources
-            .preflight_retained_semantic_units(record.header(), retained_delta)?
-        {
-            RetainedSemanticPreflight::Allowed { attempted } => attempted,
-            RetainedSemanticPreflight::Refused(evidence) => {
-                return build_incomplete(parser_result, observations, resources.usage(), evidence);
-            }
-        };
-
-        // Every normal refusal is now discharged. The remaining region checks
-        // non-resource attachment invariants and commits durably.
-        let observation = CssSelectorQualificationObservation::new(
-            &parser_result,
-            record.id(),
-            grammar_context,
-            outcome,
-            semantic_program,
-        )?;
-        observations.push(observation);
-        resources.commit_observation(observations_attempted);
-        resources.commit_retained_semantic_units(retained_attempted);
+        }
     }
 
     CssSelectorQualificationRunResult::new(
@@ -260,25 +180,9 @@ fn build_incomplete(
     .map_err(Into::into)
 }
 
-/// Fixed retained accounting: one unit per committed observation identity plus
-/// one unit per retained semantic fact (#404 R1).
-fn retained_semantic_units(
-    program: Option<&CssSelectorSemanticProgram>,
-) -> Result<usize, CssSelectorProducerError> {
-    let facts = program.map_or(0, |program| program.facts().len());
-    checked_resource_add(1, facts).map_err(|error| {
-        CssSelectorProducerError::InternalInvariantFailure(
-            CssSelectorProducerInvariantViolation::ResourceContract(error),
-        )
-    })
-}
-
 #[derive(Debug)]
 enum CandidateExecution {
-    Outcome {
-        outcome: CssSelectorQualificationOutcome,
-        staged: Option<SemanticStaging>,
-    },
+    Outcome(CssSelectorQualificationOutcome),
     ResourceLimit(CssSelectorResourceLimitEvidence),
 }
 
@@ -308,7 +212,6 @@ struct ResourceTracker<'a> {
     active_depth: usize,
     peak_depth: usize,
     observations: usize,
-    retained_semantic_units: usize,
 }
 
 impl<'a> ResourceTracker<'a> {
@@ -320,30 +223,11 @@ impl<'a> ResourceTracker<'a> {
             active_depth: 0,
             peak_depth: 0,
             observations: 0,
-            retained_semantic_units: 0,
         }
     }
 
     const fn usage(&self) -> CssSelectorResourceUsage {
-        CssSelectorResourceUsage::new(
-            self.algorithm_steps,
-            self.peak_depth,
-            self.observations,
-            self.retained_semantic_units,
-        )
-    }
-
-    /// Charges exactly one selector `AlgorithmSteps` unit before one retained
-    /// parent record is inspected by semantic relationship resolution.
-    ///
-    /// The deterministic refusal location is the zero-length point at the
-    /// current qualified-rule header start; no ancestor-authored location is
-    /// fabricated, and no parser or tokenizer counter is consumed.
-    fn charge_relationship_inspection(
-        &mut self,
-        header: &SourceAnchor,
-    ) -> Result<Option<CssSelectorResourceLimitEvidence>, CssSelectorProducerError> {
-        self.charge_algorithm_step(header, header)
+        CssSelectorResourceUsage::new(self.algorithm_steps, self.peak_depth, self.observations)
     }
 
     fn charge_algorithm_step(
@@ -420,31 +304,6 @@ impl<'a> ResourceTracker<'a> {
         self.observations = attempted;
     }
 
-    fn preflight_retained_semantic_units(
-        &self,
-        header: &SourceAnchor,
-        delta: usize,
-    ) -> Result<RetainedSemanticPreflight, CssSelectorProducerError> {
-        let attempted = self.checked_add(self.retained_semantic_units, delta)?;
-        let limit = self
-            .limits
-            .limit(CssSelectorResourceKind::RetainedSemanticUnits);
-        if attempted > limit {
-            return Ok(RetainedSemanticPreflight::Refused(self.evidence(
-                header,
-                CssSelectorResourceKind::RetainedSemanticUnits,
-                limit,
-                attempted,
-                header,
-            )?));
-        }
-        Ok(RetainedSemanticPreflight::Allowed { attempted })
-    }
-
-    fn commit_retained_semantic_units(&mut self, attempted: usize) {
-        self.retained_semantic_units = attempted;
-    }
-
     fn checked_add(&self, current: usize, delta: usize) -> Result<usize, CssSelectorProducerError> {
         checked_resource_add(current, delta).map_err(|error| {
             CssSelectorProducerError::InternalInvariantFailure(
@@ -487,11 +346,6 @@ enum ObservationPreflight {
     Refused(CssSelectorResourceLimitEvidence),
 }
 
-enum RetainedSemanticPreflight {
-    Allowed { attempted: usize },
-    Refused(CssSelectorResourceLimitEvidence),
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RecoveryDelimiter {
     Parenthesis,
@@ -524,91 +378,6 @@ enum FaultResolution {
     ResourceLimit(CssSelectorResourceLimitEvidence),
 }
 
-/// One transient staged fact.
-///
-/// Relationship facts stay pending until charged relationship resolution
-/// finishes, because every relationship in one candidate shares that
-/// candidate's single structural target.
-#[derive(Debug)]
-enum StagedFact {
-    Retained(CssSelectorSemanticFact),
-    PendingRelationship(CssSelectorSemanticRelationshipOrigin),
-    PendingImpliedRelationship,
-}
-
-/// An authored-invalid forgiving member whose contributing facts were rolled
-/// back and whose authored nesting presence must survive.
-#[derive(Debug)]
-struct PendingRejectedMember {
-    member: CssSelectorSemanticMemberId,
-    presences: Vec<(CssSelectorSemanticUnitId, SourceAnchor)>,
-}
-
-/// Candidate-local transactional semantic staging.
-///
-/// This transient state is implementation-private and is not claimed to be
-/// bounded by `RetainedSemanticUnits`, which bounds committed retained
-/// evidence only.
-#[derive(Debug)]
-struct SemanticStaging {
-    facts: Vec<StagedFact>,
-    next_member: usize,
-    next_unit: usize,
-    last_content_end: Option<usize>,
-    root_member_authored_nesting: bool,
-    pending_rejected: Option<PendingRejectedMember>,
-}
-
-impl SemanticStaging {
-    const fn new() -> Self {
-        Self {
-            facts: Vec::new(),
-            next_member: 1,
-            next_unit: 1,
-            last_content_end: None,
-            root_member_authored_nesting: false,
-            pending_rejected: None,
-        }
-    }
-
-    /// Materializes the complete candidate program.
-    ///
-    /// Identifier gaps left by rolled-back staging are preserved deliberately:
-    /// numeric contiguity carries no semantic meaning.
-    fn finish(
-        self,
-        owning_context: CssParserContextId,
-        target: CssSelectorSemanticRelationshipTarget,
-    ) -> CssSelectorSemanticProgram {
-        let facts = self
-            .facts
-            .into_iter()
-            .filter_map(|staged| match staged {
-                StagedFact::Retained(fact) => Some(fact),
-                StagedFact::PendingRelationship(origin) => {
-                    Some(CssSelectorSemanticFact::Relationship { target, origin })
-                }
-                StagedFact::PendingImpliedRelationship => {
-                    (!matches!(target, CssSelectorSemanticRelationshipTarget::Zero)).then_some(
-                        CssSelectorSemanticFact::Relationship {
-                            target,
-                            origin: CssSelectorSemanticRelationshipOrigin::Derived,
-                        },
-                    )
-                }
-            })
-            .collect();
-        CssSelectorSemanticProgram::new(owning_context, facts)
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-enum StagedUnitKind {
-    Simple(CssSelectorSemanticSimpleKind),
-    Function(CssSelectorFunctionalPseudoClass),
-    Nesting,
-}
-
 #[derive(Debug, Clone, Default)]
 struct MemberState {
     selector_has_any: bool,
@@ -623,16 +392,11 @@ struct MemberState {
 struct ListFrame {
     function: Option<CssSelectorFunctionalPseudoClass>,
     function_subject: SourceAnchor,
-    function_unit: Option<CssSelectorSemanticUnitId>,
     relative: bool,
     forgiving: bool,
     after_comma: bool,
     last_comma: Option<SourceAnchor>,
     member: MemberState,
-    member_id: Option<CssSelectorSemanticMemberId>,
-    member_open_index: Option<usize>,
-    member_start: Option<usize>,
-    member_checkpoint: usize,
 }
 
 impl ListFrame {
@@ -645,29 +409,18 @@ impl ListFrame {
         Self {
             function: None,
             function_subject: header.clone(),
-            function_unit: None,
             relative,
             forgiving: false,
             after_comma: false,
             last_comma: None,
             member: MemberState::default(),
-            member_id: None,
-            member_open_index: None,
-            member_start: None,
-            member_checkpoint: 0,
         }
     }
 
-    fn function(
-        function: CssSelectorFunctionalPseudoClass,
-        subject: SourceAnchor,
-        unit: CssSelectorSemanticUnitId,
-        checkpoint: usize,
-    ) -> Self {
+    fn function(function: CssSelectorFunctionalPseudoClass, subject: SourceAnchor) -> Self {
         Self {
             function: Some(function),
             function_subject: subject,
-            function_unit: Some(unit),
             relative: matches!(function, CssSelectorFunctionalPseudoClass::Has),
             forgiving: matches!(
                 function,
@@ -676,10 +429,6 @@ impl ListFrame {
             after_comma: false,
             last_comma: None,
             member: MemberState::default(),
-            member_id: None,
-            member_open_index: None,
-            member_start: None,
-            member_checkpoint: checkpoint,
         }
     }
 }
@@ -689,8 +438,6 @@ struct SelectorMachine<'tokens, 'source, 'tracker> {
     tokens: Vec<&'tokens CssToken>,
     cursor: usize,
     frames: Vec<ListFrame>,
-    source: &'source SourceText,
-    staging: SemanticStaging,
     resources: &'tracker mut ResourceTracker<'source>,
 }
 
@@ -701,14 +448,11 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
         grammar_context: CssSelectorGrammarContext,
         resources: &'tracker mut ResourceTracker<'source>,
     ) -> Self {
-        let source = resources.source;
         Self {
             header,
             tokens,
             cursor: 0,
             frames: vec![ListFrame::root(header, grammar_context)],
-            source,
-            staging: SemanticStaging::new(),
             resources,
         }
     }
@@ -726,176 +470,13 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
             match self.resolve_fault(fault)? {
                 FaultResolution::Continue => {}
                 FaultResolution::Final(outcome) => {
-                    return Ok(CandidateExecution::Outcome {
-                        outcome,
-                        staged: None,
-                    });
+                    return Ok(CandidateExecution::Outcome(outcome));
                 }
                 FaultResolution::ResourceLimit(evidence) => {
                     return Ok(CandidateExecution::ResourceLimit(evidence));
                 }
             }
         }
-    }
-
-    fn internal(violation: CssSelectorProducerInvariantViolation) -> MachineFault {
-        MachineFault::Internal(CssSelectorProducerError::InternalInvariantFailure(
-            violation,
-        ))
-    }
-
-    /// Joins two endpoints already established by authoritative recognition.
-    fn anchor(&self, start: usize, end: usize) -> Result<SourceAnchor, MachineFault> {
-        self.source.anchor(start, end).map_err(|error| {
-            Self::internal(CssSelectorProducerInvariantViolation::SemanticAnchorRange(
-                error,
-            ))
-        })
-    }
-
-    fn allocate_member(&mut self) -> Result<CssSelectorSemanticMemberId, MachineFault> {
-        let value = self.staging.next_member;
-        self.staging.next_member = value.checked_add(1).ok_or_else(|| {
-            Self::internal(CssSelectorProducerInvariantViolation::SemanticIdentityOverflow)
-        })?;
-        Ok(CssSelectorSemanticMemberId::new(value))
-    }
-
-    fn allocate_unit(&mut self) -> Result<CssSelectorSemanticUnitId, MachineFault> {
-        let value = self.staging.next_unit;
-        self.staging.next_unit = value.checked_add(1).ok_or_else(|| {
-            Self::internal(CssSelectorProducerInvariantViolation::SemanticIdentityOverflow)
-        })?;
-        Ok(CssSelectorSemanticUnitId::new(value))
-    }
-
-    /// Records the recognition-owned endpoints of one consumed content token.
-    fn note_content_token(&mut self, anchor: &SourceAnchor) -> Result<(), MachineFault> {
-        self.staging.last_content_end = Some(anchor.range().end());
-        let start = anchor.range().start();
-        let frame = self.current_frame_mut()?;
-        if frame.member_start.is_none() {
-            frame.member_start = Some(start);
-        }
-        Ok(())
-    }
-
-    /// Opens the current member's semantic envelope on first staged evidence.
-    ///
-    /// The envelope range is finalized by `close_staged_member` while the
-    /// member's end endpoint is still recognition-owned.
-    fn open_staged_member(&mut self) -> Result<CssSelectorSemanticMemberId, MachineFault> {
-        if let Some(member) = self.current_frame()?.member_id {
-            return Ok(member);
-        }
-        let start = self.current_frame()?.member_start.ok_or_else(|| {
-            Self::internal(CssSelectorProducerInvariantViolation::MissingSemanticMemberExtent)
-        })?;
-        let member = self.allocate_member()?;
-        let placeholder = self.anchor(start, start)?;
-        let index = self.staging.facts.len();
-        self.staging
-            .facts
-            .push(StagedFact::Retained(CssSelectorSemanticFact::OpenMember {
-                member,
-                range: placeholder,
-            }));
-        let root = self.frames.len() == 1;
-        let frame = self.current_frame_mut()?;
-        frame.member_id = Some(member);
-        frame.member_open_index = Some(index);
-        if root {
-            self.staging.root_member_authored_nesting = false;
-        }
-        Ok(member)
-    }
-
-    fn close_staged_member(&mut self) -> Result<(), MachineFault> {
-        let frame = self.current_frame()?;
-        let Some(member) = frame.member_id else {
-            return Ok(());
-        };
-        let open_index = frame.member_open_index.ok_or_else(|| {
-            Self::internal(CssSelectorProducerInvariantViolation::MissingSemanticOpenMember)
-        })?;
-        let start = frame.member_start.ok_or_else(|| {
-            Self::internal(CssSelectorProducerInvariantViolation::MissingSemanticMemberExtent)
-        })?;
-        let end = self.staging.last_content_end.ok_or_else(|| {
-            Self::internal(CssSelectorProducerInvariantViolation::MissingSemanticMemberExtent)
-        })?;
-
-        if self.frames.len() == 1 && !self.staging.root_member_authored_nesting {
-            self.staging
-                .facts
-                .push(StagedFact::PendingImpliedRelationship);
-        }
-        self.staging
-            .facts
-            .push(StagedFact::Retained(CssSelectorSemanticFact::CloseMember {
-                member,
-            }));
-
-        let range = self.anchor(start, end)?;
-        let slot = self.staging.facts.get_mut(open_index).ok_or_else(|| {
-            Self::internal(CssSelectorProducerInvariantViolation::MissingSemanticOpenMember)
-        })?;
-        *slot = StagedFact::Retained(CssSelectorSemanticFact::OpenMember { member, range });
-        Ok(())
-    }
-
-    fn reset_member_staging(&mut self) -> Result<(), MachineFault> {
-        let checkpoint = self.staging.facts.len();
-        let frame = self.current_frame_mut()?;
-        frame.member_id = None;
-        frame.member_open_index = None;
-        frame.member_start = None;
-        frame.member_checkpoint = checkpoint;
-        Ok(())
-    }
-
-    fn stage_unit(
-        &mut self,
-        kind: StagedUnitKind,
-        start: usize,
-    ) -> Result<CssSelectorSemanticUnitId, MachineFault> {
-        let member = self.open_staged_member()?;
-        let end = self.staging.last_content_end.ok_or_else(|| {
-            Self::internal(CssSelectorProducerInvariantViolation::MissingSemanticMemberExtent)
-        })?;
-        let range = self.anchor(start, end)?;
-        let unit = self.allocate_unit()?;
-        match kind {
-            StagedUnitKind::Simple(kind) => {
-                self.staging
-                    .facts
-                    .push(StagedFact::Retained(CssSelectorSemanticFact::Simple {
-                        unit,
-                        kind,
-                        range,
-                    }));
-            }
-            StagedUnitKind::Function(kind) => {
-                self.staging.facts.push(StagedFact::Retained(
-                    CssSelectorSemanticFact::OpenFunction { unit, kind, range },
-                ));
-            }
-            StagedUnitKind::Nesting => {
-                self.staging.facts.push(StagedFact::Retained(
-                    CssSelectorSemanticFact::NestingPresence {
-                        member,
-                        unit,
-                        origin: CssSelectorSemanticRelationshipOrigin::Authored(range.clone()),
-                        disposition: CssSelectorSemanticNestingDisposition::Contributing,
-                    },
-                ));
-                self.staging.facts.push(StagedFact::PendingRelationship(
-                    CssSelectorSemanticRelationshipOrigin::Authored(range),
-                ));
-                self.staging.root_member_authored_nesting = true;
-            }
-        }
-        Ok(unit)
     }
 
     fn step(&mut self) -> Result<(), MachineFault> {
@@ -949,13 +530,11 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
             }
         }
 
-        self.close_staged_member()?;
         self.consume_current()?;
         let frame = self.current_frame_mut()?;
         frame.member = MemberState::default();
         frame.after_comma = true;
         frame.last_comma = Some(comma);
-        self.reset_member_staging()?;
         Ok(())
     }
 
@@ -1001,18 +580,11 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
             }
         }
 
-        self.close_staged_member()?;
-        let unit = self.current_frame()?.function_unit.ok_or_else(|| {
-            Self::internal(CssSelectorProducerInvariantViolation::MissingSemanticFunctionUnit)
-        })?;
         self.consume_current()?;
         self.frames.pop();
         self.resources
             .leave_depth()
             .map_err(MachineFault::Internal)?;
-        self.staging.facts.push(StagedFact::Retained(
-            CssSelectorSemanticFact::CloseFunction { unit },
-        ));
         Ok(())
     }
 
@@ -1088,7 +660,6 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
             });
         }
 
-        let start = self.current_anchor()?.range().start();
         match self.current_kind()?.clone() {
             CssTokenKind::Ident(_) => {
                 if self.peek_delim(1, '|') && !self.peek_delim(2, '=') {
@@ -1098,7 +669,8 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
                     });
                 }
                 self.consume_current()?;
-                self.finish_type_or_universal(false, start)
+                self.mark_simple(false)?;
+                Ok(())
             }
             CssTokenKind::Delim('*') => {
                 if self.peek_delim(1, '|') {
@@ -1107,10 +679,9 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
                     self.consume_current()?;
                     match self.current_kind_opt() {
                         Some(CssTokenKind::Ident(_)) | Some(CssTokenKind::Delim('*')) => {
-                            let universal =
-                                matches!(self.current_kind_opt(), Some(CssTokenKind::Delim('*')));
                             self.consume_current()?;
-                            self.finish_type_or_universal(universal, start)
+                            self.mark_simple(false)?;
+                            Ok(())
                         }
                         _ => Err(MachineFault::Invalid {
                             reason: CssSelectorInvalidReason::UnexpectedToken,
@@ -1120,7 +691,8 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
                     }
                 } else {
                     self.consume_current()?;
-                    self.finish_type_or_universal(true, start)
+                    self.mark_simple(false)?;
+                    Ok(())
                 }
             }
             CssTokenKind::Delim('|') => {
@@ -1128,10 +700,9 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
                 self.consume_current()?;
                 match self.current_kind_opt() {
                     Some(CssTokenKind::Ident(_)) | Some(CssTokenKind::Delim('*')) => {
-                        let universal =
-                            matches!(self.current_kind_opt(), Some(CssTokenKind::Delim('*')));
                         self.consume_current()?;
-                        self.finish_type_or_universal(universal, start)
+                        self.mark_simple(false)?;
+                        Ok(())
                     }
                     _ => Err(MachineFault::Invalid {
                         reason: CssSelectorInvalidReason::UnexpectedToken,
@@ -1148,21 +719,6 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
         }
     }
 
-    fn finish_type_or_universal(
-        &mut self,
-        universal: bool,
-        start: usize,
-    ) -> Result<(), MachineFault> {
-        self.mark_simple(false)?;
-        let kind = if universal {
-            CssSelectorSemanticSimpleKind::Universal
-        } else {
-            CssSelectorSemanticSimpleKind::Type
-        };
-        self.stage_unit(StagedUnitKind::Simple(kind), start)?;
-        Ok(())
-    }
-
     fn consume_class_selector(&mut self) -> Result<(), MachineFault> {
         let dot = self.current_anchor()?.clone();
         self.consume_current()?;
@@ -1174,12 +730,7 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
             });
         }
         self.consume_current()?;
-        self.mark_simple(false)?;
-        self.stage_unit(
-            StagedUnitKind::Simple(CssSelectorSemanticSimpleKind::Class),
-            dot.range().start(),
-        )?;
-        Ok(())
+        self.mark_simple(false)
     }
 
     fn consume_id_selector(&mut self) -> Result<(), MachineFault> {
@@ -1197,22 +748,13 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
                 recovery_open: None,
             });
         }
-        let start = token.source().range().start();
         self.consume_current()?;
-        self.mark_simple(false)?;
-        self.stage_unit(
-            StagedUnitKind::Simple(CssSelectorSemanticSimpleKind::Id),
-            start,
-        )?;
-        Ok(())
+        self.mark_simple(false)
     }
 
     fn consume_nesting_selector(&mut self) -> Result<(), MachineFault> {
-        let start = self.current_anchor()?.range().start();
         self.consume_current()?;
-        self.mark_simple(true)?;
-        self.stage_unit(StagedUnitKind::Nesting, start)?;
-        Ok(())
+        self.mark_simple(true)
     }
 
     fn consume_attribute_selector(&mut self) -> Result<(), MachineFault> {
@@ -1241,12 +783,7 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
             Err(MachineFault::ResourceLimit(_)) | Err(MachineFault::Internal(_)) => {}
         }
         result?;
-        self.mark_simple(false)?;
-        self.stage_unit(
-            StagedUnitKind::Simple(CssSelectorSemanticSimpleKind::Attribute),
-            opener.range().start(),
-        )?;
-        Ok(())
+        self.mark_simple(false)
     }
 
     fn consume_attribute_body(&mut self, opener: SourceAnchor) -> Result<(), MachineFault> {
@@ -1377,12 +914,7 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
                     });
                 }
                 self.consume_current()?;
-                self.mark_simple(false)?;
-                self.stage_unit(
-                    StagedUnitKind::Simple(CssSelectorSemanticSimpleKind::IdentifierPseudoClass),
-                    colon.range().start(),
-                )?;
-                Ok(())
+                self.mark_simple(false)
             }
             Some(CssTokenKind::Function(name)) => {
                 let subject = self.current_anchor()?.clone();
@@ -1420,11 +952,7 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
                 {
                     return Err(MachineFault::ResourceLimit(evidence));
                 }
-                let unit =
-                    self.stage_unit(StagedUnitKind::Function(function), colon.range().start())?;
-                let checkpoint = self.staging.facts.len();
-                self.frames
-                    .push(ListFrame::function(function, subject, unit, checkpoint));
+                self.frames.push(ListFrame::function(function, subject));
                 Ok(())
             }
             _ => Err(MachineFault::Invalid {
@@ -1477,39 +1005,21 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
                     CssSelectorProducerInvariantViolation::MissingFunctionFrame,
                 )
             })?;
-            return Ok(CandidateExecution::Outcome {
-                outcome: CssSelectorQualificationOutcome::InvalidForSelectedGrammar {
+            return Ok(CandidateExecution::Outcome(
+                CssSelectorQualificationOutcome::InvalidForSelectedGrammar {
                     reason: CssSelectorInvalidReason::InvalidFunctionalPseudoArgument,
                     subject: frame.function_subject.clone(),
                 },
-                staged: None,
-            });
+            ));
         }
 
-        let frame = self
-            .frames
-            .last()
-            .ok_or({
-                CssSelectorProducerError::InternalInvariantFailure(
-                    CssSelectorProducerInvariantViolation::MissingRootFrame,
-                )
-            })?
-            .clone();
-        let classification = self.member_end_classification_for(&frame);
-        if matches!(classification, MemberEnd::Qualified) {
-            self.close_staged_member().map_err(machine_fault_to_error)?;
-            return Ok(CandidateExecution::Outcome {
-                outcome: CssSelectorQualificationOutcome::QualifiedBySelectedGrammar,
-                staged: Some(self.staging),
-            });
-        }
-
-        let outcome = match classification {
-            MemberEnd::Qualified => {
-                return Err(CssSelectorProducerError::InternalInvariantFailure(
-                    CssSelectorProducerInvariantViolation::UnexpectedFaultConversion,
-                ));
-            }
+        let frame = self.frames.pop().ok_or({
+            CssSelectorProducerError::InternalInvariantFailure(
+                CssSelectorProducerInvariantViolation::MissingRootFrame,
+            )
+        })?;
+        let outcome = match self.member_end_classification_for(&frame) {
+            MemberEnd::Qualified => CssSelectorQualificationOutcome::QualifiedBySelectedGrammar,
             MemberEnd::TrailingCombinator { subject } => {
                 CssSelectorQualificationOutcome::InvalidForSelectedGrammar {
                     reason: CssSelectorInvalidReason::UnexpectedCombinator,
@@ -1527,10 +1037,7 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
                 subject: frame.function_subject,
             },
         };
-        Ok(CandidateExecution::Outcome {
-            outcome,
-            staged: None,
-        })
+        Ok(CandidateExecution::Outcome(outcome))
     }
 
     fn member_end_classification_for(&self, frame: &ListFrame) -> MemberEnd {
@@ -1589,7 +1096,6 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
                     self.resources.leave_depth()?;
                 }
                 self.frames.truncate(forgiving_index + 1);
-                self.begin_rejected_member()?;
                 self.current_frame_mut()
                     .map_err(machine_fault_to_error)?
                     .member = MemberState::default();
@@ -1620,7 +1126,6 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
                         .current_anchor()
                         .map_err(machine_fault_to_error)?
                         .clone();
-                    self.finalize_rejected_member()?;
                     if let Some(evidence) = self.consume_for_recovery()? {
                         return Ok(Some(evidence));
                     }
@@ -1628,17 +1133,12 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
                     frame.member = MemberState::default();
                     frame.after_comma = true;
                     frame.last_comma = Some(comma);
-                    self.reset_member_staging()
-                        .map_err(machine_fault_to_error)?;
                     return Ok(None);
                 }
                 if matches!(kind, CssTokenKind::RightParenthesis) {
-                    self.finalize_rejected_member()?;
                     self.current_frame_mut()
                         .map_err(machine_fault_to_error)?
                         .member = MemberState::default();
-                    self.reset_member_staging()
-                        .map_err(machine_fault_to_error)?;
                     return Ok(None);
                 }
             }
@@ -1667,140 +1167,31 @@ impl<'tokens, 'source, 'tracker> SelectorMachine<'tokens, 'source, 'tracker> {
             }
         }
 
-        self.finalize_rejected_member()?;
-        self.reset_member_staging()
-            .map_err(machine_fault_to_error)?;
         Ok(None)
     }
 
     fn consume_for_recovery(
         &mut self,
     ) -> Result<Option<CssSelectorResourceLimitEvidence>, CssSelectorProducerError> {
-        let token = self.current_token().map_err(machine_fault_to_error)?;
-        let whitespace = matches!(token.kind(), CssTokenKind::Whitespace);
-        let nesting = matches!(token.kind(), CssTokenKind::Delim('&'));
-        let anchor = token.source().clone();
+        let anchor = self
+            .current_anchor()
+            .map_err(machine_fault_to_error)?
+            .clone();
         if let Some(evidence) = self.resources.charge_algorithm_step(self.header, &anchor)? {
             return Ok(Some(evidence));
-        }
-        if !whitespace {
-            self.note_content_token(&anchor)
-                .map_err(machine_fault_to_error)?;
-        }
-        if nesting {
-            self.retain_recovery_nesting_presence(anchor)?;
         }
         self.cursor += 1;
         Ok(None)
     }
 
-    /// Preserves an authored `&` discovered while the authoritative recovery
-    /// pass consumes the remainder of an already-rejected forgiving member.
-    ///
-    /// The presence is positional evidence recognized by the same authoritative
-    /// pass; no token is reinterpreted and no source is rescanned.
-    fn retain_recovery_nesting_presence(
-        &mut self,
-        anchor: SourceAnchor,
-    ) -> Result<(), CssSelectorProducerError> {
-        if self.staging.pending_rejected.is_none() {
-            return Ok(());
-        }
-        let unit = self.allocate_unit().map_err(machine_fault_to_error)?;
-        if let Some(pending) = self.staging.pending_rejected.as_mut() {
-            pending.presences.push((unit, anchor));
-        }
-        self.staging.root_member_authored_nesting = true;
-        Ok(())
-    }
-
-    /// Opens the member-local semantic transaction for a rejected forgiving
-    /// member: contributing facts are rolled back while authored nesting
-    /// presence recognized before the fault is preserved.
-    fn begin_rejected_member(&mut self) -> Result<(), CssSelectorProducerError> {
-        let frame = self.current_frame().map_err(machine_fault_to_error)?;
-        let checkpoint = frame.member_checkpoint;
-        let existing = frame.member_id;
-
-        let mut presences = Vec::new();
-        for staged in self.staging.facts.iter().skip(checkpoint) {
-            if let StagedFact::Retained(CssSelectorSemanticFact::NestingPresence {
-                unit,
-                origin: CssSelectorSemanticRelationshipOrigin::Authored(anchor),
-                ..
-            }) = staged
-            {
-                presences.push((*unit, anchor.clone()));
-            }
-        }
-        self.staging.facts.truncate(checkpoint);
-
-        let member = match existing {
-            Some(member) => member,
-            None => self.allocate_member().map_err(machine_fault_to_error)?,
-        };
-        self.staging.pending_rejected = Some(PendingRejectedMember { member, presences });
-
-        let frame = self.current_frame_mut().map_err(machine_fault_to_error)?;
-        frame.member_id = None;
-        frame.member_open_index = None;
-        Ok(())
-    }
-
-    /// Closes the member-local transaction once authoritative recovery has
-    /// established the rejected member's end endpoint.
-    fn finalize_rejected_member(&mut self) -> Result<(), CssSelectorProducerError> {
-        let Some(pending) = self.staging.pending_rejected.take() else {
-            return Ok(());
-        };
-        let start = self
-            .current_frame()
-            .map_err(machine_fault_to_error)?
-            .member_start
-            .ok_or({
-                CssSelectorProducerError::InternalInvariantFailure(
-                    CssSelectorProducerInvariantViolation::MissingSemanticMemberExtent,
-                )
-            })?;
-        let end = self.staging.last_content_end.ok_or({
-            CssSelectorProducerError::InternalInvariantFailure(
-                CssSelectorProducerInvariantViolation::MissingSemanticMemberExtent,
-            )
-        })?;
-        let range = self.anchor(start, end).map_err(machine_fault_to_error)?;
-
-        self.staging.facts.push(StagedFact::Retained(
-            CssSelectorSemanticFact::RejectedForgivingMember {
-                member: pending.member,
-                range,
-            },
-        ));
-        for (unit, anchor) in pending.presences {
-            self.staging.facts.push(StagedFact::Retained(
-                CssSelectorSemanticFact::NestingPresence {
-                    member: pending.member,
-                    unit,
-                    origin: CssSelectorSemanticRelationshipOrigin::Authored(anchor),
-                    disposition: CssSelectorSemanticNestingDisposition::NonContributingPresenceOnly,
-                },
-            ));
-        }
-        Ok(())
-    }
-
     fn consume_current(&mut self) -> Result<(), MachineFault> {
-        let token = self.current_token()?;
-        let whitespace = matches!(token.kind(), CssTokenKind::Whitespace);
-        let anchor = token.source().clone();
+        let anchor = self.current_anchor()?.clone();
         if let Some(evidence) = self
             .resources
             .charge_algorithm_step(self.header, &anchor)
             .map_err(MachineFault::Internal)?
         {
             return Err(MachineFault::ResourceLimit(evidence));
-        }
-        if !whitespace {
-            self.note_content_token(&anchor)?;
         }
         self.cursor += 1;
         Ok(())
@@ -1887,7 +1278,7 @@ mod tests {
     }
 
     fn selector_limits() -> CssSelectorLimits {
-        CssSelectorLimits::new(100_000, 64, 8192, 65_536).unwrap()
+        CssSelectorLimits::new(100_000, 64, 8192).unwrap()
     }
 
     fn qualify(source: &SourceText) -> CssSelectorQualificationRunResult {
@@ -2014,7 +1405,7 @@ mod tests {
     fn resource_refusal_preserves_observation_prefix() {
         let source = SourceText::new(SourceId::new(3), "a{}b{}".to_owned());
         let parser = analyze_css_source(&source, tokenizer_limits(), parser_limits()).unwrap();
-        let limits = CssSelectorLimits::new(100_000, 64, 1, 65_536).unwrap();
+        let limits = CssSelectorLimits::new(100_000, 64, 1).unwrap();
         let result = run(&source, parser, limits).unwrap();
         assert_eq!(result.observations().len(), 1);
         assert_eq!(
