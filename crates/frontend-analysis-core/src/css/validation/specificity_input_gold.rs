@@ -349,8 +349,8 @@ pub(super) struct GoldQualifierSnapshot {
     pub(super) completion: GoldQualifierCompletion,
     pub(super) outcomes: Vec<GoldQualifierOutcome>,
     pub(super) algorithm_steps: usize,
+    pub(super) peak_selector_depth: usize,
     pub(super) observations: usize,
-    pub(super) retained_semantic_units: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
