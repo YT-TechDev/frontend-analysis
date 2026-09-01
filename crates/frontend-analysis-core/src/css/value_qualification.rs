@@ -435,17 +435,18 @@ fn is_entire_whole_value_function(items: &[CssLexicalItem]) -> bool {
 }
 
 fn is_deferred_substitution_function(name: &str) -> bool {
-    [
-        "var",
-        "env",
-        "attr",
-        "if",
-        "inherit",
-        "ident",
-        "random-item",
-    ]
-    .iter()
-    .any(|function| name.eq_ignore_ascii_case(function))
+    name.starts_with("--")
+        || [
+            "var",
+            "env",
+            "attr",
+            "if",
+            "inherit",
+            "ident",
+            "random-item",
+        ]
+        .iter()
+        .any(|function| name.eq_ignore_ascii_case(function))
 }
 
 fn is_whole_value_function(name: &str) -> bool {
