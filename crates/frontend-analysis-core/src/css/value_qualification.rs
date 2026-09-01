@@ -97,7 +97,10 @@ pub(crate) enum CssDirectionQualificationError {
 
 impl fmt::Display for CssDirectionQualificationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "CSS direction value qualification failure: {self:?}")
+        write!(
+            formatter,
+            "CSS direction value qualification failure: {self:?}"
+        )
     }
 }
 
