@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -199,6 +199,64 @@ impl CssOrderQualificationObservation {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssScrollSnapAlignKeyword {
+    None,
+    Start,
+    End,
+    Center,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssScrollSnapAlignValue {
+    Single(CssScrollSnapAlignKeyword),
+    Pair {
+        first: CssScrollSnapAlignKeyword,
+        second: CssScrollSnapAlignKeyword,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssScrollSnapAlignUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssScrollSnapAlignQualificationOutcome {
+    Qualified(CssScrollSnapAlignValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssScrollSnapAlignUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `scroll-snap-align`
+/// qualification.
+///
+/// Authored one- and two-keyword forms remain distinct here. This observation
+/// does not perform the property's computed-value pair completion or CSSOM
+/// serialization canonicalization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssScrollSnapAlignQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssScrollSnapAlignQualificationOutcome,
+}
+
+impl CssScrollSnapAlignQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssScrollSnapAlignQualificationOutcome {
+        self.outcome
+    }
+}
+
 /// Run-owned result for the currently selected bounded CSS value capabilities.
 ///
 /// The exact Core-validated parser result is owned once here. Property-specific
@@ -213,6 +271,7 @@ pub(crate) struct CssValueQualificationRunResult {
     box_sizing_observations: Vec<CssBoxSizingQualificationObservation>,
     isolation_observations: Vec<CssIsolationQualificationObservation>,
     order_observations: Vec<CssOrderQualificationObservation>,
+    scroll_snap_align_observations: Vec<CssScrollSnapAlignQualificationObservation>,
 }
 
 impl CssValueQualificationRunResult {
@@ -234,6 +293,12 @@ impl CssValueQualificationRunResult {
 
     pub(crate) fn order_observations(&self) -> &[CssOrderQualificationObservation] {
         &self.order_observations
+    }
+
+    pub(crate) fn scroll_snap_align_observations(
+        &self,
+    ) -> &[CssScrollSnapAlignQualificationObservation] {
+        &self.scroll_snap_align_observations
     }
 
     pub(crate) const fn execution_completion(&self) -> CssParserExecutionCompletion {
@@ -300,6 +365,7 @@ pub(crate) fn run(
         box_sizing_observations,
         isolation_observations,
         order_observations,
+        scroll_snap_align_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
         let mut cursor = LexicalWindowCursor::new(tokenizer_result);
@@ -307,6 +373,7 @@ pub(crate) fn run(
         let mut box_sizing_observations = Vec::new();
         let mut isolation_observations = Vec::new();
         let mut order_observations = Vec::new();
+        let mut scroll_snap_align_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
             let property_range = cursor.window_for(occurrence.property_name())?;
@@ -354,6 +421,17 @@ pub(crate) fn run(
                     placement: occurrence.placement(),
                     outcome: qualify_order_value(value_items),
                 });
+                continue;
+            }
+
+            if property_name.eq_ignore_ascii_case("scroll-snap-align") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                scroll_snap_align_observations.push(CssScrollSnapAlignQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_scroll_snap_align_value(value_items),
+                });
             }
         }
 
@@ -362,6 +440,7 @@ pub(crate) fn run(
             box_sizing_observations,
             isolation_observations,
             order_observations,
+            scroll_snap_align_observations,
         )
     };
 
@@ -371,6 +450,7 @@ pub(crate) fn run(
         box_sizing_observations,
         isolation_observations,
         order_observations,
+        scroll_snap_align_observations,
     })
 }
 
@@ -579,6 +659,85 @@ fn qualify_order_value(items: &[CssLexicalItem]) -> CssOrderQualificationOutcome
         }
         _ => CssOrderQualificationOutcome::InvalidForSelectedValueGrammar,
     }
+}
+
+fn qualify_scroll_snap_align_value(
+    items: &[CssLexicalItem],
+) -> CssScrollSnapAlignQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssScrollSnapAlignQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssScrollSnapAlignUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssScrollSnapAlignQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssScrollSnapAlignUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    let tokens: Vec<_> = items
+        .iter()
+        .filter_map(|item| match item {
+            CssLexicalItem::SemanticToken(token)
+                if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+            {
+                Some(token)
+            }
+            _ => None,
+        })
+        .collect();
+
+    match tokens.as_slice() {
+        [token] => match token.kind() {
+            CssTokenKind::Ident(identifier) if is_css_wide_keyword(identifier) => {
+                CssScrollSnapAlignQualificationOutcome::UnsupportedBySelectedValueProfile(
+                    CssScrollSnapAlignUnsupportedReason::CssWideKeyword,
+                )
+            }
+            CssTokenKind::Ident(identifier) => scroll_snap_align_keyword(identifier)
+                .map(|keyword| {
+                    CssScrollSnapAlignQualificationOutcome::Qualified(
+                        CssScrollSnapAlignValue::Single(keyword),
+                    )
+                })
+                .unwrap_or(CssScrollSnapAlignQualificationOutcome::InvalidForSelectedValueGrammar),
+            _ => CssScrollSnapAlignQualificationOutcome::InvalidForSelectedValueGrammar,
+        },
+        [first, second] => match (first.kind(), second.kind()) {
+            (CssTokenKind::Ident(first), CssTokenKind::Ident(second)) => {
+                match (
+                    scroll_snap_align_keyword(first),
+                    scroll_snap_align_keyword(second),
+                ) {
+                    (Some(first), Some(second)) => {
+                        CssScrollSnapAlignQualificationOutcome::Qualified(
+                            CssScrollSnapAlignValue::Pair { first, second },
+                        )
+                    }
+                    _ => CssScrollSnapAlignQualificationOutcome::InvalidForSelectedValueGrammar,
+                }
+            }
+            _ => CssScrollSnapAlignQualificationOutcome::InvalidForSelectedValueGrammar,
+        },
+        _ => CssScrollSnapAlignQualificationOutcome::InvalidForSelectedValueGrammar,
+    }
+}
+
+fn scroll_snap_align_keyword(identifier: &str) -> Option<CssScrollSnapAlignKeyword> {
+    if identifier.eq_ignore_ascii_case("none") {
+        return Some(CssScrollSnapAlignKeyword::None);
+    }
+    if identifier.eq_ignore_ascii_case("start") {
+        return Some(CssScrollSnapAlignKeyword::Start);
+    }
+    if identifier.eq_ignore_ascii_case("end") {
+        return Some(CssScrollSnapAlignKeyword::End);
+    }
+    if identifier.eq_ignore_ascii_case("center") {
+        return Some(CssScrollSnapAlignKeyword::Center);
+    }
+    None
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
