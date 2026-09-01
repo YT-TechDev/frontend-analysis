@@ -60,11 +60,9 @@ fn qualify_with_limits(
 
 fn expected_outcome(expected: ExpectedOutcome) -> CssScrollSnapAlignQualificationOutcome {
     match expected {
-        ExpectedOutcome::Single(keyword) => {
-            CssScrollSnapAlignQualificationOutcome::Qualified(CssScrollSnapAlignValue::Single(
-                keyword,
-            ))
-        }
+        ExpectedOutcome::Single(keyword) => CssScrollSnapAlignQualificationOutcome::Qualified(
+            CssScrollSnapAlignValue::Single(keyword),
+        ),
         ExpectedOutcome::Pair(first, second) => {
             CssScrollSnapAlignQualificationOutcome::Qualified(CssScrollSnapAlignValue::Pair {
                 first,
@@ -400,6 +398,9 @@ fn repeated_and_cross_source_runs_are_semantically_deterministic() {
         first.scroll_snap_align_observations(),
         another_source.scroll_snap_align_observations()
     );
-    assert_eq!(first.direction_observations(), repeated.direction_observations());
+    assert_eq!(
+        first.direction_observations(),
+        repeated.direction_observations()
+    );
     assert_eq!(first.order_observations(), repeated.order_observations());
 }
