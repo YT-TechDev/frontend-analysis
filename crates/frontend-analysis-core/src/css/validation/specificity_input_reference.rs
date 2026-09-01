@@ -214,10 +214,15 @@ impl Resolver {
                     add_to_current(&mut containers, simple_specificity(kind))
                 }
                 GoldInstruction::BeginMax(kind) => {
-                    if containers
-                        .last()
-                        .and_then(|container| container.current)
-                        .is_none()
+                    let nested_has = kind == GoldMaxKind::Has
+                        && containers.iter().any(|container| {
+                            container.kind == ContainerKind::Max(GoldMaxKind::Has)
+                        });
+                    if nested_has
+                        || containers
+                            .last()
+                            .and_then(|container| container.current)
+                            .is_none()
                     {
                         Err(ReferenceOutcome::InvalidProgram)
                     } else {
