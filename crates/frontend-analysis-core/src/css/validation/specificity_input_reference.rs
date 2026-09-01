@@ -235,6 +235,8 @@ impl Resolver {
                         if container.kind != ContainerKind::Max(kind) || container.current.is_some()
                         {
                             Err(ReferenceOutcome::InvalidProgram)
+                        } else if container.completed.is_empty() && kind != GoldMaxKind::Is {
+                            Err(ReferenceOutcome::InvalidProgram)
                         } else {
                             let maximum = container
                                 .completed
