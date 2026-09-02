@@ -440,13 +440,16 @@ fn one_run_owns_upstream_evidence_for_every_selected_value_leaf() {
 
 #[test]
 fn duplicate_placements_and_nonordinary_contexts_stay_separate() {
-    let result = qualify(
-        1110,
-        "a{border-top-width:thin;}b{border-top-width:thin;}",
-    );
+    let result = qualify(1110, "a{border-top-width:thin;}b{border-top-width:thin;}");
     assert_expected(&result, &[ExpectedOutcome::Thin, ExpectedOutcome::Thin]);
-    assert_eq!(result.border_top_width_observations()[0].occurrence_index(), 0);
-    assert_eq!(result.border_top_width_observations()[1].occurrence_index(), 1);
+    assert_eq!(
+        result.border_top_width_observations()[0].occurrence_index(),
+        0
+    );
+    assert_eq!(
+        result.border_top_width_observations()[1].occurrence_index(),
+        1
+    );
     assert_ne!(
         result.border_top_width_observations()[0]
             .placement()
