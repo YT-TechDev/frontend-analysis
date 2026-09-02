@@ -476,8 +476,12 @@ fn duplicate_placements_and_nonordinary_contexts_stay_separate() {
     assert_eq!(result.line_height_observations()[0].occurrence_index(), 0);
     assert_eq!(result.line_height_observations()[1].occurrence_index(), 1);
     assert_ne!(
-        result.line_height_observations()[0].placement().context_id(),
-        result.line_height_observations()[1].placement().context_id(),
+        result.line_height_observations()[0]
+            .placement()
+            .context_id(),
+        result.line_height_observations()[1]
+            .placement()
+            .context_id(),
     );
 
     for (source_id, css) in [
@@ -543,7 +547,10 @@ fn incomplete_prefix_and_repeated_cross_source_runs_preserve_lifecycle_and_deter
         first.perspective_observations(),
         repeated.perspective_observations()
     );
-    assert_eq!(first.opacity_observations(), repeated.opacity_observations());
+    assert_eq!(
+        first.opacity_observations(),
+        repeated.opacity_observations()
+    );
     assert_eq!(
         first.flex_grow_observations(),
         repeated.flex_grow_observations()
@@ -556,7 +563,10 @@ fn incomplete_prefix_and_repeated_cross_source_runs_preserve_lifecycle_and_deter
         first.column_count_observations(),
         repeated.column_count_observations()
     );
-    assert_eq!(first.z_index_observations(), repeated.z_index_observations());
+    assert_eq!(
+        first.z_index_observations(),
+        repeated.z_index_observations()
+    );
     assert_eq!(
         first.border_top_width_observations(),
         repeated.border_top_width_observations()
