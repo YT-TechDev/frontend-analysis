@@ -1599,9 +1599,7 @@ fn qualify_backface_visibility_value(
         CssSingleKeywordValue::Identifier(identifier)
             if identifier.eq_ignore_ascii_case("hidden") =>
         {
-            CssBackfaceVisibilityQualificationOutcome::Qualified(
-                CssBackfaceVisibilityValue::Hidden,
-            )
+            CssBackfaceVisibilityQualificationOutcome::Qualified(CssBackfaceVisibilityValue::Hidden)
         }
         CssSingleKeywordValue::Identifier(identifier) if is_css_wide_keyword(identifier) => {
             CssBackfaceVisibilityQualificationOutcome::UnsupportedBySelectedValueProfile(

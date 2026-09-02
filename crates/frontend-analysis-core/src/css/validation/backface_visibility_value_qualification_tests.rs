@@ -59,9 +59,9 @@ fn expected_outcome(expected: ExpectedOutcome) -> CssBackfaceVisibilityQualifica
         ExpectedOutcome::Visible => CssBackfaceVisibilityQualificationOutcome::Qualified(
             CssBackfaceVisibilityValue::Visible,
         ),
-        ExpectedOutcome::Hidden => CssBackfaceVisibilityQualificationOutcome::Qualified(
-            CssBackfaceVisibilityValue::Hidden,
-        ),
+        ExpectedOutcome::Hidden => {
+            CssBackfaceVisibilityQualificationOutcome::Qualified(CssBackfaceVisibilityValue::Hidden)
+        }
         ExpectedOutcome::Invalid => {
             CssBackfaceVisibilityQualificationOutcome::InvalidForSelectedValueGrammar
         }
@@ -142,7 +142,10 @@ fn comments_and_priority_preserve_decoded_keyword_meaning() {
         ),
     );
 
-    assert_expected(&result, &[ExpectedOutcome::Visible, ExpectedOutcome::Hidden]);
+    assert_expected(
+        &result,
+        &[ExpectedOutcome::Visible, ExpectedOutcome::Hidden],
+    );
     for occurrence in result.upstream_parser_result().occurrences() {
         assert!(occurrence.priority().is_some());
     }
@@ -271,7 +274,10 @@ fn one_run_interleaves_backface_visibility_with_every_accepted_leaf() {
     assert_eq!(result.z_index_observations().len(), 1);
     assert_eq!(result.scroll_snap_align_observations().len(), 1);
     assert_eq!(result.backface_visibility_observations().len(), 1);
-    assert_eq!(result.backface_visibility_observations()[0].occurrence_index(), 18);
+    assert_eq!(
+        result.backface_visibility_observations()[0].occurrence_index(),
+        18
+    );
     assert_expected(&result, &[ExpectedOutcome::Hidden]);
 }
 
@@ -282,9 +288,18 @@ fn duplicate_declarations_keep_distinct_run_local_placement() {
         "a{backface-visibility:visible;}b{backface-visibility:visible;}",
     );
 
-    assert_expected(&result, &[ExpectedOutcome::Visible, ExpectedOutcome::Visible]);
-    assert_eq!(result.backface_visibility_observations()[0].occurrence_index(), 0);
-    assert_eq!(result.backface_visibility_observations()[1].occurrence_index(), 1);
+    assert_expected(
+        &result,
+        &[ExpectedOutcome::Visible, ExpectedOutcome::Visible],
+    );
+    assert_eq!(
+        result.backface_visibility_observations()[0].occurrence_index(),
+        0
+    );
+    assert_eq!(
+        result.backface_visibility_observations()[1].occurrence_index(),
+        1
+    );
     assert_ne!(
         result.backface_visibility_observations()[0]
             .placement()
