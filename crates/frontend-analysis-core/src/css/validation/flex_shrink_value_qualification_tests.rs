@@ -8,8 +8,8 @@ use crate::css::value_qualification::{
     CssFlexGrowQualificationOutcome, CssFlexGrowValue, CssFlexShrinkQualificationOutcome,
     CssFlexShrinkUnsupportedReason, CssFlexShrinkValue, CssIsolationQualificationOutcome,
     CssIsolationValue, CssOrderQualificationOutcome, CssOrderValue, CssScrollSnapAlignKeyword,
-    CssScrollSnapAlignQualificationOutcome, CssScrollSnapAlignValue, CssValueQualificationRunResult,
-    CssZIndexQualificationOutcome, CssZIndexValue, run,
+    CssScrollSnapAlignQualificationOutcome, CssScrollSnapAlignValue,
+    CssValueQualificationRunResult, CssZIndexQualificationOutcome, CssZIndexValue, run,
 };
 use crate::{SourceId, SourceText};
 
@@ -370,7 +370,10 @@ fn one_run_owns_upstream_evidence_for_all_selected_value_leaves() {
     assert_eq!(result.box_sizing_observations()[0].occurrence_index(), 1);
     assert_eq!(result.isolation_observations()[0].occurrence_index(), 2);
     assert_eq!(result.order_observations()[0].occurrence_index(), 3);
-    assert_eq!(result.scroll_snap_align_observations()[0].occurrence_index(), 4);
+    assert_eq!(
+        result.scroll_snap_align_observations()[0].occurrence_index(),
+        4
+    );
     assert_eq!(result.z_index_observations()[0].occurrence_index(), 5);
     assert_eq!(result.column_count_observations()[0].occurrence_index(), 6);
     assert_eq!(result.flex_grow_observations()[0].occurrence_index(), 7);
@@ -429,8 +432,12 @@ fn duplicate_flex_shrink_declarations_keep_distinct_run_local_placement() {
     assert_eq!(result.flex_shrink_observations()[0].occurrence_index(), 0);
     assert_eq!(result.flex_shrink_observations()[1].occurrence_index(), 1);
     assert_ne!(
-        result.flex_shrink_observations()[0].placement().context_id(),
-        result.flex_shrink_observations()[1].placement().context_id(),
+        result.flex_shrink_observations()[0]
+            .placement()
+            .context_id(),
+        result.flex_shrink_observations()[1]
+            .placement()
+            .context_id(),
     );
 }
 
@@ -495,10 +502,16 @@ fn repeated_and_cross_source_flex_shrink_runs_are_semantically_deterministic() {
         first.flex_grow_observations(),
         repeated.flex_grow_observations()
     );
-    assert_eq!(first.direction_observations(), repeated.direction_observations());
+    assert_eq!(
+        first.direction_observations(),
+        repeated.direction_observations()
+    );
     assert_eq!(
         first.column_count_observations(),
         repeated.column_count_observations()
     );
-    assert_eq!(first.z_index_observations(), repeated.z_index_observations());
+    assert_eq!(
+        first.z_index_observations(),
+        repeated.z_index_observations()
+    );
 }
