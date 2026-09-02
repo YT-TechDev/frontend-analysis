@@ -428,7 +428,10 @@ fn one_run_owns_upstream_evidence_for_every_selected_value_leaf() {
     assert_eq!(result.shape_margin_observations()[0].occurrence_index(), 13);
     assert_eq!(result.line_height_observations()[0].occurrence_index(), 14);
     assert_eq!(result.word_spacing_observations()[0].occurrence_index(), 15);
-    assert_eq!(result.scroll_margin_top_observations()[0].occurrence_index(), 16);
+    assert_eq!(
+        result.scroll_margin_top_observations()[0].occurrence_index(),
+        16
+    );
     assert_eq!(result.direction_observations()[1].occurrence_index(), 17);
     assert_eq!(
         result.scroll_margin_top_observations()[0].outcome(),
@@ -440,16 +443,19 @@ fn one_run_owns_upstream_evidence_for_every_selected_value_leaf() {
 
 #[test]
 fn duplicate_placements_and_nonordinary_contexts_stay_separate() {
-    let result = qualify(
-        1510,
-        "a{scroll-margin-top:-1px;}b{scroll-margin-top:-1px;}",
-    );
+    let result = qualify(1510, "a{scroll-margin-top:-1px;}b{scroll-margin-top:-1px;}");
     assert_expected(
         &result,
         &[ExpectedOutcome::DirectLength, ExpectedOutcome::DirectLength],
     );
-    assert_eq!(result.scroll_margin_top_observations()[0].occurrence_index(), 0);
-    assert_eq!(result.scroll_margin_top_observations()[1].occurrence_index(), 1);
+    assert_eq!(
+        result.scroll_margin_top_observations()[0].occurrence_index(),
+        0
+    );
+    assert_eq!(
+        result.scroll_margin_top_observations()[1].occurrence_index(),
+        1
+    );
     assert_ne!(
         result.scroll_margin_top_observations()[0]
             .placement()
@@ -531,7 +537,10 @@ fn incomplete_prefix_and_repeated_cross_source_runs_preserve_lifecycle_and_deter
         first.perspective_observations(),
         repeated.perspective_observations()
     );
-    assert_eq!(first.opacity_observations(), repeated.opacity_observations());
+    assert_eq!(
+        first.opacity_observations(),
+        repeated.opacity_observations()
+    );
     assert_eq!(
         first.flex_grow_observations(),
         repeated.flex_grow_observations()
@@ -544,7 +553,10 @@ fn incomplete_prefix_and_repeated_cross_source_runs_preserve_lifecycle_and_deter
         first.column_count_observations(),
         repeated.column_count_observations()
     );
-    assert_eq!(first.z_index_observations(), repeated.z_index_observations());
+    assert_eq!(
+        first.z_index_observations(),
+        repeated.z_index_observations()
+    );
     assert_eq!(
         first.border_top_width_observations(),
         repeated.border_top_width_observations()
