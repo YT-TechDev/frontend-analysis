@@ -89,4 +89,6 @@ mod shape_margin_value_qualification_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod word_spacing_value_qualification_tests;
+#[cfg(test)]
 mod z_index_value_qualification_tests;
