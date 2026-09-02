@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -437,6 +437,53 @@ impl CssShapeImageThresholdQualificationObservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssPerspectiveValue {
+    None,
+    DirectLengthLiteral,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssPerspectiveUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssPerspectiveQualificationOutcome {
+    Qualified(CssPerspectiveValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssPerspectiveUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `perspective` qualification.
+///
+/// This profile qualifies `none`, direct unitless zero, and direct retained
+/// CSS length Dimensions proven inside `[0,∞]`. It performs no unit conversion,
+/// numeric-function evaluation, or computed perspective processing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssPerspectiveQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssPerspectiveQualificationOutcome,
+}
+
+impl CssPerspectiveQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssPerspectiveQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssScrollSnapAlignKeyword {
     None,
     Start,
@@ -560,6 +607,7 @@ pub(crate) struct CssValueQualificationRunResult {
     flex_shrink_observations: Vec<CssFlexShrinkQualificationObservation>,
     opacity_observations: Vec<CssOpacityQualificationObservation>,
     shape_image_threshold_observations: Vec<CssShapeImageThresholdQualificationObservation>,
+    perspective_observations: Vec<CssPerspectiveQualificationObservation>,
     scroll_snap_align_observations: Vec<CssScrollSnapAlignQualificationObservation>,
     z_index_observations: Vec<CssZIndexQualificationObservation>,
 }
@@ -605,6 +653,10 @@ impl CssValueQualificationRunResult {
         &self,
     ) -> &[CssShapeImageThresholdQualificationObservation] {
         &self.shape_image_threshold_observations
+    }
+
+    pub(crate) fn perspective_observations(&self) -> &[CssPerspectiveQualificationObservation] {
+        &self.perspective_observations
     }
 
     pub(crate) fn scroll_snap_align_observations(
@@ -686,6 +738,7 @@ pub(crate) fn run(
         flex_shrink_observations,
         opacity_observations,
         shape_image_threshold_observations,
+        perspective_observations,
         scroll_snap_align_observations,
         z_index_observations,
     ) = {
@@ -700,6 +753,7 @@ pub(crate) fn run(
         let mut flex_shrink_observations = Vec::new();
         let mut opacity_observations = Vec::new();
         let mut shape_image_threshold_observations = Vec::new();
+        let mut perspective_observations = Vec::new();
         let mut scroll_snap_align_observations = Vec::new();
         let mut z_index_observations = Vec::new();
 
@@ -809,6 +863,17 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("perspective") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                perspective_observations.push(CssPerspectiveQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_perspective_value(value_items),
+                });
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("z-index") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -841,6 +906,7 @@ pub(crate) fn run(
             flex_shrink_observations,
             opacity_observations,
             shape_image_threshold_observations,
+            perspective_observations,
             scroll_snap_align_observations,
             z_index_observations,
         )
@@ -857,6 +923,7 @@ pub(crate) fn run(
         flex_shrink_observations,
         opacity_observations,
         shape_image_threshold_observations,
+        perspective_observations,
         scroll_snap_align_observations,
         z_index_observations,
     })
@@ -1343,6 +1410,80 @@ fn qualify_shape_image_threshold_value(
         }
         _ => CssShapeImageThresholdQualificationOutcome::InvalidForSelectedValueGrammar,
     }
+}
+
+fn qualify_perspective_value(items: &[CssLexicalItem]) -> CssPerspectiveQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssPerspectiveQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssPerspectiveUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssPerspectiveQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssPerspectiveUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    if entire_function_name(items).is_some() {
+        return CssPerspectiveQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssPerspectiveUnsupportedReason::FunctionValue,
+        );
+    }
+
+    let mut tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+
+    let Some(token) = tokens.next() else {
+        return CssPerspectiveQualificationOutcome::InvalidForSelectedValueGrammar;
+    };
+    if tokens.next().is_some() {
+        return CssPerspectiveQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    match token.kind() {
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("none") => {
+            CssPerspectiveQualificationOutcome::Qualified(CssPerspectiveValue::None)
+        }
+        CssTokenKind::Number { value, .. } if is_direct_zero_numeric_value(value) => {
+            CssPerspectiveQualificationOutcome::Qualified(CssPerspectiveValue::DirectLengthLiteral)
+        }
+        CssTokenKind::Dimension { value, unit, .. }
+            if is_css_length_unit(unit) && is_non_negative_direct_number(value) =>
+        {
+            CssPerspectiveQualificationOutcome::Qualified(CssPerspectiveValue::DirectLengthLiteral)
+        }
+        CssTokenKind::Ident(identifier) if is_css_wide_keyword(identifier) => {
+            CssPerspectiveQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssPerspectiveUnsupportedReason::CssWideKeyword,
+            )
+        }
+        _ => CssPerspectiveQualificationOutcome::InvalidForSelectedValueGrammar,
+    }
+}
+
+fn is_direct_zero_numeric_value(value: &CssNumericValue) -> bool {
+    let decimal = value.decimal();
+    decimal.integer_digits().bytes().all(|digit| digit == b'0')
+        && decimal.fraction_digits().bytes().all(|digit| digit == b'0')
+}
+
+fn is_css_length_unit(unit: &str) -> bool {
+    [
+        "cm", "mm", "q", "in", "pt", "pc", "px", "em", "rem", "ex", "rex", "cap",
+        "rcap", "ch", "rch", "ic", "ric", "lh", "rlh", "vw", "vh", "vi", "vb",
+        "vmin", "vmax", "svw", "svh", "svi", "svb", "svmin", "svmax", "lvw", "lvh",
+        "lvi", "lvb", "lvmin", "lvmax", "dvw", "dvh", "dvi", "dvb", "dvmin", "dvmax",
+        "cqw", "cqh", "cqi", "cqb", "cqmin", "cqmax",
+    ]
+    .iter()
+    .any(|length_unit| unit.eq_ignore_ascii_case(length_unit))
 }
 
 fn qualify_z_index_value(items: &[CssLexicalItem]) -> CssZIndexQualificationOutcome {
