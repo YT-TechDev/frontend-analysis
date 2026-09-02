@@ -165,11 +165,10 @@ fn handwritten_keyword_unitless_zero_and_direct_type_boundaries_are_explicit() {
 #[test]
 fn handwritten_current_css_length_unit_inventory_is_qualified_case_insensitively() {
     let units = [
-        "cm", "mm", "q", "in", "pt", "pc", "px", "em", "rem", "ex", "rex", "cap",
-        "rcap", "ch", "rch", "ic", "ric", "lh", "rlh", "vw", "vh", "vi", "vb",
-        "vmin", "vmax", "svw", "svh", "svi", "svb", "svmin", "svmax", "lvw", "lvh",
-        "lvi", "lvb", "lvmin", "lvmax", "dvw", "dvh", "dvi", "dvb", "dvmin", "dvmax",
-        "cqw", "cqh", "cqi", "cqb", "cqmin", "cqmax",
+        "cm", "mm", "q", "in", "pt", "pc", "px", "em", "rem", "ex", "rex", "cap", "rcap", "ch",
+        "rch", "ic", "ric", "lh", "rlh", "vw", "vh", "vi", "vb", "vmin", "vmax", "svw", "svh",
+        "svi", "svb", "svmin", "svmax", "lvw", "lvh", "lvi", "lvb", "lvmin", "lvmax", "dvw", "dvh",
+        "dvi", "dvb", "dvmin", "dvmax", "cqw", "cqh", "cqi", "cqb", "cqmin", "cqmax",
     ];
 
     let mut css = String::new();
@@ -402,7 +401,10 @@ fn one_run_owns_upstream_evidence_for_every_selected_value_leaf() {
     assert_eq!(result.box_sizing_observations()[0].occurrence_index(), 1);
     assert_eq!(result.isolation_observations()[0].occurrence_index(), 2);
     assert_eq!(result.order_observations()[0].occurrence_index(), 3);
-    assert_eq!(result.scroll_snap_align_observations()[0].occurrence_index(), 4);
+    assert_eq!(
+        result.scroll_snap_align_observations()[0].occurrence_index(),
+        4
+    );
     assert_eq!(result.z_index_observations()[0].occurrence_index(), 5);
     assert_eq!(result.column_count_observations()[0].occurrence_index(), 6);
     assert_eq!(result.flex_grow_observations()[0].occurrence_index(), 7);
@@ -426,8 +428,12 @@ fn duplicate_placements_and_nonordinary_contexts_stay_separate() {
     assert_eq!(result.perspective_observations()[0].occurrence_index(), 0);
     assert_eq!(result.perspective_observations()[1].occurrence_index(), 1);
     assert_ne!(
-        result.perspective_observations()[0].placement().context_id(),
-        result.perspective_observations()[1].placement().context_id(),
+        result.perspective_observations()[0]
+            .placement()
+            .context_id(),
+        result.perspective_observations()[1]
+            .placement()
+            .context_id(),
     );
 
     for (source_id, css) in [
@@ -475,7 +481,10 @@ fn incomplete_prefix_and_repeated_cross_source_runs_preserve_lifecycle_and_deter
     let repeated = qualify(1016, css);
     let another_source = qualify(1017, css);
 
-    assert_eq!(first.perspective_observations(), repeated.perspective_observations());
+    assert_eq!(
+        first.perspective_observations(),
+        repeated.perspective_observations()
+    );
     assert_eq!(
         first.perspective_observations(),
         another_source.perspective_observations()
@@ -484,12 +493,24 @@ fn incomplete_prefix_and_repeated_cross_source_runs_preserve_lifecycle_and_deter
         first.shape_image_threshold_observations(),
         repeated.shape_image_threshold_observations()
     );
-    assert_eq!(first.opacity_observations(), repeated.opacity_observations());
-    assert_eq!(first.flex_grow_observations(), repeated.flex_grow_observations());
-    assert_eq!(first.direction_observations(), repeated.direction_observations());
+    assert_eq!(
+        first.opacity_observations(),
+        repeated.opacity_observations()
+    );
+    assert_eq!(
+        first.flex_grow_observations(),
+        repeated.flex_grow_observations()
+    );
+    assert_eq!(
+        first.direction_observations(),
+        repeated.direction_observations()
+    );
     assert_eq!(
         first.column_count_observations(),
         repeated.column_count_observations()
     );
-    assert_eq!(first.z_index_observations(), repeated.z_index_observations());
+    assert_eq!(
+        first.z_index_observations(),
+        repeated.z_index_observations()
+    );
 }
