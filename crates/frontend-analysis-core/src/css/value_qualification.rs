@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -437,6 +437,55 @@ impl CssShapeImageThresholdQualificationObservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssBorderTopWidthValue {
+    Thin,
+    Medium,
+    Thick,
+    DirectLengthLiteral,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssBorderTopWidthUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssBorderTopWidthQualificationOutcome {
+    Qualified(CssBorderTopWidthValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssBorderTopWidthUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `border-top-width` qualification.
+///
+/// This profile composes the three direct `<line-width>` keywords with the
+/// accepted direct `<length [0,∞]>` boundary. It performs no unit conversion,
+/// numeric-function evaluation, shorthand expansion, or computed border width.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssBorderTopWidthQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssBorderTopWidthQualificationOutcome,
+}
+
+impl CssBorderTopWidthQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssBorderTopWidthQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssPerspectiveValue {
     None,
     DirectLengthLiteral,
@@ -607,6 +656,7 @@ pub(crate) struct CssValueQualificationRunResult {
     flex_shrink_observations: Vec<CssFlexShrinkQualificationObservation>,
     opacity_observations: Vec<CssOpacityQualificationObservation>,
     shape_image_threshold_observations: Vec<CssShapeImageThresholdQualificationObservation>,
+    border_top_width_observations: Vec<CssBorderTopWidthQualificationObservation>,
     perspective_observations: Vec<CssPerspectiveQualificationObservation>,
     scroll_snap_align_observations: Vec<CssScrollSnapAlignQualificationObservation>,
     z_index_observations: Vec<CssZIndexQualificationObservation>,
@@ -653,6 +703,12 @@ impl CssValueQualificationRunResult {
         &self,
     ) -> &[CssShapeImageThresholdQualificationObservation] {
         &self.shape_image_threshold_observations
+    }
+
+    pub(crate) fn border_top_width_observations(
+        &self,
+    ) -> &[CssBorderTopWidthQualificationObservation] {
+        &self.border_top_width_observations
     }
 
     pub(crate) fn perspective_observations(&self) -> &[CssPerspectiveQualificationObservation] {
@@ -738,6 +794,7 @@ pub(crate) fn run(
         flex_shrink_observations,
         opacity_observations,
         shape_image_threshold_observations,
+        border_top_width_observations,
         perspective_observations,
         scroll_snap_align_observations,
         z_index_observations,
@@ -753,6 +810,7 @@ pub(crate) fn run(
         let mut flex_shrink_observations = Vec::new();
         let mut opacity_observations = Vec::new();
         let mut shape_image_threshold_observations = Vec::new();
+        let mut border_top_width_observations = Vec::new();
         let mut perspective_observations = Vec::new();
         let mut scroll_snap_align_observations = Vec::new();
         let mut z_index_observations = Vec::new();
@@ -863,6 +921,17 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("border-top-width") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                border_top_width_observations.push(CssBorderTopWidthQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_border_top_width_value(value_items),
+                });
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("perspective") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -906,6 +975,7 @@ pub(crate) fn run(
             flex_shrink_observations,
             opacity_observations,
             shape_image_threshold_observations,
+            border_top_width_observations,
             perspective_observations,
             scroll_snap_align_observations,
             z_index_observations,
@@ -923,6 +993,7 @@ pub(crate) fn run(
         flex_shrink_observations,
         opacity_observations,
         shape_image_threshold_observations,
+        border_top_width_observations,
         perspective_observations,
         scroll_snap_align_observations,
         z_index_observations,
@@ -1409,6 +1480,74 @@ fn qualify_shape_image_threshold_value(
             )
         }
         _ => CssShapeImageThresholdQualificationOutcome::InvalidForSelectedValueGrammar,
+    }
+}
+
+fn qualify_border_top_width_value(
+    items: &[CssLexicalItem],
+) -> CssBorderTopWidthQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssBorderTopWidthQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssBorderTopWidthUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssBorderTopWidthQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssBorderTopWidthUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    if entire_function_name(items).is_some() {
+        return CssBorderTopWidthQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssBorderTopWidthUnsupportedReason::FunctionValue,
+        );
+    }
+
+    let mut tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+
+    let Some(token) = tokens.next() else {
+        return CssBorderTopWidthQualificationOutcome::InvalidForSelectedValueGrammar;
+    };
+    if tokens.next().is_some() {
+        return CssBorderTopWidthQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    match token.kind() {
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("thin") => {
+            CssBorderTopWidthQualificationOutcome::Qualified(CssBorderTopWidthValue::Thin)
+        }
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("medium") => {
+            CssBorderTopWidthQualificationOutcome::Qualified(CssBorderTopWidthValue::Medium)
+        }
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("thick") => {
+            CssBorderTopWidthQualificationOutcome::Qualified(CssBorderTopWidthValue::Thick)
+        }
+        CssTokenKind::Number { value, .. } if is_direct_zero_numeric_value(value) => {
+            CssBorderTopWidthQualificationOutcome::Qualified(
+                CssBorderTopWidthValue::DirectLengthLiteral,
+            )
+        }
+        CssTokenKind::Dimension { value, unit, .. }
+            if is_css_length_unit(unit) && is_non_negative_direct_number(value) =>
+        {
+            CssBorderTopWidthQualificationOutcome::Qualified(
+                CssBorderTopWidthValue::DirectLengthLiteral,
+            )
+        }
+        CssTokenKind::Ident(identifier) if is_css_wide_keyword(identifier) => {
+            CssBorderTopWidthQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssBorderTopWidthUnsupportedReason::CssWideKeyword,
+            )
+        }
+        _ => CssBorderTopWidthQualificationOutcome::InvalidForSelectedValueGrammar,
     }
 }
 
