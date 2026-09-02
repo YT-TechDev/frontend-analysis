@@ -83,6 +83,8 @@ mod scroll_margin_top_value_qualification_tests;
 #[cfg(test)]
 mod scroll_snap_align_value_qualification_tests;
 #[cfg(test)]
+mod scroll_snap_stop_value_qualification_tests;
+#[cfg(test)]
 mod selector_conformance_tests;
 #[cfg(test)]
 mod selector_gold_contract_tests;
