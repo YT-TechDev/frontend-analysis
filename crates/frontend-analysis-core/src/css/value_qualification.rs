@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -149,6 +149,53 @@ impl CssIsolationQualificationObservation {
     }
 
     pub(crate) const fn outcome(&self) -> CssIsolationQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssBackfaceVisibilityValue {
+    Visible,
+    Hidden,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssBackfaceVisibilityUnsupportedReason {
+    CssWideKeyword,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssBackfaceVisibilityQualificationOutcome {
+    Qualified(CssBackfaceVisibilityValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssBackfaceVisibilityUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `backface-visibility`
+/// qualification.
+///
+/// This profile qualifies only direct `visible | hidden` authored keyword
+/// evidence. Transform matrices, 3D rendering context, backface geometry,
+/// containing-block behavior, painting, and compositing remain outside this
+/// slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssBackfaceVisibilityQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssBackfaceVisibilityQualificationOutcome,
+}
+
+impl CssBackfaceVisibilityQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssBackfaceVisibilityQualificationOutcome {
         self.outcome
     }
 }
@@ -892,6 +939,7 @@ pub(crate) struct CssValueQualificationRunResult {
     direction_observations: Vec<CssDirectionQualificationObservation>,
     box_sizing_observations: Vec<CssBoxSizingQualificationObservation>,
     isolation_observations: Vec<CssIsolationQualificationObservation>,
+    backface_visibility_observations: Vec<CssBackfaceVisibilityQualificationObservation>,
     order_observations: Vec<CssOrderQualificationObservation>,
     column_count_observations: Vec<CssColumnCountQualificationObservation>,
     flex_grow_observations: Vec<CssFlexGrowQualificationObservation>,
@@ -924,6 +972,12 @@ impl CssValueQualificationRunResult {
 
     pub(crate) fn isolation_observations(&self) -> &[CssIsolationQualificationObservation] {
         &self.isolation_observations
+    }
+
+    pub(crate) fn backface_visibility_observations(
+        &self,
+    ) -> &[CssBackfaceVisibilityQualificationObservation] {
+        &self.backface_visibility_observations
     }
 
     pub(crate) fn order_observations(&self) -> &[CssOrderQualificationObservation] {
@@ -1059,6 +1113,7 @@ pub(crate) fn run(
         direction_observations,
         box_sizing_observations,
         isolation_observations,
+        backface_visibility_observations,
         order_observations,
         column_count_observations,
         flex_grow_observations,
@@ -1080,6 +1135,7 @@ pub(crate) fn run(
         let mut direction_observations = Vec::new();
         let mut box_sizing_observations = Vec::new();
         let mut isolation_observations = Vec::new();
+        let mut backface_visibility_observations = Vec::new();
         let mut order_observations = Vec::new();
         let mut column_count_observations = Vec::new();
         let mut flex_grow_observations = Vec::new();
@@ -1131,6 +1187,19 @@ pub(crate) fn run(
                     placement: occurrence.placement(),
                     outcome: qualify_isolation_value(value_items),
                 });
+                continue;
+            }
+
+            if property_name.eq_ignore_ascii_case("backface-visibility") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                backface_visibility_observations.push(
+                    CssBackfaceVisibilityQualificationObservation {
+                        occurrence_index,
+                        placement: occurrence.placement(),
+                        outcome: qualify_backface_visibility_value(value_items),
+                    },
+                );
                 continue;
             }
 
@@ -1307,6 +1376,7 @@ pub(crate) fn run(
             direction_observations,
             box_sizing_observations,
             isolation_observations,
+            backface_visibility_observations,
             order_observations,
             column_count_observations,
             flex_grow_observations,
@@ -1330,6 +1400,7 @@ pub(crate) fn run(
         direction_observations,
         box_sizing_observations,
         isolation_observations,
+        backface_visibility_observations,
         order_observations,
         column_count_observations,
         flex_grow_observations,
@@ -1502,6 +1573,43 @@ fn qualify_isolation_value(items: &[CssLexicalItem]) -> CssIsolationQualificatio
         }
         CssSingleKeywordValue::Identifier(_) => {
             CssIsolationQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+    }
+}
+
+fn qualify_backface_visibility_value(
+    items: &[CssLexicalItem],
+) -> CssBackfaceVisibilityQualificationOutcome {
+    match classify_single_keyword_value(items) {
+        CssSingleKeywordValue::UnsupportedFunction => {
+            CssBackfaceVisibilityQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssBackfaceVisibilityUnsupportedReason::FunctionValue,
+            )
+        }
+        CssSingleKeywordValue::Invalid => {
+            CssBackfaceVisibilityQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("visible") =>
+        {
+            CssBackfaceVisibilityQualificationOutcome::Qualified(
+                CssBackfaceVisibilityValue::Visible,
+            )
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("hidden") =>
+        {
+            CssBackfaceVisibilityQualificationOutcome::Qualified(
+                CssBackfaceVisibilityValue::Hidden,
+            )
+        }
+        CssSingleKeywordValue::Identifier(identifier) if is_css_wide_keyword(identifier) => {
+            CssBackfaceVisibilityQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssBackfaceVisibilityUnsupportedReason::CssWideKeyword,
+            )
+        }
+        CssSingleKeywordValue::Identifier(_) => {
+            CssBackfaceVisibilityQualificationOutcome::InvalidForSelectedValueGrammar
         }
     }
 }
