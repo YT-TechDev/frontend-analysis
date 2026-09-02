@@ -350,7 +350,10 @@ fn one_run_owns_upstream_evidence_for_every_selected_value_leaf() {
     assert_eq!(result.box_sizing_observations()[0].occurrence_index(), 1);
     assert_eq!(result.isolation_observations()[0].occurrence_index(), 2);
     assert_eq!(result.order_observations()[0].occurrence_index(), 3);
-    assert_eq!(result.scroll_snap_align_observations()[0].occurrence_index(), 4);
+    assert_eq!(
+        result.scroll_snap_align_observations()[0].occurrence_index(),
+        4
+    );
     assert_eq!(result.z_index_observations()[0].occurrence_index(), 5);
     assert_eq!(result.column_count_observations()[0].occurrence_index(), 6);
     assert_eq!(result.flex_grow_observations()[0].occurrence_index(), 7);
