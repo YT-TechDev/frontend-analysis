@@ -65,9 +65,7 @@ fn expected_outcome(expected: ExpectedOutcome) -> CssFlexGrowQualificationOutcom
         ExpectedOutcome::DirectNumber => {
             CssFlexGrowQualificationOutcome::Qualified(CssFlexGrowValue::DirectNumberLiteral)
         }
-        ExpectedOutcome::Invalid => {
-            CssFlexGrowQualificationOutcome::InvalidForSelectedValueGrammar
-        }
+        ExpectedOutcome::Invalid => CssFlexGrowQualificationOutcome::InvalidForSelectedValueGrammar,
         ExpectedOutcome::UnsupportedCssWide => {
             CssFlexGrowQualificationOutcome::UnsupportedBySelectedValueProfile(
                 CssFlexGrowUnsupportedReason::CssWideKeyword,
@@ -478,7 +476,10 @@ fn repeated_and_cross_source_flex_grow_runs_are_semantically_deterministic() {
     let repeated = qualify(730, css);
     let another_source = qualify(731, css);
 
-    assert_eq!(first.flex_grow_observations(), repeated.flex_grow_observations());
+    assert_eq!(
+        first.flex_grow_observations(),
+        repeated.flex_grow_observations()
+    );
     assert_eq!(
         first.flex_grow_observations(),
         another_source.flex_grow_observations()
