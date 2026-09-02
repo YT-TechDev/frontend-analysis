@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -389,6 +389,54 @@ impl CssOpacityQualificationObservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssShapeImageThresholdValue {
+    DirectNumberLiteral,
+    DirectPercentageLiteral,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssShapeImageThresholdUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssShapeImageThresholdQualificationOutcome {
+    Qualified(CssShapeImageThresholdValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssShapeImageThresholdUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `shape-image-threshold`
+/// qualification.
+///
+/// This profile qualifies direct authored Number and Percentage tokens only.
+/// Out-of-range authored values remain qualified; CSS Shapes clamps the
+/// specified threshold only in downstream computed-value processing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssShapeImageThresholdQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssShapeImageThresholdQualificationOutcome,
+}
+
+impl CssShapeImageThresholdQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssShapeImageThresholdQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssScrollSnapAlignKeyword {
     None,
     Start,
@@ -511,6 +559,7 @@ pub(crate) struct CssValueQualificationRunResult {
     flex_grow_observations: Vec<CssFlexGrowQualificationObservation>,
     flex_shrink_observations: Vec<CssFlexShrinkQualificationObservation>,
     opacity_observations: Vec<CssOpacityQualificationObservation>,
+    shape_image_threshold_observations: Vec<CssShapeImageThresholdQualificationObservation>,
     scroll_snap_align_observations: Vec<CssScrollSnapAlignQualificationObservation>,
     z_index_observations: Vec<CssZIndexQualificationObservation>,
 }
@@ -550,6 +599,12 @@ impl CssValueQualificationRunResult {
 
     pub(crate) fn opacity_observations(&self) -> &[CssOpacityQualificationObservation] {
         &self.opacity_observations
+    }
+
+    pub(crate) fn shape_image_threshold_observations(
+        &self,
+    ) -> &[CssShapeImageThresholdQualificationObservation] {
+        &self.shape_image_threshold_observations
     }
 
     pub(crate) fn scroll_snap_align_observations(
@@ -630,6 +685,7 @@ pub(crate) fn run(
         flex_grow_observations,
         flex_shrink_observations,
         opacity_observations,
+        shape_image_threshold_observations,
         scroll_snap_align_observations,
         z_index_observations,
     ) = {
@@ -643,6 +699,7 @@ pub(crate) fn run(
         let mut flex_grow_observations = Vec::new();
         let mut flex_shrink_observations = Vec::new();
         let mut opacity_observations = Vec::new();
+        let mut shape_image_threshold_observations = Vec::new();
         let mut scroll_snap_align_observations = Vec::new();
         let mut z_index_observations = Vec::new();
 
@@ -739,6 +796,19 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("shape-image-threshold") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                shape_image_threshold_observations.push(
+                    CssShapeImageThresholdQualificationObservation {
+                        occurrence_index,
+                        placement: occurrence.placement(),
+                        outcome: qualify_shape_image_threshold_value(value_items),
+                    },
+                );
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("z-index") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -770,6 +840,7 @@ pub(crate) fn run(
             flex_grow_observations,
             flex_shrink_observations,
             opacity_observations,
+            shape_image_threshold_observations,
             scroll_snap_align_observations,
             z_index_observations,
         )
@@ -785,6 +856,7 @@ pub(crate) fn run(
         flex_grow_observations,
         flex_shrink_observations,
         opacity_observations,
+        shape_image_threshold_observations,
         scroll_snap_align_observations,
         z_index_observations,
     })
@@ -1217,6 +1289,59 @@ fn qualify_opacity_value(items: &[CssLexicalItem]) -> CssOpacityQualificationOut
             )
         }
         _ => CssOpacityQualificationOutcome::InvalidForSelectedValueGrammar,
+    }
+}
+
+fn qualify_shape_image_threshold_value(
+    items: &[CssLexicalItem],
+) -> CssShapeImageThresholdQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssShapeImageThresholdQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssShapeImageThresholdUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssShapeImageThresholdQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssShapeImageThresholdUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    if entire_function_name(items).is_some() {
+        return CssShapeImageThresholdQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssShapeImageThresholdUnsupportedReason::FunctionValue,
+        );
+    }
+
+    let mut tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+
+    let Some(token) = tokens.next() else {
+        return CssShapeImageThresholdQualificationOutcome::InvalidForSelectedValueGrammar;
+    };
+    if tokens.next().is_some() {
+        return CssShapeImageThresholdQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    match token.kind() {
+        CssTokenKind::Number { .. } => CssShapeImageThresholdQualificationOutcome::Qualified(
+            CssShapeImageThresholdValue::DirectNumberLiteral,
+        ),
+        CssTokenKind::Percentage { .. } => CssShapeImageThresholdQualificationOutcome::Qualified(
+            CssShapeImageThresholdValue::DirectPercentageLiteral,
+        ),
+        CssTokenKind::Ident(identifier) if is_css_wide_keyword(identifier) => {
+            CssShapeImageThresholdQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssShapeImageThresholdUnsupportedReason::CssWideKeyword,
+            )
+        }
+        _ => CssShapeImageThresholdQualificationOutcome::InvalidForSelectedValueGrammar,
     }
 }
 
