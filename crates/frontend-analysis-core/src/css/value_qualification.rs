@@ -1476,11 +1476,10 @@ fn is_direct_zero_numeric_value(value: &CssNumericValue) -> bool {
 
 fn is_css_length_unit(unit: &str) -> bool {
     [
-        "cm", "mm", "q", "in", "pt", "pc", "px", "em", "rem", "ex", "rex", "cap",
-        "rcap", "ch", "rch", "ic", "ric", "lh", "rlh", "vw", "vh", "vi", "vb",
-        "vmin", "vmax", "svw", "svh", "svi", "svb", "svmin", "svmax", "lvw", "lvh",
-        "lvi", "lvb", "lvmin", "lvmax", "dvw", "dvh", "dvi", "dvb", "dvmin", "dvmax",
-        "cqw", "cqh", "cqi", "cqb", "cqmin", "cqmax",
+        "cm", "mm", "q", "in", "pt", "pc", "px", "em", "rem", "ex", "rex", "cap", "rcap", "ch",
+        "rch", "ic", "ric", "lh", "rlh", "vw", "vh", "vi", "vb", "vmin", "vmax", "svw", "svh",
+        "svi", "svb", "svmin", "svmax", "lvw", "lvh", "lvi", "lvb", "lvmin", "lvmax", "dvw", "dvh",
+        "dvi", "dvb", "dvmin", "dvmax", "cqw", "cqh", "cqi", "cqb", "cqmin", "cqmax",
     ]
     .iter()
     .any(|length_unit| unit.eq_ignore_ascii_case(length_unit))
