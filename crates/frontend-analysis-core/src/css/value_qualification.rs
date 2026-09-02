@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -582,6 +582,56 @@ impl CssWordSpacingQualificationObservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTextUnderlineOffsetValue {
+    Auto,
+    DirectLengthLiteral,
+    DirectPercentageLiteral,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTextUnderlineOffsetUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTextUnderlineOffsetQualificationOutcome {
+    Qualified(CssTextUnderlineOffsetValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssTextUnderlineOffsetUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `text-underline-offset`
+/// qualification.
+///
+/// This profile composes direct `auto` and unrestricted signed
+/// `<length-percentage>` evidence. It performs no machine numeric ordering,
+/// percentage resolution, inheritance processing, font-metric processing,
+/// underline placement, pixel snapping, or painting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTextUnderlineOffsetQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssTextUnderlineOffsetQualificationOutcome,
+}
+
+impl CssTextUnderlineOffsetQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssTextUnderlineOffsetQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssScrollMarginTopValue {
     DirectLengthLiteral,
 }
@@ -851,6 +901,7 @@ pub(crate) struct CssValueQualificationRunResult {
     shape_margin_observations: Vec<CssShapeMarginQualificationObservation>,
     line_height_observations: Vec<CssLineHeightQualificationObservation>,
     word_spacing_observations: Vec<CssWordSpacingQualificationObservation>,
+    text_underline_offset_observations: Vec<CssTextUnderlineOffsetQualificationObservation>,
     scroll_margin_top_observations: Vec<CssScrollMarginTopQualificationObservation>,
     border_top_width_observations: Vec<CssBorderTopWidthQualificationObservation>,
     perspective_observations: Vec<CssPerspectiveQualificationObservation>,
@@ -911,6 +962,12 @@ impl CssValueQualificationRunResult {
 
     pub(crate) fn word_spacing_observations(&self) -> &[CssWordSpacingQualificationObservation] {
         &self.word_spacing_observations
+    }
+
+    pub(crate) fn text_underline_offset_observations(
+        &self,
+    ) -> &[CssTextUnderlineOffsetQualificationObservation] {
+        &self.text_underline_offset_observations
     }
 
     pub(crate) fn scroll_margin_top_observations(
@@ -1011,6 +1068,7 @@ pub(crate) fn run(
         shape_margin_observations,
         line_height_observations,
         word_spacing_observations,
+        text_underline_offset_observations,
         scroll_margin_top_observations,
         border_top_width_observations,
         perspective_observations,
@@ -1031,6 +1089,7 @@ pub(crate) fn run(
         let mut shape_margin_observations = Vec::new();
         let mut line_height_observations = Vec::new();
         let mut word_spacing_observations = Vec::new();
+        let mut text_underline_offset_observations = Vec::new();
         let mut scroll_margin_top_observations = Vec::new();
         let mut border_top_width_observations = Vec::new();
         let mut perspective_observations = Vec::new();
@@ -1176,6 +1235,19 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("text-underline-offset") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                text_underline_offset_observations.push(
+                    CssTextUnderlineOffsetQualificationObservation {
+                        occurrence_index,
+                        placement: occurrence.placement(),
+                        outcome: qualify_text_underline_offset_value(value_items),
+                    },
+                );
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("scroll-margin-top") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -1244,6 +1316,7 @@ pub(crate) fn run(
             shape_margin_observations,
             line_height_observations,
             word_spacing_observations,
+            text_underline_offset_observations,
             scroll_margin_top_observations,
             border_top_width_observations,
             perspective_observations,
@@ -1266,6 +1339,7 @@ pub(crate) fn run(
         shape_margin_observations,
         line_height_observations,
         word_spacing_observations,
+        text_underline_offset_observations,
         scroll_margin_top_observations,
         border_top_width_observations,
         perspective_observations,
@@ -1930,6 +2004,69 @@ fn qualify_word_spacing_value(items: &[CssLexicalItem]) -> CssWordSpacingQualifi
             )
         }
         _ => CssWordSpacingQualificationOutcome::InvalidForSelectedValueGrammar,
+    }
+}
+
+fn qualify_text_underline_offset_value(
+    items: &[CssLexicalItem],
+) -> CssTextUnderlineOffsetQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssTextUnderlineOffsetQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssTextUnderlineOffsetUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssTextUnderlineOffsetQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssTextUnderlineOffsetUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    if entire_function_name(items).is_some() {
+        return CssTextUnderlineOffsetQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssTextUnderlineOffsetUnsupportedReason::FunctionValue,
+        );
+    }
+
+    let mut tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+
+    let Some(token) = tokens.next() else {
+        return CssTextUnderlineOffsetQualificationOutcome::InvalidForSelectedValueGrammar;
+    };
+    if tokens.next().is_some() {
+        return CssTextUnderlineOffsetQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    match token.kind() {
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("auto") => {
+            CssTextUnderlineOffsetQualificationOutcome::Qualified(CssTextUnderlineOffsetValue::Auto)
+        }
+        CssTokenKind::Number { value, .. } if is_direct_zero_numeric_value(value) => {
+            CssTextUnderlineOffsetQualificationOutcome::Qualified(
+                CssTextUnderlineOffsetValue::DirectLengthLiteral,
+            )
+        }
+        CssTokenKind::Dimension { unit, .. } if is_css_length_unit(unit) => {
+            CssTextUnderlineOffsetQualificationOutcome::Qualified(
+                CssTextUnderlineOffsetValue::DirectLengthLiteral,
+            )
+        }
+        CssTokenKind::Percentage { .. } => CssTextUnderlineOffsetQualificationOutcome::Qualified(
+            CssTextUnderlineOffsetValue::DirectPercentageLiteral,
+        ),
+        CssTokenKind::Ident(identifier) if is_css_wide_keyword(identifier) => {
+            CssTextUnderlineOffsetQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssTextUnderlineOffsetUnsupportedReason::CssWideKeyword,
+            )
+        }
+        _ => CssTextUnderlineOffsetQualificationOutcome::InvalidForSelectedValueGrammar,
     }
 }
 
