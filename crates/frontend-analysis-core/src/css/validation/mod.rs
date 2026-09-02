@@ -69,6 +69,8 @@ mod parser_contract_tests;
 #[cfg(test)]
 mod parser_resource_tests;
 #[cfg(test)]
+mod perspective_value_qualification_tests;
+#[cfg(test)]
 mod resource_tests;
 #[cfg(test)]
 mod scroll_snap_align_value_qualification_tests;
