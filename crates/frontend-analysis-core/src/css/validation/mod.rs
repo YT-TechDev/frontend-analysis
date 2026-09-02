@@ -83,6 +83,8 @@ mod selector_gold_contract_tests;
 #[cfg(test)]
 mod shape_image_threshold_value_qualification_tests;
 #[cfg(test)]
+mod shape_margin_value_qualification_tests;
+#[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod z_index_value_qualification_tests;
