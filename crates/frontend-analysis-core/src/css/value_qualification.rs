@@ -678,7 +678,7 @@ fn single_property_identifier(
     identifier.ok_or_else(|| property_name_violation(occurrence_index))
 }
 
-#[derive(Debug, Clone, Copy,PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CssSingleKeywordValue<'a> {
     Identifier(&'a str),
     Invalid,
