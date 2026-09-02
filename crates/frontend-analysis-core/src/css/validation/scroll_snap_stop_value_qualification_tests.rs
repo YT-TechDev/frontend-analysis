@@ -142,10 +142,7 @@ fn comments_and_priority_preserve_decoded_keyword_meaning() {
         ),
     );
 
-    assert_expected(
-        &result,
-        &[ExpectedOutcome::Normal, ExpectedOutcome::Always],
-    );
+    assert_expected(&result, &[ExpectedOutcome::Normal, ExpectedOutcome::Always]);
     for occurrence in result.upstream_parser_result().occurrences() {
         assert!(occurrence.priority().is_some());
     }
@@ -290,12 +287,15 @@ fn duplicate_declarations_keep_distinct_run_local_placement() {
         "a{scroll-snap-stop:normal;}b{scroll-snap-stop:normal;}",
     );
 
-    assert_expected(
-        &result,
-        &[ExpectedOutcome::Normal, ExpectedOutcome::Normal],
+    assert_expected(&result, &[ExpectedOutcome::Normal, ExpectedOutcome::Normal]);
+    assert_eq!(
+        result.scroll_snap_stop_observations()[0].occurrence_index(),
+        0
     );
-    assert_eq!(result.scroll_snap_stop_observations()[0].occurrence_index(), 0);
-    assert_eq!(result.scroll_snap_stop_observations()[1].occurrence_index(), 1);
+    assert_eq!(
+        result.scroll_snap_stop_observations()[1].occurrence_index(),
+        1
+    );
     assert_ne!(
         result.scroll_snap_stop_observations()[0]
             .placement()
