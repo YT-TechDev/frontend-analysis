@@ -678,7 +678,7 @@ fn single_property_identifier(
     identifier.ok_or_else(|| property_name_violation(occurrence_index))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy,PartialEq, Eq)]
 enum CssSingleKeywordValue<'a> {
     Identifier(&'a str),
     Invalid,
@@ -982,14 +982,8 @@ fn is_non_negative_direct_number(value: &CssNumericValue) -> bool {
     }
 
     let decimal = value.decimal();
-    decimal
-        .integer_digits()
-        .bytes()
-        .all(|digit| digit == b'0')
-        && decimal
-            .fraction_digits()
-            .bytes()
-            .all(|digit| digit == b'0')
+    decimal.integer_digits().bytes().all(|digit| digit == b'0')
+        && decimal.fraction_digits().bytes().all(|digit| digit == b'0')
 }
 
 fn qualify_z_index_value(items: &[CssLexicalItem]) -> CssZIndexQualificationOutcome {
