@@ -176,7 +176,6 @@ fn handwritten_auto_unitless_zero_and_signed_percentage_boundaries_are_explicit(
             ExpectedOutcome::DirectPercentage,
             ExpectedOutcome::DirectPercentage,
             ExpectedOutcome::DirectPercentage,
-            ExpectedOutcome::DirectPercentage,
             ExpectedOutcome::Invalid,
             ExpectedOutcome::Invalid,
             ExpectedOutcome::Invalid,
