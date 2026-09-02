@@ -59,9 +59,9 @@ fn qualify_with_limits(
 
 fn expected_outcome(expected: ExpectedOutcome) -> CssTextUnderlineOffsetQualificationOutcome {
     match expected {
-        ExpectedOutcome::Auto => CssTextUnderlineOffsetQualificationOutcome::Qualified(
-            CssTextUnderlineOffsetValue::Auto,
-        ),
+        ExpectedOutcome::Auto => {
+            CssTextUnderlineOffsetQualificationOutcome::Qualified(CssTextUnderlineOffsetValue::Auto)
+        }
         ExpectedOutcome::DirectLength => CssTextUnderlineOffsetQualificationOutcome::Qualified(
             CssTextUnderlineOffsetValue::DirectLengthLiteral,
         ),
@@ -442,20 +442,35 @@ fn one_run_owns_upstream_evidence_for_every_selected_value_leaf() {
     assert_eq!(result.box_sizing_observations()[0].occurrence_index(), 1);
     assert_eq!(result.isolation_observations()[0].occurrence_index(), 2);
     assert_eq!(result.order_observations()[0].occurrence_index(), 3);
-    assert_eq!(result.scroll_snap_align_observations()[0].occurrence_index(), 4);
+    assert_eq!(
+        result.scroll_snap_align_observations()[0].occurrence_index(),
+        4
+    );
     assert_eq!(result.z_index_observations()[0].occurrence_index(), 5);
     assert_eq!(result.column_count_observations()[0].occurrence_index(), 6);
     assert_eq!(result.flex_grow_observations()[0].occurrence_index(), 7);
     assert_eq!(result.flex_shrink_observations()[0].occurrence_index(), 8);
     assert_eq!(result.opacity_observations()[0].occurrence_index(), 9);
-    assert_eq!(result.shape_image_threshold_observations()[0].occurrence_index(), 10);
+    assert_eq!(
+        result.shape_image_threshold_observations()[0].occurrence_index(),
+        10
+    );
     assert_eq!(result.perspective_observations()[0].occurrence_index(), 11);
-    assert_eq!(result.border_top_width_observations()[0].occurrence_index(), 12);
+    assert_eq!(
+        result.border_top_width_observations()[0].occurrence_index(),
+        12
+    );
     assert_eq!(result.shape_margin_observations()[0].occurrence_index(), 13);
     assert_eq!(result.line_height_observations()[0].occurrence_index(), 14);
     assert_eq!(result.word_spacing_observations()[0].occurrence_index(), 15);
-    assert_eq!(result.scroll_margin_top_observations()[0].occurrence_index(), 16);
-    assert_eq!(result.text_underline_offset_observations()[0].occurrence_index(), 17);
+    assert_eq!(
+        result.scroll_margin_top_observations()[0].occurrence_index(),
+        16
+    );
+    assert_eq!(
+        result.text_underline_offset_observations()[0].occurrence_index(),
+        17
+    );
     assert_eq!(result.direction_observations()[1].occurrence_index(), 18);
     assert_eq!(
         result.text_underline_offset_observations()[0].outcome(),
@@ -472,8 +487,14 @@ fn duplicate_placements_and_nonordinary_contexts_stay_separate() {
         "a{text-underline-offset:auto;}b{text-underline-offset:auto;}",
     );
     assert_expected(&result, &[ExpectedOutcome::Auto, ExpectedOutcome::Auto]);
-    assert_eq!(result.text_underline_offset_observations()[0].occurrence_index(), 0);
-    assert_eq!(result.text_underline_offset_observations()[1].occurrence_index(), 1);
+    assert_eq!(
+        result.text_underline_offset_observations()[0].occurrence_index(),
+        0
+    );
+    assert_eq!(
+        result.text_underline_offset_observations()[1].occurrence_index(),
+        1
+    );
     assert_ne!(
         result.text_underline_offset_observations()[0]
             .placement()
@@ -561,14 +582,26 @@ fn incomplete_prefix_and_repeated_cross_source_runs_preserve_lifecycle_and_deter
         first.perspective_observations(),
         repeated.perspective_observations()
     );
-    assert_eq!(first.opacity_observations(), repeated.opacity_observations());
-    assert_eq!(first.flex_grow_observations(), repeated.flex_grow_observations());
-    assert_eq!(first.direction_observations(), repeated.direction_observations());
+    assert_eq!(
+        first.opacity_observations(),
+        repeated.opacity_observations()
+    );
+    assert_eq!(
+        first.flex_grow_observations(),
+        repeated.flex_grow_observations()
+    );
+    assert_eq!(
+        first.direction_observations(),
+        repeated.direction_observations()
+    );
     assert_eq!(
         first.column_count_observations(),
         repeated.column_count_observations()
     );
-    assert_eq!(first.z_index_observations(), repeated.z_index_observations());
+    assert_eq!(
+        first.z_index_observations(),
+        repeated.z_index_observations()
+    );
     assert_eq!(
         first.border_top_width_observations(),
         repeated.border_top_width_observations()

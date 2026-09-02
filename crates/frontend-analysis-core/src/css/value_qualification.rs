@@ -2046,9 +2046,7 @@ fn qualify_text_underline_offset_value(
 
     match token.kind() {
         CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("auto") => {
-            CssTextUnderlineOffsetQualificationOutcome::Qualified(
-                CssTextUnderlineOffsetValue::Auto,
-            )
+            CssTextUnderlineOffsetQualificationOutcome::Qualified(CssTextUnderlineOffsetValue::Auto)
         }
         CssTokenKind::Number { value, .. } if is_direct_zero_numeric_value(value) => {
             CssTextUnderlineOffsetQualificationOutcome::Qualified(
