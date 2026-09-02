@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -534,6 +534,54 @@ impl CssLineHeightQualificationObservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssWordSpacingValue {
+    Normal,
+    DirectLengthLiteral,
+    DirectPercentageLiteral,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssWordSpacingUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssWordSpacingQualificationOutcome {
+    Qualified(CssWordSpacingValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssWordSpacingUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `word-spacing` qualification.
+///
+/// This profile composes direct `normal` and unrestricted signed
+/// `<length-percentage>` evidence. It performs no machine numeric ordering,
+/// percentage resolution, font-metric processing, shaping, or text layout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssWordSpacingQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssWordSpacingQualificationOutcome,
+}
+
+impl CssWordSpacingQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssWordSpacingQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssBorderTopWidthValue {
     Thin,
     Medium,
@@ -755,6 +803,7 @@ pub(crate) struct CssValueQualificationRunResult {
     shape_image_threshold_observations: Vec<CssShapeImageThresholdQualificationObservation>,
     shape_margin_observations: Vec<CssShapeMarginQualificationObservation>,
     line_height_observations: Vec<CssLineHeightQualificationObservation>,
+    word_spacing_observations: Vec<CssWordSpacingQualificationObservation>,
     border_top_width_observations: Vec<CssBorderTopWidthQualificationObservation>,
     perspective_observations: Vec<CssPerspectiveQualificationObservation>,
     scroll_snap_align_observations: Vec<CssScrollSnapAlignQualificationObservation>,
@@ -810,6 +859,10 @@ impl CssValueQualificationRunResult {
 
     pub(crate) fn line_height_observations(&self) -> &[CssLineHeightQualificationObservation] {
         &self.line_height_observations
+    }
+
+    pub(crate) fn word_spacing_observations(&self) -> &[CssWordSpacingQualificationObservation] {
+        &self.word_spacing_observations
     }
 
     pub(crate) fn border_top_width_observations(
@@ -903,6 +956,7 @@ pub(crate) fn run(
         shape_image_threshold_observations,
         shape_margin_observations,
         line_height_observations,
+        word_spacing_observations,
         border_top_width_observations,
         perspective_observations,
         scroll_snap_align_observations,
@@ -921,6 +975,7 @@ pub(crate) fn run(
         let mut shape_image_threshold_observations = Vec::new();
         let mut shape_margin_observations = Vec::new();
         let mut line_height_observations = Vec::new();
+        let mut word_spacing_observations = Vec::new();
         let mut border_top_width_observations = Vec::new();
         let mut perspective_observations = Vec::new();
         let mut scroll_snap_align_observations = Vec::new();
@@ -1054,6 +1109,17 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("word-spacing") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                word_spacing_observations.push(CssWordSpacingQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_word_spacing_value(value_items),
+                });
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("border-top-width") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -1110,6 +1176,7 @@ pub(crate) fn run(
             shape_image_threshold_observations,
             shape_margin_observations,
             line_height_observations,
+            word_spacing_observations,
             border_top_width_observations,
             perspective_observations,
             scroll_snap_align_observations,
@@ -1130,6 +1197,7 @@ pub(crate) fn run(
         shape_image_threshold_observations,
         shape_margin_observations,
         line_height_observations,
+        word_spacing_observations,
         border_top_width_observations,
         perspective_observations,
         scroll_snap_align_observations,
@@ -1736,6 +1804,63 @@ fn qualify_line_height_value(items: &[CssLexicalItem]) -> CssLineHeightQualifica
             )
         }
         _ => CssLineHeightQualificationOutcome::InvalidForSelectedValueGrammar,
+    }
+}
+
+fn qualify_word_spacing_value(items: &[CssLexicalItem]) -> CssWordSpacingQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssWordSpacingQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssWordSpacingUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssWordSpacingQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssWordSpacingUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    if entire_function_name(items).is_some() {
+        return CssWordSpacingQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssWordSpacingUnsupportedReason::FunctionValue,
+        );
+    }
+
+    let mut tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+
+    let Some(token) = tokens.next() else {
+        return CssWordSpacingQualificationOutcome::InvalidForSelectedValueGrammar;
+    };
+    if tokens.next().is_some() {
+        return CssWordSpacingQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    match token.kind() {
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("normal") => {
+            CssWordSpacingQualificationOutcome::Qualified(CssWordSpacingValue::Normal)
+        }
+        CssTokenKind::Number { value, .. } if is_direct_zero_numeric_value(value) => {
+            CssWordSpacingQualificationOutcome::Qualified(CssWordSpacingValue::DirectLengthLiteral)
+        }
+        CssTokenKind::Dimension { unit, .. } if is_css_length_unit(unit) => {
+            CssWordSpacingQualificationOutcome::Qualified(CssWordSpacingValue::DirectLengthLiteral)
+        }
+        CssTokenKind::Percentage { .. } => CssWordSpacingQualificationOutcome::Qualified(
+            CssWordSpacingValue::DirectPercentageLiteral,
+        ),
+        CssTokenKind::Ident(identifier) if is_css_wide_keyword(identifier) => {
+            CssWordSpacingQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssWordSpacingUnsupportedReason::CssWideKeyword,
+            )
+        }
+        _ => CssWordSpacingQualificationOutcome::InvalidForSelectedValueGrammar,
     }
 }
 
