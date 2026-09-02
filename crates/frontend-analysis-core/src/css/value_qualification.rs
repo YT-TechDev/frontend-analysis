@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -247,6 +247,53 @@ impl CssColumnCountQualificationObservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFlexGrowValue {
+    DirectNumberLiteral,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFlexGrowUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFlexGrowQualificationOutcome {
+    Qualified(CssFlexGrowValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssFlexGrowUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `flex-grow` qualification.
+///
+/// This profile qualifies only direct authored number literals proven inside
+/// `[0,∞]`. Exact source provenance remains in the structurally owning tokenizer
+/// and parser evidence; no machine-number conversion or exponent evaluation is
+/// performed here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssFlexGrowQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssFlexGrowQualificationOutcome,
+}
+
+impl CssFlexGrowQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssFlexGrowQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssScrollSnapAlignKeyword {
     None,
     Start,
@@ -366,6 +413,7 @@ pub(crate) struct CssValueQualificationRunResult {
     isolation_observations: Vec<CssIsolationQualificationObservation>,
     order_observations: Vec<CssOrderQualificationObservation>,
     column_count_observations: Vec<CssColumnCountQualificationObservation>,
+    flex_grow_observations: Vec<CssFlexGrowQualificationObservation>,
     scroll_snap_align_observations: Vec<CssScrollSnapAlignQualificationObservation>,
     z_index_observations: Vec<CssZIndexQualificationObservation>,
 }
@@ -393,6 +441,10 @@ impl CssValueQualificationRunResult {
 
     pub(crate) fn column_count_observations(&self) -> &[CssColumnCountQualificationObservation] {
         &self.column_count_observations
+    }
+
+    pub(crate) fn flex_grow_observations(&self) -> &[CssFlexGrowQualificationObservation] {
+        &self.flex_grow_observations
     }
 
     pub(crate) fn scroll_snap_align_observations(
@@ -470,6 +522,7 @@ pub(crate) fn run(
         isolation_observations,
         order_observations,
         column_count_observations,
+        flex_grow_observations,
         scroll_snap_align_observations,
         z_index_observations,
     ) = {
@@ -480,6 +533,7 @@ pub(crate) fn run(
         let mut isolation_observations = Vec::new();
         let mut order_observations = Vec::new();
         let mut column_count_observations = Vec::new();
+        let mut flex_grow_observations = Vec::new();
         let mut scroll_snap_align_observations = Vec::new();
         let mut z_index_observations = Vec::new();
 
@@ -543,6 +597,17 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("flex-grow") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                flex_grow_observations.push(CssFlexGrowQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_flex_grow_value(value_items),
+                });
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("z-index") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -571,6 +636,7 @@ pub(crate) fn run(
             isolation_observations,
             order_observations,
             column_count_observations,
+            flex_grow_observations,
             scroll_snap_align_observations,
             z_index_observations,
         )
@@ -583,6 +649,7 @@ pub(crate) fn run(
         isolation_observations,
         order_observations,
         column_count_observations,
+        flex_grow_observations,
         scroll_snap_align_observations,
         z_index_observations,
     })
@@ -859,6 +926,70 @@ fn is_positive_direct_integer(value: &CssNumericValue) -> bool {
         .integer_digits()
         .bytes()
         .any(|digit| digit != b'0')
+}
+
+fn qualify_flex_grow_value(items: &[CssLexicalItem]) -> CssFlexGrowQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssFlexGrowQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssFlexGrowUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssFlexGrowQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssFlexGrowUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    if entire_function_name(items).is_some() {
+        return CssFlexGrowQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssFlexGrowUnsupportedReason::FunctionValue,
+        );
+    }
+
+    let mut tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+
+    let Some(token) = tokens.next() else {
+        return CssFlexGrowQualificationOutcome::InvalidForSelectedValueGrammar;
+    };
+    if tokens.next().is_some() {
+        return CssFlexGrowQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    match token.kind() {
+        CssTokenKind::Number { value, .. } if is_non_negative_direct_number(value) => {
+            CssFlexGrowQualificationOutcome::Qualified(CssFlexGrowValue::DirectNumberLiteral)
+        }
+        CssTokenKind::Ident(identifier) if is_css_wide_keyword(identifier) => {
+            CssFlexGrowQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssFlexGrowUnsupportedReason::CssWideKeyword,
+            )
+        }
+        _ => CssFlexGrowQualificationOutcome::InvalidForSelectedValueGrammar,
+    }
+}
+
+fn is_non_negative_direct_number(value: &CssNumericValue) -> bool {
+    if !matches!(value.sign(), Some(CssNumberSign::Minus)) {
+        return true;
+    }
+
+    let decimal = value.decimal();
+    decimal
+        .integer_digits()
+        .bytes()
+        .all(|digit| digit == b'0')
+        && decimal
+            .fraction_digits()
+            .bytes()
+            .all(|digit| digit == b'0')
 }
 
 fn qualify_z_index_value(items: &[CssLexicalItem]) -> CssZIndexQualificationOutcome {
