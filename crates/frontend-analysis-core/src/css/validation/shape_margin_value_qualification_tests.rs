@@ -58,9 +58,9 @@ fn qualify_with_limits(
 
 fn expected_outcome(expected: ExpectedOutcome) -> CssShapeMarginQualificationOutcome {
     match expected {
-        ExpectedOutcome::DirectLength => CssShapeMarginQualificationOutcome::Qualified(
-            CssShapeMarginValue::DirectLengthLiteral,
-        ),
+        ExpectedOutcome::DirectLength => {
+            CssShapeMarginQualificationOutcome::Qualified(CssShapeMarginValue::DirectLengthLiteral)
+        }
         ExpectedOutcome::DirectPercentage => CssShapeMarginQualificationOutcome::Qualified(
             CssShapeMarginValue::DirectPercentageLiteral,
         ),
@@ -446,9 +446,7 @@ fn one_run_owns_upstream_evidence_for_every_selected_value_leaf() {
     assert_eq!(result.direction_observations()[1].occurrence_index(), 14);
     assert_eq!(
         result.shape_margin_observations()[0].outcome(),
-        CssShapeMarginQualificationOutcome::Qualified(
-            CssShapeMarginValue::DirectPercentageLiteral
-        )
+        CssShapeMarginQualificationOutcome::Qualified(CssShapeMarginValue::DirectPercentageLiteral)
     );
 }
 
