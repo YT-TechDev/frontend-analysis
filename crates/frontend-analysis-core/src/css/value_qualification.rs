@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -484,6 +484,56 @@ impl CssShapeMarginQualificationObservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssLineHeightValue {
+    Normal,
+    DirectNumberLiteral,
+    DirectLengthLiteral,
+    DirectPercentageLiteral,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssLineHeightUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssLineHeightQualificationOutcome {
+    Qualified(CssLineHeightValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssLineHeightUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `line-height` qualification.
+///
+/// This profile composes direct `normal`, `<number [0,∞]>`, and
+/// `<length-percentage [0,∞]>` evidence only. Ambiguous unitless zero belongs
+/// to the Number branch. No calculation evaluation, percentage resolution,
+/// font-metric processing, or line-box layout is performed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssLineHeightQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssLineHeightQualificationOutcome,
+}
+
+impl CssLineHeightQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssLineHeightQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssBorderTopWidthValue {
     Thin,
     Medium,
@@ -704,6 +754,7 @@ pub(crate) struct CssValueQualificationRunResult {
     opacity_observations: Vec<CssOpacityQualificationObservation>,
     shape_image_threshold_observations: Vec<CssShapeImageThresholdQualificationObservation>,
     shape_margin_observations: Vec<CssShapeMarginQualificationObservation>,
+    line_height_observations: Vec<CssLineHeightQualificationObservation>,
     border_top_width_observations: Vec<CssBorderTopWidthQualificationObservation>,
     perspective_observations: Vec<CssPerspectiveQualificationObservation>,
     scroll_snap_align_observations: Vec<CssScrollSnapAlignQualificationObservation>,
@@ -755,6 +806,10 @@ impl CssValueQualificationRunResult {
 
     pub(crate) fn shape_margin_observations(&self) -> &[CssShapeMarginQualificationObservation] {
         &self.shape_margin_observations
+    }
+
+    pub(crate) fn line_height_observations(&self) -> &[CssLineHeightQualificationObservation] {
+        &self.line_height_observations
     }
 
     pub(crate) fn border_top_width_observations(
@@ -847,6 +902,7 @@ pub(crate) fn run(
         opacity_observations,
         shape_image_threshold_observations,
         shape_margin_observations,
+        line_height_observations,
         border_top_width_observations,
         perspective_observations,
         scroll_snap_align_observations,
@@ -864,6 +920,7 @@ pub(crate) fn run(
         let mut opacity_observations = Vec::new();
         let mut shape_image_threshold_observations = Vec::new();
         let mut shape_margin_observations = Vec::new();
+        let mut line_height_observations = Vec::new();
         let mut border_top_width_observations = Vec::new();
         let mut perspective_observations = Vec::new();
         let mut scroll_snap_align_observations = Vec::new();
@@ -986,6 +1043,17 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("line-height") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                line_height_observations.push(CssLineHeightQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_line_height_value(value_items),
+                });
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("border-top-width") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -1041,6 +1109,7 @@ pub(crate) fn run(
             opacity_observations,
             shape_image_threshold_observations,
             shape_margin_observations,
+            line_height_observations,
             border_top_width_observations,
             perspective_observations,
             scroll_snap_align_observations,
@@ -1060,6 +1129,7 @@ pub(crate) fn run(
         opacity_observations,
         shape_image_threshold_observations,
         shape_margin_observations,
+        line_height_observations,
         border_top_width_observations,
         perspective_observations,
         scroll_snap_align_observations,
@@ -1605,6 +1675,67 @@ fn qualify_shape_margin_value(items: &[CssLexicalItem]) -> CssShapeMarginQualifi
             )
         }
         _ => CssShapeMarginQualificationOutcome::InvalidForSelectedValueGrammar,
+    }
+}
+
+fn qualify_line_height_value(items: &[CssLexicalItem]) -> CssLineHeightQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssLineHeightQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssLineHeightUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssLineHeightQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssLineHeightUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    if entire_function_name(items).is_some() {
+        return CssLineHeightQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssLineHeightUnsupportedReason::FunctionValue,
+        );
+    }
+
+    let mut tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+
+    let Some(token) = tokens.next() else {
+        return CssLineHeightQualificationOutcome::InvalidForSelectedValueGrammar;
+    };
+    if tokens.next().is_some() {
+        return CssLineHeightQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    match token.kind() {
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("normal") => {
+            CssLineHeightQualificationOutcome::Qualified(CssLineHeightValue::Normal)
+        }
+        CssTokenKind::Number { value, .. } if is_non_negative_direct_number(value) => {
+            CssLineHeightQualificationOutcome::Qualified(CssLineHeightValue::DirectNumberLiteral)
+        }
+        CssTokenKind::Dimension { value, unit, .. }
+            if is_css_length_unit(unit) && is_non_negative_direct_number(value) =>
+        {
+            CssLineHeightQualificationOutcome::Qualified(CssLineHeightValue::DirectLengthLiteral)
+        }
+        CssTokenKind::Percentage { value } if is_non_negative_direct_number(value) => {
+            CssLineHeightQualificationOutcome::Qualified(
+                CssLineHeightValue::DirectPercentageLiteral,
+            )
+        }
+        CssTokenKind::Ident(identifier) if is_css_wide_keyword(identifier) => {
+            CssLineHeightQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssLineHeightUnsupportedReason::CssWideKeyword,
+            )
+        }
+        _ => CssLineHeightQualificationOutcome::InvalidForSelectedValueGrammar,
     }
 }
 
