@@ -120,7 +120,7 @@ line_break_dispatch = """            if property_name.eq_ignore_ascii_case("line
 """
 replace_exact(dispatch_anchor, line_break_dispatch + dispatch_anchor)
 
-classifier_anchor = """fn qualify_word_spacing_value(
+classifier_anchor = """fn qualify_word_spacing_value(items: &[CssLexicalItem]) -> CssWordSpacingQualificationOutcome {
 """
 line_break_classifier = """fn qualify_line_break_value(items: &[CssLexicalItem]) -> CssLineBreakQualificationOutcome {
     match classify_single_keyword_value(items) {
