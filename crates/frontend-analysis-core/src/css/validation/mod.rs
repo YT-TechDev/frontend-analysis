@@ -57,6 +57,8 @@ mod flex_shrink_value_qualification_tests;
 #[cfg(test)]
 mod font_kerning_value_qualification_tests;
 #[cfg(test)]
+mod font_synthesis_small_caps_value_qualification_tests;
+#[cfg(test)]
 mod font_synthesis_weight_value_qualification_tests;
 #[cfg(test)]
 mod font_variant_position_value_qualification_tests;
