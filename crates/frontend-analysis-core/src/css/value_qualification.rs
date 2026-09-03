@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -524,6 +524,54 @@ impl CssFontKerningQualificationObservation {
     }
 
     pub(crate) const fn outcome(&self) -> CssFontKerningQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFontVariantPositionValue {
+    Normal,
+    Sub,
+    Super,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFontVariantPositionUnsupportedReason {
+    CssWideKeyword,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFontVariantPositionQualificationOutcome {
+    Qualified(CssFontVariantPositionValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssFontVariantPositionUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `font-variant-position`
+/// qualification.
+///
+/// This profile qualifies only direct `normal | sub | super` authored keyword
+/// evidence. Glyph shaping and substitution, OpenType `subs`/`sups` processing,
+/// synthetic sub/sup sizing or positioning, font metric overrides, baseline and
+/// line-box layout, and used-value processing remain outside this slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssFontVariantPositionQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssFontVariantPositionQualificationOutcome,
+}
+
+impl CssFontVariantPositionQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssFontVariantPositionQualificationOutcome {
         self.outcome
     }
 }
@@ -1288,6 +1336,7 @@ pub(crate) struct CssValueQualificationRunResult {
     border_collapse_observations: Vec<CssBorderCollapseQualificationObservation>,
     box_decoration_break_observations: Vec<CssBoxDecorationBreakQualificationObservation>,
     font_kerning_observations: Vec<CssFontKerningQualificationObservation>,
+    font_variant_position_observations: Vec<CssFontVariantPositionQualificationObservation>,
     z_index_observations: Vec<CssZIndexQualificationObservation>,
 }
 
@@ -1416,6 +1465,12 @@ impl CssValueQualificationRunResult {
         &self.font_kerning_observations
     }
 
+    pub(crate) fn font_variant_position_observations(
+        &self,
+    ) -> &[CssFontVariantPositionQualificationObservation] {
+        &self.font_variant_position_observations
+    }
+
     pub(crate) fn z_index_observations(&self) -> &[CssZIndexQualificationObservation] {
         &self.z_index_observations
     }
@@ -1505,6 +1560,7 @@ pub(crate) fn run(
         border_collapse_observations,
         box_decoration_break_observations,
         font_kerning_observations,
+        font_variant_position_observations,
         z_index_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
@@ -1534,6 +1590,7 @@ pub(crate) fn run(
         let mut border_collapse_observations = Vec::new();
         let mut box_decoration_break_observations = Vec::new();
         let mut font_kerning_observations = Vec::new();
+        let mut font_variant_position_observations = Vec::new();
         let mut z_index_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
@@ -1834,6 +1891,19 @@ pub(crate) fn run(
                     placement: occurrence.placement(),
                     outcome: qualify_font_kerning_value(value_items),
                 });
+                continue;
+            }
+
+            if property_name.eq_ignore_ascii_case("font-variant-position") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                font_variant_position_observations.push(
+                    CssFontVariantPositionQualificationObservation {
+                        occurrence_index,
+                        placement: occurrence.placement(),
+                        outcome: qualify_font_variant_position_value(value_items),
+                    },
+                );
             }
         }
 
@@ -1863,6 +1933,7 @@ pub(crate) fn run(
             border_collapse_observations,
             box_decoration_break_observations,
             font_kerning_observations,
+            font_variant_position_observations,
             z_index_observations,
         )
     };
@@ -1894,6 +1965,7 @@ pub(crate) fn run(
         border_collapse_observations,
         box_decoration_break_observations,
         font_kerning_observations,
+        font_variant_position_observations,
         z_index_observations,
     })
 }
@@ -2340,6 +2412,48 @@ fn qualify_font_kerning_value(items: &[CssLexicalItem]) -> CssFontKerningQualifi
         }
         CssSingleKeywordValue::Identifier(_) => {
             CssFontKerningQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+    }
+}
+
+fn qualify_font_variant_position_value(
+    items: &[CssLexicalItem],
+) -> CssFontVariantPositionQualificationOutcome {
+    match classify_single_keyword_value(items) {
+        CssSingleKeywordValue::UnsupportedFunction => {
+            CssFontVariantPositionQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssFontVariantPositionUnsupportedReason::FunctionValue,
+            )
+        }
+        CssSingleKeywordValue::Invalid => {
+            CssFontVariantPositionQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("normal") =>
+        {
+            CssFontVariantPositionQualificationOutcome::Qualified(
+                CssFontVariantPositionValue::Normal,
+            )
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("sub") =>
+        {
+            CssFontVariantPositionQualificationOutcome::Qualified(CssFontVariantPositionValue::Sub)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("super") =>
+        {
+            CssFontVariantPositionQualificationOutcome::Qualified(
+                CssFontVariantPositionValue::Super,
+            )
+        }
+        CssSingleKeywordValue::Identifier(identifier) if is_css_wide_keyword(identifier) => {
+            CssFontVariantPositionQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssFontVariantPositionUnsupportedReason::CssWideKeyword,
+            )
+        }
+        CssSingleKeywordValue::Identifier(_) => {
+            CssFontVariantPositionQualificationOutcome::InvalidForSelectedValueGrammar
         }
     }
 }
