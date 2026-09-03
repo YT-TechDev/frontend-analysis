@@ -3,8 +3,8 @@ use crate::css::parser::resource::CssParserLimits;
 use crate::css::parser::result::CssParserExecutionCompletion;
 use crate::css::tokenizer::resource::CssTokenizerLimits;
 use crate::css::value_qualification::{
-    CssBorderCollapseQualificationOutcome, CssBorderCollapseUnsupportedReason, CssBorderCollapseValue,
-    CssValueQualificationRunResult, run,
+    CssBorderCollapseQualificationOutcome, CssBorderCollapseUnsupportedReason,
+    CssBorderCollapseValue, CssValueQualificationRunResult, run,
 };
 use crate::{SourceId, SourceText};
 
@@ -284,7 +284,10 @@ fn one_run_interleaves_border_collapse_with_every_accepted_leaf() {
     assert_eq!(result.text_decoration_style_observations().len(), 1);
     assert_eq!(result.table_layout_observations().len(), 1);
     assert_eq!(result.border_collapse_observations().len(), 1);
-    assert_eq!(result.border_collapse_observations()[0].occurrence_index(), 23);
+    assert_eq!(
+        result.border_collapse_observations()[0].occurrence_index(),
+        23
+    );
     assert_expected(&result, &[ExpectedOutcome::Collapse]);
 }
 
@@ -299,8 +302,14 @@ fn duplicate_declarations_keep_distinct_run_local_placement() {
         &result,
         &[ExpectedOutcome::Separate, ExpectedOutcome::Separate],
     );
-    assert_eq!(result.border_collapse_observations()[0].occurrence_index(), 0);
-    assert_eq!(result.border_collapse_observations()[1].occurrence_index(), 1);
+    assert_eq!(
+        result.border_collapse_observations()[0].occurrence_index(),
+        0
+    );
+    assert_eq!(
+        result.border_collapse_observations()[1].occurrence_index(),
+        1
+    );
     assert_ne!(
         result.border_collapse_observations()[0]
             .placement()
