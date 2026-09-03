@@ -21,7 +21,7 @@ jobs:
           git clone "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" repo
           cd repo
           git checkout feat/css-line-break-485
-          if [ "$(git log -1 --pretty=%s)" != "chore: fix temporary line-break patch runner" ]; then
+          if [ "$(git log -1 --pretty=%s)" != "chore: rerun temporary line-break patch runner" ]; then
             exit 0
           fi
 
