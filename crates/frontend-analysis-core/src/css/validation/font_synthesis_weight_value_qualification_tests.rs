@@ -56,12 +56,12 @@ fn qualify_with_limits(
 
 fn expected_outcome(expected: ExpectedOutcome) -> CssFontSynthesisWeightQualificationOutcome {
     match expected {
-        ExpectedOutcome::Auto => CssFontSynthesisWeightQualificationOutcome::Qualified(
-            CssFontSynthesisWeightValue::Auto,
-        ),
-        ExpectedOutcome::None => CssFontSynthesisWeightQualificationOutcome::Qualified(
-            CssFontSynthesisWeightValue::None,
-        ),
+        ExpectedOutcome::Auto => {
+            CssFontSynthesisWeightQualificationOutcome::Qualified(CssFontSynthesisWeightValue::Auto)
+        }
+        ExpectedOutcome::None => {
+            CssFontSynthesisWeightQualificationOutcome::Qualified(CssFontSynthesisWeightValue::None)
+        }
         ExpectedOutcome::Invalid => {
             CssFontSynthesisWeightQualificationOutcome::InvalidForSelectedValueGrammar
         }
