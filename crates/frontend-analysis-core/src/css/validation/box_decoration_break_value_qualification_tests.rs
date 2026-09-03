@@ -56,12 +56,12 @@ fn qualify_with_limits(
 
 fn expected_outcome(expected: ExpectedOutcome) -> CssBoxDecorationBreakQualificationOutcome {
     match expected {
-        ExpectedOutcome::Slice => CssBoxDecorationBreakQualificationOutcome::Qualified(
-            CssBoxDecorationBreakValue::Slice,
-        ),
-        ExpectedOutcome::Clone => CssBoxDecorationBreakQualificationOutcome::Qualified(
-            CssBoxDecorationBreakValue::Clone,
-        ),
+        ExpectedOutcome::Slice => {
+            CssBoxDecorationBreakQualificationOutcome::Qualified(CssBoxDecorationBreakValue::Slice)
+        }
+        ExpectedOutcome::Clone => {
+            CssBoxDecorationBreakQualificationOutcome::Qualified(CssBoxDecorationBreakValue::Clone)
+        }
         ExpectedOutcome::Invalid => {
             CssBoxDecorationBreakQualificationOutcome::InvalidForSelectedValueGrammar
         }
