@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -618,6 +618,53 @@ impl CssFontSynthesisSmallCapsQualificationObservation {
     }
 
     pub(crate) const fn outcome(&self) -> CssFontSynthesisSmallCapsQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFontSynthesisPositionValue {
+    Auto,
+    None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFontSynthesisPositionUnsupportedReason {
+    CssWideKeyword,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFontSynthesisPositionQualificationOutcome {
+    Qualified(CssFontSynthesisPositionValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssFontSynthesisPositionUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `font-synthesis-position`
+/// qualification.
+///
+/// This profile qualifies only direct `auto | none` authored keyword evidence.
+/// Simulated sub/sup glyph synthesis, OpenType `subs`/`sups` execution,
+/// font fallback, synthetic sizing or positioning, baseline/line-box layout,
+/// and used-value processing remain outside this slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssFontSynthesisPositionQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssFontSynthesisPositionQualificationOutcome,
+}
+
+impl CssFontSynthesisPositionQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssFontSynthesisPositionQualificationOutcome {
         self.outcome
     }
 }
@@ -1432,6 +1479,7 @@ pub(crate) struct CssValueQualificationRunResult {
     font_kerning_observations: Vec<CssFontKerningQualificationObservation>,
     font_synthesis_weight_observations: Vec<CssFontSynthesisWeightQualificationObservation>,
     font_synthesis_small_caps_observations: Vec<CssFontSynthesisSmallCapsQualificationObservation>,
+    font_synthesis_position_observations: Vec<CssFontSynthesisPositionQualificationObservation>,
     font_variant_position_observations: Vec<CssFontVariantPositionQualificationObservation>,
     z_index_observations: Vec<CssZIndexQualificationObservation>,
 }
@@ -1573,6 +1621,12 @@ impl CssValueQualificationRunResult {
         &self.font_synthesis_small_caps_observations
     }
 
+    pub(crate) fn font_synthesis_position_observations(
+        &self,
+    ) -> &[CssFontSynthesisPositionQualificationObservation] {
+        &self.font_synthesis_position_observations
+    }
+
     pub(crate) fn font_variant_position_observations(
         &self,
     ) -> &[CssFontVariantPositionQualificationObservation] {
@@ -1670,6 +1724,7 @@ pub(crate) fn run(
         font_kerning_observations,
         font_synthesis_weight_observations,
         font_synthesis_small_caps_observations,
+        font_synthesis_position_observations,
         font_variant_position_observations,
         z_index_observations,
     ) = {
@@ -1702,6 +1757,7 @@ pub(crate) fn run(
         let mut font_kerning_observations = Vec::new();
         let mut font_synthesis_weight_observations = Vec::new();
         let mut font_synthesis_small_caps_observations = Vec::new();
+        let mut font_synthesis_position_observations = Vec::new();
         let mut font_variant_position_observations = Vec::new();
         let mut z_index_observations = Vec::new();
 
@@ -2032,6 +2088,19 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("font-synthesis-position") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                font_synthesis_position_observations.push(
+                    CssFontSynthesisPositionQualificationObservation {
+                        occurrence_index,
+                        placement: occurrence.placement(),
+                        outcome: qualify_font_synthesis_position_value(value_items),
+                    },
+                );
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("font-variant-position") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -2073,6 +2142,7 @@ pub(crate) fn run(
             font_kerning_observations,
             font_synthesis_weight_observations,
             font_synthesis_small_caps_observations,
+            font_synthesis_position_observations,
             font_variant_position_observations,
             z_index_observations,
         )
@@ -2107,6 +2177,7 @@ pub(crate) fn run(
         font_kerning_observations,
         font_synthesis_weight_observations,
         font_synthesis_small_caps_observations,
+        font_synthesis_position_observations,
         font_variant_position_observations,
         z_index_observations,
     })
@@ -2624,6 +2695,43 @@ fn qualify_font_synthesis_small_caps_value(
         }
         CssSingleKeywordValue::Identifier(_) => {
             CssFontSynthesisSmallCapsQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+    }
+}
+
+fn qualify_font_synthesis_position_value(
+    items: &[CssLexicalItem],
+) -> CssFontSynthesisPositionQualificationOutcome {
+    match classify_single_keyword_value(items) {
+        CssSingleKeywordValue::UnsupportedFunction => {
+            CssFontSynthesisPositionQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssFontSynthesisPositionUnsupportedReason::FunctionValue,
+            )
+        }
+        CssSingleKeywordValue::Invalid => {
+            CssFontSynthesisPositionQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("auto") =>
+        {
+            CssFontSynthesisPositionQualificationOutcome::Qualified(
+                CssFontSynthesisPositionValue::Auto,
+            )
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("none") =>
+        {
+            CssFontSynthesisPositionQualificationOutcome::Qualified(
+                CssFontSynthesisPositionValue::None,
+            )
+        }
+        CssSingleKeywordValue::Identifier(identifier) if is_css_wide_keyword(identifier) => {
+            CssFontSynthesisPositionQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssFontSynthesisPositionUnsupportedReason::CssWideKeyword,
+            )
+        }
+        CssSingleKeywordValue::Identifier(_) => {
+            CssFontSynthesisPositionQualificationOutcome::InvalidForSelectedValueGrammar
         }
     }
 }
