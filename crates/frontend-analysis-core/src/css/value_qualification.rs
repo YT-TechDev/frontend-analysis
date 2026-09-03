@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -242,6 +242,52 @@ impl CssScrollSnapStopQualificationObservation {
     }
 
     pub(crate) const fn outcome(&self) -> CssScrollSnapStopQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssEmptyCellsValue {
+    Show,
+    Hide,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssEmptyCellsUnsupportedReason {
+    CssWideKeyword,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssEmptyCellsQualificationOutcome {
+    Qualified(CssEmptyCellsValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssEmptyCellsUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `empty-cells` qualification.
+///
+/// This profile qualifies only direct `show | hide` authored keyword evidence.
+/// Empty-cell determination, table layout, border/background suppression,
+/// baseline alignment, painting, and used-value behavior remain outside this
+/// slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssEmptyCellsQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssEmptyCellsQualificationOutcome,
+}
+
+impl CssEmptyCellsQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssEmptyCellsQualificationOutcome {
         self.outcome
     }
 }
@@ -1001,6 +1047,7 @@ pub(crate) struct CssValueQualificationRunResult {
     perspective_observations: Vec<CssPerspectiveQualificationObservation>,
     scroll_snap_align_observations: Vec<CssScrollSnapAlignQualificationObservation>,
     scroll_snap_stop_observations: Vec<CssScrollSnapStopQualificationObservation>,
+    empty_cells_observations: Vec<CssEmptyCellsQualificationObservation>,
     z_index_observations: Vec<CssZIndexQualificationObservation>,
 }
 
@@ -1099,6 +1146,10 @@ impl CssValueQualificationRunResult {
         &self.scroll_snap_stop_observations
     }
 
+    pub(crate) fn empty_cells_observations(&self) -> &[CssEmptyCellsQualificationObservation] {
+        &self.empty_cells_observations
+    }
+
     pub(crate) fn z_index_observations(&self) -> &[CssZIndexQualificationObservation] {
         &self.z_index_observations
     }
@@ -1182,6 +1233,7 @@ pub(crate) fn run(
         perspective_observations,
         scroll_snap_align_observations,
         scroll_snap_stop_observations,
+        empty_cells_observations,
         z_index_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
@@ -1205,6 +1257,7 @@ pub(crate) fn run(
         let mut perspective_observations = Vec::new();
         let mut scroll_snap_align_observations = Vec::new();
         let mut scroll_snap_stop_observations = Vec::new();
+        let mut empty_cells_observations = Vec::new();
         let mut z_index_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
@@ -1435,6 +1488,17 @@ pub(crate) fn run(
                     placement: occurrence.placement(),
                     outcome: qualify_scroll_snap_stop_value(value_items),
                 });
+                continue;
+            }
+
+            if property_name.eq_ignore_ascii_case("empty-cells") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                empty_cells_observations.push(CssEmptyCellsQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_empty_cells_value(value_items),
+                });
             }
         }
 
@@ -1458,6 +1522,7 @@ pub(crate) fn run(
             perspective_observations,
             scroll_snap_align_observations,
             scroll_snap_stop_observations,
+            empty_cells_observations,
             z_index_observations,
         )
     };
@@ -1483,6 +1548,7 @@ pub(crate) fn run(
         perspective_observations,
         scroll_snap_align_observations,
         scroll_snap_stop_observations,
+        empty_cells_observations,
         z_index_observations,
     })
 }
@@ -1709,6 +1775,33 @@ fn qualify_scroll_snap_stop_value(
         }
         CssSingleKeywordValue::Identifier(_) => {
             CssScrollSnapStopQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+    }
+}
+
+fn qualify_empty_cells_value(items: &[CssLexicalItem]) -> CssEmptyCellsQualificationOutcome {
+    match classify_single_keyword_value(items) {
+        CssSingleKeywordValue::UnsupportedFunction => {
+            CssEmptyCellsQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssEmptyCellsUnsupportedReason::FunctionValue,
+            )
+        }
+        CssSingleKeywordValue::Invalid => {
+            CssEmptyCellsQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+        CssSingleKeywordValue::Identifier(identifier) if identifier.eq_ignore_ascii_case("show") => {
+            CssEmptyCellsQualificationOutcome::Qualified(CssEmptyCellsValue::Show)
+        }
+        CssSingleKeywordValue::Identifier(identifier) if identifier.eq_ignore_ascii_case("hide") => {
+            CssEmptyCellsQualificationOutcome::Qualified(CssEmptyCellsValue::Hide)
+        }
+        CssSingleKeywordValue::Identifier(identifier) if is_css_wide_keyword(identifier) => {
+            CssEmptyCellsQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssEmptyCellsUnsupportedReason::CssWideKeyword,
+            )
+        }
+        CssSingleKeywordValue::Identifier(_) => {
+            CssEmptyCellsQualificationOutcome::InvalidForSelectedValueGrammar
         }
     }
 }
