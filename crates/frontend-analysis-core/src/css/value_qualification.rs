@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -338,6 +338,52 @@ impl CssTextDecorationStyleQualificationObservation {
     }
 
     pub(crate) const fn outcome(&self) -> CssTextDecorationStyleQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTableLayoutValue {
+    Auto,
+    Fixed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTableLayoutUnsupportedReason {
+    CssWideKeyword,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTableLayoutQualificationOutcome {
+    Qualified(CssTableLayoutValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssTableLayoutUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `table-layout` qualification.
+///
+/// This profile qualifies only direct `auto | fixed` authored keyword evidence.
+/// Table layout algorithms, intrinsic/column sizing, width distribution,
+/// table-wrapper/grid applicability, and used-value behavior remain outside
+/// this slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTableLayoutQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssTableLayoutQualificationOutcome,
+}
+
+impl CssTableLayoutQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssTableLayoutQualificationOutcome {
         self.outcome
     }
 }
@@ -1099,6 +1145,7 @@ pub(crate) struct CssValueQualificationRunResult {
     scroll_snap_stop_observations: Vec<CssScrollSnapStopQualificationObservation>,
     empty_cells_observations: Vec<CssEmptyCellsQualificationObservation>,
     text_decoration_style_observations: Vec<CssTextDecorationStyleQualificationObservation>,
+    table_layout_observations: Vec<CssTableLayoutQualificationObservation>,
     z_index_observations: Vec<CssZIndexQualificationObservation>,
 }
 
@@ -1207,6 +1254,10 @@ impl CssValueQualificationRunResult {
         &self.text_decoration_style_observations
     }
 
+    pub(crate) fn table_layout_observations(&self) -> &[CssTableLayoutQualificationObservation] {
+        &self.table_layout_observations
+    }
+
     pub(crate) fn z_index_observations(&self) -> &[CssZIndexQualificationObservation] {
         &self.z_index_observations
     }
@@ -1292,6 +1343,7 @@ pub(crate) fn run(
         scroll_snap_stop_observations,
         empty_cells_observations,
         text_decoration_style_observations,
+        table_layout_observations,
         z_index_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
@@ -1317,6 +1369,7 @@ pub(crate) fn run(
         let mut scroll_snap_stop_observations = Vec::new();
         let mut empty_cells_observations = Vec::new();
         let mut text_decoration_style_observations = Vec::new();
+        let mut table_layout_observations = Vec::new();
         let mut z_index_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
@@ -1571,6 +1624,17 @@ pub(crate) fn run(
                         outcome: qualify_text_decoration_style_value(value_items),
                     },
                 );
+                continue;
+            }
+
+            if property_name.eq_ignore_ascii_case("table-layout") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                table_layout_observations.push(CssTableLayoutQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_table_layout_value(value_items),
+                });
             }
         }
 
@@ -1596,6 +1660,7 @@ pub(crate) fn run(
             scroll_snap_stop_observations,
             empty_cells_observations,
             text_decoration_style_observations,
+            table_layout_observations,
             z_index_observations,
         )
     };
@@ -1623,6 +1688,7 @@ pub(crate) fn run(
         scroll_snap_stop_observations,
         empty_cells_observations,
         text_decoration_style_observations,
+        table_layout_observations,
         z_index_observations,
     })
 }
@@ -1936,6 +2002,37 @@ fn qualify_text_decoration_style_value(
         }
         CssSingleKeywordValue::Identifier(_) => {
             CssTextDecorationStyleQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+    }
+}
+
+fn qualify_table_layout_value(items: &[CssLexicalItem]) -> CssTableLayoutQualificationOutcome {
+    match classify_single_keyword_value(items) {
+        CssSingleKeywordValue::UnsupportedFunction => {
+            CssTableLayoutQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssTableLayoutUnsupportedReason::FunctionValue,
+            )
+        }
+        CssSingleKeywordValue::Invalid => {
+            CssTableLayoutQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("auto") =>
+        {
+            CssTableLayoutQualificationOutcome::Qualified(CssTableLayoutValue::Auto)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("fixed") =>
+        {
+            CssTableLayoutQualificationOutcome::Qualified(CssTableLayoutValue::Fixed)
+        }
+        CssSingleKeywordValue::Identifier(identifier) if is_css_wide_keyword(identifier) => {
+            CssTableLayoutQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssTableLayoutUnsupportedReason::CssWideKeyword,
+            )
+        }
+        CssSingleKeywordValue::Identifier(_) => {
+            CssTableLayoutQualificationOutcome::InvalidForSelectedValueGrammar
         }
     }
 }

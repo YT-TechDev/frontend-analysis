@@ -95,6 +95,8 @@ mod shape_image_threshold_value_qualification_tests;
 #[cfg(test)]
 mod shape_margin_value_qualification_tests;
 #[cfg(test)]
+mod table_layout_value_qualification_tests;
+#[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod text_decoration_style_value_qualification_tests;
