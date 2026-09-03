@@ -956,7 +956,7 @@ impl CssWordSpacingQualificationObservation {
     }
 }
 
-#[derive(Debug, Clone, Copy,PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssTextUnderlineOffsetValue {
     Auto,
     DirectLengthLiteral,
