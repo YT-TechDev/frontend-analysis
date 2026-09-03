@@ -1,233 +1,270 @@
-use crate::{SourceId, SourceText};
-
-use super::super::parser;
-use super::super::tokenizer;
-use super::super::value_qualification::{
-    self, CssFontSynthesisSmallCapsQualificationOutcome,
-    CssFontSynthesisSmallCapsUnsupportedReason, CssFontSynthesisSmallCapsValue,
+use crate::css::analysis::analyze_css_source;
+use crate::css::parser::resource::CssParserLimits;
+use crate::css::parser::result::CssParserExecutionCompletion;
+use crate::css::tokenizer::resource::CssTokenizerLimits;
+use crate::css::value_qualification::{
+    CssFontSynthesisSmallCapsQualificationOutcome, CssFontSynthesisSmallCapsUnsupportedReason,
+    CssFontSynthesisSmallCapsValue, CssValueQualificationRunResult, run,
 };
-use super::super::{CssAnalysisBudget, CssDeclarationPlacement};
+use crate::{SourceId, SourceText};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExpectedOutcome {
-    Qualified(CssFontSynthesisSmallCapsValue),
+    Auto,
+    None,
     Invalid,
-    Unsupported(CssFontSynthesisSmallCapsUnsupportedReason),
+    UnsupportedCssWide,
+    UnsupportedFunction,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct Case {
-    source: &'static str,
-    expected: ExpectedOutcome,
+fn tokenizer_limits() -> CssTokenizerLimits {
+    CssTokenizerLimits::new(4096, 100_000, 8192, 1024, 8192, 8192).unwrap()
 }
 
-fn run(
-    source: &'static str,
-    source_id: SourceId,
-) -> value_qualification::CssValueQualificationRunResult {
-    let source = SourceText::new(source_id, source);
-    let tokenizer_result =
-        tokenizer::run(&source, CssAnalysisBudget::default()).expect("tokenizer should succeed");
-    let parser_result =
-        parser::run(tokenizer_result, CssAnalysisBudget::default()).expect("parser should succeed");
-    value_qualification::run(parser_result).expect("qualification should succeed")
+fn parser_limits() -> CssParserLimits {
+    parser_limits_with_occurrences(8192)
 }
 
-fn assert_outcome(source: &'static str, expected: ExpectedOutcome) {
-    let result = run(source, SourceId::new(1));
-    let observations = result.font_synthesis_small_caps_observations();
-    assert_eq!(observations.len(), 1, "{source}");
-    let actual = observations[0].outcome();
+fn parser_limits_with_occurrences(max_declaration_occurrences: usize) -> CssParserLimits {
+    CssParserLimits::new(
+        100_000,
+        256,
+        256,
+        max_declaration_occurrences,
+        1024,
+        1024,
+        1024,
+        1024,
+        8192,
+    )
+    .unwrap()
+}
+
+fn qualify(source_id: u64, css: &str) -> CssValueQualificationRunResult {
+    qualify_with_limits(source_id, css, parser_limits())
+}
+
+fn qualify_with_limits(
+    source_id: u64,
+    css: &str,
+    parser_limits: CssParserLimits,
+) -> CssValueQualificationRunResult {
+    let source = SourceText::new(SourceId::new(source_id), css.to_owned());
+    let parser_result = analyze_css_source(&source, tokenizer_limits(), parser_limits).unwrap();
+    run(parser_result).unwrap()
+}
+
+fn expected_outcome(expected: ExpectedOutcome) -> CssFontSynthesisSmallCapsQualificationOutcome {
     match expected {
-        ExpectedOutcome::Qualified(value) => {
-            assert_eq!(
-                actual,
-                CssFontSynthesisSmallCapsQualificationOutcome::Qualified(value),
-                "{source}"
-            );
-        }
+        ExpectedOutcome::Auto => CssFontSynthesisSmallCapsQualificationOutcome::Qualified(
+            CssFontSynthesisSmallCapsValue::Auto,
+        ),
+        ExpectedOutcome::None => CssFontSynthesisSmallCapsQualificationOutcome::Qualified(
+            CssFontSynthesisSmallCapsValue::None,
+        ),
         ExpectedOutcome::Invalid => {
-            assert_eq!(
-                actual,
-                CssFontSynthesisSmallCapsQualificationOutcome::InvalidForSelectedValueGrammar,
-                "{source}"
-            );
+            CssFontSynthesisSmallCapsQualificationOutcome::InvalidForSelectedValueGrammar
         }
-        ExpectedOutcome::Unsupported(reason) => {
-            assert_eq!(
-                actual,
-                CssFontSynthesisSmallCapsQualificationOutcome::UnsupportedBySelectedValueProfile(
-                    reason
-                ),
-                "{source}"
-            );
-        }
-    }
-}
-
-#[test]
-fn qualifies_direct_keywords_case_and_escapes() {
-    for case in [
-        Case {
-            source: "a { font-synthesis-small-caps: auto; }",
-            expected: ExpectedOutcome::Qualified(CssFontSynthesisSmallCapsValue::Auto),
-        },
-        Case {
-            source: "a { font-synthesis-small-caps: none; }",
-            expected: ExpectedOutcome::Qualified(CssFontSynthesisSmallCapsValue::None),
-        },
-        Case {
-            source: "a { FONT-SYNTHESIS-SMALL-CAPS: AuTo; }",
-            expected: ExpectedOutcome::Qualified(CssFontSynthesisSmallCapsValue::Auto),
-        },
-        Case {
-            source: r"a { font-synthesis-small-caps: n\6f ne; }",
-            expected: ExpectedOutcome::Qualified(CssFontSynthesisSmallCapsValue::None),
-        },
-        Case {
-            source: r"a { font-synthesis-small-caps: \61 uto; }",
-            expected: ExpectedOutcome::Qualified(CssFontSynthesisSmallCapsValue::Auto),
-        },
-    ] {
-        assert_outcome(case.source, case.expected);
-    }
-}
-
-#[test]
-fn invalidates_direct_grammar_mismatches() {
-    for source in [
-        "a { font-synthesis-small-caps: normal; }",
-        "a { font-synthesis-small-caps: auto none; }",
-        "a { font-synthesis-small-caps: none auto; }",
-        "a { font-synthesis-small-caps: 1; }",
-        "a { font-synthesis-small-caps: 1px; }",
-        "a { font-synthesis-small-caps: \"auto\"; }",
-        "a { font-synthesis-small-caps: ; }",
-        "a { font-synthesis-small-caps: foo(); }",
-        "a { font-synthesis-small-caps: calc(1); }",
-    ] {
-        assert_outcome(source, ExpectedOutcome::Invalid);
-    }
-}
-
-#[test]
-fn comments_and_priority_do_not_change_value_grammar() {
-    for case in [
-        Case {
-            source: "a { font-synthesis-small-caps: /*x*/ auto /*y*/; }",
-            expected: ExpectedOutcome::Qualified(CssFontSynthesisSmallCapsValue::Auto),
-        },
-        Case {
-            source: "a { font-synthesis-small-caps: none !important; }",
-            expected: ExpectedOutcome::Qualified(CssFontSynthesisSmallCapsValue::None),
-        },
-    ] {
-        assert_outcome(case.source, case.expected);
-    }
-}
-
-#[test]
-fn css_wide_keywords_are_profile_unsupported() {
-    for keyword in [
-        "initial",
-        "inherit",
-        "unset",
-        "revert",
-        "revert-layer",
-        "revert-rule",
-    ] {
-        let source =
-            Box::leak(format!("a {{ font-synthesis-small-caps: {keyword}; }}").into_boxed_str());
-        assert_outcome(
-            source,
-            ExpectedOutcome::Unsupported(
+        ExpectedOutcome::UnsupportedCssWide => {
+            CssFontSynthesisSmallCapsQualificationOutcome::UnsupportedBySelectedValueProfile(
                 CssFontSynthesisSmallCapsUnsupportedReason::CssWideKeyword,
-            ),
-        );
+            )
+        }
+        ExpectedOutcome::UnsupportedFunction => {
+            CssFontSynthesisSmallCapsQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssFontSynthesisSmallCapsUnsupportedReason::FunctionValue,
+            )
+        }
+    }
+}
+
+fn assert_expected(result: &CssValueQualificationRunResult, expected: &[ExpectedOutcome]) {
+    let actual: Vec<_> = result
+        .font_synthesis_small_caps_observations()
+        .iter()
+        .map(|observation| observation.outcome())
+        .collect();
+    let expected: Vec<_> = expected.iter().copied().map(expected_outcome).collect();
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn handwritten_direct_keyword_boundary_matches_auto_none_grammar() {
+    let result = qualify(
+        2220,
+        concat!(
+            "a{font-synthesis-small-caps:auto;}",
+            "b{font-synthesis-small-caps:none;}",
+            "c{font-synthesis-small-caps:AUTO;}",
+            "d{FONT-SYNTHESIS-SMALL-CAPS:NoNe;}",
+            r"e{font-synthesis-small-caps:\61 uto;}",
+            r"f{font-synthesis-small-caps:n\6f ne;}",
+            "g{font-synthesis-small-caps:normal;}",
+            "h{font-synthesis-small-caps:auto none;}",
+            "i{font-synthesis-small-caps:none auto;}",
+            "j{font-synthesis-small-caps:auto,none;}",
+            "k{font-synthesis-small-caps:;}",
+            "l{font-synthesis-small-caps:1;}",
+            "m{font-synthesis-small-caps:1px;}",
+            "n{font-synthesis-small-caps:\"auto\";}",
+            "o{color:auto;}",
+        ),
+    );
+
+    assert_expected(
+        &result,
+        &[
+            ExpectedOutcome::Auto,
+            ExpectedOutcome::None,
+            ExpectedOutcome::Auto,
+            ExpectedOutcome::None,
+            ExpectedOutcome::Auto,
+            ExpectedOutcome::None,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+        ],
+    );
+    assert_eq!(
+        result.execution_completion(),
+        CssParserExecutionCompletion::Complete
+    );
+}
+
+#[test]
+fn comments_and_priority_preserve_decoded_keyword_meaning() {
+    let result = qualify(
+        2221,
+        concat!(
+            "a{font-synthesis-small-caps:/**/auto/**/!important;}",
+            "b{font-synthesis-small-caps:/**/none/**/!important;}",
+        ),
+    );
+
+    assert_expected(&result, &[ExpectedOutcome::Auto, ExpectedOutcome::None]);
+    for occurrence in result.upstream_parser_result().occurrences() {
+        assert!(occurrence.priority().is_some());
     }
 }
 
 #[test]
-fn deferred_and_entire_whole_value_functions_are_profile_unsupported() {
-    for source in [
-        "a { font-synthesis-small-caps: var(--x); }",
-        "a { font-synthesis-small-caps: env(x); }",
-        "a { font-synthesis-small-caps: attr(data-x); }",
-        "a { font-synthesis-small-caps: if(style(--x): auto; else: none); }",
-        "a { font-synthesis-small-caps: inherit(auto); }",
-        "a { font-synthesis-small-caps: ident(auto); }",
-        "a { font-synthesis-small-caps: random-item(auto, none); }",
-        "a { font-synthesis-small-caps: --custom(auto); }",
-        "a { font-synthesis-small-caps: first-valid(auto, none); }",
-        "a { font-synthesis-small-caps: cycle(auto, none); }",
-        "a { font-synthesis-small-caps: interpolate(auto, none); }",
-    ] {
-        assert_outcome(
-            source,
-            ExpectedOutcome::Unsupported(CssFontSynthesisSmallCapsUnsupportedReason::FunctionValue),
-        );
-    }
+fn css_wide_keywords_remain_profile_unsupported() {
+    let result = qualify(
+        2222,
+        concat!(
+            "a{font-synthesis-small-caps:initial;}",
+            "b{font-synthesis-small-caps:inherit;}",
+            "c{font-synthesis-small-caps:unset;}",
+            "d{font-synthesis-small-caps:revert;}",
+            "e{font-synthesis-small-caps:revert-layer;}",
+            "f{font-synthesis-small-caps:revert-rule;}",
+        ),
+    );
+
+    assert_expected(&result, &[ExpectedOutcome::UnsupportedCssWide; 6]);
 }
 
 #[test]
-fn function_placement_boundaries_remain_distinct() {
-    for source in [
-        "a { font-synthesis-small-caps: auto first-valid(auto, none); }",
-        "a { font-synthesis-small-caps: first-valid(auto, none) auto; }",
-        "a { font-synthesis-small-caps: auto cycle(auto, none); }",
-        "a { font-synthesis-small-caps: interpolate(auto, none) none; }",
-    ] {
-        assert_outcome(source, ExpectedOutcome::Invalid);
-    }
+fn deferred_and_whole_value_functions_fail_open_but_ordinary_functions_are_invalid() {
+    let result = qualify(
+        2223,
+        concat!(
+            "a{font-synthesis-small-caps:var(--caps);}",
+            "b{font-synthesis-small-caps:env(caps);}",
+            "c{font-synthesis-small-caps:attr(data-caps);}",
+            "d{font-synthesis-small-caps:--caps();}",
+            "e{font-synthesis-small-caps:first-valid(auto,none);}",
+            "f{font-synthesis-small-caps:cycle(auto,none);}",
+            "g{font-synthesis-small-caps:interpolate(0%,0:auto,1:none);}",
+            "h{font-synthesis-small-caps:foo();}",
+            "i{font-synthesis-small-caps:calc(1);}",
+        ),
+    );
 
-    for source in [
-        "a { font-synthesis-small-caps: auto var(--x); }",
-        "a { font-synthesis-small-caps: var(--x) none; }",
-        "a { font-synthesis-small-caps: auto --custom(none); }",
-    ] {
-        assert_outcome(
-            source,
-            ExpectedOutcome::Unsupported(CssFontSynthesisSmallCapsUnsupportedReason::FunctionValue),
-        );
-    }
+    assert_expected(
+        &result,
+        &[
+            ExpectedOutcome::UnsupportedFunction,
+            ExpectedOutcome::UnsupportedFunction,
+            ExpectedOutcome::UnsupportedFunction,
+            ExpectedOutcome::UnsupportedFunction,
+            ExpectedOutcome::UnsupportedFunction,
+            ExpectedOutcome::UnsupportedFunction,
+            ExpectedOutcome::UnsupportedFunction,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+        ],
+    );
 }
 
 #[test]
-fn interleaves_with_all_accepted_value_qualification_leaves() {
-    let source = r#"
-a {
-  direction: rtl;
-  box-sizing: border-box;
-  isolation: isolate;
-  backface-visibility: hidden;
-  order: 2;
-  column-count: 3;
-  flex-grow: 1;
-  flex-shrink: 1;
-  opacity: 0.5;
-  shape-image-threshold: 50%;
-  shape-margin: 1px;
-  line-height: normal;
-  word-spacing: 1px;
-  text-underline-offset: auto;
-  scroll-margin-top: 1px;
-  border-top-width: thin;
-  perspective: none;
-  z-index: auto;
-  scroll-snap-align: center;
-  scroll-snap-stop: always;
-  empty-cells: hide;
-  text-decoration-style: wavy;
-  table-layout: fixed;
-  border-collapse: collapse;
-  box-decoration-break: clone;
-  font-kerning: normal;
-  font-variant-position: super;
-  font-synthesis-weight: none;
-  font-synthesis-small-caps: auto;
+fn function_placement_preserves_keyword_leaf_fail_open_boundary() {
+    let result = qualify(
+        2224,
+        concat!(
+            "a{font-synthesis-small-caps:auto first-valid(none);}",
+            "b{font-synthesis-small-caps:first-valid(none) auto;}",
+            "c{font-synthesis-small-caps:none foo();}",
+            "d{font-synthesis-small-caps:foo() auto;}",
+            "e{font-synthesis-small-caps:auto var(--caps);}",
+            "f{font-synthesis-small-caps:foo(var(--caps));}",
+        ),
+    );
+
+    assert_expected(
+        &result,
+        &[
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::UnsupportedFunction,
+            ExpectedOutcome::UnsupportedFunction,
+        ],
+    );
 }
-"#;
-    let result = run(source, SourceId::new(2));
+
+#[test]
+fn one_run_interleaves_font_synthesis_small_caps_with_every_accepted_leaf() {
+    let result = qualify(
+        2225,
+        concat!(
+            "a{direction:ltr;}",
+            "b{box-sizing:border-box;}",
+            "c{isolation:isolate;}",
+            "d{backface-visibility:hidden;}",
+            "e{order:1;}",
+            "f{column-count:2;}",
+            "g{flex-grow:1;}",
+            "h{flex-shrink:1;}",
+            "i{opacity:.5;}",
+            "j{shape-image-threshold:.5;}",
+            "k{shape-margin:1px;}",
+            "l{line-height:1;}",
+            "m{word-spacing:-1px;}",
+            "n{text-underline-offset:-10%;}",
+            "o{scroll-margin-top:-1px;}",
+            "p{border-top-width:thin;}",
+            "q{perspective:1px;}",
+            "r{z-index:1;}",
+            "s{scroll-snap-align:center;}",
+            "t{scroll-snap-stop:always;}",
+            "u{empty-cells:hide;}",
+            "v{text-decoration-style:wavy;}",
+            "w{table-layout:fixed;}",
+            "x{border-collapse:collapse;}",
+            "y{box-decoration-break:clone;}",
+            "z{font-kerning:normal;}",
+            "aa{font-variant-position:super;}",
+            "ab{font-synthesis-weight:none;}",
+            "ac{font-synthesis-small-caps:none;}",
+        ),
+    );
 
     assert_eq!(result.direction_observations().len(), 1);
     assert_eq!(result.box_sizing_observations().len(), 1);
@@ -257,97 +294,90 @@ a {
     assert_eq!(result.font_kerning_observations().len(), 1);
     assert_eq!(result.font_variant_position_observations().len(), 1);
     assert_eq!(result.font_synthesis_weight_observations().len(), 1);
-
-    let observation = result.font_synthesis_small_caps_observations()[0];
-    assert_eq!(observation.occurrence_index(), 28);
+    assert_eq!(result.font_synthesis_small_caps_observations().len(), 1);
     assert_eq!(
-        observation.placement(),
-        CssDeclarationPlacement::OrdinaryDeclaration
+        result.font_synthesis_small_caps_observations()[0].occurrence_index(),
+        28
+    );
+    assert_expected(&result, &[ExpectedOutcome::None]);
+}
+
+#[test]
+fn duplicate_declarations_keep_distinct_run_local_placement() {
+    let result = qualify(
+        2226,
+        "a{font-synthesis-small-caps:auto;}b{font-synthesis-small-caps:auto;}",
+    );
+
+    assert_expected(&result, &[ExpectedOutcome::Auto, ExpectedOutcome::Auto]);
+    assert_eq!(
+        result.font_synthesis_small_caps_observations()[0].occurrence_index(),
+        0
     );
     assert_eq!(
-        observation.outcome(),
-        CssFontSynthesisSmallCapsQualificationOutcome::Qualified(
-            CssFontSynthesisSmallCapsValue::Auto
-        )
+        result.font_synthesis_small_caps_observations()[1].occurrence_index(),
+        1
+    );
+    assert_ne!(
+        result.font_synthesis_small_caps_observations()[0]
+            .placement()
+            .context_id(),
+        result.font_synthesis_small_caps_observations()[1]
+            .placement()
+            .context_id(),
     );
 }
 
 #[test]
-fn duplicate_occurrences_preserve_run_local_identity() {
-    let source = "a { font-synthesis-small-caps: auto; font-synthesis-small-caps: none; }";
-    let result = run(source, SourceId::new(3));
-    let observations = result.font_synthesis_small_caps_observations();
-    assert_eq!(observations.len(), 2);
-    assert_eq!(observations[0].occurrence_index(), 0);
-    assert_eq!(observations[1].occurrence_index(), 1);
-    assert_eq!(
-        observations[0].outcome(),
-        CssFontSynthesisSmallCapsQualificationOutcome::Qualified(
-            CssFontSynthesisSmallCapsValue::Auto
-        )
-    );
-    assert_eq!(
-        observations[1].outcome(),
-        CssFontSynthesisSmallCapsQualificationOutcome::Qualified(
-            CssFontSynthesisSmallCapsValue::None
-        )
-    );
-}
-
-#[test]
-fn excludes_nonordinary_declaration_shaped_contexts() {
-    for source in [
-        "@font-face { font-synthesis-small-caps: auto; }",
-        "@page { font-synthesis-small-caps: auto; }",
-        "@keyframes x { from { font-synthesis-small-caps: auto; } }",
+fn nonordinary_declaration_shaped_contexts_are_excluded() {
+    for (source_id, css) in [
+        (2230, "@font-face{font-synthesis-small-caps:auto;}"),
+        (2231, "@page{font-synthesis-small-caps:auto;}"),
+        (2232, "@page{@top-left{font-synthesis-small-caps:auto;}}"),
+        (2233, "@keyframes k{from{font-synthesis-small-caps:auto;}}"),
     ] {
-        let result = run(source, SourceId::new(4));
-        assert!(result.font_synthesis_small_caps_observations().is_empty());
+        let result = qualify(source_id, css);
+        assert!(
+            result.font_synthesis_small_caps_observations().is_empty(),
+            "nonordinary declaration context produced a font-synthesis-small-caps observation for {css:?}"
+        );
     }
 }
 
 #[test]
-fn preserves_upstream_incomplete_committed_prefix() {
-    let source = SourceText::new(
-        SourceId::new(5),
-        "a { font-synthesis-small-caps: auto; font-synthesis-small-caps: none; }",
+fn parser_resource_stop_preserves_committed_prefix_and_completion() {
+    let result = qualify_with_limits(
+        2240,
+        "a{font-synthesis-small-caps:auto;font-synthesis-small-caps:none;}",
+        parser_limits_with_occurrences(1),
     );
-    let tokenizer_result = tokenizer::run(
-        &source,
-        CssAnalysisBudget {
-            max_lexical_items: 12,
-            ..CssAnalysisBudget::default()
-        },
-    )
-    .expect("tokenizer should return committed prefix");
-    let parser_result = parser::run(tokenizer_result, CssAnalysisBudget::default())
-        .expect("parser should preserve committed prefix");
-    assert!(matches!(
-        parser_result.execution_completion(),
-        super::super::parser::result::CssParserExecutionCompletion::Incomplete(_)
-    ));
 
-    let result = value_qualification::run(parser_result).expect("qualification should succeed");
-    assert!(matches!(
+    assert_eq!(
         result.execution_completion(),
-        super::super::parser::result::CssParserExecutionCompletion::Incomplete(_)
-    ));
-    assert!(result.font_synthesis_small_caps_observations().len() <= 1);
+        CssParserExecutionCompletion::Incomplete
+    );
+    assert_expected(&result, &[ExpectedOutcome::Auto]);
+    assert_eq!(result.upstream_parser_result().occurrences().len(), 1);
 }
 
 #[test]
-fn repeated_and_cross_source_runs_are_deterministic() {
-    let source = "a { font-synthesis-small-caps: none; }";
-    let first = run(source, SourceId::new(6));
-    let second = run(source, SourceId::new(6));
-    let other_source = run(source, SourceId::new(7));
+fn repeated_and_cross_source_runs_are_semantically_deterministic() {
+    let css = concat!(
+        "a{font-synthesis-small-caps:auto;}",
+        "b{font-synthesis-small-caps:inherit;}",
+        "c{font-synthesis-small-caps:normal;}",
+        "d{font-synthesis-small-caps:var(--caps);}",
+    );
+    let first = qualify(2250, css);
+    let repeated = qualify(2250, css);
+    let another_source = qualify(2251, css);
 
     assert_eq!(
         first.font_synthesis_small_caps_observations(),
-        second.font_synthesis_small_caps_observations()
+        repeated.font_synthesis_small_caps_observations()
     );
     assert_eq!(
         first.font_synthesis_small_caps_observations(),
-        other_source.font_synthesis_small_caps_observations()
+        another_source.font_synthesis_small_caps_observations()
     );
 }
