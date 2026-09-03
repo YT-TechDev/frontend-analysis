@@ -166,10 +166,7 @@ fn comments_and_priority_preserve_decoded_keyword_meaning() {
         ),
     );
 
-    assert_expected(
-        &result,
-        &[ExpectedOutcome::Loose, ExpectedOutcome::Strict],
-    );
+    assert_expected(&result, &[ExpectedOutcome::Loose, ExpectedOutcome::Strict]);
     for occurrence in result.upstream_parser_result().occurrences() {
         assert!(occurrence.priority().is_some());
     }
@@ -332,10 +329,7 @@ fn one_run_interleaves_line_break_with_every_accepted_leaf() {
 
 #[test]
 fn duplicate_declarations_keep_distinct_run_local_placement() {
-    let result = qualify(
-        2506,
-        "a{line-break:strict;}b{line-break:strict;}",
-    );
+    let result = qualify(2506, "a{line-break:strict;}b{line-break:strict;}");
 
     assert_expected(&result, &[ExpectedOutcome::Strict, ExpectedOutcome::Strict]);
     assert_eq!(result.line_break_observations()[0].occurrence_index(), 0);

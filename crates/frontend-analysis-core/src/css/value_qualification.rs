@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -1200,6 +1200,56 @@ impl CssLineHeightQualificationObservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssLineBreakValue {
+    Auto,
+    Loose,
+    Normal,
+    Strict,
+    Anywhere,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssLineBreakUnsupportedReason {
+    CssWideKeyword,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssLineBreakQualificationOutcome {
+    Qualified(CssLineBreakValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssLineBreakUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `line-break` qualification.
+///
+/// This profile qualifies only direct
+/// `auto | loose | normal | strict | anywhere` authored keyword evidence.
+/// Unicode line-breaking classes, UAX #14 processing, writing-system/language
+/// tailoring, CJK punctuation behavior, soft-wrap generation, shaping, line
+/// layout, and intrinsic sizing remain outside this slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssLineBreakQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssLineBreakQualificationOutcome,
+}
+
+impl CssLineBreakQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssLineBreakQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssWordSpacingValue {
     Normal,
     DirectLengthLiteral,
@@ -1566,6 +1616,7 @@ pub(crate) struct CssValueQualificationRunResult {
     shape_image_threshold_observations: Vec<CssShapeImageThresholdQualificationObservation>,
     shape_margin_observations: Vec<CssShapeMarginQualificationObservation>,
     line_height_observations: Vec<CssLineHeightQualificationObservation>,
+    line_break_observations: Vec<CssLineBreakQualificationObservation>,
     word_spacing_observations: Vec<CssWordSpacingQualificationObservation>,
     text_underline_offset_observations: Vec<CssTextUnderlineOffsetQualificationObservation>,
     scroll_margin_top_observations: Vec<CssScrollMarginTopQualificationObservation>,
@@ -1643,6 +1694,10 @@ impl CssValueQualificationRunResult {
 
     pub(crate) fn line_height_observations(&self) -> &[CssLineHeightQualificationObservation] {
         &self.line_height_observations
+    }
+
+    pub(crate) fn line_break_observations(&self) -> &[CssLineBreakQualificationObservation] {
+        &self.line_break_observations
     }
 
     pub(crate) fn word_spacing_observations(&self) -> &[CssWordSpacingQualificationObservation] {
@@ -1825,6 +1880,7 @@ pub(crate) fn run(
         shape_image_threshold_observations,
         shape_margin_observations,
         line_height_observations,
+        line_break_observations,
         word_spacing_observations,
         text_underline_offset_observations,
         scroll_margin_top_observations,
@@ -1860,6 +1916,7 @@ pub(crate) fn run(
         let mut shape_image_threshold_observations = Vec::new();
         let mut shape_margin_observations = Vec::new();
         let mut line_height_observations = Vec::new();
+        let mut line_break_observations = Vec::new();
         let mut word_spacing_observations = Vec::new();
         let mut text_underline_offset_observations = Vec::new();
         let mut scroll_margin_top_observations = Vec::new();
@@ -2018,6 +2075,17 @@ pub(crate) fn run(
                     occurrence_index,
                     placement: occurrence.placement(),
                     outcome: qualify_line_height_value(value_items),
+                });
+                continue;
+            }
+
+            if property_name.eq_ignore_ascii_case("line-break") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                line_break_observations.push(CssLineBreakQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_line_break_value(value_items),
                 });
                 continue;
             }
@@ -2269,6 +2337,7 @@ pub(crate) fn run(
             shape_image_threshold_observations,
             shape_margin_observations,
             line_height_observations,
+            line_break_observations,
             word_spacing_observations,
             text_underline_offset_observations,
             scroll_margin_top_observations,
@@ -2306,6 +2375,7 @@ pub(crate) fn run(
         shape_image_threshold_observations,
         shape_margin_observations,
         line_height_observations,
+        line_break_observations,
         word_spacing_observations,
         text_underline_offset_observations,
         scroll_margin_top_observations,
@@ -3466,6 +3536,52 @@ fn qualify_line_height_value(items: &[CssLexicalItem]) -> CssLineHeightQualifica
             )
         }
         _ => CssLineHeightQualificationOutcome::InvalidForSelectedValueGrammar,
+    }
+}
+
+fn qualify_line_break_value(items: &[CssLexicalItem]) -> CssLineBreakQualificationOutcome {
+    match classify_single_keyword_value(items) {
+        CssSingleKeywordValue::UnsupportedFunction => {
+            CssLineBreakQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssLineBreakUnsupportedReason::FunctionValue,
+            )
+        }
+        CssSingleKeywordValue::Invalid => {
+            CssLineBreakQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("auto") =>
+        {
+            CssLineBreakQualificationOutcome::Qualified(CssLineBreakValue::Auto)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("loose") =>
+        {
+            CssLineBreakQualificationOutcome::Qualified(CssLineBreakValue::Loose)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("normal") =>
+        {
+            CssLineBreakQualificationOutcome::Qualified(CssLineBreakValue::Normal)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("strict") =>
+        {
+            CssLineBreakQualificationOutcome::Qualified(CssLineBreakValue::Strict)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("anywhere") =>
+        {
+            CssLineBreakQualificationOutcome::Qualified(CssLineBreakValue::Anywhere)
+        }
+        CssSingleKeywordValue::Identifier(identifier) if is_css_wide_keyword(identifier) => {
+            CssLineBreakQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssLineBreakUnsupportedReason::CssWideKeyword,
+            )
+        }
+        CssSingleKeywordValue::Identifier(_) => {
+            CssLineBreakQualificationOutcome::InvalidForSelectedValueGrammar
+        }
     }
 }
 
