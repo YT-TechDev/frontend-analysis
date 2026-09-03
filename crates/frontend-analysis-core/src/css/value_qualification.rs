@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -430,6 +430,53 @@ impl CssBorderCollapseQualificationObservation {
     }
 
     pub(crate) const fn outcome(&self) -> CssBorderCollapseQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssBoxDecorationBreakValue {
+    Slice,
+    Clone,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssBoxDecorationBreakUnsupportedReason {
+    CssWideKeyword,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssBoxDecorationBreakQualificationOutcome {
+    Qualified(CssBoxDecorationBreakValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssBoxDecorationBreakUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `box-decoration-break`
+/// qualification.
+///
+/// This profile qualifies only direct `slice | clone` authored keyword
+/// evidence. Fragment construction, fragmentation algorithms, border/background
+/// painting, mask/clip interaction, and used-value processing remain outside
+/// this slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssBoxDecorationBreakQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssBoxDecorationBreakQualificationOutcome,
+}
+
+impl CssBoxDecorationBreakQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssBoxDecorationBreakQualificationOutcome {
         self.outcome
     }
 }
@@ -1193,6 +1240,7 @@ pub(crate) struct CssValueQualificationRunResult {
     text_decoration_style_observations: Vec<CssTextDecorationStyleQualificationObservation>,
     table_layout_observations: Vec<CssTableLayoutQualificationObservation>,
     border_collapse_observations: Vec<CssBorderCollapseQualificationObservation>,
+    box_decoration_break_observations: Vec<CssBoxDecorationBreakQualificationObservation>,
     z_index_observations: Vec<CssZIndexQualificationObservation>,
 }
 
@@ -1311,6 +1359,12 @@ impl CssValueQualificationRunResult {
         &self.border_collapse_observations
     }
 
+    pub(crate) fn box_decoration_break_observations(
+        &self,
+    ) -> &[CssBoxDecorationBreakQualificationObservation] {
+        &self.box_decoration_break_observations
+    }
+
     pub(crate) fn z_index_observations(&self) -> &[CssZIndexQualificationObservation] {
         &self.z_index_observations
     }
@@ -1398,6 +1452,7 @@ pub(crate) fn run(
         text_decoration_style_observations,
         table_layout_observations,
         border_collapse_observations,
+        box_decoration_break_observations,
         z_index_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
@@ -1425,6 +1480,7 @@ pub(crate) fn run(
         let mut text_decoration_style_observations = Vec::new();
         let mut table_layout_observations = Vec::new();
         let mut border_collapse_observations = Vec::new();
+        let mut box_decoration_break_observations = Vec::new();
         let mut z_index_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
@@ -1701,6 +1757,19 @@ pub(crate) fn run(
                     placement: occurrence.placement(),
                     outcome: qualify_border_collapse_value(value_items),
                 });
+                continue;
+            }
+
+            if property_name.eq_ignore_ascii_case("box-decoration-break") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                box_decoration_break_observations.push(
+                    CssBoxDecorationBreakQualificationObservation {
+                        occurrence_index,
+                        placement: occurrence.placement(),
+                        outcome: qualify_box_decoration_break_value(value_items),
+                    },
+                );
             }
         }
 
@@ -1728,6 +1797,7 @@ pub(crate) fn run(
             text_decoration_style_observations,
             table_layout_observations,
             border_collapse_observations,
+            box_decoration_break_observations,
             z_index_observations,
         )
     };
@@ -1757,6 +1827,7 @@ pub(crate) fn run(
         text_decoration_style_observations,
         table_layout_observations,
         border_collapse_observations,
+        box_decoration_break_observations,
         z_index_observations,
     })
 }
@@ -2134,6 +2205,39 @@ fn qualify_border_collapse_value(
         }
         CssSingleKeywordValue::Identifier(_) => {
             CssBorderCollapseQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+    }
+}
+
+fn qualify_box_decoration_break_value(
+    items: &[CssLexicalItem],
+) -> CssBoxDecorationBreakQualificationOutcome {
+    match classify_single_keyword_value(items) {
+        CssSingleKeywordValue::UnsupportedFunction => {
+            CssBoxDecorationBreakQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssBoxDecorationBreakUnsupportedReason::FunctionValue,
+            )
+        }
+        CssSingleKeywordValue::Invalid => {
+            CssBoxDecorationBreakQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("slice") =>
+        {
+            CssBoxDecorationBreakQualificationOutcome::Qualified(CssBoxDecorationBreakValue::Slice)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("clone") =>
+        {
+            CssBoxDecorationBreakQualificationOutcome::Qualified(CssBoxDecorationBreakValue::Clone)
+        }
+        CssSingleKeywordValue::Identifier(identifier) if is_css_wide_keyword(identifier) => {
+            CssBoxDecorationBreakQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssBoxDecorationBreakUnsupportedReason::CssWideKeyword,
+            )
+        }
+        CssSingleKeywordValue::Identifier(_) => {
+            CssBoxDecorationBreakQualificationOutcome::InvalidForSelectedValueGrammar
         }
     }
 }
