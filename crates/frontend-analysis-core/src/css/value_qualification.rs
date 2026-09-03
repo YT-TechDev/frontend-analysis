@@ -722,7 +722,7 @@ impl CssLineHeightQualificationObservation {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy,PartialEq, Eq)]
 pub(crate) enum CssWordSpacingValue {
     Normal,
     DirectLengthLiteral,
@@ -1899,7 +1899,9 @@ fn qualify_text_decoration_style_value(
         CssSingleKeywordValue::Identifier(identifier)
             if identifier.eq_ignore_ascii_case("solid") =>
         {
-            CssTextDecorationStyleQualificationOutcome::Qualified(CssTextDecorationStyleValue::Solid)
+            CssTextDecorationStyleQualificationOutcome::Qualified(
+                CssTextDecorationStyleValue::Solid,
+            )
         }
         CssSingleKeywordValue::Identifier(identifier)
             if identifier.eq_ignore_ascii_case("double") =>
