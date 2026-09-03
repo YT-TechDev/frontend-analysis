@@ -21,12 +21,15 @@ struct Case {
     expected: ExpectedOutcome,
 }
 
-fn run(source: &'static str, source_id: SourceId) -> value_qualification::CssValueQualificationRunResult {
+fn run(
+    source: &'static str,
+    source_id: SourceId,
+) -> value_qualification::CssValueQualificationRunResult {
     let source = SourceText::new(source_id, source);
-    let tokenizer_result = tokenizer::run(&source, CssAnalysisBudget::default())
-        .expect("tokenizer should succeed");
-    let parser_result = parser::run(tokenizer_result, CssAnalysisBudget::default())
-        .expect("parser should succeed");
+    let tokenizer_result =
+        tokenizer::run(&source, CssAnalysisBudget::default()).expect("tokenizer should succeed");
+    let parser_result =
+        parser::run(tokenizer_result, CssAnalysisBudget::default()).expect("parser should succeed");
     value_qualification::run(parser_result).expect("qualification should succeed")
 }
 
@@ -133,12 +136,13 @@ fn css_wide_keywords_are_profile_unsupported() {
         "revert-layer",
         "revert-rule",
     ] {
-        let source = Box::leak(
-            format!("a {{ font-synthesis-small-caps: {keyword}; }}").into_boxed_str(),
-        );
+        let source =
+            Box::leak(format!("a {{ font-synthesis-small-caps: {keyword}; }}").into_boxed_str());
         assert_outcome(
             source,
-            ExpectedOutcome::Unsupported(CssFontSynthesisSmallCapsUnsupportedReason::CssWideKeyword),
+            ExpectedOutcome::Unsupported(
+                CssFontSynthesisSmallCapsUnsupportedReason::CssWideKeyword,
+            ),
         );
     }
 }
@@ -160,9 +164,7 @@ fn deferred_and_entire_whole_value_functions_are_profile_unsupported() {
     ] {
         assert_outcome(
             source,
-            ExpectedOutcome::Unsupported(
-                CssFontSynthesisSmallCapsUnsupportedReason::FunctionValue,
-            ),
+            ExpectedOutcome::Unsupported(CssFontSynthesisSmallCapsUnsupportedReason::FunctionValue),
         );
     }
 }
@@ -185,9 +187,7 @@ fn function_placement_boundaries_remain_distinct() {
     ] {
         assert_outcome(
             source,
-            ExpectedOutcome::Unsupported(
-                CssFontSynthesisSmallCapsUnsupportedReason::FunctionValue,
-            ),
+            ExpectedOutcome::Unsupported(CssFontSynthesisSmallCapsUnsupportedReason::FunctionValue),
         );
     }
 }
