@@ -1,0 +1,198 @@
+from pathlib import Path
+
+production = Path("crates/frontend-analysis-core/src/css/value_qualification.rs")
+text = production.read_text()
+
+
+def replace_exact(old: str, new: str, count: int = 1) -> None:
+    global text
+    actual = text.count(old)
+    assert actual == count, f"anchor count mismatch: expected {count}, got {actual}: {old[:80]!r}"
+    text = text.replace(old, new)
+
+
+replace_exact(
+    "//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481).\n",
+    "//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483).\n",
+)
+
+enum_anchor = """#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFontVariantPositionValue {
+"""
+caps_types = """#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFontVariantCapsValue {
+    Normal,
+    SmallCaps,
+    AllSmallCaps,
+    PetiteCaps,
+    AllPetiteCaps,
+    Unicase,
+    TitlingCaps,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFontVariantCapsUnsupportedReason {
+    CssWideKeyword,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFontVariantCapsQualificationOutcome {
+    Qualified(CssFontVariantCapsValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssFontVariantCapsUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `font-variant-caps`
+/// qualification.
+///
+/// This profile qualifies only direct
+/// `normal | small-caps | all-small-caps | petite-caps | all-petite-caps |
+/// unicase | titling-caps` authored keyword evidence. OpenType feature
+/// selection, small/petite-caps synthesis, case conversion, font fallback,
+/// glyph shaping/rendering, and used-value processing remain outside this slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssFontVariantCapsQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssFontVariantCapsQualificationOutcome,
+}
+
+impl CssFontVariantCapsQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssFontVariantCapsQualificationOutcome {
+        self.outcome
+    }
+}
+
+"""
+replace_exact(enum_anchor, caps_types + enum_anchor)
+
+replace_exact(
+    "    font_variant_emoji_observations: Vec<CssFontVariantEmojiQualificationObservation>,\n    font_variant_position_observations: Vec<CssFontVariantPositionQualificationObservation>,\n",
+    "    font_variant_emoji_observations: Vec<CssFontVariantEmojiQualificationObservation>,\n    font_variant_caps_observations: Vec<CssFontVariantCapsQualificationObservation>,\n    font_variant_position_observations: Vec<CssFontVariantPositionQualificationObservation>,\n",
+)
+
+getter_anchor = """    pub(crate) fn font_variant_position_observations(
+"""
+caps_getter = """    pub(crate) fn font_variant_caps_observations(
+        &self,
+    ) -> &[CssFontVariantCapsQualificationObservation] {
+        &self.font_variant_caps_observations
+    }
+
+"""
+replace_exact(getter_anchor, caps_getter + getter_anchor)
+
+replace_exact(
+    "        font_variant_emoji_observations,\n        font_variant_position_observations,\n",
+    "        font_variant_emoji_observations,\n        font_variant_caps_observations,\n        font_variant_position_observations,\n",
+    count=3,
+)
+
+replace_exact(
+    "        let mut font_variant_emoji_observations = Vec::new();\n        let mut font_variant_position_observations = Vec::new();\n",
+    "        let mut font_variant_emoji_observations = Vec::new();\n        let mut font_variant_caps_observations = Vec::new();\n        let mut font_variant_position_observations = Vec::new();\n",
+)
+
+dispatch_anchor = """            if property_name.eq_ignore_ascii_case("font-variant-position") {
+"""
+caps_dispatch = """            if property_name.eq_ignore_ascii_case("font-variant-caps") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                font_variant_caps_observations.push(CssFontVariantCapsQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_font_variant_caps_value(value_items),
+                });
+                continue;
+            }
+
+"""
+replace_exact(dispatch_anchor, caps_dispatch + dispatch_anchor)
+
+classifier_anchor = """fn qualify_font_variant_position_value(
+"""
+caps_classifier = """fn qualify_font_variant_caps_value(
+    items: &[CssLexicalItem],
+) -> CssFontVariantCapsQualificationOutcome {
+    match classify_single_keyword_value(items) {
+        CssSingleKeywordValue::UnsupportedFunction => {
+            CssFontVariantCapsQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssFontVariantCapsUnsupportedReason::FunctionValue,
+            )
+        }
+        CssSingleKeywordValue::Invalid => {
+            CssFontVariantCapsQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("normal") =>
+        {
+            CssFontVariantCapsQualificationOutcome::Qualified(CssFontVariantCapsValue::Normal)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("small-caps") =>
+        {
+            CssFontVariantCapsQualificationOutcome::Qualified(CssFontVariantCapsValue::SmallCaps)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("all-small-caps") =>
+        {
+            CssFontVariantCapsQualificationOutcome::Qualified(CssFontVariantCapsValue::AllSmallCaps)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("petite-caps") =>
+        {
+            CssFontVariantCapsQualificationOutcome::Qualified(CssFontVariantCapsValue::PetiteCaps)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("all-petite-caps") =>
+        {
+            CssFontVariantCapsQualificationOutcome::Qualified(CssFontVariantCapsValue::AllPetiteCaps)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("unicase") =>
+        {
+            CssFontVariantCapsQualificationOutcome::Qualified(CssFontVariantCapsValue::Unicase)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("titling-caps") =>
+        {
+            CssFontVariantCapsQualificationOutcome::Qualified(CssFontVariantCapsValue::TitlingCaps)
+        }
+        CssSingleKeywordValue::Identifier(identifier) if is_css_wide_keyword(identifier) => {
+            CssFontVariantCapsQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssFontVariantCapsUnsupportedReason::CssWideKeyword,
+            )
+        }
+        CssSingleKeywordValue::Identifier(_) => {
+            CssFontVariantCapsQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+    }
+}
+
+"""
+replace_exact(classifier_anchor, caps_classifier + classifier_anchor)
+production.write_text(text)
+
+validation_mod = Path("crates/frontend-analysis-core/src/css/validation/mod.rs")
+mod_text = validation_mod.read_text()
+old = """mod font_variant_emoji_value_qualification_tests;
+#[cfg(test)]
+mod font_variant_position_value_qualification_tests;
+"""
+new = """mod font_variant_emoji_value_qualification_tests;
+#[cfg(test)]
+mod font_variant_caps_value_qualification_tests;
+#[cfg(test)]
+mod font_variant_position_value_qualification_tests;
+"""
+assert mod_text.count(old) == 1, "validation module anchor mismatch"
+validation_mod.write_text(mod_text.replace(old, new))
