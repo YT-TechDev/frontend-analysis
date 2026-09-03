@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -665,6 +665,55 @@ impl CssFontSynthesisPositionQualificationObservation {
     }
 
     pub(crate) const fn outcome(&self) -> CssFontSynthesisPositionQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFontVariantEmojiValue {
+    Normal,
+    Text,
+    Emoji,
+    Unicode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFontVariantEmojiUnsupportedReason {
+    CssWideKeyword,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFontVariantEmojiQualificationOutcome {
+    Qualified(CssFontVariantEmojiValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssFontVariantEmojiUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `font-variant-emoji`
+/// qualification.
+///
+/// This profile qualifies only direct `normal | text | emoji | unicode`
+/// authored keyword evidence. Unicode emoji classification, variation
+/// selector or ZWJ processing, font fallback, glyph shaping/rendering,
+/// and used-value processing remain outside this slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssFontVariantEmojiQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssFontVariantEmojiQualificationOutcome,
+}
+
+impl CssFontVariantEmojiQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssFontVariantEmojiQualificationOutcome {
         self.outcome
     }
 }
@@ -1480,6 +1529,7 @@ pub(crate) struct CssValueQualificationRunResult {
     font_synthesis_weight_observations: Vec<CssFontSynthesisWeightQualificationObservation>,
     font_synthesis_small_caps_observations: Vec<CssFontSynthesisSmallCapsQualificationObservation>,
     font_synthesis_position_observations: Vec<CssFontSynthesisPositionQualificationObservation>,
+    font_variant_emoji_observations: Vec<CssFontVariantEmojiQualificationObservation>,
     font_variant_position_observations: Vec<CssFontVariantPositionQualificationObservation>,
     z_index_observations: Vec<CssZIndexQualificationObservation>,
 }
@@ -1627,6 +1677,12 @@ impl CssValueQualificationRunResult {
         &self.font_synthesis_position_observations
     }
 
+    pub(crate) fn font_variant_emoji_observations(
+        &self,
+    ) -> &[CssFontVariantEmojiQualificationObservation] {
+        &self.font_variant_emoji_observations
+    }
+
     pub(crate) fn font_variant_position_observations(
         &self,
     ) -> &[CssFontVariantPositionQualificationObservation] {
@@ -1725,6 +1781,7 @@ pub(crate) fn run(
         font_synthesis_weight_observations,
         font_synthesis_small_caps_observations,
         font_synthesis_position_observations,
+        font_variant_emoji_observations,
         font_variant_position_observations,
         z_index_observations,
     ) = {
@@ -1758,6 +1815,7 @@ pub(crate) fn run(
         let mut font_synthesis_weight_observations = Vec::new();
         let mut font_synthesis_small_caps_observations = Vec::new();
         let mut font_synthesis_position_observations = Vec::new();
+        let mut font_variant_emoji_observations = Vec::new();
         let mut font_variant_position_observations = Vec::new();
         let mut z_index_observations = Vec::new();
 
@@ -2101,6 +2159,17 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("font-variant-emoji") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                font_variant_emoji_observations.push(CssFontVariantEmojiQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_font_variant_emoji_value(value_items),
+                });
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("font-variant-position") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -2143,6 +2212,7 @@ pub(crate) fn run(
             font_synthesis_weight_observations,
             font_synthesis_small_caps_observations,
             font_synthesis_position_observations,
+            font_variant_emoji_observations,
             font_variant_position_observations,
             z_index_observations,
         )
@@ -2178,6 +2248,7 @@ pub(crate) fn run(
         font_synthesis_weight_observations,
         font_synthesis_small_caps_observations,
         font_synthesis_position_observations,
+        font_variant_emoji_observations,
         font_variant_position_observations,
         z_index_observations,
     })
@@ -2732,6 +2803,49 @@ fn qualify_font_synthesis_position_value(
         }
         CssSingleKeywordValue::Identifier(_) => {
             CssFontSynthesisPositionQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+    }
+}
+
+fn qualify_font_variant_emoji_value(
+    items: &[CssLexicalItem],
+) -> CssFontVariantEmojiQualificationOutcome {
+    match classify_single_keyword_value(items) {
+        CssSingleKeywordValue::UnsupportedFunction => {
+            CssFontVariantEmojiQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssFontVariantEmojiUnsupportedReason::FunctionValue,
+            )
+        }
+        CssSingleKeywordValue::Invalid => {
+            CssFontVariantEmojiQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("normal") =>
+        {
+            CssFontVariantEmojiQualificationOutcome::Qualified(CssFontVariantEmojiValue::Normal)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("text") =>
+        {
+            CssFontVariantEmojiQualificationOutcome::Qualified(CssFontVariantEmojiValue::Text)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("emoji") =>
+        {
+            CssFontVariantEmojiQualificationOutcome::Qualified(CssFontVariantEmojiValue::Emoji)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("unicode") =>
+        {
+            CssFontVariantEmojiQualificationOutcome::Qualified(CssFontVariantEmojiValue::Unicode)
+        }
+        CssSingleKeywordValue::Identifier(identifier) if is_css_wide_keyword(identifier) => {
+            CssFontVariantEmojiQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssFontVariantEmojiUnsupportedReason::CssWideKeyword,
+            )
+        }
+        CssSingleKeywordValue::Identifier(_) => {
+            CssFontVariantEmojiQualificationOutcome::InvalidForSelectedValueGrammar
         }
     }
 }
