@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -477,6 +477,53 @@ impl CssBoxDecorationBreakQualificationObservation {
     }
 
     pub(crate) const fn outcome(&self) -> CssBoxDecorationBreakQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFontKerningValue {
+    Auto,
+    Normal,
+    None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFontKerningUnsupportedReason {
+    CssWideKeyword,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFontKerningQualificationOutcome {
+    Qualified(CssFontKerningValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssFontKerningUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `font-kerning` qualification.
+///
+/// This profile qualifies only direct `auto | normal | none` authored keyword
+/// evidence. Glyph shaping, OpenType `kern`/`vkrn` processing, font-table
+/// inspection, font selection/fallback, text layout, and used-value processing
+/// remain outside this slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssFontKerningQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssFontKerningQualificationOutcome,
+}
+
+impl CssFontKerningQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssFontKerningQualificationOutcome {
         self.outcome
     }
 }
@@ -979,8 +1026,7 @@ pub(crate) enum CssScrollMarginTopQualificationOutcome {
     UnsupportedBySelectedValueProfile(CssScrollMarginTopUnsupportedReason),
 }
 
-/// One selected ordinary declaration's bounded `scroll-margin-top`
-/// qualification.
+/// One selected ordinary declaration's bounded `scroll-margin-top` qualification.
 ///
 /// This profile qualifies direct unrestricted signed `<length>` evidence only.
 /// It deliberately rejects Percentage tokens and performs no machine numeric
@@ -1241,6 +1287,7 @@ pub(crate) struct CssValueQualificationRunResult {
     table_layout_observations: Vec<CssTableLayoutQualificationObservation>,
     border_collapse_observations: Vec<CssBorderCollapseQualificationObservation>,
     box_decoration_break_observations: Vec<CssBoxDecorationBreakQualificationObservation>,
+    font_kerning_observations: Vec<CssFontKerningQualificationObservation>,
     z_index_observations: Vec<CssZIndexQualificationObservation>,
 }
 
@@ -1365,6 +1412,10 @@ impl CssValueQualificationRunResult {
         &self.box_decoration_break_observations
     }
 
+    pub(crate) fn font_kerning_observations(&self) -> &[CssFontKerningQualificationObservation] {
+        &self.font_kerning_observations
+    }
+
     pub(crate) fn z_index_observations(&self) -> &[CssZIndexQualificationObservation] {
         &self.z_index_observations
     }
@@ -1453,6 +1504,7 @@ pub(crate) fn run(
         table_layout_observations,
         border_collapse_observations,
         box_decoration_break_observations,
+        font_kerning_observations,
         z_index_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
@@ -1481,6 +1533,7 @@ pub(crate) fn run(
         let mut table_layout_observations = Vec::new();
         let mut border_collapse_observations = Vec::new();
         let mut box_decoration_break_observations = Vec::new();
+        let mut font_kerning_observations = Vec::new();
         let mut z_index_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
@@ -1770,6 +1823,17 @@ pub(crate) fn run(
                         outcome: qualify_box_decoration_break_value(value_items),
                     },
                 );
+                continue;
+            }
+
+            if property_name.eq_ignore_ascii_case("font-kerning") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                font_kerning_observations.push(CssFontKerningQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_font_kerning_value(value_items),
+                });
             }
         }
 
@@ -1798,6 +1862,7 @@ pub(crate) fn run(
             table_layout_observations,
             border_collapse_observations,
             box_decoration_break_observations,
+            font_kerning_observations,
             z_index_observations,
         )
     };
@@ -1828,6 +1893,7 @@ pub(crate) fn run(
         table_layout_observations,
         border_collapse_observations,
         box_decoration_break_observations,
+        font_kerning_observations,
         z_index_observations,
     })
 }
@@ -2238,6 +2304,42 @@ fn qualify_box_decoration_break_value(
         }
         CssSingleKeywordValue::Identifier(_) => {
             CssBoxDecorationBreakQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+    }
+}
+
+fn qualify_font_kerning_value(items: &[CssLexicalItem]) -> CssFontKerningQualificationOutcome {
+    match classify_single_keyword_value(items) {
+        CssSingleKeywordValue::UnsupportedFunction => {
+            CssFontKerningQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssFontKerningUnsupportedReason::FunctionValue,
+            )
+        }
+        CssSingleKeywordValue::Invalid => {
+            CssFontKerningQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("auto") =>
+        {
+            CssFontKerningQualificationOutcome::Qualified(CssFontKerningValue::Auto)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("normal") =>
+        {
+            CssFontKerningQualificationOutcome::Qualified(CssFontKerningValue::Normal)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("none") =>
+        {
+            CssFontKerningQualificationOutcome::Qualified(CssFontKerningValue::None)
+        }
+        CssSingleKeywordValue::Identifier(identifier) if is_css_wide_keyword(identifier) => {
+            CssFontKerningQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssFontKerningUnsupportedReason::CssWideKeyword,
+            )
+        }
+        CssSingleKeywordValue::Identifier(_) => {
+            CssFontKerningQualificationOutcome::InvalidForSelectedValueGrammar
         }
     }
 }
