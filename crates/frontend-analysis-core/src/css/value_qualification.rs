@@ -956,7 +956,7 @@ impl CssWordSpacingQualificationObservation {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy,PartialEq, Eq)]
 pub(crate) enum CssTextUnderlineOffsetValue {
     Auto,
     DirectLengthLiteral,
@@ -1026,8 +1026,7 @@ pub(crate) enum CssScrollMarginTopQualificationOutcome {
     UnsupportedBySelectedValueProfile(CssScrollMarginTopUnsupportedReason),
 }
 
-/// One selected ordinary declaration's bounded `scroll-margin-top`
-/// qualification.
+/// One selected ordinary declaration's bounded `scroll-margin-top` qualification.
 ///
 /// This profile qualifies direct unrestricted signed `<length>` evidence only.
 /// It deliberately rejects Percentage tokens and performs no machine numeric
@@ -2319,7 +2318,9 @@ fn qualify_font_kerning_value(items: &[CssLexicalItem]) -> CssFontKerningQualifi
         CssSingleKeywordValue::Invalid => {
             CssFontKerningQualificationOutcome::InvalidForSelectedValueGrammar
         }
-        CssSingleKeywordValue::Identifier(identifier) if identifier.eq_ignore_ascii_case("auto") => {
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("auto") =>
+        {
             CssFontKerningQualificationOutcome::Qualified(CssFontKerningValue::Auto)
         }
         CssSingleKeywordValue::Identifier(identifier)
@@ -2327,7 +2328,9 @@ fn qualify_font_kerning_value(items: &[CssLexicalItem]) -> CssFontKerningQualifi
         {
             CssFontKerningQualificationOutcome::Qualified(CssFontKerningValue::Normal)
         }
-        CssSingleKeywordValue::Identifier(identifier) if identifier.eq_ignore_ascii_case("none") => {
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("none") =>
+        {
             CssFontKerningQualificationOutcome::Qualified(CssFontKerningValue::None)
         }
         CssSingleKeywordValue::Identifier(identifier) if is_css_wide_keyword(identifier) => {
