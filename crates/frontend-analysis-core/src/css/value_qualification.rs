@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -196,6 +196,52 @@ impl CssBackfaceVisibilityQualificationObservation {
     }
 
     pub(crate) const fn outcome(&self) -> CssBackfaceVisibilityQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssScrollSnapStopValue {
+    Normal,
+    Always,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssScrollSnapStopUnsupportedReason {
+    CssWideKeyword,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssScrollSnapStopQualificationOutcome {
+    Qualified(CssScrollSnapStopValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssScrollSnapStopUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `scroll-snap-stop`
+/// qualification.
+///
+/// This profile qualifies only direct `normal | always` authored keyword
+/// evidence. Relative-scroll classification, snap trapping, snap-position
+/// selection, scroll physics, and resnapping remain outside this slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssScrollSnapStopQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssScrollSnapStopQualificationOutcome,
+}
+
+impl CssScrollSnapStopQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssScrollSnapStopQualificationOutcome {
         self.outcome
     }
 }
@@ -954,6 +1000,7 @@ pub(crate) struct CssValueQualificationRunResult {
     border_top_width_observations: Vec<CssBorderTopWidthQualificationObservation>,
     perspective_observations: Vec<CssPerspectiveQualificationObservation>,
     scroll_snap_align_observations: Vec<CssScrollSnapAlignQualificationObservation>,
+    scroll_snap_stop_observations: Vec<CssScrollSnapStopQualificationObservation>,
     z_index_observations: Vec<CssZIndexQualificationObservation>,
 }
 
@@ -1046,6 +1093,12 @@ impl CssValueQualificationRunResult {
         &self.scroll_snap_align_observations
     }
 
+    pub(crate) fn scroll_snap_stop_observations(
+        &self,
+    ) -> &[CssScrollSnapStopQualificationObservation] {
+        &self.scroll_snap_stop_observations
+    }
+
     pub(crate) fn z_index_observations(&self) -> &[CssZIndexQualificationObservation] {
         &self.z_index_observations
     }
@@ -1128,6 +1181,7 @@ pub(crate) fn run(
         border_top_width_observations,
         perspective_observations,
         scroll_snap_align_observations,
+        scroll_snap_stop_observations,
         z_index_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
@@ -1150,6 +1204,7 @@ pub(crate) fn run(
         let mut border_top_width_observations = Vec::new();
         let mut perspective_observations = Vec::new();
         let mut scroll_snap_align_observations = Vec::new();
+        let mut scroll_snap_stop_observations = Vec::new();
         let mut z_index_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
@@ -1369,6 +1424,17 @@ pub(crate) fn run(
                     placement: occurrence.placement(),
                     outcome: qualify_scroll_snap_align_value(value_items),
                 });
+                continue;
+            }
+
+            if property_name.eq_ignore_ascii_case("scroll-snap-stop") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                scroll_snap_stop_observations.push(CssScrollSnapStopQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_scroll_snap_stop_value(value_items),
+                });
             }
         }
 
@@ -1391,6 +1457,7 @@ pub(crate) fn run(
             border_top_width_observations,
             perspective_observations,
             scroll_snap_align_observations,
+            scroll_snap_stop_observations,
             z_index_observations,
         )
     };
@@ -1415,6 +1482,7 @@ pub(crate) fn run(
         border_top_width_observations,
         perspective_observations,
         scroll_snap_align_observations,
+        scroll_snap_stop_observations,
         z_index_observations,
     })
 }
@@ -1608,6 +1676,39 @@ fn qualify_backface_visibility_value(
         }
         CssSingleKeywordValue::Identifier(_) => {
             CssBackfaceVisibilityQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+    }
+}
+
+fn qualify_scroll_snap_stop_value(
+    items: &[CssLexicalItem],
+) -> CssScrollSnapStopQualificationOutcome {
+    match classify_single_keyword_value(items) {
+        CssSingleKeywordValue::UnsupportedFunction => {
+            CssScrollSnapStopQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssScrollSnapStopUnsupportedReason::FunctionValue,
+            )
+        }
+        CssSingleKeywordValue::Invalid => {
+            CssScrollSnapStopQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("normal") =>
+        {
+            CssScrollSnapStopQualificationOutcome::Qualified(CssScrollSnapStopValue::Normal)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("always") =>
+        {
+            CssScrollSnapStopQualificationOutcome::Qualified(CssScrollSnapStopValue::Always)
+        }
+        CssSingleKeywordValue::Identifier(identifier) if is_css_wide_keyword(identifier) => {
+            CssScrollSnapStopQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssScrollSnapStopUnsupportedReason::CssWideKeyword,
+            )
+        }
+        CssSingleKeywordValue::Identifier(_) => {
+            CssScrollSnapStopQualificationOutcome::InvalidForSelectedValueGrammar
         }
     }
 }
