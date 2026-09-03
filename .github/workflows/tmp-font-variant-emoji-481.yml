@@ -10,16 +10,21 @@ permissions:
 
 jobs:
   patch:
-    if: "${{ github.event.head_commit.message == 'chore: fix temporary patch runner for #481' }}"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: feat/css-font-variant-emoji-481
-
       - name: Apply exact production sibling insertion
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" repo
+          cd repo
+          git checkout feat/css-font-variant-emoji-481
+          if [ "$(git log -1 --pretty=%s)" != "chore: run temporary patch for #481" ]; then
+            exit 0
+          fi
+
           python3 - <<'PY'
           from pathlib import Path
 
@@ -204,10 +209,6 @@ jobs:
           PY
 
           git diff --check -- crates/frontend-analysis-core/src/css/value_qualification.rs
-
-      - name: Commit production change
-        shell: bash
-        run: |
           git config user.name "YT-TechDev"
           git config user.email "msc_prop@proton.me"
           git add crates/frontend-analysis-core/src/css/value_qualification.rs
