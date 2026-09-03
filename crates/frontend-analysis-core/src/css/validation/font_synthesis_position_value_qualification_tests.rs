@@ -1,11 +1,12 @@
+use crate::css::analysis::analyze_css_source;
+use crate::css::parser::resource::CssParserLimits;
 use crate::css::parser::result::CssParserExecutionCompletion;
-use crate::css::tokenizer::result::CssTokenizerExecutionCompletion;
-use crate::css::validation::{analyze_css_source, CssAnalysisLimits};
+use crate::css::tokenizer::resource::CssTokenizerLimits;
 use crate::css::value_qualification::{
     CssFontSynthesisPositionQualificationOutcome, CssFontSynthesisPositionUnsupportedReason,
-    CssFontSynthesisPositionValue,
+    CssFontSynthesisPositionValue, CssValueQualificationRunResult, run,
 };
-use crate::SourceId;
+use crate::{SourceId, SourceText};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExpectedOutcome {
@@ -16,290 +17,369 @@ enum ExpectedOutcome {
     UnsupportedFunction,
 }
 
-fn analyze(source_id: u64, source: &str) -> crate::css::value_qualification::CssValueQualificationRunResult {
-    analyze_css_source(
-        SourceId::new(source_id),
-        source,
-        CssAnalysisLimits::default(),
-    )
-    .expect("CSS analysis should succeed")
-    .value_qualification_result
+fn tokenizer_limits() -> CssTokenizerLimits {
+    CssTokenizerLimits::new(4096, 100_000, 8192, 1024, 8192, 8192).unwrap()
 }
 
-fn actual_outcomes(
-    result: &crate::css::value_qualification::CssValueQualificationRunResult,
-) -> Vec<(usize, ExpectedOutcome)> {
-    result
+fn parser_limits() -> CssParserLimits {
+    parser_limits_with_occurrences(8192)
+}
+
+fn parser_limits_with_occurrences(max_declaration_occurrences: usize) -> CssParserLimits {
+    CssParserLimits::new(
+        100_000,
+        256,
+        256,
+        max_declaration_occurrences,
+        1024,
+        1024,
+        1024,
+        1024,
+        8192,
+    )
+    .unwrap()
+}
+
+fn qualify(source_id: u64, css: &str) -> CssValueQualificationRunResult {
+    qualify_with_limits(source_id, css, parser_limits())
+}
+
+fn qualify_with_limits(
+    source_id: u64,
+    css: &str,
+    parser_limits: CssParserLimits,
+) -> CssValueQualificationRunResult {
+    let source = SourceText::new(SourceId::new(source_id), css.to_owned());
+    let parser_result = analyze_css_source(&source, tokenizer_limits(), parser_limits).unwrap();
+    run(parser_result).unwrap()
+}
+
+fn expected_outcome(expected: ExpectedOutcome) -> CssFontSynthesisPositionQualificationOutcome {
+    match expected {
+        ExpectedOutcome::Auto => CssFontSynthesisPositionQualificationOutcome::Qualified(
+            CssFontSynthesisPositionValue::Auto,
+        ),
+        ExpectedOutcome::None => CssFontSynthesisPositionQualificationOutcome::Qualified(
+            CssFontSynthesisPositionValue::None,
+        ),
+        ExpectedOutcome::Invalid => {
+            CssFontSynthesisPositionQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+        ExpectedOutcome::UnsupportedCssWide => {
+            CssFontSynthesisPositionQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssFontSynthesisPositionUnsupportedReason::CssWideKeyword,
+            )
+        }
+        ExpectedOutcome::UnsupportedFunction => {
+            CssFontSynthesisPositionQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssFontSynthesisPositionUnsupportedReason::FunctionValue,
+            )
+        }
+    }
+}
+
+fn assert_expected(result: &CssValueQualificationRunResult, expected: &[ExpectedOutcome]) {
+    let actual: Vec<_> = result
         .font_synthesis_position_observations()
         .iter()
-        .map(|observation| {
-            let outcome = match observation.outcome() {
-                CssFontSynthesisPositionQualificationOutcome::Qualified(
-                    CssFontSynthesisPositionValue::Auto,
-                ) => ExpectedOutcome::Auto,
-                CssFontSynthesisPositionQualificationOutcome::Qualified(
-                    CssFontSynthesisPositionValue::None,
-                ) => ExpectedOutcome::None,
-                CssFontSynthesisPositionQualificationOutcome::InvalidForSelectedValueGrammar => {
-                    ExpectedOutcome::Invalid
-                }
-                CssFontSynthesisPositionQualificationOutcome::UnsupportedBySelectedValueProfile(
-                    CssFontSynthesisPositionUnsupportedReason::CssWideKeyword,
-                ) => ExpectedOutcome::UnsupportedCssWide,
-                CssFontSynthesisPositionQualificationOutcome::UnsupportedBySelectedValueProfile(
-                    CssFontSynthesisPositionUnsupportedReason::FunctionValue,
-                ) => ExpectedOutcome::UnsupportedFunction,
-            };
-            (observation.occurrence_index(), outcome)
-        })
-        .collect()
+        .map(|observation| observation.outcome())
+        .collect();
+    let expected: Vec<_> = expected.iter().copied().map(expected_outcome).collect();
+    assert_eq!(actual, expected);
 }
 
 #[test]
-fn font_synthesis_position_direct_grammar_is_bounded_and_source_honest() {
-    let source = r#"
-        a {
-            font-synthesis-position: auto;
-            font-synthesis-position: none;
-            FONT-SYNTHESIS-POSITION: AuTo;
-            font-synthesis-position: n\6f ne;
-            font-synthesis-position: normal;
-            font-synthesis-position: auto none;
-            font-synthesis-position: auto, none;
-            font-synthesis-position: ;
-            font-synthesis-position: 1;
-            font-synthesis-position: 1px;
-            font-synthesis-position: "auto";
-            color: red;
-        }
-    "#;
+fn handwritten_direct_keyword_boundary_matches_auto_none_grammar() {
+    let result = qualify(
+        2260,
+        concat!(
+            "a{font-synthesis-position:auto;}",
+            "b{font-synthesis-position:none;}",
+            "c{font-synthesis-position:AUTO;}",
+            "d{FONT-SYNTHESIS-POSITION:NoNe;}",
+            r"e{font-synthesis-position:\61 uto;}",
+            r"f{font-synthesis-position:n\6f ne;}",
+            "g{font-synthesis-position:normal;}",
+            "h{font-synthesis-position:auto none;}",
+            "i{font-synthesis-position:none auto;}",
+            "j{font-synthesis-position:auto,none;}",
+            "k{font-synthesis-position:;}",
+            "l{font-synthesis-position:1;}",
+            "m{font-synthesis-position:1px;}",
+            "n{font-synthesis-position:\"auto\";}",
+            "o{color:auto;}",
+        ),
+    );
 
-    let result = analyze(1, source);
+    assert_expected(
+        &result,
+        &[
+            ExpectedOutcome::Auto,
+            ExpectedOutcome::None,
+            ExpectedOutcome::Auto,
+            ExpectedOutcome::None,
+            ExpectedOutcome::Auto,
+            ExpectedOutcome::None,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+        ],
+    );
     assert_eq!(
-        actual_outcomes(&result),
-        vec![
-            (0, ExpectedOutcome::Auto),
-            (1, ExpectedOutcome::None),
-            (2, ExpectedOutcome::Auto),
-            (3, ExpectedOutcome::None),
-            (4, ExpectedOutcome::Invalid),
-            (5, ExpectedOutcome::Invalid),
-            (6, ExpectedOutcome::Invalid),
-            (7, ExpectedOutcome::Invalid),
-            (8, ExpectedOutcome::Invalid),
-            (9, ExpectedOutcome::Invalid),
-            (10, ExpectedOutcome::Invalid),
-        ]
+        result.execution_completion(),
+        CssParserExecutionCompletion::Complete
     );
 }
 
 #[test]
-fn font_synthesis_position_comments_and_priority_do_not_change_value_grammar() {
-    let source = r#"
-        a {
-            font-synthesis-position: /*a*/ auto /*b*/ !important;
-            font-synthesis-position: none!important;
-        }
-    "#;
-    let result = analyze(2, source);
-    assert_eq!(
-        actual_outcomes(&result),
-        vec![(0, ExpectedOutcome::Auto), (1, ExpectedOutcome::None)]
+fn comments_and_priority_preserve_decoded_keyword_meaning() {
+    let result = qualify(
+        2261,
+        concat!(
+            "a{font-synthesis-position:/**/auto/**/!important;}",
+            "b{font-synthesis-position:/**/none/**/!important;}",
+        ),
+    );
+
+    assert_expected(&result, &[ExpectedOutcome::Auto, ExpectedOutcome::None]);
+    for occurrence in result.upstream_parser_result().occurrences() {
+        assert!(occurrence.priority().is_some());
+    }
+}
+
+#[test]
+fn css_wide_keywords_remain_profile_unsupported() {
+    let result = qualify(
+        2262,
+        concat!(
+            "a{font-synthesis-position:initial;}",
+            "b{font-synthesis-position:inherit;}",
+            "c{font-synthesis-position:unset;}",
+            "d{font-synthesis-position:revert;}",
+            "e{font-synthesis-position:revert-layer;}",
+            "f{font-synthesis-position:revert-rule;}",
+        ),
+    );
+
+    assert_expected(&result, &[ExpectedOutcome::UnsupportedCssWide; 6]);
+}
+
+#[test]
+fn deferred_and_whole_value_functions_fail_open_but_ordinary_functions_are_invalid() {
+    let result = qualify(
+        2263,
+        concat!(
+            "a{font-synthesis-position:var(--position);}",
+            "b{font-synthesis-position:env(position);}",
+            "c{font-synthesis-position:attr(data-position);}",
+            "d{font-synthesis-position:--position();}",
+            "e{font-synthesis-position:first-valid(auto,none);}",
+            "f{font-synthesis-position:cycle(auto,none);}",
+            "g{font-synthesis-position:interpolate(0%,0:auto,1:none);}",
+            "h{font-synthesis-position:foo();}",
+            "i{font-synthesis-position:calc(1);}",
+        ),
+    );
+
+    assert_expected(
+        &result,
+        &[
+            ExpectedOutcome::UnsupportedFunction,
+            ExpectedOutcome::UnsupportedFunction,
+            ExpectedOutcome::UnsupportedFunction,
+            ExpectedOutcome::UnsupportedFunction,
+            ExpectedOutcome::UnsupportedFunction,
+            ExpectedOutcome::UnsupportedFunction,
+            ExpectedOutcome::UnsupportedFunction,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+        ],
     );
 }
 
 #[test]
-fn font_synthesis_position_css_wide_keywords_are_profile_unsupported() {
-    let source = r#"
-        a {
-            font-synthesis-position: initial;
-            font-synthesis-position: inherit;
-            font-synthesis-position: unset;
-            font-synthesis-position: revert;
-            font-synthesis-position: revert-layer;
-            font-synthesis-position: revert-rule;
-        }
-    "#;
-    let result = analyze(3, source);
-    assert_eq!(
-        actual_outcomes(&result),
-        vec![
-            (0, ExpectedOutcome::UnsupportedCssWide),
-            (1, ExpectedOutcome::UnsupportedCssWide),
-            (2, ExpectedOutcome::UnsupportedCssWide),
-            (3, ExpectedOutcome::UnsupportedCssWide),
-            (4, ExpectedOutcome::UnsupportedCssWide),
-            (5, ExpectedOutcome::UnsupportedCssWide),
-        ]
+fn function_placement_preserves_keyword_leaf_fail_open_boundary() {
+    let result = qualify(
+        2264,
+        concat!(
+            "a{font-synthesis-position:auto first-valid(none);}",
+            "b{font-synthesis-position:first-valid(none) auto;}",
+            "c{font-synthesis-position:none foo();}",
+            "d{font-synthesis-position:foo() auto;}",
+            "e{font-synthesis-position:auto var(--position);}",
+            "f{font-synthesis-position:foo(var(--position));}",
+        ),
+    );
+
+    assert_expected(
+        &result,
+        &[
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::UnsupportedFunction,
+            ExpectedOutcome::UnsupportedFunction,
+        ],
     );
 }
 
 #[test]
-fn font_synthesis_position_deferred_and_whole_value_functions_fail_open() {
-    let source = r#"
-        a {
-            font-synthesis-position: var(--x);
-            font-synthesis-position: env(foo);
-            font-synthesis-position: attr(data-x);
-            font-synthesis-position: --custom();
-            font-synthesis-position: first-valid(auto, none);
-            font-synthesis-position: cycle(auto, none);
-            font-synthesis-position: interpolate(auto, none);
-            font-synthesis-position: foo();
-            font-synthesis-position: calc(1);
-        }
-    "#;
-    let result = analyze(4, source);
+fn one_run_interleaves_font_synthesis_position_with_every_accepted_leaf() {
+    let result = qualify(
+        2265,
+        concat!(
+            "a{direction:ltr;}",
+            "b{box-sizing:border-box;}",
+            "c{isolation:isolate;}",
+            "d{backface-visibility:hidden;}",
+            "e{order:1;}",
+            "f{column-count:2;}",
+            "g{flex-grow:1;}",
+            "h{flex-shrink:1;}",
+            "i{opacity:.5;}",
+            "j{shape-image-threshold:.5;}",
+            "k{shape-margin:1px;}",
+            "l{line-height:1;}",
+            "m{word-spacing:-1px;}",
+            "n{text-underline-offset:-10%;}",
+            "o{scroll-margin-top:-1px;}",
+            "p{border-top-width:thin;}",
+            "q{perspective:1px;}",
+            "r{z-index:1;}",
+            "s{scroll-snap-align:center;}",
+            "t{scroll-snap-stop:always;}",
+            "u{empty-cells:hide;}",
+            "v{text-decoration-style:wavy;}",
+            "w{table-layout:fixed;}",
+            "x{border-collapse:collapse;}",
+            "y{box-decoration-break:clone;}",
+            "z{font-kerning:normal;}",
+            "aa{font-variant-position:super;}",
+            "ab{font-synthesis-weight:none;}",
+            "ac{font-synthesis-small-caps:none;}",
+            "ad{font-synthesis-position:none;}",
+        ),
+    );
+
+    assert_eq!(result.direction_observations().len(), 1);
+    assert_eq!(result.box_sizing_observations().len(), 1);
+    assert_eq!(result.isolation_observations().len(), 1);
+    assert_eq!(result.backface_visibility_observations().len(), 1);
+    assert_eq!(result.order_observations().len(), 1);
+    assert_eq!(result.column_count_observations().len(), 1);
+    assert_eq!(result.flex_grow_observations().len(), 1);
+    assert_eq!(result.flex_shrink_observations().len(), 1);
+    assert_eq!(result.opacity_observations().len(), 1);
+    assert_eq!(result.shape_image_threshold_observations().len(), 1);
+    assert_eq!(result.shape_margin_observations().len(), 1);
+    assert_eq!(result.line_height_observations().len(), 1);
+    assert_eq!(result.word_spacing_observations().len(), 1);
+    assert_eq!(result.text_underline_offset_observations().len(), 1);
+    assert_eq!(result.scroll_margin_top_observations().len(), 1);
+    assert_eq!(result.border_top_width_observations().len(), 1);
+    assert_eq!(result.perspective_observations().len(), 1);
+    assert_eq!(result.z_index_observations().len(), 1);
+    assert_eq!(result.scroll_snap_align_observations().len(), 1);
+    assert_eq!(result.scroll_snap_stop_observations().len(), 1);
+    assert_eq!(result.empty_cells_observations().len(), 1);
+    assert_eq!(result.text_decoration_style_observations().len(), 1);
+    assert_eq!(result.table_layout_observations().len(), 1);
+    assert_eq!(result.border_collapse_observations().len(), 1);
+    assert_eq!(result.box_decoration_break_observations().len(), 1);
+    assert_eq!(result.font_kerning_observations().len(), 1);
+    assert_eq!(result.font_variant_position_observations().len(), 1);
+    assert_eq!(result.font_synthesis_weight_observations().len(), 1);
+    assert_eq!(result.font_synthesis_small_caps_observations().len(), 1);
+    assert_eq!(result.font_synthesis_position_observations().len(), 1);
     assert_eq!(
-        actual_outcomes(&result),
-        vec![
-            (0, ExpectedOutcome::UnsupportedFunction),
-            (1, ExpectedOutcome::UnsupportedFunction),
-            (2, ExpectedOutcome::UnsupportedFunction),
-            (3, ExpectedOutcome::UnsupportedFunction),
-            (4, ExpectedOutcome::UnsupportedFunction),
-            (5, ExpectedOutcome::UnsupportedFunction),
-            (6, ExpectedOutcome::UnsupportedFunction),
-            (7, ExpectedOutcome::Invalid),
-            (8, ExpectedOutcome::Invalid),
-        ]
+        result.font_synthesis_position_observations()[0].occurrence_index(),
+        29
+    );
+    assert_expected(&result, &[ExpectedOutcome::None]);
+}
+
+#[test]
+fn duplicate_declarations_keep_distinct_run_local_placement() {
+    let result = qualify(
+        2266,
+        "a{font-synthesis-position:auto;}b{font-synthesis-position:auto;}",
+    );
+
+    assert_expected(&result, &[ExpectedOutcome::Auto, ExpectedOutcome::Auto]);
+    assert_eq!(
+        result.font_synthesis_position_observations()[0].occurrence_index(),
+        0
+    );
+    assert_eq!(
+        result.font_synthesis_position_observations()[1].occurrence_index(),
+        1
+    );
+    assert_ne!(
+        result.font_synthesis_position_observations()[0]
+            .placement()
+            .context_id(),
+        result.font_synthesis_position_observations()[1]
+            .placement()
+            .context_id(),
     );
 }
 
 #[test]
-fn font_synthesis_position_function_placement_boundaries_remain_distinct() {
-    let source = r#"
-        a {
-            font-synthesis-position: auto first-valid(none, auto);
-            font-synthesis-position: first-valid(auto, none) auto;
-            font-synthesis-position: auto foo();
-            font-synthesis-position: foo() auto;
-            font-synthesis-position: auto var(--x);
-            font-synthesis-position: foo(var(--x));
-        }
-    "#;
-    let result = analyze(5, source);
-    assert_eq!(
-        actual_outcomes(&result),
-        vec![
-            (0, ExpectedOutcome::Invalid),
-            (1, ExpectedOutcome::Invalid),
-            (2, ExpectedOutcome::Invalid),
-            (3, ExpectedOutcome::Invalid),
-            (4, ExpectedOutcome::UnsupportedFunction),
-            (5, ExpectedOutcome::UnsupportedFunction),
-        ]
+fn nonordinary_declaration_shaped_contexts_are_excluded() {
+    for (source_id, css) in [
+        (2270, "@font-face{font-synthesis-position:auto;}"),
+        (2271, "@page{font-synthesis-position:auto;}"),
+        (2272, "@page{@top-left{font-synthesis-position:auto;}}"),
+        (2273, "@keyframes k{from{font-synthesis-position:auto;}}"),
+    ] {
+        let result = qualify(source_id, css);
+        assert!(
+            result.font_synthesis_position_observations().is_empty(),
+            "nonordinary declaration context produced a font-synthesis-position observation for {css:?}"
+        );
+    }
+}
+
+#[test]
+fn parser_resource_stop_preserves_committed_prefix_and_completion() {
+    let result = qualify_with_limits(
+        2280,
+        "a{font-synthesis-position:auto;font-synthesis-position:none;}",
+        parser_limits_with_occurrences(1),
     );
-}
-
-#[test]
-fn font_synthesis_position_interleaves_with_all_accepted_leaves() {
-    let source = r#"
-        a {
-            direction: ltr;
-            box-sizing: border-box;
-            isolation: isolate;
-            backface-visibility: hidden;
-            order: 1;
-            column-count: 2;
-            flex-grow: 1;
-            flex-shrink: 1;
-            opacity: 1;
-            shape-image-threshold: 1;
-            shape-margin: 1px;
-            line-height: normal;
-            word-spacing: normal;
-            text-underline-offset: auto;
-            scroll-margin-top: 1px;
-            border-top-width: thin;
-            perspective: none;
-            z-index: auto;
-            scroll-snap-align: center;
-            scroll-snap-stop: always;
-            empty-cells: hide;
-            text-decoration-style: solid;
-            table-layout: fixed;
-            border-collapse: collapse;
-            box-decoration-break: clone;
-            font-kerning: normal;
-            font-variant-position: super;
-            font-synthesis-weight: none;
-            font-synthesis-small-caps: auto;
-            font-synthesis-position: none;
-        }
-    "#;
-    let result = analyze(6, source);
-    assert_eq!(actual_outcomes(&result), vec![(29, ExpectedOutcome::None)]);
-}
-
-#[test]
-fn font_synthesis_position_duplicate_declarations_keep_run_local_identity() {
-    let source = r#"
-        a {
-            font-synthesis-position: auto;
-            font-synthesis-position: none;
-            font-synthesis-position: auto;
-        }
-    "#;
-    let result = analyze(7, source);
-    let observations = result.font_synthesis_position_observations();
-    assert_eq!(observations.len(), 3);
-    assert_eq!(observations[0].occurrence_index(), 0);
-    assert_eq!(observations[1].occurrence_index(), 1);
-    assert_eq!(observations[2].occurrence_index(), 2);
-    assert_ne!(observations[0].placement(), observations[1].placement());
-}
-
-#[test]
-fn font_synthesis_position_ignores_nonordinary_declaration_contexts() {
-    let source = r#"
-        @font-face { font-synthesis-position: auto; }
-        @page { font-synthesis-position: none; }
-        @page { @top-left { font-synthesis-position: auto; } }
-        @keyframes x { from { font-synthesis-position: none; } }
-        a { font-synthesis-position: auto; }
-    "#;
-    let result = analyze(8, source);
-    assert_eq!(actual_outcomes(&result), vec![(0, ExpectedOutcome::Auto)]);
-}
-
-#[test]
-fn font_synthesis_position_preserves_upstream_incomplete_committed_prefix() {
-    let source = r#"
-        a {
-            font-synthesis-position: auto;
-            font-synthesis-position: none;
-        }
-    "#;
-    let mut limits = CssAnalysisLimits::default();
-    limits.tokenizer.max_semantic_tokens = Some(8);
-    let result = analyze_css_source(SourceId::new(9), source, limits)
-        .expect("resource-limited CSS analysis should preserve committed prefix")
-        .value_qualification_result;
 
     assert_eq!(
         result.execution_completion(),
         CssParserExecutionCompletion::Incomplete
     );
-    assert_eq!(
-        result.upstream_parser_result()
-            .upstream_tokenizer_result()
-            .execution_completion(),
-        CssTokenizerExecutionCompletion::Incomplete
-    );
-    assert_eq!(actual_outcomes(&result), vec![(0, ExpectedOutcome::Auto)]);
+    assert_expected(&result, &[ExpectedOutcome::Auto]);
+    assert_eq!(result.upstream_parser_result().occurrences().len(), 1);
 }
 
 #[test]
-fn font_synthesis_position_is_deterministic_across_repeated_and_cross_source_runs() {
-    let source = "a { font-synthesis-position: auto; font-synthesis-position: none; }";
-    let first = analyze(10, source);
-    let second = analyze(10, source);
-    let other_source = analyze(11, source);
+fn repeated_and_cross_source_runs_are_semantically_deterministic() {
+    let css = concat!(
+        "a{font-synthesis-position:auto;}",
+        "b{font-synthesis-position:inherit;}",
+        "c{font-synthesis-position:normal;}",
+        "d{font-synthesis-position:var(--position);}",
+    );
+    let first = qualify(2290, css);
+    let repeated = qualify(2290, css);
+    let another_source = qualify(2291, css);
 
     assert_eq!(
         first.font_synthesis_position_observations(),
-        second.font_synthesis_position_observations()
+        repeated.font_synthesis_position_observations()
     );
-    assert_eq!(actual_outcomes(&first), actual_outcomes(&other_source));
+    assert_eq!(
+        first.font_synthesis_position_observations(),
+        another_source.font_synthesis_position_observations()
+    );
 }
