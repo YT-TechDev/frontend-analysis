@@ -1,0 +1,73 @@
+name: Temporary font-variant-caps patch runner 4
+
+on:
+  push:
+    branches:
+      - feat/css-font-variant-caps-483
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Apply corrected exact sibling insertion
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" repo
+          cd repo
+          git checkout feat/css-font-variant-caps-483
+          if [ "$(git log -1 --pretty=%s)" != "chore: fix temporary caps patch anchors" ]; then
+            exit 0
+          fi
+
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('.github/tmp/apply_font_variant_caps_483.py')
+          script = path.read_text()
+          old = '''replace_exact(
+              "        font_variant_emoji_observations,\\n        font_variant_position_observations,\\n",
+              "        font_variant_emoji_observations,\\n        font_variant_caps_observations,\\n        font_variant_position_observations,\\n",
+              count=3,
+          )
+
+          replace_exact(
+              "        let mut font_variant_emoji_observations = Vec::new();\\n        let mut font_variant_position_observations = Vec::new();\\n",
+          '''
+          new = '''replace_exact(
+              "        font_variant_emoji_observations,\\n        font_variant_position_observations,\\n",
+              "        font_variant_emoji_observations,\\n        font_variant_caps_observations,\\n        font_variant_position_observations,\\n",
+              count=2,
+          )
+
+          replace_exact(
+              "            font_variant_emoji_observations,\\n            font_variant_position_observations,\\n",
+              "            font_variant_emoji_observations,\\n            font_variant_caps_observations,\\n            font_variant_position_observations,\\n",
+          )
+
+          replace_exact(
+              "        let mut font_variant_emoji_observations = Vec::new();\\n        let mut font_variant_position_observations = Vec::new();\\n",
+          '''
+          if script.count(old) != 1:
+              raise SystemExit('temporary script anchor mismatch')
+          path.write_text(script.replace(old, new))
+          PY
+
+          python3 .github/tmp/apply_font_variant_caps_483.py
+          cargo fmt --all
+          git diff --check -- \
+            crates/frontend-analysis-core/src/css/value_qualification.rs \
+            crates/frontend-analysis-core/src/css/validation/font_variant_caps_value_qualification_tests.rs \
+            crates/frontend-analysis-core/src/css/validation/mod.rs
+          git config user.name "YT-TechDev"
+          git config user.email "msc_prop@proton.me"
+          git add \
+            crates/frontend-analysis-core/src/css/value_qualification.rs \
+            crates/frontend-analysis-core/src/css/validation/font_variant_caps_value_qualification_tests.rs \
+            crates/frontend-analysis-core/src/css/validation/mod.rs
+          git commit -m "feat(css): add bounded font-variant-caps qualification"
+          git push origin HEAD:feat/css-font-variant-caps-483
