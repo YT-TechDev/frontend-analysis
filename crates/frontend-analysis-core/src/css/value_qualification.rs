@@ -434,7 +434,7 @@ impl CssBorderCollapseQualificationObservation {
     }
 }
 
-#[derive(Debug, Clone, Copy,PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssBoxDecorationBreakValue {
     Slice,
     Clone,
