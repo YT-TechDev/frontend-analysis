@@ -1,0 +1,39 @@
+name: Temporary font-variant-caps patch runner 2
+
+on:
+  push:
+    branches:
+      - feat/css-font-variant-caps-483
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: feat/css-font-variant-caps-483
+          fetch-depth: 0
+
+      - name: Apply exact sibling insertion
+        run: python3 .github/tmp/apply_font_variant_caps_483.py
+
+      - name: Format intended Rust paths
+        run: cargo fmt --all
+
+      - name: Commit intended candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "YT-TechDev"
+          git config user.email "msc_prop@proton.me"
+          git add \
+            crates/frontend-analysis-core/src/css/value_qualification.rs \
+            crates/frontend-analysis-core/src/css/validation/font_variant_caps_value_qualification_tests.rs \
+            crates/frontend-analysis-core/src/css/validation/mod.rs
+          git diff --cached --quiet && { echo 'no candidate changes'; exit 1; }
+          git commit -m "feat(css): add bounded font-variant-caps qualification"
+          git push origin HEAD:feat/css-font-variant-caps-483
