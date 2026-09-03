@@ -1,0 +1,37 @@
+name: Temporary rustfmt runner 481
+
+on:
+  push:
+    branches:
+      - feat/css-font-variant-emoji-481
+
+permissions:
+  contents: write
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Format intended Rust paths
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" repo
+          cd repo
+          git checkout feat/css-font-variant-emoji-481
+          if [ "$(git log -1 --pretty=%s)" != "chore: temporary rustfmt runner for #481" ]; then
+            exit 0
+          fi
+          rustup show active-toolchain
+          cargo fmt --all
+          git diff --check
+          git config user.name "YT-TechDev"
+          git config user.email "msc_prop@proton.me"
+          git add crates/frontend-analysis-core/src/css/value_qualification.rs crates/frontend-analysis-core/src/css/validation/font_variant_emoji_value_qualification_tests.rs crates/frontend-analysis-core/src/css/validation/mod.rs
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "style(css): format font-variant-emoji candidate"
+          git push origin HEAD:feat/css-font-variant-emoji-481
