@@ -58,18 +58,18 @@ fn qualify_with_limits(
 
 fn expected_outcome(expected: ExpectedOutcome) -> CssFontVariantEmojiQualificationOutcome {
     match expected {
-        ExpectedOutcome::Normal => CssFontVariantEmojiQualificationOutcome::Qualified(
-            CssFontVariantEmojiValue::Normal,
-        ),
+        ExpectedOutcome::Normal => {
+            CssFontVariantEmojiQualificationOutcome::Qualified(CssFontVariantEmojiValue::Normal)
+        }
         ExpectedOutcome::Text => {
             CssFontVariantEmojiQualificationOutcome::Qualified(CssFontVariantEmojiValue::Text)
         }
         ExpectedOutcome::Emoji => {
             CssFontVariantEmojiQualificationOutcome::Qualified(CssFontVariantEmojiValue::Emoji)
         }
-        ExpectedOutcome::Unicode => CssFontVariantEmojiQualificationOutcome::Qualified(
-            CssFontVariantEmojiValue::Unicode,
-        ),
+        ExpectedOutcome::Unicode => {
+            CssFontVariantEmojiQualificationOutcome::Qualified(CssFontVariantEmojiValue::Unicode)
+        }
         ExpectedOutcome::Invalid => {
             CssFontVariantEmojiQualificationOutcome::InvalidForSelectedValueGrammar
         }
@@ -336,8 +336,14 @@ fn duplicate_declarations_keep_distinct_run_local_placement() {
     );
 
     assert_expected(&result, &[ExpectedOutcome::Text, ExpectedOutcome::Text]);
-    assert_eq!(result.font_variant_emoji_observations()[0].occurrence_index(), 0);
-    assert_eq!(result.font_variant_emoji_observations()[1].occurrence_index(), 1);
+    assert_eq!(
+        result.font_variant_emoji_observations()[0].occurrence_index(),
+        0
+    );
+    assert_eq!(
+        result.font_variant_emoji_observations()[1].occurrence_index(),
+        1
+    );
     assert_ne!(
         result.font_variant_emoji_observations()[0]
             .placement()

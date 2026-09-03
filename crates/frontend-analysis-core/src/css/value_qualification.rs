@@ -1678,10 +1678,10 @@ impl CssValueQualificationRunResult {
     }
 
     pub(crate) fn font_variant_emoji_observations(
-    &self,
-) -> &[CssFontVariantEmojiQualificationObservation] {
-    &self.font_variant_emoji_observations
-}
+        &self,
+    ) -> &[CssFontVariantEmojiQualificationObservation] {
+        &self.font_variant_emoji_observations
+    }
 
     pub(crate) fn font_variant_position_observations(
         &self,
@@ -2160,15 +2160,15 @@ pub(crate) fn run(
             }
 
             if property_name.eq_ignore_ascii_case("font-variant-emoji") {
-    let value_range = cursor.window_for(occurrence.value())?;
-    let value_items = &tokenizer_result.lexical_items()[value_range];
-    font_variant_emoji_observations.push(CssFontVariantEmojiQualificationObservation {
-        occurrence_index,
-        placement: occurrence.placement(),
-        outcome: qualify_font_variant_emoji_value(value_items),
-    });
-    continue;
-}
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                font_variant_emoji_observations.push(CssFontVariantEmojiQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_font_variant_emoji_value(value_items),
+                });
+                continue;
+            }
 
             if property_name.eq_ignore_ascii_case("font-variant-position") {
                 let value_range = cursor.window_for(occurrence.value())?;
@@ -2213,7 +2213,7 @@ pub(crate) fn run(
             font_synthesis_small_caps_observations,
             font_synthesis_position_observations,
             font_variant_emoji_observations,
-        font_variant_position_observations,
+            font_variant_position_observations,
             z_index_observations,
         )
     };
@@ -2822,30 +2822,22 @@ fn qualify_font_variant_emoji_value(
         CssSingleKeywordValue::Identifier(identifier)
             if identifier.eq_ignore_ascii_case("normal") =>
         {
-            CssFontVariantEmojiQualificationOutcome::Qualified(
-                CssFontVariantEmojiValue::Normal,
-            )
+            CssFontVariantEmojiQualificationOutcome::Qualified(CssFontVariantEmojiValue::Normal)
         }
         CssSingleKeywordValue::Identifier(identifier)
             if identifier.eq_ignore_ascii_case("text") =>
         {
-            CssFontVariantEmojiQualificationOutcome::Qualified(
-                CssFontVariantEmojiValue::Text,
-            )
+            CssFontVariantEmojiQualificationOutcome::Qualified(CssFontVariantEmojiValue::Text)
         }
         CssSingleKeywordValue::Identifier(identifier)
             if identifier.eq_ignore_ascii_case("emoji") =>
         {
-            CssFontVariantEmojiQualificationOutcome::Qualified(
-                CssFontVariantEmojiValue::Emoji,
-            )
+            CssFontVariantEmojiQualificationOutcome::Qualified(CssFontVariantEmojiValue::Emoji)
         }
         CssSingleKeywordValue::Identifier(identifier)
             if identifier.eq_ignore_ascii_case("unicode") =>
         {
-            CssFontVariantEmojiQualificationOutcome::Qualified(
-                CssFontVariantEmojiValue::Unicode,
-            )
+            CssFontVariantEmojiQualificationOutcome::Qualified(CssFontVariantEmojiValue::Unicode)
         }
         CssSingleKeywordValue::Identifier(identifier) if is_css_wide_keyword(identifier) => {
             CssFontVariantEmojiQualificationOutcome::UnsupportedBySelectedValueProfile(
