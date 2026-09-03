@@ -434,7 +434,7 @@ impl CssBorderCollapseQualificationObservation {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy,PartialEq, Eq)]
 pub(crate) enum CssBoxDecorationBreakValue {
     Slice,
     Clone,
@@ -2435,9 +2435,7 @@ fn qualify_font_variant_position_value(
                 CssFontVariantPositionValue::Normal,
             )
         }
-        CssSingleKeywordValue::Identifier(identifier)
-            if identifier.eq_ignore_ascii_case("sub") =>
-        {
+        CssSingleKeywordValue::Identifier(identifier) if identifier.eq_ignore_ascii_case("sub") => {
             CssFontVariantPositionQualificationOutcome::Qualified(CssFontVariantPositionValue::Sub)
         }
         CssSingleKeywordValue::Identifier(identifier)
