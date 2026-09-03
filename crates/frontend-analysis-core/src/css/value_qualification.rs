@@ -1789,10 +1789,14 @@ fn qualify_empty_cells_value(items: &[CssLexicalItem]) -> CssEmptyCellsQualifica
         CssSingleKeywordValue::Invalid => {
             CssEmptyCellsQualificationOutcome::InvalidForSelectedValueGrammar
         }
-        CssSingleKeywordValue::Identifier(identifier) if identifier.eq_ignore_ascii_case("show") => {
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("show") =>
+        {
             CssEmptyCellsQualificationOutcome::Qualified(CssEmptyCellsValue::Show)
         }
-        CssSingleKeywordValue::Identifier(identifier) if identifier.eq_ignore_ascii_case("hide") => {
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("hide") =>
+        {
             CssEmptyCellsQualificationOutcome::Qualified(CssEmptyCellsValue::Hide)
         }
         CssSingleKeywordValue::Identifier(identifier) if is_css_wide_keyword(identifier) => {
