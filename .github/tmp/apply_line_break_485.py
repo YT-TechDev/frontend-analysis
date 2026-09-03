@@ -91,7 +91,12 @@ replace_exact(getter_anchor, line_break_getter + getter_anchor)
 replace_exact(
     "        line_height_observations,\n        word_spacing_observations,\n",
     "        line_height_observations,\n        line_break_observations,\n        word_spacing_observations,\n",
-    count=3,
+    count=2,
+)
+
+replace_exact(
+    "            line_height_observations,\n            word_spacing_observations,\n",
+    "            line_height_observations,\n            line_break_observations,\n            word_spacing_observations,\n",
 )
 
 replace_exact(
