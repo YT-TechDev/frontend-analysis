@@ -1,0 +1,215 @@
+name: Temporary font-variant-emoji patch runner
+
+on:
+  push:
+    branches:
+      - feat/css-font-variant-emoji-481
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message == 'chore: temporary patch runner for #481'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/css-font-variant-emoji-481
+
+      - name: Apply exact production sibling insertion
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('crates/frontend-analysis-core/src/css/value_qualification.rs')
+          text = path.read_text()
+
+          def replace_exact(old: str, new: str, count: int = 1) -> None:
+              global text
+              actual = text.count(old)
+              if actual != count:
+                  raise SystemExit(f'anchor count mismatch: expected {count}, got {actual}: {old[:80]!r}')
+              text = text.replace(old, new)
+
+          replace_exact(
+              '//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479).',
+              '//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481).',
+          )
+
+          type_anchor = '''#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+          pub(crate) enum CssFontVariantPositionValue {
+          '''
+          type_block = '''#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+          pub(crate) enum CssFontVariantEmojiValue {
+              Normal,
+              Text,
+              Emoji,
+              Unicode,
+          }
+
+          #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+          pub(crate) enum CssFontVariantEmojiUnsupportedReason {
+              CssWideKeyword,
+              FunctionValue,
+          }
+
+          #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+          pub(crate) enum CssFontVariantEmojiQualificationOutcome {
+              Qualified(CssFontVariantEmojiValue),
+              InvalidForSelectedValueGrammar,
+              UnsupportedBySelectedValueProfile(CssFontVariantEmojiUnsupportedReason),
+          }
+
+          /// One selected ordinary declaration's bounded `font-variant-emoji`
+          /// qualification.
+          ///
+          /// This profile qualifies only direct `normal | text | emoji | unicode`
+          /// authored keyword evidence. Unicode emoji classification, variation
+          /// selector or ZWJ processing, font fallback, glyph shaping/rendering,
+          /// and used-value processing remain outside this slice.
+          #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+          pub(crate) struct CssFontVariantEmojiQualificationObservation {
+              occurrence_index: usize,
+              placement: CssDeclarationPlacement,
+              outcome: CssFontVariantEmojiQualificationOutcome,
+          }
+
+          impl CssFontVariantEmojiQualificationObservation {
+              pub(crate) const fn occurrence_index(&self) -> usize {
+                  self.occurrence_index
+              }
+
+              pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+                  self.placement
+              }
+
+              pub(crate) const fn outcome(&self) -> CssFontVariantEmojiQualificationOutcome {
+                  self.outcome
+              }
+          }
+
+          ''' + type_anchor
+          replace_exact(type_anchor, type_block)
+
+          replace_exact(
+              '    font_variant_position_observations: Vec<CssFontVariantPositionQualificationObservation>,\n',
+              '    font_variant_emoji_observations: Vec<CssFontVariantEmojiQualificationObservation>,\n'
+              '    font_variant_position_observations: Vec<CssFontVariantPositionQualificationObservation>,\n',
+          )
+
+          getter_anchor = '''    pub(crate) fn font_variant_position_observations(
+              &self,
+          ) -> &[CssFontVariantPositionQualificationObservation] {
+              &self.font_variant_position_observations
+          }
+          '''
+          getter_block = '''    pub(crate) fn font_variant_emoji_observations(
+              &self,
+          ) -> &[CssFontVariantEmojiQualificationObservation] {
+              &self.font_variant_emoji_observations
+          }
+
+          ''' + getter_anchor
+          replace_exact(getter_anchor, getter_block)
+
+          replace_exact(
+              '        font_variant_position_observations,\n',
+              '        font_variant_emoji_observations,\n        font_variant_position_observations,\n',
+              count=3,
+          )
+
+          replace_exact(
+              '        let mut font_variant_position_observations = Vec::new();\n',
+              '        let mut font_variant_emoji_observations = Vec::new();\n'
+              '        let mut font_variant_position_observations = Vec::new();\n',
+          )
+
+          dispatch_anchor = '''            if property_name.eq_ignore_ascii_case("font-variant-position") {
+          '''
+          dispatch_block = '''            if property_name.eq_ignore_ascii_case("font-variant-emoji") {
+              let value_range = cursor.window_for(occurrence.value())?;
+              let value_items = &tokenizer_result.lexical_items()[value_range];
+              font_variant_emoji_observations.push(CssFontVariantEmojiQualificationObservation {
+                  occurrence_index,
+                  placement: occurrence.placement(),
+                  outcome: qualify_font_variant_emoji_value(value_items),
+              });
+              continue;
+          }
+
+          ''' + dispatch_anchor
+          replace_exact(dispatch_anchor, dispatch_block)
+
+          classifier_anchor = '''fn qualify_font_variant_position_value(
+              items: &[CssLexicalItem],
+          ) -> CssFontVariantPositionQualificationOutcome {
+          '''
+          classifier_block = '''fn qualify_font_variant_emoji_value(
+              items: &[CssLexicalItem],
+          ) -> CssFontVariantEmojiQualificationOutcome {
+              match classify_single_keyword_value(items) {
+                  CssSingleKeywordValue::UnsupportedFunction => {
+                      CssFontVariantEmojiQualificationOutcome::UnsupportedBySelectedValueProfile(
+                          CssFontVariantEmojiUnsupportedReason::FunctionValue,
+                      )
+                  }
+                  CssSingleKeywordValue::Invalid => {
+                      CssFontVariantEmojiQualificationOutcome::InvalidForSelectedValueGrammar
+                  }
+                  CssSingleKeywordValue::Identifier(identifier)
+                      if identifier.eq_ignore_ascii_case("normal") =>
+                  {
+                      CssFontVariantEmojiQualificationOutcome::Qualified(
+                          CssFontVariantEmojiValue::Normal,
+                      )
+                  }
+                  CssSingleKeywordValue::Identifier(identifier)
+                      if identifier.eq_ignore_ascii_case("text") =>
+                  {
+                      CssFontVariantEmojiQualificationOutcome::Qualified(
+                          CssFontVariantEmojiValue::Text,
+                      )
+                  }
+                  CssSingleKeywordValue::Identifier(identifier)
+                      if identifier.eq_ignore_ascii_case("emoji") =>
+                  {
+                      CssFontVariantEmojiQualificationOutcome::Qualified(
+                          CssFontVariantEmojiValue::Emoji,
+                      )
+                  }
+                  CssSingleKeywordValue::Identifier(identifier)
+                      if identifier.eq_ignore_ascii_case("unicode") =>
+                  {
+                      CssFontVariantEmojiQualificationOutcome::Qualified(
+                          CssFontVariantEmojiValue::Unicode,
+                      )
+                  }
+                  CssSingleKeywordValue::Identifier(identifier) if is_css_wide_keyword(identifier) => {
+                      CssFontVariantEmojiQualificationOutcome::UnsupportedBySelectedValueProfile(
+                          CssFontVariantEmojiUnsupportedReason::CssWideKeyword,
+                      )
+                  }
+                  CssSingleKeywordValue::Identifier(_) => {
+                      CssFontVariantEmojiQualificationOutcome::InvalidForSelectedValueGrammar
+                  }
+              }
+          }
+
+          ''' + classifier_anchor
+          replace_exact(classifier_anchor, classifier_block)
+
+          path.write_text(text)
+          PY
+
+          git diff --check -- crates/frontend-analysis-core/src/css/value_qualification.rs
+
+      - name: Commit production change
+        shell: bash
+        run: |
+          git config user.name "YT-TechDev"
+          git config user.email "msc_prop@proton.me"
+          git add crates/frontend-analysis-core/src/css/value_qualification.rs
+          git commit -m "feat(css): add bounded font-variant-emoji qualification"
+          git push origin HEAD:feat/css-font-variant-emoji-481
