@@ -21,7 +21,7 @@ jobs:
           git clone "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" repo
           cd repo
           git checkout feat/css-font-variant-emoji-481
-          if [ "$(git log -1 --pretty=%s)" != "chore: run temporary patch for #481" ]; then
+          if [ "$(git log -1 --pretty=%s)" != "chore: retry temporary patch runner for #481" ]; then
             exit 0
           fi
 
@@ -104,12 +104,7 @@ jobs:
               '    font_variant_position_observations: Vec<CssFontVariantPositionQualificationObservation>,\n',
           )
 
-          getter_anchor = '''    pub(crate) fn font_variant_position_observations(
-              &self,
-          ) -> &[CssFontVariantPositionQualificationObservation] {
-              &self.font_variant_position_observations
-          }
-          '''
+          getter_anchor = '    pub(crate) fn font_variant_position_observations(\n'
           getter_block = '''    pub(crate) fn font_variant_emoji_observations(
               &self,
           ) -> &[CssFontVariantEmojiQualificationObservation] {
