@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -288,6 +288,56 @@ impl CssEmptyCellsQualificationObservation {
     }
 
     pub(crate) const fn outcome(&self) -> CssEmptyCellsQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTextDecorationStyleValue {
+    Solid,
+    Double,
+    Dotted,
+    Dashed,
+    Wavy,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTextDecorationStyleUnsupportedReason {
+    CssWideKeyword,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTextDecorationStyleQualificationOutcome {
+    Qualified(CssTextDecorationStyleValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssTextDecorationStyleUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `text-decoration-style`
+/// qualification.
+///
+/// This profile qualifies only direct `solid | double | dotted | dashed | wavy`
+/// authored keyword evidence. Decoration painting, dash/wave geometry,
+/// thickness/font-metric interaction, pseudo applicability, and rendering
+/// remain outside this slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTextDecorationStyleQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssTextDecorationStyleQualificationOutcome,
+}
+
+impl CssTextDecorationStyleQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssTextDecorationStyleQualificationOutcome {
         self.outcome
     }
 }
@@ -1048,6 +1098,7 @@ pub(crate) struct CssValueQualificationRunResult {
     scroll_snap_align_observations: Vec<CssScrollSnapAlignQualificationObservation>,
     scroll_snap_stop_observations: Vec<CssScrollSnapStopQualificationObservation>,
     empty_cells_observations: Vec<CssEmptyCellsQualificationObservation>,
+    text_decoration_style_observations: Vec<CssTextDecorationStyleQualificationObservation>,
     z_index_observations: Vec<CssZIndexQualificationObservation>,
 }
 
@@ -1150,6 +1201,12 @@ impl CssValueQualificationRunResult {
         &self.empty_cells_observations
     }
 
+    pub(crate) fn text_decoration_style_observations(
+        &self,
+    ) -> &[CssTextDecorationStyleQualificationObservation] {
+        &self.text_decoration_style_observations
+    }
+
     pub(crate) fn z_index_observations(&self) -> &[CssZIndexQualificationObservation] {
         &self.z_index_observations
     }
@@ -1234,6 +1291,7 @@ pub(crate) fn run(
         scroll_snap_align_observations,
         scroll_snap_stop_observations,
         empty_cells_observations,
+        text_decoration_style_observations,
         z_index_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
@@ -1258,6 +1316,7 @@ pub(crate) fn run(
         let mut scroll_snap_align_observations = Vec::new();
         let mut scroll_snap_stop_observations = Vec::new();
         let mut empty_cells_observations = Vec::new();
+        let mut text_decoration_style_observations = Vec::new();
         let mut z_index_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
@@ -1499,6 +1558,19 @@ pub(crate) fn run(
                     placement: occurrence.placement(),
                     outcome: qualify_empty_cells_value(value_items),
                 });
+                continue;
+            }
+
+            if property_name.eq_ignore_ascii_case("text-decoration-style") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                text_decoration_style_observations.push(
+                    CssTextDecorationStyleQualificationObservation {
+                        occurrence_index,
+                        placement: occurrence.placement(),
+                        outcome: qualify_text_decoration_style_value(value_items),
+                    },
+                );
             }
         }
 
@@ -1523,6 +1595,7 @@ pub(crate) fn run(
             scroll_snap_align_observations,
             scroll_snap_stop_observations,
             empty_cells_observations,
+            text_decoration_style_observations,
             z_index_observations,
         )
     };
@@ -1549,6 +1622,7 @@ pub(crate) fn run(
         scroll_snap_align_observations,
         scroll_snap_stop_observations,
         empty_cells_observations,
+        text_decoration_style_observations,
         z_index_observations,
     })
 }
@@ -1806,6 +1880,62 @@ fn qualify_empty_cells_value(items: &[CssLexicalItem]) -> CssEmptyCellsQualifica
         }
         CssSingleKeywordValue::Identifier(_) => {
             CssEmptyCellsQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+    }
+}
+
+fn qualify_text_decoration_style_value(
+    items: &[CssLexicalItem],
+) -> CssTextDecorationStyleQualificationOutcome {
+    match classify_single_keyword_value(items) {
+        CssSingleKeywordValue::UnsupportedFunction => {
+            CssTextDecorationStyleQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssTextDecorationStyleUnsupportedReason::FunctionValue,
+            )
+        }
+        CssSingleKeywordValue::Invalid => {
+            CssTextDecorationStyleQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("solid") =>
+        {
+            CssTextDecorationStyleQualificationOutcome::Qualified(
+                CssTextDecorationStyleValue::Solid,
+            )
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("double") =>
+        {
+            CssTextDecorationStyleQualificationOutcome::Qualified(
+                CssTextDecorationStyleValue::Double,
+            )
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("dotted") =>
+        {
+            CssTextDecorationStyleQualificationOutcome::Qualified(
+                CssTextDecorationStyleValue::Dotted,
+            )
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("dashed") =>
+        {
+            CssTextDecorationStyleQualificationOutcome::Qualified(
+                CssTextDecorationStyleValue::Dashed,
+            )
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("wavy") =>
+        {
+            CssTextDecorationStyleQualificationOutcome::Qualified(CssTextDecorationStyleValue::Wavy)
+        }
+        CssSingleKeywordValue::Identifier(identifier) if is_css_wide_keyword(identifier) => {
+            CssTextDecorationStyleQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssTextDecorationStyleUnsupportedReason::CssWideKeyword,
+            )
+        }
+        CssSingleKeywordValue::Identifier(_) => {
+            CssTextDecorationStyleQualificationOutcome::InvalidForSelectedValueGrammar
         }
     }
 }

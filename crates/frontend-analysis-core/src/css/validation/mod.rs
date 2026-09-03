@@ -97,6 +97,8 @@ mod shape_margin_value_qualification_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod text_decoration_style_value_qualification_tests;
+#[cfg(test)]
 mod text_underline_offset_value_qualification_tests;
 #[cfg(test)]
 mod word_spacing_value_qualification_tests;
