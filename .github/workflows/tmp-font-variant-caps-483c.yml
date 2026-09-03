@@ -1,0 +1,41 @@
+name: Temporary font-variant-caps patch runner 3
+
+on:
+  push:
+    branches:
+      - feat/css-font-variant-caps-483
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Apply exact sibling insertion
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" repo
+          cd repo
+          git checkout feat/css-font-variant-caps-483
+          if [ "$(git log -1 --pretty=%s)" != "chore: add working temporary patch runner for #483" ]; then
+            exit 0
+          fi
+
+          python3 .github/tmp/apply_font_variant_caps_483.py
+          cargo fmt --all
+          git diff --check -- \
+            crates/frontend-analysis-core/src/css/value_qualification.rs \
+            crates/frontend-analysis-core/src/css/validation/font_variant_caps_value_qualification_tests.rs \
+            crates/frontend-analysis-core/src/css/validation/mod.rs
+          git config user.name "YT-TechDev"
+          git config user.email "msc_prop@proton.me"
+          git add \
+            crates/frontend-analysis-core/src/css/value_qualification.rs \
+            crates/frontend-analysis-core/src/css/validation/font_variant_caps_value_qualification_tests.rs \
+            crates/frontend-analysis-core/src/css/validation/mod.rs
+          git commit -m "feat(css): add bounded font-variant-caps qualification"
+          git push origin HEAD:feat/css-font-variant-caps-483
