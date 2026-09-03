@@ -71,9 +71,9 @@ fn expected_outcome(expected: ExpectedOutcome) -> CssTextDecorationStyleQualific
         ExpectedOutcome::Dashed => CssTextDecorationStyleQualificationOutcome::Qualified(
             CssTextDecorationStyleValue::Dashed,
         ),
-        ExpectedOutcome::Wavy => CssTextDecorationStyleQualificationOutcome::Qualified(
-            CssTextDecorationStyleValue::Wavy,
-        ),
+        ExpectedOutcome::Wavy => {
+            CssTextDecorationStyleQualificationOutcome::Qualified(CssTextDecorationStyleValue::Wavy)
+        }
         ExpectedOutcome::Invalid => {
             CssTextDecorationStyleQualificationOutcome::InvalidForSelectedValueGrammar
         }
@@ -160,10 +160,7 @@ fn comments_and_priority_preserve_decoded_keyword_meaning() {
         ),
     );
 
-    assert_expected(
-        &result,
-        &[ExpectedOutcome::Dotted, ExpectedOutcome::Dashed],
-    );
+    assert_expected(&result, &[ExpectedOutcome::Dotted, ExpectedOutcome::Dashed]);
     for occurrence in result.upstream_parser_result().occurrences() {
         assert!(occurrence.priority().is_some());
     }
