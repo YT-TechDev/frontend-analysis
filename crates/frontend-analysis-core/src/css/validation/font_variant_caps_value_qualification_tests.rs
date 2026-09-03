@@ -67,21 +67,21 @@ fn expected_outcome(expected: ExpectedOutcome) -> CssFontVariantCapsQualificatio
         ExpectedOutcome::SmallCaps => {
             CssFontVariantCapsQualificationOutcome::Qualified(CssFontVariantCapsValue::SmallCaps)
         }
-        ExpectedOutcome::AllSmallCaps => CssFontVariantCapsQualificationOutcome::Qualified(
-            CssFontVariantCapsValue::AllSmallCaps,
-        ),
-        ExpectedOutcome::PetiteCaps => CssFontVariantCapsQualificationOutcome::Qualified(
-            CssFontVariantCapsValue::PetiteCaps,
-        ),
+        ExpectedOutcome::AllSmallCaps => {
+            CssFontVariantCapsQualificationOutcome::Qualified(CssFontVariantCapsValue::AllSmallCaps)
+        }
+        ExpectedOutcome::PetiteCaps => {
+            CssFontVariantCapsQualificationOutcome::Qualified(CssFontVariantCapsValue::PetiteCaps)
+        }
         ExpectedOutcome::AllPetiteCaps => CssFontVariantCapsQualificationOutcome::Qualified(
             CssFontVariantCapsValue::AllPetiteCaps,
         ),
         ExpectedOutcome::Unicase => {
             CssFontVariantCapsQualificationOutcome::Qualified(CssFontVariantCapsValue::Unicase)
         }
-        ExpectedOutcome::TitlingCaps => CssFontVariantCapsQualificationOutcome::Qualified(
-            CssFontVariantCapsValue::TitlingCaps,
-        ),
+        ExpectedOutcome::TitlingCaps => {
+            CssFontVariantCapsQualificationOutcome::Qualified(CssFontVariantCapsValue::TitlingCaps)
+        }
         ExpectedOutcome::Invalid => {
             CssFontVariantCapsQualificationOutcome::InvalidForSelectedValueGrammar
         }
@@ -350,8 +350,14 @@ fn duplicate_declarations_keep_distinct_run_local_placement() {
         &result,
         &[ExpectedOutcome::SmallCaps, ExpectedOutcome::SmallCaps],
     );
-    assert_eq!(result.font_variant_caps_observations()[0].occurrence_index(), 0);
-    assert_eq!(result.font_variant_caps_observations()[1].occurrence_index(), 1);
+    assert_eq!(
+        result.font_variant_caps_observations()[0].occurrence_index(),
+        0
+    );
+    assert_eq!(
+        result.font_variant_caps_observations()[1].occurrence_index(),
+        1
+    );
     assert_ne!(
         result.font_variant_caps_observations()[0]
             .placement()
