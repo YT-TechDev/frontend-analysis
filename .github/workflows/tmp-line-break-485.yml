@@ -21,15 +21,14 @@ jobs:
           git clone "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" repo
           cd repo
           git checkout feat/css-line-break-485
-          if [ "$(git log -1 --pretty=%s)" != "chore: correct temporary line-break classifier anchor" ]; then
+          if [ "$(git log -1 --pretty=%s)" != "chore: rerun exact temporary line-break patch runner" ]; then
             exit 0
           fi
 
-          python3 -c 'from pathlib import Path; p=Path(".github/tmp/apply_line_break_485.py"); s=p.read_text(); old="classifier_anchor = \"\"\"fn qualify_word_spacing_value(\\n\"\"\""; new="classifier_anchor = \"\"\"fn qualify_word_spacing_value(items: &[CssLexicalItem]) -> CssWordSpacingQualificationOutcome {\\n\"\"\""; assert s.count(old) == 1; p.write_text(s.replace(old, new))'
           python3 .github/tmp/apply_line_break_485.py
           cargo fmt --all
 
-          unexpected="$(git status --porcelain | awk '{print $2}' | grep -vE '^(\.github/tmp/apply_line_break_485.py|crates/frontend-analysis-core/src/css/value_qualification.rs|crates/frontend-analysis-core/src/css/validation/line_break_value_qualification_tests.rs|crates/frontend-analysis-core/src/css/validation/mod.rs)$' || true)"
+          unexpected="$(git status --porcelain | awk '{print $2}' | grep -vE '^(crates/frontend-analysis-core/src/css/value_qualification.rs|crates/frontend-analysis-core/src/css/validation/line_break_value_qualification_tests.rs|crates/frontend-analysis-core/src/css/validation/mod.rs)$' || true)"
           test -z "$unexpected" || { echo "unexpected formatted paths:"; echo "$unexpected"; exit 1; }
 
           git diff --check -- \
