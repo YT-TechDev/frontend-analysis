@@ -287,8 +287,12 @@ fn duplicate_declarations_keep_distinct_run_local_placement() {
     assert_eq!(result.empty_cells_observations()[0].occurrence_index(), 0);
     assert_eq!(result.empty_cells_observations()[1].occurrence_index(), 1);
     assert_ne!(
-        result.empty_cells_observations()[0].placement().context_id(),
-        result.empty_cells_observations()[1].placement().context_id(),
+        result.empty_cells_observations()[0]
+            .placement()
+            .context_id(),
+        result.empty_cells_observations()[1]
+            .placement()
+            .context_id(),
     );
 }
 
