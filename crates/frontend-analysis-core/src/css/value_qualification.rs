@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -524,6 +524,53 @@ impl CssFontKerningQualificationObservation {
     }
 
     pub(crate) const fn outcome(&self) -> CssFontKerningQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFontSynthesisWeightValue {
+    Auto,
+    None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFontSynthesisWeightUnsupportedReason {
+    CssWideKeyword,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFontSynthesisWeightQualificationOutcome {
+    Qualified(CssFontSynthesisWeightValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssFontSynthesisWeightUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `font-synthesis-weight`
+/// qualification.
+///
+/// This profile qualifies only direct `auto | none` authored keyword evidence.
+/// Font selection, glyph synthesis, synthetic emboldening, font-table
+/// inspection, shaping, rendering, and used-value processing remain outside
+/// this slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssFontSynthesisWeightQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssFontSynthesisWeightQualificationOutcome,
+}
+
+impl CssFontSynthesisWeightQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssFontSynthesisWeightQualificationOutcome {
         self.outcome
     }
 }
@@ -1336,6 +1383,7 @@ pub(crate) struct CssValueQualificationRunResult {
     border_collapse_observations: Vec<CssBorderCollapseQualificationObservation>,
     box_decoration_break_observations: Vec<CssBoxDecorationBreakQualificationObservation>,
     font_kerning_observations: Vec<CssFontKerningQualificationObservation>,
+    font_synthesis_weight_observations: Vec<CssFontSynthesisWeightQualificationObservation>,
     font_variant_position_observations: Vec<CssFontVariantPositionQualificationObservation>,
     z_index_observations: Vec<CssZIndexQualificationObservation>,
 }
@@ -1465,6 +1513,12 @@ impl CssValueQualificationRunResult {
         &self.font_kerning_observations
     }
 
+    pub(crate) fn font_synthesis_weight_observations(
+        &self,
+    ) -> &[CssFontSynthesisWeightQualificationObservation] {
+        &self.font_synthesis_weight_observations
+    }
+
     pub(crate) fn font_variant_position_observations(
         &self,
     ) -> &[CssFontVariantPositionQualificationObservation] {
@@ -1560,6 +1614,7 @@ pub(crate) fn run(
         border_collapse_observations,
         box_decoration_break_observations,
         font_kerning_observations,
+        font_synthesis_weight_observations,
         font_variant_position_observations,
         z_index_observations,
     ) = {
@@ -1590,6 +1645,7 @@ pub(crate) fn run(
         let mut border_collapse_observations = Vec::new();
         let mut box_decoration_break_observations = Vec::new();
         let mut font_kerning_observations = Vec::new();
+        let mut font_synthesis_weight_observations = Vec::new();
         let mut font_variant_position_observations = Vec::new();
         let mut z_index_observations = Vec::new();
 
@@ -1894,6 +1950,19 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("font-synthesis-weight") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                font_synthesis_weight_observations.push(
+                    CssFontSynthesisWeightQualificationObservation {
+                        occurrence_index,
+                        placement: occurrence.placement(),
+                        outcome: qualify_font_synthesis_weight_value(value_items),
+                    },
+                );
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("font-variant-position") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -1933,6 +2002,7 @@ pub(crate) fn run(
             border_collapse_observations,
             box_decoration_break_observations,
             font_kerning_observations,
+            font_synthesis_weight_observations,
             font_variant_position_observations,
             z_index_observations,
         )
@@ -1965,6 +2035,7 @@ pub(crate) fn run(
         border_collapse_observations,
         box_decoration_break_observations,
         font_kerning_observations,
+        font_synthesis_weight_observations,
         font_variant_position_observations,
         z_index_observations,
     })
@@ -2412,6 +2483,39 @@ fn qualify_font_kerning_value(items: &[CssLexicalItem]) -> CssFontKerningQualifi
         }
         CssSingleKeywordValue::Identifier(_) => {
             CssFontKerningQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+    }
+}
+
+fn qualify_font_synthesis_weight_value(
+    items: &[CssLexicalItem],
+) -> CssFontSynthesisWeightQualificationOutcome {
+    match classify_single_keyword_value(items) {
+        CssSingleKeywordValue::UnsupportedFunction => {
+            CssFontSynthesisWeightQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssFontSynthesisWeightUnsupportedReason::FunctionValue,
+            )
+        }
+        CssSingleKeywordValue::Invalid => {
+            CssFontSynthesisWeightQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("auto") =>
+        {
+            CssFontSynthesisWeightQualificationOutcome::Qualified(CssFontSynthesisWeightValue::Auto)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("none") =>
+        {
+            CssFontSynthesisWeightQualificationOutcome::Qualified(CssFontSynthesisWeightValue::None)
+        }
+        CssSingleKeywordValue::Identifier(identifier) if is_css_wide_keyword(identifier) => {
+            CssFontSynthesisWeightQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssFontSynthesisWeightUnsupportedReason::CssWideKeyword,
+            )
+        }
+        CssSingleKeywordValue::Identifier(_) => {
+            CssFontSynthesisWeightQualificationOutcome::InvalidForSelectedValueGrammar
         }
     }
 }
