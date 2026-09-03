@@ -55,6 +55,8 @@ mod flex_grow_value_qualification_tests;
 #[cfg(test)]
 mod flex_shrink_value_qualification_tests;
 #[cfg(test)]
+mod font_kerning_value_qualification_tests;
+#[cfg(test)]
 mod group_context_contract_tests;
 #[cfg(test)]
 mod group_lifecycle_validation_tests;
