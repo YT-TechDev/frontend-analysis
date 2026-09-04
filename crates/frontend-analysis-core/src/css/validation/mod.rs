@@ -89,6 +89,8 @@ mod line_height_value_qualification_tests;
 #[cfg(test)]
 mod mask_type_value_qualification_tests;
 #[cfg(test)]
+mod math_shift_value_qualification_tests;
+#[cfg(test)]
 mod math_style_value_qualification_tests;
 #[cfg(test)]
 mod opacity_value_qualification_tests;
