@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -1297,6 +1297,53 @@ impl CssPrintColorAdjustQualificationObservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssOverflowWrapValue {
+    Normal,
+    BreakWord,
+    Anywhere,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssOverflowWrapUnsupportedReason {
+    CssWideKeyword,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssOverflowWrapQualificationOutcome {
+    Qualified(CssOverflowWrapValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssOverflowWrapUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `overflow-wrap` qualification.
+///
+/// This profile qualifies only direct `normal | break-word | anywhere` authored
+/// keyword evidence. The legacy `word-wrap` alias, line-breaking execution,
+/// soft-wrap generation, intrinsic sizing, shaping, and line layout remain
+/// outside this slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssOverflowWrapQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssOverflowWrapQualificationOutcome,
+}
+
+impl CssOverflowWrapQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssOverflowWrapQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssWordSpacingValue {
     Normal,
     DirectLengthLiteral,
@@ -1665,6 +1712,7 @@ pub(crate) struct CssValueQualificationRunResult {
     line_height_observations: Vec<CssLineHeightQualificationObservation>,
     line_break_observations: Vec<CssLineBreakQualificationObservation>,
     print_color_adjust_observations: Vec<CssPrintColorAdjustQualificationObservation>,
+    overflow_wrap_observations: Vec<CssOverflowWrapQualificationObservation>,
     word_spacing_observations: Vec<CssWordSpacingQualificationObservation>,
     text_underline_offset_observations: Vec<CssTextUnderlineOffsetQualificationObservation>,
     scroll_margin_top_observations: Vec<CssScrollMarginTopQualificationObservation>,
@@ -1752,6 +1800,10 @@ impl CssValueQualificationRunResult {
         &self,
     ) -> &[CssPrintColorAdjustQualificationObservation] {
         &self.print_color_adjust_observations
+    }
+
+    pub(crate) fn overflow_wrap_observations(&self) -> &[CssOverflowWrapQualificationObservation] {
+        &self.overflow_wrap_observations
     }
 
     pub(crate) fn word_spacing_observations(&self) -> &[CssWordSpacingQualificationObservation] {
@@ -1936,6 +1988,7 @@ pub(crate) fn run(
         line_height_observations,
         line_break_observations,
         print_color_adjust_observations,
+        overflow_wrap_observations,
         word_spacing_observations,
         text_underline_offset_observations,
         scroll_margin_top_observations,
@@ -1973,6 +2026,7 @@ pub(crate) fn run(
         let mut line_height_observations = Vec::new();
         let mut line_break_observations = Vec::new();
         let mut print_color_adjust_observations = Vec::new();
+        let mut overflow_wrap_observations = Vec::new();
         let mut word_spacing_observations = Vec::new();
         let mut text_underline_offset_observations = Vec::new();
         let mut scroll_margin_top_observations = Vec::new();
@@ -2153,6 +2207,17 @@ pub(crate) fn run(
                     occurrence_index,
                     placement: occurrence.placement(),
                     outcome: qualify_print_color_adjust_value(value_items),
+                });
+                continue;
+            }
+
+            if property_name.eq_ignore_ascii_case("overflow-wrap") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                overflow_wrap_observations.push(CssOverflowWrapQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_overflow_wrap_value(value_items),
                 });
                 continue;
             }
@@ -2406,6 +2471,7 @@ pub(crate) fn run(
             line_height_observations,
             line_break_observations,
             print_color_adjust_observations,
+            overflow_wrap_observations,
             word_spacing_observations,
             text_underline_offset_observations,
             scroll_margin_top_observations,
@@ -2445,6 +2511,7 @@ pub(crate) fn run(
         line_height_observations,
         line_break_observations,
         print_color_adjust_observations,
+        overflow_wrap_observations,
         word_spacing_observations,
         text_underline_offset_observations,
         scroll_margin_top_observations,
@@ -3683,6 +3750,42 @@ fn qualify_print_color_adjust_value(
         }
         CssSingleKeywordValue::Identifier(_) => {
             CssPrintColorAdjustQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+    }
+}
+
+fn qualify_overflow_wrap_value(items: &[CssLexicalItem]) -> CssOverflowWrapQualificationOutcome {
+    match classify_single_keyword_value(items) {
+        CssSingleKeywordValue::UnsupportedFunction => {
+            CssOverflowWrapQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssOverflowWrapUnsupportedReason::FunctionValue,
+            )
+        }
+        CssSingleKeywordValue::Invalid => {
+            CssOverflowWrapQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("normal") =>
+        {
+            CssOverflowWrapQualificationOutcome::Qualified(CssOverflowWrapValue::Normal)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("break-word") =>
+        {
+            CssOverflowWrapQualificationOutcome::Qualified(CssOverflowWrapValue::BreakWord)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("anywhere") =>
+        {
+            CssOverflowWrapQualificationOutcome::Qualified(CssOverflowWrapValue::Anywhere)
+        }
+        CssSingleKeywordValue::Identifier(identifier) if is_css_wide_keyword(identifier) => {
+            CssOverflowWrapQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssOverflowWrapUnsupportedReason::CssWideKeyword,
+            )
+        }
+        CssSingleKeywordValue::Identifier(_) => {
+            CssOverflowWrapQualificationOutcome::InvalidForSelectedValueGrammar
         }
     }
 }
