@@ -4317,9 +4317,7 @@ fn qualify_shape_rendering_value(
     }
 }
 
-fn qualify_text_rendering_value(
-    items: &[CssLexicalItem],
-) -> CssTextRenderingQualificationOutcome {
+fn qualify_text_rendering_value(items: &[CssLexicalItem]) -> CssTextRenderingQualificationOutcome {
     match classify_single_keyword_value(items) {
         CssSingleKeywordValue::UnsupportedFunction => {
             CssTextRenderingQualificationOutcome::UnsupportedBySelectedValueProfile(
