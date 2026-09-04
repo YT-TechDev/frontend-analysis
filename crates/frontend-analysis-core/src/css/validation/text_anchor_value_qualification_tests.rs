@@ -365,20 +365,18 @@ fn one_run_interleaves_text_anchor_with_every_accepted_leaf() {
 
 #[test]
 fn duplicate_declarations_keep_distinct_run_local_placement() {
-    let result = qualify(
-        2947,
-        "a{text-anchor:middle;}b{text-anchor:middle;}",
-    );
+    let result = qualify(2947, "a{text-anchor:middle;}b{text-anchor:middle;}");
 
-    assert_expected(
-        &result,
-        &[ExpectedOutcome::Middle, ExpectedOutcome::Middle],
-    );
+    assert_expected(&result, &[ExpectedOutcome::Middle, ExpectedOutcome::Middle]);
     assert_eq!(result.text_anchor_observations()[0].occurrence_index(), 0);
     assert_eq!(result.text_anchor_observations()[1].occurrence_index(), 1);
     assert_ne!(
-        result.text_anchor_observations()[0].placement().context_id(),
-        result.text_anchor_observations()[1].placement().context_id(),
+        result.text_anchor_observations()[0]
+            .placement()
+            .context_id(),
+        result.text_anchor_observations()[1]
+            .placement()
+            .context_id(),
     );
 }
 
