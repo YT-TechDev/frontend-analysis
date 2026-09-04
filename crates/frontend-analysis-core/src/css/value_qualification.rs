@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -1541,6 +1541,56 @@ impl CssShapeRenderingQualificationObservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTextRenderingValue {
+    Auto,
+    OptimizeSpeed,
+    OptimizeLegibility,
+    GeometricPrecision,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTextRenderingUnsupportedReason {
+    CssWideKeyword,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTextRenderingQualificationOutcome {
+    Qualified(CssTextRenderingValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssTextRenderingUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `text-rendering` qualification.
+///
+/// This profile qualifies only direct
+/// `auto | optimizeSpeed | optimizeLegibility | geometricPrecision` authored
+/// keyword evidence. Text shaping, kerning and ligature execution, font
+/// selection, glyph rasterization, anti-aliasing, rendering-hint execution, SVG
+/// text applicability, presentation-attribute semantics, painting, and
+/// computed/used-value processing remain outside this slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTextRenderingQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssTextRenderingQualificationOutcome,
+}
+
+impl CssTextRenderingQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssTextRenderingQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssWordSpacingValue {
     Normal,
     DirectLengthLiteral,
@@ -1915,6 +1965,7 @@ pub(crate) struct CssValueQualificationRunResult {
     color_interpolation_filters_observations:
         Vec<CssColorInterpolationFiltersQualificationObservation>,
     shape_rendering_observations: Vec<CssShapeRenderingQualificationObservation>,
+    text_rendering_observations: Vec<CssTextRenderingQualificationObservation>,
     word_spacing_observations: Vec<CssWordSpacingQualificationObservation>,
     text_underline_offset_observations: Vec<CssTextUnderlineOffsetQualificationObservation>,
     scroll_margin_top_observations: Vec<CssScrollMarginTopQualificationObservation>,
@@ -2026,6 +2077,12 @@ impl CssValueQualificationRunResult {
         &self,
     ) -> &[CssShapeRenderingQualificationObservation] {
         &self.shape_rendering_observations
+    }
+
+    pub(crate) fn text_rendering_observations(
+        &self,
+    ) -> &[CssTextRenderingQualificationObservation] {
+        &self.text_rendering_observations
     }
 
     pub(crate) fn word_spacing_observations(&self) -> &[CssWordSpacingQualificationObservation] {
@@ -2215,6 +2272,7 @@ pub(crate) fn run(
         mask_type_observations,
         color_interpolation_filters_observations,
         shape_rendering_observations,
+        text_rendering_observations,
         word_spacing_observations,
         text_underline_offset_observations,
         scroll_margin_top_observations,
@@ -2257,6 +2315,7 @@ pub(crate) fn run(
         let mut mask_type_observations = Vec::new();
         let mut color_interpolation_filters_observations = Vec::new();
         let mut shape_rendering_observations = Vec::new();
+        let mut text_rendering_observations = Vec::new();
         let mut word_spacing_observations = Vec::new();
         let mut text_underline_offset_observations = Vec::new();
         let mut scroll_margin_top_observations = Vec::new();
@@ -2494,6 +2553,17 @@ pub(crate) fn run(
                     occurrence_index,
                     placement: occurrence.placement(),
                     outcome: qualify_shape_rendering_value(value_items),
+                });
+                continue;
+            }
+
+            if property_name.eq_ignore_ascii_case("text-rendering") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                text_rendering_observations.push(CssTextRenderingQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_text_rendering_value(value_items),
                 });
                 continue;
             }
@@ -2752,6 +2822,7 @@ pub(crate) fn run(
             mask_type_observations,
             color_interpolation_filters_observations,
             shape_rendering_observations,
+            text_rendering_observations,
             word_spacing_observations,
             text_underline_offset_observations,
             scroll_margin_top_observations,
@@ -2796,6 +2867,7 @@ pub(crate) fn run(
         mask_type_observations,
         color_interpolation_filters_observations,
         shape_rendering_observations,
+        text_rendering_observations,
         word_spacing_observations,
         text_underline_offset_observations,
         scroll_margin_top_observations,
@@ -4241,6 +4313,53 @@ fn qualify_shape_rendering_value(
         }
         CssSingleKeywordValue::Identifier(_) => {
             CssShapeRenderingQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+    }
+}
+
+fn qualify_text_rendering_value(
+    items: &[CssLexicalItem],
+) -> CssTextRenderingQualificationOutcome {
+    match classify_single_keyword_value(items) {
+        CssSingleKeywordValue::UnsupportedFunction => {
+            CssTextRenderingQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssTextRenderingUnsupportedReason::FunctionValue,
+            )
+        }
+        CssSingleKeywordValue::Invalid => {
+            CssTextRenderingQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("auto") =>
+        {
+            CssTextRenderingQualificationOutcome::Qualified(CssTextRenderingValue::Auto)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("optimizespeed") =>
+        {
+            CssTextRenderingQualificationOutcome::Qualified(CssTextRenderingValue::OptimizeSpeed)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("optimizelegibility") =>
+        {
+            CssTextRenderingQualificationOutcome::Qualified(
+                CssTextRenderingValue::OptimizeLegibility,
+            )
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("geometricprecision") =>
+        {
+            CssTextRenderingQualificationOutcome::Qualified(
+                CssTextRenderingValue::GeometricPrecision,
+            )
+        }
+        CssSingleKeywordValue::Identifier(identifier) if is_css_wide_keyword(identifier) => {
+            CssTextRenderingQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssTextRenderingUnsupportedReason::CssWideKeyword,
+            )
+        }
+        CssSingleKeywordValue::Identifier(_) => {
+            CssTextRenderingQualificationOutcome::InvalidForSelectedValueGrammar
         }
     }
 }
