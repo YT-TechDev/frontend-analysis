@@ -264,9 +264,18 @@ fn svg_text_applicability_is_not_an_input_to_qualification() {
             ExpectedOutcome::OptimizeLegibility,
         ],
     );
-    assert_eq!(result.text_rendering_observations()[0].occurrence_index(), 0);
-    assert_eq!(result.text_rendering_observations()[1].occurrence_index(), 1);
-    assert_eq!(result.text_rendering_observations()[2].occurrence_index(), 2);
+    assert_eq!(
+        result.text_rendering_observations()[0].occurrence_index(),
+        0
+    );
+    assert_eq!(
+        result.text_rendering_observations()[1].occurrence_index(),
+        1
+    );
+    assert_eq!(
+        result.text_rendering_observations()[2].occurrence_index(),
+        2
+    );
     assert_eq!(
         result.text_rendering_observations()[0].outcome(),
         result.text_rendering_observations()[1].outcome()
@@ -365,7 +374,10 @@ fn one_run_interleaves_text_rendering_with_every_accepted_leaf() {
     assert_eq!(result.color_interpolation_filters_observations().len(), 1);
     assert_eq!(result.shape_rendering_observations().len(), 1);
     assert_eq!(result.text_rendering_observations().len(), 1);
-    assert_eq!(result.text_rendering_observations()[0].occurrence_index(), 39);
+    assert_eq!(
+        result.text_rendering_observations()[0].occurrence_index(),
+        39
+    );
     assert_expected(&result, &[ExpectedOutcome::OptimizeLegibility]);
 }
 
@@ -383,11 +395,21 @@ fn duplicate_declarations_keep_distinct_run_local_placement() {
             ExpectedOutcome::OptimizeLegibility,
         ],
     );
-    assert_eq!(result.text_rendering_observations()[0].occurrence_index(), 0);
-    assert_eq!(result.text_rendering_observations()[1].occurrence_index(), 1);
+    assert_eq!(
+        result.text_rendering_observations()[0].occurrence_index(),
+        0
+    );
+    assert_eq!(
+        result.text_rendering_observations()[1].occurrence_index(),
+        1
+    );
     assert_ne!(
-        result.text_rendering_observations()[0].placement().context_id(),
-        result.text_rendering_observations()[1].placement().context_id(),
+        result.text_rendering_observations()[0]
+            .placement()
+            .context_id(),
+        result.text_rendering_observations()[1]
+            .placement()
+            .context_id(),
     );
 }
 
@@ -397,7 +419,10 @@ fn nonordinary_declaration_shaped_contexts_are_excluded() {
         (2910, "@font-face{text-rendering:optimizeLegibility;}"),
         (2911, "@page{text-rendering:optimizeLegibility;}"),
         (2912, "@page{@top-left{text-rendering:optimizeLegibility;}}"),
-        (2913, "@keyframes k{from{text-rendering:optimizeLegibility;}}"),
+        (
+            2913,
+            "@keyframes k{from{text-rendering:optimizeLegibility;}}",
+        ),
     ] {
         let result = qualify(source_id, css);
         assert!(
