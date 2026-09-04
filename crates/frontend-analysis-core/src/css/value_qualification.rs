@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -1689,6 +1689,60 @@ impl CssForcedColorAdjustQualificationObservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTextAlignLastValue {
+    Auto,
+    Start,
+    End,
+    Left,
+    Right,
+    Center,
+    Justify,
+    MatchParent,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTextAlignLastUnsupportedReason {
+    CssWideKeyword,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTextAlignLastQualificationOutcome {
+    Qualified(CssTextAlignLastValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssTextAlignLastUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `text-align-last` qualification.
+///
+/// This profile qualifies only direct
+/// `auto | start | end | left | right | center | justify | match-parent`
+/// authored keyword evidence. Last-line construction/alignment execution,
+/// direction/writing-mode resolution, `match-parent` computed-value
+/// transformation, bidi processing, justification, layout, rendering, and
+/// computed/used-value processing remain outside this slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTextAlignLastQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssTextAlignLastQualificationOutcome,
+}
+
+impl CssTextAlignLastQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssTextAlignLastQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssWordSpacingValue {
     Normal,
     DirectLengthLiteral,
@@ -2066,6 +2120,7 @@ pub(crate) struct CssValueQualificationRunResult {
     text_rendering_observations: Vec<CssTextRenderingQualificationObservation>,
     text_anchor_observations: Vec<CssTextAnchorQualificationObservation>,
     forced_color_adjust_observations: Vec<CssForcedColorAdjustQualificationObservation>,
+    text_align_last_observations: Vec<CssTextAlignLastQualificationObservation>,
     word_spacing_observations: Vec<CssWordSpacingQualificationObservation>,
     text_underline_offset_observations: Vec<CssTextUnderlineOffsetQualificationObservation>,
     scroll_margin_top_observations: Vec<CssScrollMarginTopQualificationObservation>,
@@ -2193,6 +2248,12 @@ impl CssValueQualificationRunResult {
         &self,
     ) -> &[CssForcedColorAdjustQualificationObservation] {
         &self.forced_color_adjust_observations
+    }
+
+    pub(crate) fn text_align_last_observations(
+        &self,
+    ) -> &[CssTextAlignLastQualificationObservation] {
+        &self.text_align_last_observations
     }
 
     pub(crate) fn word_spacing_observations(&self) -> &[CssWordSpacingQualificationObservation] {
@@ -2385,6 +2446,7 @@ pub(crate) fn run(
         text_rendering_observations,
         text_anchor_observations,
         forced_color_adjust_observations,
+        text_align_last_observations,
         word_spacing_observations,
         text_underline_offset_observations,
         scroll_margin_top_observations,
@@ -2430,6 +2492,7 @@ pub(crate) fn run(
         let mut text_rendering_observations = Vec::new();
         let mut text_anchor_observations = Vec::new();
         let mut forced_color_adjust_observations = Vec::new();
+        let mut text_align_last_observations = Vec::new();
         let mut word_spacing_observations = Vec::new();
         let mut text_underline_offset_observations = Vec::new();
         let mut scroll_margin_top_observations = Vec::new();
@@ -2706,6 +2769,17 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("text-align-last") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                text_align_last_observations.push(CssTextAlignLastQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_text_align_last_value(value_items),
+                });
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("word-spacing") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -2963,6 +3037,7 @@ pub(crate) fn run(
             text_rendering_observations,
             text_anchor_observations,
             forced_color_adjust_observations,
+            text_align_last_observations,
             word_spacing_observations,
             text_underline_offset_observations,
             scroll_margin_top_observations,
@@ -3010,6 +3085,7 @@ pub(crate) fn run(
         text_rendering_observations,
         text_anchor_observations,
         forced_color_adjust_observations,
+        text_align_last_observations,
         word_spacing_observations,
         text_underline_offset_observations,
         scroll_margin_top_observations,
@@ -4574,6 +4650,65 @@ fn qualify_forced_color_adjust_value(
         }
         CssSingleKeywordValue::Identifier(_) => {
             CssForcedColorAdjustQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+    }
+}
+
+fn qualify_text_align_last_value(items: &[CssLexicalItem]) -> CssTextAlignLastQualificationOutcome {
+    match classify_single_keyword_value(items) {
+        CssSingleKeywordValue::UnsupportedFunction => {
+            CssTextAlignLastQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssTextAlignLastUnsupportedReason::FunctionValue,
+            )
+        }
+        CssSingleKeywordValue::Invalid => {
+            CssTextAlignLastQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("auto") =>
+        {
+            CssTextAlignLastQualificationOutcome::Qualified(CssTextAlignLastValue::Auto)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("start") =>
+        {
+            CssTextAlignLastQualificationOutcome::Qualified(CssTextAlignLastValue::Start)
+        }
+        CssSingleKeywordValue::Identifier(identifier) if identifier.eq_ignore_ascii_case("end") => {
+            CssTextAlignLastQualificationOutcome::Qualified(CssTextAlignLastValue::End)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("left") =>
+        {
+            CssTextAlignLastQualificationOutcome::Qualified(CssTextAlignLastValue::Left)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("right") =>
+        {
+            CssTextAlignLastQualificationOutcome::Qualified(CssTextAlignLastValue::Right)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("center") =>
+        {
+            CssTextAlignLastQualificationOutcome::Qualified(CssTextAlignLastValue::Center)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("justify") =>
+        {
+            CssTextAlignLastQualificationOutcome::Qualified(CssTextAlignLastValue::Justify)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("match-parent") =>
+        {
+            CssTextAlignLastQualificationOutcome::Qualified(CssTextAlignLastValue::MatchParent)
+        }
+        CssSingleKeywordValue::Identifier(identifier) if is_css_wide_keyword(identifier) => {
+            CssTextAlignLastQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssTextAlignLastUnsupportedReason::CssWideKeyword,
+            )
+        }
+        CssSingleKeywordValue::Identifier(_) => {
+            CssTextAlignLastQualificationOutcome::InvalidForSelectedValueGrammar
         }
     }
 }
