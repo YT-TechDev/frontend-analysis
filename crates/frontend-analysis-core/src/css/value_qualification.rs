@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -1743,6 +1743,51 @@ impl CssTextAlignLastQualificationObservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssMathStyleValue {
+    Normal,
+    Compact,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssMathStyleUnsupportedReason {
+    CssWideKeyword,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssMathStyleQualificationOutcome {
+    Qualified(CssMathStyleValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssMathStyleUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `math-style` qualification.
+///
+/// This profile qualifies only the direct authored `normal | compact`
+/// keyword grammar. Math layout, inherited descendant behavior, MathML
+/// attribute mapping, and computed/used values remain outside this slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssMathStyleQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssMathStyleQualificationOutcome,
+}
+
+impl CssMathStyleQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssMathStyleQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssWordSpacingValue {
     Normal,
     DirectLengthLiteral,
@@ -2121,6 +2166,7 @@ pub(crate) struct CssValueQualificationRunResult {
     text_anchor_observations: Vec<CssTextAnchorQualificationObservation>,
     forced_color_adjust_observations: Vec<CssForcedColorAdjustQualificationObservation>,
     text_align_last_observations: Vec<CssTextAlignLastQualificationObservation>,
+    math_style_observations: Vec<CssMathStyleQualificationObservation>,
     word_spacing_observations: Vec<CssWordSpacingQualificationObservation>,
     text_underline_offset_observations: Vec<CssTextUnderlineOffsetQualificationObservation>,
     scroll_margin_top_observations: Vec<CssScrollMarginTopQualificationObservation>,
@@ -2254,6 +2300,10 @@ impl CssValueQualificationRunResult {
         &self,
     ) -> &[CssTextAlignLastQualificationObservation] {
         &self.text_align_last_observations
+    }
+
+    pub(crate) fn math_style_observations(&self) -> &[CssMathStyleQualificationObservation] {
+        &self.math_style_observations
     }
 
     pub(crate) fn word_spacing_observations(&self) -> &[CssWordSpacingQualificationObservation] {
@@ -2447,6 +2497,7 @@ pub(crate) fn run(
         text_anchor_observations,
         forced_color_adjust_observations,
         text_align_last_observations,
+        math_style_observations,
         word_spacing_observations,
         text_underline_offset_observations,
         scroll_margin_top_observations,
@@ -2493,6 +2544,7 @@ pub(crate) fn run(
         let mut text_anchor_observations = Vec::new();
         let mut forced_color_adjust_observations = Vec::new();
         let mut text_align_last_observations = Vec::new();
+        let mut math_style_observations = Vec::new();
         let mut word_spacing_observations = Vec::new();
         let mut text_underline_offset_observations = Vec::new();
         let mut scroll_margin_top_observations = Vec::new();
@@ -2780,6 +2832,17 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("math-style") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                math_style_observations.push(CssMathStyleQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_math_style_value(value_items),
+                });
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("word-spacing") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -3038,6 +3101,7 @@ pub(crate) fn run(
             text_anchor_observations,
             forced_color_adjust_observations,
             text_align_last_observations,
+            math_style_observations,
             word_spacing_observations,
             text_underline_offset_observations,
             scroll_margin_top_observations,
@@ -3086,6 +3150,7 @@ pub(crate) fn run(
         text_anchor_observations,
         forced_color_adjust_observations,
         text_align_last_observations,
+        math_style_observations,
         word_spacing_observations,
         text_underline_offset_observations,
         scroll_margin_top_observations,
@@ -4709,6 +4774,37 @@ fn qualify_text_align_last_value(items: &[CssLexicalItem]) -> CssTextAlignLastQu
         }
         CssSingleKeywordValue::Identifier(_) => {
             CssTextAlignLastQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+    }
+}
+
+fn qualify_math_style_value(items: &[CssLexicalItem]) -> CssMathStyleQualificationOutcome {
+    match classify_single_keyword_value(items) {
+        CssSingleKeywordValue::UnsupportedFunction => {
+            CssMathStyleQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssMathStyleUnsupportedReason::FunctionValue,
+            )
+        }
+        CssSingleKeywordValue::Invalid => {
+            CssMathStyleQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("normal") =>
+        {
+            CssMathStyleQualificationOutcome::Qualified(CssMathStyleValue::Normal)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("compact") =>
+        {
+            CssMathStyleQualificationOutcome::Qualified(CssMathStyleValue::Compact)
+        }
+        CssSingleKeywordValue::Identifier(identifier) if is_css_wide_keyword(identifier) => {
+            CssMathStyleQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssMathStyleUnsupportedReason::CssWideKeyword,
+            )
+        }
+        CssSingleKeywordValue::Identifier(_) => {
+            CssMathStyleQualificationOutcome::InvalidForSelectedValueGrammar
         }
     }
 }
