@@ -102,7 +102,10 @@ fn expected_outcome(expected: ExpectedOutcome) -> CssTextAlignLastQualificationO
     }
 }
 
-fn assert_expected(result: &CssValueQualificationRunResult, expected: &[ExpectedOutcome]) {
+fn assert_expected(
+    result: &CssValueQualificationRunResult,
+    expected: &[ExpectedOutcome],
+) {
     let actual: Vec<_> = result
         .text_align_last_observations()
         .iter()
@@ -286,9 +289,18 @@ fn direction_layout_state_and_element_kind_are_not_inputs_to_qualification() {
             ExpectedOutcome::End,
         ],
     );
-    assert_eq!(result.text_align_last_observations()[0].occurrence_index(), 0);
-    assert_eq!(result.text_align_last_observations()[1].occurrence_index(), 1);
-    assert_eq!(result.text_align_last_observations()[2].occurrence_index(), 2);
+    assert_eq!(
+        result.text_align_last_observations()[0].occurrence_index(),
+        0
+    );
+    assert_eq!(
+        result.text_align_last_observations()[1].occurrence_index(),
+        1
+    );
+    assert_eq!(
+        result.text_align_last_observations()[2].occurrence_index(),
+        2
+    );
     assert_eq!(
         result.text_align_last_observations()[0].outcome(),
         result.text_align_last_observations()[1].outcome()
@@ -393,20 +405,26 @@ fn one_run_interleaves_text_align_last_with_every_accepted_leaf() {
     assert_eq!(result.text_anchor_observations().len(), 1);
     assert_eq!(result.forced_color_adjust_observations().len(), 1);
     assert_eq!(result.text_align_last_observations().len(), 1);
-    assert_eq!(result.text_align_last_observations()[0].occurrence_index(), 42);
+    assert_eq!(
+        result.text_align_last_observations()[0].occurrence_index(),
+        42
+    );
     assert_expected(&result, &[ExpectedOutcome::MatchParent]);
 }
 
 #[test]
 fn duplicate_declarations_keep_distinct_run_local_placement() {
-    let result = qualify(
-        3027,
-        "a{text-align-last:end;}b{text-align-last:end;}",
-    );
+    let result = qualify(3027, "a{text-align-last:end;}b{text-align-last:end;}");
 
     assert_expected(&result, &[ExpectedOutcome::End, ExpectedOutcome::End]);
-    assert_eq!(result.text_align_last_observations()[0].occurrence_index(), 0);
-    assert_eq!(result.text_align_last_observations()[1].occurrence_index(), 1);
+    assert_eq!(
+        result.text_align_last_observations()[0].occurrence_index(),
+        0
+    );
+    assert_eq!(
+        result.text_align_last_observations()[1].occurrence_index(),
+        1
+    );
     assert_ne!(
         result.text_align_last_observations()[0]
             .placement()
