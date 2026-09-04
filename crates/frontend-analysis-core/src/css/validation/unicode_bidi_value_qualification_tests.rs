@@ -269,7 +269,10 @@ fn direction_is_not_an_input_to_unicode_bidi_qualification() {
         ),
     );
 
-    assert_expected(&result, &[ExpectedOutcome::Isolate, ExpectedOutcome::Isolate]);
+    assert_expected(
+        &result,
+        &[ExpectedOutcome::Isolate, ExpectedOutcome::Isolate],
+    );
     assert_eq!(result.unicode_bidi_observations()[0].occurrence_index(), 1);
     assert_eq!(result.unicode_bidi_observations()[1].occurrence_index(), 3);
     assert_eq!(
@@ -358,10 +361,7 @@ fn one_run_interleaves_unicode_bidi_with_every_accepted_leaf() {
     assert_eq!(result.print_color_adjust_observations().len(), 1);
     assert_eq!(result.overflow_wrap_observations().len(), 1);
     assert_eq!(result.unicode_bidi_observations().len(), 1);
-    assert_eq!(
-        result.unicode_bidi_observations()[0].occurrence_index(),
-        35
-    );
+    assert_eq!(result.unicode_bidi_observations()[0].occurrence_index(), 35);
     assert_expected(&result, &[ExpectedOutcome::Plaintext]);
 }
 
