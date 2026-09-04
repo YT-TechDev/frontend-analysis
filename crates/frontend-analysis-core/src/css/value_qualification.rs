@@ -1068,7 +1068,7 @@ pub(crate) enum CssShapeImageThresholdUnsupportedReason {
     FunctionValue,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy,PartialEq, Eq)]
 pub(crate) enum CssShapeImageThresholdQualificationOutcome {
     Qualified(CssShapeImageThresholdValue),
     InvalidForSelectedValueGrammar,
@@ -4451,9 +4451,7 @@ fn qualify_text_anchor_value(items: &[CssLexicalItem]) -> CssTextAnchorQualifica
         {
             CssTextAnchorQualificationOutcome::Qualified(CssTextAnchorValue::Middle)
         }
-        CssSingleKeywordValue::Identifier(identifier)
-            if identifier.eq_ignore_ascii_case("end") =>
-        {
+        CssSingleKeywordValue::Identifier(identifier) if identifier.eq_ignore_ascii_case("end") => {
             CssTextAnchorQualificationOutcome::Qualified(CssTextAnchorValue::End)
         }
         CssSingleKeywordValue::Identifier(identifier) if is_css_wide_keyword(identifier) => {
