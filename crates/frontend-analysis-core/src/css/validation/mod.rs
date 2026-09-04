@@ -99,6 +99,8 @@ mod parser_resource_tests;
 #[cfg(test)]
 mod perspective_value_qualification_tests;
 #[cfg(test)]
+mod print_color_adjust_value_qualification_tests;
+#[cfg(test)]
 mod resource_tests;
 #[cfg(test)]
 mod scroll_margin_top_value_qualification_tests;
