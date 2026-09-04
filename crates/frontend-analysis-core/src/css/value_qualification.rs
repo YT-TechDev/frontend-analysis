@@ -2022,7 +2022,9 @@ impl CssValueQualificationRunResult {
         &self.color_interpolation_filters_observations
     }
 
-    pub(crate) fn shape_rendering_observations(&self) -> &[CssShapeRenderingQualificationObservation] {
+    pub(crate) fn shape_rendering_observations(
+        &self,
+    ) -> &[CssShapeRenderingQualificationObservation] {
         &self.shape_rendering_observations
     }
 
@@ -4198,7 +4200,9 @@ fn qualify_color_interpolation_filters_value(
     }
 }
 
-fn qualify_shape_rendering_value(items: &[CssLexicalItem]) -> CssShapeRenderingQualificationOutcome {
+fn qualify_shape_rendering_value(
+    items: &[CssLexicalItem],
+) -> CssShapeRenderingQualificationOutcome {
     match classify_single_keyword_value(items) {
         CssSingleKeywordValue::UnsupportedFunction => {
             CssShapeRenderingQualificationOutcome::UnsupportedBySelectedValueProfile(
