@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -1591,6 +1591,55 @@ impl CssTextRenderingQualificationObservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTextAnchorValue {
+    Start,
+    Middle,
+    End,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTextAnchorUnsupportedReason {
+    CssWideKeyword,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTextAnchorQualificationOutcome {
+    Qualified(CssTextAnchorValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssTextAnchorUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `text-anchor` qualification.
+///
+/// This profile qualifies only direct `start | middle | end` authored keyword
+/// evidence. SVG text-content applicability and identity, presentation-attribute
+/// semantics, direction/writing-mode resolution, bidi processing, text-chunk
+/// construction, glyph shaping, anchoring-position calculation, textPath
+/// behavior, layout, painting, and computed/used-value processing remain outside
+/// this slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTextAnchorQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssTextAnchorQualificationOutcome,
+}
+
+impl CssTextAnchorQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssTextAnchorQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssWordSpacingValue {
     Normal,
     DirectLengthLiteral,
@@ -1966,6 +2015,7 @@ pub(crate) struct CssValueQualificationRunResult {
         Vec<CssColorInterpolationFiltersQualificationObservation>,
     shape_rendering_observations: Vec<CssShapeRenderingQualificationObservation>,
     text_rendering_observations: Vec<CssTextRenderingQualificationObservation>,
+    text_anchor_observations: Vec<CssTextAnchorQualificationObservation>,
     word_spacing_observations: Vec<CssWordSpacingQualificationObservation>,
     text_underline_offset_observations: Vec<CssTextUnderlineOffsetQualificationObservation>,
     scroll_margin_top_observations: Vec<CssScrollMarginTopQualificationObservation>,
@@ -2083,6 +2133,10 @@ impl CssValueQualificationRunResult {
         &self,
     ) -> &[CssTextRenderingQualificationObservation] {
         &self.text_rendering_observations
+    }
+
+    pub(crate) fn text_anchor_observations(&self) -> &[CssTextAnchorQualificationObservation] {
+        &self.text_anchor_observations
     }
 
     pub(crate) fn word_spacing_observations(&self) -> &[CssWordSpacingQualificationObservation] {
@@ -2273,6 +2327,7 @@ pub(crate) fn run(
         color_interpolation_filters_observations,
         shape_rendering_observations,
         text_rendering_observations,
+        text_anchor_observations,
         word_spacing_observations,
         text_underline_offset_observations,
         scroll_margin_top_observations,
@@ -2316,6 +2371,7 @@ pub(crate) fn run(
         let mut color_interpolation_filters_observations = Vec::new();
         let mut shape_rendering_observations = Vec::new();
         let mut text_rendering_observations = Vec::new();
+        let mut text_anchor_observations = Vec::new();
         let mut word_spacing_observations = Vec::new();
         let mut text_underline_offset_observations = Vec::new();
         let mut scroll_margin_top_observations = Vec::new();
@@ -2564,6 +2620,17 @@ pub(crate) fn run(
                     occurrence_index,
                     placement: occurrence.placement(),
                     outcome: qualify_text_rendering_value(value_items),
+                });
+                continue;
+            }
+
+            if property_name.eq_ignore_ascii_case("text-anchor") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                text_anchor_observations.push(CssTextAnchorQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_text_anchor_value(value_items),
                 });
                 continue;
             }
@@ -2823,6 +2890,7 @@ pub(crate) fn run(
             color_interpolation_filters_observations,
             shape_rendering_observations,
             text_rendering_observations,
+            text_anchor_observations,
             word_spacing_observations,
             text_underline_offset_observations,
             scroll_margin_top_observations,
@@ -2868,6 +2936,7 @@ pub(crate) fn run(
         color_interpolation_filters_observations,
         shape_rendering_observations,
         text_rendering_observations,
+        text_anchor_observations,
         word_spacing_observations,
         text_underline_offset_observations,
         scroll_margin_top_observations,
@@ -4358,6 +4427,42 @@ fn qualify_text_rendering_value(items: &[CssLexicalItem]) -> CssTextRenderingQua
         }
         CssSingleKeywordValue::Identifier(_) => {
             CssTextRenderingQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+    }
+}
+
+fn qualify_text_anchor_value(items: &[CssLexicalItem]) -> CssTextAnchorQualificationOutcome {
+    match classify_single_keyword_value(items) {
+        CssSingleKeywordValue::UnsupportedFunction => {
+            CssTextAnchorQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssTextAnchorUnsupportedReason::FunctionValue,
+            )
+        }
+        CssSingleKeywordValue::Invalid => {
+            CssTextAnchorQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("start") =>
+        {
+            CssTextAnchorQualificationOutcome::Qualified(CssTextAnchorValue::Start)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("middle") =>
+        {
+            CssTextAnchorQualificationOutcome::Qualified(CssTextAnchorValue::Middle)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("end") =>
+        {
+            CssTextAnchorQualificationOutcome::Qualified(CssTextAnchorValue::End)
+        }
+        CssSingleKeywordValue::Identifier(identifier) if is_css_wide_keyword(identifier) => {
+            CssTextAnchorQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssTextAnchorUnsupportedReason::CssWideKeyword,
+            )
+        }
+        CssSingleKeywordValue::Identifier(_) => {
+            CssTextAnchorQualificationOutcome::InvalidForSelectedValueGrammar
         }
     }
 }
