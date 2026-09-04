@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -1788,6 +1788,51 @@ impl CssMathStyleQualificationObservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssMathShiftValue {
+    Normal,
+    Compact,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssMathShiftUnsupportedReason {
+    CssWideKeyword,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssMathShiftQualificationOutcome {
+    Qualified(CssMathShiftValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssMathShiftUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `math-shift` qualification.
+///
+/// This profile qualifies only the direct authored `normal | compact`
+/// keyword grammar. Script placement, cramped layout, MathML user-agent
+/// stylesheet behavior, and computed/used values remain outside this slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssMathShiftQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssMathShiftQualificationOutcome,
+}
+
+impl CssMathShiftQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssMathShiftQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssWordSpacingValue {
     Normal,
     DirectLengthLiteral,
@@ -2167,6 +2212,7 @@ pub(crate) struct CssValueQualificationRunResult {
     forced_color_adjust_observations: Vec<CssForcedColorAdjustQualificationObservation>,
     text_align_last_observations: Vec<CssTextAlignLastQualificationObservation>,
     math_style_observations: Vec<CssMathStyleQualificationObservation>,
+    math_shift_observations: Vec<CssMathShiftQualificationObservation>,
     word_spacing_observations: Vec<CssWordSpacingQualificationObservation>,
     text_underline_offset_observations: Vec<CssTextUnderlineOffsetQualificationObservation>,
     scroll_margin_top_observations: Vec<CssScrollMarginTopQualificationObservation>,
@@ -2304,6 +2350,10 @@ impl CssValueQualificationRunResult {
 
     pub(crate) fn math_style_observations(&self) -> &[CssMathStyleQualificationObservation] {
         &self.math_style_observations
+    }
+
+    pub(crate) fn math_shift_observations(&self) -> &[CssMathShiftQualificationObservation] {
+        &self.math_shift_observations
     }
 
     pub(crate) fn word_spacing_observations(&self) -> &[CssWordSpacingQualificationObservation] {
@@ -2498,6 +2548,7 @@ pub(crate) fn run(
         forced_color_adjust_observations,
         text_align_last_observations,
         math_style_observations,
+        math_shift_observations,
         word_spacing_observations,
         text_underline_offset_observations,
         scroll_margin_top_observations,
@@ -2545,6 +2596,7 @@ pub(crate) fn run(
         let mut forced_color_adjust_observations = Vec::new();
         let mut text_align_last_observations = Vec::new();
         let mut math_style_observations = Vec::new();
+        let mut math_shift_observations = Vec::new();
         let mut word_spacing_observations = Vec::new();
         let mut text_underline_offset_observations = Vec::new();
         let mut scroll_margin_top_observations = Vec::new();
@@ -2843,6 +2895,17 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("math-shift") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                math_shift_observations.push(CssMathShiftQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_math_shift_value(value_items),
+                });
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("word-spacing") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -3102,6 +3165,7 @@ pub(crate) fn run(
             forced_color_adjust_observations,
             text_align_last_observations,
             math_style_observations,
+            math_shift_observations,
             word_spacing_observations,
             text_underline_offset_observations,
             scroll_margin_top_observations,
@@ -3151,6 +3215,7 @@ pub(crate) fn run(
         forced_color_adjust_observations,
         text_align_last_observations,
         math_style_observations,
+        math_shift_observations,
         word_spacing_observations,
         text_underline_offset_observations,
         scroll_margin_top_observations,
@@ -4805,6 +4870,37 @@ fn qualify_math_style_value(items: &[CssLexicalItem]) -> CssMathStyleQualificati
         }
         CssSingleKeywordValue::Identifier(_) => {
             CssMathStyleQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+    }
+}
+
+fn qualify_math_shift_value(items: &[CssLexicalItem]) -> CssMathShiftQualificationOutcome {
+    match classify_single_keyword_value(items) {
+        CssSingleKeywordValue::UnsupportedFunction => {
+            CssMathShiftQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssMathShiftUnsupportedReason::FunctionValue,
+            )
+        }
+        CssSingleKeywordValue::Invalid => {
+            CssMathShiftQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("normal") =>
+        {
+            CssMathShiftQualificationOutcome::Qualified(CssMathShiftValue::Normal)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("compact") =>
+        {
+            CssMathShiftQualificationOutcome::Qualified(CssMathShiftValue::Compact)
+        }
+        CssSingleKeywordValue::Identifier(identifier) if is_css_wide_keyword(identifier) => {
+            CssMathShiftQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssMathShiftUnsupportedReason::CssWideKeyword,
+            )
+        }
+        CssSingleKeywordValue::Identifier(_) => {
+            CssMathShiftQualificationOutcome::InvalidForSelectedValueGrammar
         }
     }
 }
