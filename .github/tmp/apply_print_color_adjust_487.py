@@ -118,7 +118,7 @@ new_dispatch = """            if property_name.eq_ignore_ascii_case("print-color
 """
 replace_exact(dispatch_anchor, new_dispatch + dispatch_anchor)
 
-classifier_anchor = """fn qualify_word_spacing_value(
+classifier_anchor = """fn qualify_word_spacing_value(items: &[CssLexicalItem]) -> CssWordSpacingQualificationOutcome {
 """
 new_classifier = """fn qualify_print_color_adjust_value(
     items: &[CssLexicalItem],
