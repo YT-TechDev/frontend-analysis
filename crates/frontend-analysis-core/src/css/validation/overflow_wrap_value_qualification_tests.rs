@@ -334,23 +334,30 @@ fn one_run_interleaves_overflow_wrap_with_every_accepted_leaf() {
     assert_eq!(result.line_break_observations().len(), 1);
     assert_eq!(result.print_color_adjust_observations().len(), 1);
     assert_eq!(result.overflow_wrap_observations().len(), 1);
-    assert_eq!(result.overflow_wrap_observations()[0].occurrence_index(), 34);
+    assert_eq!(
+        result.overflow_wrap_observations()[0].occurrence_index(),
+        34
+    );
     assert_expected(&result, &[ExpectedOutcome::Anywhere]);
 }
 
 #[test]
 fn duplicate_declarations_keep_distinct_run_local_placement() {
-    let result = qualify(
-        2707,
-        "a{overflow-wrap:anywhere;}b{overflow-wrap:anywhere;}",
-    );
+    let result = qualify(2707, "a{overflow-wrap:anywhere;}b{overflow-wrap:anywhere;}");
 
-    assert_expected(&result, &[ExpectedOutcome::Anywhere, ExpectedOutcome::Anywhere]);
+    assert_expected(
+        &result,
+        &[ExpectedOutcome::Anywhere, ExpectedOutcome::Anywhere],
+    );
     assert_eq!(result.overflow_wrap_observations()[0].occurrence_index(), 0);
     assert_eq!(result.overflow_wrap_observations()[1].occurrence_index(), 1);
     assert_ne!(
-        result.overflow_wrap_observations()[0].placement().context_id(),
-        result.overflow_wrap_observations()[1].placement().context_id(),
+        result.overflow_wrap_observations()[0]
+            .placement()
+            .context_id(),
+        result.overflow_wrap_observations()[1]
+            .placement()
+            .context_id(),
     );
 }
 
