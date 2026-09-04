@@ -21,7 +21,7 @@ jobs:
           git clone "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" repo
           cd repo
           git checkout feat/css-print-color-adjust-487
-          if [ "$(git log -1 --pretty=%s)" != "chore: rerun temporary print-color-adjust patch runner" ]; then
+          if [ "$(git log -1 --pretty=%s)" != "chore: rerun exact temporary print-color-adjust patch runner" ]; then
             exit 0
           fi
 
