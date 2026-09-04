@@ -1540,7 +1540,7 @@ impl CssShapeRenderingQualificationObservation {
     }
 }
 
-#[derive(Debug, Clone, Copy,PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssTextRenderingValue {
     Auto,
     OptimizeSpeed,
@@ -4654,9 +4654,7 @@ fn qualify_forced_color_adjust_value(
     }
 }
 
-fn qualify_text_align_last_value(
-    items: &[CssLexicalItem],
-) -> CssTextAlignLastQualificationOutcome {
+fn qualify_text_align_last_value(items: &[CssLexicalItem]) -> CssTextAlignLastQualificationOutcome {
     match classify_single_keyword_value(items) {
         CssSingleKeywordValue::UnsupportedFunction => {
             CssTextAlignLastQualificationOutcome::UnsupportedBySelectedValueProfile(
