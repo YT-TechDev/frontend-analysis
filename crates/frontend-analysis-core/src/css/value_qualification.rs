@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -1640,6 +1640,55 @@ impl CssTextAnchorQualificationObservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssForcedColorAdjustValue {
+    Auto,
+    None,
+    PreserveParentColor,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssForcedColorAdjustUnsupportedReason {
+    CssWideKeyword,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssForcedColorAdjustQualificationOutcome {
+    Qualified(CssForcedColorAdjustValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssForcedColorAdjustUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `forced-color-adjust`
+/// qualification.
+///
+/// This profile qualifies only direct `auto | none | preserve-parent-color`
+/// authored keyword evidence. Forced-colors mode execution, OS accessibility
+/// state, color replacement/system-color resolution, parent-color lookup,
+/// inheritance/propagation execution, rendering, and computed/used-value
+/// processing remain outside this slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssForcedColorAdjustQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssForcedColorAdjustQualificationOutcome,
+}
+
+impl CssForcedColorAdjustQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssForcedColorAdjustQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssWordSpacingValue {
     Normal,
     DirectLengthLiteral,
@@ -2016,6 +2065,7 @@ pub(crate) struct CssValueQualificationRunResult {
     shape_rendering_observations: Vec<CssShapeRenderingQualificationObservation>,
     text_rendering_observations: Vec<CssTextRenderingQualificationObservation>,
     text_anchor_observations: Vec<CssTextAnchorQualificationObservation>,
+    forced_color_adjust_observations: Vec<CssForcedColorAdjustQualificationObservation>,
     word_spacing_observations: Vec<CssWordSpacingQualificationObservation>,
     text_underline_offset_observations: Vec<CssTextUnderlineOffsetQualificationObservation>,
     scroll_margin_top_observations: Vec<CssScrollMarginTopQualificationObservation>,
@@ -2137,6 +2187,12 @@ impl CssValueQualificationRunResult {
 
     pub(crate) fn text_anchor_observations(&self) -> &[CssTextAnchorQualificationObservation] {
         &self.text_anchor_observations
+    }
+
+    pub(crate) fn forced_color_adjust_observations(
+        &self,
+    ) -> &[CssForcedColorAdjustQualificationObservation] {
+        &self.forced_color_adjust_observations
     }
 
     pub(crate) fn word_spacing_observations(&self) -> &[CssWordSpacingQualificationObservation] {
@@ -2328,6 +2384,7 @@ pub(crate) fn run(
         shape_rendering_observations,
         text_rendering_observations,
         text_anchor_observations,
+        forced_color_adjust_observations,
         word_spacing_observations,
         text_underline_offset_observations,
         scroll_margin_top_observations,
@@ -2372,6 +2429,7 @@ pub(crate) fn run(
         let mut shape_rendering_observations = Vec::new();
         let mut text_rendering_observations = Vec::new();
         let mut text_anchor_observations = Vec::new();
+        let mut forced_color_adjust_observations = Vec::new();
         let mut word_spacing_observations = Vec::new();
         let mut text_underline_offset_observations = Vec::new();
         let mut scroll_margin_top_observations = Vec::new();
@@ -2635,6 +2693,19 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("forced-color-adjust") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                forced_color_adjust_observations.push(
+                    CssForcedColorAdjustQualificationObservation {
+                        occurrence_index,
+                        placement: occurrence.placement(),
+                        outcome: qualify_forced_color_adjust_value(value_items),
+                    },
+                );
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("word-spacing") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -2891,6 +2962,7 @@ pub(crate) fn run(
             shape_rendering_observations,
             text_rendering_observations,
             text_anchor_observations,
+            forced_color_adjust_observations,
             word_spacing_observations,
             text_underline_offset_observations,
             scroll_margin_top_observations,
@@ -2937,6 +3009,7 @@ pub(crate) fn run(
         shape_rendering_observations,
         text_rendering_observations,
         text_anchor_observations,
+        forced_color_adjust_observations,
         word_spacing_observations,
         text_underline_offset_observations,
         scroll_margin_top_observations,
@@ -4461,6 +4534,46 @@ fn qualify_text_anchor_value(items: &[CssLexicalItem]) -> CssTextAnchorQualifica
         }
         CssSingleKeywordValue::Identifier(_) => {
             CssTextAnchorQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+    }
+}
+
+fn qualify_forced_color_adjust_value(
+    items: &[CssLexicalItem],
+) -> CssForcedColorAdjustQualificationOutcome {
+    match classify_single_keyword_value(items) {
+        CssSingleKeywordValue::UnsupportedFunction => {
+            CssForcedColorAdjustQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssForcedColorAdjustUnsupportedReason::FunctionValue,
+            )
+        }
+        CssSingleKeywordValue::Invalid => {
+            CssForcedColorAdjustQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("auto") =>
+        {
+            CssForcedColorAdjustQualificationOutcome::Qualified(CssForcedColorAdjustValue::Auto)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("none") =>
+        {
+            CssForcedColorAdjustQualificationOutcome::Qualified(CssForcedColorAdjustValue::None)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("preserve-parent-color") =>
+        {
+            CssForcedColorAdjustQualificationOutcome::Qualified(
+                CssForcedColorAdjustValue::PreserveParentColor,
+            )
+        }
+        CssSingleKeywordValue::Identifier(identifier) if is_css_wide_keyword(identifier) => {
+            CssForcedColorAdjustQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssForcedColorAdjustUnsupportedReason::CssWideKeyword,
+            )
+        }
+        CssSingleKeywordValue::Identifier(_) => {
+            CssForcedColorAdjustQualificationOutcome::InvalidForSelectedValueGrammar
         }
     }
 }

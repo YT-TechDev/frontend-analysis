@@ -71,6 +71,8 @@ mod font_variant_emoji_value_qualification_tests;
 #[cfg(test)]
 mod font_variant_position_value_qualification_tests;
 #[cfg(test)]
+mod forced_color_adjust_value_qualification_tests;
+#[cfg(test)]
 mod group_context_contract_tests;
 #[cfg(test)]
 mod group_lifecycle_validation_tests;
