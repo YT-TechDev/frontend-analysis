@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -1250,6 +1250,53 @@ impl CssLineBreakQualificationObservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssPrintColorAdjustValue {
+    Economy,
+    Exact,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssPrintColorAdjustUnsupportedReason {
+    CssWideKeyword,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssPrintColorAdjustQualificationOutcome {
+    Qualified(CssPrintColorAdjustValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssPrintColorAdjustUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `print-color-adjust`
+/// qualification.
+///
+/// This profile qualifies only direct `economy | exact` authored keyword
+/// evidence. Printer/device behavior, ink-economy execution, actual color
+/// rewriting, user preferences, viewport propagation, and printing/rendering
+/// behavior remain outside this slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssPrintColorAdjustQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssPrintColorAdjustQualificationOutcome,
+}
+
+impl CssPrintColorAdjustQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssPrintColorAdjustQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssWordSpacingValue {
     Normal,
     DirectLengthLiteral,
@@ -1617,6 +1664,7 @@ pub(crate) struct CssValueQualificationRunResult {
     shape_margin_observations: Vec<CssShapeMarginQualificationObservation>,
     line_height_observations: Vec<CssLineHeightQualificationObservation>,
     line_break_observations: Vec<CssLineBreakQualificationObservation>,
+    print_color_adjust_observations: Vec<CssPrintColorAdjustQualificationObservation>,
     word_spacing_observations: Vec<CssWordSpacingQualificationObservation>,
     text_underline_offset_observations: Vec<CssTextUnderlineOffsetQualificationObservation>,
     scroll_margin_top_observations: Vec<CssScrollMarginTopQualificationObservation>,
@@ -1698,6 +1746,12 @@ impl CssValueQualificationRunResult {
 
     pub(crate) fn line_break_observations(&self) -> &[CssLineBreakQualificationObservation] {
         &self.line_break_observations
+    }
+
+    pub(crate) fn print_color_adjust_observations(
+        &self,
+    ) -> &[CssPrintColorAdjustQualificationObservation] {
+        &self.print_color_adjust_observations
     }
 
     pub(crate) fn word_spacing_observations(&self) -> &[CssWordSpacingQualificationObservation] {
@@ -1881,6 +1935,7 @@ pub(crate) fn run(
         shape_margin_observations,
         line_height_observations,
         line_break_observations,
+        print_color_adjust_observations,
         word_spacing_observations,
         text_underline_offset_observations,
         scroll_margin_top_observations,
@@ -1917,6 +1972,7 @@ pub(crate) fn run(
         let mut shape_margin_observations = Vec::new();
         let mut line_height_observations = Vec::new();
         let mut line_break_observations = Vec::new();
+        let mut print_color_adjust_observations = Vec::new();
         let mut word_spacing_observations = Vec::new();
         let mut text_underline_offset_observations = Vec::new();
         let mut scroll_margin_top_observations = Vec::new();
@@ -2086,6 +2142,17 @@ pub(crate) fn run(
                     occurrence_index,
                     placement: occurrence.placement(),
                     outcome: qualify_line_break_value(value_items),
+                });
+                continue;
+            }
+
+            if property_name.eq_ignore_ascii_case("print-color-adjust") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                print_color_adjust_observations.push(CssPrintColorAdjustQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_print_color_adjust_value(value_items),
                 });
                 continue;
             }
@@ -2338,6 +2405,7 @@ pub(crate) fn run(
             shape_margin_observations,
             line_height_observations,
             line_break_observations,
+            print_color_adjust_observations,
             word_spacing_observations,
             text_underline_offset_observations,
             scroll_margin_top_observations,
@@ -2376,6 +2444,7 @@ pub(crate) fn run(
         shape_margin_observations,
         line_height_observations,
         line_break_observations,
+        print_color_adjust_observations,
         word_spacing_observations,
         text_underline_offset_observations,
         scroll_margin_top_observations,
@@ -3581,6 +3650,39 @@ fn qualify_line_break_value(items: &[CssLexicalItem]) -> CssLineBreakQualificati
         }
         CssSingleKeywordValue::Identifier(_) => {
             CssLineBreakQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+    }
+}
+
+fn qualify_print_color_adjust_value(
+    items: &[CssLexicalItem],
+) -> CssPrintColorAdjustQualificationOutcome {
+    match classify_single_keyword_value(items) {
+        CssSingleKeywordValue::UnsupportedFunction => {
+            CssPrintColorAdjustQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssPrintColorAdjustUnsupportedReason::FunctionValue,
+            )
+        }
+        CssSingleKeywordValue::Invalid => {
+            CssPrintColorAdjustQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("economy") =>
+        {
+            CssPrintColorAdjustQualificationOutcome::Qualified(CssPrintColorAdjustValue::Economy)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("exact") =>
+        {
+            CssPrintColorAdjustQualificationOutcome::Qualified(CssPrintColorAdjustValue::Exact)
+        }
+        CssSingleKeywordValue::Identifier(identifier) if is_css_wide_keyword(identifier) => {
+            CssPrintColorAdjustQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssPrintColorAdjustUnsupportedReason::CssWideKeyword,
+            )
+        }
+        CssSingleKeywordValue::Identifier(_) => {
+            CssPrintColorAdjustQualificationOutcome::InvalidForSelectedValueGrammar
         }
     }
 }

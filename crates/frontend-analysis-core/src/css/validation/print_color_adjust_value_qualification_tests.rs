@@ -56,9 +56,9 @@ fn qualify_with_limits(
 
 fn expected_outcome(expected: ExpectedOutcome) -> CssPrintColorAdjustQualificationOutcome {
     match expected {
-        ExpectedOutcome::Economy => CssPrintColorAdjustQualificationOutcome::Qualified(
-            CssPrintColorAdjustValue::Economy,
-        ),
+        ExpectedOutcome::Economy => {
+            CssPrintColorAdjustQualificationOutcome::Qualified(CssPrintColorAdjustValue::Economy)
+        }
         ExpectedOutcome::Exact => {
             CssPrintColorAdjustQualificationOutcome::Qualified(CssPrintColorAdjustValue::Exact)
         }
@@ -305,7 +305,10 @@ fn one_run_interleaves_print_color_adjust_with_every_accepted_leaf() {
     assert_eq!(result.font_variant_caps_observations().len(), 1);
     assert_eq!(result.line_break_observations().len(), 1);
     assert_eq!(result.print_color_adjust_observations().len(), 1);
-    assert_eq!(result.print_color_adjust_observations()[0].occurrence_index(), 33);
+    assert_eq!(
+        result.print_color_adjust_observations()[0].occurrence_index(),
+        33
+    );
     assert_expected(&result, &[ExpectedOutcome::Exact]);
 }
 
@@ -317,8 +320,14 @@ fn duplicate_declarations_keep_distinct_run_local_placement() {
     );
 
     assert_expected(&result, &[ExpectedOutcome::Exact, ExpectedOutcome::Exact]);
-    assert_eq!(result.print_color_adjust_observations()[0].occurrence_index(), 0);
-    assert_eq!(result.print_color_adjust_observations()[1].occurrence_index(), 1);
+    assert_eq!(
+        result.print_color_adjust_observations()[0].occurrence_index(),
+        0
+    );
+    assert_eq!(
+        result.print_color_adjust_observations()[1].occurrence_index(),
+        1
+    );
     assert_ne!(
         result.print_color_adjust_observations()[0]
             .placement()
