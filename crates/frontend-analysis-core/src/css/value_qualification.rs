@@ -1068,7 +1068,7 @@ pub(crate) enum CssShapeImageThresholdUnsupportedReason {
     FunctionValue,
 }
 
-#[derive(Debug, Clone, Copy,PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssShapeImageThresholdQualificationOutcome {
     Qualified(CssShapeImageThresholdValue),
     InvalidForSelectedValueGrammar,
