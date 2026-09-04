@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -1396,6 +1396,52 @@ impl CssUnicodeBidiQualificationObservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssMaskTypeValue {
+    Luminance,
+    Alpha,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssMaskTypeUnsupportedReason {
+    CssWideKeyword,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssMaskTypeQualificationOutcome {
+    Qualified(CssMaskTypeValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssMaskTypeUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `mask-type` qualification.
+///
+/// This profile qualifies only direct `luminance | alpha` authored keyword
+/// evidence. SVG `<mask>` applicability, element identity, mask rendering and
+/// compositing, luminance calculation, alpha extraction, `mask-mode`
+/// interaction, and computed/used-value processing remain outside this slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssMaskTypeQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssMaskTypeQualificationOutcome,
+}
+
+impl CssMaskTypeQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssMaskTypeQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssWordSpacingValue {
     Normal,
     DirectLengthLiteral,
@@ -1766,6 +1812,7 @@ pub(crate) struct CssValueQualificationRunResult {
     print_color_adjust_observations: Vec<CssPrintColorAdjustQualificationObservation>,
     overflow_wrap_observations: Vec<CssOverflowWrapQualificationObservation>,
     unicode_bidi_observations: Vec<CssUnicodeBidiQualificationObservation>,
+    mask_type_observations: Vec<CssMaskTypeQualificationObservation>,
     word_spacing_observations: Vec<CssWordSpacingQualificationObservation>,
     text_underline_offset_observations: Vec<CssTextUnderlineOffsetQualificationObservation>,
     scroll_margin_top_observations: Vec<CssScrollMarginTopQualificationObservation>,
@@ -1861,6 +1908,10 @@ impl CssValueQualificationRunResult {
 
     pub(crate) fn unicode_bidi_observations(&self) -> &[CssUnicodeBidiQualificationObservation] {
         &self.unicode_bidi_observations
+    }
+
+    pub(crate) fn mask_type_observations(&self) -> &[CssMaskTypeQualificationObservation] {
+        &self.mask_type_observations
     }
 
     pub(crate) fn word_spacing_observations(&self) -> &[CssWordSpacingQualificationObservation] {
@@ -2047,6 +2098,7 @@ pub(crate) fn run(
         print_color_adjust_observations,
         overflow_wrap_observations,
         unicode_bidi_observations,
+        mask_type_observations,
         word_spacing_observations,
         text_underline_offset_observations,
         scroll_margin_top_observations,
@@ -2086,6 +2138,7 @@ pub(crate) fn run(
         let mut print_color_adjust_observations = Vec::new();
         let mut overflow_wrap_observations = Vec::new();
         let mut unicode_bidi_observations = Vec::new();
+        let mut mask_type_observations = Vec::new();
         let mut word_spacing_observations = Vec::new();
         let mut text_underline_offset_observations = Vec::new();
         let mut scroll_margin_top_observations = Vec::new();
@@ -2288,6 +2341,17 @@ pub(crate) fn run(
                     occurrence_index,
                     placement: occurrence.placement(),
                     outcome: qualify_unicode_bidi_value(value_items),
+                });
+                continue;
+            }
+
+            if property_name.eq_ignore_ascii_case("mask-type") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                mask_type_observations.push(CssMaskTypeQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_mask_type_value(value_items),
                 });
                 continue;
             }
@@ -2543,6 +2607,7 @@ pub(crate) fn run(
             print_color_adjust_observations,
             overflow_wrap_observations,
             unicode_bidi_observations,
+            mask_type_observations,
             word_spacing_observations,
             text_underline_offset_observations,
             scroll_margin_top_observations,
@@ -2584,6 +2649,7 @@ pub(crate) fn run(
         print_color_adjust_observations,
         overflow_wrap_observations,
         unicode_bidi_observations,
+        mask_type_observations,
         word_spacing_observations,
         text_underline_offset_observations,
         scroll_margin_top_observations,
@@ -3909,6 +3975,37 @@ fn qualify_unicode_bidi_value(items: &[CssLexicalItem]) -> CssUnicodeBidiQualifi
         }
         CssSingleKeywordValue::Identifier(_) => {
             CssUnicodeBidiQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+    }
+}
+
+fn qualify_mask_type_value(items: &[CssLexicalItem]) -> CssMaskTypeQualificationOutcome {
+    match classify_single_keyword_value(items) {
+        CssSingleKeywordValue::UnsupportedFunction => {
+            CssMaskTypeQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssMaskTypeUnsupportedReason::FunctionValue,
+            )
+        }
+        CssSingleKeywordValue::Invalid => {
+            CssMaskTypeQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("luminance") =>
+        {
+            CssMaskTypeQualificationOutcome::Qualified(CssMaskTypeValue::Luminance)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("alpha") =>
+        {
+            CssMaskTypeQualificationOutcome::Qualified(CssMaskTypeValue::Alpha)
+        }
+        CssSingleKeywordValue::Identifier(identifier) if is_css_wide_keyword(identifier) => {
+            CssMaskTypeQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssMaskTypeUnsupportedReason::CssWideKeyword,
+            )
+        }
+        CssSingleKeywordValue::Identifier(_) => {
+            CssMaskTypeQualificationOutcome::InvalidForSelectedValueGrammar
         }
     }
 }
