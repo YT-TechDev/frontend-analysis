@@ -123,6 +123,8 @@ mod shape_image_threshold_value_qualification_tests;
 #[cfg(test)]
 mod shape_margin_value_qualification_tests;
 #[cfg(test)]
+mod shape_rendering_value_qualification_tests;
+#[cfg(test)]
 mod table_layout_value_qualification_tests;
 #[cfg(test)]
 mod tests;
