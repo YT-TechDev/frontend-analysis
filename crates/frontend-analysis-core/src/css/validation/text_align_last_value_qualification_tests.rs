@@ -102,10 +102,7 @@ fn expected_outcome(expected: ExpectedOutcome) -> CssTextAlignLastQualificationO
     }
 }
 
-fn assert_expected(
-    result: &CssValueQualificationRunResult,
-    expected: &[ExpectedOutcome],
-) {
+fn assert_expected(result: &CssValueQualificationRunResult, expected: &[ExpectedOutcome]) {
     let actual: Vec<_> = result
         .text_align_last_observations()
         .iter()
