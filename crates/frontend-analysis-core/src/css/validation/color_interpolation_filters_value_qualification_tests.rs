@@ -56,9 +56,7 @@ fn qualify_with_limits(
     run(parser_result).unwrap()
 }
 
-fn expected_outcome(
-    expected: ExpectedOutcome,
-) -> CssColorInterpolationFiltersQualificationOutcome {
+fn expected_outcome(expected: ExpectedOutcome) -> CssColorInterpolationFiltersQualificationOutcome {
     match expected {
         ExpectedOutcome::Auto => CssColorInterpolationFiltersQualificationOutcome::Qualified(
             CssColorInterpolationFiltersValue::Auto,
@@ -406,7 +404,10 @@ fn nonordinary_declaration_shaped_contexts_are_excluded() {
         (2830, "@font-face{color-interpolation-filters:sRGB;}"),
         (2831, "@page{color-interpolation-filters:sRGB;}"),
         (2832, "@page{@top-left{color-interpolation-filters:sRGB;}}"),
-        (2833, "@keyframes k{from{color-interpolation-filters:sRGB;}}"),
+        (
+            2833,
+            "@keyframes k{from{color-interpolation-filters:sRGB;}}",
+        ),
     ] {
         let result = qualify(source_id, css);
         assert!(
