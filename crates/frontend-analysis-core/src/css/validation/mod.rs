@@ -131,6 +131,8 @@ mod table_layout_value_qualification_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod text_align_last_value_qualification_tests;
+#[cfg(test)]
 mod text_anchor_value_qualification_tests;
 #[cfg(test)]
 mod text_decoration_style_value_qualification_tests;
