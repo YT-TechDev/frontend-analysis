@@ -62,9 +62,7 @@ fn expected_outcome(expected: ExpectedOutcome) -> CssMaskTypeQualificationOutcom
         ExpectedOutcome::Alpha => {
             CssMaskTypeQualificationOutcome::Qualified(CssMaskTypeValue::Alpha)
         }
-        ExpectedOutcome::Invalid => {
-            CssMaskTypeQualificationOutcome::InvalidForSelectedValueGrammar
-        }
+        ExpectedOutcome::Invalid => CssMaskTypeQualificationOutcome::InvalidForSelectedValueGrammar,
         ExpectedOutcome::UnsupportedCssWide => {
             CssMaskTypeQualificationOutcome::UnsupportedBySelectedValueProfile(
                 CssMaskTypeUnsupportedReason::CssWideKeyword,
