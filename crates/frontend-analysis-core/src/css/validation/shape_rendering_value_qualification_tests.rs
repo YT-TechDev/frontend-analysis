@@ -264,9 +264,18 @@ fn svg_shape_applicability_is_not_an_input_to_qualification() {
             ExpectedOutcome::CrispEdges,
         ],
     );
-    assert_eq!(result.shape_rendering_observations()[0].occurrence_index(), 0);
-    assert_eq!(result.shape_rendering_observations()[1].occurrence_index(), 1);
-    assert_eq!(result.shape_rendering_observations()[2].occurrence_index(), 2);
+    assert_eq!(
+        result.shape_rendering_observations()[0].occurrence_index(),
+        0
+    );
+    assert_eq!(
+        result.shape_rendering_observations()[1].occurrence_index(),
+        1
+    );
+    assert_eq!(
+        result.shape_rendering_observations()[2].occurrence_index(),
+        2
+    );
     assert_eq!(
         result.shape_rendering_observations()[0].outcome(),
         result.shape_rendering_observations()[1].outcome()
@@ -363,7 +372,10 @@ fn one_run_interleaves_shape_rendering_with_every_accepted_leaf() {
     assert_eq!(result.mask_type_observations().len(), 1);
     assert_eq!(result.color_interpolation_filters_observations().len(), 1);
     assert_eq!(result.shape_rendering_observations().len(), 1);
-    assert_eq!(result.shape_rendering_observations()[0].occurrence_index(), 38);
+    assert_eq!(
+        result.shape_rendering_observations()[0].occurrence_index(),
+        38
+    );
     assert_expected(&result, &[ExpectedOutcome::GeometricPrecision]);
 }
 
@@ -378,8 +390,14 @@ fn duplicate_declarations_keep_distinct_run_local_placement() {
         &result,
         &[ExpectedOutcome::CrispEdges, ExpectedOutcome::CrispEdges],
     );
-    assert_eq!(result.shape_rendering_observations()[0].occurrence_index(), 0);
-    assert_eq!(result.shape_rendering_observations()[1].occurrence_index(), 1);
+    assert_eq!(
+        result.shape_rendering_observations()[0].occurrence_index(),
+        0
+    );
+    assert_eq!(
+        result.shape_rendering_observations()[1].occurrence_index(),
+        1
+    );
     assert_ne!(
         result.shape_rendering_observations()[0]
             .placement()
