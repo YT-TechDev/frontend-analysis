@@ -57,12 +57,12 @@ fn qualify_with_limits(
 
 fn expected_outcome(expected: ExpectedOutcome) -> CssForcedColorAdjustQualificationOutcome {
     match expected {
-        ExpectedOutcome::Auto => CssForcedColorAdjustQualificationOutcome::Qualified(
-            CssForcedColorAdjustValue::Auto,
-        ),
-        ExpectedOutcome::None => CssForcedColorAdjustQualificationOutcome::Qualified(
-            CssForcedColorAdjustValue::None,
-        ),
+        ExpectedOutcome::Auto => {
+            CssForcedColorAdjustQualificationOutcome::Qualified(CssForcedColorAdjustValue::Auto)
+        }
+        ExpectedOutcome::None => {
+            CssForcedColorAdjustQualificationOutcome::Qualified(CssForcedColorAdjustValue::None)
+        }
         ExpectedOutcome::PreserveParentColor => {
             CssForcedColorAdjustQualificationOutcome::Qualified(
                 CssForcedColorAdjustValue::PreserveParentColor,
