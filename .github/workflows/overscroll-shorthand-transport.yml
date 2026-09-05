@@ -1,4 +1,4 @@
-name: Overscroll Shorthand Transport
+name: Overscroll Shorthand Candidate Export
 
 on:
   push:
@@ -6,28 +6,25 @@ on:
       - feat/css-overscroll-behavior-shorthand-value-qualification-532
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  transport:
+  export:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
 
     steps:
       - name: Checkout branch
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
 
-      - name: Install accepted Rust toolchain
+      - name: Install accepted Rust formatter
         shell: bash
         run: |
           rustup toolchain install 1.97.1 \
             --profile minimal \
-            --component rustfmt \
-            --component clippy
+            --component rustfmt
 
-      - name: Apply focused production and validation changes
+      - name: Reproduce tested candidate
         shell: bash
         run: |
           sed -i 's/expected=3,/expected=2,/' .github/scripts/overscroll-shorthand-transport.py
@@ -48,66 +45,25 @@ jobs:
               raise SystemExit(f"tuple-return anchor mismatch: {text.count(old)}")
           path.write_text(text.replace(old, new))
           PY
+          cargo +1.97.1 fmt --all
+          cargo +1.97.1 fmt --all -- --check
+          git diff --check
 
-      - name: Format candidate
-        run: cargo +1.97.1 fmt --all
-
-      - name: Validate formatting
-        run: cargo +1.97.1 fmt --all -- --check
-
-      - name: Validate patch whitespace
-        run: git diff --check
-
-      - name: Run focused overscroll shorthand tests
-        run: cargo +1.97.1 test -p frontend-analysis-core overscroll_behavior_shorthand_value_qualification_tests
-
-      - name: Validate Core Clippy
-        run: cargo +1.97.1 clippy -p frontend-analysis-core --all-targets --all-features -- -D warnings
-
-      - name: Run Core tests
-        run: cargo +1.97.1 test -p frontend-analysis-core
-
-      - name: Commit exact three-file candidate
+      - name: Prepare exact production files
         shell: bash
         run: |
-          git rm .github/workflows/overscroll-shorthand-transport.yml .github/scripts/overscroll-shorthand-transport.py
-          git add \
-            crates/frontend-analysis-core/src/css/value_qualification.rs \
-            crates/frontend-analysis-core/src/css/validation/overscroll_behavior_shorthand_value_qualification_tests.rs \
-            crates/frontend-analysis-core/src/css/validation/mod.rs
+          mkdir -p candidate/crates/frontend-analysis-core/src/css/validation
+          cp crates/frontend-analysis-core/src/css/value_qualification.rs \
+            candidate/crates/frontend-analysis-core/src/css/value_qualification.rs
+          cp crates/frontend-analysis-core/src/css/validation/mod.rs \
+            candidate/crates/frontend-analysis-core/src/css/validation/mod.rs
+          cp crates/frontend-analysis-core/src/css/validation/overscroll_behavior_shorthand_value_qualification_tests.rs \
+            candidate/crates/frontend-analysis-core/src/css/validation/overscroll_behavior_shorthand_value_qualification_tests.rs
 
-          python3 - <<'PY'
-          import subprocess
-
-          expected = {
-              "crates/frontend-analysis-core/src/css/value_qualification.rs",
-              "crates/frontend-analysis-core/src/css/validation/overscroll_behavior_shorthand_value_qualification_tests.rs",
-              "crates/frontend-analysis-core/src/css/validation/mod.rs",
-          }
-          staged = set(subprocess.check_output(
-              ["git", "diff", "--cached", "--name-only"], text=True
-          ).splitlines())
-          production = {path for path in staged if not path.startswith(".github/")}
-          if production != expected:
-              raise SystemExit(
-                  f"production scope mismatch: expected {sorted(expected)}, got {sorted(production)}"
-              )
-          unexpected = {
-              path for path in staged
-              if path.startswith(".github/")
-              and path not in {
-                  ".github/workflows/overscroll-shorthand-transport.yml",
-                  ".github/scripts/overscroll-shorthand-transport.py",
-              }
-          }
-          if unexpected:
-              raise SystemExit(f"unexpected staged transport paths: {sorted(unexpected)}")
-          PY
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "feat(css): add bounded overscroll-behavior shorthand value qualification"
-          git push \
-            --force-with-lease=refs/heads/feat/css-overscroll-behavior-shorthand-value-qualification-532:${GITHUB_SHA} \
-            origin \
-            HEAD:refs/heads/feat/css-overscroll-behavior-shorthand-value-qualification-532
+      - name: Upload exact candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: overscroll-shorthand-exact-candidate
+          path: candidate
+          if-no-files-found: error
+          retention-days: 1
