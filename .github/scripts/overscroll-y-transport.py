@@ -53,13 +53,23 @@ text = text[:word_getter_start] + y_from_x(x_getter_block) + text[word_getter_st
 
 tuple_anchor = "        overscroll_behavior_x_observations,\n        word_spacing_observations,"
 tuple_count = text.count(tuple_anchor)
-if tuple_count < 3:
-    raise SystemExit(f"tuple plumbing: expected at least three anchors, found {tuple_count}")
+if tuple_count != 2:
+    raise SystemExit(f"8-space tuple plumbing: expected two anchors, found {tuple_count}")
 text = text.replace(
     tuple_anchor,
     "        overscroll_behavior_x_observations,\n"
     "        overscroll_behavior_y_observations,\n"
     "        word_spacing_observations,",
+)
+
+nested_tuple_anchor = "            overscroll_behavior_x_observations,\n            word_spacing_observations,"
+text = replace_once(
+    text,
+    nested_tuple_anchor,
+    "            overscroll_behavior_x_observations,\n"
+    "            overscroll_behavior_y_observations,\n"
+    "            word_spacing_observations,",
+    "12-space tuple plumbing",
 )
 
 text = replace_once(
