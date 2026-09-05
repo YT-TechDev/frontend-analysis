@@ -1,0 +1,358 @@
+name: Column Fill Implementation Transport
+
+on:
+  push:
+    branches:
+      - feat/css-column-fill-value-qualification-520
+    paths:
+      - .github/workflows/column-fill-transport.yml
+
+permissions:
+  contents: write
+
+jobs:
+  implement:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/css-column-fill-value-qualification-520
+          fetch-depth: 0
+
+      - name: Patch bounded column-fill leaf
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          production_path = Path("crates/frontend-analysis-core/src/css/value_qualification.rs")
+          mod_path = Path("crates/frontend-analysis-core/src/css/validation/mod.rs")
+          fill_test_path = Path("crates/frontend-analysis-core/src/css/validation/fill_rule_value_qualification_tests.rs")
+          column_test_path = Path("crates/frontend-analysis-core/src/css/validation/column_fill_value_qualification_tests.rs")
+
+          production = production_path.read_text()
+
+          def replace_exact(text, old, new, count=1):
+              actual = text.count(old)
+              if actual != count:
+                  raise SystemExit(f"expected {count} occurrence(s), found {actual}: {old[:100]!r}")
+              return text.replace(old, new)
+
+          production = replace_exact(
+              production,
+              "#516/#518).",
+              "#516/#518/#520).",
+          )
+
+          word_spacing_type_anchor = """#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssWordSpacingValue {
+"""
+          column_fill_types = """#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssColumnFillValue {
+    Auto,
+    Balance,
+    BalanceAll,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssColumnFillUnsupportedReason {
+    CssWideKeyword,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssColumnFillQualificationOutcome {
+    Qualified(CssColumnFillValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssColumnFillUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `column-fill` qualification.
+///
+/// This profile qualifies only the direct authored
+/// `auto | balance | balance-all` keyword grammar. Multi-column construction,
+/// balancing execution, fragmentation, applicability, and computed/used values
+/// remain outside this slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssColumnFillQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssColumnFillQualificationOutcome,
+}
+
+impl CssColumnFillQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssColumnFillQualificationOutcome {
+        self.outcome
+    }
+}
+
+"""
+          production = replace_exact(
+              production,
+              word_spacing_type_anchor,
+              column_fill_types + word_spacing_type_anchor,
+          )
+
+          production = replace_exact(
+              production,
+              "    fill_rule_observations: Vec<CssFillRuleQualificationObservation>,\n    word_spacing_observations: Vec<CssWordSpacingQualificationObservation>,",
+              "    fill_rule_observations: Vec<CssFillRuleQualificationObservation>,\n    column_fill_observations: Vec<CssColumnFillQualificationObservation>,\n    word_spacing_observations: Vec<CssWordSpacingQualificationObservation>,",
+          )
+
+          getter_anchor = """    pub(crate) fn fill_rule_observations(&self) -> &[CssFillRuleQualificationObservation] {
+        &self.fill_rule_observations
+    }
+
+"""
+          getter = """    pub(crate) fn column_fill_observations(&self) -> &[CssColumnFillQualificationObservation] {
+        &self.column_fill_observations
+    }
+
+"""
+          production = replace_exact(production, getter_anchor, getter_anchor + getter)
+
+          production = replace_exact(
+              production,
+              "        fill_rule_observations,\n        word_spacing_observations,",
+              "        fill_rule_observations,\n        column_fill_observations,\n        word_spacing_observations,",
+              count=3,
+          )
+
+          production = replace_exact(
+              production,
+              "        let mut fill_rule_observations = Vec::new();\n        let mut word_spacing_observations = Vec::new();",
+              "        let mut fill_rule_observations = Vec::new();\n        let mut column_fill_observations = Vec::new();\n        let mut word_spacing_observations = Vec::new();",
+          )
+
+          word_spacing_dispatch_anchor = """            if property_name.eq_ignore_ascii_case("word-spacing") {
+"""
+          column_fill_dispatch = """            if property_name.eq_ignore_ascii_case("column-fill") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                column_fill_observations.push(CssColumnFillQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_column_fill_value(value_items),
+                });
+                continue;
+            }
+
+"""
+          production = replace_exact(
+              production,
+              word_spacing_dispatch_anchor,
+              column_fill_dispatch + word_spacing_dispatch_anchor,
+          )
+
+          word_spacing_qualifier_anchor = """fn qualify_word_spacing_value(items: &[CssLexicalItem]) -> CssWordSpacingQualificationOutcome {
+"""
+          column_fill_qualifier = """fn qualify_column_fill_value(items: &[CssLexicalItem]) -> CssColumnFillQualificationOutcome {
+    match classify_single_keyword_value(items) {
+        CssSingleKeywordValue::UnsupportedFunction => {
+            CssColumnFillQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssColumnFillUnsupportedReason::FunctionValue,
+            )
+        }
+        CssSingleKeywordValue::Invalid => {
+            CssColumnFillQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("auto") =>
+        {
+            CssColumnFillQualificationOutcome::Qualified(CssColumnFillValue::Auto)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("balance") =>
+        {
+            CssColumnFillQualificationOutcome::Qualified(CssColumnFillValue::Balance)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("balance-all") =>
+        {
+            CssColumnFillQualificationOutcome::Qualified(CssColumnFillValue::BalanceAll)
+        }
+        CssSingleKeywordValue::Identifier(identifier) if is_css_wide_keyword(identifier) => {
+            CssColumnFillQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssColumnFillUnsupportedReason::CssWideKeyword,
+            )
+        }
+        CssSingleKeywordValue::Identifier(_) => {
+            CssColumnFillQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+    }
+}
+
+"""
+          production = replace_exact(
+              production,
+              word_spacing_qualifier_anchor,
+              column_fill_qualifier + word_spacing_qualifier_anchor,
+          )
+
+          production_path.write_text(production)
+
+          mod_text = mod_path.read_text()
+          mod_text = replace_exact(
+              mod_text,
+              "#[cfg(test)]\nmod column_count_value_qualification_tests;",
+              "#[cfg(test)]\nmod column_fill_value_qualification_tests;\n#[cfg(test)]\nmod column_count_value_qualification_tests;",
+          )
+          mod_path.write_text(mod_text)
+
+          tests = fill_test_path.read_text()
+          tests = tests.replace("CssFillRule", "CssColumnFill")
+          tests = tests.replace("fill_rule", "column_fill")
+          tests = tests.replace("fill-rule", "column-fill")
+          tests = tests.replace("ExpectedOutcome::Nonzero", "ExpectedOutcome::Auto")
+          tests = tests.replace("ExpectedOutcome::Evenodd", "ExpectedOutcome::Balance")
+          tests = tests.replace("CssColumnFillValue::Nonzero", "CssColumnFillValue::Auto")
+          tests = tests.replace("CssColumnFillValue::Evenodd", "CssColumnFillValue::Balance")
+          tests = tests.replace("    Nonzero,\n    Evenodd,", "    Auto,\n    Balance,\n    BalanceAll,")
+          tests = tests.replace(
+              "        ExpectedOutcome::Balance => {\n            CssColumnFillQualificationOutcome::Qualified(CssColumnFillValue::Balance)\n        }",
+              "        ExpectedOutcome::Balance => {\n            CssColumnFillQualificationOutcome::Qualified(CssColumnFillValue::Balance)\n        }\n        ExpectedOutcome::BalanceAll => {\n            CssColumnFillQualificationOutcome::Qualified(CssColumnFillValue::BalanceAll)\n        }",
+          )
+          tests = tests.replace("nonzero", "auto")
+          tests = tests.replace("evenodd", "balance")
+          tests = tests.replace(
+              '            "c{FILL-RULE:EvEnOdD;}",',
+              '            "c{COLUMN-FILL:BaLaNcE-AlL;}",',
+          )
+          tests = tests.replace(
+              r'            r"d{column-fill:\6e onzero;}",',
+              r'            r"d{column-fill:\61 uto;}",',
+          )
+          tests = tests.replace(
+              r'            r"e{fill-\72 ule:balance;}",',
+              r'            r"e{column-\66 ill:balance;}",',
+          )
+          tests = tests.replace(
+              '            "f{column-fill:auto;}",',
+              '            "f{column-fill:none;}",',
+              1,
+          )
+          tests = tests.replace(
+              '            "l{clip-rule:balance;}",',
+              '            "l{clip-rule:evenodd;}",',
+          )
+          first_expected = """            ExpectedOutcome::Auto,
+            ExpectedOutcome::Balance,
+            ExpectedOutcome::Balance,
+            ExpectedOutcome::Auto,
+"""
+          tests = replace_exact(
+              tests,
+              first_expected,
+              """            ExpectedOutcome::Auto,
+            ExpectedOutcome::Balance,
+            ExpectedOutcome::BalanceAll,
+            ExpectedOutcome::Auto,
+""",
+          )
+          tests = tests.replace(
+              "fn element_kind_and_svg_applicability_are_not_inputs_to_qualification()",
+              "fn element_kind_and_multicol_applicability_are_not_inputs_to_qualification()",
+          )
+          tests = tests.replace(
+              '            "path{column-fill:balance;}",\n            "div{column-fill:balance;}",\n            "svg{column-fill:balance;}",',
+              '            "div{column-fill:balance;}",\n            "section{column-fill:balance;}",\n            "span{column-fill:balance;}",',
+          )
+          tests = tests.replace(
+              '            "av{clip-rule:balance;}",\n            "aw{column-fill:balance;}",',
+              '            "av{clip-rule:evenodd;}",\n            "aw{fill-rule:evenodd;}",\n            "ax{column-fill:balance-all;}",',
+          )
+          interleave_tail = """    assert_eq!(result.clip_rule_observations().len(), 1);
+    assert_eq!(result.column_fill_observations().len(), 1);
+    assert_eq!(result.column_fill_observations()[0].occurrence_index(), 48);
+    assert_expected(&result, &[ExpectedOutcome::Balance]);
+"""
+          tests = replace_exact(
+              tests,
+              interleave_tail,
+              """    assert_eq!(result.clip_rule_observations().len(), 1);
+    assert_eq!(result.fill_rule_observations().len(), 1);
+    assert_eq!(result.column_fill_observations().len(), 1);
+    assert_eq!(result.column_fill_observations()[0].occurrence_index(), 49);
+    assert_expected(&result, &[ExpectedOutcome::BalanceAll]);
+""",
+          )
+          tests = tests.replace(
+              '        "c{column-fill:auto;}",',
+              '        "c{column-fill:none;}",',
+          )
+          tests = tests.replace(
+              "nonordinary declaration context produced a column-fill observation",
+              "nonordinary declaration context produced a column-fill observation",
+          )
+
+          if "Nonzero" in tests or "Evenodd" in tests or "fill-rule:" in tests.replace('"aw{fill-rule:evenodd;}"', ''):
+              raise SystemExit("stale fill-rule grammar material remained in column-fill test")
+          if "ExpectedOutcome::BalanceAll" not in tests or "CssColumnFillValue::BalanceAll" not in tests:
+              raise SystemExit("balance-all coverage missing")
+
+          column_test_path.write_text(tests)
+          PY
+
+      - name: Format and validate scope
+        shell: bash
+        run: |
+          rustup component add rustfmt clippy
+          cargo fmt --all
+          git diff --check
+          python3 <<'PY'
+          import subprocess
+          allowed = {
+              ".github/workflows/column-fill-transport.yml",
+              "crates/frontend-analysis-core/src/css/value_qualification.rs",
+              "crates/frontend-analysis-core/src/css/validation/column_fill_value_qualification_tests.rs",
+              "crates/frontend-analysis-core/src/css/validation/mod.rs",
+          }
+          changed = set(subprocess.check_output(["git", "status", "--porcelain"], text=True).splitlines())
+          paths = {line[3:] for line in changed}
+          unexpected = paths - allowed
+          if unexpected:
+              raise SystemExit(f"unexpected changed paths: {sorted(unexpected)}")
+          required = allowed - {".github/workflows/column-fill-transport.yml"}
+          if not required <= paths:
+              raise SystemExit(f"missing expected changed paths: {sorted(required - paths)}")
+          PY
+
+      - name: Implementation-side sealing
+        shell: bash
+        run: |
+          cargo fmt --all --check
+          cargo test -p frontend-analysis-core column_fill_value_qualification_tests
+          cargo clippy -p frontend-analysis-core --all-targets --all-features -- -D warnings
+          cargo test -p frontend-analysis-core
+
+      - name: Commit final three-file candidate
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/column-fill-transport.yml
+          python3 <<'PY'
+          import subprocess
+          expected = {
+              "crates/frontend-analysis-core/src/css/value_qualification.rs",
+              "crates/frontend-analysis-core/src/css/validation/column_fill_value_qualification_tests.rs",
+              "crates/frontend-analysis-core/src/css/validation/mod.rs",
+          }
+          output = subprocess.check_output(["git", "status", "--porcelain"], text=True).splitlines()
+          paths = {line[3:] for line in output if line[3:] != ".github/workflows/column-fill-transport.yml"}
+          if paths != expected:
+              raise SystemExit(f"final candidate scope mismatch: {sorted(paths)}")
+          PY
+          git add crates/frontend-analysis-core/src/css/value_qualification.rs \
+                  crates/frontend-analysis-core/src/css/validation/column_fill_value_qualification_tests.rs \
+                  crates/frontend-analysis-core/src/css/validation/mod.rs
+          git commit -m "feat(css): add bounded column-fill value qualification"
+          git push origin HEAD:feat/css-column-fill-value-qualification-520
