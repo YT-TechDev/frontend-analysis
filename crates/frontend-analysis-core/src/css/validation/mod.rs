@@ -55,6 +55,8 @@ mod direction_value_qualification_tests;
 #[cfg(test)]
 mod empty_cells_value_qualification_tests;
 #[cfg(test)]
+mod fill_rule_value_qualification_tests;
+#[cfg(test)]
 mod flex_grow_value_qualification_tests;
 #[cfg(test)]
 mod flex_shrink_value_qualification_tests;
