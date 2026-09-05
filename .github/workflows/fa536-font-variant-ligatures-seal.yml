@@ -48,3 +48,5 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "feat(css): add bounded font-variant-ligatures value qualification"
           git push origin HEAD:feat/css-font-variant-ligatures-value-qualification-536
+
+# retry after GitHub startup failure
