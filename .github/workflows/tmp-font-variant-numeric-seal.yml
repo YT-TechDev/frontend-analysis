@@ -7,6 +7,7 @@ on:
     paths:
       - .github/workflows/tmp-font-variant-numeric-seal.yml
       - .github/tmp-font-variant-numeric-seal.py
+      - .github/tmp-font-variant-numeric-carry-fix.py
 
 permissions:
   contents: write
@@ -30,7 +31,9 @@ jobs:
             --component clippy
 
       - name: Apply bounded candidate
-        run: python3 .github/tmp-font-variant-numeric-seal.py
+        run: |
+          python3 .github/tmp-font-variant-numeric-seal.py
+          python3 .github/tmp-font-variant-numeric-carry-fix.py
 
       - name: Format candidate
         run: cargo fmt --all
