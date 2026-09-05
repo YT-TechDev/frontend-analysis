@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -1972,6 +1972,52 @@ impl CssClipRuleQualificationObservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFillRuleValue {
+    Nonzero,
+    Evenodd,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFillRuleUnsupportedReason {
+    CssWideKeyword,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFillRuleQualificationOutcome {
+    Qualified(CssFillRuleValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssFillRuleUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `fill-rule` qualification.
+///
+/// This profile qualifies only the direct authored `nonzero | evenodd`
+/// keyword grammar. Fill-area construction, winding execution, path/text
+/// geometry, SVG applicability, painting, hit-testing, interpolation, and
+/// computed/used values remain outside this slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssFillRuleQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssFillRuleQualificationOutcome,
+}
+
+impl CssFillRuleQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssFillRuleQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssWordSpacingValue {
     Normal,
     DirectLengthLiteral,
@@ -2355,6 +2401,7 @@ pub(crate) struct CssValueQualificationRunResult {
     ruby_merge_observations: Vec<CssRubyMergeQualificationObservation>,
     ruby_overhang_observations: Vec<CssRubyOverhangQualificationObservation>,
     clip_rule_observations: Vec<CssClipRuleQualificationObservation>,
+    fill_rule_observations: Vec<CssFillRuleQualificationObservation>,
     word_spacing_observations: Vec<CssWordSpacingQualificationObservation>,
     text_underline_offset_observations: Vec<CssTextUnderlineOffsetQualificationObservation>,
     scroll_margin_top_observations: Vec<CssScrollMarginTopQualificationObservation>,
@@ -2508,6 +2555,10 @@ impl CssValueQualificationRunResult {
 
     pub(crate) fn clip_rule_observations(&self) -> &[CssClipRuleQualificationObservation] {
         &self.clip_rule_observations
+    }
+
+    pub(crate) fn fill_rule_observations(&self) -> &[CssFillRuleQualificationObservation] {
+        &self.fill_rule_observations
     }
 
     pub(crate) fn word_spacing_observations(&self) -> &[CssWordSpacingQualificationObservation] {
@@ -2706,6 +2757,7 @@ pub(crate) fn run(
         ruby_merge_observations,
         ruby_overhang_observations,
         clip_rule_observations,
+        fill_rule_observations,
         word_spacing_observations,
         text_underline_offset_observations,
         scroll_margin_top_observations,
@@ -2757,6 +2809,7 @@ pub(crate) fn run(
         let mut ruby_merge_observations = Vec::new();
         let mut ruby_overhang_observations = Vec::new();
         let mut clip_rule_observations = Vec::new();
+        let mut fill_rule_observations = Vec::new();
         let mut word_spacing_observations = Vec::new();
         let mut text_underline_offset_observations = Vec::new();
         let mut scroll_margin_top_observations = Vec::new();
@@ -3099,6 +3152,17 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("fill-rule") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                fill_rule_observations.push(CssFillRuleQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_fill_rule_value(value_items),
+                });
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("word-spacing") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -3362,6 +3426,7 @@ pub(crate) fn run(
             ruby_merge_observations,
             ruby_overhang_observations,
             clip_rule_observations,
+            fill_rule_observations,
             word_spacing_observations,
             text_underline_offset_observations,
             scroll_margin_top_observations,
@@ -3415,6 +3480,7 @@ pub(crate) fn run(
         ruby_merge_observations,
         ruby_overhang_observations,
         clip_rule_observations,
+        fill_rule_observations,
         word_spacing_observations,
         text_underline_offset_observations,
         scroll_margin_top_observations,
@@ -5199,6 +5265,37 @@ fn qualify_clip_rule_value(items: &[CssLexicalItem]) -> CssClipRuleQualification
         }
         CssSingleKeywordValue::Identifier(_) => {
             CssClipRuleQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+    }
+}
+
+fn qualify_fill_rule_value(items: &[CssLexicalItem]) -> CssFillRuleQualificationOutcome {
+    match classify_single_keyword_value(items) {
+        CssSingleKeywordValue::UnsupportedFunction => {
+            CssFillRuleQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssFillRuleUnsupportedReason::FunctionValue,
+            )
+        }
+        CssSingleKeywordValue::Invalid => {
+            CssFillRuleQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("nonzero") =>
+        {
+            CssFillRuleQualificationOutcome::Qualified(CssFillRuleValue::Nonzero)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("evenodd") =>
+        {
+            CssFillRuleQualificationOutcome::Qualified(CssFillRuleValue::Evenodd)
+        }
+        CssSingleKeywordValue::Identifier(identifier) if is_css_wide_keyword(identifier) => {
+            CssFillRuleQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssFillRuleUnsupportedReason::CssWideKeyword,
+            )
+        }
+        CssSingleKeywordValue::Identifier(_) => {
+            CssFillRuleQualificationOutcome::InvalidForSelectedValueGrammar
         }
     }
 }
