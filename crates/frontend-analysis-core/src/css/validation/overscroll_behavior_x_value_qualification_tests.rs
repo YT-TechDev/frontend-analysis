@@ -312,8 +312,9 @@ fn nonordinary_declaration_shaped_contexts_are_excluded() {
             result.overscroll_behavior_x_observations().is_empty(),
             concat!(
                 "nonordinary declaration context produced an ",
-                "overscroll-behavior-x observation for {css:?}"
-            )
+                "overscroll-behavior-x observation for {:?}"
+            ),
+            css
         );
     }
 }
