@@ -41,6 +41,8 @@ mod column_fill_value_qualification_tests;
 #[cfg(test)]
 mod conformance_tests;
 #[cfg(test)]
+mod contain_value_qualification_tests;
+#[cfg(test)]
 mod context_conformance_tests;
 #[cfg(test)]
 mod context_contract_tests;

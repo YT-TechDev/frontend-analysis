@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520/#522/#524/#526/#528/#530/#532).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520/#522/#524/#526/#528/#530/#532/#534).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -2366,6 +2366,78 @@ impl CssOverscrollBehaviorQualificationObservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssContainComponent {
+    Size,
+    InlineSize,
+    Layout,
+    Style,
+    Paint,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssContainComponents {
+    authored: [CssContainComponent; 4],
+    count: usize,
+}
+
+impl CssContainComponents {
+    pub(crate) fn authored_components(&self) -> &[CssContainComponent] {
+        &self.authored[..self.count]
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssContainValue {
+    None,
+    Strict,
+    Content,
+    Components(CssContainComponents),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssContainUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssContainQualificationOutcome {
+    Qualified(CssContainValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssContainUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded authored `contain`
+/// qualification.
+///
+/// Composite values preserve the author's component order even though the
+/// grammar is order-insensitive. Slot uniqueness is validated during
+/// qualification; this observation performs no canonical serialization,
+/// `strict`/`content` expansion, computed-value processing, or containment
+/// execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssContainQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssContainQualificationOutcome,
+}
+
+impl CssContainQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssContainQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssWordSpacingValue {
     Normal,
     DirectLengthLiteral,
@@ -2753,6 +2825,7 @@ pub(crate) struct CssValueQualificationRunResult {
     column_fill_observations: Vec<CssColumnFillQualificationObservation>,
     text_decoration_skip_ink_observations: Vec<CssTextDecorationSkipInkQualificationObservation>,
     overscroll_behavior_observations: Vec<CssOverscrollBehaviorQualificationObservation>,
+    contain_observations: Vec<CssContainQualificationObservation>,
     overscroll_behavior_x_observations: Vec<CssOverscrollBehaviorXQualificationObservation>,
     overscroll_behavior_y_observations: Vec<CssOverscrollBehaviorYQualificationObservation>,
     overscroll_behavior_inline_observations:
@@ -2931,6 +3004,10 @@ impl CssValueQualificationRunResult {
         &self,
     ) -> &[CssOverscrollBehaviorQualificationObservation] {
         &self.overscroll_behavior_observations
+    }
+
+    pub(crate) fn contain_observations(&self) -> &[CssContainQualificationObservation] {
+        &self.contain_observations
     }
 
     pub(crate) fn overscroll_behavior_x_observations(
@@ -3157,6 +3234,7 @@ pub(crate) fn run(
         column_fill_observations,
         text_decoration_skip_ink_observations,
         overscroll_behavior_observations,
+        contain_observations,
         overscroll_behavior_x_observations,
         overscroll_behavior_y_observations,
         overscroll_behavior_inline_observations,
@@ -3216,6 +3294,7 @@ pub(crate) fn run(
         let mut column_fill_observations = Vec::new();
         let mut text_decoration_skip_ink_observations = Vec::new();
         let mut overscroll_behavior_observations = Vec::new();
+        let mut contain_observations = Vec::new();
         let mut overscroll_behavior_x_observations = Vec::new();
         let mut overscroll_behavior_y_observations = Vec::new();
         let mut overscroll_behavior_inline_observations = Vec::new();
@@ -3597,6 +3676,17 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("contain") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                contain_observations.push(CssContainQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_contain_value(value_items),
+                });
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("overscroll-behavior") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -3929,6 +4019,7 @@ pub(crate) fn run(
             column_fill_observations,
             text_decoration_skip_ink_observations,
             overscroll_behavior_observations,
+            contain_observations,
             overscroll_behavior_x_observations,
             overscroll_behavior_y_observations,
             overscroll_behavior_inline_observations,
@@ -3990,6 +4081,7 @@ pub(crate) fn run(
         column_fill_observations,
         text_decoration_skip_ink_observations,
         overscroll_behavior_observations,
+        contain_observations,
         overscroll_behavior_x_observations,
         overscroll_behavior_y_observations,
         overscroll_behavior_inline_observations,
@@ -5889,6 +5981,100 @@ fn qualify_text_decoration_skip_ink_value(
             CssTextDecorationSkipInkQualificationOutcome::InvalidForSelectedValueGrammar
         }
     }
+}
+
+fn qualify_contain_value(items: &[CssLexicalItem]) -> CssContainQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssContainQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssContainUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssContainQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssContainUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    let tokens: Vec<_> = items
+        .iter()
+        .filter_map(|item| match item {
+            CssLexicalItem::SemanticToken(token)
+                if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+            {
+                Some(token)
+            }
+            _ => None,
+        })
+        .collect();
+
+    if let [token] = tokens.as_slice()
+        && let CssTokenKind::Ident(identifier) = token.kind()
+    {
+        if is_css_wide_keyword(identifier) {
+            return CssContainQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssContainUnsupportedReason::CssWideKeyword,
+            );
+        }
+        if identifier.eq_ignore_ascii_case("none") {
+            return CssContainQualificationOutcome::Qualified(CssContainValue::None);
+        }
+        if identifier.eq_ignore_ascii_case("strict") {
+            return CssContainQualificationOutcome::Qualified(CssContainValue::Strict);
+        }
+        if identifier.eq_ignore_ascii_case("content") {
+            return CssContainQualificationOutcome::Qualified(CssContainValue::Content);
+        }
+    }
+
+    if tokens.is_empty() {
+        return CssContainQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    let mut authored = [CssContainComponent::Size; 4];
+    let mut count = 0usize;
+    let mut occupied_slots = 0u8;
+
+    for token in tokens {
+        let CssTokenKind::Ident(identifier) = token.kind() else {
+            return CssContainQualificationOutcome::InvalidForSelectedValueGrammar;
+        };
+
+        let Some((component, slot)) = contain_component(identifier) else {
+            return CssContainQualificationOutcome::InvalidForSelectedValueGrammar;
+        };
+
+        if occupied_slots & slot != 0 {
+            return CssContainQualificationOutcome::InvalidForSelectedValueGrammar;
+        }
+        occupied_slots |= slot;
+        authored[count] = component;
+        count += 1;
+    }
+
+    CssContainQualificationOutcome::Qualified(CssContainValue::Components(CssContainComponents {
+        authored,
+        count,
+    }))
+}
+
+fn contain_component(identifier: &str) -> Option<(CssContainComponent, u8)> {
+    if identifier.eq_ignore_ascii_case("size") {
+        return Some((CssContainComponent::Size, 0b0001));
+    }
+    if identifier.eq_ignore_ascii_case("inline-size") {
+        return Some((CssContainComponent::InlineSize, 0b0001));
+    }
+    if identifier.eq_ignore_ascii_case("layout") {
+        return Some((CssContainComponent::Layout, 0b0010));
+    }
+    if identifier.eq_ignore_ascii_case("style") {
+        return Some((CssContainComponent::Style, 0b0100));
+    }
+    if identifier.eq_ignore_ascii_case("paint") {
+        return Some((CssContainComponent::Paint, 0b1000));
+    }
+    None
 }
 
 fn qualify_overscroll_behavior_value(

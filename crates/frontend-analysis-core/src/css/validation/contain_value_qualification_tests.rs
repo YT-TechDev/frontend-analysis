@@ -63,7 +63,10 @@ fn assert_expected(result: &CssValueQualificationRunResult, expected: &[Expected
 
     for (observation, expected) in actual.iter().zip(expected.iter().copied()) {
         match (observation.outcome(), expected) {
-            (CssContainQualificationOutcome::Qualified(CssContainValue::None), ExpectedOutcome::None)
+            (
+                CssContainQualificationOutcome::Qualified(CssContainValue::None),
+                ExpectedOutcome::None,
+            )
             | (
                 CssContainQualificationOutcome::Qualified(CssContainValue::Strict),
                 ExpectedOutcome::Strict,
@@ -98,7 +101,9 @@ fn assert_expected(result: &CssValueQualificationRunResult, expected: &[Expected
                 ),
                 ExpectedOutcome::UnsupportedWholeValueFunction,
             ) => {}
-            (actual, expected) => panic!("unexpected contain outcome: {actual:?}, expected {expected:?}"),
+            (actual, expected) => {
+                panic!("unexpected contain outcome: {actual:?}, expected {expected:?}")
+            }
         }
     }
 }
@@ -240,8 +245,8 @@ fn case_escapes_comments_and_priority_preserve_authored_components_and_placement
     );
 
     let priority_observation = &result.contain_observations()[5];
-    let occurrence = &result.upstream_parser_result().occurrences()
-        [priority_observation.occurrence_index()];
+    let occurrence =
+        &result.upstream_parser_result().occurrences()[priority_observation.occurrence_index()];
     assert_eq!(priority_observation.placement(), occurrence.placement());
     assert!(occurrence.priority().is_some());
 }
@@ -435,6 +440,12 @@ fn repeated_and_cross_source_runs_are_semantically_deterministic() {
     let repeated = qualify(85_370, css);
     let another_source = qualify(85_371, css);
 
-    assert_eq!(first.contain_observations(), repeated.contain_observations());
-    assert_eq!(first.contain_observations(), another_source.contain_observations());
+    assert_eq!(
+        first.contain_observations(),
+        repeated.contain_observations()
+    );
+    assert_eq!(
+        first.contain_observations(),
+        another_source.contain_observations()
+    );
 }
