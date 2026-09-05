@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -1880,6 +1880,52 @@ impl CssRubyMergeQualificationObservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssRubyOverhangValue {
+    Auto,
+    Spaces,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssRubyOverhangUnsupportedReason {
+    CssWideKeyword,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssRubyOverhangQualificationOutcome {
+    Qualified(CssRubyOverhangValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssRubyOverhangUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `ruby-overhang` qualification.
+///
+/// This profile qualifies the direct authored `auto | spaces` keyword grammar
+/// and maps the legacy `none` value alias to `Spaces`. Ruby layout, annotation
+/// container construction, overhang measurement, applicability, CSSOM
+/// serialization, and computed/used values remain outside this slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssRubyOverhangQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssRubyOverhangQualificationOutcome,
+}
+
+impl CssRubyOverhangQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssRubyOverhangQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssWordSpacingValue {
     Normal,
     DirectLengthLiteral,
@@ -2261,6 +2307,7 @@ pub(crate) struct CssValueQualificationRunResult {
     math_style_observations: Vec<CssMathStyleQualificationObservation>,
     math_shift_observations: Vec<CssMathShiftQualificationObservation>,
     ruby_merge_observations: Vec<CssRubyMergeQualificationObservation>,
+    ruby_overhang_observations: Vec<CssRubyOverhangQualificationObservation>,
     word_spacing_observations: Vec<CssWordSpacingQualificationObservation>,
     text_underline_offset_observations: Vec<CssTextUnderlineOffsetQualificationObservation>,
     scroll_margin_top_observations: Vec<CssScrollMarginTopQualificationObservation>,
@@ -2406,6 +2453,10 @@ impl CssValueQualificationRunResult {
 
     pub(crate) fn ruby_merge_observations(&self) -> &[CssRubyMergeQualificationObservation] {
         &self.ruby_merge_observations
+    }
+
+    pub(crate) fn ruby_overhang_observations(&self) -> &[CssRubyOverhangQualificationObservation] {
+        &self.ruby_overhang_observations
     }
 
     pub(crate) fn word_spacing_observations(&self) -> &[CssWordSpacingQualificationObservation] {
@@ -2602,6 +2653,7 @@ pub(crate) fn run(
         math_style_observations,
         math_shift_observations,
         ruby_merge_observations,
+        ruby_overhang_observations,
         word_spacing_observations,
         text_underline_offset_observations,
         scroll_margin_top_observations,
@@ -2651,6 +2703,7 @@ pub(crate) fn run(
         let mut math_style_observations = Vec::new();
         let mut math_shift_observations = Vec::new();
         let mut ruby_merge_observations = Vec::new();
+        let mut ruby_overhang_observations = Vec::new();
         let mut word_spacing_observations = Vec::new();
         let mut text_underline_offset_observations = Vec::new();
         let mut scroll_margin_top_observations = Vec::new();
@@ -2971,6 +3024,17 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("ruby-overhang") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                ruby_overhang_observations.push(CssRubyOverhangQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_ruby_overhang_value(value_items),
+                });
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("word-spacing") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -3232,6 +3296,7 @@ pub(crate) fn run(
             math_style_observations,
             math_shift_observations,
             ruby_merge_observations,
+            ruby_overhang_observations,
             word_spacing_observations,
             text_underline_offset_observations,
             scroll_margin_top_observations,
@@ -3283,6 +3348,7 @@ pub(crate) fn run(
         math_style_observations,
         math_shift_observations,
         ruby_merge_observations,
+        ruby_overhang_observations,
         word_spacing_observations,
         text_underline_offset_observations,
         scroll_margin_top_observations,
@@ -5004,6 +5070,38 @@ fn qualify_ruby_merge_value(items: &[CssLexicalItem]) -> CssRubyMergeQualificati
         }
         CssSingleKeywordValue::Identifier(_) => {
             CssRubyMergeQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+    }
+}
+
+fn qualify_ruby_overhang_value(items: &[CssLexicalItem]) -> CssRubyOverhangQualificationOutcome {
+    match classify_single_keyword_value(items) {
+        CssSingleKeywordValue::UnsupportedFunction => {
+            CssRubyOverhangQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssRubyOverhangUnsupportedReason::FunctionValue,
+            )
+        }
+        CssSingleKeywordValue::Invalid => {
+            CssRubyOverhangQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("auto") =>
+        {
+            CssRubyOverhangQualificationOutcome::Qualified(CssRubyOverhangValue::Auto)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("spaces")
+                || identifier.eq_ignore_ascii_case("none") =>
+        {
+            CssRubyOverhangQualificationOutcome::Qualified(CssRubyOverhangValue::Spaces)
+        }
+        CssSingleKeywordValue::Identifier(identifier) if is_css_wide_keyword(identifier) => {
+            CssRubyOverhangQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssRubyOverhangUnsupportedReason::CssWideKeyword,
+            )
+        }
+        CssSingleKeywordValue::Identifier(_) => {
+            CssRubyOverhangQualificationOutcome::InvalidForSelectedValueGrammar
         }
     }
 }
