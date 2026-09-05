@@ -10,7 +10,6 @@ permissions:
 
 jobs:
   patch:
-    if: ${{ !contains(github.event.head_commit.message, 'feat(css): add bounded fill-rule value qualification') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,6 +23,8 @@ jobs:
 
           path = Path('crates/frontend-analysis-core/src/css/value_qualification.rs')
           text = path.read_text()
+          if 'pub(crate) enum CssFillRuleValue' in text:
+              raise SystemExit(0)
 
           def replace_once(old: str, new: str) -> None:
               global text
@@ -156,13 +157,10 @@ jobs:
           '''
           replace_once(dispatch, fill_dispatch)
 
-          # The tuple name pair occurs once in the inner return tuple after the outer
-          # destructuring target was already replaced above.
           replace_once(
               '            clip_rule_observations,\n            word_spacing_observations,',
               '            clip_rule_observations,\n            fill_rule_observations,\n            word_spacing_observations,',
           )
-          # The result initializer is the remaining eight-space pair.
           replace_once(
               '        clip_rule_observations,\n        word_spacing_observations,',
               '        clip_rule_observations,\n        fill_rule_observations,\n        word_spacing_observations,',
@@ -242,6 +240,9 @@ jobs:
 
       - name: Commit production change
         run: |
+          if git diff --quiet -- crates/frontend-analysis-core/src/css/value_qualification.rs; then
+            exit 0
+          fi
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add crates/frontend-analysis-core/src/css/value_qualification.rs
