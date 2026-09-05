@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -2018,6 +2018,53 @@ impl CssFillRuleQualificationObservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssColumnFillValue {
+    Auto,
+    Balance,
+    BalanceAll,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssColumnFillUnsupportedReason {
+    CssWideKeyword,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssColumnFillQualificationOutcome {
+    Qualified(CssColumnFillValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssColumnFillUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `column-fill` qualification.
+///
+/// This profile qualifies only the direct authored
+/// `auto | balance | balance-all` keyword grammar. Multi-column construction,
+/// balancing execution, fragmentation, applicability, and computed/used values
+/// remain outside this slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssColumnFillQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssColumnFillQualificationOutcome,
+}
+
+impl CssColumnFillQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssColumnFillQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssWordSpacingValue {
     Normal,
     DirectLengthLiteral,
@@ -2402,6 +2449,7 @@ pub(crate) struct CssValueQualificationRunResult {
     ruby_overhang_observations: Vec<CssRubyOverhangQualificationObservation>,
     clip_rule_observations: Vec<CssClipRuleQualificationObservation>,
     fill_rule_observations: Vec<CssFillRuleQualificationObservation>,
+    column_fill_observations: Vec<CssColumnFillQualificationObservation>,
     word_spacing_observations: Vec<CssWordSpacingQualificationObservation>,
     text_underline_offset_observations: Vec<CssTextUnderlineOffsetQualificationObservation>,
     scroll_margin_top_observations: Vec<CssScrollMarginTopQualificationObservation>,
@@ -2559,6 +2607,10 @@ impl CssValueQualificationRunResult {
 
     pub(crate) fn fill_rule_observations(&self) -> &[CssFillRuleQualificationObservation] {
         &self.fill_rule_observations
+    }
+
+    pub(crate) fn column_fill_observations(&self) -> &[CssColumnFillQualificationObservation] {
+        &self.column_fill_observations
     }
 
     pub(crate) fn word_spacing_observations(&self) -> &[CssWordSpacingQualificationObservation] {
@@ -2758,6 +2810,7 @@ pub(crate) fn run(
         ruby_overhang_observations,
         clip_rule_observations,
         fill_rule_observations,
+        column_fill_observations,
         word_spacing_observations,
         text_underline_offset_observations,
         scroll_margin_top_observations,
@@ -2810,6 +2863,7 @@ pub(crate) fn run(
         let mut ruby_overhang_observations = Vec::new();
         let mut clip_rule_observations = Vec::new();
         let mut fill_rule_observations = Vec::new();
+        let mut column_fill_observations = Vec::new();
         let mut word_spacing_observations = Vec::new();
         let mut text_underline_offset_observations = Vec::new();
         let mut scroll_margin_top_observations = Vec::new();
@@ -3163,6 +3217,17 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("column-fill") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                column_fill_observations.push(CssColumnFillQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_column_fill_value(value_items),
+                });
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("word-spacing") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -3427,6 +3492,7 @@ pub(crate) fn run(
             ruby_overhang_observations,
             clip_rule_observations,
             fill_rule_observations,
+            column_fill_observations,
             word_spacing_observations,
             text_underline_offset_observations,
             scroll_margin_top_observations,
@@ -3481,6 +3547,7 @@ pub(crate) fn run(
         ruby_overhang_observations,
         clip_rule_observations,
         fill_rule_observations,
+        column_fill_observations,
         word_spacing_observations,
         text_underline_offset_observations,
         scroll_margin_top_observations,
@@ -5296,6 +5363,42 @@ fn qualify_fill_rule_value(items: &[CssLexicalItem]) -> CssFillRuleQualification
         }
         CssSingleKeywordValue::Identifier(_) => {
             CssFillRuleQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+    }
+}
+
+fn qualify_column_fill_value(items: &[CssLexicalItem]) -> CssColumnFillQualificationOutcome {
+    match classify_single_keyword_value(items) {
+        CssSingleKeywordValue::UnsupportedFunction => {
+            CssColumnFillQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssColumnFillUnsupportedReason::FunctionValue,
+            )
+        }
+        CssSingleKeywordValue::Invalid => {
+            CssColumnFillQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("auto") =>
+        {
+            CssColumnFillQualificationOutcome::Qualified(CssColumnFillValue::Auto)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("balance") =>
+        {
+            CssColumnFillQualificationOutcome::Qualified(CssColumnFillValue::Balance)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("balance-all") =>
+        {
+            CssColumnFillQualificationOutcome::Qualified(CssColumnFillValue::BalanceAll)
+        }
+        CssSingleKeywordValue::Identifier(identifier) if is_css_wide_keyword(identifier) => {
+            CssColumnFillQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssColumnFillUnsupportedReason::CssWideKeyword,
+            )
+        }
+        CssSingleKeywordValue::Identifier(_) => {
+            CssColumnFillQualificationOutcome::InvalidForSelectedValueGrammar
         }
     }
 }
