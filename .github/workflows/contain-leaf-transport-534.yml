@@ -1,0 +1,66 @@
+name: Contain Leaf Transport 534
+
+on:
+  push:
+    branches:
+      - feat/css-contain-value-qualification-534
+    paths:
+      - .github/workflows/contain-leaf-transport-534.yml
+      - .github/scripts/apply-contain-leaf-534.py
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-seal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: feat/css-contain-value-qualification-534
+          fetch-depth: 0
+
+      - name: Install accepted Rust toolchain
+        shell: bash
+        run: |
+          rustup toolchain install 1.97.1 \
+            --profile minimal \
+            --component rustfmt \
+            --component clippy
+
+      - name: Apply bounded contain implementation
+        run: python3 .github/scripts/apply-contain-leaf-534.py
+
+      - name: Format candidate
+        run: cargo +1.97.1 fmt --all
+
+      - name: Validate formatting
+        run: cargo +1.97.1 fmt --all -- --check
+
+      - name: Validate whitespace
+        run: git diff --check
+
+      - name: Run focused contain tests
+        run: cargo +1.97.1 test -p frontend-analysis-core contain_value_qualification_tests
+
+      - name: Run Core Clippy
+        run: cargo +1.97.1 clippy -p frontend-analysis-core --all-targets --all-features -- -D warnings
+
+      - name: Run Core full suite
+        run: cargo +1.97.1 test -p frontend-analysis-core
+
+      - name: Commit tested production candidate
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            crates/frontend-analysis-core/src/css/value_qualification.rs \
+            crates/frontend-analysis-core/src/css/validation/contain_value_qualification_tests.rs \
+            crates/frontend-analysis-core/src/css/validation/mod.rs
+          git diff --cached --check
+          git commit -m "feat(css): implement bounded contain value qualification"
+          git push origin HEAD:feat/css-contain-value-qualification-534
