@@ -1,0 +1,91 @@
+name: Overscroll Block Transport
+
+on:
+  push:
+    branches:
+      - feat/css-overscroll-behavior-block-value-qualification-530
+
+permissions:
+  contents: write
+
+jobs:
+  transport:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Install accepted Rust toolchain
+        shell: bash
+        run: |
+          rustup toolchain install 1.97.1 \
+            --profile minimal \
+            --component rustfmt \
+            --component clippy
+
+      - name: Apply focused production and validation changes
+        run: python3 .github/scripts/overscroll-block-transport.py
+
+      - name: Format candidate
+        run: cargo +1.97.1 fmt --all
+
+      - name: Validate formatting
+        run: cargo +1.97.1 fmt --all -- --check
+
+      - name: Validate patch whitespace
+        run: git diff --check
+
+      - name: Run focused overscroll-block tests
+        run: cargo +1.97.1 test -p frontend-analysis-core overscroll_behavior_block_value_qualification_tests
+
+      - name: Validate Core Clippy
+        run: cargo +1.97.1 clippy -p frontend-analysis-core --all-targets --all-features -- -D warnings
+
+      - name: Run Core tests
+        run: cargo +1.97.1 test -p frontend-analysis-core
+
+      - name: Commit exact three-file candidate
+        shell: bash
+        run: |
+          git rm .github/workflows/overscroll-block-transport.yml .github/scripts/overscroll-block-transport.py
+          git add \
+            crates/frontend-analysis-core/src/css/value_qualification.rs \
+            crates/frontend-analysis-core/src/css/validation/overscroll_behavior_block_value_qualification_tests.rs \
+            crates/frontend-analysis-core/src/css/validation/mod.rs
+
+          python3 - <<'PY'
+          import subprocess
+
+          expected = {
+              "crates/frontend-analysis-core/src/css/value_qualification.rs",
+              "crates/frontend-analysis-core/src/css/validation/overscroll_behavior_block_value_qualification_tests.rs",
+              "crates/frontend-analysis-core/src/css/validation/mod.rs",
+          }
+          staged = set(subprocess.check_output(
+              ["git", "diff", "--cached", "--name-only"], text=True
+          ).splitlines())
+          production = {path for path in staged if not path.startswith(".github/")}
+          if production != expected:
+              raise SystemExit(
+                  f"production scope mismatch: expected {sorted(expected)}, got {sorted(production)}"
+              )
+          unexpected = {
+              path for path in staged
+              if path.startswith(".github/")
+              and path not in {
+                  ".github/workflows/overscroll-block-transport.yml",
+                  ".github/scripts/overscroll-block-transport.py",
+              }
+          }
+          if unexpected:
+              raise SystemExit(f"unexpected staged transport paths: {sorted(unexpected)}")
+          PY
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "feat(css): add bounded overscroll-behavior-block value qualification"
+          git push origin HEAD:feat/css-overscroll-behavior-block-value-qualification-530
