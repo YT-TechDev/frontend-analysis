@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520/#522).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -2065,6 +2065,53 @@ impl CssColumnFillQualificationObservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTextDecorationSkipInkValue {
+    Auto,
+    None,
+    All,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTextDecorationSkipInkUnsupportedReason {
+    CssWideKeyword,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTextDecorationSkipInkQualificationOutcome {
+    Qualified(CssTextDecorationSkipInkValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssTextDecorationSkipInkUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded
+/// `text-decoration-skip-ink` qualification.
+///
+/// This profile qualifies only the direct authored `auto | none | all`
+/// keyword grammar. Decoration-line construction, ink intersection geometry,
+/// painting, applicability, and computed/used values remain outside this slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTextDecorationSkipInkQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssTextDecorationSkipInkQualificationOutcome,
+}
+
+impl CssTextDecorationSkipInkQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssTextDecorationSkipInkQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssWordSpacingValue {
     Normal,
     DirectLengthLiteral,
@@ -2450,6 +2497,8 @@ pub(crate) struct CssValueQualificationRunResult {
     clip_rule_observations: Vec<CssClipRuleQualificationObservation>,
     fill_rule_observations: Vec<CssFillRuleQualificationObservation>,
     column_fill_observations: Vec<CssColumnFillQualificationObservation>,
+    text_decoration_skip_ink_observations:
+        Vec<CssTextDecorationSkipInkQualificationObservation>,
     word_spacing_observations: Vec<CssWordSpacingQualificationObservation>,
     text_underline_offset_observations: Vec<CssTextUnderlineOffsetQualificationObservation>,
     scroll_margin_top_observations: Vec<CssScrollMarginTopQualificationObservation>,
@@ -2611,6 +2660,12 @@ impl CssValueQualificationRunResult {
 
     pub(crate) fn column_fill_observations(&self) -> &[CssColumnFillQualificationObservation] {
         &self.column_fill_observations
+    }
+
+    pub(crate) fn text_decoration_skip_ink_observations(
+        &self,
+    ) -> &[CssTextDecorationSkipInkQualificationObservation] {
+        &self.text_decoration_skip_ink_observations
     }
 
     pub(crate) fn word_spacing_observations(&self) -> &[CssWordSpacingQualificationObservation] {
@@ -2811,6 +2866,7 @@ pub(crate) fn run(
         clip_rule_observations,
         fill_rule_observations,
         column_fill_observations,
+        text_decoration_skip_ink_observations,
         word_spacing_observations,
         text_underline_offset_observations,
         scroll_margin_top_observations,
@@ -2864,6 +2920,7 @@ pub(crate) fn run(
         let mut clip_rule_observations = Vec::new();
         let mut fill_rule_observations = Vec::new();
         let mut column_fill_observations = Vec::new();
+        let mut text_decoration_skip_ink_observations = Vec::new();
         let mut word_spacing_observations = Vec::new();
         let mut text_underline_offset_observations = Vec::new();
         let mut scroll_margin_top_observations = Vec::new();
@@ -3228,6 +3285,19 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("text-decoration-skip-ink") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                text_decoration_skip_ink_observations.push(
+                    CssTextDecorationSkipInkQualificationObservation {
+                        occurrence_index,
+                        placement: occurrence.placement(),
+                        outcome: qualify_text_decoration_skip_ink_value(value_items),
+                    },
+                );
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("word-spacing") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -3493,6 +3563,7 @@ pub(crate) fn run(
             clip_rule_observations,
             fill_rule_observations,
             column_fill_observations,
+            text_decoration_skip_ink_observations,
             word_spacing_observations,
             text_underline_offset_observations,
             scroll_margin_top_observations,
@@ -3548,6 +3619,7 @@ pub(crate) fn run(
         clip_rule_observations,
         fill_rule_observations,
         column_fill_observations,
+        text_decoration_skip_ink_observations,
         word_spacing_observations,
         text_underline_offset_observations,
         scroll_margin_top_observations,
@@ -5399,6 +5471,50 @@ fn qualify_column_fill_value(items: &[CssLexicalItem]) -> CssColumnFillQualifica
         }
         CssSingleKeywordValue::Identifier(_) => {
             CssColumnFillQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+    }
+}
+
+fn qualify_text_decoration_skip_ink_value(
+    items: &[CssLexicalItem],
+) -> CssTextDecorationSkipInkQualificationOutcome {
+    match classify_single_keyword_value(items) {
+        CssSingleKeywordValue::UnsupportedFunction => {
+            CssTextDecorationSkipInkQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssTextDecorationSkipInkUnsupportedReason::FunctionValue,
+            )
+        }
+        CssSingleKeywordValue::Invalid => {
+            CssTextDecorationSkipInkQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("auto") =>
+        {
+            CssTextDecorationSkipInkQualificationOutcome::Qualified(
+                CssTextDecorationSkipInkValue::Auto,
+            )
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("none") =>
+        {
+            CssTextDecorationSkipInkQualificationOutcome::Qualified(
+                CssTextDecorationSkipInkValue::None,
+            )
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("all") =>
+        {
+            CssTextDecorationSkipInkQualificationOutcome::Qualified(
+                CssTextDecorationSkipInkValue::All,
+            )
+        }
+        CssSingleKeywordValue::Identifier(identifier) if is_css_wide_keyword(identifier) => {
+            CssTextDecorationSkipInkQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssTextDecorationSkipInkUnsupportedReason::CssWideKeyword,
+            )
+        }
+        CssSingleKeywordValue::Identifier(_) => {
+            CssTextDecorationSkipInkQualificationOutcome::InvalidForSelectedValueGrammar
         }
     }
 }
