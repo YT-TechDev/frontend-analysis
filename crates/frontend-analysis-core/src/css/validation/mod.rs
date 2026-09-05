@@ -31,6 +31,8 @@ mod box_decoration_break_value_qualification_tests;
 #[cfg(test)]
 mod box_sizing_value_qualification_tests;
 #[cfg(test)]
+mod clip_rule_value_qualification_tests;
+#[cfg(test)]
 mod color_interpolation_filters_value_qualification_tests;
 #[cfg(test)]
 mod column_count_value_qualification_tests;
