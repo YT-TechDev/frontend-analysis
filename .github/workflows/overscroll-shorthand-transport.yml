@@ -54,7 +54,7 @@ jobs:
       - name: Commit exact three-file tree and push isolated ref
         shell: bash
         run: |
-          git rm .github/workflows/overscroll-shorthand-transport.yml .github/scripts/overscroll-shorthand-transport.py
+          git rm -f .github/workflows/overscroll-shorthand-transport.yml .github/scripts/overscroll-shorthand-transport.py
           git add \
             crates/frontend-analysis-core/src/css/value_qualification.rs \
             crates/frontend-analysis-core/src/css/validation/overscroll_behavior_shorthand_value_qualification_tests.rs \
