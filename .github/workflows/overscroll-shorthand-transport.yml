@@ -28,7 +28,26 @@ jobs:
             --component clippy
 
       - name: Apply focused production and validation changes
-        run: python3 .github/scripts/overscroll-shorthand-transport.py
+        shell: bash
+        run: |
+          sed -i 's/expected=3,/expected=2,/' .github/scripts/overscroll-shorthand-transport.py
+          python3 .github/scripts/overscroll-shorthand-transport.py
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("crates/frontend-analysis-core/src/css/value_qualification.rs")
+          text = path.read_text()
+          old = """            text_decoration_skip_ink_observations,
+                      overscroll_behavior_x_observations,
+          """
+          new = """            text_decoration_skip_ink_observations,
+                      overscroll_behavior_observations,
+                      overscroll_behavior_x_observations,
+          """
+          if text.count(old) != 1:
+              raise SystemExit(f"tuple-return anchor mismatch: {text.count(old)}")
+          path.write_text(text.replace(old, new))
+          PY
 
       - name: Format candidate
         run: cargo +1.97.1 fmt --all
