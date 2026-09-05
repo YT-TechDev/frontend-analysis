@@ -1,0 +1,12 @@
+name: temporary font-variant-numeric sealing
+on:
+  workflow_dispatch:
+
+jobs:
+  seal:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009f9f20cc4f1ff861fa28a
+      - name: Probe
+        run: echo ready
