@@ -5611,16 +5611,12 @@ fn qualify_overscroll_behavior_x_value(
         CssSingleKeywordValue::Identifier(identifier)
             if identifier.eq_ignore_ascii_case("none") =>
         {
-            CssOverscrollBehaviorXQualificationOutcome::Qualified(
-                CssOverscrollBehaviorXValue::None,
-            )
+            CssOverscrollBehaviorXQualificationOutcome::Qualified(CssOverscrollBehaviorXValue::None)
         }
         CssSingleKeywordValue::Identifier(identifier)
             if identifier.eq_ignore_ascii_case("auto") =>
         {
-            CssOverscrollBehaviorXQualificationOutcome::Qualified(
-                CssOverscrollBehaviorXValue::Auto,
-            )
+            CssOverscrollBehaviorXQualificationOutcome::Qualified(CssOverscrollBehaviorXValue::Auto)
         }
         CssSingleKeywordValue::Identifier(identifier)
             if identifier.eq_ignore_ascii_case("chain") =>

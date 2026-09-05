@@ -61,12 +61,12 @@ fn expected_outcome(expected: ExpectedOutcome) -> CssOverscrollBehaviorXQualific
         ExpectedOutcome::Contain => CssOverscrollBehaviorXQualificationOutcome::Qualified(
             CssOverscrollBehaviorXValue::Contain,
         ),
-        ExpectedOutcome::None => CssOverscrollBehaviorXQualificationOutcome::Qualified(
-            CssOverscrollBehaviorXValue::None,
-        ),
-        ExpectedOutcome::Auto => CssOverscrollBehaviorXQualificationOutcome::Qualified(
-            CssOverscrollBehaviorXValue::Auto,
-        ),
+        ExpectedOutcome::None => {
+            CssOverscrollBehaviorXQualificationOutcome::Qualified(CssOverscrollBehaviorXValue::None)
+        }
+        ExpectedOutcome::Auto => {
+            CssOverscrollBehaviorXQualificationOutcome::Qualified(CssOverscrollBehaviorXValue::Auto)
+        }
         ExpectedOutcome::Chain => CssOverscrollBehaviorXQualificationOutcome::Qualified(
             CssOverscrollBehaviorXValue::Chain,
         ),
@@ -150,10 +150,7 @@ fn comments_and_priority_preserve_decoded_keyword_meaning_and_source_placement()
         ),
     );
 
-    assert_expected(
-        &result,
-        &[ExpectedOutcome::Contain, ExpectedOutcome::Chain],
-    );
+    assert_expected(&result, &[ExpectedOutcome::Contain, ExpectedOutcome::Chain]);
     for observation in result.overscroll_behavior_x_observations() {
         let occurrence =
             &result.upstream_parser_result().occurrences()[observation.occurrence_index()];
