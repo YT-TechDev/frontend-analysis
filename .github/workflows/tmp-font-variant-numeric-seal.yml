@@ -44,6 +44,11 @@ jobs:
       - name: Validate patch hygiene
         run: git diff --check
 
+      - name: Debug tuple plumbing
+        shell: bash
+        run: |
+          grep -n -A2 -B2 'font_variant_ligatures_observations' crates/frontend-analysis-core/src/css/value_qualification.rs
+
       - name: Run focused tests
         run: cargo test -p frontend-analysis-core --all-features font_variant_numeric_value_qualification_tests
 
