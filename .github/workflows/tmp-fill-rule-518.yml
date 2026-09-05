@@ -1,0 +1,249 @@
+name: Temporary fill-rule #518 patch
+
+on:
+  push:
+    branches:
+      - feat/css-fill-rule-value-qualification-518
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, 'feat(css): add bounded fill-rule value qualification') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply exact production patch
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('crates/frontend-analysis-core/src/css/value_qualification.rs')
+          text = path.read_text()
+
+          def replace_once(old: str, new: str) -> None:
+              global text
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'expected exactly one replacement target, found {count}: {old[:100]!r}')
+              text = text.replace(old, new, 1)
+
+          replace_once(
+              'semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516).',
+              'semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518).',
+          )
+
+          clip_block = '''impl CssClipRuleQualificationObservation {
+              pub(crate) const fn occurrence_index(&self) -> usize {
+                  self.occurrence_index
+              }
+
+              pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+                  self.placement
+              }
+
+              pub(crate) const fn outcome(&self) -> CssClipRuleQualificationOutcome {
+                  self.outcome
+              }
+          }
+          '''
+          fill_block = clip_block + '''
+          #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+          pub(crate) enum CssFillRuleValue {
+              Nonzero,
+              Evenodd,
+          }
+
+          #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+          pub(crate) enum CssFillRuleUnsupportedReason {
+              CssWideKeyword,
+              FunctionValue,
+          }
+
+          #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+          pub(crate) enum CssFillRuleQualificationOutcome {
+              Qualified(CssFillRuleValue),
+              InvalidForSelectedValueGrammar,
+              UnsupportedBySelectedValueProfile(CssFillRuleUnsupportedReason),
+          }
+
+          /// One selected ordinary declaration's bounded `fill-rule` qualification.
+          ///
+          /// This profile qualifies only the direct authored `nonzero | evenodd`
+          /// keyword grammar. Fill-area construction, winding execution, path/text
+          /// geometry, SVG applicability, painting, hit-testing, interpolation, and
+          /// computed/used values remain outside this slice.
+          #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+          pub(crate) struct CssFillRuleQualificationObservation {
+              occurrence_index: usize,
+              placement: CssDeclarationPlacement,
+              outcome: CssFillRuleQualificationOutcome,
+          }
+
+          impl CssFillRuleQualificationObservation {
+              pub(crate) const fn occurrence_index(&self) -> usize {
+                  self.occurrence_index
+              }
+
+              pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+                  self.placement
+              }
+
+              pub(crate) const fn outcome(&self) -> CssFillRuleQualificationOutcome {
+                  self.outcome
+              }
+          }
+          '''
+          replace_once(clip_block, fill_block)
+
+          replace_once(
+              '    clip_rule_observations: Vec<CssClipRuleQualificationObservation>,\n    word_spacing_observations: Vec<CssWordSpacingQualificationObservation>,',
+              '    clip_rule_observations: Vec<CssClipRuleQualificationObservation>,\n    fill_rule_observations: Vec<CssFillRuleQualificationObservation>,\n    word_spacing_observations: Vec<CssWordSpacingQualificationObservation>,',
+          )
+
+          replace_once(
+              '''    pub(crate) fn clip_rule_observations(&self) -> &[CssClipRuleQualificationObservation] {
+                  &self.clip_rule_observations
+              }
+
+              pub(crate) fn word_spacing_observations''',
+              '''    pub(crate) fn clip_rule_observations(&self) -> &[CssClipRuleQualificationObservation] {
+                  &self.clip_rule_observations
+              }
+
+              pub(crate) fn fill_rule_observations(&self) -> &[CssFillRuleQualificationObservation] {
+                  &self.fill_rule_observations
+              }
+
+              pub(crate) fn word_spacing_observations''',
+          )
+
+          replace_once(
+              '        clip_rule_observations,\n        word_spacing_observations,',
+              '        clip_rule_observations,\n        fill_rule_observations,\n        word_spacing_observations,',
+          )
+          replace_once(
+              '        let mut clip_rule_observations = Vec::new();\n        let mut word_spacing_observations = Vec::new();',
+              '        let mut clip_rule_observations = Vec::new();\n        let mut fill_rule_observations = Vec::new();\n        let mut word_spacing_observations = Vec::new();',
+          )
+
+          dispatch = '''            if property_name.eq_ignore_ascii_case("clip-rule") {
+                          let value_range = cursor.window_for(occurrence.value())?;
+                          let value_items = &tokenizer_result.lexical_items()[value_range];
+                          clip_rule_observations.push(CssClipRuleQualificationObservation {
+                              occurrence_index,
+                              placement: occurrence.placement(),
+                              outcome: qualify_clip_rule_value(value_items),
+                          });
+                          continue;
+                      }
+          '''
+          fill_dispatch = dispatch + '''
+                      if property_name.eq_ignore_ascii_case("fill-rule") {
+                          let value_range = cursor.window_for(occurrence.value())?;
+                          let value_items = &tokenizer_result.lexical_items()[value_range];
+                          fill_rule_observations.push(CssFillRuleQualificationObservation {
+                              occurrence_index,
+                              placement: occurrence.placement(),
+                              outcome: qualify_fill_rule_value(value_items),
+                          });
+                          continue;
+                      }
+          '''
+          replace_once(dispatch, fill_dispatch)
+
+          # The tuple name pair occurs once in the inner return tuple after the outer
+          # destructuring target was already replaced above.
+          replace_once(
+              '            clip_rule_observations,\n            word_spacing_observations,',
+              '            clip_rule_observations,\n            fill_rule_observations,\n            word_spacing_observations,',
+          )
+          # The result initializer is the remaining eight-space pair.
+          replace_once(
+              '        clip_rule_observations,\n        word_spacing_observations,',
+              '        clip_rule_observations,\n        fill_rule_observations,\n        word_spacing_observations,',
+          )
+
+          clip_qualifier = '''fn qualify_clip_rule_value(items: &[CssLexicalItem]) -> CssClipRuleQualificationOutcome {
+              match classify_single_keyword_value(items) {
+                  CssSingleKeywordValue::UnsupportedFunction => {
+                      CssClipRuleQualificationOutcome::UnsupportedBySelectedValueProfile(
+                          CssClipRuleUnsupportedReason::FunctionValue,
+                      )
+                  }
+                  CssSingleKeywordValue::Invalid => {
+                      CssClipRuleQualificationOutcome::InvalidForSelectedValueGrammar
+                  }
+                  CssSingleKeywordValue::Identifier(identifier)
+                      if identifier.eq_ignore_ascii_case("nonzero") =>
+                  {
+                      CssClipRuleQualificationOutcome::Qualified(CssClipRuleValue::Nonzero)
+                  }
+                  CssSingleKeywordValue::Identifier(identifier)
+                      if identifier.eq_ignore_ascii_case("evenodd") =>
+                  {
+                      CssClipRuleQualificationOutcome::Qualified(CssClipRuleValue::Evenodd)
+                  }
+                  CssSingleKeywordValue::Identifier(identifier) if is_css_wide_keyword(identifier) => {
+                      CssClipRuleQualificationOutcome::UnsupportedBySelectedValueProfile(
+                          CssClipRuleUnsupportedReason::CssWideKeyword,
+                      )
+                  }
+                  CssSingleKeywordValue::Identifier(_) => {
+                      CssClipRuleQualificationOutcome::InvalidForSelectedValueGrammar
+                  }
+              }
+          }
+          '''
+          fill_qualifier = clip_qualifier + '''
+          fn qualify_fill_rule_value(items: &[CssLexicalItem]) -> CssFillRuleQualificationOutcome {
+              match classify_single_keyword_value(items) {
+                  CssSingleKeywordValue::UnsupportedFunction => {
+                      CssFillRuleQualificationOutcome::UnsupportedBySelectedValueProfile(
+                          CssFillRuleUnsupportedReason::FunctionValue,
+                      )
+                  }
+                  CssSingleKeywordValue::Invalid => {
+                      CssFillRuleQualificationOutcome::InvalidForSelectedValueGrammar
+                  }
+                  CssSingleKeywordValue::Identifier(identifier)
+                      if identifier.eq_ignore_ascii_case("nonzero") =>
+                  {
+                      CssFillRuleQualificationOutcome::Qualified(CssFillRuleValue::Nonzero)
+                  }
+                  CssSingleKeywordValue::Identifier(identifier)
+                      if identifier.eq_ignore_ascii_case("evenodd") =>
+                  {
+                      CssFillRuleQualificationOutcome::Qualified(CssFillRuleValue::Evenodd)
+                  }
+                  CssSingleKeywordValue::Identifier(identifier) if is_css_wide_keyword(identifier) => {
+                      CssFillRuleQualificationOutcome::UnsupportedBySelectedValueProfile(
+                          CssFillRuleUnsupportedReason::CssWideKeyword,
+                      )
+                  }
+                  CssSingleKeywordValue::Identifier(_) => {
+                      CssFillRuleQualificationOutcome::InvalidForSelectedValueGrammar
+                  }
+              }
+          }
+          '''
+          replace_once(clip_qualifier, fill_qualifier)
+
+          path.write_text(text)
+          PY
+
+          cargo fmt --all
+          git diff --check
+          git diff -- crates/frontend-analysis-core/src/css/value_qualification.rs
+
+      - name: Commit production change
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add crates/frontend-analysis-core/src/css/value_qualification.rs
+          git commit -m "feat(css): add bounded fill-rule value qualification"
+          git push
