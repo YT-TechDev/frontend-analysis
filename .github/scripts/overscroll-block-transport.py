@@ -106,16 +106,15 @@ if text.count("fn qualify_overscroll_behavior_block_value(") != 1:
     raise SystemExit("production block qualifier count is not exactly one")
 VALUE.write_text(text)
 
-# Validation module registration.
+# Validation module registration follows the existing alphabetical ordering.
 mod_text = MOD.read_text()
 if "mod overscroll_behavior_block_value_qualification_tests;" in mod_text:
     raise SystemExit("overscroll-behavior-block validation module already registered")
 mod_text = replace_once(
     mod_text,
-    "mod overscroll_behavior_inline_value_qualification_tests;\n#[cfg(test)]\nmod page_conformance_tests;",
-    "mod overscroll_behavior_inline_value_qualification_tests;\n#[cfg(test)]\n"
+    "mod overscroll_behavior_inline_value_qualification_tests;",
     "mod overscroll_behavior_block_value_qualification_tests;\n#[cfg(test)]\n"
-    "mod page_conformance_tests;",
+    "mod overscroll_behavior_inline_value_qualification_tests;",
     "validation module registration",
 )
 MOD.write_text(mod_text)
