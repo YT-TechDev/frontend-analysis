@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520/#522/#524/#526/#528/#530/#532/#534).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520/#522/#524/#526/#528/#530/#532/#534/#536).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -2112,6 +2112,80 @@ impl CssTextDecorationSkipInkQualificationObservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFontVariantLigaturesComponent {
+    CommonLigatures,
+    NoCommonLigatures,
+    DiscretionaryLigatures,
+    NoDiscretionaryLigatures,
+    HistoricalLigatures,
+    NoHistoricalLigatures,
+    Contextual,
+    NoContextual,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssFontVariantLigaturesComponents {
+    authored: [CssFontVariantLigaturesComponent; 4],
+    count: usize,
+}
+
+impl CssFontVariantLigaturesComponents {
+    pub(crate) fn authored_components(&self) -> &[CssFontVariantLigaturesComponent] {
+        &self.authored[..self.count]
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFontVariantLigaturesValue {
+    Normal,
+    None,
+    Components(CssFontVariantLigaturesComponents),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFontVariantLigaturesUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFontVariantLigaturesQualificationOutcome {
+    Qualified(CssFontVariantLigaturesValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssFontVariantLigaturesUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded authored
+/// `font-variant-ligatures` qualification.
+///
+/// Composite values retain authored component order even though the grammar is
+/// order-insensitive. Slot uniqueness is validated during qualification. This
+/// slice does not expand keywords to OpenType feature tags, normalize feature
+/// state, shape glyphs, or claim computed/used-value or font-feature precedence
+/// semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssFontVariantLigaturesQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssFontVariantLigaturesQualificationOutcome,
+}
+
+impl CssFontVariantLigaturesQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssFontVariantLigaturesQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssOverscrollBehaviorXValue {
     Contain,
     None,
@@ -2826,6 +2900,7 @@ pub(crate) struct CssValueQualificationRunResult {
     text_decoration_skip_ink_observations: Vec<CssTextDecorationSkipInkQualificationObservation>,
     overscroll_behavior_observations: Vec<CssOverscrollBehaviorQualificationObservation>,
     contain_observations: Vec<CssContainQualificationObservation>,
+    font_variant_ligatures_observations: Vec<CssFontVariantLigaturesQualificationObservation>,
     overscroll_behavior_x_observations: Vec<CssOverscrollBehaviorXQualificationObservation>,
     overscroll_behavior_y_observations: Vec<CssOverscrollBehaviorYQualificationObservation>,
     overscroll_behavior_inline_observations:
@@ -3008,6 +3083,12 @@ impl CssValueQualificationRunResult {
 
     pub(crate) fn contain_observations(&self) -> &[CssContainQualificationObservation] {
         &self.contain_observations
+    }
+
+    pub(crate) fn font_variant_ligatures_observations(
+        &self,
+    ) -> &[CssFontVariantLigaturesQualificationObservation] {
+        &self.font_variant_ligatures_observations
     }
 
     pub(crate) fn overscroll_behavior_x_observations(
@@ -3235,6 +3316,7 @@ pub(crate) fn run(
         text_decoration_skip_ink_observations,
         overscroll_behavior_observations,
         contain_observations,
+        font_variant_ligatures_observations,
         overscroll_behavior_x_observations,
         overscroll_behavior_y_observations,
         overscroll_behavior_inline_observations,
@@ -3295,6 +3377,7 @@ pub(crate) fn run(
         let mut text_decoration_skip_ink_observations = Vec::new();
         let mut overscroll_behavior_observations = Vec::new();
         let mut contain_observations = Vec::new();
+        let mut font_variant_ligatures_observations = Vec::new();
         let mut overscroll_behavior_x_observations = Vec::new();
         let mut overscroll_behavior_y_observations = Vec::new();
         let mut overscroll_behavior_inline_observations = Vec::new();
@@ -3700,6 +3783,19 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("font-variant-ligatures") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                font_variant_ligatures_observations.push(
+                    CssFontVariantLigaturesQualificationObservation {
+                        occurrence_index,
+                        placement: occurrence.placement(),
+                        outcome: qualify_font_variant_ligatures_value(value_items),
+                    },
+                );
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("overscroll-behavior-x") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -4020,6 +4116,7 @@ pub(crate) fn run(
             text_decoration_skip_ink_observations,
             overscroll_behavior_observations,
             contain_observations,
+            font_variant_ligatures_observations,
             overscroll_behavior_x_observations,
             overscroll_behavior_y_observations,
             overscroll_behavior_inline_observations,
@@ -4082,6 +4179,7 @@ pub(crate) fn run(
         text_decoration_skip_ink_observations,
         overscroll_behavior_observations,
         contain_observations,
+        font_variant_ligatures_observations,
         overscroll_behavior_x_observations,
         overscroll_behavior_y_observations,
         overscroll_behavior_inline_observations,
@@ -6073,6 +6171,128 @@ fn contain_component(identifier: &str) -> Option<(CssContainComponent, u8)> {
     }
     if identifier.eq_ignore_ascii_case("paint") {
         return Some((CssContainComponent::Paint, 0b1000));
+    }
+    None
+}
+
+fn qualify_font_variant_ligatures_value(
+    items: &[CssLexicalItem],
+) -> CssFontVariantLigaturesQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssFontVariantLigaturesQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssFontVariantLigaturesUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssFontVariantLigaturesQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssFontVariantLigaturesUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    let tokens: Vec<_> = items
+        .iter()
+        .filter_map(|item| match item {
+            CssLexicalItem::SemanticToken(token)
+                if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+            {
+                Some(token)
+            }
+            _ => None,
+        })
+        .collect();
+
+    if let [token] = tokens.as_slice()
+        && let CssTokenKind::Ident(identifier) = token.kind()
+    {
+        if is_css_wide_keyword(identifier) {
+            return CssFontVariantLigaturesQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssFontVariantLigaturesUnsupportedReason::CssWideKeyword,
+            );
+        }
+        if identifier.eq_ignore_ascii_case("normal") {
+            return CssFontVariantLigaturesQualificationOutcome::Qualified(
+                CssFontVariantLigaturesValue::Normal,
+            );
+        }
+        if identifier.eq_ignore_ascii_case("none") {
+            return CssFontVariantLigaturesQualificationOutcome::Qualified(
+                CssFontVariantLigaturesValue::None,
+            );
+        }
+    }
+
+    if tokens.is_empty() || tokens.len() > 4 {
+        return CssFontVariantLigaturesQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    let mut authored = [CssFontVariantLigaturesComponent::CommonLigatures; 4];
+    let mut count = 0usize;
+    let mut occupied_slots = 0u8;
+
+    for token in tokens {
+        let CssTokenKind::Ident(identifier) = token.kind() else {
+            return CssFontVariantLigaturesQualificationOutcome::InvalidForSelectedValueGrammar;
+        };
+
+        let Some((component, slot)) = font_variant_ligatures_component(identifier) else {
+            return CssFontVariantLigaturesQualificationOutcome::InvalidForSelectedValueGrammar;
+        };
+
+        if occupied_slots & slot != 0 {
+            return CssFontVariantLigaturesQualificationOutcome::InvalidForSelectedValueGrammar;
+        }
+        occupied_slots |= slot;
+        authored[count] = component;
+        count += 1;
+    }
+
+    CssFontVariantLigaturesQualificationOutcome::Qualified(
+        CssFontVariantLigaturesValue::Components(CssFontVariantLigaturesComponents {
+            authored,
+            count,
+        }),
+    )
+}
+
+fn font_variant_ligatures_component(
+    identifier: &str,
+) -> Option<(CssFontVariantLigaturesComponent, u8)> {
+    if identifier.eq_ignore_ascii_case("common-ligatures") {
+        return Some((CssFontVariantLigaturesComponent::CommonLigatures, 0b0001));
+    }
+    if identifier.eq_ignore_ascii_case("no-common-ligatures") {
+        return Some((CssFontVariantLigaturesComponent::NoCommonLigatures, 0b0001));
+    }
+    if identifier.eq_ignore_ascii_case("discretionary-ligatures") {
+        return Some((
+            CssFontVariantLigaturesComponent::DiscretionaryLigatures,
+            0b0010,
+        ));
+    }
+    if identifier.eq_ignore_ascii_case("no-discretionary-ligatures") {
+        return Some((
+            CssFontVariantLigaturesComponent::NoDiscretionaryLigatures,
+            0b0010,
+        ));
+    }
+    if identifier.eq_ignore_ascii_case("historical-ligatures") {
+        return Some((
+            CssFontVariantLigaturesComponent::HistoricalLigatures,
+            0b0100,
+        ));
+    }
+    if identifier.eq_ignore_ascii_case("no-historical-ligatures") {
+        return Some((
+            CssFontVariantLigaturesComponent::NoHistoricalLigatures,
+            0b0100,
+        ));
+    }
+    if identifier.eq_ignore_ascii_case("contextual") {
+        return Some((CssFontVariantLigaturesComponent::Contextual, 0b1000));
+    }
+    if identifier.eq_ignore_ascii_case("no-contextual") {
+        return Some((CssFontVariantLigaturesComponent::NoContextual, 0b1000));
     }
     None
 }
