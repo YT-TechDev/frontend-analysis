@@ -93,9 +93,10 @@ jobs:
               "crates/frontend-analysis-core/src/css/validation/mod.rs",
           }
           output = subprocess.check_output(["git", "status", "--porcelain"], text=True).splitlines()
-          paths = {line[3:] for line in output if not line[3:].startswith(".github/")}
-          if paths != expected:
-              raise SystemExit(f"final candidate scope mismatch: {sorted(paths)}")
+          paths = {line[3:].strip() for line in output}
+          production_paths = {path for path in paths if not path.startswith(".github/")}
+          if production_paths != expected:
+              raise SystemExit(f"final candidate scope mismatch: {sorted(production_paths)}")
           PY
           git add crates/frontend-analysis-core/src/css/value_qualification.rs \
                   crates/frontend-analysis-core/src/css/validation/column_fill_value_qualification_tests.rs \
