@@ -20,7 +20,20 @@ jobs:
           fetch-depth: 0
 
       - name: Patch bounded column-fill leaf
-        run: python3 .github/scripts/column-fill-transport.py
+        shell: bash
+        run: |
+          sed -i 's/    count=3,/    count=2,/' .github/scripts/column-fill-transport.py
+          python3 .github/scripts/column-fill-transport.py
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("crates/frontend-analysis-core/src/css/value_qualification.rs")
+          text = path.read_text()
+          old = "            fill_rule_observations,\n            word_spacing_observations,"
+          new = "            fill_rule_observations,\n            column_fill_observations,\n            word_spacing_observations,"
+          if text.count(old) != 1:
+              raise SystemExit(f"expected one inner tuple anchor, found {text.count(old)}")
+          path.write_text(text.replace(old, new))
+          PY
 
       - name: Install accepted Rust toolchain
         shell: bash
