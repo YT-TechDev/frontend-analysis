@@ -1,4 +1,4 @@
-name: Overscroll Shorthand Candidate Export
+name: Overscroll Shorthand Final Transport
 
 on:
   push:
@@ -6,16 +6,18 @@ on:
       - feat/css-overscroll-behavior-shorthand-value-qualification-532
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  export:
+  transport:
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
     steps:
       - name: Checkout branch
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
 
       - name: Install accepted Rust formatter
         shell: bash
@@ -24,7 +26,7 @@ jobs:
             --profile minimal \
             --component rustfmt
 
-      - name: Reproduce tested candidate
+      - name: Reproduce already-sealed candidate
         shell: bash
         run: |
           sed -i 's/expected=3,/expected=2,/' .github/scripts/overscroll-shorthand-transport.py
@@ -49,21 +51,32 @@ jobs:
           cargo +1.97.1 fmt --all -- --check
           git diff --check
 
-      - name: Prepare exact production files
+      - name: Commit exact three-file tree and push isolated ref
         shell: bash
         run: |
-          mkdir -p candidate/crates/frontend-analysis-core/src/css/validation
-          cp crates/frontend-analysis-core/src/css/value_qualification.rs \
-            candidate/crates/frontend-analysis-core/src/css/value_qualification.rs
-          cp crates/frontend-analysis-core/src/css/validation/mod.rs \
-            candidate/crates/frontend-analysis-core/src/css/validation/mod.rs
-          cp crates/frontend-analysis-core/src/css/validation/overscroll_behavior_shorthand_value_qualification_tests.rs \
-            candidate/crates/frontend-analysis-core/src/css/validation/overscroll_behavior_shorthand_value_qualification_tests.rs
+          git rm .github/workflows/overscroll-shorthand-transport.yml .github/scripts/overscroll-shorthand-transport.py
+          git add \
+            crates/frontend-analysis-core/src/css/value_qualification.rs \
+            crates/frontend-analysis-core/src/css/validation/overscroll_behavior_shorthand_value_qualification_tests.rs \
+            crates/frontend-analysis-core/src/css/validation/mod.rs
 
-      - name: Upload exact candidate
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: overscroll-shorthand-exact-candidate
-          path: candidate
-          if-no-files-found: error
-          retention-days: 1
+          python3 - <<'PY'
+          import subprocess
+
+          expected = {
+              "crates/frontend-analysis-core/src/css/value_qualification.rs",
+              "crates/frontend-analysis-core/src/css/validation/overscroll_behavior_shorthand_value_qualification_tests.rs",
+              "crates/frontend-analysis-core/src/css/validation/mod.rs",
+          }
+          staged = set(subprocess.check_output(
+              ["git", "diff", "--cached", "--name-only"], text=True
+          ).splitlines())
+          production = {p for p in staged if not p.startswith(".github/")}
+          if production != expected:
+              raise SystemExit(f"production scope mismatch: {sorted(production)}")
+          PY
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "feat(css): add bounded overscroll-behavior shorthand value qualification"
+          git push origin HEAD:refs/heads/transport/css-overscroll-shorthand-candidate-532
