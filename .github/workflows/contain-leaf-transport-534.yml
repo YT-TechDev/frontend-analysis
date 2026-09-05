@@ -34,6 +34,56 @@ jobs:
       - name: Apply bounded contain implementation
         run: python3 .github/scripts/apply-contain-leaf-534.py
 
+      - name: Apply focused Clippy remediation
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("crates/frontend-analysis-core/src/css/value_qualification.rs")
+          text = path.read_text()
+          old = '''    if let [token] = tokens.as_slice() {
+              if let CssTokenKind::Ident(identifier) = token.kind() {
+                  if is_css_wide_keyword(identifier) {
+                      return CssContainQualificationOutcome::UnsupportedBySelectedValueProfile(
+                          CssContainUnsupportedReason::CssWideKeyword,
+                      );
+                  }
+                  if identifier.eq_ignore_ascii_case("none") {
+                      return CssContainQualificationOutcome::Qualified(CssContainValue::None);
+                  }
+                  if identifier.eq_ignore_ascii_case("strict") {
+                      return CssContainQualificationOutcome::Qualified(CssContainValue::Strict);
+                  }
+                  if identifier.eq_ignore_ascii_case("content") {
+                      return CssContainQualificationOutcome::Qualified(CssContainValue::Content);
+                  }
+              }
+          }
+          '''
+          new = '''    if let [token] = tokens.as_slice()
+              && let CssTokenKind::Ident(identifier) = token.kind()
+          {
+              if is_css_wide_keyword(identifier) {
+                  return CssContainQualificationOutcome::UnsupportedBySelectedValueProfile(
+                      CssContainUnsupportedReason::CssWideKeyword,
+                  );
+              }
+              if identifier.eq_ignore_ascii_case("none") {
+                  return CssContainQualificationOutcome::Qualified(CssContainValue::None);
+              }
+              if identifier.eq_ignore_ascii_case("strict") {
+                  return CssContainQualificationOutcome::Qualified(CssContainValue::Strict);
+              }
+              if identifier.eq_ignore_ascii_case("content") {
+                  return CssContainQualificationOutcome::Qualified(CssContainValue::Content);
+              }
+          }
+          '''
+          if text.count(old) != 1:
+              raise RuntimeError(f"expected one Clippy remediation anchor, found {text.count(old)}")
+          path.write_text(text.replace(old, new, 1))
+          PY
+
       - name: Format candidate
         run: cargo +1.97.1 fmt --all
 
