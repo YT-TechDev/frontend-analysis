@@ -125,6 +125,28 @@ if Y_TEST.exists():
 y_test = y_from_x(X_TEST.read_text())
 y_test = y_test.replace(r"overscroll-behavior-\78", r"overscroll-behavior-\79")
 
+# Keep SourceId values unique across validation modules. The analyzer caches by
+# SourceId, so copied fixture IDs can collide when the full test suite runs in
+# parallel even though either module passes in isolation.
+for old, new in {
+    "3300": "3340",
+    "3301": "3341",
+    "3302": "3342",
+    "3303": "3343",
+    "3304": "3344",
+    "3305": "3345",
+    "3306": "3346",
+    "3307": "3347",
+    "3310": "3350",
+    "3311": "3351",
+    "3312": "3352",
+    "3313": "3353",
+    "3320": "3360",
+    "3330": "3370",
+    "3331": "3371",
+}.items():
+    y_test = y_test.replace(old, new)
+
 y_test = replace_once(
     y_test,
     '            "d{overscroll-behavior-y:chain;}",\n'
@@ -165,4 +187,7 @@ if r"overscroll-behavior-\78" in y_test:
     raise SystemExit("stale escaped x property remained in Y tests")
 if r"overscroll-behavior-\79" not in y_test:
     raise SystemExit("escaped y property challenge is missing")
+for stale_id in ["3300", "3301", "3302", "3303", "3304", "3305", "3306", "3307", "3310", "3311", "3312", "3313", "3320", "3330", "3331"]:
+    if stale_id in y_test:
+        raise SystemExit(f"stale copied SourceId remained in Y tests: {stale_id}")
 Y_TEST.write_text(y_test)
