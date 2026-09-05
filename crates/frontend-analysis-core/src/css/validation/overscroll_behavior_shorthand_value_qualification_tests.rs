@@ -1,257 +1,4 @@
-from pathlib import Path
-
-VALUE_PATH = Path("crates/frontend-analysis-core/src/css/value_qualification.rs")
-MOD_PATH = Path("crates/frontend-analysis-core/src/css/validation/mod.rs")
-TEST_PATH = Path(
-    "crates/frontend-analysis-core/src/css/validation/"
-    "overscroll_behavior_shorthand_value_qualification_tests.rs"
-)
-
-text = VALUE_PATH.read_text()
-
-
-def replace_exact(old: str, new: str, expected: int = 1) -> None:
-    global text
-    count = text.count(old)
-    if count != expected:
-        raise SystemExit(
-            f"anchor count mismatch: expected {expected}, got {count}: {old[:120]!r}"
-        )
-    text = text.replace(old, new)
-
-
-replace_exact("#524/#526/#528/#530).", "#524/#526/#528/#530/#532).")
-
-type_marker = """#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CssWordSpacingValue {
-"""
-type_block = """#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CssOverscrollBehaviorKeyword {
-    Contain,
-    None,
-    Auto,
-    Chain,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CssOverscrollBehaviorValue {
-    Single(CssOverscrollBehaviorKeyword),
-    Pair {
-        first: CssOverscrollBehaviorKeyword,
-        second: CssOverscrollBehaviorKeyword,
-    },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CssOverscrollBehaviorUnsupportedReason {
-    CssWideKeyword,
-    DeferredSubstitutionFunction,
-    WholeValueFunction,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CssOverscrollBehaviorQualificationOutcome {
-    Qualified(CssOverscrollBehaviorValue),
-    InvalidForSelectedValueGrammar,
-    UnsupportedBySelectedValueProfile(CssOverscrollBehaviorUnsupportedReason),
-}
-
-/// One selected ordinary declaration's bounded authored
-/// `overscroll-behavior` shorthand qualification.
-///
-/// Authored one- and two-keyword forms remain distinct here. This observation
-/// performs no shorthand expansion, x/y mapping, one-value defaulting,
-/// computed-value processing, or CSSOM serialization collapse.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct CssOverscrollBehaviorQualificationObservation {
-    occurrence_index: usize,
-    placement: CssDeclarationPlacement,
-    outcome: CssOverscrollBehaviorQualificationOutcome,
-}
-
-impl CssOverscrollBehaviorQualificationObservation {
-    pub(crate) const fn occurrence_index(&self) -> usize {
-        self.occurrence_index
-    }
-
-    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
-        self.placement
-    }
-
-    pub(crate) const fn outcome(&self) -> CssOverscrollBehaviorQualificationOutcome {
-        self.outcome
-    }
-}
-
-"""
-replace_exact(type_marker, type_block + type_marker)
-
-field_marker = """    text_decoration_skip_ink_observations: Vec<CssTextDecorationSkipInkQualificationObservation>,
-    overscroll_behavior_x_observations: Vec<CssOverscrollBehaviorXQualificationObservation>,
-"""
-replace_exact(
-    field_marker,
-    """    text_decoration_skip_ink_observations: Vec<CssTextDecorationSkipInkQualificationObservation>,
-    overscroll_behavior_observations: Vec<CssOverscrollBehaviorQualificationObservation>,
-    overscroll_behavior_x_observations: Vec<CssOverscrollBehaviorXQualificationObservation>,
-""",
-)
-
-getter_marker = """    pub(crate) fn overscroll_behavior_x_observations(
-"""
-getter = """    pub(crate) fn overscroll_behavior_observations(
-        &self,
-    ) -> &[CssOverscrollBehaviorQualificationObservation] {
-        &self.overscroll_behavior_observations
-    }
-
-"""
-replace_exact(getter_marker, getter + getter_marker)
-
-tuple_marker = """        text_decoration_skip_ink_observations,
-        overscroll_behavior_x_observations,
-"""
-replace_exact(
-    tuple_marker,
-    """        text_decoration_skip_ink_observations,
-        overscroll_behavior_observations,
-        overscroll_behavior_x_observations,
-""",
-    expected=3,
-)
-
-init_marker = """        let mut text_decoration_skip_ink_observations = Vec::new();
-        let mut overscroll_behavior_x_observations = Vec::new();
-"""
-replace_exact(
-    init_marker,
-    """        let mut text_decoration_skip_ink_observations = Vec::new();
-        let mut overscroll_behavior_observations = Vec::new();
-        let mut overscroll_behavior_x_observations = Vec::new();
-""",
-)
-
-dispatch_marker = """            if property_name.eq_ignore_ascii_case(\"overscroll-behavior-x\") {
-"""
-dispatch = """            if property_name.eq_ignore_ascii_case(\"overscroll-behavior\") {
-                let value_range = cursor.window_for(occurrence.value())?;
-                let value_items = &tokenizer_result.lexical_items()[value_range];
-                overscroll_behavior_observations.push(CssOverscrollBehaviorQualificationObservation {
-                    occurrence_index,
-                    placement: occurrence.placement(),
-                    outcome: qualify_overscroll_behavior_value(value_items),
-                });
-                continue;
-            }
-
-"""
-replace_exact(dispatch_marker, dispatch + dispatch_marker)
-
-qualifier_marker = """fn qualify_overscroll_behavior_x_value(
-"""
-qualifier = """fn qualify_overscroll_behavior_value(
-    items: &[CssLexicalItem],
-) -> CssOverscrollBehaviorQualificationOutcome {
-    if contains_deferred_substitution_function(items) {
-        return CssOverscrollBehaviorQualificationOutcome::UnsupportedBySelectedValueProfile(
-            CssOverscrollBehaviorUnsupportedReason::DeferredSubstitutionFunction,
-        );
-    }
-
-    if is_entire_whole_value_function(items) {
-        return CssOverscrollBehaviorQualificationOutcome::UnsupportedBySelectedValueProfile(
-            CssOverscrollBehaviorUnsupportedReason::WholeValueFunction,
-        );
-    }
-
-    let tokens: Vec<_> = items
-        .iter()
-        .filter_map(|item| match item {
-            CssLexicalItem::SemanticToken(token)
-                if !matches!(token.kind(), CssTokenKind::Whitespace) =>
-            {
-                Some(token)
-            }
-            _ => None,
-        })
-        .collect();
-
-    match tokens.as_slice() {
-        [token] => match token.kind() {
-            CssTokenKind::Ident(identifier) if is_css_wide_keyword(identifier) => {
-                CssOverscrollBehaviorQualificationOutcome::UnsupportedBySelectedValueProfile(
-                    CssOverscrollBehaviorUnsupportedReason::CssWideKeyword,
-                )
-            }
-            CssTokenKind::Ident(identifier) => overscroll_behavior_keyword(identifier)
-                .map(|keyword| {
-                    CssOverscrollBehaviorQualificationOutcome::Qualified(
-                        CssOverscrollBehaviorValue::Single(keyword),
-                    )
-                })
-                .unwrap_or(CssOverscrollBehaviorQualificationOutcome::InvalidForSelectedValueGrammar),
-            _ => CssOverscrollBehaviorQualificationOutcome::InvalidForSelectedValueGrammar,
-        },
-        [first, second] => match (first.kind(), second.kind()) {
-            (CssTokenKind::Ident(first), CssTokenKind::Ident(second)) => {
-                match (
-                    overscroll_behavior_keyword(first),
-                    overscroll_behavior_keyword(second),
-                ) {
-                    (Some(first), Some(second)) => {
-                        CssOverscrollBehaviorQualificationOutcome::Qualified(
-                            CssOverscrollBehaviorValue::Pair { first, second },
-                        )
-                    }
-                    _ => CssOverscrollBehaviorQualificationOutcome::InvalidForSelectedValueGrammar,
-                }
-            }
-            _ => CssOverscrollBehaviorQualificationOutcome::InvalidForSelectedValueGrammar,
-        },
-        _ => CssOverscrollBehaviorQualificationOutcome::InvalidForSelectedValueGrammar,
-    }
-}
-
-fn overscroll_behavior_keyword(identifier: &str) -> Option<CssOverscrollBehaviorKeyword> {
-    if identifier.eq_ignore_ascii_case(\"contain\") {
-        return Some(CssOverscrollBehaviorKeyword::Contain);
-    }
-    if identifier.eq_ignore_ascii_case(\"none\") {
-        return Some(CssOverscrollBehaviorKeyword::None);
-    }
-    if identifier.eq_ignore_ascii_case(\"auto\") {
-        return Some(CssOverscrollBehaviorKeyword::Auto);
-    }
-    if identifier.eq_ignore_ascii_case(\"chain\") {
-        return Some(CssOverscrollBehaviorKeyword::Chain);
-    }
-    None
-}
-
-"""
-replace_exact(qualifier_marker, qualifier + qualifier_marker)
-
-VALUE_PATH.write_text(text)
-
-mod_text = MOD_PATH.read_text()
-mod_old = """#[cfg(test)]
-mod overscroll_behavior_inline_value_qualification_tests;
-#[cfg(test)]
-mod overscroll_behavior_x_value_qualification_tests;
-"""
-mod_new = """#[cfg(test)]
-mod overscroll_behavior_inline_value_qualification_tests;
-#[cfg(test)]
-mod overscroll_behavior_shorthand_value_qualification_tests;
-#[cfg(test)]
-mod overscroll_behavior_x_value_qualification_tests;
-"""
-if mod_text.count(mod_old) != 1:
-    raise SystemExit("validation mod anchor mismatch")
-MOD_PATH.write_text(mod_text.replace(mod_old, mod_new))
-
-TEST_PATH.write_text(
-r'''use crate::css::analysis::analyze_css_source;
+use crate::css::analysis::analyze_css_source;
 use crate::css::parser::resource::CssParserLimits;
 use crate::css::parser::result::CssParserExecutionCompletion;
 use crate::css::tokenizer::resource::CssTokenizerLimits;
@@ -315,9 +62,10 @@ fn expected_outcome(expected: ExpectedOutcome) -> CssOverscrollBehaviorQualifica
             CssOverscrollBehaviorValue::Single(keyword),
         ),
         ExpectedOutcome::Pair(first, second) => {
-            CssOverscrollBehaviorQualificationOutcome::Qualified(
-                CssOverscrollBehaviorValue::Pair { first, second },
-            )
+            CssOverscrollBehaviorQualificationOutcome::Qualified(CssOverscrollBehaviorValue::Pair {
+                first,
+                second,
+            })
         }
         ExpectedOutcome::Invalid => {
             CssOverscrollBehaviorQualificationOutcome::InvalidForSelectedValueGrammar
@@ -571,7 +319,10 @@ fn one_run_interleaves_shorthand_and_longhands_without_cross_dispatch() {
     assert_eq!(result.overscroll_behavior_block_observations().len(), 1);
     assert_eq!(result.overscroll_behavior_observations().len(), 1);
     assert_eq!(result.clip_rule_observations().len(), 1);
-    assert_eq!(result.overscroll_behavior_observations()[0].occurrence_index(), 5);
+    assert_eq!(
+        result.overscroll_behavior_observations()[0].occurrence_index(),
+        5
+    );
     assert_expected(&result, &[ExpectedOutcome::Pair(Contain, Chain)]);
 }
 
@@ -655,5 +406,3 @@ fn repeated_and_cross_source_runs_are_semantically_deterministic() {
         another_source.overscroll_behavior_observations()
     );
 }
-'''
-)

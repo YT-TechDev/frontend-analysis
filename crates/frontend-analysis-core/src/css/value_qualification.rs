@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520/#522/#524/#526/#528/#530).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520/#522/#524/#526/#528/#530/#532).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -2308,6 +2308,64 @@ impl CssOverscrollBehaviorBlockQualificationObservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssOverscrollBehaviorKeyword {
+    Contain,
+    None,
+    Auto,
+    Chain,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssOverscrollBehaviorValue {
+    Single(CssOverscrollBehaviorKeyword),
+    Pair {
+        first: CssOverscrollBehaviorKeyword,
+        second: CssOverscrollBehaviorKeyword,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssOverscrollBehaviorUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssOverscrollBehaviorQualificationOutcome {
+    Qualified(CssOverscrollBehaviorValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssOverscrollBehaviorUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded authored
+/// `overscroll-behavior` shorthand qualification.
+///
+/// Authored one- and two-keyword forms remain distinct here. This observation
+/// performs no shorthand expansion, x/y mapping, one-value defaulting,
+/// computed-value processing, or CSSOM serialization collapse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssOverscrollBehaviorQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssOverscrollBehaviorQualificationOutcome,
+}
+
+impl CssOverscrollBehaviorQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssOverscrollBehaviorQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssWordSpacingValue {
     Normal,
     DirectLengthLiteral,
@@ -2694,6 +2752,7 @@ pub(crate) struct CssValueQualificationRunResult {
     fill_rule_observations: Vec<CssFillRuleQualificationObservation>,
     column_fill_observations: Vec<CssColumnFillQualificationObservation>,
     text_decoration_skip_ink_observations: Vec<CssTextDecorationSkipInkQualificationObservation>,
+    overscroll_behavior_observations: Vec<CssOverscrollBehaviorQualificationObservation>,
     overscroll_behavior_x_observations: Vec<CssOverscrollBehaviorXQualificationObservation>,
     overscroll_behavior_y_observations: Vec<CssOverscrollBehaviorYQualificationObservation>,
     overscroll_behavior_inline_observations:
@@ -2866,6 +2925,12 @@ impl CssValueQualificationRunResult {
         &self,
     ) -> &[CssTextDecorationSkipInkQualificationObservation] {
         &self.text_decoration_skip_ink_observations
+    }
+
+    pub(crate) fn overscroll_behavior_observations(
+        &self,
+    ) -> &[CssOverscrollBehaviorQualificationObservation] {
+        &self.overscroll_behavior_observations
     }
 
     pub(crate) fn overscroll_behavior_x_observations(
@@ -3091,6 +3156,7 @@ pub(crate) fn run(
         fill_rule_observations,
         column_fill_observations,
         text_decoration_skip_ink_observations,
+        overscroll_behavior_observations,
         overscroll_behavior_x_observations,
         overscroll_behavior_y_observations,
         overscroll_behavior_inline_observations,
@@ -3149,6 +3215,7 @@ pub(crate) fn run(
         let mut fill_rule_observations = Vec::new();
         let mut column_fill_observations = Vec::new();
         let mut text_decoration_skip_ink_observations = Vec::new();
+        let mut overscroll_behavior_observations = Vec::new();
         let mut overscroll_behavior_x_observations = Vec::new();
         let mut overscroll_behavior_y_observations = Vec::new();
         let mut overscroll_behavior_inline_observations = Vec::new();
@@ -3530,6 +3597,19 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("overscroll-behavior") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                overscroll_behavior_observations.push(
+                    CssOverscrollBehaviorQualificationObservation {
+                        occurrence_index,
+                        placement: occurrence.placement(),
+                        outcome: qualify_overscroll_behavior_value(value_items),
+                    },
+                );
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("overscroll-behavior-x") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -3848,6 +3928,7 @@ pub(crate) fn run(
             fill_rule_observations,
             column_fill_observations,
             text_decoration_skip_ink_observations,
+            overscroll_behavior_observations,
             overscroll_behavior_x_observations,
             overscroll_behavior_y_observations,
             overscroll_behavior_inline_observations,
@@ -3908,6 +3989,7 @@ pub(crate) fn run(
         fill_rule_observations,
         column_fill_observations,
         text_decoration_skip_ink_observations,
+        overscroll_behavior_observations,
         overscroll_behavior_x_observations,
         overscroll_behavior_y_observations,
         overscroll_behavior_inline_observations,
@@ -5807,6 +5889,87 @@ fn qualify_text_decoration_skip_ink_value(
             CssTextDecorationSkipInkQualificationOutcome::InvalidForSelectedValueGrammar
         }
     }
+}
+
+fn qualify_overscroll_behavior_value(
+    items: &[CssLexicalItem],
+) -> CssOverscrollBehaviorQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssOverscrollBehaviorQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssOverscrollBehaviorUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssOverscrollBehaviorQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssOverscrollBehaviorUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    let tokens: Vec<_> = items
+        .iter()
+        .filter_map(|item| match item {
+            CssLexicalItem::SemanticToken(token)
+                if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+            {
+                Some(token)
+            }
+            _ => None,
+        })
+        .collect();
+
+    match tokens.as_slice() {
+        [token] => match token.kind() {
+            CssTokenKind::Ident(identifier) if is_css_wide_keyword(identifier) => {
+                CssOverscrollBehaviorQualificationOutcome::UnsupportedBySelectedValueProfile(
+                    CssOverscrollBehaviorUnsupportedReason::CssWideKeyword,
+                )
+            }
+            CssTokenKind::Ident(identifier) => overscroll_behavior_keyword(identifier)
+                .map(|keyword| {
+                    CssOverscrollBehaviorQualificationOutcome::Qualified(
+                        CssOverscrollBehaviorValue::Single(keyword),
+                    )
+                })
+                .unwrap_or(
+                    CssOverscrollBehaviorQualificationOutcome::InvalidForSelectedValueGrammar,
+                ),
+            _ => CssOverscrollBehaviorQualificationOutcome::InvalidForSelectedValueGrammar,
+        },
+        [first, second] => match (first.kind(), second.kind()) {
+            (CssTokenKind::Ident(first), CssTokenKind::Ident(second)) => {
+                match (
+                    overscroll_behavior_keyword(first),
+                    overscroll_behavior_keyword(second),
+                ) {
+                    (Some(first), Some(second)) => {
+                        CssOverscrollBehaviorQualificationOutcome::Qualified(
+                            CssOverscrollBehaviorValue::Pair { first, second },
+                        )
+                    }
+                    _ => CssOverscrollBehaviorQualificationOutcome::InvalidForSelectedValueGrammar,
+                }
+            }
+            _ => CssOverscrollBehaviorQualificationOutcome::InvalidForSelectedValueGrammar,
+        },
+        _ => CssOverscrollBehaviorQualificationOutcome::InvalidForSelectedValueGrammar,
+    }
+}
+
+fn overscroll_behavior_keyword(identifier: &str) -> Option<CssOverscrollBehaviorKeyword> {
+    if identifier.eq_ignore_ascii_case("contain") {
+        return Some(CssOverscrollBehaviorKeyword::Contain);
+    }
+    if identifier.eq_ignore_ascii_case("none") {
+        return Some(CssOverscrollBehaviorKeyword::None);
+    }
+    if identifier.eq_ignore_ascii_case("auto") {
+        return Some(CssOverscrollBehaviorKeyword::Auto);
+    }
+    if identifier.eq_ignore_ascii_case("chain") {
+        return Some(CssOverscrollBehaviorKeyword::Chain);
+    }
+    None
 }
 
 fn qualify_overscroll_behavior_x_value(
