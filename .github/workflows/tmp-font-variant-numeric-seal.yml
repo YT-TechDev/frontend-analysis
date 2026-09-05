@@ -4,13 +4,15 @@ on:
   push:
     branches:
       - feat/css-font-variant-numeric-value-qualification-538
+    paths:
+      - .github/workflows/tmp-font-variant-numeric-seal.yml
+      - .github/tmp-font-variant-numeric-seal.py
 
 permissions:
   contents: write
 
 jobs:
   seal:
-    if: github.event.head_commit.message != 'feat(css): add bounded font-variant-numeric value qualification'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
