@@ -1,54 +1,9 @@
-name: FA536 font-variant-ligatures sealing
+name: FA536 transport probe
 
-on:
-  push:
-    branches:
-      - feat/css-font-variant-ligatures-value-qualification-536
-
-permissions:
-  contents: write
+on: [push]
 
 jobs:
-  seal:
-    if: github.event.head_commit.message == 'chore: fix FA536 transport and run sealing'
+  probe:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Apply bounded leaf
-        run: python3 .github/fa536_apply.py
-
-      - name: Install Rust 1.97.1
-        run: rustup toolchain install 1.97.1 --profile minimal
-
-      - name: Format
-        run: cargo +1.97.1 fmt --all
-
-      - name: Format check
-        run: cargo +1.97.1 fmt --all -- --check
-
-      - name: Whitespace check
-        run: git diff --check
-
-      - name: Focused tests
-        run: cargo +1.97.1 test -p frontend-analysis-core font_variant_ligatures_value_qualification_tests -- --nocapture
-
-      - name: Core Clippy
-        run: cargo +1.97.1 clippy -p frontend-analysis-core --all-targets --all-features -- -D warnings
-
-      - name: Core full suite
-        run: cargo +1.97.1 test -p frontend-analysis-core
-
-      - name: Commit tested candidate and remove transport
-        shell: bash
-        run: |
-          git rm .github/workflows/fa536-font-variant-ligatures-seal.yml .github/fa536_apply.py
-          git add crates/frontend-analysis-core/src/css/value_qualification.rs \
-                  crates/frontend-analysis-core/src/css/validation/font_variant_ligatures_value_qualification_tests.rs \
-                  crates/frontend-analysis-core/src/css/validation/mod.rs
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "feat(css): add bounded font-variant-ligatures value qualification"
-          git push origin HEAD:feat/css-font-variant-ligatures-value-qualification-536
+      - run: echo ok
