@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520/#522/#524/#526/#528/#530/#532/#534/#536).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520/#522/#524/#526/#528/#530/#532/#534/#536/#538).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -2186,6 +2186,79 @@ impl CssFontVariantLigaturesQualificationObservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFontVariantNumericComponent {
+    LiningNums,
+    OldstyleNums,
+    ProportionalNums,
+    TabularNums,
+    DiagonalFractions,
+    StackedFractions,
+    Ordinal,
+    SlashedZero,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssFontVariantNumericComponents {
+    authored: [CssFontVariantNumericComponent; 5],
+    count: usize,
+}
+
+impl CssFontVariantNumericComponents {
+    pub(crate) fn authored_components(&self) -> &[CssFontVariantNumericComponent] {
+        &self.authored[..self.count]
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFontVariantNumericValue {
+    Normal,
+    Components(CssFontVariantNumericComponents),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFontVariantNumericUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFontVariantNumericQualificationOutcome {
+    Qualified(CssFontVariantNumericValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssFontVariantNumericUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded authored
+/// `font-variant-numeric` qualification.
+///
+/// The composite branch preserves the exact authored component order even
+/// though CSS `||` matching is order-insensitive. Slot uniqueness is validated
+/// during qualification. This slice does not expand keywords to OpenType
+/// feature tags, normalize feature state, shape glyphs, or claim computed/used
+/// value or font-feature precedence semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssFontVariantNumericQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssFontVariantNumericQualificationOutcome,
+}
+
+impl CssFontVariantNumericQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssFontVariantNumericQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssOverscrollBehaviorXValue {
     Contain,
     None,
@@ -2901,6 +2974,7 @@ pub(crate) struct CssValueQualificationRunResult {
     overscroll_behavior_observations: Vec<CssOverscrollBehaviorQualificationObservation>,
     contain_observations: Vec<CssContainQualificationObservation>,
     font_variant_ligatures_observations: Vec<CssFontVariantLigaturesQualificationObservation>,
+    font_variant_numeric_observations: Vec<CssFontVariantNumericQualificationObservation>,
     overscroll_behavior_x_observations: Vec<CssOverscrollBehaviorXQualificationObservation>,
     overscroll_behavior_y_observations: Vec<CssOverscrollBehaviorYQualificationObservation>,
     overscroll_behavior_inline_observations:
@@ -3089,6 +3163,12 @@ impl CssValueQualificationRunResult {
         &self,
     ) -> &[CssFontVariantLigaturesQualificationObservation] {
         &self.font_variant_ligatures_observations
+    }
+
+    pub(crate) fn font_variant_numeric_observations(
+        &self,
+    ) -> &[CssFontVariantNumericQualificationObservation] {
+        &self.font_variant_numeric_observations
     }
 
     pub(crate) fn overscroll_behavior_x_observations(
@@ -3317,6 +3397,7 @@ pub(crate) fn run(
         overscroll_behavior_observations,
         contain_observations,
         font_variant_ligatures_observations,
+        font_variant_numeric_observations,
         overscroll_behavior_x_observations,
         overscroll_behavior_y_observations,
         overscroll_behavior_inline_observations,
@@ -3378,6 +3459,7 @@ pub(crate) fn run(
         let mut overscroll_behavior_observations = Vec::new();
         let mut contain_observations = Vec::new();
         let mut font_variant_ligatures_observations = Vec::new();
+        let mut font_variant_numeric_observations = Vec::new();
         let mut overscroll_behavior_x_observations = Vec::new();
         let mut overscroll_behavior_y_observations = Vec::new();
         let mut overscroll_behavior_inline_observations = Vec::new();
@@ -3796,6 +3878,19 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("font-variant-numeric") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                font_variant_numeric_observations.push(
+                    CssFontVariantNumericQualificationObservation {
+                        occurrence_index,
+                        placement: occurrence.placement(),
+                        outcome: qualify_font_variant_numeric_value(value_items),
+                    },
+                );
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("overscroll-behavior-x") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -4117,6 +4212,7 @@ pub(crate) fn run(
             overscroll_behavior_observations,
             contain_observations,
             font_variant_ligatures_observations,
+            font_variant_numeric_observations,
             overscroll_behavior_x_observations,
             overscroll_behavior_y_observations,
             overscroll_behavior_inline_observations,
@@ -4180,6 +4276,7 @@ pub(crate) fn run(
         overscroll_behavior_observations,
         contain_observations,
         font_variant_ligatures_observations,
+        font_variant_numeric_observations,
         overscroll_behavior_x_observations,
         overscroll_behavior_y_observations,
         overscroll_behavior_inline_observations,
@@ -6293,6 +6390,106 @@ fn font_variant_ligatures_component(
     }
     if identifier.eq_ignore_ascii_case("no-contextual") {
         return Some((CssFontVariantLigaturesComponent::NoContextual, 0b1000));
+    }
+    None
+}
+
+fn qualify_font_variant_numeric_value(
+    items: &[CssLexicalItem],
+) -> CssFontVariantNumericQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssFontVariantNumericQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssFontVariantNumericUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssFontVariantNumericQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssFontVariantNumericUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    let tokens: Vec<_> = items
+        .iter()
+        .filter_map(|item| match item {
+            CssLexicalItem::SemanticToken(token)
+                if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+            {
+                Some(token)
+            }
+            _ => None,
+        })
+        .collect();
+
+    if let [token] = tokens.as_slice()
+        && let CssTokenKind::Ident(identifier) = token.kind()
+    {
+        if is_css_wide_keyword(identifier) {
+            return CssFontVariantNumericQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssFontVariantNumericUnsupportedReason::CssWideKeyword,
+            );
+        }
+        if identifier.eq_ignore_ascii_case("normal") {
+            return CssFontVariantNumericQualificationOutcome::Qualified(
+                CssFontVariantNumericValue::Normal,
+            );
+        }
+    }
+
+    if tokens.is_empty() || tokens.len() > 5 {
+        return CssFontVariantNumericQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    let mut authored = [CssFontVariantNumericComponent::LiningNums; 5];
+    let mut count = 0usize;
+    let mut occupied_slots = 0u8;
+
+    for token in tokens {
+        let CssTokenKind::Ident(identifier) = token.kind() else {
+            return CssFontVariantNumericQualificationOutcome::InvalidForSelectedValueGrammar;
+        };
+        let Some((component, slot)) = font_variant_numeric_component(identifier) else {
+            return CssFontVariantNumericQualificationOutcome::InvalidForSelectedValueGrammar;
+        };
+        if occupied_slots & slot != 0 {
+            return CssFontVariantNumericQualificationOutcome::InvalidForSelectedValueGrammar;
+        }
+        occupied_slots |= slot;
+        authored[count] = component;
+        count += 1;
+    }
+
+    CssFontVariantNumericQualificationOutcome::Qualified(CssFontVariantNumericValue::Components(
+        CssFontVariantNumericComponents { authored, count },
+    ))
+}
+
+fn font_variant_numeric_component(
+    identifier: &str,
+) -> Option<(CssFontVariantNumericComponent, u8)> {
+    if identifier.eq_ignore_ascii_case("lining-nums") {
+        return Some((CssFontVariantNumericComponent::LiningNums, 0b00001));
+    }
+    if identifier.eq_ignore_ascii_case("oldstyle-nums") {
+        return Some((CssFontVariantNumericComponent::OldstyleNums, 0b00001));
+    }
+    if identifier.eq_ignore_ascii_case("proportional-nums") {
+        return Some((CssFontVariantNumericComponent::ProportionalNums, 0b00010));
+    }
+    if identifier.eq_ignore_ascii_case("tabular-nums") {
+        return Some((CssFontVariantNumericComponent::TabularNums, 0b00010));
+    }
+    if identifier.eq_ignore_ascii_case("diagonal-fractions") {
+        return Some((CssFontVariantNumericComponent::DiagonalFractions, 0b00100));
+    }
+    if identifier.eq_ignore_ascii_case("stacked-fractions") {
+        return Some((CssFontVariantNumericComponent::StackedFractions, 0b00100));
+    }
+    if identifier.eq_ignore_ascii_case("ordinal") {
+        return Some((CssFontVariantNumericComponent::Ordinal, 0b01000));
+    }
+    if identifier.eq_ignore_ascii_case("slashed-zero") {
+        return Some((CssFontVariantNumericComponent::SlashedZero, 0b10000));
     }
     None
 }
