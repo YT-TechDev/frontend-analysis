@@ -107,4 +107,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "feat(css): add bounded overscroll-behavior shorthand value qualification"
-          git push origin HEAD:feat/css-overscroll-behavior-shorthand-value-qualification-532
+          git push \
+            --force-with-lease=refs/heads/feat/css-overscroll-behavior-shorthand-value-qualification-532:${GITHUB_SHA} \
+            origin \
+            HEAD:refs/heads/feat/css-overscroll-behavior-shorthand-value-qualification-532
