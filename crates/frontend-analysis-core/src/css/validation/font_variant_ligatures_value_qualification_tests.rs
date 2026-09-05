@@ -1,301 +1,4 @@
-from pathlib import Path
-import re
-
-source_path = Path('crates/frontend-analysis-core/src/css/value_qualification.rs')
-source = source_path.read_text()
-
-old_header = '#532/#534).'
-if old_header not in source:
-    raise SystemExit('header anchor missing')
-source = source.replace(old_header, '#532/#534/#536).', 1)
-
-type_anchor = '''#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CssOverscrollBehaviorXValue {'''
-if type_anchor not in source:
-    raise SystemExit('type insertion anchor missing')
-
-type_block = r'''#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CssFontVariantLigaturesComponent {
-    CommonLigatures,
-    NoCommonLigatures,
-    DiscretionaryLigatures,
-    NoDiscretionaryLigatures,
-    HistoricalLigatures,
-    NoHistoricalLigatures,
-    Contextual,
-    NoContextual,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct CssFontVariantLigaturesComponents {
-    authored: [CssFontVariantLigaturesComponent; 4],
-    count: usize,
-}
-
-impl CssFontVariantLigaturesComponents {
-    pub(crate) fn authored_components(&self) -> &[CssFontVariantLigaturesComponent] {
-        &self.authored[..self.count]
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CssFontVariantLigaturesValue {
-    Normal,
-    None,
-    Components(CssFontVariantLigaturesComponents),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CssFontVariantLigaturesUnsupportedReason {
-    CssWideKeyword,
-    DeferredSubstitutionFunction,
-    WholeValueFunction,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CssFontVariantLigaturesQualificationOutcome {
-    Qualified(CssFontVariantLigaturesValue),
-    InvalidForSelectedValueGrammar,
-    UnsupportedBySelectedValueProfile(CssFontVariantLigaturesUnsupportedReason),
-}
-
-/// One selected ordinary declaration's bounded authored
-/// `font-variant-ligatures` qualification.
-///
-/// Composite values retain authored component order even though the grammar is
-/// order-insensitive. Slot uniqueness is validated during qualification. This
-/// slice does not expand keywords to OpenType feature tags, normalize feature
-/// state, shape glyphs, or claim computed/used-value or font-feature precedence
-/// semantics.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct CssFontVariantLigaturesQualificationObservation {
-    occurrence_index: usize,
-    placement: CssDeclarationPlacement,
-    outcome: CssFontVariantLigaturesQualificationOutcome,
-}
-
-impl CssFontVariantLigaturesQualificationObservation {
-    pub(crate) const fn occurrence_index(&self) -> usize {
-        self.occurrence_index
-    }
-
-    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
-        self.placement
-    }
-
-    pub(crate) const fn outcome(&self) -> CssFontVariantLigaturesQualificationOutcome {
-        self.outcome
-    }
-}
-
-'''
-source = source.replace(type_anchor, type_block + type_anchor, 1)
-
-field_anchor = '    contain_observations: Vec<CssContainQualificationObservation>,\n'
-if field_anchor not in source:
-    raise SystemExit('run-result field anchor missing')
-source = source.replace(
-    field_anchor,
-    field_anchor + '    font_variant_ligatures_observations: Vec<CssFontVariantLigaturesQualificationObservation>,\n',
-    1,
-)
-
-getter_anchor = '''    pub(crate) fn contain_observations(&self) -> &[CssContainQualificationObservation] {
-        &self.contain_observations
-    }
-'''
-if getter_anchor not in source:
-    raise SystemExit('getter anchor missing')
-getter = getter_anchor + '''
-    pub(crate) fn font_variant_ligatures_observations(
-        &self,
-    ) -> &[CssFontVariantLigaturesQualificationObservation] {
-        &self.font_variant_ligatures_observations
-    }
-'''
-source = source.replace(getter_anchor, getter, 1)
-
-local_anchor = '        let mut contain_observations = Vec::new();\n'
-if local_anchor not in source:
-    raise SystemExit('local observations anchor missing')
-source = source.replace(
-    local_anchor,
-    local_anchor + '        let mut font_variant_ligatures_observations = Vec::new();\n',
-    1,
-)
-
-dispatch_anchor = '''            if property_name.eq_ignore_ascii_case("overscroll-behavior-x") {'''
-if dispatch_anchor not in source:
-    raise SystemExit('dispatch anchor missing')
-dispatch = '''            if property_name.eq_ignore_ascii_case("font-variant-ligatures") {
-                let value_range = cursor.window_for(occurrence.value())?;
-                let value_items = &tokenizer_result.lexical_items()[value_range];
-                font_variant_ligatures_observations.push(
-                    CssFontVariantLigaturesQualificationObservation {
-                        occurrence_index,
-                        placement: occurrence.placement(),
-                        outcome: qualify_font_variant_ligatures_value(value_items),
-                    },
-                );
-                continue;
-            }
-
-'''
-source = source.replace(dispatch_anchor, dispatch + dispatch_anchor, 1)
-
-source, bare_count = re.subn(
-    r'(?m)^(\s*)contain_observations,$',
-    r'\1contain_observations,\n\1font_variant_ligatures_observations,',
-    source,
-)
-if bare_count < 2:
-    raise SystemExit(f'unexpected bare contain observation count: {bare_count}')
-
-classifier_anchor = 'fn qualify_overscroll_behavior_value('
-if classifier_anchor not in source:
-    raise SystemExit('classifier insertion anchor missing')
-classifier = r'''fn qualify_font_variant_ligatures_value(
-    items: &[CssLexicalItem],
-) -> CssFontVariantLigaturesQualificationOutcome {
-    if contains_deferred_substitution_function(items) {
-        return CssFontVariantLigaturesQualificationOutcome::UnsupportedBySelectedValueProfile(
-            CssFontVariantLigaturesUnsupportedReason::DeferredSubstitutionFunction,
-        );
-    }
-
-    if is_entire_whole_value_function(items) {
-        return CssFontVariantLigaturesQualificationOutcome::UnsupportedBySelectedValueProfile(
-            CssFontVariantLigaturesUnsupportedReason::WholeValueFunction,
-        );
-    }
-
-    let tokens: Vec<_> = items
-        .iter()
-        .filter_map(|item| match item {
-            CssLexicalItem::SemanticToken(token)
-                if !matches!(token.kind(), CssTokenKind::Whitespace) =>
-            {
-                Some(token)
-            }
-            _ => None,
-        })
-        .collect();
-
-    if let [token] = tokens.as_slice()
-        && let CssTokenKind::Ident(identifier) = token.kind()
-    {
-        if is_css_wide_keyword(identifier) {
-            return CssFontVariantLigaturesQualificationOutcome::UnsupportedBySelectedValueProfile(
-                CssFontVariantLigaturesUnsupportedReason::CssWideKeyword,
-            );
-        }
-        if identifier.eq_ignore_ascii_case("normal") {
-            return CssFontVariantLigaturesQualificationOutcome::Qualified(
-                CssFontVariantLigaturesValue::Normal,
-            );
-        }
-        if identifier.eq_ignore_ascii_case("none") {
-            return CssFontVariantLigaturesQualificationOutcome::Qualified(
-                CssFontVariantLigaturesValue::None,
-            );
-        }
-    }
-
-    if tokens.is_empty() || tokens.len() > 4 {
-        return CssFontVariantLigaturesQualificationOutcome::InvalidForSelectedValueGrammar;
-    }
-
-    let mut authored = [CssFontVariantLigaturesComponent::CommonLigatures; 4];
-    let mut count = 0usize;
-    let mut occupied_slots = 0u8;
-
-    for token in tokens {
-        let CssTokenKind::Ident(identifier) = token.kind() else {
-            return CssFontVariantLigaturesQualificationOutcome::InvalidForSelectedValueGrammar;
-        };
-
-        let Some((component, slot)) = font_variant_ligatures_component(identifier) else {
-            return CssFontVariantLigaturesQualificationOutcome::InvalidForSelectedValueGrammar;
-        };
-
-        if occupied_slots & slot != 0 {
-            return CssFontVariantLigaturesQualificationOutcome::InvalidForSelectedValueGrammar;
-        }
-        occupied_slots |= slot;
-        authored[count] = component;
-        count += 1;
-    }
-
-    CssFontVariantLigaturesQualificationOutcome::Qualified(
-        CssFontVariantLigaturesValue::Components(CssFontVariantLigaturesComponents {
-            authored,
-            count,
-        }),
-    )
-}
-
-fn font_variant_ligatures_component(
-    identifier: &str,
-) -> Option<(CssFontVariantLigaturesComponent, u8)> {
-    if identifier.eq_ignore_ascii_case("common-ligatures") {
-        return Some((CssFontVariantLigaturesComponent::CommonLigatures, 0b0001));
-    }
-    if identifier.eq_ignore_ascii_case("no-common-ligatures") {
-        return Some((CssFontVariantLigaturesComponent::NoCommonLigatures, 0b0001));
-    }
-    if identifier.eq_ignore_ascii_case("discretionary-ligatures") {
-        return Some((
-            CssFontVariantLigaturesComponent::DiscretionaryLigatures,
-            0b0010,
-        ));
-    }
-    if identifier.eq_ignore_ascii_case("no-discretionary-ligatures") {
-        return Some((
-            CssFontVariantLigaturesComponent::NoDiscretionaryLigatures,
-            0b0010,
-        ));
-    }
-    if identifier.eq_ignore_ascii_case("historical-ligatures") {
-        return Some((CssFontVariantLigaturesComponent::HistoricalLigatures, 0b0100));
-    }
-    if identifier.eq_ignore_ascii_case("no-historical-ligatures") {
-        return Some((
-            CssFontVariantLigaturesComponent::NoHistoricalLigatures,
-            0b0100,
-        ));
-    }
-    if identifier.eq_ignore_ascii_case("contextual") {
-        return Some((CssFontVariantLigaturesComponent::Contextual, 0b1000));
-    }
-    if identifier.eq_ignore_ascii_case("no-contextual") {
-        return Some((CssFontVariantLigaturesComponent::NoContextual, 0b1000));
-    }
-    None
-}
-
-'''
-source = source.replace(classifier_anchor, classifier + classifier_anchor, 1)
-source_path.write_text(source)
-
-mod_path = Path('crates/frontend-analysis-core/src/css/validation/mod.rs')
-mod_source = mod_path.read_text()
-mod_anchor = '''#[cfg(test)]
-mod font_variant_emoji_value_qualification_tests;
-'''
-if mod_anchor not in mod_source:
-    raise SystemExit('validation module anchor missing')
-mod_source = mod_source.replace(
-    mod_anchor,
-    mod_anchor + '#[cfg(test)]\nmod font_variant_ligatures_value_qualification_tests;\n',
-    1,
-)
-mod_path.write_text(mod_source)
-
-test_path = Path(
-    'crates/frontend-analysis-core/src/css/validation/'
-    'font_variant_ligatures_value_qualification_tests.rs'
-)
-test_path.write_text(r'''use crate::css::analysis::analyze_css_source;
+use crate::css::analysis::analyze_css_source;
 use crate::css::parser::resource::CssParserLimits;
 use crate::css::parser::result::CssParserExecutionCompletion;
 use crate::css::tokenizer::resource::CssTokenizerLimits;
@@ -538,8 +241,8 @@ fn case_escapes_comments_and_priority_preserve_authored_components_and_placement
     );
 
     let priority_observation = &result.font_variant_ligatures_observations()[3];
-    let occurrence = &result.upstream_parser_result().occurrences()
-        [priority_observation.occurrence_index()];
+    let occurrence =
+        &result.upstream_parser_result().occurrences()[priority_observation.occurrence_index()];
     assert_eq!(priority_observation.placement(), occurrence.placement());
     assert!(occurrence.priority().is_some());
 }
@@ -655,7 +358,10 @@ fn cross_dispatch_with_accepted_font_variant_and_contain_leaves_remains_isolated
     assert_eq!(result.font_variant_emoji_observations().len(), 1);
     assert_eq!(result.font_variant_ligatures_observations().len(), 1);
     assert_eq!(result.contain_observations().len(), 1);
-    assert_eq!(result.font_variant_ligatures_observations()[0].occurrence_index(), 3);
+    assert_eq!(
+        result.font_variant_ligatures_observations()[0].occurrence_index(),
+        3
+    );
     assert_expected(
         &result,
         &[ExpectedOutcome::Components(&[CommonLigatures, Contextual])],
@@ -691,10 +397,19 @@ fn duplicate_declarations_keep_distinct_run_local_placement() {
 #[test]
 fn nonordinary_declaration_shaped_contexts_are_excluded() {
     for (source_id, css) in [
-        (85_510, "@font-face{font-variant-ligatures:common-ligatures;}"),
+        (
+            85_510,
+            "@font-face{font-variant-ligatures:common-ligatures;}",
+        ),
         (85_511, "@page{font-variant-ligatures:common-ligatures;}"),
-        (85_512, "@page{@top-left{font-variant-ligatures:common-ligatures;}}"),
-        (85_513, "@keyframes k{from{font-variant-ligatures:common-ligatures;}}"),
+        (
+            85_512,
+            "@page{@top-left{font-variant-ligatures:common-ligatures;}}",
+        ),
+        (
+            85_513,
+            "@keyframes k{from{font-variant-ligatures:common-ligatures;}}",
+        ),
     ] {
         let result = qualify(source_id, css);
         assert!(
@@ -750,4 +465,3 @@ fn repeated_and_cross_source_runs_are_semantically_deterministic() {
         another_source.font_variant_ligatures_observations()
     );
 }
-''')
