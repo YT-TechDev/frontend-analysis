@@ -2497,8 +2497,7 @@ pub(crate) struct CssValueQualificationRunResult {
     clip_rule_observations: Vec<CssClipRuleQualificationObservation>,
     fill_rule_observations: Vec<CssFillRuleQualificationObservation>,
     column_fill_observations: Vec<CssColumnFillQualificationObservation>,
-    text_decoration_skip_ink_observations:
-        Vec<CssTextDecorationSkipInkQualificationObservation>,
+    text_decoration_skip_ink_observations: Vec<CssTextDecorationSkipInkQualificationObservation>,
     word_spacing_observations: Vec<CssWordSpacingQualificationObservation>,
     text_underline_offset_observations: Vec<CssTextUnderlineOffsetQualificationObservation>,
     scroll_margin_top_observations: Vec<CssScrollMarginTopQualificationObservation>,
@@ -5501,9 +5500,7 @@ fn qualify_text_decoration_skip_ink_value(
                 CssTextDecorationSkipInkValue::None,
             )
         }
-        CssSingleKeywordValue::Identifier(identifier)
-            if identifier.eq_ignore_ascii_case("all") =>
-        {
+        CssSingleKeywordValue::Identifier(identifier) if identifier.eq_ignore_ascii_case("all") => {
             CssTextDecorationSkipInkQualificationOutcome::Qualified(
                 CssTextDecorationSkipInkValue::All,
             )

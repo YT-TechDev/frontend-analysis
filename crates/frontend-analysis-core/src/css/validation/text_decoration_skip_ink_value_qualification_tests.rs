@@ -57,21 +57,15 @@ fn qualify_with_limits(
 
 fn expected_outcome(expected: ExpectedOutcome) -> CssTextDecorationSkipInkQualificationOutcome {
     match expected {
-        ExpectedOutcome::Auto => {
-            CssTextDecorationSkipInkQualificationOutcome::Qualified(
-                CssTextDecorationSkipInkValue::Auto,
-            )
-        }
-        ExpectedOutcome::None => {
-            CssTextDecorationSkipInkQualificationOutcome::Qualified(
-                CssTextDecorationSkipInkValue::None,
-            )
-        }
-        ExpectedOutcome::All => {
-            CssTextDecorationSkipInkQualificationOutcome::Qualified(
-                CssTextDecorationSkipInkValue::All,
-            )
-        }
+        ExpectedOutcome::Auto => CssTextDecorationSkipInkQualificationOutcome::Qualified(
+            CssTextDecorationSkipInkValue::Auto,
+        ),
+        ExpectedOutcome::None => CssTextDecorationSkipInkQualificationOutcome::Qualified(
+            CssTextDecorationSkipInkValue::None,
+        ),
+        ExpectedOutcome::All => CssTextDecorationSkipInkQualificationOutcome::Qualified(
+            CssTextDecorationSkipInkValue::All,
+        ),
         ExpectedOutcome::Invalid => {
             CssTextDecorationSkipInkQualificationOutcome::InvalidForSelectedValueGrammar
         }
