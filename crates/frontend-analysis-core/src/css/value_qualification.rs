@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520/#522/#524/#526/#528/#530/#532/#534/#536/#538/#541/#546/#549/#551/#553/#555/#559).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520/#522/#524/#526/#528/#530/#532/#534/#536/#538/#541/#546/#549/#551/#553/#555/#559/#561).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -603,8 +603,8 @@ pub(crate) enum CssFontSynthesisSmallCapsQualificationOutcome {
 ///
 /// This profile qualifies only direct `auto | none` authored keyword evidence.
 /// Font selection, glyph synthesis, casing transformation, OpenType feature
-/// execution, shaping, rendering, and used-value processing remain outside
-/// this slice.
+/// execution, shaping, rendering, and used-value processing remain outside this
+/// slice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct CssFontSynthesisSmallCapsQualificationObservation {
     occurrence_index: usize,
@@ -3852,7 +3852,8 @@ impl CssValueQualificationRunResult {
         &'a self,
         observation: &CssPageQualificationObservation,
     ) -> Option<&'a str> {
-        if observation.outcome() != CssPageQualificationOutcome::Qualified(CssPageValue::CustomIdent)
+        if observation.outcome()
+            != CssPageQualificationOutcome::Qualified(CssPageValue::CustomIdent)
         {
             return None;
         }
@@ -8429,14 +8430,17 @@ fn qualify_page_value(
         );
     }
 
-    let mut tokens = items.iter().enumerate().filter_map(|(relative_index, item)| match item {
-        CssLexicalItem::SemanticToken(token)
-            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
-        {
-            Some((relative_index, token))
-        }
-        _ => None,
-    });
+    let mut tokens = items
+        .iter()
+        .enumerate()
+        .filter_map(|(relative_index, item)| match item {
+            CssLexicalItem::SemanticToken(token)
+                if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+            {
+                Some((relative_index, token))
+            }
+            _ => None,
+        });
 
     let Some((relative_index, token)) = tokens.next() else {
         return (
