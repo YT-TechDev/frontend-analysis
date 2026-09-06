@@ -27,6 +27,9 @@ jobs:
           rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
           rustup default 1.97.1
 
+      - name: Repair temporary tuple transport
+        run: python3 .github/scripts/fix-text-decoration-line-transport.py
+
       - name: Apply bounded candidate
         run: python3 .github/scripts/apply-text-decoration-line-candidate.py
 
@@ -55,6 +58,7 @@ jobs:
         run: |
           rm .github/workflows/text-decoration-line-sealing.yml
           rm .github/scripts/apply-text-decoration-line-candidate.py
+          rm .github/scripts/fix-text-decoration-line-transport.py
           expected=$'crates/frontend-analysis-core/src/css/validation/mod.rs\ncrates/frontend-analysis-core/src/css/validation/text_decoration_line_value_qualification_tests.rs\ncrates/frontend-analysis-core/src/css/value_qualification.rs'
           actual="$(git diff --name-only "$BASE_SHA" | sort)"
           test "$actual" = "$expected"
