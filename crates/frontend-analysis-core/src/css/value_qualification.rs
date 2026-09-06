@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520/#522/#524/#526/#528/#530/#532/#534/#536/#538/#541/#546/#549).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520/#522/#524/#526/#528/#530/#532/#534/#536/#538/#541/#546/#549/#551).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -1880,6 +1880,76 @@ impl CssRubyMergeQualificationObservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssRubyPositionComponent {
+    Alternate,
+    Over,
+    Under,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssRubyPositionComponents {
+    authored: [CssRubyPositionComponent; 2],
+    count: usize,
+}
+
+impl CssRubyPositionComponents {
+    pub(crate) fn authored_components(&self) -> &[CssRubyPositionComponent] {
+        &self.authored[..self.count]
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssRubyPositionValue {
+    InterCharacter,
+    Components(CssRubyPositionComponents),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssRubyPositionUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssRubyPositionQualificationOutcome {
+    Qualified(CssRubyPositionValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssRubyPositionUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded authored
+/// `ruby-position` qualification.
+///
+/// The composite branch preserves exact authored order for the
+/// property-specific `[ alternate || [ over | under ] ]` grammar.
+/// `alternate` occupies one singleton slot while `over | under` share
+/// one mutually-exclusive SIDE slot. `inter-character` remains a
+/// standalone authored identity. This slice does not execute alternating
+/// annotation-level placement, inter-character layout, writing-mode
+/// resolution, CSSOM canonicalization, or computed/used-value semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssRubyPositionQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssRubyPositionQualificationOutcome,
+}
+
+impl CssRubyPositionQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssRubyPositionQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssRubyOverhangValue {
     Auto,
     Spaces,
@@ -3180,6 +3250,7 @@ pub(crate) struct CssValueQualificationRunResult {
     math_style_observations: Vec<CssMathStyleQualificationObservation>,
     math_shift_observations: Vec<CssMathShiftQualificationObservation>,
     ruby_merge_observations: Vec<CssRubyMergeQualificationObservation>,
+    ruby_position_observations: Vec<CssRubyPositionQualificationObservation>,
     ruby_overhang_observations: Vec<CssRubyOverhangQualificationObservation>,
     clip_rule_observations: Vec<CssClipRuleQualificationObservation>,
     fill_rule_observations: Vec<CssFillRuleQualificationObservation>,
@@ -3342,6 +3413,10 @@ impl CssValueQualificationRunResult {
 
     pub(crate) fn ruby_merge_observations(&self) -> &[CssRubyMergeQualificationObservation] {
         &self.ruby_merge_observations
+    }
+
+    pub(crate) fn ruby_position_observations(&self) -> &[CssRubyPositionQualificationObservation] {
+        &self.ruby_position_observations
     }
 
     pub(crate) fn ruby_overhang_observations(&self) -> &[CssRubyOverhangQualificationObservation] {
@@ -3624,6 +3699,7 @@ pub(crate) fn run(
         math_style_observations,
         math_shift_observations,
         ruby_merge_observations,
+        ruby_position_observations,
         ruby_overhang_observations,
         clip_rule_observations,
         fill_rule_observations,
@@ -3689,6 +3765,7 @@ pub(crate) fn run(
         let mut math_style_observations = Vec::new();
         let mut math_shift_observations = Vec::new();
         let mut ruby_merge_observations = Vec::new();
+        let mut ruby_position_observations = Vec::new();
         let mut ruby_overhang_observations = Vec::new();
         let mut clip_rule_observations = Vec::new();
         let mut fill_rule_observations = Vec::new();
@@ -4021,6 +4098,17 @@ pub(crate) fn run(
                     occurrence_index,
                     placement: occurrence.placement(),
                     outcome: qualify_ruby_merge_value(value_items),
+                });
+                continue;
+            }
+
+            if property_name.eq_ignore_ascii_case("ruby-position") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                ruby_position_observations.push(CssRubyPositionQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_ruby_position_value(value_items),
                 });
                 continue;
             }
@@ -4482,6 +4570,7 @@ pub(crate) fn run(
             math_style_observations,
             math_shift_observations,
             ruby_merge_observations,
+            ruby_position_observations,
             ruby_overhang_observations,
             clip_rule_observations,
             fill_rule_observations,
@@ -4549,6 +4638,7 @@ pub(crate) fn run(
         math_style_observations,
         math_shift_observations,
         ruby_merge_observations,
+        ruby_position_observations,
         ruby_overhang_observations,
         clip_rule_observations,
         fill_rule_observations,
@@ -6288,6 +6378,87 @@ fn qualify_ruby_merge_value(items: &[CssLexicalItem]) -> CssRubyMergeQualificati
             CssRubyMergeQualificationOutcome::InvalidForSelectedValueGrammar
         }
     }
+}
+
+fn qualify_ruby_position_value(items: &[CssLexicalItem]) -> CssRubyPositionQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssRubyPositionQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssRubyPositionUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssRubyPositionQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssRubyPositionUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    let tokens: Vec<_> = items
+        .iter()
+        .filter_map(|item| match item {
+            CssLexicalItem::SemanticToken(token)
+                if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+            {
+                Some(token)
+            }
+            _ => None,
+        })
+        .collect();
+
+    if let [token] = tokens.as_slice()
+        && let CssTokenKind::Ident(identifier) = token.kind()
+    {
+        if is_css_wide_keyword(identifier) {
+            return CssRubyPositionQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssRubyPositionUnsupportedReason::CssWideKeyword,
+            );
+        }
+        if identifier.eq_ignore_ascii_case("inter-character") {
+            return CssRubyPositionQualificationOutcome::Qualified(
+                CssRubyPositionValue::InterCharacter,
+            );
+        }
+    }
+
+    if tokens.is_empty() || tokens.len() > 2 {
+        return CssRubyPositionQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    let mut authored = [CssRubyPositionComponent::Alternate; 2];
+    let mut count = 0usize;
+    let mut occupied_slots = 0u8;
+
+    for token in tokens {
+        let CssTokenKind::Ident(identifier) = token.kind() else {
+            return CssRubyPositionQualificationOutcome::InvalidForSelectedValueGrammar;
+        };
+        let Some((component, slot)) = ruby_position_component(identifier) else {
+            return CssRubyPositionQualificationOutcome::InvalidForSelectedValueGrammar;
+        };
+        if occupied_slots & slot != 0 {
+            return CssRubyPositionQualificationOutcome::InvalidForSelectedValueGrammar;
+        }
+        occupied_slots |= slot;
+        authored[count] = component;
+        count += 1;
+    }
+
+    CssRubyPositionQualificationOutcome::Qualified(CssRubyPositionValue::Components(
+        CssRubyPositionComponents { authored, count },
+    ))
+}
+
+fn ruby_position_component(identifier: &str) -> Option<(CssRubyPositionComponent, u8)> {
+    if identifier.eq_ignore_ascii_case("alternate") {
+        return Some((CssRubyPositionComponent::Alternate, 0b01));
+    }
+    if identifier.eq_ignore_ascii_case("over") {
+        return Some((CssRubyPositionComponent::Over, 0b10));
+    }
+    if identifier.eq_ignore_ascii_case("under") {
+        return Some((CssRubyPositionComponent::Under, 0b10));
+    }
+    None
 }
 
 fn qualify_ruby_overhang_value(items: &[CssLexicalItem]) -> CssRubyOverhangQualificationOutcome {
