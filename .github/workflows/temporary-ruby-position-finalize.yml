@@ -1,0 +1,324 @@
+name: Temporary ruby-position finalize
+
+on:
+  push:
+    branches:
+      - feat/css-ruby-position-value-qualification-551
+    paths:
+      - .github/workflows/temporary-ruby-position-finalize.yml
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Install accepted Rust toolchain
+        run: rustup toolchain install 1.97.1 --profile minimal --component rustfmt,clippy
+
+      - name: Select accepted Rust toolchain
+        run: rustup override set 1.97.1
+
+      - name: Apply ruby-position production integration
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("crates/frontend-analysis-core/src/css/value_qualification.rs")
+          source = path.read_text()
+
+          def replace_once(text, old, new, label):
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected 1 anchor, found {count}")
+              return text.replace(old, new, 1)
+
+          source = replace_once(
+              source,
+              "#541/#546/#549).",
+              "#541/#546/#549/#551).",
+              "module provenance",
+          )
+
+          type_anchor = "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub(crate) enum CssRubyOverhangValue"
+          type_block = '''#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+          pub(crate) enum CssRubyPositionComponent {
+              Alternate,
+              Over,
+              Under,
+          }
+
+          #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+          pub(crate) struct CssRubyPositionComponents {
+              authored: [CssRubyPositionComponent; 2],
+              count: usize,
+          }
+
+          impl CssRubyPositionComponents {
+              pub(crate) fn authored_components(&self) -> &[CssRubyPositionComponent] {
+                  &self.authored[..self.count]
+              }
+          }
+
+          #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+          pub(crate) enum CssRubyPositionValue {
+              InterCharacter,
+              Components(CssRubyPositionComponents),
+          }
+
+          #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+          pub(crate) enum CssRubyPositionUnsupportedReason {
+              CssWideKeyword,
+              DeferredSubstitutionFunction,
+              WholeValueFunction,
+          }
+
+          #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+          pub(crate) enum CssRubyPositionQualificationOutcome {
+              Qualified(CssRubyPositionValue),
+              InvalidForSelectedValueGrammar,
+              UnsupportedBySelectedValueProfile(CssRubyPositionUnsupportedReason),
+          }
+
+          /// One selected ordinary declaration's bounded authored
+          /// `ruby-position` qualification.
+          ///
+          /// The composite branch preserves exact authored order for the
+          /// property-specific `[ alternate || [ over | under ] ]` grammar.
+          /// `alternate` occupies one singleton slot while `over | under` share
+          /// one mutually-exclusive SIDE slot. `inter-character` remains a
+          /// standalone authored identity. This slice does not execute alternating
+          /// annotation-level placement, inter-character layout, writing-mode
+          /// resolution, CSSOM canonicalization, or computed/used-value semantics.
+          #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+          pub(crate) struct CssRubyPositionQualificationObservation {
+              occurrence_index: usize,
+              placement: CssDeclarationPlacement,
+              outcome: CssRubyPositionQualificationOutcome,
+          }
+
+          impl CssRubyPositionQualificationObservation {
+              pub(crate) const fn occurrence_index(&self) -> usize {
+                  self.occurrence_index
+              }
+
+              pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+                  self.placement
+              }
+
+              pub(crate) const fn outcome(&self) -> CssRubyPositionQualificationOutcome {
+                  self.outcome
+              }
+          }
+
+          '''
+          source = replace_once(source, type_anchor, type_block + type_anchor, "type insertion")
+
+          source = replace_once(
+              source,
+              "    ruby_merge_observations: Vec<CssRubyMergeQualificationObservation>,\n    ruby_overhang_observations: Vec<CssRubyOverhangQualificationObservation>,",
+              "    ruby_merge_observations: Vec<CssRubyMergeQualificationObservation>,\n    ruby_position_observations: Vec<CssRubyPositionQualificationObservation>,\n    ruby_overhang_observations: Vec<CssRubyOverhangQualificationObservation>,",
+              "run-result field",
+          )
+
+          getter_anchor = "    pub(crate) fn ruby_overhang_observations(&self) -> &[CssRubyOverhangQualificationObservation] {\n"
+          getter = '''    pub(crate) fn ruby_position_observations(&self) -> &[CssRubyPositionQualificationObservation] {
+              &self.ruby_position_observations
+          }
+
+          '''
+          source = replace_once(source, getter_anchor, getter + getter_anchor, "getter insertion")
+
+          source = replace_once(
+              source,
+              "        let mut ruby_merge_observations = Vec::new();\n        let mut ruby_overhang_observations = Vec::new();",
+              "        let mut ruby_merge_observations = Vec::new();\n        let mut ruby_position_observations = Vec::new();\n        let mut ruby_overhang_observations = Vec::new();",
+              "mutable collection",
+          )
+
+          list_anchor = "        ruby_merge_observations,\n"
+          list_count = source.count(list_anchor)
+          if list_count != 3:
+              raise SystemExit(f"run plumbing lists: expected 3 anchors, found {list_count}")
+          source = source.replace(
+              list_anchor,
+              "        ruby_merge_observations,\n        ruby_position_observations,\n",
+          )
+
+          dispatch_anchor = '            if property_name.eq_ignore_ascii_case("ruby-overhang") {\n'
+          dispatch = '''            if property_name.eq_ignore_ascii_case("ruby-position") {
+              let value_range = cursor.window_for(occurrence.value())?;
+              let value_items = &tokenizer_result.lexical_items()[value_range];
+              ruby_position_observations.push(CssRubyPositionQualificationObservation {
+                  occurrence_index,
+                  placement: occurrence.placement(),
+                  outcome: qualify_ruby_position_value(value_items),
+              });
+              continue;
+          }
+
+          '''
+          source = replace_once(source, dispatch_anchor, dispatch + dispatch_anchor, "dispatch insertion")
+
+          qualifier_anchor = "fn qualify_ruby_overhang_value(items: &[CssLexicalItem]) -> CssRubyOverhangQualificationOutcome {\n"
+          qualifier = '''fn qualify_ruby_position_value(
+              items: &[CssLexicalItem],
+          ) -> CssRubyPositionQualificationOutcome {
+              if contains_deferred_substitution_function(items) {
+                  return CssRubyPositionQualificationOutcome::UnsupportedBySelectedValueProfile(
+                      CssRubyPositionUnsupportedReason::DeferredSubstitutionFunction,
+                  );
+              }
+
+              if is_entire_whole_value_function(items) {
+                  return CssRubyPositionQualificationOutcome::UnsupportedBySelectedValueProfile(
+                      CssRubyPositionUnsupportedReason::WholeValueFunction,
+                  );
+              }
+
+              let tokens: Vec<_> = items
+                  .iter()
+                  .filter_map(|item| match item {
+                      CssLexicalItem::SemanticToken(token)
+                          if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+                      {
+                          Some(token)
+                      }
+                      _ => None,
+                  })
+                  .collect();
+
+              if let [token] = tokens.as_slice()
+                  && let CssTokenKind::Ident(identifier) = token.kind()
+              {
+                  if is_css_wide_keyword(identifier) {
+                      return CssRubyPositionQualificationOutcome::UnsupportedBySelectedValueProfile(
+                          CssRubyPositionUnsupportedReason::CssWideKeyword,
+                      );
+                  }
+                  if identifier.eq_ignore_ascii_case("inter-character") {
+                      return CssRubyPositionQualificationOutcome::Qualified(
+                          CssRubyPositionValue::InterCharacter,
+                      );
+                  }
+              }
+
+              if tokens.is_empty() || tokens.len() > 2 {
+                  return CssRubyPositionQualificationOutcome::InvalidForSelectedValueGrammar;
+              }
+
+              let mut authored = [CssRubyPositionComponent::Alternate; 2];
+              let mut count = 0usize;
+              let mut occupied_slots = 0u8;
+
+              for token in tokens {
+                  let CssTokenKind::Ident(identifier) = token.kind() else {
+                      return CssRubyPositionQualificationOutcome::InvalidForSelectedValueGrammar;
+                  };
+                  let Some((component, slot)) = ruby_position_component(identifier) else {
+                      return CssRubyPositionQualificationOutcome::InvalidForSelectedValueGrammar;
+                  };
+                  if occupied_slots & slot != 0 {
+                      return CssRubyPositionQualificationOutcome::InvalidForSelectedValueGrammar;
+                  }
+                  occupied_slots |= slot;
+                  authored[count] = component;
+                  count += 1;
+              }
+
+              CssRubyPositionQualificationOutcome::Qualified(CssRubyPositionValue::Components(
+                  CssRubyPositionComponents { authored, count },
+              ))
+          }
+
+          fn ruby_position_component(identifier: &str) -> Option<(CssRubyPositionComponent, u8)> {
+              if identifier.eq_ignore_ascii_case("alternate") {
+                  return Some((CssRubyPositionComponent::Alternate, 0b01));
+              }
+              if identifier.eq_ignore_ascii_case("over") {
+                  return Some((CssRubyPositionComponent::Over, 0b10));
+              }
+              if identifier.eq_ignore_ascii_case("under") {
+                  return Some((CssRubyPositionComponent::Under, 0b10));
+              }
+              None
+          }
+
+          '''
+          source = replace_once(source, qualifier_anchor, qualifier + qualifier_anchor, "qualifier insertion")
+          path.write_text(source)
+
+          mod_path = Path("crates/frontend-analysis-core/src/css/validation/mod.rs")
+          mod_text = mod_path.read_text()
+          mod_text = replace_once(
+              mod_text,
+              "#[cfg(test)]\nmod ruby_merge_value_qualification_tests;\n#[cfg(test)]\nmod ruby_overhang_value_qualification_tests;",
+              "#[cfg(test)]\nmod ruby_merge_value_qualification_tests;\n#[cfg(test)]\nmod ruby_position_value_qualification_tests;\n#[cfg(test)]\nmod ruby_overhang_value_qualification_tests;",
+              "test module registration",
+          )
+          mod_path.write_text(mod_text)
+          PY
+
+      - name: Assert production integration exists
+        run: |
+          grep -q 'pub(crate) enum CssRubyPositionComponent' crates/frontend-analysis-core/src/css/value_qualification.rs
+          grep -q 'ruby_position_observations' crates/frontend-analysis-core/src/css/value_qualification.rs
+          grep -q 'fn qualify_ruby_position_value' crates/frontend-analysis-core/src/css/value_qualification.rs
+          grep -q 'mod ruby_position_value_qualification_tests;' crates/frontend-analysis-core/src/css/validation/mod.rs
+
+      - name: Format candidate
+        run: cargo fmt --all
+
+      - name: Validate patch cleanliness
+        run: git diff --check
+
+      - name: Assert focused test discovery
+        shell: bash
+        run: |
+          cargo test -p frontend-analysis-core ruby_position_value_qualification_tests -- --list > /tmp/ruby-position-tests.txt
+          cat /tmp/ruby-position-tests.txt
+          count=$(grep -c 'ruby_position_value_qualification_tests::' /tmp/ruby-position-tests.txt)
+          test "$count" -eq 9
+
+      - name: Run focused ruby-position tests
+        run: cargo test -p frontend-analysis-core ruby_position_value_qualification_tests
+
+      - name: Run Core Clippy
+        run: cargo clippy -p frontend-analysis-core --all-targets --all-features -- -D warnings
+
+      - name: Run Core full suite
+        run: cargo test -p frontend-analysis-core
+
+      - name: Commit exact three-path candidate
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/temporary-ruby-position-finalize.yml
+          git add \
+            crates/frontend-analysis-core/src/css/value_qualification.rs \
+            crates/frontend-analysis-core/src/css/validation/mod.rs \
+            crates/frontend-analysis-core/src/css/validation/ruby_position_value_qualification_tests.rs
+          git diff --cached --check
+          git commit -m "feat(css): add bounded ruby-position value qualification"
+
+          base=2bb4f8869f133cb1ab526e66dcd73f72cfbbb7f2
+          actual=$(git diff --name-only "$base"..HEAD | sort)
+          expected=$(printf '%s\n' \
+            crates/frontend-analysis-core/src/css/validation/mod.rs \
+            crates/frontend-analysis-core/src/css/validation/ruby_position_value_qualification_tests.rs \
+            crates/frontend-analysis-core/src/css/value_qualification.rs | sort)
+          printf 'Final paths:\n%s\n' "$actual"
+          test "$actual" = "$expected"
+          test -z "$(git diff --name-only "$base"..HEAD -- .github/workflows)"
+          git show HEAD:crates/frontend-analysis-core/src/css/value_qualification.rs | grep -q 'pub(crate) enum CssRubyPositionComponent'
+          git show HEAD:crates/frontend-analysis-core/src/css/value_qualification.rs | grep -q 'fn qualify_ruby_position_value'
+          git show HEAD:crates/frontend-analysis-core/src/css/validation/mod.rs | grep -q 'mod ruby_position_value_qualification_tests;'
+          git push origin HEAD:feat/css-ruby-position-value-qualification-551
