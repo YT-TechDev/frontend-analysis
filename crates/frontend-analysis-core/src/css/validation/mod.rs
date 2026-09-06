@@ -173,6 +173,8 @@ mod text_decoration_style_value_qualification_tests;
 #[cfg(test)]
 mod text_rendering_value_qualification_tests;
 #[cfg(test)]
+mod text_transform_value_qualification_tests;
+#[cfg(test)]
 mod text_underline_offset_value_qualification_tests;
 #[cfg(test)]
 mod unicode_bidi_value_qualification_tests;

@@ -70,9 +70,9 @@ fn assert_expected(result: &CssValueQualificationRunResult, expected: &[Expected
                 ExpectedOutcome::MathAuto,
             ) => {}
             (
-                CssTextTransformQualificationOutcome::Qualified(
-                    CssTextTransformValue::Components(components),
-                ),
+                CssTextTransformQualificationOutcome::Qualified(CssTextTransformValue::Components(
+                    components,
+                )),
                 ExpectedOutcome::Components(expected),
             ) => assert_eq!(components.authored_components(), expected),
             (
@@ -325,7 +325,10 @@ fn applicability_and_cross_dispatch_remain_isolated() {
     assert_eq!(result.contain_observations().len(), 1);
     assert_eq!(result.text_transform_observations().len(), 1);
     assert_eq!(result.text_decoration_line_observations().len(), 1);
-    assert_eq!(result.text_transform_observations()[0].occurrence_index(), 2);
+    assert_eq!(
+        result.text_transform_observations()[0].occurrence_index(),
+        2
+    );
     assert_expected(
         &result,
         &[ExpectedOutcome::Components(&[FullWidth, Uppercase])],

@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520/#522/#524/#526/#528/#530/#532/#534/#536/#538/#541).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520/#522/#524/#526/#528/#530/#532/#534/#536/#538/#541/#546).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -2330,6 +2330,79 @@ impl CssTextDecorationLineQualificationObservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTextTransformComponent {
+    Capitalize,
+    Uppercase,
+    Lowercase,
+    FullWidth,
+    FullSizeKana,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTextTransformComponents {
+    authored: [CssTextTransformComponent; 3],
+    count: usize,
+}
+
+impl CssTextTransformComponents {
+    pub(crate) fn authored_components(&self) -> &[CssTextTransformComponent] {
+        &self.authored[..self.count]
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTextTransformValue {
+    None,
+    MathAuto,
+    Components(CssTextTransformComponents),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTextTransformUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTextTransformQualificationOutcome {
+    Qualified(CssTextTransformValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssTextTransformUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded authored
+/// `text-transform` qualification.
+///
+/// Composite values preserve exact authored component order even though CSS
+/// `||` matching is order-insensitive. The CASE slot is mutually exclusive,
+/// while `full-width` and `full-size-kana` each claim their own singleton
+/// slot. `none` and `math-auto` remain standalone authored identities. This
+/// slice does not transform text, perform language-sensitive casing, map
+/// width/kana/math characters, canonicalize CSSOM order, or claim
+/// computed/used-value semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTextTransformQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssTextTransformQualificationOutcome,
+}
+
+impl CssTextTransformQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssTextTransformQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssOverscrollBehaviorXValue {
     Contain,
     None,
@@ -3047,6 +3120,7 @@ pub(crate) struct CssValueQualificationRunResult {
     font_variant_ligatures_observations: Vec<CssFontVariantLigaturesQualificationObservation>,
     font_variant_numeric_observations: Vec<CssFontVariantNumericQualificationObservation>,
     text_decoration_line_observations: Vec<CssTextDecorationLineQualificationObservation>,
+    text_transform_observations: Vec<CssTextTransformQualificationObservation>,
     overscroll_behavior_x_observations: Vec<CssOverscrollBehaviorXQualificationObservation>,
     overscroll_behavior_y_observations: Vec<CssOverscrollBehaviorYQualificationObservation>,
     overscroll_behavior_inline_observations:
@@ -3247,6 +3321,12 @@ impl CssValueQualificationRunResult {
         &self,
     ) -> &[CssTextDecorationLineQualificationObservation] {
         &self.text_decoration_line_observations
+    }
+
+    pub(crate) fn text_transform_observations(
+        &self,
+    ) -> &[CssTextTransformQualificationObservation] {
+        &self.text_transform_observations
     }
 
     pub(crate) fn overscroll_behavior_x_observations(
@@ -3477,6 +3557,7 @@ pub(crate) fn run(
         font_variant_ligatures_observations,
         font_variant_numeric_observations,
         text_decoration_line_observations,
+        text_transform_observations,
         overscroll_behavior_x_observations,
         overscroll_behavior_y_observations,
         overscroll_behavior_inline_observations,
@@ -3540,6 +3621,7 @@ pub(crate) fn run(
         let mut font_variant_ligatures_observations = Vec::new();
         let mut font_variant_numeric_observations = Vec::new();
         let mut text_decoration_line_observations = Vec::new();
+        let mut text_transform_observations = Vec::new();
         let mut overscroll_behavior_x_observations = Vec::new();
         let mut overscroll_behavior_y_observations = Vec::new();
         let mut overscroll_behavior_inline_observations = Vec::new();
@@ -3984,6 +4066,17 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("text-transform") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                text_transform_observations.push(CssTextTransformQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_text_transform_value(value_items),
+                });
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("overscroll-behavior-x") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -4307,6 +4400,7 @@ pub(crate) fn run(
             font_variant_ligatures_observations,
             font_variant_numeric_observations,
             text_decoration_line_observations,
+            text_transform_observations,
             overscroll_behavior_x_observations,
             overscroll_behavior_y_observations,
             overscroll_behavior_inline_observations,
@@ -4372,6 +4466,7 @@ pub(crate) fn run(
         font_variant_ligatures_observations,
         font_variant_numeric_observations,
         text_decoration_line_observations,
+        text_transform_observations,
         overscroll_behavior_x_observations,
         overscroll_behavior_y_observations,
         overscroll_behavior_inline_observations,
@@ -6683,6 +6778,96 @@ fn text_decoration_line_component(
     }
     if identifier.eq_ignore_ascii_case("blink") {
         return Some((CssTextDecorationLineComponent::Blink, 0b1000));
+    }
+    None
+}
+
+fn qualify_text_transform_value(items: &[CssLexicalItem]) -> CssTextTransformQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssTextTransformQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssTextTransformUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssTextTransformQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssTextTransformUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    let tokens: Vec<_> = items
+        .iter()
+        .filter_map(|item| match item {
+            CssLexicalItem::SemanticToken(token)
+                if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+            {
+                Some(token)
+            }
+            _ => None,
+        })
+        .collect();
+
+    if let [token] = tokens.as_slice()
+        && let CssTokenKind::Ident(identifier) = token.kind()
+    {
+        if is_css_wide_keyword(identifier) {
+            return CssTextTransformQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssTextTransformUnsupportedReason::CssWideKeyword,
+            );
+        }
+        if identifier.eq_ignore_ascii_case("none") {
+            return CssTextTransformQualificationOutcome::Qualified(CssTextTransformValue::None);
+        }
+        if identifier.eq_ignore_ascii_case("math-auto") {
+            return CssTextTransformQualificationOutcome::Qualified(
+                CssTextTransformValue::MathAuto,
+            );
+        }
+    }
+
+    if tokens.is_empty() || tokens.len() > 3 {
+        return CssTextTransformQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    let mut authored = [CssTextTransformComponent::Capitalize; 3];
+    let mut count = 0usize;
+    let mut occupied_slots = 0u8;
+
+    for token in tokens {
+        let CssTokenKind::Ident(identifier) = token.kind() else {
+            return CssTextTransformQualificationOutcome::InvalidForSelectedValueGrammar;
+        };
+        let Some((component, slot)) = text_transform_component(identifier) else {
+            return CssTextTransformQualificationOutcome::InvalidForSelectedValueGrammar;
+        };
+        if occupied_slots & slot != 0 {
+            return CssTextTransformQualificationOutcome::InvalidForSelectedValueGrammar;
+        }
+        occupied_slots |= slot;
+        authored[count] = component;
+        count += 1;
+    }
+
+    CssTextTransformQualificationOutcome::Qualified(CssTextTransformValue::Components(
+        CssTextTransformComponents { authored, count },
+    ))
+}
+
+fn text_transform_component(identifier: &str) -> Option<(CssTextTransformComponent, u8)> {
+    if identifier.eq_ignore_ascii_case("capitalize") {
+        return Some((CssTextTransformComponent::Capitalize, 0b001));
+    }
+    if identifier.eq_ignore_ascii_case("uppercase") {
+        return Some((CssTextTransformComponent::Uppercase, 0b001));
+    }
+    if identifier.eq_ignore_ascii_case("lowercase") {
+        return Some((CssTextTransformComponent::Lowercase, 0b001));
+    }
+    if identifier.eq_ignore_ascii_case("full-width") {
+        return Some((CssTextTransformComponent::FullWidth, 0b010));
+    }
+    if identifier.eq_ignore_ascii_case("full-size-kana") {
+        return Some((CssTextTransformComponent::FullSizeKana, 0b100));
     }
     None
 }
