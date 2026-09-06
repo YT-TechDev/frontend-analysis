@@ -89,7 +89,9 @@ fn assert_expected(result: &CssValueQualificationRunResult, expected: &[Expected
                 ExpectedOutcome::UnsupportedWholeValueFunction,
             ) => {}
             (actual, expected) => {
-                panic!("unexpected text-emphasis-position outcome: {actual:?}, expected {expected:?}")
+                panic!(
+                    "unexpected text-emphasis-position outcome: {actual:?}, expected {expected:?}"
+                )
             }
         }
     }
@@ -319,10 +321,7 @@ fn applicability_and_cross_dispatch_remain_isolated() {
         result.text_emphasis_position_observations()[0].occurrence_index(),
         2
     );
-    assert_expected(
-        &result,
-        &[ExpectedOutcome::Components(&[Left, Under])],
-    );
+    assert_expected(&result, &[ExpectedOutcome::Components(&[Left, Under])]);
 }
 
 #[test]
@@ -356,10 +355,7 @@ fn nonordinary_declaration_shaped_contexts_are_excluded() {
         (88_010, "@font-face{text-emphasis-position:over;}"),
         (88_011, "@page{text-emphasis-position:over;}"),
         (88_012, "@page{@top-left{text-emphasis-position:over;}}"),
-        (
-            88_013,
-            "@keyframes k{from{text-emphasis-position:over;}}",
-        ),
+        (88_013, "@keyframes k{from{text-emphasis-position:over;}}"),
     ] {
         let result = qualify(source_id, css);
         assert!(
@@ -386,10 +382,7 @@ fn parser_resource_stop_preserves_committed_prefix_and_completion() {
         result.execution_completion(),
         CssParserExecutionCompletion::Incomplete
     );
-    assert_expected(
-        &result,
-        &[ExpectedOutcome::Components(&[Left, Under])],
-    );
+    assert_expected(&result, &[ExpectedOutcome::Components(&[Left, Under])]);
     assert_eq!(result.upstream_parser_result().occurrences().len(), 1);
 }
 
