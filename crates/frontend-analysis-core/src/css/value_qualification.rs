@@ -3320,6 +3320,72 @@ impl CssScrollSnapAlignQualificationObservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssPageValue {
+    Auto,
+    CustomIdent,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssPageUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssPageQualificationOutcome {
+    Qualified(CssPageValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssPageUnsupportedReason),
+}
+
+/// Run-local locator for the exact tokenizer item selected during authoritative
+/// `page` custom-ident recognition. The index is evidence placement, not the
+/// custom identifier's semantic identity; that identity remains the tokenizer-
+/// owned decoded `Ident` value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssPageCustomIdentEvidenceRef {
+    lexical_item_index: usize,
+}
+
+impl CssPageCustomIdentEvidenceRef {
+    pub(crate) const fn lexical_item_index(&self) -> usize {
+        self.lexical_item_index
+    }
+}
+
+/// One selected ordinary declaration's bounded `page` qualification.
+///
+/// Open-ended custom-ident payload and exact authored source remain owned by
+/// the tokenizer/parser chain. A qualified custom-ident records only the
+/// recognition-time run-local relation to that exact retained Ident token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssPageQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssPageQualificationOutcome,
+    custom_ident_evidence: Option<CssPageCustomIdentEvidenceRef>,
+}
+
+impl CssPageQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssPageQualificationOutcome {
+        self.outcome
+    }
+
+    pub(crate) const fn custom_ident_evidence(&self) -> Option<CssPageCustomIdentEvidenceRef> {
+        self.custom_ident_evidence
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssZIndexValue {
     Auto,
     DirectIntegerLiteral,
@@ -3443,6 +3509,7 @@ pub(crate) struct CssValueQualificationRunResult {
     font_variant_caps_observations: Vec<CssFontVariantCapsQualificationObservation>,
     font_variant_position_observations: Vec<CssFontVariantPositionQualificationObservation>,
     font_weight_observations: Vec<CssFontWeightQualificationObservation>,
+    page_observations: Vec<CssPageQualificationObservation>,
     z_index_observations: Vec<CssZIndexQualificationObservation>,
 }
 
@@ -3777,6 +3844,33 @@ impl CssValueQualificationRunResult {
         &self.font_weight_observations
     }
 
+    pub(crate) fn page_observations(&self) -> &[CssPageQualificationObservation] {
+        &self.page_observations
+    }
+
+    pub(crate) fn page_custom_ident_value<'a>(
+        &'a self,
+        observation: &CssPageQualificationObservation,
+    ) -> Option<&'a str> {
+        if observation.outcome() != CssPageQualificationOutcome::Qualified(CssPageValue::CustomIdent)
+        {
+            return None;
+        }
+        let evidence = observation.custom_ident_evidence()?;
+        let item = self
+            .upstream_parser_result
+            .upstream_tokenizer_result()
+            .lexical_items()
+            .get(evidence.lexical_item_index())?;
+        let CssLexicalItem::SemanticToken(token) = item else {
+            return None;
+        };
+        let CssTokenKind::Ident(value) = token.kind() else {
+            return None;
+        };
+        Some(value.as_str())
+    }
+
     pub(crate) fn z_index_observations(&self) -> &[CssZIndexQualificationObservation] {
         &self.z_index_observations
     }
@@ -3906,6 +4000,7 @@ pub(crate) fn run(
         font_variant_caps_observations,
         font_variant_position_observations,
         font_weight_observations,
+        page_observations,
         z_index_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
@@ -3975,6 +4070,7 @@ pub(crate) fn run(
         let mut font_variant_caps_observations = Vec::new();
         let mut font_variant_position_observations = Vec::new();
         let mut font_weight_observations = Vec::new();
+        let mut page_observations = Vec::new();
         let mut z_index_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
@@ -4562,6 +4658,21 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("page") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let lexical_item_start = value_range.start;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                let (outcome, custom_ident_evidence) =
+                    qualify_page_value(value_items, lexical_item_start);
+                page_observations.push(CssPageQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome,
+                    custom_ident_evidence,
+                });
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("z-index") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -4816,6 +4927,7 @@ pub(crate) fn run(
             font_variant_caps_observations,
             font_variant_position_observations,
             font_weight_observations,
+            page_observations,
             z_index_observations,
         )
     };
@@ -4887,6 +4999,7 @@ pub(crate) fn run(
         font_variant_caps_observations,
         font_variant_position_observations,
         font_weight_observations,
+        page_observations,
         z_index_observations,
     })
 }
@@ -8289,6 +8402,81 @@ fn is_css_length_unit(unit: &str) -> bool {
     ]
     .iter()
     .any(|length_unit| unit.eq_ignore_ascii_case(length_unit))
+}
+
+fn qualify_page_value(
+    items: &[CssLexicalItem],
+    lexical_item_start: usize,
+) -> (
+    CssPageQualificationOutcome,
+    Option<CssPageCustomIdentEvidenceRef>,
+) {
+    if contains_deferred_substitution_function(items) {
+        return (
+            CssPageQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssPageUnsupportedReason::DeferredSubstitutionFunction,
+            ),
+            None,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return (
+            CssPageQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssPageUnsupportedReason::WholeValueFunction,
+            ),
+            None,
+        );
+    }
+
+    let mut tokens = items.iter().enumerate().filter_map(|(relative_index, item)| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some((relative_index, token))
+        }
+        _ => None,
+    });
+
+    let Some((relative_index, token)) = tokens.next() else {
+        return (
+            CssPageQualificationOutcome::InvalidForSelectedValueGrammar,
+            None,
+        );
+    };
+    if tokens.next().is_some() {
+        return (
+            CssPageQualificationOutcome::InvalidForSelectedValueGrammar,
+            None,
+        );
+    }
+
+    match token.kind() {
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("auto") => (
+            CssPageQualificationOutcome::Qualified(CssPageValue::Auto),
+            None,
+        ),
+        CssTokenKind::Ident(identifier) if is_css_wide_keyword(identifier) => (
+            CssPageQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssPageUnsupportedReason::CssWideKeyword,
+            ),
+            None,
+        ),
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("default") => (
+            CssPageQualificationOutcome::InvalidForSelectedValueGrammar,
+            None,
+        ),
+        CssTokenKind::Ident(_) => (
+            CssPageQualificationOutcome::Qualified(CssPageValue::CustomIdent),
+            Some(CssPageCustomIdentEvidenceRef {
+                lexical_item_index: lexical_item_start + relative_index,
+            }),
+        ),
+        _ => (
+            CssPageQualificationOutcome::InvalidForSelectedValueGrammar,
+            None,
+        ),
+    }
 }
 
 fn qualify_z_index_value(items: &[CssLexicalItem]) -> CssZIndexQualificationOutcome {
