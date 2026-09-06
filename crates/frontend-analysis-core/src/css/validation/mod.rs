@@ -85,6 +85,8 @@ mod font_variant_numeric_value_qualification_tests;
 #[cfg(test)]
 mod font_variant_position_value_qualification_tests;
 #[cfg(test)]
+mod font_weight_value_qualification_tests;
+#[cfg(test)]
 mod forced_color_adjust_value_qualification_tests;
 #[cfg(test)]
 mod group_context_contract_tests;
