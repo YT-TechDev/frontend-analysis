@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520/#522/#524/#526/#528/#530/#532/#534/#536/#538/#541/#546).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520/#522/#524/#526/#528/#530/#532/#534/#536/#538/#541/#546/#549).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -2403,6 +2403,76 @@ impl CssTextTransformQualificationObservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTextEmphasisPositionComponent {
+    Over,
+    Under,
+    Right,
+    Left,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTextEmphasisPositionComponents {
+    authored: [CssTextEmphasisPositionComponent; 2],
+    count: usize,
+}
+
+impl CssTextEmphasisPositionComponents {
+    pub(crate) fn authored_components(&self) -> &[CssTextEmphasisPositionComponent] {
+        &self.authored[..self.count]
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTextEmphasisPositionValue {
+    Components(CssTextEmphasisPositionComponents),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTextEmphasisPositionUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTextEmphasisPositionQualificationOutcome {
+    Qualified(CssTextEmphasisPositionValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssTextEmphasisPositionUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded authored
+/// `text-emphasis-position` qualification.
+///
+/// The selected normative grammar is
+/// `[ over | under ] && [ right | left ]?`: one vertical component is
+/// required, the side component is optional, and the two groups may occur
+/// in either authored order. Exact authored sequence is retained. This
+/// slice does not synthesize the default `right`, canonicalize CSSOM
+/// serialization, implement language-dependent placement, or claim
+/// computed/used-value or rendering semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTextEmphasisPositionQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssTextEmphasisPositionQualificationOutcome,
+}
+
+impl CssTextEmphasisPositionQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssTextEmphasisPositionQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssOverscrollBehaviorXValue {
     Contain,
     None,
@@ -3121,6 +3191,7 @@ pub(crate) struct CssValueQualificationRunResult {
     font_variant_numeric_observations: Vec<CssFontVariantNumericQualificationObservation>,
     text_decoration_line_observations: Vec<CssTextDecorationLineQualificationObservation>,
     text_transform_observations: Vec<CssTextTransformQualificationObservation>,
+    text_emphasis_position_observations: Vec<CssTextEmphasisPositionQualificationObservation>,
     overscroll_behavior_x_observations: Vec<CssOverscrollBehaviorXQualificationObservation>,
     overscroll_behavior_y_observations: Vec<CssOverscrollBehaviorYQualificationObservation>,
     overscroll_behavior_inline_observations:
@@ -3327,6 +3398,12 @@ impl CssValueQualificationRunResult {
         &self,
     ) -> &[CssTextTransformQualificationObservation] {
         &self.text_transform_observations
+    }
+
+    pub(crate) fn text_emphasis_position_observations(
+        &self,
+    ) -> &[CssTextEmphasisPositionQualificationObservation] {
+        &self.text_emphasis_position_observations
     }
 
     pub(crate) fn overscroll_behavior_x_observations(
@@ -3558,6 +3635,7 @@ pub(crate) fn run(
         font_variant_numeric_observations,
         text_decoration_line_observations,
         text_transform_observations,
+        text_emphasis_position_observations,
         overscroll_behavior_x_observations,
         overscroll_behavior_y_observations,
         overscroll_behavior_inline_observations,
@@ -3622,6 +3700,7 @@ pub(crate) fn run(
         let mut font_variant_numeric_observations = Vec::new();
         let mut text_decoration_line_observations = Vec::new();
         let mut text_transform_observations = Vec::new();
+        let mut text_emphasis_position_observations = Vec::new();
         let mut overscroll_behavior_x_observations = Vec::new();
         let mut overscroll_behavior_y_observations = Vec::new();
         let mut overscroll_behavior_inline_observations = Vec::new();
@@ -4077,6 +4156,19 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("text-emphasis-position") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                text_emphasis_position_observations.push(
+                    CssTextEmphasisPositionQualificationObservation {
+                        occurrence_index,
+                        placement: occurrence.placement(),
+                        outcome: qualify_text_emphasis_position_value(value_items),
+                    },
+                );
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("overscroll-behavior-x") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -4401,6 +4493,7 @@ pub(crate) fn run(
             font_variant_numeric_observations,
             text_decoration_line_observations,
             text_transform_observations,
+            text_emphasis_position_observations,
             overscroll_behavior_x_observations,
             overscroll_behavior_y_observations,
             overscroll_behavior_inline_observations,
@@ -4467,6 +4560,7 @@ pub(crate) fn run(
         font_variant_numeric_observations,
         text_decoration_line_observations,
         text_transform_observations,
+        text_emphasis_position_observations,
         overscroll_behavior_x_observations,
         overscroll_behavior_y_observations,
         overscroll_behavior_inline_observations,
@@ -6868,6 +6962,96 @@ fn text_transform_component(identifier: &str) -> Option<(CssTextTransformCompone
     }
     if identifier.eq_ignore_ascii_case("full-size-kana") {
         return Some((CssTextTransformComponent::FullSizeKana, 0b100));
+    }
+    None
+}
+
+fn qualify_text_emphasis_position_value(
+    items: &[CssLexicalItem],
+) -> CssTextEmphasisPositionQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssTextEmphasisPositionQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssTextEmphasisPositionUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssTextEmphasisPositionQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssTextEmphasisPositionUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    let tokens: Vec<_> = items
+        .iter()
+        .filter_map(|item| match item {
+            CssLexicalItem::SemanticToken(token)
+                if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+            {
+                Some(token)
+            }
+            _ => None,
+        })
+        .collect();
+
+    if let [token] = tokens.as_slice()
+        && let CssTokenKind::Ident(identifier) = token.kind()
+        && is_css_wide_keyword(identifier)
+    {
+        return CssTextEmphasisPositionQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssTextEmphasisPositionUnsupportedReason::CssWideKeyword,
+        );
+    }
+
+    if tokens.is_empty() || tokens.len() > 2 {
+        return CssTextEmphasisPositionQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    let mut authored = [CssTextEmphasisPositionComponent::Over; 2];
+    let mut count = 0usize;
+    let mut occupied_slots = 0u8;
+
+    for token in tokens {
+        let CssTokenKind::Ident(identifier) = token.kind() else {
+            return CssTextEmphasisPositionQualificationOutcome::InvalidForSelectedValueGrammar;
+        };
+        let Some((component, slot)) = text_emphasis_position_component(identifier) else {
+            return CssTextEmphasisPositionQualificationOutcome::InvalidForSelectedValueGrammar;
+        };
+        if occupied_slots & slot != 0 {
+            return CssTextEmphasisPositionQualificationOutcome::InvalidForSelectedValueGrammar;
+        }
+        occupied_slots |= slot;
+        authored[count] = component;
+        count += 1;
+    }
+
+    const VERTICAL_SLOT: u8 = 0b01;
+    if occupied_slots & VERTICAL_SLOT == 0 {
+        return CssTextEmphasisPositionQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    CssTextEmphasisPositionQualificationOutcome::Qualified(
+        CssTextEmphasisPositionValue::Components(CssTextEmphasisPositionComponents {
+            authored,
+            count,
+        }),
+    )
+}
+
+fn text_emphasis_position_component(
+    identifier: &str,
+) -> Option<(CssTextEmphasisPositionComponent, u8)> {
+    if identifier.eq_ignore_ascii_case("over") {
+        return Some((CssTextEmphasisPositionComponent::Over, 0b01));
+    }
+    if identifier.eq_ignore_ascii_case("under") {
+        return Some((CssTextEmphasisPositionComponent::Under, 0b01));
+    }
+    if identifier.eq_ignore_ascii_case("right") {
+        return Some((CssTextEmphasisPositionComponent::Right, 0b10));
+    }
+    if identifier.eq_ignore_ascii_case("left") {
+        return Some((CssTextEmphasisPositionComponent::Left, 0b10));
     }
     None
 }
