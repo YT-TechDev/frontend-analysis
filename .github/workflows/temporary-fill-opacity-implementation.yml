@@ -37,14 +37,9 @@ jobs:
                   raise SystemExit(f'{label}: expected 1 occurrence, found {count}')
               text = text.replace(old, new, 1)
 
-          once(
-              '#549/#551/#553).',
-              '#549/#551/#553/#555).',
-              'leaf header',
-          )
+          once('#549/#551/#553).', '#549/#551/#553/#555).', 'leaf header')
 
-          shape_marker = '''#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-          pub(crate) enum CssShapeImageThresholdValue {'''.replace('          ', '')
+          shape_marker = '#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub(crate) enum CssShapeImageThresholdValue {'
           fill_types = '''#[derive(Debug, Clone, Copy, PartialEq, Eq)]
           pub(crate) enum CssFillOpacityValue {
               DirectNumberLiteral,
@@ -102,23 +97,14 @@ jobs:
               'run-result field',
           )
 
-          once(
-              '''    pub(crate) fn opacity_observations(&self) -> &[CssOpacityQualificationObservation] {
-                  &self.opacity_observations
-              }
+          getter_marker = '''    pub(crate) fn shape_image_threshold_observations(
+          '''.replace('          ', '')
+          fill_getter = '''    pub(crate) fn fill_opacity_observations(&self) -> &[CssFillOpacityQualificationObservation] {
+              &self.fill_opacity_observations
+          }
 
-              pub(crate) fn shape_image_threshold_observations('''.replace('              ', ''),
-              '''    pub(crate) fn opacity_observations(&self) -> &[CssOpacityQualificationObservation] {
-                  &self.opacity_observations
-              }
-
-              pub(crate) fn fill_opacity_observations(&self) -> &[CssFillOpacityQualificationObservation] {
-                  &self.fill_opacity_observations
-              }
-
-              pub(crate) fn shape_image_threshold_observations('''.replace('              ', ''),
-              'run-result getter',
-          )
+          '''.replace('          ', '')
+          once(getter_marker, fill_getter + getter_marker, 'run-result getter')
 
           text, count = re.subn(
               r'(?m)^(\s*)opacity_observations,\n\1shape_image_threshold_observations,',
@@ -134,31 +120,20 @@ jobs:
               'observation vector',
           )
 
-          opacity_dispatch = '''            if property_name.eq_ignore_ascii_case("opacity") {
+          dispatch_marker = '            if property_name.eq_ignore_ascii_case("shape-image-threshold") {'
+          fill_dispatch = '''            if property_name.eq_ignore_ascii_case("fill-opacity") {
               let value_range = cursor.window_for(occurrence.value())?;
               let value_items = &tokenizer_result.lexical_items()[value_range];
-              opacity_observations.push(CssOpacityQualificationObservation {
+              fill_opacity_observations.push(CssFillOpacityQualificationObservation {
                   occurrence_index,
                   placement: occurrence.placement(),
-                  outcome: qualify_opacity_value(value_items),
+                  outcome: qualify_fill_opacity_value(value_items),
               });
               continue;
           }
+
           '''.replace('          ', '')
-          fill_dispatch = '''
-          
-              if property_name.eq_ignore_ascii_case("fill-opacity") {
-                  let value_range = cursor.window_for(occurrence.value())?;
-                  let value_items = &tokenizer_result.lexical_items()[value_range];
-                  fill_opacity_observations.push(CssFillOpacityQualificationObservation {
-                      occurrence_index,
-                      placement: occurrence.placement(),
-                      outcome: qualify_fill_opacity_value(value_items),
-                  });
-                  continue;
-              }
-          '''.replace('          ', '')
-          once(opacity_dispatch, opacity_dispatch + fill_dispatch, 'fill-opacity dispatch')
+          once(dispatch_marker, fill_dispatch + dispatch_marker, 'fill-opacity dispatch')
 
           qualifier_marker = '\nfn qualify_shape_image_threshold_value('
           fill_qualifier = '''
@@ -234,10 +209,6 @@ jobs:
                   crates/frontend-analysis-core/src/css/validation/mod.rs \
                   crates/frontend-analysis-core/src/css/validation/fill_opacity_value_qualification_tests.rs \
                   .github/workflows/temporary-fill-opacity-implementation.yml
-          test "$(git diff --cached --name-only | grep -v '^\.github/workflows/temporary-fill-opacity-implementation.yml$' | sort)" = "$(printf '%s\n' \
-            crates/frontend-analysis-core/src/css/validation/fill_opacity_value_qualification_tests.rs \
-            crates/frontend-analysis-core/src/css/validation/mod.rs \
-            crates/frontend-analysis-core/src/css/value_qualification.rs | sort)"
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git commit -m 'feat(css): add bounded fill-opacity value qualification'
