@@ -56,14 +56,19 @@ jobs:
         env:
           BASE_SHA: 368461a5d470f91cfbe3356ecc1c97ee40ed3274
         run: |
-          rm .github/workflows/text-decoration-line-sealing.yml
-          rm .github/scripts/apply-text-decoration-line-candidate.py
-          rm .github/scripts/fix-text-decoration-line-transport.py
+          set -euxo pipefail
+          rm -f .github/workflows/text-decoration-line-sealing.yml
+          rm -f .github/scripts/apply-text-decoration-line-candidate.py
+          rm -f .github/scripts/fix-text-decoration-line-transport.py
+          git add -A
+          git status --short
+          git diff --cached --name-status "$BASE_SHA"
           expected=$'crates/frontend-analysis-core/src/css/validation/mod.rs\ncrates/frontend-analysis-core/src/css/validation/text_decoration_line_value_qualification_tests.rs\ncrates/frontend-analysis-core/src/css/value_qualification.rs'
-          actual="$(git diff --name-only "$BASE_SHA" | sort)"
+          actual="$(git diff --cached --name-only "$BASE_SHA" | sort)"
+          printf 'Expected paths:\n%s\n' "$expected"
+          printf 'Actual paths:\n%s\n' "$actual"
           test "$actual" = "$expected"
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
           git commit -m 'feat(css): add bounded text-decoration-line value qualification'
           git push origin HEAD:feat/css-text-decoration-line-value-qualification-541
