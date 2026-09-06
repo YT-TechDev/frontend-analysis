@@ -133,11 +133,7 @@ fn auto_is_ascii_case_insensitive_and_custom_ident_identity_is_case_sensitive() 
 fn escape_equivalent_custom_ident_values_share_interpreted_identity() {
     let result = qualify(
         921,
-        concat!(
-            "a{page:Foo;}",
-            "b{page:\\46 oo;}",
-            "c{page:\\000046oo;}",
-        ),
+        concat!("a{page:Foo;}", "b{page:\\46 oo;}", "c{page:\\000046oo;}",),
     );
 
     assert_expected(&result, &[ExpectedOutcome::CustomIdent; 3]);
@@ -168,7 +164,10 @@ fn custom_ident_does_not_unicode_normalize_interpreted_identity() {
 
     assert_expected(&result, &[ExpectedOutcome::CustomIdent; 2]);
     assert_eq!(custom_ident_values(&result), ["é", "e\u{301}"]);
-    assert_ne!(custom_ident_values(&result)[0], custom_ident_values(&result)[1]);
+    assert_ne!(
+        custom_ident_values(&result)[0],
+        custom_ident_values(&result)[1]
+    );
 }
 
 #[test]
@@ -370,7 +369,10 @@ fn repeated_and_cross_source_page_runs_are_semantically_deterministic() {
     let another_source = qualify(935, css);
 
     assert_eq!(first.page_observations(), repeated.page_observations());
-    assert_eq!(first.page_observations(), another_source.page_observations());
+    assert_eq!(
+        first.page_observations(),
+        another_source.page_observations()
+    );
     assert_eq!(custom_ident_values(&first), ["Foo", "Foo", "foo"]);
     assert_eq!(custom_ident_values(&repeated), ["Foo", "Foo", "foo"]);
     assert_eq!(custom_ident_values(&another_source), ["Foo", "Foo", "foo"]);
