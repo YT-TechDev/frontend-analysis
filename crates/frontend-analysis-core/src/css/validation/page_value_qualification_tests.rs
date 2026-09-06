@@ -91,7 +91,7 @@ fn assert_expected(result: &CssValueQualificationRunResult, expected: &[Expected
     assert_eq!(actual, expected);
 }
 
-fn custom_ident_values<'a>(result: &'a CssValueQualificationRunResult) -> Vec<&'a str> {
+fn custom_ident_values(result: &CssValueQualificationRunResult) -> Vec<&str> {
     result
         .page_observations()
         .iter()
