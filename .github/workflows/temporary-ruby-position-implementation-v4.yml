@@ -46,7 +46,7 @@ jobs:
               raise SystemExit(f"return tuple / constructor: expected 2 anchors, found {remaining}")
           tail = tail.replace(pair, pair_with_position)
           source = source[:tuple_end] + tail
-'''
+          '''
           new = '''if remaining != 1:
               raise SystemExit(f"return tuple: expected 1 anchor, found {remaining}")
           tail = tail.replace(pair, pair_with_position, 1)
@@ -58,7 +58,7 @@ jobs:
               "        ruby_merge_observations,\\n        ruby_position_observations,\\n        ruby_overhang_observations,\\n        clip_rule_observations,",
               "result constructor field",
           )
-'''
+          '''
           if old not in script:
               raise SystemExit('v3 correction anchor not found')
           script = script.replace(old, new, 1)
