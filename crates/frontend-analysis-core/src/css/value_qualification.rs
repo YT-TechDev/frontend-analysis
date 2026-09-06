@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520/#522/#524/#526/#528/#530/#532/#534/#536/#538).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520/#522/#524/#526/#528/#530/#532/#534/#536/#538/#541).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -2259,6 +2259,77 @@ impl CssFontVariantNumericQualificationObservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTextDecorationLineComponent {
+    Underline,
+    Overline,
+    LineThrough,
+    Blink,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTextDecorationLineComponents {
+    authored: [CssTextDecorationLineComponent; 4],
+    count: usize,
+}
+
+impl CssTextDecorationLineComponents {
+    pub(crate) fn authored_components(&self) -> &[CssTextDecorationLineComponent] {
+        &self.authored[..self.count]
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTextDecorationLineValue {
+    None,
+    SpellingError,
+    GrammarError,
+    Components(CssTextDecorationLineComponents),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTextDecorationLineUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTextDecorationLineQualificationOutcome {
+    Qualified(CssTextDecorationLineValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssTextDecorationLineUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded authored
+/// `text-decoration-line` qualification.
+///
+/// Composite values preserve exact authored component order even though CSS
+/// `||` matching is order-insensitive. Slot uniqueness is validated during
+/// qualification. This slice does not render decorations, blink, detect
+/// spelling/grammar errors, propagate decorations, canonicalize CSSOM order,
+/// or claim computed/used-value semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTextDecorationLineQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssTextDecorationLineQualificationOutcome,
+}
+
+impl CssTextDecorationLineQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssTextDecorationLineQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssOverscrollBehaviorXValue {
     Contain,
     None,
@@ -2975,6 +3046,7 @@ pub(crate) struct CssValueQualificationRunResult {
     contain_observations: Vec<CssContainQualificationObservation>,
     font_variant_ligatures_observations: Vec<CssFontVariantLigaturesQualificationObservation>,
     font_variant_numeric_observations: Vec<CssFontVariantNumericQualificationObservation>,
+    text_decoration_line_observations: Vec<CssTextDecorationLineQualificationObservation>,
     overscroll_behavior_x_observations: Vec<CssOverscrollBehaviorXQualificationObservation>,
     overscroll_behavior_y_observations: Vec<CssOverscrollBehaviorYQualificationObservation>,
     overscroll_behavior_inline_observations:
@@ -3169,6 +3241,12 @@ impl CssValueQualificationRunResult {
         &self,
     ) -> &[CssFontVariantNumericQualificationObservation] {
         &self.font_variant_numeric_observations
+    }
+
+    pub(crate) fn text_decoration_line_observations(
+        &self,
+    ) -> &[CssTextDecorationLineQualificationObservation] {
+        &self.text_decoration_line_observations
     }
 
     pub(crate) fn overscroll_behavior_x_observations(
@@ -3398,6 +3476,7 @@ pub(crate) fn run(
         contain_observations,
         font_variant_ligatures_observations,
         font_variant_numeric_observations,
+        text_decoration_line_observations,
         overscroll_behavior_x_observations,
         overscroll_behavior_y_observations,
         overscroll_behavior_inline_observations,
@@ -3460,6 +3539,7 @@ pub(crate) fn run(
         let mut contain_observations = Vec::new();
         let mut font_variant_ligatures_observations = Vec::new();
         let mut font_variant_numeric_observations = Vec::new();
+        let mut text_decoration_line_observations = Vec::new();
         let mut overscroll_behavior_x_observations = Vec::new();
         let mut overscroll_behavior_y_observations = Vec::new();
         let mut overscroll_behavior_inline_observations = Vec::new();
@@ -3891,6 +3971,19 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("text-decoration-line") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                text_decoration_line_observations.push(
+                    CssTextDecorationLineQualificationObservation {
+                        occurrence_index,
+                        placement: occurrence.placement(),
+                        outcome: qualify_text_decoration_line_value(value_items),
+                    },
+                );
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("overscroll-behavior-x") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -4213,6 +4306,7 @@ pub(crate) fn run(
             contain_observations,
             font_variant_ligatures_observations,
             font_variant_numeric_observations,
+            text_decoration_line_observations,
             overscroll_behavior_x_observations,
             overscroll_behavior_y_observations,
             overscroll_behavior_inline_observations,
@@ -4277,6 +4371,7 @@ pub(crate) fn run(
         contain_observations,
         font_variant_ligatures_observations,
         font_variant_numeric_observations,
+        text_decoration_line_observations,
         overscroll_behavior_x_observations,
         overscroll_behavior_y_observations,
         overscroll_behavior_inline_observations,
@@ -6490,6 +6585,104 @@ fn font_variant_numeric_component(
     }
     if identifier.eq_ignore_ascii_case("slashed-zero") {
         return Some((CssFontVariantNumericComponent::SlashedZero, 0b10000));
+    }
+    None
+}
+
+fn qualify_text_decoration_line_value(
+    items: &[CssLexicalItem],
+) -> CssTextDecorationLineQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssTextDecorationLineQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssTextDecorationLineUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssTextDecorationLineQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssTextDecorationLineUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    let tokens: Vec<_> = items
+        .iter()
+        .filter_map(|item| match item {
+            CssLexicalItem::SemanticToken(token)
+                if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+            {
+                Some(token)
+            }
+            _ => None,
+        })
+        .collect();
+
+    if let [token] = tokens.as_slice()
+        && let CssTokenKind::Ident(identifier) = token.kind()
+    {
+        if is_css_wide_keyword(identifier) {
+            return CssTextDecorationLineQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssTextDecorationLineUnsupportedReason::CssWideKeyword,
+            );
+        }
+        if identifier.eq_ignore_ascii_case("none") {
+            return CssTextDecorationLineQualificationOutcome::Qualified(
+                CssTextDecorationLineValue::None,
+            );
+        }
+        if identifier.eq_ignore_ascii_case("spelling-error") {
+            return CssTextDecorationLineQualificationOutcome::Qualified(
+                CssTextDecorationLineValue::SpellingError,
+            );
+        }
+        if identifier.eq_ignore_ascii_case("grammar-error") {
+            return CssTextDecorationLineQualificationOutcome::Qualified(
+                CssTextDecorationLineValue::GrammarError,
+            );
+        }
+    }
+
+    if tokens.is_empty() || tokens.len() > 4 {
+        return CssTextDecorationLineQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    let mut authored = [CssTextDecorationLineComponent::Underline; 4];
+    let mut count = 0usize;
+    let mut occupied_slots = 0u8;
+
+    for token in tokens {
+        let CssTokenKind::Ident(identifier) = token.kind() else {
+            return CssTextDecorationLineQualificationOutcome::InvalidForSelectedValueGrammar;
+        };
+        let Some((component, slot)) = text_decoration_line_component(identifier) else {
+            return CssTextDecorationLineQualificationOutcome::InvalidForSelectedValueGrammar;
+        };
+        if occupied_slots & slot != 0 {
+            return CssTextDecorationLineQualificationOutcome::InvalidForSelectedValueGrammar;
+        }
+        occupied_slots |= slot;
+        authored[count] = component;
+        count += 1;
+    }
+
+    CssTextDecorationLineQualificationOutcome::Qualified(CssTextDecorationLineValue::Components(
+        CssTextDecorationLineComponents { authored, count },
+    ))
+}
+
+fn text_decoration_line_component(
+    identifier: &str,
+) -> Option<(CssTextDecorationLineComponent, u8)> {
+    if identifier.eq_ignore_ascii_case("underline") {
+        return Some((CssTextDecorationLineComponent::Underline, 0b0001));
+    }
+    if identifier.eq_ignore_ascii_case("overline") {
+        return Some((CssTextDecorationLineComponent::Overline, 0b0010));
+    }
+    if identifier.eq_ignore_ascii_case("line-through") {
+        return Some((CssTextDecorationLineComponent::LineThrough, 0b0100));
+    }
+    if identifier.eq_ignore_ascii_case("blink") {
+        return Some((CssTextDecorationLineComponent::Blink, 0b1000));
     }
     None
 }
