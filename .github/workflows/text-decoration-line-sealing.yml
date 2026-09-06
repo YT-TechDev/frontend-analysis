@@ -1,0 +1,65 @@
+name: Temporary text-decoration-line sealing
+
+on:
+  push:
+    branches:
+      - feat/css-text-decoration-line-value-qualification-541
+
+permissions:
+  contents: write
+
+jobs:
+  seal:
+    if: contains(github.event.head_commit.message, 'temporary text-decoration-line candidate transport') || contains(github.event.head_commit.message, 'run temporary text-decoration-line sealing')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: feat/css-text-decoration-line-value-qualification-541
+          fetch-depth: 0
+
+      - name: Install accepted Rust toolchain
+        shell: bash
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
+          rustup default 1.97.1
+
+      - name: Apply bounded candidate
+        run: python3 .github/scripts/apply-text-decoration-line-candidate.py
+
+      - name: Format candidate
+        run: cargo fmt --all
+
+      - name: Validate formatting
+        run: cargo fmt --all -- --check
+
+      - name: Validate patch hygiene
+        run: git diff --check
+
+      - name: Run focused tests
+        run: cargo test -p frontend-analysis-core text_decoration_line_value_qualification_tests --all-features
+
+      - name: Validate Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Run Core full suite
+        run: cargo test -p frontend-analysis-core --all-targets --all-features
+
+      - name: Commit tested production candidate
+        shell: bash
+        env:
+          BASE_SHA: 368461a5d470f91cfbe3356ecc1c97ee40ed3274
+        run: |
+          rm .github/workflows/text-decoration-line-sealing.yml
+          rm .github/scripts/apply-text-decoration-line-candidate.py
+          expected=$'crates/frontend-analysis-core/src/css/validation/mod.rs\ncrates/frontend-analysis-core/src/css/validation/text_decoration_line_value_qualification_tests.rs\ncrates/frontend-analysis-core/src/css/value_qualification.rs'
+          actual="$(git diff --name-only "$BASE_SHA" | sort)"
+          test "$actual" = "$expected"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'feat(css): add bounded text-decoration-line value qualification'
+          git push origin HEAD:feat/css-text-decoration-line-value-qualification-541
