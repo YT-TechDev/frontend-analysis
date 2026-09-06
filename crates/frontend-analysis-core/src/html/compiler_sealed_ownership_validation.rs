@@ -254,30 +254,7 @@ impl ResolvedCompiler {
             .arg("--version")
             .output()
             .map_err(|error| format!("{} is not invocable: {error}", self.executable.display()))?;
-        if !output.status.success() {
-            return Err(format!(
-                "{} did not report a version successfully",
-                self.executable.display()
-            ));
-        }
-        let stdout = String::from_utf8(output.stdout).map_err(|error| {
-            format!(
-                "{} emitted non-UTF-8 version stdout: {error}",
-                self.executable.display()
-            )
-        })?;
-        let first_line = stdout
-            .lines()
-            .next()
-            .unwrap_or_default()
-            .trim_end_matches('\r');
-        if first_line.is_empty() {
-            return Err(format!(
-                "{} reported an empty version line",
-                self.executable.display()
-            ));
-        }
-        Ok(first_line.to_owned())
+        version_line_from_output(&self.executable, output.status.success(), &output.stdout)
     }
 
     /// `Ok` only when this exact executable is the accepted stable compiler.
@@ -292,6 +269,42 @@ impl ResolvedCompiler {
             ))
         }
     }
+}
+
+/// Interprets the process boundary of one `rustc --version` invocation.
+///
+/// The subprocess itself is exercised by the resolver/fixture integration cells.
+/// Exact version-output regressions use this deterministic seam so a transient
+/// temporary-wrapper spawn cannot decide parser/classifier correctness.
+fn version_line_from_output(
+    executable: &Path,
+    succeeded: bool,
+    stdout: &[u8],
+) -> Result<String, String> {
+    if !succeeded {
+        return Err(format!(
+            "{} did not report a version successfully",
+            executable.display()
+        ));
+    }
+    let stdout = std::str::from_utf8(stdout).map_err(|error| {
+        format!(
+            "{} emitted non-UTF-8 version stdout: {error}",
+            executable.display()
+        )
+    })?;
+    let first_line = stdout
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches('\r');
+    if first_line.is_empty() {
+        return Err(format!(
+            "{} reported an empty version line",
+            executable.display()
+        ));
+    }
+    Ok(first_line.to_owned())
 }
 
 /// Exact bounded parser for the only accepted `rustc --version` identity.
@@ -709,20 +722,12 @@ fn f1b_version_verification_uses_the_same_identity_that_compiles_fixtures() {
 
 #[test]
 fn f1c_a_compiler_reporting_a_wrong_version_cannot_produce_accepted_evidence() {
-    // Simulated with a local wrapper rather than by touching the machine's
-    // rustup configuration, so the test is portable and leaves no global state.
-    let fixture = Fixture::new("f1c");
-    let Some(impostor) = wrapper_reporting_version(&fixture.directory, "rustc 1.0.0 (deadbeef)")
-    else {
-        return;
-    };
-    let wrong = ResolvedCompiler {
-        executable: impostor,
-    };
-    let verdict = wrong.verify_accepted_version();
+    let executable = Path::new("f1c-rustc");
+    let version = version_line_from_output(executable, true, b"rustc 1.0.0 (deadbeef)\n")
+        .expect("a successful version command with stdout has a version line");
     assert!(
-        verdict.is_err(),
-        "a non-{ACCEPTED_RUSTC_VERSION} compiler was accepted: {verdict:?}"
+        !is_accepted_rustc_version_line(&version),
+        "a non-{ACCEPTED_RUSTC_VERSION} compiler was accepted: {version:?}"
     );
 }
 
@@ -731,8 +736,20 @@ fn f1d_a_nonexistent_compiler_identity_fails_closed() {
     let missing = ResolvedCompiler {
         executable: PathBuf::from("/nonexistent/frontend-analysis/rustc"),
     };
-    assert!(missing.version_from(repository_context()).is_err());
-    assert!(missing.verify_accepted_version().is_err());
+    let version_error = missing
+        .version_from(repository_context())
+        .expect_err("a nonexistent compiler cannot report a version");
+    assert!(
+        version_error.contains("is not invocable"),
+        "nonexistent compiler failed for the wrong reason: {version_error}"
+    );
+    let verification_error = missing
+        .verify_accepted_version()
+        .expect_err("a nonexistent compiler cannot establish accepted identity");
+    assert!(
+        verification_error.contains("is not invocable"),
+        "version verification accepted a wrong failure reason: {verification_error}"
+    );
 }
 
 #[test]
@@ -774,102 +791,83 @@ fn f1e_a_fixture_directory_cannot_redirect_the_harness_to_an_ambient_compiler() 
 
 #[test]
 fn r1a_exact_stable_1_97_1_version_is_accepted() {
-    let fixture = Fixture::new("r1a");
-    let Some(wrapper) =
-        wrapper_reporting_version(&fixture.directory, "rustc 1.97.1 (8bab26f4f 2026-07-14)")
-    else {
-        return;
-    };
-    assert!(
-        ResolvedCompiler {
-            executable: wrapper
-        }
-        .verify_accepted_version()
-        .is_ok()
-    );
-
-    let Some(crlf) = write_wrapper(
-        &fixture.directory,
-        "r1a-crlf-rustc",
-        "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf 'rustc 1.97.1 (8bab26f4f 2026-07-14)\\r\\n'\n  exit 0\nfi\nexit 1\n",
-    ) else {
-        return;
-    };
-    assert!(
-        ResolvedCompiler { executable: crlf }
-            .verify_accepted_version()
-            .is_ok(),
-        "CRLF on the first official version line must not change identity"
-    );
-}
-
-#[test]
-fn r1b_1_97_10_prefix_collision_is_rejected() {
-    assert_version_wrapper_is_rejected("r1b", "rustc 1.97.10 (prefix-collision)");
-}
-
-#[test]
-fn r1c_nightly_suffix_is_rejected() {
-    assert_version_wrapper_is_rejected("r1c", "rustc 1.97.1-nightly (nightly)");
-}
-
-#[test]
-fn r1d_beta_suffix_is_rejected() {
-    assert_version_wrapper_is_rejected("r1d", "rustc 1.97.1-beta (beta)");
-}
-
-#[test]
-fn r1e_arbitrary_rustc_prefix_is_rejected() {
-    assert_version_wrapper_is_rejected("r1e", "some-rustc 1.97.1 (wrapper)");
-}
-
-#[test]
-fn r1f_empty_malformed_and_stderr_only_version_output_are_rejected() {
-    let fixture = Fixture::new("r1f");
-    for (name, script) in [
+    for (label, stdout) in [
+        ("LF", b"rustc 1.97.1 (8bab26f4f 2026-07-14)\n".as_slice()),
         (
-            "r1f-empty",
-            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf '\\n'\n  exit 0\nfi\nexit 1\n",
-        ),
-        (
-            "r1f-malformed",
-            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf 'not a rustc version\\n'\n  exit 0\nfi\nexit 1\n",
-        ),
-        (
-            "r1f-stderr-only",
-            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf 'rustc 1.97.1 (fake)\\n' >&2\n  exit 0\nfi\nexit 1\n",
+            "CRLF",
+            b"rustc 1.97.1 (8bab26f4f 2026-07-14)\r\n".as_slice(),
         ),
     ] {
-        let Some(wrapper) = write_wrapper(&fixture.directory, name, script) else {
-            return;
-        };
+        let version = version_line_from_output(Path::new("r1a-rustc"), true, stdout)
+            .expect("accepted rustc output must produce a version line");
         assert!(
-            ResolvedCompiler {
-                executable: wrapper
-            }
-            .verify_accepted_version()
-            .is_err(),
-            "{name} unexpectedly established compiler identity"
+            is_accepted_rustc_version_line(&version),
+            "{label} on the official version line must establish stable Rust {ACCEPTED_RUSTC_VERSION}: {version:?}"
         );
     }
 }
 
 #[test]
-fn r1g_nonzero_version_command_is_rejected() {
-    let fixture = Fixture::new("r1g");
-    let Some(wrapper) = write_wrapper(
-        &fixture.directory,
-        "r1g-rustc",
-        "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf 'rustc 1.97.1 (fake)\\n'\n  exit 23\nfi\nexit 1\n",
-    ) else {
-        return;
-    };
+fn r1b_1_97_10_prefix_collision_is_rejected() {
+    assert!(!is_accepted_rustc_version_line(
+        "rustc 1.97.10 (prefix-collision)"
+    ));
+}
+
+#[test]
+fn r1c_nightly_suffix_is_rejected() {
+    assert!(!is_accepted_rustc_version_line(
+        "rustc 1.97.1-nightly (nightly)"
+    ));
+}
+
+#[test]
+fn r1d_beta_suffix_is_rejected() {
+    assert!(!is_accepted_rustc_version_line("rustc 1.97.1-beta (beta)"));
+}
+
+#[test]
+fn r1e_arbitrary_rustc_prefix_is_rejected() {
+    assert!(!is_accepted_rustc_version_line(
+        "some-rustc 1.97.1 (wrapper)"
+    ));
+}
+
+#[test]
+fn r1f_empty_malformed_and_stderr_only_version_output_are_rejected() {
+    let empty = version_line_from_output(Path::new("r1f-empty"), true, b"\n")
+        .expect_err("an empty first stdout line cannot establish compiler identity");
     assert!(
-        ResolvedCompiler {
-            executable: wrapper
-        }
-        .verify_accepted_version()
-        .is_err()
+        empty.contains("reported an empty version line"),
+        "empty stdout failed for the wrong reason: {empty}"
+    );
+
+    let malformed =
+        version_line_from_output(Path::new("r1f-malformed"), true, b"not a rustc version\n")
+            .expect("nonempty stdout still produces a bounded first-line observation");
+    assert!(
+        !is_accepted_rustc_version_line(&malformed),
+        "malformed version text unexpectedly established compiler identity"
+    );
+
+    // `version_from` deliberately ignores stderr for identity. A command whose
+    // accepted-looking text exists only on stderr therefore reaches this seam
+    // with empty stdout and must fail at the same boundary.
+    let stderr_only = version_line_from_output(Path::new("r1f-stderr-only"), true, b"")
+        .expect_err("stderr-only output cannot establish compiler identity");
+    assert!(
+        stderr_only.contains("reported an empty version line"),
+        "stderr-only output failed for the wrong reason: {stderr_only}"
+    );
+}
+
+#[test]
+fn r1g_nonzero_version_command_is_rejected() {
+    let error = version_line_from_output(Path::new("r1g-rustc"), false, b"rustc 1.97.1 (fake)\n")
+        .expect_err("a nonzero version command cannot establish compiler identity");
+    assert!(
+        error.contains("did not report a version successfully"),
+        "nonzero status failed for the wrong reason: {error}"
     );
 }
 
@@ -1026,32 +1024,6 @@ fn r2f_only_the_concrete_sysroot_compiler_defines_identity() {
         ResolvedCompiler::resolve_from_launcher(&deceptive_launcher).is_err(),
         "resolver verified the launcher instead of the stored concrete compiler"
     );
-}
-
-fn assert_version_wrapper_is_rejected(name: &str, version: &str) {
-    let fixture = Fixture::new(name);
-    let Some(wrapper) = wrapper_reporting_version(&fixture.directory, version) else {
-        return;
-    };
-    assert!(
-        ResolvedCompiler {
-            executable: wrapper
-        }
-        .verify_accepted_version()
-        .is_err(),
-        "version {version:?} unexpectedly established stable Rust {ACCEPTED_RUSTC_VERSION}"
-    );
-}
-
-/// Writes an executable that answers `--version` with `version` and refuses
-/// everything else. `None` when this platform cannot mark a file executable,
-/// in which case the calling cell declines rather than asserting nothing.
-fn wrapper_reporting_version(directory: &Path, version: &str) -> Option<PathBuf> {
-    let script = format!(
-        "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf '%s\\n' {}\n  exit 0\nfi\nexit 1\n",
-        shell_single_quote(version)
-    );
-    write_wrapper(directory, "impostor-rustc", &script)
 }
 
 fn fake_sysroot_with_version(
