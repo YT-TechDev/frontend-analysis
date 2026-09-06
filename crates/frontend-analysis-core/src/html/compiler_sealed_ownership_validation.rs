@@ -793,7 +793,10 @@ fn f1e_a_fixture_directory_cannot_redirect_the_harness_to_an_ambient_compiler() 
 fn r1a_exact_stable_1_97_1_version_is_accepted() {
     for (label, stdout) in [
         ("LF", b"rustc 1.97.1 (8bab26f4f 2026-07-14)\n".as_slice()),
-        ("CRLF", b"rustc 1.97.1 (8bab26f4f 2026-07-14)\r\n".as_slice()),
+        (
+            "CRLF",
+            b"rustc 1.97.1 (8bab26f4f 2026-07-14)\r\n".as_slice(),
+        ),
     ] {
         let version = version_line_from_output(Path::new("r1a-rustc"), true, stdout)
             .expect("accepted rustc output must produce a version line");
@@ -806,12 +809,16 @@ fn r1a_exact_stable_1_97_1_version_is_accepted() {
 
 #[test]
 fn r1b_1_97_10_prefix_collision_is_rejected() {
-    assert!(!is_accepted_rustc_version_line("rustc 1.97.10 (prefix-collision)"));
+    assert!(!is_accepted_rustc_version_line(
+        "rustc 1.97.10 (prefix-collision)"
+    ));
 }
 
 #[test]
 fn r1c_nightly_suffix_is_rejected() {
-    assert!(!is_accepted_rustc_version_line("rustc 1.97.1-nightly (nightly)"));
+    assert!(!is_accepted_rustc_version_line(
+        "rustc 1.97.1-nightly (nightly)"
+    ));
 }
 
 #[test]
@@ -821,7 +828,9 @@ fn r1d_beta_suffix_is_rejected() {
 
 #[test]
 fn r1e_arbitrary_rustc_prefix_is_rejected() {
-    assert!(!is_accepted_rustc_version_line("some-rustc 1.97.1 (wrapper)"));
+    assert!(!is_accepted_rustc_version_line(
+        "some-rustc 1.97.1 (wrapper)"
+    ));
 }
 
 #[test]
@@ -833,12 +842,9 @@ fn r1f_empty_malformed_and_stderr_only_version_output_are_rejected() {
         "empty stdout failed for the wrong reason: {empty}"
     );
 
-    let malformed = version_line_from_output(
-        Path::new("r1f-malformed"),
-        true,
-        b"not a rustc version\n",
-    )
-    .expect("nonempty stdout still produces a bounded first-line observation");
+    let malformed =
+        version_line_from_output(Path::new("r1f-malformed"), true, b"not a rustc version\n")
+            .expect("nonempty stdout still produces a bounded first-line observation");
     assert!(
         !is_accepted_rustc_version_line(&malformed),
         "malformed version text unexpectedly established compiler identity"
