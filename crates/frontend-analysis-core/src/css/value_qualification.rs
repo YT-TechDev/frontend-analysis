@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520/#522/#524/#526/#528/#530/#532/#534/#536/#538/#541/#546/#549/#551/#553).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520/#522/#524/#526/#528/#530/#532/#534/#536/#538/#541/#546/#549/#551/#553/#555).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -1050,6 +1050,54 @@ impl CssOpacityQualificationObservation {
     }
 
     pub(crate) const fn outcome(&self) -> CssOpacityQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFillOpacityValue {
+    DirectNumberLiteral,
+    DirectPercentageLiteral,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFillOpacityUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFillOpacityQualificationOutcome {
+    Qualified(CssFillOpacityValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssFillOpacityUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `fill-opacity` qualification.
+///
+/// This profile reuses the accepted direct authored `<opacity-value>`
+/// Number/Percentage boundary. Out-of-range authored values remain qualified;
+/// clamping, SVG painting/applicability, CSSOM, animation, and computed/used
+/// values remain outside this slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssFillOpacityQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssFillOpacityQualificationOutcome,
+}
+
+impl CssFillOpacityQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssFillOpacityQualificationOutcome {
         self.outcome
     }
 }
@@ -3281,6 +3329,7 @@ pub(crate) struct CssValueQualificationRunResult {
     flex_grow_observations: Vec<CssFlexGrowQualificationObservation>,
     flex_shrink_observations: Vec<CssFlexShrinkQualificationObservation>,
     opacity_observations: Vec<CssOpacityQualificationObservation>,
+    fill_opacity_observations: Vec<CssFillOpacityQualificationObservation>,
     shape_image_threshold_observations: Vec<CssShapeImageThresholdQualificationObservation>,
     shape_margin_observations: Vec<CssShapeMarginQualificationObservation>,
     line_height_observations: Vec<CssLineHeightQualificationObservation>,
@@ -3381,6 +3430,10 @@ impl CssValueQualificationRunResult {
 
     pub(crate) fn opacity_observations(&self) -> &[CssOpacityQualificationObservation] {
         &self.opacity_observations
+    }
+
+    pub(crate) fn fill_opacity_observations(&self) -> &[CssFillOpacityQualificationObservation] {
+        &self.fill_opacity_observations
     }
 
     pub(crate) fn shape_image_threshold_observations(
@@ -3736,6 +3789,7 @@ pub(crate) fn run(
         flex_grow_observations,
         flex_shrink_observations,
         opacity_observations,
+        fill_opacity_observations,
         shape_image_threshold_observations,
         shape_margin_observations,
         line_height_observations,
@@ -3803,6 +3857,7 @@ pub(crate) fn run(
         let mut flex_grow_observations = Vec::new();
         let mut flex_shrink_observations = Vec::new();
         let mut opacity_observations = Vec::new();
+        let mut fill_opacity_observations = Vec::new();
         let mut shape_image_threshold_observations = Vec::new();
         let mut shape_margin_observations = Vec::new();
         let mut line_height_observations = Vec::new();
@@ -3961,6 +4016,17 @@ pub(crate) fn run(
                     occurrence_index,
                     placement: occurrence.placement(),
                     outcome: qualify_opacity_value(value_items),
+                });
+                continue;
+            }
+
+            if property_name.eq_ignore_ascii_case("fill-opacity") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                fill_opacity_observations.push(CssFillOpacityQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_fill_opacity_value(value_items),
                 });
                 continue;
             }
@@ -4620,6 +4686,7 @@ pub(crate) fn run(
             flex_grow_observations,
             flex_shrink_observations,
             opacity_observations,
+            fill_opacity_observations,
             shape_image_threshold_observations,
             shape_margin_observations,
             line_height_observations,
@@ -4689,6 +4756,7 @@ pub(crate) fn run(
         flex_grow_observations,
         flex_shrink_observations,
         opacity_observations,
+        fill_opacity_observations,
         shape_image_threshold_observations,
         shape_margin_observations,
         line_height_observations,
@@ -5712,6 +5780,57 @@ fn qualify_opacity_value(items: &[CssLexicalItem]) -> CssOpacityQualificationOut
             )
         }
         _ => CssOpacityQualificationOutcome::InvalidForSelectedValueGrammar,
+    }
+}
+
+fn qualify_fill_opacity_value(items: &[CssLexicalItem]) -> CssFillOpacityQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssFillOpacityQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssFillOpacityUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssFillOpacityQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssFillOpacityUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    if entire_function_name(items).is_some() {
+        return CssFillOpacityQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssFillOpacityUnsupportedReason::FunctionValue,
+        );
+    }
+
+    let mut tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+
+    let Some(token) = tokens.next() else {
+        return CssFillOpacityQualificationOutcome::InvalidForSelectedValueGrammar;
+    };
+    if tokens.next().is_some() {
+        return CssFillOpacityQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    match token.kind() {
+        CssTokenKind::Number { .. } => {
+            CssFillOpacityQualificationOutcome::Qualified(CssFillOpacityValue::DirectNumberLiteral)
+        }
+        CssTokenKind::Percentage { .. } => CssFillOpacityQualificationOutcome::Qualified(
+            CssFillOpacityValue::DirectPercentageLiteral,
+        ),
+        CssTokenKind::Ident(identifier) if is_css_wide_keyword(identifier) => {
+            CssFillOpacityQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssFillOpacityUnsupportedReason::CssWideKeyword,
+            )
+        }
+        _ => CssFillOpacityQualificationOutcome::InvalidForSelectedValueGrammar,
     }
 }
 

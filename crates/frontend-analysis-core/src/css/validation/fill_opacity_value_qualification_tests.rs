@@ -58,9 +58,9 @@ fn qualify_with_limits(
 
 fn expected_outcome(expected: ExpectedOutcome) -> CssFillOpacityQualificationOutcome {
     match expected {
-        ExpectedOutcome::DirectNumber => CssFillOpacityQualificationOutcome::Qualified(
-            CssFillOpacityValue::DirectNumberLiteral,
-        ),
+        ExpectedOutcome::DirectNumber => {
+            CssFillOpacityQualificationOutcome::Qualified(CssFillOpacityValue::DirectNumberLiteral)
+        }
         ExpectedOutcome::DirectPercentage => CssFillOpacityQualificationOutcome::Qualified(
             CssFillOpacityValue::DirectPercentageLiteral,
         ),
@@ -388,7 +388,10 @@ fn repeated_and_cross_source_fill_opacity_runs_are_semantically_deterministic() 
         first.fill_opacity_observations(),
         another_source.fill_opacity_observations()
     );
-    assert_eq!(first.opacity_observations(), repeated.opacity_observations());
+    assert_eq!(
+        first.opacity_observations(),
+        repeated.opacity_observations()
+    );
     assert_eq!(
         first.direction_observations(),
         repeated.direction_observations()
