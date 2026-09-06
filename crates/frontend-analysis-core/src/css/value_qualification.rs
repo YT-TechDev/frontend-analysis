@@ -1,11 +1,12 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520/#522/#524/#526/#528/#530/#532/#534/#536/#538/#541/#546/#549/#551/#553/#555).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520/#522/#524/#526/#528/#530/#532/#534/#536/#538/#541/#546/#549/#551/#553/#555/#559).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
 //! retokenize declaration fragments, mutate parser evidence, or claim cascade,
 //! inheritance, computed-value, CSSOM, DOM, layout, or browser-runtime semantics.
 
+use std::cmp::Ordering;
 use std::error::Error;
 use std::fmt;
 use std::ops::Range;
@@ -14,7 +15,10 @@ use crate::{SourceAnchor, SourceId};
 
 use super::declaration::CssDeclarationPlacement;
 use super::parser::result::{CssParserExecutionCompletion, CssParserRunResult};
-use super::token::{CssLexicalItem, CssNumberSign, CssNumberType, CssNumericValue, CssTokenKind};
+use super::token::{
+    CssDecimalExponent, CssExponentSign, CssLexicalItem, CssNumberSign, CssNumberType,
+    CssNumericValue, CssTokenKind,
+};
 use super::tokenizer::result::CssTokenizerRunResult;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -815,6 +819,58 @@ impl CssFontVariantPositionQualificationObservation {
     }
 
     pub(crate) const fn outcome(&self) -> CssFontVariantPositionQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFontWeightValue {
+    Normal,
+    Bold,
+    Bolder,
+    Lighter,
+    DirectNumberLiteral,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFontWeightUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFontWeightQualificationOutcome {
+    Qualified(CssFontWeightValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssFontWeightUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `font-weight` qualification.
+///
+/// This profile qualifies the direct authored keyword branches and direct
+/// Number tokens proven exactly inside `[1,1000]`. Exact authored numeric
+/// spelling remains in the structurally owning tokenizer evidence. Relative
+/// weight resolution, font matching, variation axes, synthesis, calculations,
+/// percentages, descriptors, and computed/used values remain outside this slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssFontWeightQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssFontWeightQualificationOutcome,
+}
+
+impl CssFontWeightQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssFontWeightQualificationOutcome {
         self.outcome
     }
 }
@@ -3386,6 +3442,7 @@ pub(crate) struct CssValueQualificationRunResult {
     font_variant_emoji_observations: Vec<CssFontVariantEmojiQualificationObservation>,
     font_variant_caps_observations: Vec<CssFontVariantCapsQualificationObservation>,
     font_variant_position_observations: Vec<CssFontVariantPositionQualificationObservation>,
+    font_weight_observations: Vec<CssFontWeightQualificationObservation>,
     z_index_observations: Vec<CssZIndexQualificationObservation>,
 }
 
@@ -3716,6 +3773,10 @@ impl CssValueQualificationRunResult {
         &self.font_variant_position_observations
     }
 
+    pub(crate) fn font_weight_observations(&self) -> &[CssFontWeightQualificationObservation] {
+        &self.font_weight_observations
+    }
+
     pub(crate) fn z_index_observations(&self) -> &[CssZIndexQualificationObservation] {
         &self.z_index_observations
     }
@@ -3844,6 +3905,7 @@ pub(crate) fn run(
         font_variant_emoji_observations,
         font_variant_caps_observations,
         font_variant_position_observations,
+        font_weight_observations,
         z_index_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
@@ -3912,6 +3974,7 @@ pub(crate) fn run(
         let mut font_variant_emoji_observations = Vec::new();
         let mut font_variant_caps_observations = Vec::new();
         let mut font_variant_position_observations = Vec::new();
+        let mut font_weight_observations = Vec::new();
         let mut z_index_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
@@ -4663,6 +4726,17 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("font-weight") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                font_weight_observations.push(CssFontWeightQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_font_weight_value(value_items),
+                });
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("font-variant-position") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -4741,6 +4815,7 @@ pub(crate) fn run(
             font_variant_emoji_observations,
             font_variant_caps_observations,
             font_variant_position_observations,
+            font_weight_observations,
             z_index_observations,
         )
     };
@@ -4811,6 +4886,7 @@ pub(crate) fn run(
         font_variant_emoji_observations,
         font_variant_caps_observations,
         font_variant_position_observations,
+        font_weight_observations,
         z_index_observations,
     })
 }
@@ -5508,6 +5584,170 @@ fn qualify_font_variant_position_value(
         CssSingleKeywordValue::Identifier(_) => {
             CssFontVariantPositionQualificationOutcome::InvalidForSelectedValueGrammar
         }
+    }
+}
+
+fn qualify_font_weight_value(items: &[CssLexicalItem]) -> CssFontWeightQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssFontWeightQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssFontWeightUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssFontWeightQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssFontWeightUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    if entire_function_name(items).is_some() {
+        return CssFontWeightQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssFontWeightUnsupportedReason::FunctionValue,
+        );
+    }
+
+    let mut tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+
+    let Some(token) = tokens.next() else {
+        return CssFontWeightQualificationOutcome::InvalidForSelectedValueGrammar;
+    };
+    if tokens.next().is_some() {
+        return CssFontWeightQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    match token.kind() {
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("normal") => {
+            CssFontWeightQualificationOutcome::Qualified(CssFontWeightValue::Normal)
+        }
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("bold") => {
+            CssFontWeightQualificationOutcome::Qualified(CssFontWeightValue::Bold)
+        }
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("bolder") => {
+            CssFontWeightQualificationOutcome::Qualified(CssFontWeightValue::Bolder)
+        }
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("lighter") => {
+            CssFontWeightQualificationOutcome::Qualified(CssFontWeightValue::Lighter)
+        }
+        CssTokenKind::Number { value, .. } if is_direct_font_weight_number(value) => {
+            CssFontWeightQualificationOutcome::Qualified(CssFontWeightValue::DirectNumberLiteral)
+        }
+        CssTokenKind::Ident(identifier) if is_css_wide_keyword(identifier) => {
+            CssFontWeightQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssFontWeightUnsupportedReason::CssWideKeyword,
+            )
+        }
+        _ => CssFontWeightQualificationOutcome::InvalidForSelectedValueGrammar,
+    }
+}
+
+/// Decides the closed direct-literal range `[1,1000]` from retained decimal
+/// structure only. The authored numeric evidence is never rewritten or
+/// converted to a host floating-point or bounded exponent value.
+fn is_direct_font_weight_number(value: &CssNumericValue) -> bool {
+    if matches!(value.sign(), Some(CssNumberSign::Minus)) {
+        return false;
+    }
+
+    let decimal = value.decimal();
+    let integer_digits = decimal.integer_digits().as_bytes();
+    let fraction_digits = decimal.fraction_digits().as_bytes();
+    let total_digits = integer_digits.len() + fraction_digits.len();
+
+    let first_nonzero = integer_digits
+        .iter()
+        .chain(fraction_digits)
+        .position(|digit| *digit != b'0');
+    let Some(first_nonzero) = first_nonzero else {
+        return false;
+    };
+
+    let trailing_zeros = fraction_digits
+        .iter()
+        .rev()
+        .chain(integer_digits.iter().rev())
+        .take_while(|digit| **digit == b'0')
+        .count();
+    let core_len = total_digits - first_nonzero - trailing_zeros;
+
+    let lower = compare_font_weight_decimal_order(
+        decimal.exponent(),
+        core_len,
+        trailing_zeros,
+        fraction_digits.len(),
+        1,
+    );
+    if lower == Ordering::Less {
+        return false;
+    }
+
+    match compare_font_weight_decimal_order(
+        decimal.exponent(),
+        core_len,
+        trailing_zeros,
+        fraction_digits.len(),
+        4,
+    ) {
+        Ordering::Less => true,
+        Ordering::Greater => false,
+        Ordering::Equal => {
+            core_len == 1
+                && integer_digits
+                    .iter()
+                    .chain(fraction_digits)
+                    .nth(first_nonzero)
+                    == Some(&b'1')
+        }
+    }
+}
+
+fn compare_font_weight_decimal_order(
+    exponent: Option<&CssDecimalExponent>,
+    core_len: usize,
+    trailing_zeros: usize,
+    fraction_len: usize,
+    target_order: u128,
+) -> Ordering {
+    let left = core_len as u128 + trailing_zeros as u128;
+    let right = fraction_len as u128 + target_order;
+
+    let Some(exponent) = exponent else {
+        return left.cmp(&right);
+    };
+    let exponent_digits = exponent.digits().trim_start_matches('0');
+    if exponent_digits.is_empty() {
+        return left.cmp(&right);
+    }
+
+    match exponent.sign() {
+        Some(CssExponentSign::Minus) => {
+            if left <= right {
+                return Ordering::Less;
+            }
+            compare_decimal_digits_to_u128(exponent_digits, left - right).reverse()
+        }
+        None | Some(CssExponentSign::Plus) => {
+            if left >= right {
+                return Ordering::Greater;
+            }
+            compare_decimal_digits_to_u128(exponent_digits, right - left)
+        }
+    }
+}
+
+/// Compares a normalized non-empty ASCII decimal digit string with one small
+/// non-negative metadata count without parsing the digit string as an integer.
+fn compare_decimal_digits_to_u128(digits: &str, value: u128) -> Ordering {
+    let rendered = value.to_string();
+    match digits.len().cmp(&rendered.len()) {
+        Ordering::Equal => digits.as_bytes().cmp(rendered.as_bytes()),
+        ordering => ordering,
     }
 }
 
