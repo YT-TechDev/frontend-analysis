@@ -1,7 +1,7 @@
 use crate::css::analysis::analyze_css_source;
 use crate::css::parser::resource::CssParserLimits;
 use crate::css::parser::result::CssParserExecutionCompletion;
-use crate::css::token::CssTokenKind;
+use crate::css::token::{CssLexicalItem, CssTokenKind};
 use crate::css::tokenizer::resource::CssTokenizerLimits;
 use crate::css::value_qualification::{
     CssPageQualificationOutcome, CssPageUnsupportedReason, CssPageValue,
@@ -151,10 +151,11 @@ fn escape_equivalent_custom_ident_values_share_interpreted_identity() {
             .upstream_parser_result()
             .upstream_tokenizer_result()
             .lexical_items()[evidence.lexical_item_index()];
-        let CssTokenKind::Ident(value) = match item {
-            crate::css::token::CssLexicalItem::SemanticToken(token) => token.kind(),
+        let token = match item {
+            CssLexicalItem::SemanticToken(token) => token,
             _ => panic!("page custom-ident evidence ref did not point to a semantic token"),
-        } else {
+        };
+        let CssTokenKind::Ident(value) = token.kind() else {
             panic!("page custom-ident evidence ref did not point to an Ident token");
         };
         assert_eq!(value, "Foo");
