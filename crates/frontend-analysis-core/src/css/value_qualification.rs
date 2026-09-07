@@ -3386,6 +3386,56 @@ impl CssPageQualificationObservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssBorderSpacingValue {
+    Single,
+    Pair,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssBorderSpacingUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssBorderSpacingQualificationOutcome {
+    Qualified(CssBorderSpacingValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssBorderSpacingUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `border-spacing` qualification.
+///
+/// This profile partitions the already-retained declaration value window into
+/// one or two top-level components using a recognition-time block-depth
+/// balanced walk, then qualifies each direct component against the already
+/// accepted direct `<length [0,∞]>` boundary. Function-headed components are
+/// classified by placement and identity only; no Function is evaluated or
+/// type-checked, and no unit conversion or table-layout geometry is derived.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssBorderSpacingQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssBorderSpacingQualificationOutcome,
+}
+
+impl CssBorderSpacingQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssBorderSpacingQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssZIndexValue {
     Auto,
     DirectIntegerLiteral,
@@ -3510,6 +3560,7 @@ pub(crate) struct CssValueQualificationRunResult {
     font_variant_position_observations: Vec<CssFontVariantPositionQualificationObservation>,
     font_weight_observations: Vec<CssFontWeightQualificationObservation>,
     page_observations: Vec<CssPageQualificationObservation>,
+    border_spacing_observations: Vec<CssBorderSpacingQualificationObservation>,
     z_index_observations: Vec<CssZIndexQualificationObservation>,
 }
 
@@ -3872,6 +3923,12 @@ impl CssValueQualificationRunResult {
         Some(value.as_str())
     }
 
+    pub(crate) fn border_spacing_observations(
+        &self,
+    ) -> &[CssBorderSpacingQualificationObservation] {
+        &self.border_spacing_observations
+    }
+
     pub(crate) fn z_index_observations(&self) -> &[CssZIndexQualificationObservation] {
         &self.z_index_observations
     }
@@ -4002,6 +4059,7 @@ pub(crate) fn run(
         font_variant_position_observations,
         font_weight_observations,
         page_observations,
+        border_spacing_observations,
         z_index_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
@@ -4072,6 +4130,7 @@ pub(crate) fn run(
         let mut font_variant_position_observations = Vec::new();
         let mut font_weight_observations = Vec::new();
         let mut page_observations = Vec::new();
+        let mut border_spacing_observations = Vec::new();
         let mut z_index_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
@@ -4674,6 +4733,17 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("border-spacing") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                border_spacing_observations.push(CssBorderSpacingQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_border_spacing_value(value_items),
+                });
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("z-index") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -4929,6 +4999,7 @@ pub(crate) fn run(
             font_variant_position_observations,
             font_weight_observations,
             page_observations,
+            border_spacing_observations,
             z_index_observations,
         )
     };
@@ -5001,6 +5072,7 @@ pub(crate) fn run(
         font_variant_position_observations,
         font_weight_observations,
         page_observations,
+        border_spacing_observations,
         z_index_observations,
     })
 }
@@ -8481,6 +8553,208 @@ fn qualify_page_value(
             None,
         ),
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CssBorderSpacingComponentClass {
+    QualifiedLength,
+    ResidualFunction,
+    MisplacedWholeValueFunction,
+    Invalid,
+}
+
+/// Partitions an already-retained `border-spacing` declaration value window
+/// into ordered top-level components using one left-to-right recognition-time
+/// pass. Depth-zero Whitespace/Comment lexical items are separators; Function
+/// and bracket openers extend the current component until their matching
+/// closer, so nested content never inflates top-level cardinality. A
+/// component also ends the instant block depth returns to zero — including a
+/// direct token that never opened a block — so a following top-level token
+/// always starts its own component even without an intervening separator. An
+/// unmatched closer at depth zero does not affect depth tracking and simply
+/// remains part of an ordinary top-level component.
+fn border_spacing_top_level_components(items: &[CssLexicalItem]) -> Vec<&[CssLexicalItem]> {
+    let mut components = Vec::new();
+    let mut block_stack: Vec<CssValueBlockCloser> = Vec::new();
+    let mut current_start: Option<usize> = None;
+
+    for (index, item) in items.iter().enumerate() {
+        if block_stack.is_empty() {
+            let is_separator = match item {
+                CssLexicalItem::Comment(_) => true,
+                CssLexicalItem::SemanticToken(token) => {
+                    matches!(token.kind(), CssTokenKind::Whitespace)
+                }
+            };
+            if is_separator {
+                if let Some(start) = current_start.take() {
+                    components.push(&items[start..index]);
+                }
+                continue;
+            }
+        }
+
+        if current_start.is_none() {
+            current_start = Some(index);
+        }
+
+        if let CssLexicalItem::SemanticToken(token) = item {
+            match token.kind() {
+                CssTokenKind::Function(_) | CssTokenKind::LeftParenthesis => {
+                    block_stack.push(CssValueBlockCloser::Parenthesis);
+                }
+                CssTokenKind::LeftSquareBracket => {
+                    block_stack.push(CssValueBlockCloser::SquareBracket);
+                }
+                CssTokenKind::LeftCurlyBracket => {
+                    block_stack.push(CssValueBlockCloser::CurlyBracket);
+                }
+                CssTokenKind::RightParenthesis
+                    if block_stack.last() == Some(&CssValueBlockCloser::Parenthesis) =>
+                {
+                    block_stack.pop();
+                }
+                CssTokenKind::RightSquareBracket
+                    if block_stack.last() == Some(&CssValueBlockCloser::SquareBracket) =>
+                {
+                    block_stack.pop();
+                }
+                CssTokenKind::RightCurlyBracket
+                    if block_stack.last() == Some(&CssValueBlockCloser::CurlyBracket) =>
+                {
+                    block_stack.pop();
+                }
+                _ => {}
+            }
+        }
+
+        // A component is complete the instant its block depth returns to
+        // zero, whether that is a direct token that never opened a block or
+        // a Function/bracket whose matching closer was just consumed. A
+        // following top-level token must start its own component even when
+        // no whitespace/comment separates it from this one.
+        if block_stack.is_empty()
+            && let Some(start) = current_start.take()
+        {
+            components.push(&items[start..=index]);
+        }
+    }
+
+    if let Some(start) = current_start {
+        components.push(&items[start..]);
+    }
+
+    components
+}
+
+/// Classifies one already-partitioned top-level `border-spacing` component.
+///
+/// A Function-headed component is classified by name/placement only; its
+/// interior is never parsed. A direct component reuses the accepted direct
+/// `<length [0,∞]>` boundary (unitless zero, or a non-negative length unit
+/// dimension) already established for other direct-length leaves.
+fn classify_border_spacing_component(
+    component: &[CssLexicalItem],
+) -> CssBorderSpacingComponentClass {
+    let mut tokens = component.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+
+    let Some(first) = tokens.next() else {
+        return CssBorderSpacingComponentClass::Invalid;
+    };
+
+    if let CssTokenKind::Function(name) = first.kind() {
+        return if is_whole_value_function(name) {
+            CssBorderSpacingComponentClass::MisplacedWholeValueFunction
+        } else {
+            CssBorderSpacingComponentClass::ResidualFunction
+        };
+    }
+
+    if tokens.next().is_some() {
+        return CssBorderSpacingComponentClass::Invalid;
+    }
+
+    match first.kind() {
+        CssTokenKind::Number { value, .. } if is_direct_zero_numeric_value(value) => {
+            CssBorderSpacingComponentClass::QualifiedLength
+        }
+        CssTokenKind::Dimension { value, unit, .. }
+            if is_css_length_unit(unit) && is_non_negative_direct_number(value) =>
+        {
+            CssBorderSpacingComponentClass::QualifiedLength
+        }
+        _ => CssBorderSpacingComponentClass::Invalid,
+    }
+}
+
+fn qualify_border_spacing_value(items: &[CssLexicalItem]) -> CssBorderSpacingQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssBorderSpacingQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssBorderSpacingUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssBorderSpacingQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssBorderSpacingUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    let mut whole_value_tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+    if let (Some(only_token), None) = (whole_value_tokens.next(), whole_value_tokens.next())
+        && let CssTokenKind::Ident(identifier) = only_token.kind()
+        && is_css_wide_keyword(identifier)
+    {
+        return CssBorderSpacingQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssBorderSpacingUnsupportedReason::CssWideKeyword,
+        );
+    }
+
+    let components = border_spacing_top_level_components(items);
+
+    if components.is_empty() || components.len() > 2 {
+        return CssBorderSpacingQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    let mut has_residual_function = false;
+    for component in &components {
+        match classify_border_spacing_component(component) {
+            CssBorderSpacingComponentClass::QualifiedLength => {}
+            CssBorderSpacingComponentClass::ResidualFunction => {
+                has_residual_function = true;
+            }
+            CssBorderSpacingComponentClass::MisplacedWholeValueFunction
+            | CssBorderSpacingComponentClass::Invalid => {
+                return CssBorderSpacingQualificationOutcome::InvalidForSelectedValueGrammar;
+            }
+        }
+    }
+
+    if has_residual_function {
+        return CssBorderSpacingQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssBorderSpacingUnsupportedReason::FunctionValue,
+        );
+    }
+
+    CssBorderSpacingQualificationOutcome::Qualified(if components.len() == 1 {
+        CssBorderSpacingValue::Single
+    } else {
+        CssBorderSpacingValue::Pair
+    })
 }
 
 fn qualify_z_index_value(items: &[CssLexicalItem]) -> CssZIndexQualificationOutcome {

@@ -25,6 +25,8 @@ mod backface_visibility_value_qualification_tests;
 #[cfg(test)]
 mod border_collapse_value_qualification_tests;
 #[cfg(test)]
+mod border_spacing_value_qualification_tests;
+#[cfg(test)]
 mod border_top_width_value_qualification_tests;
 #[cfg(test)]
 mod box_decoration_break_value_qualification_tests;
