@@ -205,6 +205,39 @@ fn function_headed_components_in_either_or_both_positions_are_unsupported() {
 }
 
 #[test]
+fn a_completed_function_component_ends_at_depth_zero_without_requiring_a_separator() {
+    // Regression for the partition boundary defect found in PR #564 review of
+    // head bfbe2c2ab76e333d5341c97b45cfdc011b7cf45b: `border_spacing_top_level_components`
+    // only ended a component at a depth-zero Whitespace/Comment separator, so
+    // `calc(1px)/2px` was merged into one slice starting at `calc(` and was
+    // then classified as a lone ResidualFunction without ever noticing the
+    // trailing `/2px`. A component must end the instant its matching closer
+    // returns block depth to zero, even with no whitespace/comment after it,
+    // so trailing top-level evidence cannot be hidden inside a Function
+    // component and soften a decidable grammar/cardinality failure into
+    // UnsupportedBySelectedValueProfile.
+    let result = qualify(
+        1218,
+        concat!(
+            "a{border-spacing:calc(1px)/2px;}",
+            "b{border-spacing:calc(1px));}",
+        ),
+    );
+
+    assert_expected(
+        &result,
+        &[ExpectedOutcome::Invalid, ExpectedOutcome::Invalid],
+    );
+
+    // The fix must not regress a Function immediately followed by another
+    // Function with no whitespace between them: still exactly two top-level
+    // components, and still the bounded-profile Unsupported boundary because
+    // neither Function is evaluated.
+    let adjacent_functions = qualify(1219, "a{border-spacing:calc(1px)calc(2px);}");
+    assert_expected(&adjacent_functions, &[ExpectedOutcome::UnsupportedFunction]);
+}
+
+#[test]
 fn cardinality_and_whole_value_placement_classification_order_is_load_bearing() {
     // Cardinality is decidable before Function support is considered, so a
     // cardinality violation stays Invalid even with a Function present.

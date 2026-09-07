@@ -8567,7 +8567,10 @@ enum CssBorderSpacingComponentClass {
 /// into ordered top-level components using one left-to-right recognition-time
 /// pass. Depth-zero Whitespace/Comment lexical items are separators; Function
 /// and bracket openers extend the current component until their matching
-/// closer, so nested content never inflates top-level cardinality. An
+/// closer, so nested content never inflates top-level cardinality. A
+/// component also ends the instant block depth returns to zero — including a
+/// direct token that never opened a block — so a following top-level token
+/// always starts its own component even without an intervening separator. An
 /// unmatched closer at depth zero does not affect depth tracking and simply
 /// remains part of an ordinary top-level component.
 fn border_spacing_top_level_components(items: &[CssLexicalItem]) -> Vec<&[CssLexicalItem]> {
@@ -8623,6 +8626,17 @@ fn border_spacing_top_level_components(items: &[CssLexicalItem]) -> Vec<&[CssLex
                 }
                 _ => {}
             }
+        }
+
+        // A component is complete the instant its block depth returns to
+        // zero, whether that is a direct token that never opened a block or
+        // a Function/bracket whose matching closer was just consumed. A
+        // following top-level token must start its own component even when
+        // no whitespace/comment separates it from this one.
+        if block_stack.is_empty()
+            && let Some(start) = current_start.take()
+        {
+            components.push(&items[start..=index]);
         }
     }
 
