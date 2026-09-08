@@ -103,6 +103,8 @@ mod group_context_contract_tests;
 #[cfg(test)]
 mod group_lifecycle_validation_tests;
 #[cfg(test)]
+mod hyphenate_character_value_qualification_tests;
+#[cfg(test)]
 mod isolation_value_qualification_tests;
 #[cfg(test)]
 mod keyframe_conformance_tests;
