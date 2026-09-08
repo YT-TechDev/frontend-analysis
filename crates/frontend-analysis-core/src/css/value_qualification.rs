@@ -3861,6 +3861,85 @@ impl CssTransitionPropertyQualificationObservation {
     }
 }
 
+/// Run-local locator for the exact tokenizer item selected during authoritative
+/// `hyphenate-character` direct `<string>` recognition. The index is evidence
+/// placement, not the String's semantic identity; that identity remains the
+/// tokenizer-owned decoded `CssTokenKind::String(String)` value, exactly as
+/// `CssPageCustomIdentEvidenceRef` and
+/// `CssTransitionPropertyCustomIdentEvidenceRef` locate their Ident tokens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssHyphenateCharacterStringEvidenceRef {
+    lexical_item_index: usize,
+}
+
+impl CssHyphenateCharacterStringEvidenceRef {
+    pub(crate) const fn lexical_item_index(&self) -> usize {
+        self.lexical_item_index
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssHyphenateCharacterValue {
+    Auto,
+    DirectStringLiteral,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssHyphenateCharacterUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssHyphenateCharacterQualificationOutcome {
+    Qualified(CssHyphenateCharacterValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssHyphenateCharacterUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `hyphenate-character`
+/// qualification.
+///
+/// This profile recognizes only the authored `auto | <string>` grammar: the
+/// first direct authored CSS `<string>` qualification leaf (#580 / #418
+/// comment 5581206679). A direct Ident `auto` (ASCII-case-insensitive)
+/// qualifies as `Auto` with no String evidence. Exactly one non-trivia
+/// retained `CssTokenKind::String(_)` qualifies as `DirectStringLiteral`; its
+/// decoded payload remains tokenizer-owned, and this observation retains only
+/// a recognition-time evidence reference to that exact token, mirroring the
+/// accepted `page` / `transition-property` custom-ident evidence-reference
+/// ownership pattern. A quoted String never inherits keyword semantics from
+/// its decoded contents (`"auto"`, `"initial"`, `"none"` all remain String),
+/// and a retained `CssTokenKind::BadString` is not `<string>` for this
+/// profile. This grammar has no ordinary Function-backed branch, so any
+/// Function value is directly `InvalidForSelectedValueGrammar`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssHyphenateCharacterQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssHyphenateCharacterQualificationOutcome,
+    string_evidence: Option<CssHyphenateCharacterStringEvidenceRef>,
+}
+
+impl CssHyphenateCharacterQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssHyphenateCharacterQualificationOutcome {
+        self.outcome
+    }
+
+    pub(crate) const fn string_evidence(&self) -> Option<CssHyphenateCharacterStringEvidenceRef> {
+        self.string_evidence
+    }
+}
+
 /// Run-owned result for the currently selected bounded CSS value capabilities.
 ///
 /// The exact Core-validated parser result is owned once here. Property-specific
@@ -3947,6 +4026,7 @@ pub(crate) struct CssValueQualificationRunResult {
     animation_delay_observations: Vec<CssAnimationDelayQualificationObservation>,
     transition_duration_observations: Vec<CssTransitionDurationQualificationObservation>,
     transition_property_observations: Vec<CssTransitionPropertyQualificationObservation>,
+    hyphenate_character_observations: Vec<CssHyphenateCharacterQualificationObservation>,
 }
 
 impl CssValueQualificationRunResult {
@@ -4374,6 +4454,43 @@ impl CssValueQualificationRunResult {
         Some(value.as_str())
     }
 
+    pub(crate) fn hyphenate_character_observations(
+        &self,
+    ) -> &[CssHyphenateCharacterQualificationObservation] {
+        &self.hyphenate_character_observations
+    }
+
+    /// Resolves one qualified `hyphenate-character` direct String's
+    /// tokenizer-owned decoded identity through its run-local evidence
+    /// reference, mirroring `page_custom_ident_value` and
+    /// `transition_property_custom_ident_value` without copying the
+    /// open-ended String payload into a second owner.
+    pub(crate) fn hyphenate_character_string_value<'a>(
+        &'a self,
+        observation: &CssHyphenateCharacterQualificationObservation,
+    ) -> Option<&'a str> {
+        if observation.outcome()
+            != CssHyphenateCharacterQualificationOutcome::Qualified(
+                CssHyphenateCharacterValue::DirectStringLiteral,
+            )
+        {
+            return None;
+        }
+        let evidence = observation.string_evidence()?;
+        let item = self
+            .upstream_parser_result
+            .upstream_tokenizer_result()
+            .lexical_items()
+            .get(evidence.lexical_item_index())?;
+        let CssLexicalItem::SemanticToken(token) = item else {
+            return None;
+        };
+        let CssTokenKind::String(value) = token.kind() else {
+            return None;
+        };
+        Some(value.as_str())
+    }
+
     pub(crate) const fn execution_completion(&self) -> CssParserExecutionCompletion {
         self.upstream_parser_result.execution_completion()
     }
@@ -4508,6 +4625,7 @@ pub(crate) fn run(
         animation_delay_observations,
         transition_duration_observations,
         transition_property_observations,
+        hyphenate_character_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
         let mut cursor = LexicalWindowCursor::new(tokenizer_result);
@@ -4585,6 +4703,7 @@ pub(crate) fn run(
         let mut animation_delay_observations = Vec::new();
         let mut transition_duration_observations = Vec::new();
         let mut transition_property_observations = Vec::new();
+        let mut hyphenate_character_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
             let property_range = cursor.window_for(occurrence.property_name())?;
@@ -5286,6 +5405,23 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("hyphenate-character") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let lexical_item_start = value_range.start;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                let (outcome, string_evidence) =
+                    qualify_hyphenate_character_value(value_items, lexical_item_start);
+                hyphenate_character_observations.push(
+                    CssHyphenateCharacterQualificationObservation {
+                        occurrence_index,
+                        placement: occurrence.placement(),
+                        outcome,
+                        string_evidence,
+                    },
+                );
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("scroll-snap-align") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -5538,6 +5674,7 @@ pub(crate) fn run(
             animation_delay_observations,
             transition_duration_observations,
             transition_property_observations,
+            hyphenate_character_observations,
         )
     };
 
@@ -5617,6 +5754,7 @@ pub(crate) fn run(
         animation_delay_observations,
         transition_duration_observations,
         transition_property_observations,
+        hyphenate_character_observations,
     })
 }
 
@@ -9099,6 +9237,99 @@ fn qualify_page_value(
         ),
         _ => (
             CssPageQualificationOutcome::InvalidForSelectedValueGrammar,
+            None,
+        ),
+    }
+}
+
+/// Qualifies one selected ordinary `hyphenate-character` declaration's
+/// already-retained value window against the authored `auto | <string>`
+/// grammar (#580 / #418 comment 5581206679).
+///
+/// After the shared deferred-substitution and whole-value-Function preflight,
+/// exactly one non-trivia retained token decides the outcome: a direct Ident
+/// `auto` (ASCII-case-insensitive) qualifies as `Auto` with no String
+/// evidence; a direct `CssTokenKind::String(_)` qualifies as
+/// `DirectStringLiteral` with an evidence reference to that exact retained
+/// token; every other single token (including a wrong token class or a
+/// retained `BadString`), zero tokens, or more than one token is
+/// `InvalidForSelectedValueGrammar`. This grammar has no ordinary
+/// Function-backed branch, so a Function token falls through to the same
+/// Invalid outcome rather than a residual `FunctionValue` Unsupported class.
+/// The decoded String payload is never copied out of the tokenizer's
+/// `CssTokenKind::String(String)`; only its run-local lexical-item position
+/// is retained.
+fn qualify_hyphenate_character_value(
+    items: &[CssLexicalItem],
+    lexical_item_start: usize,
+) -> (
+    CssHyphenateCharacterQualificationOutcome,
+    Option<CssHyphenateCharacterStringEvidenceRef>,
+) {
+    if contains_deferred_substitution_function(items) {
+        return (
+            CssHyphenateCharacterQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssHyphenateCharacterUnsupportedReason::DeferredSubstitutionFunction,
+            ),
+            None,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return (
+            CssHyphenateCharacterQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssHyphenateCharacterUnsupportedReason::WholeValueFunction,
+            ),
+            None,
+        );
+    }
+
+    let mut tokens = items
+        .iter()
+        .enumerate()
+        .filter_map(|(relative_index, item)| match item {
+            CssLexicalItem::SemanticToken(token)
+                if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+            {
+                Some((relative_index, token))
+            }
+            _ => None,
+        });
+
+    let Some((relative_index, token)) = tokens.next() else {
+        return (
+            CssHyphenateCharacterQualificationOutcome::InvalidForSelectedValueGrammar,
+            None,
+        );
+    };
+    if tokens.next().is_some() {
+        return (
+            CssHyphenateCharacterQualificationOutcome::InvalidForSelectedValueGrammar,
+            None,
+        );
+    }
+
+    match token.kind() {
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("auto") => (
+            CssHyphenateCharacterQualificationOutcome::Qualified(CssHyphenateCharacterValue::Auto),
+            None,
+        ),
+        CssTokenKind::Ident(identifier) if is_css_wide_keyword(identifier) => (
+            CssHyphenateCharacterQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssHyphenateCharacterUnsupportedReason::CssWideKeyword,
+            ),
+            None,
+        ),
+        CssTokenKind::String(_) => (
+            CssHyphenateCharacterQualificationOutcome::Qualified(
+                CssHyphenateCharacterValue::DirectStringLiteral,
+            ),
+            Some(CssHyphenateCharacterStringEvidenceRef {
+                lexical_item_index: lexical_item_start + relative_index,
+            }),
+        ),
+        _ => (
+            CssHyphenateCharacterQualificationOutcome::InvalidForSelectedValueGrammar,
             None,
         ),
     }
