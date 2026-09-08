@@ -3541,6 +3541,56 @@ impl CssAspectRatioQualificationObservation {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssAnimationPlayStateValue {
+    Running,
+    Paused,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssAnimationPlayStateUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CssAnimationPlayStateQualificationOutcome {
+    Qualified(Vec<CssAnimationPlayStateValue>),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssAnimationPlayStateUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `animation-play-state`
+/// qualification.
+///
+/// This profile recognizes only the authored
+/// `<single-animation-play-state>#` grammar. Ordered list values are
+/// retained as property-specific `Running | Paused` items. Exact source
+/// evidence, separators, trivia, and occurrence identity remain owned by
+/// the upstream tokenizer/parser result; no animation runtime or
+/// coordinating-list semantics are derived here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CssAnimationPlayStateQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssAnimationPlayStateQualificationOutcome,
+}
+
+impl CssAnimationPlayStateQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> &CssAnimationPlayStateQualificationOutcome {
+        &self.outcome
+    }
+}
+
 /// Run-owned result for the currently selected bounded CSS value capabilities.
 ///
 /// The exact Core-validated parser result is owned once here. Property-specific
@@ -3622,6 +3672,7 @@ pub(crate) struct CssValueQualificationRunResult {
     border_spacing_observations: Vec<CssBorderSpacingQualificationObservation>,
     z_index_observations: Vec<CssZIndexQualificationObservation>,
     aspect_ratio_observations: Vec<CssAspectRatioQualificationObservation>,
+    animation_play_state_observations: Vec<CssAnimationPlayStateQualificationObservation>,
 }
 
 impl CssValueQualificationRunResult {
@@ -3997,6 +4048,12 @@ impl CssValueQualificationRunResult {
         &self.aspect_ratio_observations
     }
 
+    pub(crate) fn animation_play_state_observations(
+        &self,
+    ) -> &[CssAnimationPlayStateQualificationObservation] {
+        &self.animation_play_state_observations
+    }
+
     pub(crate) const fn execution_completion(&self) -> CssParserExecutionCompletion {
         self.upstream_parser_result.execution_completion()
     }
@@ -4126,6 +4183,7 @@ pub(crate) fn run(
         border_spacing_observations,
         z_index_observations,
         aspect_ratio_observations,
+        animation_play_state_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
         let mut cursor = LexicalWindowCursor::new(tokenizer_result);
@@ -4198,6 +4256,7 @@ pub(crate) fn run(
         let mut border_spacing_observations = Vec::new();
         let mut z_index_observations = Vec::new();
         let mut aspect_ratio_observations = Vec::new();
+        let mut animation_play_state_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
             let property_range = cursor.window_for(occurrence.property_name())?;
@@ -4832,6 +4891,19 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("animation-play-state") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                animation_play_state_observations.push(
+                    CssAnimationPlayStateQualificationObservation {
+                        occurrence_index,
+                        placement: occurrence.placement(),
+                        outcome: qualify_animation_play_state_value(value_items),
+                    },
+                );
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("scroll-snap-align") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -5079,6 +5151,7 @@ pub(crate) fn run(
             border_spacing_observations,
             z_index_observations,
             aspect_ratio_observations,
+            animation_play_state_observations,
         )
     };
 
@@ -5153,6 +5226,7 @@ pub(crate) fn run(
         border_spacing_observations,
         z_index_observations,
         aspect_ratio_observations,
+        animation_play_state_observations,
     })
 }
 
@@ -9194,6 +9268,135 @@ fn qualify_aspect_ratio_value(items: &[CssLexicalItem]) -> CssAspectRatioQualifi
             CssAspectRatioQualificationOutcome::InvalidForSelectedValueGrammar
         }
     }
+}
+
+fn animation_play_state_item_value(items: &[CssLexicalItem]) -> Option<CssAnimationPlayStateValue> {
+    let mut tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+
+    let token = tokens.next()?;
+    if tokens.next().is_some() {
+        return None;
+    }
+
+    match token.kind() {
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("running") => {
+            Some(CssAnimationPlayStateValue::Running)
+        }
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("paused") => {
+            Some(CssAnimationPlayStateValue::Paused)
+        }
+        _ => None,
+    }
+}
+
+/// Qualifies one retained `animation-play-state` declaration value
+/// against `<single-animation-play-state>#`, where each item is
+/// `running | paused`.
+///
+/// Deferred substitution is checked before list recognition because it
+/// can change top-level separator structure. The list walk then splits
+/// only on retained depth-zero `Comma` tokens. Commas inside Functions
+/// or other balanced blocks remain inside the current item. Leading,
+/// trailing, and consecutive top-level commas therefore produce empty
+/// items and fail the selected grammar without any raw-source search or
+/// reconstruction.
+fn qualify_animation_play_state_value(
+    items: &[CssLexicalItem],
+) -> CssAnimationPlayStateQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssAnimationPlayStateQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssAnimationPlayStateUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssAnimationPlayStateQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssAnimationPlayStateUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    let mut whole_value_tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+    if let (Some(only_token), None) = (whole_value_tokens.next(), whole_value_tokens.next())
+        && let CssTokenKind::Ident(identifier) = only_token.kind()
+        && is_css_wide_keyword(identifier)
+    {
+        return CssAnimationPlayStateQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssAnimationPlayStateUnsupportedReason::CssWideKeyword,
+        );
+    }
+
+    let mut values = Vec::new();
+    let mut block_stack: Vec<CssValueBlockCloser> = Vec::new();
+    let mut item_start = 0usize;
+
+    for (index, item) in items.iter().enumerate() {
+        if block_stack.is_empty()
+            && matches!(
+                item,
+                CssLexicalItem::SemanticToken(token)
+                    if matches!(token.kind(), CssTokenKind::Comma)
+            )
+        {
+            let Some(value) = animation_play_state_item_value(&items[item_start..index]) else {
+                return CssAnimationPlayStateQualificationOutcome::InvalidForSelectedValueGrammar;
+            };
+            values.push(value);
+            item_start = index + 1;
+            continue;
+        }
+
+        let CssLexicalItem::SemanticToken(token) = item else {
+            continue;
+        };
+        match token.kind() {
+            CssTokenKind::Function(_) | CssTokenKind::LeftParenthesis => {
+                block_stack.push(CssValueBlockCloser::Parenthesis);
+            }
+            CssTokenKind::LeftSquareBracket => {
+                block_stack.push(CssValueBlockCloser::SquareBracket);
+            }
+            CssTokenKind::LeftCurlyBracket => {
+                block_stack.push(CssValueBlockCloser::CurlyBracket);
+            }
+            CssTokenKind::RightParenthesis
+                if block_stack.last() == Some(&CssValueBlockCloser::Parenthesis) =>
+            {
+                block_stack.pop();
+            }
+            CssTokenKind::RightSquareBracket
+                if block_stack.last() == Some(&CssValueBlockCloser::SquareBracket) =>
+            {
+                block_stack.pop();
+            }
+            CssTokenKind::RightCurlyBracket
+                if block_stack.last() == Some(&CssValueBlockCloser::CurlyBracket) =>
+            {
+                block_stack.pop();
+            }
+            _ => {}
+        }
+    }
+
+    let Some(value) = animation_play_state_item_value(&items[item_start..]) else {
+        return CssAnimationPlayStateQualificationOutcome::InvalidForSelectedValueGrammar;
+    };
+    values.push(value);
+
+    CssAnimationPlayStateQualificationOutcome::Qualified(values)
 }
 
 fn qualify_scroll_snap_align_value(
