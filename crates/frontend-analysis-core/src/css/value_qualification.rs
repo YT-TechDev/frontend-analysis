@@ -3591,6 +3591,62 @@ impl CssAnimationPlayStateQualificationObservation {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssAnimationIterationCountValue {
+    Infinite,
+    DirectNumberLiteral,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssAnimationIterationCountUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CssAnimationIterationCountQualificationOutcome {
+    Qualified(Vec<CssAnimationIterationCountValue>),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssAnimationIterationCountUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `animation-iteration-count`
+/// qualification.
+///
+/// This profile recognizes only the authored
+/// `<single-animation-iteration-count>#` grammar, where
+/// `<single-animation-iteration-count> = infinite | <number [0,∞]>`. Ordered
+/// list values are retained as property-specific `Infinite |
+/// DirectNumberLiteral` items. Function-backed numeric items (e.g. `calc()`)
+/// remain conservatively `UnsupportedBySelectedValueProfile(FunctionValue)`
+/// because this slice does not evaluate numeric Functions; a decisive direct
+/// Invalid item always takes precedence over a residual Function item
+/// elsewhere in the same list. Exact source evidence, separators, trivia, and
+/// occurrence identity remain owned by the upstream tokenizer/parser result;
+/// no coordinated animation-list or runtime semantics are derived here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CssAnimationIterationCountQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssAnimationIterationCountQualificationOutcome,
+}
+
+impl CssAnimationIterationCountQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> &CssAnimationIterationCountQualificationOutcome {
+        &self.outcome
+    }
+}
+
 /// Run-owned result for the currently selected bounded CSS value capabilities.
 ///
 /// The exact Core-validated parser result is owned once here. Property-specific
@@ -3673,6 +3729,7 @@ pub(crate) struct CssValueQualificationRunResult {
     z_index_observations: Vec<CssZIndexQualificationObservation>,
     aspect_ratio_observations: Vec<CssAspectRatioQualificationObservation>,
     animation_play_state_observations: Vec<CssAnimationPlayStateQualificationObservation>,
+    animation_iteration_count_observations: Vec<CssAnimationIterationCountQualificationObservation>,
 }
 
 impl CssValueQualificationRunResult {
@@ -4054,6 +4111,12 @@ impl CssValueQualificationRunResult {
         &self.animation_play_state_observations
     }
 
+    pub(crate) fn animation_iteration_count_observations(
+        &self,
+    ) -> &[CssAnimationIterationCountQualificationObservation] {
+        &self.animation_iteration_count_observations
+    }
+
     pub(crate) const fn execution_completion(&self) -> CssParserExecutionCompletion {
         self.upstream_parser_result.execution_completion()
     }
@@ -4184,6 +4247,7 @@ pub(crate) fn run(
         z_index_observations,
         aspect_ratio_observations,
         animation_play_state_observations,
+        animation_iteration_count_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
         let mut cursor = LexicalWindowCursor::new(tokenizer_result);
@@ -4257,6 +4321,7 @@ pub(crate) fn run(
         let mut z_index_observations = Vec::new();
         let mut aspect_ratio_observations = Vec::new();
         let mut animation_play_state_observations = Vec::new();
+        let mut animation_iteration_count_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
             let property_range = cursor.window_for(occurrence.property_name())?;
@@ -4904,6 +4969,19 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("animation-iteration-count") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                animation_iteration_count_observations.push(
+                    CssAnimationIterationCountQualificationObservation {
+                        occurrence_index,
+                        placement: occurrence.placement(),
+                        outcome: qualify_animation_iteration_count_value(value_items),
+                    },
+                );
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("scroll-snap-align") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -5152,6 +5230,7 @@ pub(crate) fn run(
             z_index_observations,
             aspect_ratio_observations,
             animation_play_state_observations,
+            animation_iteration_count_observations,
         )
     };
 
@@ -5227,6 +5306,7 @@ pub(crate) fn run(
         z_index_observations,
         aspect_ratio_observations,
         animation_play_state_observations,
+        animation_iteration_count_observations,
     })
 }
 
@@ -9397,6 +9477,200 @@ fn qualify_animation_play_state_value(
     values.push(value);
 
     CssAnimationPlayStateQualificationOutcome::Qualified(values)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CssAnimationIterationCountItemClass {
+    Qualified(CssAnimationIterationCountValue),
+    ResidualFunction,
+    MisplacedWholeValueFunction,
+    Invalid,
+}
+
+/// Classifies one already-comma-segmented `animation-iteration-count` list
+/// item. A Function-headed item that consumes the entire item is classified
+/// by name/placement only, exactly as the accepted `aspect-ratio` component
+/// classifier does; its interior is never parsed or evaluated. A direct item
+/// reuses the already accepted direct `<number [0,∞]>` boundary and the
+/// direct `infinite` keyword comparison unchanged.
+fn classify_animation_iteration_count_item(
+    item: &[CssLexicalItem],
+) -> CssAnimationIterationCountItemClass {
+    if let Some(name) = entire_function_name(item) {
+        return if is_whole_value_function(name) {
+            CssAnimationIterationCountItemClass::MisplacedWholeValueFunction
+        } else {
+            CssAnimationIterationCountItemClass::ResidualFunction
+        };
+    }
+
+    let mut tokens = item.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+
+    let Some(token) = tokens.next() else {
+        return CssAnimationIterationCountItemClass::Invalid;
+    };
+    if tokens.next().is_some() {
+        return CssAnimationIterationCountItemClass::Invalid;
+    }
+
+    match token.kind() {
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("infinite") => {
+            CssAnimationIterationCountItemClass::Qualified(
+                CssAnimationIterationCountValue::Infinite,
+            )
+        }
+        CssTokenKind::Number { value, .. } if is_non_negative_direct_number(value) => {
+            CssAnimationIterationCountItemClass::Qualified(
+                CssAnimationIterationCountValue::DirectNumberLiteral,
+            )
+        }
+        _ => CssAnimationIterationCountItemClass::Invalid,
+    }
+}
+
+/// Qualifies one retained `animation-iteration-count` declaration value
+/// against `<single-animation-iteration-count>#`, where each item is
+/// `infinite | <number [0,∞]>`.
+///
+/// Deferred substitution and the whole-value Function/CSS-wide-keyword
+/// boundaries are checked before list recognition, reusing the accepted
+/// #571 top-level comma-list theorem unchanged: the list walk splits only on
+/// retained depth-zero `Comma` tokens, and commas inside Functions or other
+/// balanced blocks remain inside the current item.
+///
+/// Unlike `animation-play-state`, a list item here may be function-backed
+/// (`<number>` allows `calc()`), so a Function-headed item is not
+/// immediately decisive. Every item is classified first; a decisive
+/// `Invalid`/`MisplacedWholeValueFunction` item anywhere in the list always
+/// outranks a residual `FunctionValue` item, which in turn outranks a fully
+/// `Qualified` list. This aggregation order is what keeps cases such as
+/// `-1, calc(2)` and `calc(2), -1` `InvalidForSelectedValueGrammar` rather
+/// than softened into `FunctionValue` `Unsupported`.
+fn qualify_animation_iteration_count_value(
+    items: &[CssLexicalItem],
+) -> CssAnimationIterationCountQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssAnimationIterationCountQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssAnimationIterationCountUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssAnimationIterationCountQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssAnimationIterationCountUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    let mut whole_value_tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+    if let (Some(only_token), None) = (whole_value_tokens.next(), whole_value_tokens.next())
+        && let CssTokenKind::Ident(identifier) = only_token.kind()
+        && is_css_wide_keyword(identifier)
+    {
+        return CssAnimationIterationCountQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssAnimationIterationCountUnsupportedReason::CssWideKeyword,
+        );
+    }
+
+    let mut item_classes = Vec::new();
+    let mut block_stack: Vec<CssValueBlockCloser> = Vec::new();
+    let mut item_start = 0usize;
+
+    for (index, item) in items.iter().enumerate() {
+        if block_stack.is_empty()
+            && matches!(
+                item,
+                CssLexicalItem::SemanticToken(token)
+                    if matches!(token.kind(), CssTokenKind::Comma)
+            )
+        {
+            item_classes.push(classify_animation_iteration_count_item(
+                &items[item_start..index],
+            ));
+            item_start = index + 1;
+            continue;
+        }
+
+        let CssLexicalItem::SemanticToken(token) = item else {
+            continue;
+        };
+        match token.kind() {
+            CssTokenKind::Function(_) | CssTokenKind::LeftParenthesis => {
+                block_stack.push(CssValueBlockCloser::Parenthesis);
+            }
+            CssTokenKind::LeftSquareBracket => {
+                block_stack.push(CssValueBlockCloser::SquareBracket);
+            }
+            CssTokenKind::LeftCurlyBracket => {
+                block_stack.push(CssValueBlockCloser::CurlyBracket);
+            }
+            CssTokenKind::RightParenthesis
+                if block_stack.last() == Some(&CssValueBlockCloser::Parenthesis) =>
+            {
+                block_stack.pop();
+            }
+            CssTokenKind::RightSquareBracket
+                if block_stack.last() == Some(&CssValueBlockCloser::SquareBracket) =>
+            {
+                block_stack.pop();
+            }
+            CssTokenKind::RightCurlyBracket
+                if block_stack.last() == Some(&CssValueBlockCloser::CurlyBracket) =>
+            {
+                block_stack.pop();
+            }
+            _ => {}
+        }
+    }
+    item_classes.push(classify_animation_iteration_count_item(
+        &items[item_start..],
+    ));
+
+    if item_classes.iter().any(|class| {
+        matches!(
+            class,
+            CssAnimationIterationCountItemClass::Invalid
+                | CssAnimationIterationCountItemClass::MisplacedWholeValueFunction
+        )
+    }) {
+        return CssAnimationIterationCountQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    if item_classes
+        .iter()
+        .any(|class| matches!(class, CssAnimationIterationCountItemClass::ResidualFunction))
+    {
+        return CssAnimationIterationCountQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssAnimationIterationCountUnsupportedReason::FunctionValue,
+        );
+    }
+
+    let values = item_classes
+        .into_iter()
+        .map(|class| match class {
+            CssAnimationIterationCountItemClass::Qualified(value) => value,
+            CssAnimationIterationCountItemClass::ResidualFunction
+            | CssAnimationIterationCountItemClass::MisplacedWholeValueFunction
+            | CssAnimationIterationCountItemClass::Invalid => {
+                unreachable!("non-Qualified item classes are filtered above")
+            }
+        })
+        .collect();
+
+    CssAnimationIterationCountQualificationOutcome::Qualified(values)
 }
 
 fn qualify_scroll_snap_align_value(
