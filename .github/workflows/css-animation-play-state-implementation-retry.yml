@@ -76,8 +76,8 @@ jobs:
               lambda m: f'let expected = vec![Invalid; {m.group(2)}];\n    assert_expected(&{m.group(1)}, &expected);',
               tests,
           )
-          if count != 3:
-              raise SystemExit(f'expected three non-Copy repeat fixes, found {count}')
+          if count != 4:
+              raise SystemExit(f'expected four non-Copy repeat fixes, found {count}')
           test_path.write_text(tests)
           PY
 
