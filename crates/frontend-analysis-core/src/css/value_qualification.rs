@@ -3940,6 +3940,104 @@ impl CssHyphenateCharacterQualificationObservation {
     }
 }
 
+/// Run-local locator for the exact tokenizer item selected during authoritative
+/// `animation-name` `<keyframes-name>` recognition. Unlike
+/// `CssTransitionPropertyCustomIdentEvidenceRef` and
+/// `CssHyphenateCharacterStringEvidenceRef`, this locator may point at either
+/// an accepted direct `Ident` token or an accepted non-empty direct `String`
+/// token: `<keyframes-name> = <custom-ident> | <string>`. The index is
+/// evidence placement, not the interpreted identity itself; the interpreted
+/// `<keyframes-name>` text remains the tokenizer-owned decoded `Ident`/`String`
+/// value at that exact retained position, resolved through
+/// `animation_name_keyframes_name_value`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssAnimationNameKeyframesNameEvidenceRef {
+    lexical_item_index: usize,
+}
+
+impl CssAnimationNameKeyframesNameEvidenceRef {
+    pub(crate) const fn lexical_item_index(&self) -> usize {
+        self.lexical_item_index
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssAnimationNameItemValue {
+    None,
+    KeyframesName,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssAnimationNameUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CssAnimationNameQualificationOutcome {
+    Qualified(Vec<CssAnimationNameItemValue>),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssAnimationNameUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `animation-name` qualification.
+///
+/// This profile recognizes only the authored
+/// `[ none | <keyframes-name> ]#` grammar, where
+/// `<keyframes-name> = <custom-ident> | <string>` (#582 / #418 comment
+/// 5581930292), composing the accepted top-level comma-list theorem
+/// (#571/#573/#575/#577) with the accepted open-ended evidence-reference
+/// ownership theorem proven by `page` / `transition-property` /
+/// `hyphenate-character`. Unlike `transition-property`, `none` is not a
+/// dedicated whole-value branch here: it is matched ASCII-case-insensitively
+/// as a repeated list-item sentinel, so it may appear any number of times in
+/// any position. A quoted String never inherits identifier keyword semantics
+/// from its decoded contents, so `"none"` is always a `KeyframesName` item,
+/// distinct from the unquoted `none` sentinel; an empty direct String is
+/// `InvalidForSelectedValueGrammar`, unlike the accepted `hyphenate-character`
+/// empty-String allowance. Every other direct Ident item other than `none`,
+/// `default`, and the CSS-wide keywords is an open-ended `<custom-ident>`
+/// `KeyframesName` item whose decoded semantic identity remains
+/// tokenizer-owned and fully case-sensitive. When `outcome()` is
+/// `Qualified(items)`, `keyframes_name_evidence()` is index-aligned with
+/// `items`: `Some` exactly where the item is `KeyframesName` (whether
+/// Ident-backed or String-backed) and `None` where it is the `None` sentinel,
+/// so no keyframes-name evidence reference is ever fabricated for a sentinel
+/// item. This item grammar has no ordinary Function-backed branch, so any
+/// Function or other multi-token item is directly
+/// `InvalidForSelectedValueGrammar`; there is intentionally no residual
+/// `FunctionValue` Unsupported item class. Authored order and duplicate items
+/// are preserved exactly; no deduplication, case normalization, Unicode
+/// normalization, or `@keyframes` lookup is performed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CssAnimationNameQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssAnimationNameQualificationOutcome,
+    keyframes_name_evidence: Vec<Option<CssAnimationNameKeyframesNameEvidenceRef>>,
+}
+
+impl CssAnimationNameQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> &CssAnimationNameQualificationOutcome {
+        &self.outcome
+    }
+
+    pub(crate) fn keyframes_name_evidence(
+        &self,
+    ) -> &[Option<CssAnimationNameKeyframesNameEvidenceRef>] {
+        &self.keyframes_name_evidence
+    }
+}
+
 /// Run-owned result for the currently selected bounded CSS value capabilities.
 ///
 /// The exact Core-validated parser result is owned once here. Property-specific
@@ -4027,6 +4125,7 @@ pub(crate) struct CssValueQualificationRunResult {
     transition_duration_observations: Vec<CssTransitionDurationQualificationObservation>,
     transition_property_observations: Vec<CssTransitionPropertyQualificationObservation>,
     hyphenate_character_observations: Vec<CssHyphenateCharacterQualificationObservation>,
+    animation_name_observations: Vec<CssAnimationNameQualificationObservation>,
 }
 
 impl CssValueQualificationRunResult {
@@ -4491,6 +4590,42 @@ impl CssValueQualificationRunResult {
         Some(value.as_str())
     }
 
+    pub(crate) fn animation_name_observations(
+        &self,
+    ) -> &[CssAnimationNameQualificationObservation] {
+        &self.animation_name_observations
+    }
+
+    /// Resolves one qualified `animation-name` `KeyframesName` item's
+    /// tokenizer-owned decoded interpreted identity through its run-local
+    /// evidence reference, mirroring `page_custom_ident_value`,
+    /// `transition_property_custom_ident_value`, and
+    /// `hyphenate_character_string_value` without copying the payload into a
+    /// second owner. Unlike those single-kind resolvers, the retained token
+    /// at the evidence position may be either a direct `Ident` or a direct
+    /// non-empty `String`, since `<keyframes-name> = <custom-ident> |
+    /// <string>`; both resolve to the same interpreted `&str` shape here, and
+    /// their authored lexical kind remains separately inspectable from the
+    /// exact retained token at `lexical_item_index()`.
+    pub(crate) fn animation_name_keyframes_name_value(
+        &self,
+        evidence: CssAnimationNameKeyframesNameEvidenceRef,
+    ) -> Option<&str> {
+        let item = self
+            .upstream_parser_result
+            .upstream_tokenizer_result()
+            .lexical_items()
+            .get(evidence.lexical_item_index())?;
+        let CssLexicalItem::SemanticToken(token) = item else {
+            return None;
+        };
+        match token.kind() {
+            CssTokenKind::Ident(value) => Some(value.as_str()),
+            CssTokenKind::String(value) => Some(value.as_str()),
+            _ => None,
+        }
+    }
+
     pub(crate) const fn execution_completion(&self) -> CssParserExecutionCompletion {
         self.upstream_parser_result.execution_completion()
     }
@@ -4626,6 +4761,7 @@ pub(crate) fn run(
         transition_duration_observations,
         transition_property_observations,
         hyphenate_character_observations,
+        animation_name_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
         let mut cursor = LexicalWindowCursor::new(tokenizer_result);
@@ -4704,6 +4840,7 @@ pub(crate) fn run(
         let mut transition_duration_observations = Vec::new();
         let mut transition_property_observations = Vec::new();
         let mut hyphenate_character_observations = Vec::new();
+        let mut animation_name_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
             let property_range = cursor.window_for(occurrence.property_name())?;
@@ -5422,6 +5559,21 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("animation-name") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let lexical_item_start = value_range.start;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                let (outcome, keyframes_name_evidence) =
+                    qualify_animation_name_value(value_items, lexical_item_start);
+                animation_name_observations.push(CssAnimationNameQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome,
+                    keyframes_name_evidence,
+                });
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("scroll-snap-align") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -5675,6 +5827,7 @@ pub(crate) fn run(
             transition_duration_observations,
             transition_property_observations,
             hyphenate_character_observations,
+            animation_name_observations,
         )
     };
 
@@ -5755,6 +5908,7 @@ pub(crate) fn run(
         transition_duration_observations,
         transition_property_observations,
         hyphenate_character_observations,
+        animation_name_observations,
     })
 }
 
@@ -10819,6 +10973,241 @@ fn qualify_transition_property_value(
             qualified_items,
         )),
         custom_ident_evidence,
+    )
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CssAnimationNameItemClass {
+    Qualified(
+        CssAnimationNameItemValue,
+        Option<CssAnimationNameKeyframesNameEvidenceRef>,
+    ),
+    Invalid,
+}
+
+/// Classifies one already-comma-segmented `animation-name` list item.
+///
+/// Unlike `transition-property`, `none` is matched here as a repeated item
+/// sentinel rather than a dedicated whole-value branch: an unquoted direct
+/// Ident `none`, ASCII-case-insensitively, is always `None` regardless of its
+/// position in the list. `default` and the CSS-wide keywords remain excluded
+/// from list-item position, exactly as for `transition-property`. Every other
+/// direct Ident is a qualified open-ended `<custom-ident>` `KeyframesName`
+/// item. A quoted String never inherits `none`/keyword semantics from its
+/// decoded contents -- `"none"`, `"initial"`, `"default"` are all
+/// `KeyframesName` String items -- but an empty direct String is `Invalid`,
+/// unlike the accepted `hyphenate-character` empty-String allowance; a
+/// retained `BadString` is not `<string>` and is also `Invalid`. This item
+/// grammar has no ordinary Function-backed branch, so any Function-headed
+/// item, whether an ordinary Function or a misplaced generic whole-value
+/// Function, is directly `Invalid` -- it never reaches this match because a
+/// Function-headed item always retains more than the single non-trivia token
+/// this grammar accepts. Every `KeyframesName` item's recognition-time
+/// evidence reference is the absolute retained lexical-item index of the
+/// exact selected Ident/String token, reusing the `page` /
+/// `transition-property` ownership pattern: the reference is a locator, not
+/// the tokenizer-owned decoded identity itself.
+fn classify_animation_name_item(
+    item: &[CssLexicalItem],
+    absolute_item_start: usize,
+) -> CssAnimationNameItemClass {
+    let mut tokens = item
+        .iter()
+        .enumerate()
+        .filter_map(|(relative_index, entry)| match entry {
+            CssLexicalItem::SemanticToken(token)
+                if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+            {
+                Some((relative_index, token))
+            }
+            _ => None,
+        });
+
+    let Some((relative_index, token)) = tokens.next() else {
+        return CssAnimationNameItemClass::Invalid;
+    };
+    if tokens.next().is_some() {
+        return CssAnimationNameItemClass::Invalid;
+    }
+
+    match token.kind() {
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("none") => {
+            CssAnimationNameItemClass::Qualified(CssAnimationNameItemValue::None, None)
+        }
+        CssTokenKind::Ident(identifier)
+            if identifier.eq_ignore_ascii_case("default") || is_css_wide_keyword(identifier) =>
+        {
+            CssAnimationNameItemClass::Invalid
+        }
+        CssTokenKind::Ident(_) => CssAnimationNameItemClass::Qualified(
+            CssAnimationNameItemValue::KeyframesName,
+            Some(CssAnimationNameKeyframesNameEvidenceRef {
+                lexical_item_index: absolute_item_start + relative_index,
+            }),
+        ),
+        CssTokenKind::String(value) if !value.is_empty() => CssAnimationNameItemClass::Qualified(
+            CssAnimationNameItemValue::KeyframesName,
+            Some(CssAnimationNameKeyframesNameEvidenceRef {
+                lexical_item_index: absolute_item_start + relative_index,
+            }),
+        ),
+        _ => CssAnimationNameItemClass::Invalid,
+    }
+}
+
+/// Qualifies one retained `animation-name` declaration value against
+/// `[ none | <keyframes-name> ]#`, where
+/// `<keyframes-name> = <custom-ident> | <string>` (#582 / #418 comment
+/// 5581930292), composing the accepted top-level comma-list theorem
+/// (#571/#573/#575/#577) with the accepted open-ended evidence-reference
+/// ownership theorem proven by `page` / `transition-property` /
+/// `hyphenate-character`.
+///
+/// Deferred substitution and the whole-value Function boundary are checked
+/// first, exactly as for `page`/`transition-property`; the depth-balanced
+/// walk below never sees their nested fallback commas as outer separators. A
+/// sole CSS-wide keyword preserves the existing whole-value Unsupported
+/// boundary. Critically, unlike `transition-property`, `none` is deliberately
+/// **not** special-cased as a sole-whole-value branch here: `[ none |
+/// <keyframes-name> ]#` places `none` inside the repeated item grammar
+/// itself, so `none`, `none, none`, and `foo, none` must all reach ordinary
+/// list-item classification. Otherwise every top-level depth-zero-comma-
+/// delimited item is classified independently; any decisive `Invalid` item
+/// anywhere in the list makes the whole declaration
+/// `InvalidForSelectedValueGrammar`, preserving exact authored order and
+/// duplicate items -- including repeated `None` items and semantically equal
+/// but lexically distinct `KeyframesName` items such as `foo` and `"foo"` --
+/// in the resulting item vector when every item qualifies. The returned
+/// evidence vector is index-aligned with the qualified item vector: `Some`
+/// exactly where the item is `KeyframesName`.
+fn qualify_animation_name_value(
+    items: &[CssLexicalItem],
+    lexical_item_start: usize,
+) -> (
+    CssAnimationNameQualificationOutcome,
+    Vec<Option<CssAnimationNameKeyframesNameEvidenceRef>>,
+) {
+    if contains_deferred_substitution_function(items) {
+        return (
+            CssAnimationNameQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssAnimationNameUnsupportedReason::DeferredSubstitutionFunction,
+            ),
+            Vec::new(),
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return (
+            CssAnimationNameQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssAnimationNameUnsupportedReason::WholeValueFunction,
+            ),
+            Vec::new(),
+        );
+    }
+
+    let mut whole_value_tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+    if let (Some(only_token), None) = (whole_value_tokens.next(), whole_value_tokens.next())
+        && let CssTokenKind::Ident(identifier) = only_token.kind()
+        && is_css_wide_keyword(identifier)
+    {
+        return (
+            CssAnimationNameQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssAnimationNameUnsupportedReason::CssWideKeyword,
+            ),
+            Vec::new(),
+        );
+    }
+
+    let mut item_classes = Vec::new();
+    let mut block_stack: Vec<CssValueBlockCloser> = Vec::new();
+    let mut item_start = 0usize;
+
+    for (index, item) in items.iter().enumerate() {
+        if block_stack.is_empty()
+            && matches!(
+                item,
+                CssLexicalItem::SemanticToken(token)
+                    if matches!(token.kind(), CssTokenKind::Comma)
+            )
+        {
+            item_classes.push(classify_animation_name_item(
+                &items[item_start..index],
+                lexical_item_start + item_start,
+            ));
+            item_start = index + 1;
+            continue;
+        }
+
+        let CssLexicalItem::SemanticToken(token) = item else {
+            continue;
+        };
+        match token.kind() {
+            CssTokenKind::Function(_) | CssTokenKind::LeftParenthesis => {
+                block_stack.push(CssValueBlockCloser::Parenthesis);
+            }
+            CssTokenKind::LeftSquareBracket => {
+                block_stack.push(CssValueBlockCloser::SquareBracket);
+            }
+            CssTokenKind::LeftCurlyBracket => {
+                block_stack.push(CssValueBlockCloser::CurlyBracket);
+            }
+            CssTokenKind::RightParenthesis
+                if block_stack.last() == Some(&CssValueBlockCloser::Parenthesis) =>
+            {
+                block_stack.pop();
+            }
+            CssTokenKind::RightSquareBracket
+                if block_stack.last() == Some(&CssValueBlockCloser::SquareBracket) =>
+            {
+                block_stack.pop();
+            }
+            CssTokenKind::RightCurlyBracket
+                if block_stack.last() == Some(&CssValueBlockCloser::CurlyBracket) =>
+            {
+                block_stack.pop();
+            }
+            _ => {}
+        }
+    }
+    item_classes.push(classify_animation_name_item(
+        &items[item_start..],
+        lexical_item_start + item_start,
+    ));
+
+    if item_classes
+        .iter()
+        .any(|class| matches!(class, CssAnimationNameItemClass::Invalid))
+    {
+        return (
+            CssAnimationNameQualificationOutcome::InvalidForSelectedValueGrammar,
+            Vec::new(),
+        );
+    }
+
+    let mut qualified_items = Vec::with_capacity(item_classes.len());
+    let mut keyframes_name_evidence = Vec::with_capacity(item_classes.len());
+    for class in item_classes {
+        match class {
+            CssAnimationNameItemClass::Qualified(value, evidence) => {
+                qualified_items.push(value);
+                keyframes_name_evidence.push(evidence);
+            }
+            CssAnimationNameItemClass::Invalid => {
+                unreachable!("Invalid item classes are filtered above")
+            }
+        }
+    }
+
+    (
+        CssAnimationNameQualificationOutcome::Qualified(qualified_items),
+        keyframes_name_evidence,
     )
 }
 
