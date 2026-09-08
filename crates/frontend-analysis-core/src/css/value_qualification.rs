@@ -17,7 +17,7 @@ use super::declaration::CssDeclarationPlacement;
 use super::parser::result::{CssParserExecutionCompletion, CssParserRunResult};
 use super::token::{
     CssDecimalExponent, CssExponentSign, CssLexicalItem, CssNumberSign, CssNumberType,
-    CssNumericValue, CssTokenKind,
+    CssNumericValue, CssToken, CssTokenKind,
 };
 use super::tokenizer::result::CssTokenizerRunResult;
 
@@ -3482,6 +3482,65 @@ impl CssZIndexQualificationObservation {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssAspectRatioRatioValue {
+    Single,
+    Pair,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssAspectRatioValue {
+    Auto,
+    Ratio(CssAspectRatioRatioValue),
+    AutoAndRatio(CssAspectRatioRatioValue),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssAspectRatioUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssAspectRatioQualificationOutcome {
+    Qualified(CssAspectRatioValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssAspectRatioUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `aspect-ratio` qualification.
+///
+/// This profile partitions the already-retained declaration value window into
+/// ordered top-level components using a recognition-time block-depth balanced
+/// walk, then identifies the optional direct `auto` operand and one optional
+/// contiguous `<ratio>` operand in either authored order. Direct ratio
+/// components reuse the already accepted direct `<number [0,∞]>` boundary;
+/// Function-headed components are classified by placement and identity only,
+/// never evaluated. No ratio arithmetic, normalization, or computed-value
+/// semantics are derived.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssAspectRatioQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssAspectRatioQualificationOutcome,
+}
+
+impl CssAspectRatioQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssAspectRatioQualificationOutcome {
+        self.outcome
+    }
+}
+
 /// Run-owned result for the currently selected bounded CSS value capabilities.
 ///
 /// The exact Core-validated parser result is owned once here. Property-specific
@@ -3562,6 +3621,7 @@ pub(crate) struct CssValueQualificationRunResult {
     page_observations: Vec<CssPageQualificationObservation>,
     border_spacing_observations: Vec<CssBorderSpacingQualificationObservation>,
     z_index_observations: Vec<CssZIndexQualificationObservation>,
+    aspect_ratio_observations: Vec<CssAspectRatioQualificationObservation>,
 }
 
 impl CssValueQualificationRunResult {
@@ -3933,6 +3993,10 @@ impl CssValueQualificationRunResult {
         &self.z_index_observations
     }
 
+    pub(crate) fn aspect_ratio_observations(&self) -> &[CssAspectRatioQualificationObservation] {
+        &self.aspect_ratio_observations
+    }
+
     pub(crate) const fn execution_completion(&self) -> CssParserExecutionCompletion {
         self.upstream_parser_result.execution_completion()
     }
@@ -4061,6 +4125,7 @@ pub(crate) fn run(
         page_observations,
         border_spacing_observations,
         z_index_observations,
+        aspect_ratio_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
         let mut cursor = LexicalWindowCursor::new(tokenizer_result);
@@ -4132,6 +4197,7 @@ pub(crate) fn run(
         let mut page_observations = Vec::new();
         let mut border_spacing_observations = Vec::new();
         let mut z_index_observations = Vec::new();
+        let mut aspect_ratio_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
             let property_range = cursor.window_for(occurrence.property_name())?;
@@ -4755,6 +4821,17 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("aspect-ratio") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                aspect_ratio_observations.push(CssAspectRatioQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_aspect_ratio_value(value_items),
+                });
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("scroll-snap-align") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -5001,6 +5078,7 @@ pub(crate) fn run(
             page_observations,
             border_spacing_observations,
             z_index_observations,
+            aspect_ratio_observations,
         )
     };
 
@@ -5074,6 +5152,7 @@ pub(crate) fn run(
         page_observations,
         border_spacing_observations,
         z_index_observations,
+        aspect_ratio_observations,
     })
 }
 
@@ -8806,6 +8885,314 @@ fn qualify_z_index_value(items: &[CssLexicalItem]) -> CssZIndexQualificationOutc
             )
         }
         _ => CssZIndexQualificationOutcome::InvalidForSelectedValueGrammar,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CssAspectRatioComponentClass {
+    QualifiedNumber,
+    ResidualFunction,
+    MisplacedWholeValueFunction,
+    Invalid,
+}
+
+/// Partitions an already-retained `aspect-ratio` declaration value window into
+/// ordered top-level components using one left-to-right recognition-time
+/// pass. Depth-zero Whitespace/Comment lexical items are separators; Function
+/// and bracket openers extend the current component until their matching
+/// closer, so nested content never inflates top-level cardinality. A
+/// component also ends the instant block depth returns to zero — including a
+/// direct token that never opened a block — so a following top-level token
+/// always starts its own component even without an intervening separator.
+/// This intentionally duplicates the equivalent `border-spacing` walk rather
+/// than sharing it: this leaf keeps its own bounded local recognition.
+fn aspect_ratio_top_level_components(items: &[CssLexicalItem]) -> Vec<&[CssLexicalItem]> {
+    let mut components = Vec::new();
+    let mut block_stack: Vec<CssValueBlockCloser> = Vec::new();
+    let mut current_start: Option<usize> = None;
+
+    for (index, item) in items.iter().enumerate() {
+        if block_stack.is_empty() {
+            let is_separator = match item {
+                CssLexicalItem::Comment(_) => true,
+                CssLexicalItem::SemanticToken(token) => {
+                    matches!(token.kind(), CssTokenKind::Whitespace)
+                }
+            };
+            if is_separator {
+                if let Some(start) = current_start.take() {
+                    components.push(&items[start..index]);
+                }
+                continue;
+            }
+        }
+
+        if current_start.is_none() {
+            current_start = Some(index);
+        }
+
+        if let CssLexicalItem::SemanticToken(token) = item {
+            match token.kind() {
+                CssTokenKind::Function(_) | CssTokenKind::LeftParenthesis => {
+                    block_stack.push(CssValueBlockCloser::Parenthesis);
+                }
+                CssTokenKind::LeftSquareBracket => {
+                    block_stack.push(CssValueBlockCloser::SquareBracket);
+                }
+                CssTokenKind::LeftCurlyBracket => {
+                    block_stack.push(CssValueBlockCloser::CurlyBracket);
+                }
+                CssTokenKind::RightParenthesis
+                    if block_stack.last() == Some(&CssValueBlockCloser::Parenthesis) =>
+                {
+                    block_stack.pop();
+                }
+                CssTokenKind::RightSquareBracket
+                    if block_stack.last() == Some(&CssValueBlockCloser::SquareBracket) =>
+                {
+                    block_stack.pop();
+                }
+                CssTokenKind::RightCurlyBracket
+                    if block_stack.last() == Some(&CssValueBlockCloser::CurlyBracket) =>
+                {
+                    block_stack.pop();
+                }
+                _ => {}
+            }
+        }
+
+        if block_stack.is_empty()
+            && let Some(start) = current_start.take()
+        {
+            components.push(&items[start..=index]);
+        }
+    }
+
+    if let Some(start) = current_start {
+        components.push(&items[start..]);
+    }
+
+    components
+}
+
+/// Returns the component's only non-whitespace token, or `None` when the
+/// component holds zero or more than one such token.
+fn aspect_ratio_only_token(component: &[CssLexicalItem]) -> Option<&CssToken> {
+    let mut tokens = component.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+    let only = tokens.next()?;
+    if tokens.next().is_some() {
+        return None;
+    }
+    Some(only)
+}
+
+/// A component is the direct `auto` operand only when it is exactly one
+/// `Ident("auto")` token; a Function-headed or multi-token component can
+/// never satisfy this operand.
+fn is_aspect_ratio_auto_component(component: &[CssLexicalItem]) -> bool {
+    aspect_ratio_only_token(component)
+        .is_some_and(|token| matches!(token.kind(), CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("auto")))
+}
+
+/// A component is the ratio-internal separator only when it is exactly one
+/// `Delim('/')` token. A `/` nested inside a comment never reaches this
+/// point as a lexical item, so this cannot be fooled by comment trivia that
+/// visually resembles a slash.
+fn is_aspect_ratio_slash_component(component: &[CssLexicalItem]) -> bool {
+    aspect_ratio_only_token(component)
+        .is_some_and(|token| matches!(token.kind(), CssTokenKind::Delim('/')))
+}
+
+/// Classifies one already-partitioned top-level `<ratio>` numeric-position
+/// component. A Function-headed component is classified by name/placement
+/// only; its interior is never parsed or evaluated. A direct component
+/// reuses the already accepted direct `<number [0,∞]>` boundary unchanged.
+fn classify_aspect_ratio_number_component(
+    component: &[CssLexicalItem],
+) -> CssAspectRatioComponentClass {
+    let mut tokens = component.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+
+    let Some(first) = tokens.next() else {
+        return CssAspectRatioComponentClass::Invalid;
+    };
+
+    if let CssTokenKind::Function(name) = first.kind() {
+        return if is_whole_value_function(name) {
+            CssAspectRatioComponentClass::MisplacedWholeValueFunction
+        } else {
+            CssAspectRatioComponentClass::ResidualFunction
+        };
+    }
+
+    if tokens.next().is_some() {
+        return CssAspectRatioComponentClass::Invalid;
+    }
+
+    match first.kind() {
+        CssTokenKind::Number { value, .. } if is_non_negative_direct_number(value) => {
+            CssAspectRatioComponentClass::QualifiedNumber
+        }
+        _ => CssAspectRatioComponentClass::Invalid,
+    }
+}
+
+/// Classifies one already-identified contiguous three-component `<ratio>`
+/// pair candidate (`[numerator, Delim('/'), denominator]`). A direct
+/// decidable failure on either numeric position wins over a residual
+/// Function elsewhere in the same pair: this is the load-bearing ordering
+/// that keeps `-1 / calc(9)` Invalid rather than Function-Unsupported.
+fn classify_aspect_ratio_ratio_pair(
+    components: &[&[CssLexicalItem]],
+) -> CssAspectRatioComponentClass {
+    debug_assert_eq!(components.len(), 3);
+
+    if !is_aspect_ratio_slash_component(components[1]) {
+        return CssAspectRatioComponentClass::Invalid;
+    }
+
+    let numerator = classify_aspect_ratio_number_component(components[0]);
+    let denominator = classify_aspect_ratio_number_component(components[2]);
+
+    match (numerator, denominator) {
+        (
+            CssAspectRatioComponentClass::QualifiedNumber,
+            CssAspectRatioComponentClass::QualifiedNumber,
+        ) => CssAspectRatioComponentClass::QualifiedNumber,
+        (CssAspectRatioComponentClass::Invalid, _)
+        | (_, CssAspectRatioComponentClass::Invalid)
+        | (CssAspectRatioComponentClass::MisplacedWholeValueFunction, _)
+        | (_, CssAspectRatioComponentClass::MisplacedWholeValueFunction) => {
+            CssAspectRatioComponentClass::Invalid
+        }
+        _ => CssAspectRatioComponentClass::ResidualFunction,
+    }
+}
+
+/// Qualifies one already-retained `aspect-ratio` ordinary declaration value
+/// window against the selected `auto || <ratio>` profile, where
+/// `<ratio> = <number [0,∞]> [ / <number [0,∞]> ]?`.
+///
+/// Classification order is load-bearing: deferred/arbitrary substitution,
+/// then whole-value Function, then whole-value CSS-wide keyword, then one
+/// property-local depth-balanced operand-grouping walk that identifies the
+/// optional direct `auto` operand and one optional contiguous `<ratio>`
+/// operand in either authored order, rejecting duplicates and interleaving
+/// before any residual Function is allowed to soften a direct failure into
+/// a profile-Unsupported outcome.
+fn qualify_aspect_ratio_value(items: &[CssLexicalItem]) -> CssAspectRatioQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssAspectRatioQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssAspectRatioUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssAspectRatioQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssAspectRatioUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    let mut whole_value_tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+    if let (Some(only_token), None) = (whole_value_tokens.next(), whole_value_tokens.next())
+        && let CssTokenKind::Ident(identifier) = only_token.kind()
+        && is_css_wide_keyword(identifier)
+    {
+        return CssAspectRatioQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssAspectRatioUnsupportedReason::CssWideKeyword,
+        );
+    }
+
+    let components = aspect_ratio_top_level_components(items);
+
+    if components.is_empty() {
+        return CssAspectRatioQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    let leading_auto = is_aspect_ratio_auto_component(components[0]);
+    let trailing_auto =
+        components.len() > 1 && is_aspect_ratio_auto_component(components[components.len() - 1]);
+
+    let (has_auto, ratio_components): (bool, &[&[CssLexicalItem]]) = if components.len() == 1 {
+        if leading_auto {
+            (true, &[])
+        } else {
+            (false, &components[..])
+        }
+    } else if leading_auto {
+        (true, &components[1..])
+    } else if trailing_auto {
+        (true, &components[..components.len() - 1])
+    } else {
+        (false, &components[..])
+    };
+
+    // A duplicate `auto`, or an `auto` interleaved inside what would
+    // otherwise be a contiguous ratio operand, is never absorbed here: any
+    // remaining `auto` component makes the composition malformed.
+    if ratio_components
+        .iter()
+        .any(|component| is_aspect_ratio_auto_component(component))
+    {
+        return CssAspectRatioQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    if ratio_components.is_empty() {
+        debug_assert!(has_auto);
+        return CssAspectRatioQualificationOutcome::Qualified(CssAspectRatioValue::Auto);
+    }
+
+    let (ratio_class, ratio_shape) = match ratio_components.len() {
+        1 => (
+            classify_aspect_ratio_number_component(ratio_components[0]),
+            CssAspectRatioRatioValue::Single,
+        ),
+        3 => (
+            classify_aspect_ratio_ratio_pair(ratio_components),
+            CssAspectRatioRatioValue::Pair,
+        ),
+        _ => {
+            return CssAspectRatioQualificationOutcome::InvalidForSelectedValueGrammar;
+        }
+    };
+
+    match ratio_class {
+        CssAspectRatioComponentClass::QualifiedNumber => {
+            CssAspectRatioQualificationOutcome::Qualified(if has_auto {
+                CssAspectRatioValue::AutoAndRatio(ratio_shape)
+            } else {
+                CssAspectRatioValue::Ratio(ratio_shape)
+            })
+        }
+        CssAspectRatioComponentClass::ResidualFunction => {
+            CssAspectRatioQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssAspectRatioUnsupportedReason::FunctionValue,
+            )
+        }
+        CssAspectRatioComponentClass::MisplacedWholeValueFunction
+        | CssAspectRatioComponentClass::Invalid => {
+            CssAspectRatioQualificationOutcome::InvalidForSelectedValueGrammar
+        }
     }
 }
 
