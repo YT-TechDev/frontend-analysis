@@ -78,6 +78,12 @@ jobs:
           )
           if count != 4:
               raise SystemExit(f'expected four non-Copy repeat fixes, found {count}')
+
+          old = "fn committed_prefix_and_repeated_cross_source_runs_preserve_lifecycle() {\n    use CssAnimationPlayStateValue::{Paused, Running};"
+          new = "fn committed_prefix_and_repeated_cross_source_runs_preserve_lifecycle() {\n    use CssAnimationPlayStateValue::Running;"
+          if tests.count(old) != 1:
+              raise SystemExit('expected exactly one lifecycle import anchor')
+          tests = tests.replace(old, new, 1)
           test_path.write_text(tests)
           PY
 
