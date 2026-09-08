@@ -4038,6 +4038,92 @@ impl CssAnimationNameQualificationObservation {
     }
 }
 
+/// Run-local locator for the exact tokenizer item selected during
+/// authoritative `anchor-name` `<dashed-ident>` recognition, reusing the
+/// `page` / `transition-property` / `hyphenate-character` / `animation-name`
+/// evidence-reference ownership pattern. The index is evidence placement,
+/// not the interpreted identifier itself; the decoded `<dashed-ident>` text
+/// remains the tokenizer-owned decoded `Ident` value at that exact retained
+/// position, resolved through `anchor_name_dashed_ident_value`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssAnchorNameDashedIdentEvidenceRef {
+    lexical_item_index: usize,
+}
+
+impl CssAnchorNameDashedIdentEvidenceRef {
+    pub(crate) const fn lexical_item_index(&self) -> usize {
+        self.lexical_item_index
+    }
+}
+
+/// One authored `anchor-name` value: either the dedicated whole-value `none`
+/// sentinel or an ordered, possibly-duplicated list of qualified
+/// `<dashed-ident>` items. Unlike `CssAnimationNameItemValue`, this grammar
+/// has exactly one list-item kind, so no separate item-value enum is
+/// introduced: each `Names` entry is directly the evidence reference to its
+/// qualified `<dashed-ident>` item, and the decoded identifier payload
+/// itself remains tokenizer-owned.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CssAnchorNameValue {
+    None,
+    Names(Vec<CssAnchorNameDashedIdentEvidenceRef>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssAnchorNameUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CssAnchorNameQualificationOutcome {
+    Qualified(CssAnchorNameValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssAnchorNameUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `anchor-name` qualification.
+///
+/// This profile recognizes only the authored `none | <dashed-ident>#`
+/// grammar (#584 / #418 comment 5583004626), composing the accepted
+/// top-level comma-list theorem (#571/#573/#575/#577) with the accepted
+/// open-ended evidence-reference ownership theorem proven by `page` /
+/// `transition-property` / `hyphenate-character` / `animation-name`. Sole
+/// `none` is a dedicated whole-value branch, matched ASCII-case-
+/// insensitively; unlike `animation-name`'s `none`, it is **not** a valid
+/// list item -- `none` in any list position, alone or alongside qualified
+/// `<dashed-ident>` items, is `InvalidForSelectedValueGrammar`. Every
+/// direct-Ident list item qualifies iff its tokenizer-decoded identifier
+/// starts with `--`; this test is the identifier's *interpreted* decoded
+/// identity, never its raw authored spelling, so an escape-authored item
+/// that decodes to a leading `--` qualifies and an unescaped `--none`
+/// qualifies as an ordinary `<dashed-ident>` distinct from the `none`
+/// sentinel. The dashed-ident identity remains fully case-sensitive; no
+/// case-folding, deduplication, or reordering is performed. This item
+/// grammar has no ordinary Function-backed branch, so any Function or other
+/// multi-token item is directly `InvalidForSelectedValueGrammar`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CssAnchorNameQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssAnchorNameQualificationOutcome,
+}
+
+impl CssAnchorNameQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> &CssAnchorNameQualificationOutcome {
+        &self.outcome
+    }
+}
+
 /// Run-owned result for the currently selected bounded CSS value capabilities.
 ///
 /// The exact Core-validated parser result is owned once here. Property-specific
@@ -4126,6 +4212,7 @@ pub(crate) struct CssValueQualificationRunResult {
     transition_property_observations: Vec<CssTransitionPropertyQualificationObservation>,
     hyphenate_character_observations: Vec<CssHyphenateCharacterQualificationObservation>,
     animation_name_observations: Vec<CssAnimationNameQualificationObservation>,
+    anchor_name_observations: Vec<CssAnchorNameQualificationObservation>,
 }
 
 impl CssValueQualificationRunResult {
@@ -4626,6 +4713,35 @@ impl CssValueQualificationRunResult {
         }
     }
 
+    pub(crate) fn anchor_name_observations(&self) -> &[CssAnchorNameQualificationObservation] {
+        &self.anchor_name_observations
+    }
+
+    /// Resolves one qualified `anchor-name` `<dashed-ident>` item's
+    /// tokenizer-owned decoded interpreted identity through its run-local
+    /// evidence reference, mirroring `page_custom_ident_value`,
+    /// `transition_property_custom_ident_value`, and
+    /// `animation_name_keyframes_name_value` without copying the payload into
+    /// a second owner. The retained token at the evidence position is always
+    /// a direct `Ident`, since this item grammar has no `<string>` branch.
+    pub(crate) fn anchor_name_dashed_ident_value(
+        &self,
+        evidence: CssAnchorNameDashedIdentEvidenceRef,
+    ) -> Option<&str> {
+        let item = self
+            .upstream_parser_result
+            .upstream_tokenizer_result()
+            .lexical_items()
+            .get(evidence.lexical_item_index())?;
+        let CssLexicalItem::SemanticToken(token) = item else {
+            return None;
+        };
+        let CssTokenKind::Ident(value) = token.kind() else {
+            return None;
+        };
+        Some(value.as_str())
+    }
+
     pub(crate) const fn execution_completion(&self) -> CssParserExecutionCompletion {
         self.upstream_parser_result.execution_completion()
     }
@@ -4762,6 +4878,7 @@ pub(crate) fn run(
         transition_property_observations,
         hyphenate_character_observations,
         animation_name_observations,
+        anchor_name_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
         let mut cursor = LexicalWindowCursor::new(tokenizer_result);
@@ -4841,6 +4958,7 @@ pub(crate) fn run(
         let mut transition_property_observations = Vec::new();
         let mut hyphenate_character_observations = Vec::new();
         let mut animation_name_observations = Vec::new();
+        let mut anchor_name_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
             let property_range = cursor.window_for(occurrence.property_name())?;
@@ -5574,6 +5692,19 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("anchor-name") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let lexical_item_start = value_range.start;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                let outcome = qualify_anchor_name_value(value_items, lexical_item_start);
+                anchor_name_observations.push(CssAnchorNameQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome,
+                });
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("scroll-snap-align") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -5828,6 +5959,7 @@ pub(crate) fn run(
             transition_property_observations,
             hyphenate_character_observations,
             animation_name_observations,
+            anchor_name_observations,
         )
     };
 
@@ -5909,6 +6041,7 @@ pub(crate) fn run(
         transition_property_observations,
         hyphenate_character_observations,
         animation_name_observations,
+        anchor_name_observations,
     })
 }
 
@@ -11209,6 +11342,199 @@ fn qualify_animation_name_value(
         CssAnimationNameQualificationOutcome::Qualified(qualified_items),
         keyframes_name_evidence,
     )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CssAnchorNameItemClass {
+    Qualified(CssAnchorNameDashedIdentEvidenceRef),
+    Invalid,
+}
+
+/// Classifies one already-comma-segmented `anchor-name` list item.
+///
+/// An item qualifies iff, after trivia handling, it is exactly one direct
+/// `Ident` token whose tokenizer-decoded identifier starts with `--`. This
+/// is the interpreted decoded identity, never the raw authored spelling: an
+/// escape-authored Ident that decodes to a leading `--` qualifies exactly
+/// like an unescaped one. `none` and every CSS-wide keyword are Invalid here
+/// without any dedicated exclusion arm, because their decoded identifiers do
+/// not start with `--`; there is intentionally no special-cased `--none`
+/// handling either, since it is an ordinary dashed-ident whose identity
+/// happens to begin with `--`. A quoted `String`, even one decoding to text
+/// beginning with `--`, is a different token class and is therefore Invalid
+/// -- `Ident("--foo")` and `String("--foo")` are never conflated. This item
+/// grammar has no ordinary Function-backed branch, so any Function-headed
+/// item is directly `Invalid`. A qualified item's recognition-time evidence
+/// reference is the absolute retained lexical-item index of the exact
+/// selected Ident token, reusing the `page` / `transition-property` /
+/// `animation-name` ownership pattern: the reference is a locator, not the
+/// tokenizer-owned decoded identity itself.
+fn classify_anchor_name_item(
+    item: &[CssLexicalItem],
+    absolute_item_start: usize,
+) -> CssAnchorNameItemClass {
+    let mut tokens = item
+        .iter()
+        .enumerate()
+        .filter_map(|(relative_index, entry)| match entry {
+            CssLexicalItem::SemanticToken(token)
+                if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+            {
+                Some((relative_index, token))
+            }
+            _ => None,
+        });
+
+    let Some((relative_index, token)) = tokens.next() else {
+        return CssAnchorNameItemClass::Invalid;
+    };
+    if tokens.next().is_some() {
+        return CssAnchorNameItemClass::Invalid;
+    }
+
+    match token.kind() {
+        CssTokenKind::Ident(identifier) if identifier.starts_with("--") => {
+            CssAnchorNameItemClass::Qualified(CssAnchorNameDashedIdentEvidenceRef {
+                lexical_item_index: absolute_item_start + relative_index,
+            })
+        }
+        _ => CssAnchorNameItemClass::Invalid,
+    }
+}
+
+/// Qualifies one retained `anchor-name` declaration value against
+/// `none | <dashed-ident>#` (#584 / #418 comment 5583004626), composing the
+/// accepted top-level comma-list theorem (#571/#573/#575/#577) with the
+/// accepted open-ended evidence-reference ownership theorem proven by
+/// `page` / `transition-property` / `hyphenate-character` /
+/// `animation-name`.
+///
+/// Deferred substitution and the whole-value Function boundary are checked
+/// first, exactly as for `page`/`transition-property`/`animation-name`; the
+/// depth-balanced walk below never sees their nested fallback commas as
+/// outer separators. A sole retained direct `none` Ident, ASCII-case-
+/// insensitively, qualifies the dedicated whole-value branch and never
+/// reaches list segmentation. A sole CSS-wide keyword preserves the existing
+/// whole-value Unsupported boundary. Otherwise every top-level depth-zero-
+/// comma-delimited item is classified independently; any decisive `Invalid`
+/// item anywhere in the list makes the whole declaration
+/// `InvalidForSelectedValueGrammar` -- critically, unlike `animation-name`,
+/// `none` in list-item position is always `Invalid` here, since this
+/// grammar places `none` only in the dedicated whole-value branch, never
+/// inside the repeated item list. Exact authored order and duplicate
+/// `<dashed-ident>` items are preserved in the resulting evidence vector
+/// when every item qualifies.
+fn qualify_anchor_name_value(
+    items: &[CssLexicalItem],
+    lexical_item_start: usize,
+) -> CssAnchorNameQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssAnchorNameQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssAnchorNameUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssAnchorNameQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssAnchorNameUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    let mut whole_value_tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+    if let (Some(only_token), None) = (whole_value_tokens.next(), whole_value_tokens.next())
+        && let CssTokenKind::Ident(identifier) = only_token.kind()
+    {
+        if identifier.eq_ignore_ascii_case("none") {
+            return CssAnchorNameQualificationOutcome::Qualified(CssAnchorNameValue::None);
+        }
+        if is_css_wide_keyword(identifier) {
+            return CssAnchorNameQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssAnchorNameUnsupportedReason::CssWideKeyword,
+            );
+        }
+    }
+
+    let mut item_classes = Vec::new();
+    let mut block_stack: Vec<CssValueBlockCloser> = Vec::new();
+    let mut item_start = 0usize;
+
+    for (index, item) in items.iter().enumerate() {
+        if block_stack.is_empty()
+            && matches!(
+                item,
+                CssLexicalItem::SemanticToken(token)
+                    if matches!(token.kind(), CssTokenKind::Comma)
+            )
+        {
+            item_classes.push(classify_anchor_name_item(
+                &items[item_start..index],
+                lexical_item_start + item_start,
+            ));
+            item_start = index + 1;
+            continue;
+        }
+
+        let CssLexicalItem::SemanticToken(token) = item else {
+            continue;
+        };
+        match token.kind() {
+            CssTokenKind::Function(_) | CssTokenKind::LeftParenthesis => {
+                block_stack.push(CssValueBlockCloser::Parenthesis);
+            }
+            CssTokenKind::LeftSquareBracket => {
+                block_stack.push(CssValueBlockCloser::SquareBracket);
+            }
+            CssTokenKind::LeftCurlyBracket => {
+                block_stack.push(CssValueBlockCloser::CurlyBracket);
+            }
+            CssTokenKind::RightParenthesis
+                if block_stack.last() == Some(&CssValueBlockCloser::Parenthesis) =>
+            {
+                block_stack.pop();
+            }
+            CssTokenKind::RightSquareBracket
+                if block_stack.last() == Some(&CssValueBlockCloser::SquareBracket) =>
+            {
+                block_stack.pop();
+            }
+            CssTokenKind::RightCurlyBracket
+                if block_stack.last() == Some(&CssValueBlockCloser::CurlyBracket) =>
+            {
+                block_stack.pop();
+            }
+            _ => {}
+        }
+    }
+    item_classes.push(classify_anchor_name_item(
+        &items[item_start..],
+        lexical_item_start + item_start,
+    ));
+
+    if item_classes
+        .iter()
+        .any(|class| matches!(class, CssAnchorNameItemClass::Invalid))
+    {
+        return CssAnchorNameQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    let names = item_classes
+        .into_iter()
+        .map(|class| match class {
+            CssAnchorNameItemClass::Qualified(evidence) => evidence,
+            CssAnchorNameItemClass::Invalid => {
+                unreachable!("Invalid item classes are filtered above")
+            }
+        })
+        .collect();
+
+    CssAnchorNameQualificationOutcome::Qualified(CssAnchorNameValue::Names(names))
 }
 
 fn qualify_scroll_snap_align_value(
