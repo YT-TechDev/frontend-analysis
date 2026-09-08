@@ -49,6 +49,8 @@ mod clip_rule_value_qualification_tests;
 #[cfg(test)]
 mod color_interpolation_filters_value_qualification_tests;
 #[cfg(test)]
+mod color_scheme_value_qualification_tests;
+#[cfg(test)]
 mod column_count_value_qualification_tests;
 #[cfg(test)]
 mod column_fill_value_qualification_tests;

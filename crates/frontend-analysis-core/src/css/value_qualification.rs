@@ -4274,6 +4274,112 @@ impl CssContainerNameQualificationObservation {
     }
 }
 
+/// Run-local locator for the exact tokenizer item selected during
+/// authoritative `color-scheme` `<custom-ident>` recognition, reusing the
+/// `page` / `transition-property` / `hyphenate-character` /
+/// `animation-name` / `anchor-name` / `container-name` evidence-reference
+/// ownership pattern. The index is evidence placement, not the interpreted
+/// identifier itself; the decoded `<custom-ident>` text remains the
+/// tokenizer-owned decoded `Ident` value at that exact retained position,
+/// resolved through `color_scheme_custom_ident_value`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssColorSchemeCustomIdentEvidenceRef {
+    lexical_item_index: usize,
+}
+
+impl CssColorSchemeCustomIdentEvidenceRef {
+    pub(crate) const fn lexical_item_index(&self) -> usize {
+        self.lexical_item_index
+    }
+}
+
+/// One ordered `color-scheme` repeated scheme-group item: the two
+/// predefined keywords, matched ASCII-case-insensitively, or an open-ended
+/// tokenizer-owned `<custom-ident>` evidence reference. Unlike
+/// `container-name`, `none` is deliberately not excluded here -- it is an
+/// ordinary qualified `CustomIdent` item, since this property does not
+/// reserve it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssColorSchemeItemValue {
+    Light,
+    Dark,
+    CustomIdent(CssColorSchemeCustomIdentEvidenceRef),
+}
+
+/// One authored `color-scheme` value: either the dedicated standalone
+/// `normal` branch or the composite `[ light | dark | <custom-ident> ]+ &&
+/// only?` branch. `normal` never combines with the composite branch, and
+/// `only` is an orthogonal modifier of the *entire* repeated `items` group
+/// -- it is never itself a repeated item and is never interior to the
+/// group. The authored outer placement of `only` (leading vs. trailing) is
+/// not retained; both placements are equally `Qualified`, and no CSSOM
+/// canonical-serialization order is implied.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CssColorSchemeValue {
+    Normal,
+    Schemes {
+        items: Vec<CssColorSchemeItemValue>,
+        only: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssColorSchemeUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CssColorSchemeQualificationOutcome {
+    Qualified(CssColorSchemeValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssColorSchemeUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `color-scheme`
+/// qualification against `normal | [ light | dark | <custom-ident> ]+ &&
+/// only?` (#590 / #418 comment 5585104754), composing the accepted
+/// delimiter-free `+` repetition theorem (`container-name`) with the
+/// accepted property-local `&&` composition theorem
+/// (`text-emphasis-position`) and the accepted open-ended
+/// evidence-reference ownership theorem proven by `page` /
+/// `transition-property` / `hyphenate-character` / `animation-name` /
+/// `anchor-name` / `container-name`. A sole retained direct `normal`
+/// Ident, ASCII-case-insensitively, qualifies the dedicated standalone
+/// branch and never combines with the composite branch. Otherwise every
+/// top-level, delimiter-free (never comma-separated) component must be
+/// exactly one direct `Ident` token that is either the predefined keyword
+/// `light`/`dark`, the structural modifier `only`, or an
+/// otherwise-unreserved `<custom-ident>` -- `normal`, `default`, and
+/// CSS-wide keywords never qualify as a component in this position. At
+/// most one `only` component may appear, and only at the very start or
+/// very end of the component sequence; the remaining (non-`only`)
+/// components form the mandatory, order- and duplicate-preserving `items`
+/// sequence, which must be non-empty. Identity remains fully
+/// case-sensitive for `<custom-ident>` items; no case-folding,
+/// Unicode-normalization, deduplication, or reordering is performed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CssColorSchemeQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssColorSchemeQualificationOutcome,
+}
+
+impl CssColorSchemeQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> &CssColorSchemeQualificationOutcome {
+        &self.outcome
+    }
+}
+
 /// Run-owned result for the currently selected bounded CSS value capabilities.
 ///
 /// The exact Core-validated parser result is owned once here. Property-specific
@@ -4365,6 +4471,7 @@ pub(crate) struct CssValueQualificationRunResult {
     anchor_name_observations: Vec<CssAnchorNameQualificationObservation>,
     offset_rotate_observations: Vec<CssOffsetRotateQualificationObservation>,
     container_name_observations: Vec<CssContainerNameQualificationObservation>,
+    color_scheme_observations: Vec<CssColorSchemeQualificationObservation>,
 }
 
 impl CssValueQualificationRunResult {
@@ -4931,6 +5038,34 @@ impl CssValueQualificationRunResult {
         };
         Some(value.as_str())
     }
+
+    pub(crate) fn color_scheme_observations(&self) -> &[CssColorSchemeQualificationObservation] {
+        &self.color_scheme_observations
+    }
+
+    /// Resolves one qualified `color-scheme` `<custom-ident>` item's
+    /// tokenizer-owned decoded interpreted identity through its run-local
+    /// evidence reference, mirroring `container_name_custom_ident_value`
+    /// without copying the payload into a second owner. The retained token
+    /// at the evidence position is always a direct `Ident`, since this
+    /// item grammar has no `<string>` branch.
+    pub(crate) fn color_scheme_custom_ident_value(
+        &self,
+        evidence: CssColorSchemeCustomIdentEvidenceRef,
+    ) -> Option<&str> {
+        let item = self
+            .upstream_parser_result
+            .upstream_tokenizer_result()
+            .lexical_items()
+            .get(evidence.lexical_item_index())?;
+        let CssLexicalItem::SemanticToken(token) = item else {
+            return None;
+        };
+        let CssTokenKind::Ident(value) = token.kind() else {
+            return None;
+        };
+        Some(value.as_str())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -5067,6 +5202,7 @@ pub(crate) fn run(
         anchor_name_observations,
         offset_rotate_observations,
         container_name_observations,
+        color_scheme_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
         let mut cursor = LexicalWindowCursor::new(tokenizer_result);
@@ -5149,6 +5285,7 @@ pub(crate) fn run(
         let mut anchor_name_observations = Vec::new();
         let mut offset_rotate_observations = Vec::new();
         let mut container_name_observations = Vec::new();
+        let mut color_scheme_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
             let property_range = cursor.window_for(occurrence.property_name())?;
@@ -5919,6 +6056,19 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("color-scheme") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let lexical_item_start = value_range.start;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                let outcome = qualify_color_scheme_value(value_items, lexical_item_start);
+                color_scheme_observations.push(CssColorSchemeQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome,
+                });
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("scroll-snap-align") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -6176,6 +6326,7 @@ pub(crate) fn run(
             anchor_name_observations,
             offset_rotate_observations,
             container_name_observations,
+            color_scheme_observations,
         )
     };
 
@@ -6260,6 +6411,7 @@ pub(crate) fn run(
         anchor_name_observations,
         offset_rotate_observations,
         container_name_observations,
+        color_scheme_observations,
     })
 }
 
@@ -12255,6 +12407,290 @@ fn qualify_container_name_value(
         .collect();
 
     CssContainerNameQualificationOutcome::Qualified(CssContainerNameValue::Names(names))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CssColorSchemeItemClass {
+    Light,
+    Dark,
+    Only,
+    CustomIdent(CssColorSchemeCustomIdentEvidenceRef),
+    Invalid,
+}
+
+/// Classifies one already-partitioned top-level `color-scheme` component.
+///
+/// A component qualifies as `Light`/`Dark` iff, after trivia handling, it
+/// is exactly one direct `Ident` token whose tokenizer-decoded identifier
+/// is `light`/`dark` (ASCII-case-insensitively). It qualifies as the
+/// structural `Only` modifier under the same single-Ident condition when
+/// the decoded identifier is `only`. It is `CustomIdent` when the decoded
+/// identifier is none of `normal`, `light`, `dark`, `only`, `default`
+/// (ASCII-case-insensitively), and not a CSS-wide keyword -- these are the
+/// property-specific plus generic `<custom-ident>` exclusions; `none` is
+/// deliberately absent from this list, since unlike `container-name` this
+/// property does not reserve it. This is the interpreted decoded identity,
+/// never the raw authored spelling: an escape-authored Ident decodes
+/// through the tokenizer before this comparison runs. A component with
+/// more than one non-trivia token -- including a Function, a bracketed
+/// construct, or a stray `Comma` sharing a component with a neighboring
+/// token -- is directly `Invalid`, since this item grammar has no ordinary
+/// Function-backed branch and this leaf is delimiter-free `+` repetition,
+/// never `#` comma-list repetition. A quoted `String` is a different token
+/// class than `Ident` and is therefore also `Invalid`. A qualified
+/// `CustomIdent` component's recognition-time evidence reference is the
+/// absolute retained lexical-item index of the exact selected Ident token,
+/// reusing the `page` / `transition-property` / `animation-name` /
+/// `anchor-name` / `container-name` ownership pattern: the reference is a
+/// locator, not the tokenizer-owned decoded identity itself.
+fn classify_color_scheme_item(
+    item: &[CssLexicalItem],
+    absolute_item_start: usize,
+) -> CssColorSchemeItemClass {
+    let mut tokens = item
+        .iter()
+        .enumerate()
+        .filter_map(|(relative_index, entry)| match entry {
+            CssLexicalItem::SemanticToken(token)
+                if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+            {
+                Some((relative_index, token))
+            }
+            _ => None,
+        });
+
+    let Some((relative_index, token)) = tokens.next() else {
+        return CssColorSchemeItemClass::Invalid;
+    };
+    if tokens.next().is_some() {
+        return CssColorSchemeItemClass::Invalid;
+    }
+
+    match token.kind() {
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("light") => {
+            CssColorSchemeItemClass::Light
+        }
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("dark") => {
+            CssColorSchemeItemClass::Dark
+        }
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("only") => {
+            CssColorSchemeItemClass::Only
+        }
+        CssTokenKind::Ident(identifier)
+            if identifier.eq_ignore_ascii_case("normal")
+                || identifier.eq_ignore_ascii_case("default")
+                || is_css_wide_keyword(identifier) =>
+        {
+            CssColorSchemeItemClass::Invalid
+        }
+        CssTokenKind::Ident(_) => {
+            CssColorSchemeItemClass::CustomIdent(CssColorSchemeCustomIdentEvidenceRef {
+                lexical_item_index: absolute_item_start + relative_index,
+            })
+        }
+        _ => CssColorSchemeItemClass::Invalid,
+    }
+}
+
+/// Qualifies one retained `color-scheme` declaration value against
+/// `normal | [ light | dark | <custom-ident> ]+ && only?` (#590 / #418
+/// comment 5585104754), composing the accepted delimiter-free
+/// top-level-component partitioning theorem (`container-name`) with a
+/// bounded property-local `&&` group-boundary matcher: an optional
+/// structural `only` component composes with the *entire* mandatory
+/// repeated scheme-item group, and may appear only immediately before or
+/// immediately after that group -- never interior to it, never duplicated,
+/// and never standing alone in place of the group.
+///
+/// Deferred substitution and the whole-value Function boundary are
+/// checked first, exactly as for `container-name`. A sole retained direct
+/// `normal` Ident, ASCII-case-insensitively, qualifies the dedicated
+/// standalone branch and never reaches component recognition -- `normal`
+/// is deliberately never a repeated-item sentinel or combinable with
+/// `only`. A sole CSS-wide keyword preserves the existing whole-value
+/// Unsupported boundary. Otherwise this single left-to-right
+/// recognition-time pass partitions the value into ordered top-level
+/// components using depth-zero Whitespace/Comment trivia as separators --
+/// never raw-source whitespace splitting -- and classifies each component
+/// the instant its block depth returns to zero, so a bare `Comma` never
+/// behaves as a permitted separator. Any decisive `Invalid` component
+/// anywhere makes the whole declaration `InvalidForSelectedValueGrammar`,
+/// as does an empty component sequence.
+///
+/// With every component classified and none `Invalid`, at most one
+/// component may be `Only`; more than one is `InvalidForSelectedValueGrammar`.
+/// A single `Only` component must sit at index `0` or at the final index of
+/// the component sequence -- any other position is interior placement and
+/// is `InvalidForSelectedValueGrammar`. The remaining components (with the
+/// `Only` component, if any, removed) form the mandatory scheme-item
+/// group: it must be non-empty, so a sole `only` (with no scheme items
+/// left over) is also `InvalidForSelectedValueGrammar`. Exact authored
+/// order and duplicate `Light`/`Dark`/`CustomIdent` items are preserved in
+/// the resulting `items` vector when the whole declaration qualifies.
+fn qualify_color_scheme_value(
+    items: &[CssLexicalItem],
+    lexical_item_start: usize,
+) -> CssColorSchemeQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssColorSchemeQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssColorSchemeUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssColorSchemeQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssColorSchemeUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    let mut whole_value_tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+    if let (Some(only_token), None) = (whole_value_tokens.next(), whole_value_tokens.next())
+        && let CssTokenKind::Ident(identifier) = only_token.kind()
+    {
+        if identifier.eq_ignore_ascii_case("normal") {
+            return CssColorSchemeQualificationOutcome::Qualified(CssColorSchemeValue::Normal);
+        }
+        if is_css_wide_keyword(identifier) {
+            return CssColorSchemeQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssColorSchemeUnsupportedReason::CssWideKeyword,
+            );
+        }
+    }
+
+    let mut item_classes = Vec::new();
+    let mut block_stack: Vec<CssValueBlockCloser> = Vec::new();
+    let mut item_start: Option<usize> = None;
+
+    for (index, item) in items.iter().enumerate() {
+        if block_stack.is_empty() {
+            let is_separator = match item {
+                CssLexicalItem::Comment(_) => true,
+                CssLexicalItem::SemanticToken(token) => {
+                    matches!(token.kind(), CssTokenKind::Whitespace)
+                }
+            };
+            if is_separator {
+                if let Some(start) = item_start.take() {
+                    item_classes.push(classify_color_scheme_item(
+                        &items[start..index],
+                        lexical_item_start + start,
+                    ));
+                }
+                continue;
+            }
+        }
+
+        if item_start.is_none() {
+            item_start = Some(index);
+        }
+
+        if let CssLexicalItem::SemanticToken(token) = item {
+            match token.kind() {
+                CssTokenKind::Function(_) | CssTokenKind::LeftParenthesis => {
+                    block_stack.push(CssValueBlockCloser::Parenthesis);
+                }
+                CssTokenKind::LeftSquareBracket => {
+                    block_stack.push(CssValueBlockCloser::SquareBracket);
+                }
+                CssTokenKind::LeftCurlyBracket => {
+                    block_stack.push(CssValueBlockCloser::CurlyBracket);
+                }
+                CssTokenKind::RightParenthesis
+                    if block_stack.last() == Some(&CssValueBlockCloser::Parenthesis) =>
+                {
+                    block_stack.pop();
+                }
+                CssTokenKind::RightSquareBracket
+                    if block_stack.last() == Some(&CssValueBlockCloser::SquareBracket) =>
+                {
+                    block_stack.pop();
+                }
+                CssTokenKind::RightCurlyBracket
+                    if block_stack.last() == Some(&CssValueBlockCloser::CurlyBracket) =>
+                {
+                    block_stack.pop();
+                }
+                _ => {}
+            }
+        }
+
+        if block_stack.is_empty()
+            && let Some(start) = item_start.take()
+        {
+            item_classes.push(classify_color_scheme_item(
+                &items[start..=index],
+                lexical_item_start + start,
+            ));
+        }
+    }
+    if let Some(start) = item_start {
+        item_classes.push(classify_color_scheme_item(
+            &items[start..],
+            lexical_item_start + start,
+        ));
+    }
+
+    if item_classes.is_empty() {
+        return CssColorSchemeQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    if item_classes
+        .iter()
+        .any(|class| matches!(class, CssColorSchemeItemClass::Invalid))
+    {
+        return CssColorSchemeQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    let only_positions: Vec<usize> = item_classes
+        .iter()
+        .enumerate()
+        .filter_map(|(index, class)| {
+            matches!(class, CssColorSchemeItemClass::Only).then_some(index)
+        })
+        .collect();
+
+    let only = match only_positions.as_slice() {
+        [] => false,
+        [position] => {
+            let last_index = item_classes.len() - 1;
+            if *position != 0 && *position != last_index {
+                return CssColorSchemeQualificationOutcome::InvalidForSelectedValueGrammar;
+            }
+            true
+        }
+        _ => return CssColorSchemeQualificationOutcome::InvalidForSelectedValueGrammar,
+    };
+
+    let scheme_items: Vec<CssColorSchemeItemValue> = item_classes
+        .into_iter()
+        .filter_map(|class| match class {
+            CssColorSchemeItemClass::Light => Some(CssColorSchemeItemValue::Light),
+            CssColorSchemeItemClass::Dark => Some(CssColorSchemeItemValue::Dark),
+            CssColorSchemeItemClass::CustomIdent(evidence) => {
+                Some(CssColorSchemeItemValue::CustomIdent(evidence))
+            }
+            CssColorSchemeItemClass::Only => None,
+            CssColorSchemeItemClass::Invalid => {
+                unreachable!("Invalid item classes are filtered above")
+            }
+        })
+        .collect();
+
+    if scheme_items.is_empty() {
+        return CssColorSchemeQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    CssColorSchemeQualificationOutcome::Qualified(CssColorSchemeValue::Schemes {
+        items: scheme_items,
+        only,
+    })
 }
 
 fn qualify_scroll_snap_align_value(
