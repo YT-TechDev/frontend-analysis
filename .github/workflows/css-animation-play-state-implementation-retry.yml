@@ -43,19 +43,20 @@ jobs:
           script = workflow.split(marker, 1)[1].split(terminator, 1)[0]
           script = textwrap.dedent(script)
 
-          exact_dispatch = r'''dispatch_anchor = r''' + "'''" + r'''            if property_name.eq_ignore_ascii_case("aspect-ratio") {
-                let value_range = cursor.window_for(occurrence.value())?;
-                let value_items = &tokenizer_result.lexical_items()[value_range];
-                aspect_ratio_observations.push(CssAspectRatioQualificationObservation {
-                    occurrence_index,
-                    placement: occurrence.placement(),
-                    outcome: qualify_aspect_ratio_value(value_items),
-                });
-                continue;
-            }
-
-''' + "'''" + r'''
-dispatch_new ='''
+          exact_dispatch = (
+              "dispatch_anchor = r'''            if property_name.eq_ignore_ascii_case(\"aspect-ratio\") {\n"
+              "                let value_range = cursor.window_for(occurrence.value())?;\n"
+              "                let value_items = &tokenizer_result.lexical_items()[value_range];\n"
+              "                aspect_ratio_observations.push(CssAspectRatioQualificationObservation {\n"
+              "                    occurrence_index,\n"
+              "                    placement: occurrence.placement(),\n"
+              "                    outcome: qualify_aspect_ratio_value(value_items),\n"
+              "                });\n"
+              "                continue;\n"
+              "            }\n\n"
+              "'''\n"
+              "dispatch_new ="
+          )
 
           script, count = re.subn(
               r"dispatch_anchor = r'''[\s\S]*?'''\ndispatch_new =",
