@@ -21,6 +21,8 @@ mod parser_gold;
 mod selector_gold;
 
 #[cfg(test)]
+mod anchor_name_value_qualification_tests;
+#[cfg(test)]
 mod animation_delay_value_qualification_tests;
 #[cfg(test)]
 mod animation_iteration_count_value_qualification_tests;
