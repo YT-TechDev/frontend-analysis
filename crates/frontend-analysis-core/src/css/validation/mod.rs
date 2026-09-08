@@ -125,6 +125,8 @@ mod math_shift_value_qualification_tests;
 #[cfg(test)]
 mod math_style_value_qualification_tests;
 #[cfg(test)]
+mod offset_rotate_value_qualification_tests;
+#[cfg(test)]
 mod opacity_value_qualification_tests;
 #[cfg(test)]
 mod order_value_qualification_tests;

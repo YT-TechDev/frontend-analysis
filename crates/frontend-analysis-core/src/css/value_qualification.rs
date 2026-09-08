@@ -3541,6 +3541,69 @@ impl CssAspectRatioQualificationObservation {
     }
 }
 
+/// One authored `offset-rotate` structural composition of at most one
+/// `auto | reverse` keyword operand and at most one direct `<angle>`
+/// operand, in either authored order. This is membership/shape evidence
+/// only: no numeric angle value, unit, canonical degrees, or authored
+/// component order is retained.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssOffsetRotateValue {
+    Auto,
+    Reverse,
+    DirectAngle,
+    AutoAndDirectAngle,
+    ReverseAndDirectAngle,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssOffsetRotateUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssOffsetRotateQualificationOutcome {
+    Qualified(CssOffsetRotateValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssOffsetRotateUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `offset-rotate`
+/// qualification against `[ auto | reverse ] || <angle>`.
+///
+/// This profile partitions the already-retained declaration value window
+/// into ordered top-level components using a recognition-time block-depth
+/// balanced walk, then identifies the optional direct `auto`/`reverse`
+/// keyword operand and one optional direct `<angle>` operand in either
+/// authored order. A direct `<angle>` component is exactly one retained
+/// `Dimension` token whose decoded unit is ASCII-case-insensitively `deg`,
+/// `grad`, `rad`, or `turn`; a unitless Number (including zero) is not a
+/// direct `<angle>` literal. Function-headed components are classified by
+/// placement and identity only, never evaluated. No angle unit conversion,
+/// canonicalization, or computed-value semantics are derived.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssOffsetRotateQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssOffsetRotateQualificationOutcome,
+}
+
+impl CssOffsetRotateQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssOffsetRotateQualificationOutcome {
+        self.outcome
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssAnimationPlayStateValue {
     Running,
@@ -4213,6 +4276,7 @@ pub(crate) struct CssValueQualificationRunResult {
     hyphenate_character_observations: Vec<CssHyphenateCharacterQualificationObservation>,
     animation_name_observations: Vec<CssAnimationNameQualificationObservation>,
     anchor_name_observations: Vec<CssAnchorNameQualificationObservation>,
+    offset_rotate_observations: Vec<CssOffsetRotateQualificationObservation>,
 }
 
 impl CssValueQualificationRunResult {
@@ -4745,6 +4809,10 @@ impl CssValueQualificationRunResult {
     pub(crate) const fn execution_completion(&self) -> CssParserExecutionCompletion {
         self.upstream_parser_result.execution_completion()
     }
+
+    pub(crate) fn offset_rotate_observations(&self) -> &[CssOffsetRotateQualificationObservation] {
+        &self.offset_rotate_observations
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4879,6 +4947,7 @@ pub(crate) fn run(
         hyphenate_character_observations,
         animation_name_observations,
         anchor_name_observations,
+        offset_rotate_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
         let mut cursor = LexicalWindowCursor::new(tokenizer_result);
@@ -4959,6 +5028,7 @@ pub(crate) fn run(
         let mut hyphenate_character_observations = Vec::new();
         let mut animation_name_observations = Vec::new();
         let mut anchor_name_observations = Vec::new();
+        let mut offset_rotate_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
             let property_range = cursor.window_for(occurrence.property_name())?;
@@ -5705,6 +5775,17 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("offset-rotate") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                offset_rotate_observations.push(CssOffsetRotateQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_offset_rotate_value(value_items),
+                });
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("scroll-snap-align") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -5960,6 +6041,7 @@ pub(crate) fn run(
             hyphenate_character_observations,
             animation_name_observations,
             anchor_name_observations,
+            offset_rotate_observations,
         )
     };
 
@@ -6042,6 +6124,7 @@ pub(crate) fn run(
         hyphenate_character_observations,
         animation_name_observations,
         anchor_name_observations,
+        offset_rotate_observations,
     })
 }
 
@@ -9451,6 +9534,12 @@ fn is_css_time_unit(unit: &str) -> bool {
         .any(|time_unit| unit.eq_ignore_ascii_case(time_unit))
 }
 
+fn is_css_angle_unit(unit: &str) -> bool {
+    ["deg", "grad", "rad", "turn"]
+        .iter()
+        .any(|angle_unit| unit.eq_ignore_ascii_case(angle_unit))
+}
+
 fn qualify_page_value(
     items: &[CssLexicalItem],
     lexical_item_start: usize,
@@ -10180,6 +10269,268 @@ fn qualify_aspect_ratio_value(items: &[CssLexicalItem]) -> CssAspectRatioQualifi
         CssAspectRatioComponentClass::MisplacedWholeValueFunction
         | CssAspectRatioComponentClass::Invalid => {
             CssAspectRatioQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CssOffsetRotateComponentClass {
+    KeywordAuto,
+    KeywordReverse,
+    QualifiedAngle,
+    ResidualFunction,
+    MisplacedWholeValueFunction,
+    Invalid,
+}
+
+/// Partitions an already-retained `offset-rotate` declaration value window
+/// into ordered top-level components using one left-to-right
+/// recognition-time pass. Depth-zero Whitespace/Comment lexical items are
+/// separators; Function and bracket openers extend the current component
+/// until their matching closer, so nested content never inflates top-level
+/// cardinality. This intentionally duplicates the equivalent `aspect-ratio`
+/// walk rather than sharing it: this leaf keeps its own bounded local
+/// recognition.
+fn offset_rotate_top_level_components(items: &[CssLexicalItem]) -> Vec<&[CssLexicalItem]> {
+    let mut components = Vec::new();
+    let mut block_stack: Vec<CssValueBlockCloser> = Vec::new();
+    let mut current_start: Option<usize> = None;
+
+    for (index, item) in items.iter().enumerate() {
+        if block_stack.is_empty() {
+            let is_separator = match item {
+                CssLexicalItem::Comment(_) => true,
+                CssLexicalItem::SemanticToken(token) => {
+                    matches!(token.kind(), CssTokenKind::Whitespace)
+                }
+            };
+            if is_separator {
+                if let Some(start) = current_start.take() {
+                    components.push(&items[start..index]);
+                }
+                continue;
+            }
+        }
+
+        if current_start.is_none() {
+            current_start = Some(index);
+        }
+
+        if let CssLexicalItem::SemanticToken(token) = item {
+            match token.kind() {
+                CssTokenKind::Function(_) | CssTokenKind::LeftParenthesis => {
+                    block_stack.push(CssValueBlockCloser::Parenthesis);
+                }
+                CssTokenKind::LeftSquareBracket => {
+                    block_stack.push(CssValueBlockCloser::SquareBracket);
+                }
+                CssTokenKind::LeftCurlyBracket => {
+                    block_stack.push(CssValueBlockCloser::CurlyBracket);
+                }
+                CssTokenKind::RightParenthesis
+                    if block_stack.last() == Some(&CssValueBlockCloser::Parenthesis) =>
+                {
+                    block_stack.pop();
+                }
+                CssTokenKind::RightSquareBracket
+                    if block_stack.last() == Some(&CssValueBlockCloser::SquareBracket) =>
+                {
+                    block_stack.pop();
+                }
+                CssTokenKind::RightCurlyBracket
+                    if block_stack.last() == Some(&CssValueBlockCloser::CurlyBracket) =>
+                {
+                    block_stack.pop();
+                }
+                _ => {}
+            }
+        }
+
+        if block_stack.is_empty()
+            && let Some(start) = current_start.take()
+        {
+            components.push(&items[start..=index]);
+        }
+    }
+
+    if let Some(start) = current_start {
+        components.push(&items[start..]);
+    }
+
+    components
+}
+
+/// Classifies one already-partitioned top-level `offset-rotate` component. A
+/// Function-headed component is classified by name/placement only; its
+/// interior is never parsed or evaluated. A direct component qualifies as
+/// the `auto`/`reverse` keyword operand only when it is exactly one
+/// ASCII-case-insensitive `Ident` token matching that keyword, and as the
+/// direct `<angle>` operand only when it is exactly one retained `Dimension`
+/// token whose decoded unit is ASCII-case-insensitively `deg`, `grad`,
+/// `rad`, or `turn`. A unitless Number (including zero) never satisfies the
+/// direct `<angle>` operand, unlike the accepted `<length>` unitless-zero
+/// accommodation.
+fn classify_offset_rotate_component(component: &[CssLexicalItem]) -> CssOffsetRotateComponentClass {
+    if let Some(name) = entire_function_name(component) {
+        return if is_whole_value_function(name) {
+            CssOffsetRotateComponentClass::MisplacedWholeValueFunction
+        } else {
+            CssOffsetRotateComponentClass::ResidualFunction
+        };
+    }
+
+    let mut tokens = component.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+
+    let Some(token) = tokens.next() else {
+        return CssOffsetRotateComponentClass::Invalid;
+    };
+    if tokens.next().is_some() {
+        return CssOffsetRotateComponentClass::Invalid;
+    }
+
+    match token.kind() {
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("auto") => {
+            CssOffsetRotateComponentClass::KeywordAuto
+        }
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("reverse") => {
+            CssOffsetRotateComponentClass::KeywordReverse
+        }
+        CssTokenKind::Dimension { unit, .. } if is_css_angle_unit(unit) => {
+            CssOffsetRotateComponentClass::QualifiedAngle
+        }
+        _ => CssOffsetRotateComponentClass::Invalid,
+    }
+}
+
+/// Qualifies one already-retained `offset-rotate` ordinary declaration value
+/// window against the selected `[ auto | reverse ] || <angle>` profile.
+///
+/// Classification order is load-bearing: deferred/arbitrary substitution,
+/// then whole-value Function, then whole-value CSS-wide keyword, then one
+/// property-local depth-balanced component-grouping walk that identifies at
+/// most one direct `auto`/`reverse` keyword component and at most one
+/// direct `<angle>`-position component in either authored order. A decisive
+/// direct structural failure — more than two top-level components, a
+/// duplicate keyword, a duplicate angle-position component, or any
+/// otherwise-Invalid or misplaced whole-value-Function component — always
+/// wins over a residual Function occupying the angle position, which keeps
+/// cases such as `auto reverse calc(45deg)` and `10deg calc(20deg)`
+/// `InvalidForSelectedValueGrammar` rather than softened into
+/// `FunctionValue` `Unsupported`.
+fn qualify_offset_rotate_value(items: &[CssLexicalItem]) -> CssOffsetRotateQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssOffsetRotateQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssOffsetRotateUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssOffsetRotateQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssOffsetRotateUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    let mut whole_value_tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+    if let (Some(only_token), None) = (whole_value_tokens.next(), whole_value_tokens.next())
+        && let CssTokenKind::Ident(identifier) = only_token.kind()
+        && is_css_wide_keyword(identifier)
+    {
+        return CssOffsetRotateQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssOffsetRotateUnsupportedReason::CssWideKeyword,
+        );
+    }
+
+    let components = offset_rotate_top_level_components(items);
+
+    if components.is_empty() || components.len() > 2 {
+        return CssOffsetRotateQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    let classes: Vec<_> = components
+        .iter()
+        .map(|component| classify_offset_rotate_component(component))
+        .collect();
+
+    if classes.iter().any(|class| {
+        matches!(
+            class,
+            CssOffsetRotateComponentClass::Invalid
+                | CssOffsetRotateComponentClass::MisplacedWholeValueFunction
+        )
+    }) {
+        return CssOffsetRotateQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    let keyword_classes: Vec<_> = classes
+        .iter()
+        .filter(|class| {
+            matches!(
+                class,
+                CssOffsetRotateComponentClass::KeywordAuto
+                    | CssOffsetRotateComponentClass::KeywordReverse
+            )
+        })
+        .collect();
+    let angle_classes: Vec<_> = classes
+        .iter()
+        .filter(|class| {
+            matches!(
+                class,
+                CssOffsetRotateComponentClass::QualifiedAngle
+                    | CssOffsetRotateComponentClass::ResidualFunction
+            )
+        })
+        .collect();
+
+    if keyword_classes.len() > 1 || angle_classes.len() > 1 {
+        return CssOffsetRotateQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    if angle_classes
+        .first()
+        .is_some_and(|class| matches!(class, CssOffsetRotateComponentClass::ResidualFunction))
+    {
+        return CssOffsetRotateQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssOffsetRotateUnsupportedReason::FunctionValue,
+        );
+    }
+
+    let has_direct_angle = !angle_classes.is_empty();
+    match keyword_classes.first() {
+        Some(CssOffsetRotateComponentClass::KeywordAuto) => {
+            CssOffsetRotateQualificationOutcome::Qualified(if has_direct_angle {
+                CssOffsetRotateValue::AutoAndDirectAngle
+            } else {
+                CssOffsetRotateValue::Auto
+            })
+        }
+        Some(CssOffsetRotateComponentClass::KeywordReverse) => {
+            CssOffsetRotateQualificationOutcome::Qualified(if has_direct_angle {
+                CssOffsetRotateValue::ReverseAndDirectAngle
+            } else {
+                CssOffsetRotateValue::Reverse
+            })
+        }
+        _ => {
+            if has_direct_angle {
+                CssOffsetRotateQualificationOutcome::Qualified(CssOffsetRotateValue::DirectAngle)
+            } else {
+                CssOffsetRotateQualificationOutcome::InvalidForSelectedValueGrammar
+            }
         }
     }
 }
