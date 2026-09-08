@@ -3704,6 +3704,65 @@ impl CssAnimationDelayQualificationObservation {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTransitionDurationValue {
+    DirectTimeLiteral,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTransitionDurationUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CssTransitionDurationQualificationOutcome {
+    Qualified(Vec<CssTransitionDurationValue>),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssTransitionDurationUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `transition-duration`
+/// qualification.
+///
+/// This profile recognizes only the authored `<time [0s,∞]>#` grammar,
+/// composing the accepted top-level comma-list theorem, the accepted direct
+/// `<time>` Dimension theorem from `animation-delay` (#575), and the
+/// existing exact `is_non_negative_direct_number` authored-range theorem. A
+/// direct item qualifies only when it is exactly one non-trivia `Dimension`
+/// token whose decoded unit is ASCII-case-insensitively `s` or `ms` and whose
+/// retained numeric evidence is non-negative; unlike `animation-delay`, a
+/// direct negative non-zero time literal is therefore
+/// `InvalidForSelectedValueGrammar`. A calculation such as `calc(-1s)` is not
+/// range-checked here and remains conservatively
+/// `UnsupportedBySelectedValueProfile(FunctionValue)`; a decisive direct
+/// Invalid item elsewhere in the same list always outranks a residual
+/// Function item. Exact source evidence, separators, trivia, and occurrence
+/// identity remain owned by the upstream tokenizer/parser result; no
+/// coordinated transition-list or runtime semantics are derived here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CssTransitionDurationQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssTransitionDurationQualificationOutcome,
+}
+
+impl CssTransitionDurationQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> &CssTransitionDurationQualificationOutcome {
+        &self.outcome
+    }
+}
+
 /// Run-owned result for the currently selected bounded CSS value capabilities.
 ///
 /// The exact Core-validated parser result is owned once here. Property-specific
@@ -3788,6 +3847,7 @@ pub(crate) struct CssValueQualificationRunResult {
     animation_play_state_observations: Vec<CssAnimationPlayStateQualificationObservation>,
     animation_iteration_count_observations: Vec<CssAnimationIterationCountQualificationObservation>,
     animation_delay_observations: Vec<CssAnimationDelayQualificationObservation>,
+    transition_duration_observations: Vec<CssTransitionDurationQualificationObservation>,
 }
 
 impl CssValueQualificationRunResult {
@@ -4181,6 +4241,12 @@ impl CssValueQualificationRunResult {
         &self.animation_delay_observations
     }
 
+    pub(crate) fn transition_duration_observations(
+        &self,
+    ) -> &[CssTransitionDurationQualificationObservation] {
+        &self.transition_duration_observations
+    }
+
     pub(crate) const fn execution_completion(&self) -> CssParserExecutionCompletion {
         self.upstream_parser_result.execution_completion()
     }
@@ -4313,6 +4379,7 @@ pub(crate) fn run(
         animation_play_state_observations,
         animation_iteration_count_observations,
         animation_delay_observations,
+        transition_duration_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
         let mut cursor = LexicalWindowCursor::new(tokenizer_result);
@@ -4388,6 +4455,7 @@ pub(crate) fn run(
         let mut animation_play_state_observations = Vec::new();
         let mut animation_iteration_count_observations = Vec::new();
         let mut animation_delay_observations = Vec::new();
+        let mut transition_duration_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
             let property_range = cursor.window_for(occurrence.property_name())?;
@@ -5059,6 +5127,19 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("transition-duration") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                transition_duration_observations.push(
+                    CssTransitionDurationQualificationObservation {
+                        occurrence_index,
+                        placement: occurrence.placement(),
+                        outcome: qualify_transition_duration_value(value_items),
+                    },
+                );
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("scroll-snap-align") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -5309,6 +5390,7 @@ pub(crate) fn run(
             animation_play_state_observations,
             animation_iteration_count_observations,
             animation_delay_observations,
+            transition_duration_observations,
         )
     };
 
@@ -5386,6 +5468,7 @@ pub(crate) fn run(
         animation_play_state_observations,
         animation_iteration_count_observations,
         animation_delay_observations,
+        transition_duration_observations,
     })
 }
 
@@ -9940,6 +10023,196 @@ fn qualify_animation_delay_value(
         .collect();
 
     CssAnimationDelayQualificationOutcome::Qualified(values)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CssTransitionDurationItemClass {
+    Qualified(CssTransitionDurationValue),
+    ResidualFunction,
+    MisplacedWholeValueFunction,
+    Invalid,
+}
+
+/// Classifies one already-comma-segmented `transition-duration` list item,
+/// reusing the accepted `animation-delay` (#575) item-classification shape
+/// unchanged except for the added non-negative range check. A direct item
+/// qualifies only when it is exactly one non-trivia `Dimension` token whose
+/// decoded unit is ASCII-case-insensitively `s` or `ms` and whose retained
+/// numeric evidence satisfies the existing exact `is_non_negative_direct_number`
+/// theorem; a direct negative non-zero time literal is therefore `Invalid`,
+/// not merely out of range. A unitless Number (including zero) is not a
+/// direct `<time>` literal, exactly as for `animation-delay`.
+fn classify_transition_duration_item(item: &[CssLexicalItem]) -> CssTransitionDurationItemClass {
+    if let Some(name) = entire_function_name(item) {
+        return if is_whole_value_function(name) {
+            CssTransitionDurationItemClass::MisplacedWholeValueFunction
+        } else {
+            CssTransitionDurationItemClass::ResidualFunction
+        };
+    }
+
+    let mut tokens = item.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+
+    let Some(token) = tokens.next() else {
+        return CssTransitionDurationItemClass::Invalid;
+    };
+    if tokens.next().is_some() {
+        return CssTransitionDurationItemClass::Invalid;
+    }
+
+    match token.kind() {
+        CssTokenKind::Dimension { value, unit, .. }
+            if is_css_time_unit(unit) && is_non_negative_direct_number(value) =>
+        {
+            CssTransitionDurationItemClass::Qualified(CssTransitionDurationValue::DirectTimeLiteral)
+        }
+        _ => CssTransitionDurationItemClass::Invalid,
+    }
+}
+
+/// Qualifies one retained `transition-duration` declaration value against
+/// `<time [0s,∞]>#`, composing the accepted top-level comma-list theorem,
+/// the accepted direct `<time>` Dimension theorem, and the existing exact
+/// non-negative authored numeric range theorem.
+///
+/// Deferred substitution and the whole-value Function/CSS-wide-keyword
+/// boundaries are checked before list recognition, reusing the accepted
+/// #571/#573/#575 top-level comma-list theorem unchanged: the list walk
+/// splits only on retained depth-zero `Comma` tokens, and commas inside
+/// Functions or other balanced blocks remain inside the current item.
+///
+/// A list item here may be function-backed (`<time>` allows `calc()`), so a
+/// Function-headed item is not immediately decisive. Every item is
+/// classified first; a decisive `Invalid`/`MisplacedWholeValueFunction` item
+/// anywhere in the list always outranks a residual `FunctionValue` item,
+/// which in turn outranks a fully `Qualified` list. This aggregation order
+/// keeps cases such as `-1s, calc(2s)` and `calc(2s), -1s`
+/// `InvalidForSelectedValueGrammar` rather than softened into
+/// `FunctionValue` `Unsupported`, while `calc(-1s)` alone (with no decisive
+/// direct Invalid item elsewhere) remains `FunctionValue` `Unsupported`
+/// because this slice never evaluates the Function to learn its result is
+/// negative.
+fn qualify_transition_duration_value(
+    items: &[CssLexicalItem],
+) -> CssTransitionDurationQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssTransitionDurationQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssTransitionDurationUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssTransitionDurationQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssTransitionDurationUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    let mut whole_value_tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+    if let (Some(only_token), None) = (whole_value_tokens.next(), whole_value_tokens.next())
+        && let CssTokenKind::Ident(identifier) = only_token.kind()
+        && is_css_wide_keyword(identifier)
+    {
+        return CssTransitionDurationQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssTransitionDurationUnsupportedReason::CssWideKeyword,
+        );
+    }
+
+    let mut item_classes = Vec::new();
+    let mut block_stack: Vec<CssValueBlockCloser> = Vec::new();
+    let mut item_start = 0usize;
+
+    for (index, item) in items.iter().enumerate() {
+        if block_stack.is_empty()
+            && matches!(
+                item,
+                CssLexicalItem::SemanticToken(token)
+                    if matches!(token.kind(), CssTokenKind::Comma)
+            )
+        {
+            item_classes.push(classify_transition_duration_item(&items[item_start..index]));
+            item_start = index + 1;
+            continue;
+        }
+
+        let CssLexicalItem::SemanticToken(token) = item else {
+            continue;
+        };
+        match token.kind() {
+            CssTokenKind::Function(_) | CssTokenKind::LeftParenthesis => {
+                block_stack.push(CssValueBlockCloser::Parenthesis);
+            }
+            CssTokenKind::LeftSquareBracket => {
+                block_stack.push(CssValueBlockCloser::SquareBracket);
+            }
+            CssTokenKind::LeftCurlyBracket => {
+                block_stack.push(CssValueBlockCloser::CurlyBracket);
+            }
+            CssTokenKind::RightParenthesis
+                if block_stack.last() == Some(&CssValueBlockCloser::Parenthesis) =>
+            {
+                block_stack.pop();
+            }
+            CssTokenKind::RightSquareBracket
+                if block_stack.last() == Some(&CssValueBlockCloser::SquareBracket) =>
+            {
+                block_stack.pop();
+            }
+            CssTokenKind::RightCurlyBracket
+                if block_stack.last() == Some(&CssValueBlockCloser::CurlyBracket) =>
+            {
+                block_stack.pop();
+            }
+            _ => {}
+        }
+    }
+    item_classes.push(classify_transition_duration_item(&items[item_start..]));
+
+    if item_classes.iter().any(|class| {
+        matches!(
+            class,
+            CssTransitionDurationItemClass::Invalid
+                | CssTransitionDurationItemClass::MisplacedWholeValueFunction
+        )
+    }) {
+        return CssTransitionDurationQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    if item_classes
+        .iter()
+        .any(|class| matches!(class, CssTransitionDurationItemClass::ResidualFunction))
+    {
+        return CssTransitionDurationQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssTransitionDurationUnsupportedReason::FunctionValue,
+        );
+    }
+
+    let values = item_classes
+        .into_iter()
+        .map(|class| match class {
+            CssTransitionDurationItemClass::Qualified(value) => value,
+            CssTransitionDurationItemClass::ResidualFunction
+            | CssTransitionDurationItemClass::MisplacedWholeValueFunction
+            | CssTransitionDurationItemClass::Invalid => {
+                unreachable!("non-Qualified item classes are filtered above")
+            }
+        })
+        .collect();
+
+    CssTransitionDurationQualificationOutcome::Qualified(values)
 }
 
 fn qualify_scroll_snap_align_value(
