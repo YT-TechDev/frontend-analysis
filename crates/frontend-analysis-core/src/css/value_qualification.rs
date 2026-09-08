@@ -3763,6 +3763,104 @@ impl CssTransitionDurationQualificationObservation {
     }
 }
 
+/// One authored `<single-transition-property>` list item kind: either the
+/// predefined `all` keyword or an open-ended `<custom-ident>`. This carries
+/// no payload; a qualified `CustomIdent` item's decoded semantic identity
+/// remains tokenizer-owned and is related only through the observation's
+/// parallel, index-aligned evidence-reference list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTransitionPropertyItemValue {
+    All,
+    CustomIdent,
+}
+
+/// Run-local locator for the exact tokenizer item selected during authoritative
+/// `transition-property` custom-ident recognition. The index is evidence
+/// placement, not the custom identifier's semantic identity; that identity
+/// remains the tokenizer-owned decoded `Ident` value, exactly as for the
+/// accepted `page` theorem (`CssPageCustomIdentEvidenceRef`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTransitionPropertyCustomIdentEvidenceRef {
+    lexical_item_index: usize,
+}
+
+impl CssTransitionPropertyCustomIdentEvidenceRef {
+    pub(crate) const fn lexical_item_index(&self) -> usize {
+        self.lexical_item_index
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CssTransitionPropertyValue {
+    None,
+    Items(Vec<CssTransitionPropertyItemValue>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTransitionPropertyUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CssTransitionPropertyQualificationOutcome {
+    Qualified(CssTransitionPropertyValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssTransitionPropertyUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `transition-property`
+/// qualification.
+///
+/// This profile recognizes only the authored
+/// `none | [ all | <custom-ident> ]#` grammar, composing the accepted
+/// top-level comma-list theorem (#571/#573/#575/#577) with the accepted
+/// open-ended custom-ident evidence-reference ownership theorem proven by
+/// `page` (#578 / #418 comment 5580383097). Sole `none` is the dedicated
+/// whole-value branch; it is not a valid list item. Inside the list, `all`
+/// is matched ASCII-case-insensitively as a predefined keyword; every other
+/// direct Ident item is an open-ended `<custom-ident>` whose decoded
+/// semantic identity remains tokenizer-owned. When `outcome()` is
+/// `Qualified(CssTransitionPropertyValue::Items(kinds))`,
+/// `custom_ident_evidence()` is index-aligned with `kinds`: `Some` exactly
+/// where the item is `CustomIdent` and `None` where it is `All`, so no
+/// custom-ident evidence reference is ever fabricated for an `All` item.
+/// `none`, `default`, and CSS-wide keywords are excluded from list-item
+/// position. Unlike `<time>`/`<number>` grammars, this item grammar has no
+/// ordinary Function-backed branch, so any Function or other multi-token
+/// item is directly `InvalidForSelectedValueGrammar`; there is intentionally
+/// no residual `FunctionValue` Unsupported item class. Authored order and
+/// duplicate items are preserved exactly; no deduplication, canonicalization,
+/// or property-registry lookup is performed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CssTransitionPropertyQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssTransitionPropertyQualificationOutcome,
+    custom_ident_evidence: Vec<Option<CssTransitionPropertyCustomIdentEvidenceRef>>,
+}
+
+impl CssTransitionPropertyQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> &CssTransitionPropertyQualificationOutcome {
+        &self.outcome
+    }
+
+    pub(crate) fn custom_ident_evidence(
+        &self,
+    ) -> &[Option<CssTransitionPropertyCustomIdentEvidenceRef>] {
+        &self.custom_ident_evidence
+    }
+}
+
 /// Run-owned result for the currently selected bounded CSS value capabilities.
 ///
 /// The exact Core-validated parser result is owned once here. Property-specific
@@ -3848,6 +3946,7 @@ pub(crate) struct CssValueQualificationRunResult {
     animation_iteration_count_observations: Vec<CssAnimationIterationCountQualificationObservation>,
     animation_delay_observations: Vec<CssAnimationDelayQualificationObservation>,
     transition_duration_observations: Vec<CssTransitionDurationQualificationObservation>,
+    transition_property_observations: Vec<CssTransitionPropertyQualificationObservation>,
 }
 
 impl CssValueQualificationRunResult {
@@ -4247,6 +4346,34 @@ impl CssValueQualificationRunResult {
         &self.transition_duration_observations
     }
 
+    pub(crate) fn transition_property_observations(
+        &self,
+    ) -> &[CssTransitionPropertyQualificationObservation] {
+        &self.transition_property_observations
+    }
+
+    /// Resolves one qualified `transition-property` custom-ident item's
+    /// tokenizer-owned decoded identity through its run-local evidence
+    /// reference, mirroring `page_custom_ident_value` without copying the
+    /// identifier payload into a second owner.
+    pub(crate) fn transition_property_custom_ident_value(
+        &self,
+        evidence: CssTransitionPropertyCustomIdentEvidenceRef,
+    ) -> Option<&str> {
+        let item = self
+            .upstream_parser_result
+            .upstream_tokenizer_result()
+            .lexical_items()
+            .get(evidence.lexical_item_index())?;
+        let CssLexicalItem::SemanticToken(token) = item else {
+            return None;
+        };
+        let CssTokenKind::Ident(value) = token.kind() else {
+            return None;
+        };
+        Some(value.as_str())
+    }
+
     pub(crate) const fn execution_completion(&self) -> CssParserExecutionCompletion {
         self.upstream_parser_result.execution_completion()
     }
@@ -4380,6 +4507,7 @@ pub(crate) fn run(
         animation_iteration_count_observations,
         animation_delay_observations,
         transition_duration_observations,
+        transition_property_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
         let mut cursor = LexicalWindowCursor::new(tokenizer_result);
@@ -4456,6 +4584,7 @@ pub(crate) fn run(
         let mut animation_iteration_count_observations = Vec::new();
         let mut animation_delay_observations = Vec::new();
         let mut transition_duration_observations = Vec::new();
+        let mut transition_property_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
             let property_range = cursor.window_for(occurrence.property_name())?;
@@ -5140,6 +5269,23 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("transition-property") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let lexical_item_start = value_range.start;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                let (outcome, custom_ident_evidence) =
+                    qualify_transition_property_value(value_items, lexical_item_start);
+                transition_property_observations.push(
+                    CssTransitionPropertyQualificationObservation {
+                        occurrence_index,
+                        placement: occurrence.placement(),
+                        outcome,
+                        custom_ident_evidence,
+                    },
+                );
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("scroll-snap-align") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -5391,6 +5537,7 @@ pub(crate) fn run(
             animation_iteration_count_observations,
             animation_delay_observations,
             transition_duration_observations,
+            transition_property_observations,
         )
     };
 
@@ -5469,6 +5616,7 @@ pub(crate) fn run(
         animation_iteration_count_observations,
         animation_delay_observations,
         transition_duration_observations,
+        transition_property_observations,
     })
 }
 
@@ -10213,6 +10361,234 @@ fn qualify_transition_duration_value(
         .collect();
 
     CssTransitionDurationQualificationOutcome::Qualified(values)
+}
+
+enum CssTransitionPropertyItemClass {
+    Qualified(
+        CssTransitionPropertyItemValue,
+        Option<CssTransitionPropertyCustomIdentEvidenceRef>,
+    ),
+    Invalid,
+}
+
+/// Classifies one already-comma-segmented `transition-property` list item.
+///
+/// Unlike `transition-duration`, this item grammar (`all | <custom-ident>`)
+/// has no ordinary Function-backed value branch, so any item that is not
+/// exactly one non-trivia direct Ident token -- including any Function-headed
+/// item, whether an ordinary Function or a misplaced generic whole-value
+/// Function -- is directly `Invalid`. `all` is matched ASCII-case-
+/// insensitively as the predefined keyword item and never receives
+/// custom-ident evidence. `none`, `default`, and CSS-wide keywords are
+/// excluded from list-item position by CSS Transitions / CSS Values and are
+/// therefore `Invalid` here, not merely `all`'s Unsupported whole-value
+/// sibling. Every other direct Ident is a qualified `<custom-ident>` item
+/// whose recognition-time evidence reference is the absolute retained
+/// lexical-item index of the exact selected Ident token, reusing the `page`
+/// (#578 / #418 comment 5580383097) ownership pattern: the reference is a
+/// locator, not the tokenizer-owned decoded identity itself.
+fn classify_transition_property_item(
+    item: &[CssLexicalItem],
+    absolute_item_start: usize,
+) -> CssTransitionPropertyItemClass {
+    let mut tokens = item
+        .iter()
+        .enumerate()
+        .filter_map(|(relative_index, entry)| match entry {
+            CssLexicalItem::SemanticToken(token)
+                if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+            {
+                Some((relative_index, token))
+            }
+            _ => None,
+        });
+
+    let Some((relative_index, token)) = tokens.next() else {
+        return CssTransitionPropertyItemClass::Invalid;
+    };
+    if tokens.next().is_some() {
+        return CssTransitionPropertyItemClass::Invalid;
+    }
+
+    match token.kind() {
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("all") => {
+            CssTransitionPropertyItemClass::Qualified(CssTransitionPropertyItemValue::All, None)
+        }
+        CssTokenKind::Ident(identifier)
+            if identifier.eq_ignore_ascii_case("none")
+                || identifier.eq_ignore_ascii_case("default")
+                || is_css_wide_keyword(identifier) =>
+        {
+            CssTransitionPropertyItemClass::Invalid
+        }
+        CssTokenKind::Ident(_) => CssTransitionPropertyItemClass::Qualified(
+            CssTransitionPropertyItemValue::CustomIdent,
+            Some(CssTransitionPropertyCustomIdentEvidenceRef {
+                lexical_item_index: absolute_item_start + relative_index,
+            }),
+        ),
+        _ => CssTransitionPropertyItemClass::Invalid,
+    }
+}
+
+/// Qualifies one retained `transition-property` declaration value against
+/// `none | [ all | <custom-ident> ]#`, composing the accepted top-level
+/// comma-list theorem (#571/#573/#575/#577) with the accepted open-ended
+/// custom-ident evidence-reference ownership theorem proven by `page`.
+///
+/// Deferred substitution and the whole-value Function boundary are checked
+/// first, exactly as for `page`/`transition-duration`; the depth-balanced
+/// walk below never sees their nested fallback commas as outer separators.
+/// A sole retained direct `none` Ident, ASCII-case-insensitively, qualifies
+/// the dedicated whole-value branch and never reaches list segmentation. A
+/// sole CSS-wide keyword preserves the existing whole-value Unsupported
+/// boundary. Otherwise every top-level depth-zero-comma-delimited item is
+/// classified independently; any decisive `Invalid` item anywhere in the
+/// list makes the whole declaration `InvalidForSelectedValueGrammar`,
+/// preserving exact authored order and duplicate occurrences in the
+/// resulting item vector when every item qualifies. The returned evidence
+/// vector is index-aligned with the qualified item vector: `Some` exactly
+/// where the item is `CustomIdent`.
+fn qualify_transition_property_value(
+    items: &[CssLexicalItem],
+    lexical_item_start: usize,
+) -> (
+    CssTransitionPropertyQualificationOutcome,
+    Vec<Option<CssTransitionPropertyCustomIdentEvidenceRef>>,
+) {
+    if contains_deferred_substitution_function(items) {
+        return (
+            CssTransitionPropertyQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssTransitionPropertyUnsupportedReason::DeferredSubstitutionFunction,
+            ),
+            Vec::new(),
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return (
+            CssTransitionPropertyQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssTransitionPropertyUnsupportedReason::WholeValueFunction,
+            ),
+            Vec::new(),
+        );
+    }
+
+    let mut whole_value_tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+    if let (Some(only_token), None) = (whole_value_tokens.next(), whole_value_tokens.next())
+        && let CssTokenKind::Ident(identifier) = only_token.kind()
+    {
+        if identifier.eq_ignore_ascii_case("none") {
+            return (
+                CssTransitionPropertyQualificationOutcome::Qualified(
+                    CssTransitionPropertyValue::None,
+                ),
+                Vec::new(),
+            );
+        }
+        if is_css_wide_keyword(identifier) {
+            return (
+                CssTransitionPropertyQualificationOutcome::UnsupportedBySelectedValueProfile(
+                    CssTransitionPropertyUnsupportedReason::CssWideKeyword,
+                ),
+                Vec::new(),
+            );
+        }
+    }
+
+    let mut item_classes = Vec::new();
+    let mut block_stack: Vec<CssValueBlockCloser> = Vec::new();
+    let mut item_start = 0usize;
+
+    for (index, item) in items.iter().enumerate() {
+        if block_stack.is_empty()
+            && matches!(
+                item,
+                CssLexicalItem::SemanticToken(token)
+                    if matches!(token.kind(), CssTokenKind::Comma)
+            )
+        {
+            item_classes.push(classify_transition_property_item(
+                &items[item_start..index],
+                lexical_item_start + item_start,
+            ));
+            item_start = index + 1;
+            continue;
+        }
+
+        let CssLexicalItem::SemanticToken(token) = item else {
+            continue;
+        };
+        match token.kind() {
+            CssTokenKind::Function(_) | CssTokenKind::LeftParenthesis => {
+                block_stack.push(CssValueBlockCloser::Parenthesis);
+            }
+            CssTokenKind::LeftSquareBracket => {
+                block_stack.push(CssValueBlockCloser::SquareBracket);
+            }
+            CssTokenKind::LeftCurlyBracket => {
+                block_stack.push(CssValueBlockCloser::CurlyBracket);
+            }
+            CssTokenKind::RightParenthesis
+                if block_stack.last() == Some(&CssValueBlockCloser::Parenthesis) =>
+            {
+                block_stack.pop();
+            }
+            CssTokenKind::RightSquareBracket
+                if block_stack.last() == Some(&CssValueBlockCloser::SquareBracket) =>
+            {
+                block_stack.pop();
+            }
+            CssTokenKind::RightCurlyBracket
+                if block_stack.last() == Some(&CssValueBlockCloser::CurlyBracket) =>
+            {
+                block_stack.pop();
+            }
+            _ => {}
+        }
+    }
+    item_classes.push(classify_transition_property_item(
+        &items[item_start..],
+        lexical_item_start + item_start,
+    ));
+
+    if item_classes
+        .iter()
+        .any(|class| matches!(class, CssTransitionPropertyItemClass::Invalid))
+    {
+        return (
+            CssTransitionPropertyQualificationOutcome::InvalidForSelectedValueGrammar,
+            Vec::new(),
+        );
+    }
+
+    let mut qualified_items = Vec::with_capacity(item_classes.len());
+    let mut custom_ident_evidence = Vec::with_capacity(item_classes.len());
+    for class in item_classes {
+        match class {
+            CssTransitionPropertyItemClass::Qualified(value, evidence) => {
+                qualified_items.push(value);
+                custom_ident_evidence.push(evidence);
+            }
+            CssTransitionPropertyItemClass::Invalid => {
+                unreachable!("Invalid item classes are filtered above")
+            }
+        }
+    }
+
+    (
+        CssTransitionPropertyQualificationOutcome::Qualified(CssTransitionPropertyValue::Items(
+            qualified_items,
+        )),
+        custom_ident_evidence,
+    )
 }
 
 fn qualify_scroll_snap_align_value(
