@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520/#522/#524/#526/#528/#530/#532/#534/#536/#538/#541/#546/#549/#551/#553/#555/#559/#561).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520/#522/#524/#526/#528/#530/#532/#534/#536/#538/#541/#546/#549/#551/#553/#555/#559/#561/#596).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -4380,6 +4380,76 @@ impl CssColorSchemeQualificationObservation {
     }
 }
 
+/// One authored `image-resolution` structural composition selected against
+/// `[ from-image || <resolution> ] && snap?` (#596 / #418 comment
+/// 5601753463). This is shape-only membership evidence, analogous to
+/// `offset-rotate`: no resolution numeric magnitude, unit String, canonical
+/// `dppx` value, or authored component order is retained. `from-image
+/// 300dpi` and `300dpi from-image` are therefore the same
+/// `FromImageAndResolution` shape, and leading vs. trailing `snap`
+/// placement collapses into the same `*AndSnap` shape once grammar
+/// validity is established.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssImageResolutionValue {
+    FromImage,
+    DirectResolution,
+    FromImageAndResolution,
+    FromImageAndSnap,
+    DirectResolutionAndSnap,
+    FromImageAndResolutionAndSnap,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssImageResolutionUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssImageResolutionQualificationOutcome {
+    Qualified(CssImageResolutionValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssImageResolutionUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `image-resolution`
+/// qualification against `[ from-image || <resolution> ] && snap?`.
+///
+/// This profile partitions the already-retained declaration value window
+/// into ordered top-level components using a recognition-time block-depth
+/// balanced walk (mirroring `offset-rotate` / `color-scheme`), then treats
+/// `snap` as an orthogonal structural modifier of the *entire* `[
+/// from-image || <resolution> ]` group -- reusing the accepted
+/// `color-scheme` `only` boundary theorem -- so `snap` may appear only
+/// immediately before or immediately after that group, never interior to
+/// it. A direct `<resolution>` component is exactly one retained
+/// `Dimension` token whose decoded unit is ASCII-case-insensitively `dpi`,
+/// `dpcm`, `dppx`, or `x` and whose value is not negative-non-zero (signed
+/// zero remains qualified). No unit conversion, canonical `dppx`
+/// materialization, or computed-value semantics are derived.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssImageResolutionQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssImageResolutionQualificationOutcome,
+}
+
+impl CssImageResolutionQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssImageResolutionQualificationOutcome {
+        self.outcome
+    }
+}
+
 /// Run-local locator for the exact tokenizer item selected during
 /// authoritative `counter-increment` `<counter-name>` recognition, reusing
 /// the `page` / `transition-property` / `hyphenate-character` /
@@ -4760,6 +4830,7 @@ pub(crate) struct CssValueQualificationRunResult {
     color_scheme_observations: Vec<CssColorSchemeQualificationObservation>,
     counter_increment_observations: Vec<CssCounterIncrementQualificationObservation>,
     counter_reset_observations: Vec<CssCounterResetQualificationObservation>,
+    image_resolution_observations: Vec<CssImageResolutionQualificationObservation>,
 }
 
 impl CssValueQualificationRunResult {
@@ -5454,6 +5525,12 @@ impl CssValueQualificationRunResult {
         };
         Some(token.kind())
     }
+
+    pub(crate) fn image_resolution_observations(
+        &self,
+    ) -> &[CssImageResolutionQualificationObservation] {
+        &self.image_resolution_observations
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -5593,6 +5670,7 @@ pub(crate) fn run(
         color_scheme_observations,
         counter_increment_observations,
         counter_reset_observations,
+        image_resolution_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
         let mut cursor = LexicalWindowCursor::new(tokenizer_result);
@@ -5678,6 +5756,7 @@ pub(crate) fn run(
         let mut color_scheme_observations = Vec::new();
         let mut counter_increment_observations = Vec::new();
         let mut counter_reset_observations = Vec::new();
+        let mut image_resolution_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
             let property_range = cursor.window_for(occurrence.property_name())?;
@@ -6487,6 +6566,17 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("image-resolution") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                image_resolution_observations.push(CssImageResolutionQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_image_resolution_value(value_items),
+                });
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("scroll-snap-align") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -6747,6 +6837,7 @@ pub(crate) fn run(
             color_scheme_observations,
             counter_increment_observations,
             counter_reset_observations,
+            image_resolution_observations,
         )
     };
 
@@ -6834,6 +6925,7 @@ pub(crate) fn run(
         color_scheme_observations,
         counter_increment_observations,
         counter_reset_observations,
+        image_resolution_observations,
     })
 }
 
@@ -13847,6 +13939,313 @@ fn qualify_color_scheme_value(
         items: scheme_items,
         only,
     })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CssImageResolutionComponentClass {
+    FromImage,
+    DirectResolution,
+    Snap,
+    ResidualFunction,
+    MisplacedWholeValueFunction,
+    Invalid,
+}
+
+fn is_css_resolution_unit(unit: &str) -> bool {
+    ["dpi", "dpcm", "dppx", "x"]
+        .iter()
+        .any(|resolution_unit| unit.eq_ignore_ascii_case(resolution_unit))
+}
+
+/// Partitions an already-retained `image-resolution` declaration value
+/// window into ordered top-level components using one left-to-right
+/// recognition-time pass. Depth-zero Whitespace/Comment lexical items are
+/// separators; Function and bracket openers extend the current component
+/// until their matching closer, so nested content never inflates top-level
+/// cardinality. This intentionally duplicates the equivalent
+/// `offset-rotate` walk rather than sharing it: this leaf keeps its own
+/// bounded local recognition.
+fn image_resolution_top_level_components(items: &[CssLexicalItem]) -> Vec<&[CssLexicalItem]> {
+    let mut components = Vec::new();
+    let mut block_stack: Vec<CssValueBlockCloser> = Vec::new();
+    let mut current_start: Option<usize> = None;
+
+    for (index, item) in items.iter().enumerate() {
+        if block_stack.is_empty() {
+            let is_separator = match item {
+                CssLexicalItem::Comment(_) => true,
+                CssLexicalItem::SemanticToken(token) => {
+                    matches!(token.kind(), CssTokenKind::Whitespace)
+                }
+            };
+            if is_separator {
+                if let Some(start) = current_start.take() {
+                    components.push(&items[start..index]);
+                }
+                continue;
+            }
+        }
+
+        if current_start.is_none() {
+            current_start = Some(index);
+        }
+
+        if let CssLexicalItem::SemanticToken(token) = item {
+            match token.kind() {
+                CssTokenKind::Function(_) | CssTokenKind::LeftParenthesis => {
+                    block_stack.push(CssValueBlockCloser::Parenthesis);
+                }
+                CssTokenKind::LeftSquareBracket => {
+                    block_stack.push(CssValueBlockCloser::SquareBracket);
+                }
+                CssTokenKind::LeftCurlyBracket => {
+                    block_stack.push(CssValueBlockCloser::CurlyBracket);
+                }
+                CssTokenKind::RightParenthesis
+                    if block_stack.last() == Some(&CssValueBlockCloser::Parenthesis) =>
+                {
+                    block_stack.pop();
+                }
+                CssTokenKind::RightSquareBracket
+                    if block_stack.last() == Some(&CssValueBlockCloser::SquareBracket) =>
+                {
+                    block_stack.pop();
+                }
+                CssTokenKind::RightCurlyBracket
+                    if block_stack.last() == Some(&CssValueBlockCloser::CurlyBracket) =>
+                {
+                    block_stack.pop();
+                }
+                _ => {}
+            }
+        }
+
+        if block_stack.is_empty()
+            && let Some(start) = current_start.take()
+        {
+            components.push(&items[start..=index]);
+        }
+    }
+
+    if let Some(start) = current_start {
+        components.push(&items[start..]);
+    }
+
+    components
+}
+
+/// Classifies one already-partitioned top-level `image-resolution`
+/// component. A Function-headed component is classified by name/placement
+/// only; its interior is never parsed or evaluated. A direct component
+/// qualifies as the `from-image`/`snap` keyword operand only when it is
+/// exactly one ASCII-case-insensitive `Ident` token matching that keyword,
+/// and as the direct `<resolution>` operand only when it is exactly one
+/// retained `Dimension` token whose decoded unit is ASCII-case-insensitively
+/// `dpi`, `dpcm`, `dppx`, or `x` and whose value is not negative-non-zero
+/// (signed zero remains qualified, reusing the accepted lexical-zero
+/// `is_non_negative_direct_number` policy). A unitless Number never
+/// satisfies the direct `<resolution>` operand.
+fn classify_image_resolution_component(
+    component: &[CssLexicalItem],
+) -> CssImageResolutionComponentClass {
+    if let Some(name) = entire_function_name(component) {
+        return if is_whole_value_function(name) {
+            CssImageResolutionComponentClass::MisplacedWholeValueFunction
+        } else {
+            CssImageResolutionComponentClass::ResidualFunction
+        };
+    }
+
+    let mut tokens = component.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+
+    let Some(token) = tokens.next() else {
+        return CssImageResolutionComponentClass::Invalid;
+    };
+    if tokens.next().is_some() {
+        return CssImageResolutionComponentClass::Invalid;
+    }
+
+    match token.kind() {
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("from-image") => {
+            CssImageResolutionComponentClass::FromImage
+        }
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("snap") => {
+            CssImageResolutionComponentClass::Snap
+        }
+        CssTokenKind::Dimension { value, unit, .. }
+            if is_css_resolution_unit(unit) && is_non_negative_direct_number(value) =>
+        {
+            CssImageResolutionComponentClass::DirectResolution
+        }
+        _ => CssImageResolutionComponentClass::Invalid,
+    }
+}
+
+/// Qualifies one already-retained `image-resolution` ordinary declaration
+/// value window against the selected `[ from-image || <resolution> ] &&
+/// snap?` profile (#596 / #418 comment 5601753463).
+///
+/// Classification order is load-bearing: deferred/arbitrary substitution,
+/// then whole-value Function, then whole-value CSS-wide keyword, then one
+/// property-local depth-balanced component-grouping walk. `snap` is an
+/// orthogonal structural modifier of the *entire* `[ from-image ||
+/// <resolution> ]` group -- reusing the accepted `color-scheme` `only`
+/// group-boundary theorem -- so at most one `snap` component may appear,
+/// and only at the very start or very end of the top-level component
+/// sequence; any other position (splitting the inner group, e.g.
+/// `from-image snap 1dpi`) is decisive `InvalidForSelectedValueGrammar`.
+/// The remaining (non-`snap`) components form the mandatory inner group: it
+/// must be non-empty, contain at most one `from-image` component, and
+/// contain at most one component competing for the single `<resolution>`
+/// slot (a direct literal and a residual Function compete for that same
+/// slot). A decisive direct structural failure -- more than two non-`snap`
+/// components, a duplicate `from-image`, two components competing for the
+/// `<resolution>` slot, or any otherwise-Invalid or misplaced
+/// whole-value-Function component -- always wins over a residual Function
+/// occupying the `<resolution>` slot, which keeps cases such as
+/// `from-image snap calc(1dppx)` `InvalidForSelectedValueGrammar` rather
+/// than softened into `FunctionValue` `Unsupported`.
+fn qualify_image_resolution_value(
+    items: &[CssLexicalItem],
+) -> CssImageResolutionQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssImageResolutionQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssImageResolutionUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssImageResolutionQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssImageResolutionUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    let mut whole_value_tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+    if let (Some(only_token), None) = (whole_value_tokens.next(), whole_value_tokens.next())
+        && let CssTokenKind::Ident(identifier) = only_token.kind()
+        && is_css_wide_keyword(identifier)
+    {
+        return CssImageResolutionQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssImageResolutionUnsupportedReason::CssWideKeyword,
+        );
+    }
+
+    let components = image_resolution_top_level_components(items);
+
+    if components.is_empty() {
+        return CssImageResolutionQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    let classes: Vec<_> = components
+        .iter()
+        .map(|component| classify_image_resolution_component(component))
+        .collect();
+
+    if classes.iter().any(|class| {
+        matches!(
+            class,
+            CssImageResolutionComponentClass::Invalid
+                | CssImageResolutionComponentClass::MisplacedWholeValueFunction
+        )
+    }) {
+        return CssImageResolutionQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    let snap_positions: Vec<usize> = classes
+        .iter()
+        .enumerate()
+        .filter_map(|(index, class)| {
+            matches!(class, CssImageResolutionComponentClass::Snap).then_some(index)
+        })
+        .collect();
+
+    let has_snap = match snap_positions.as_slice() {
+        [] => false,
+        [position] => {
+            let last_index = classes.len() - 1;
+            if *position != 0 && *position != last_index {
+                return CssImageResolutionQualificationOutcome::InvalidForSelectedValueGrammar;
+            }
+            true
+        }
+        _ => return CssImageResolutionQualificationOutcome::InvalidForSelectedValueGrammar,
+    };
+
+    let group_classes: Vec<_> = classes
+        .iter()
+        .filter(|class| !matches!(class, CssImageResolutionComponentClass::Snap))
+        .collect();
+
+    if group_classes.is_empty() || group_classes.len() > 2 {
+        return CssImageResolutionQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    let from_image_count = group_classes
+        .iter()
+        .filter(|class| matches!(class, CssImageResolutionComponentClass::FromImage))
+        .count();
+    let resolution_slot_classes: Vec<_> = group_classes
+        .iter()
+        .filter(|class| {
+            matches!(
+                class,
+                CssImageResolutionComponentClass::DirectResolution
+                    | CssImageResolutionComponentClass::ResidualFunction
+            )
+        })
+        .collect();
+
+    if from_image_count > 1 || resolution_slot_classes.len() > 1 {
+        return CssImageResolutionQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    if resolution_slot_classes
+        .first()
+        .is_some_and(|class| matches!(class, CssImageResolutionComponentClass::ResidualFunction))
+    {
+        return CssImageResolutionQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssImageResolutionUnsupportedReason::FunctionValue,
+        );
+    }
+
+    let has_from_image = from_image_count == 1;
+    let has_direct_resolution = !resolution_slot_classes.is_empty();
+
+    match (has_from_image, has_direct_resolution, has_snap) {
+        (true, false, false) => {
+            CssImageResolutionQualificationOutcome::Qualified(CssImageResolutionValue::FromImage)
+        }
+        (false, true, false) => CssImageResolutionQualificationOutcome::Qualified(
+            CssImageResolutionValue::DirectResolution,
+        ),
+        (true, true, false) => CssImageResolutionQualificationOutcome::Qualified(
+            CssImageResolutionValue::FromImageAndResolution,
+        ),
+        (true, false, true) => CssImageResolutionQualificationOutcome::Qualified(
+            CssImageResolutionValue::FromImageAndSnap,
+        ),
+        (false, true, true) => CssImageResolutionQualificationOutcome::Qualified(
+            CssImageResolutionValue::DirectResolutionAndSnap,
+        ),
+        (true, true, true) => CssImageResolutionQualificationOutcome::Qualified(
+            CssImageResolutionValue::FromImageAndResolutionAndSnap,
+        ),
+        (false, false, _) => CssImageResolutionQualificationOutcome::InvalidForSelectedValueGrammar,
+    }
 }
 
 fn qualify_scroll_snap_align_value(
