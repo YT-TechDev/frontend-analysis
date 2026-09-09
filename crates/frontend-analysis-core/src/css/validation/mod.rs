@@ -238,9 +238,7 @@ mod counter_reset_missing_close_evidence_completion {
     use crate::css::parser::result::CssParserExecutionCompletion;
     use crate::css::token::{CssLexicalItem, CssTokenKind};
     use crate::css::tokenizer::resource::CssTokenizerLimits;
-    use crate::css::value_qualification::{
-        CssCounterResetQualificationOutcome, run,
-    };
+    use crate::css::value_qualification::{CssCounterResetQualificationOutcome, run};
     use crate::{SourceId, SourceText};
 
     #[test]
@@ -251,12 +249,9 @@ mod counter_reset_missing_close_evidence_completion {
         );
         let tokenizer_limits =
             CssTokenizerLimits::new(4096, 100_000, 8192, 1024, 8192, 8192).unwrap();
-        let parser_limits = CssParserLimits::new(
-            100_000, 256, 256, 8192, 1024, 1024, 1024, 1024, 8192,
-        )
-        .unwrap();
-        let parser_result =
-            analyze_css_source(&source, tokenizer_limits, parser_limits).unwrap();
+        let parser_limits =
+            CssParserLimits::new(100_000, 256, 256, 8192, 1024, 1024, 1024, 1024, 8192).unwrap();
+        let parser_result = analyze_css_source(&source, tokenizer_limits, parser_limits).unwrap();
         let result = run(parser_result).unwrap();
 
         assert_eq!(
