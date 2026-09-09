@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520/#522/#524/#526/#528/#530/#532/#534/#536/#538/#541/#546/#549/#551/#553/#555/#559/#561/#596).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520/#522/#524/#526/#528/#530/#532/#534/#536/#538/#541/#546/#549/#551/#553/#555/#559/#561/#596/#598).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -4736,6 +4736,116 @@ impl CssCounterResetQualificationObservation {
     }
 }
 
+/// Run-local locator for the exact tokenizer item selected during
+/// authoritative `will-change` `<custom-ident>` recognition, reusing the
+/// `page` / `transition-property` / `hyphenate-character` / `animation-name`
+/// / `anchor-name` / `container-name` / `color-scheme` evidence-reference
+/// ownership pattern. The index is evidence placement, not the interpreted
+/// identifier itself; the decoded `<custom-ident>` text remains the
+/// tokenizer-owned decoded `Ident` value at that exact retained position,
+/// resolved through `will_change_custom_ident_value`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssWillChangeCustomIdentEvidenceRef {
+    lexical_item_index: usize,
+}
+
+impl CssWillChangeCustomIdentEvidenceRef {
+    pub(crate) const fn lexical_item_index(&self) -> usize {
+        self.lexical_item_index
+    }
+}
+
+/// One ordered `will-change` `<animateable-feature>` list item: the two
+/// predefined keywords, matched ASCII-case-insensitively, or an open-ended
+/// tokenizer-owned `<custom-ident>` evidence reference (#598 / css-will-change-1
+/// `<animateable-feature> = scroll-position | contents | <custom-ident>`).
+/// This leaf never tests whether a `CustomIdent` names an existing built-in
+/// CSS property, an alias, or a shorthand -- an unrecognized property-shaped
+/// name such as `Not-A-Property` and a custom-property-shaped name such as
+/// `--var` are both ordinary valid `CustomIdent` items, indistinguishable in
+/// this grammar from `transform`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssWillChangeItemValue {
+    ScrollPosition,
+    Contents,
+    CustomIdent(CssWillChangeCustomIdentEvidenceRef),
+}
+
+/// One authored `will-change` value: either the dedicated whole-value `auto`
+/// branch or the non-empty comma-list `<animateable-feature>#` branch (#598
+/// / css-will-change-1 `will-change: auto | <animateable-feature>#`). Unlike
+/// `animation-name`'s `none`, `auto` never combines with the list branch --
+/// `auto, transform` and `transform, auto` are both
+/// `InvalidForSelectedValueGrammar`, never a partial acceptance.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CssWillChangeValue {
+    Auto,
+    Features(Vec<CssWillChangeItemValue>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssWillChangeUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CssWillChangeQualificationOutcome {
+    Qualified(CssWillChangeValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssWillChangeUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `will-change` qualification
+/// against `auto | <animateable-feature>#` where `<animateable-feature> =
+/// scroll-position | contents | <custom-ident>` (#598), composing the
+/// accepted top-level comma-list theorem (#571/#573/#575/#577) with the
+/// accepted open-ended evidence-reference ownership theorem proven by
+/// `page` / `transition-property` / `hyphenate-character` / `animation-name`
+/// / `anchor-name` / `container-name` / `color-scheme`.
+///
+/// Deferred substitution and the whole-value Function boundary are checked
+/// first, exactly as for `anchor-name`/`container-name`. A sole retained
+/// direct `auto` Ident, ASCII-case-insensitively, qualifies the dedicated
+/// whole-value branch and never reaches list segmentation; unlike
+/// `animation-name`'s `none`, `auto` is deliberately never a repeated-item
+/// sentinel here. A sole CSS-wide keyword preserves the existing whole-value
+/// Unsupported boundary. Otherwise every top-level depth-zero-comma-delimited
+/// item is classified independently: exactly one direct Ident decoding
+/// (ASCII-case-insensitively) to `scroll-position` or `contents` qualifies
+/// the corresponding dedicated feature; any other single direct Ident
+/// qualifies as an open-ended `<custom-ident>` item unless its decoded
+/// identity is `will-change`, `none`, `all`, `auto`, `default`, or a
+/// CSS-wide keyword -- the property-local exclusions layered on top of the
+/// normal `<custom-ident>` exclusions. Any decisive `Invalid` item anywhere
+/// in the list makes the whole declaration `InvalidForSelectedValueGrammar`,
+/// preserving exact authored order and duplicate items -- including
+/// case-differing duplicates such as `transform, TRANSFORM` -- in the
+/// resulting item vector when every item qualifies. `<custom-ident>` identity
+/// is never canonicalized, lowercased, deduplicated, or checked against a
+/// built-in property registry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CssWillChangeQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssWillChangeQualificationOutcome,
+}
+
+impl CssWillChangeQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> &CssWillChangeQualificationOutcome {
+        &self.outcome
+    }
+}
+
 /// Run-owned result for the currently selected bounded CSS value capabilities.
 ///
 /// The exact Core-validated parser result is owned once here. Property-specific
@@ -4831,6 +4941,7 @@ pub(crate) struct CssValueQualificationRunResult {
     counter_increment_observations: Vec<CssCounterIncrementQualificationObservation>,
     counter_reset_observations: Vec<CssCounterResetQualificationObservation>,
     image_resolution_observations: Vec<CssImageResolutionQualificationObservation>,
+    will_change_observations: Vec<CssWillChangeQualificationObservation>,
 }
 
 impl CssValueQualificationRunResult {
@@ -5531,6 +5642,34 @@ impl CssValueQualificationRunResult {
     ) -> &[CssImageResolutionQualificationObservation] {
         &self.image_resolution_observations
     }
+
+    pub(crate) fn will_change_observations(&self) -> &[CssWillChangeQualificationObservation] {
+        &self.will_change_observations
+    }
+
+    /// Resolves one qualified `will-change` `CustomIdent` item's
+    /// tokenizer-owned decoded interpreted identity through its run-local
+    /// evidence reference, mirroring `container_name_custom_ident_value` /
+    /// `color_scheme_custom_ident_value` without copying the payload into a
+    /// second owner. The retained token at the evidence position is always
+    /// a direct `Ident`, since this item grammar has no `<string>` branch.
+    pub(crate) fn will_change_custom_ident_value(
+        &self,
+        evidence: CssWillChangeCustomIdentEvidenceRef,
+    ) -> Option<&str> {
+        let item = self
+            .upstream_parser_result
+            .upstream_tokenizer_result()
+            .lexical_items()
+            .get(evidence.lexical_item_index())?;
+        let CssLexicalItem::SemanticToken(token) = item else {
+            return None;
+        };
+        let CssTokenKind::Ident(value) = token.kind() else {
+            return None;
+        };
+        Some(value.as_str())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -5671,6 +5810,7 @@ pub(crate) fn run(
         counter_increment_observations,
         counter_reset_observations,
         image_resolution_observations,
+        will_change_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
         let mut cursor = LexicalWindowCursor::new(tokenizer_result);
@@ -5757,6 +5897,7 @@ pub(crate) fn run(
         let mut counter_increment_observations = Vec::new();
         let mut counter_reset_observations = Vec::new();
         let mut image_resolution_observations = Vec::new();
+        let mut will_change_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
             let property_range = cursor.window_for(occurrence.property_name())?;
@@ -6577,6 +6718,19 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("will-change") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let lexical_item_start = value_range.start;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                let outcome = qualify_will_change_value(value_items, lexical_item_start);
+                will_change_observations.push(CssWillChangeQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome,
+                });
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("scroll-snap-align") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -6838,6 +6992,7 @@ pub(crate) fn run(
             counter_increment_observations,
             counter_reset_observations,
             image_resolution_observations,
+            will_change_observations,
         )
     };
 
@@ -6926,6 +7081,7 @@ pub(crate) fn run(
         counter_increment_observations,
         counter_reset_observations,
         image_resolution_observations,
+        will_change_observations,
     })
 }
 
@@ -14246,6 +14402,221 @@ fn qualify_image_resolution_value(
         ),
         (false, false, _) => CssImageResolutionQualificationOutcome::InvalidForSelectedValueGrammar,
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CssWillChangeItemClass {
+    Qualified(CssWillChangeItemValue),
+    Invalid,
+}
+
+/// Classifies one already-comma-segmented `will-change`
+/// `<animateable-feature>` list item.
+///
+/// An item qualifies iff, after trivia handling, it is exactly one direct
+/// `Ident` token. `scroll-position` and `contents` are recognized ASCII
+/// case-insensitively as the two dedicated predefined keywords. Every other
+/// direct Ident qualifies as an open-ended `<custom-ident>` item unless its
+/// decoded identifier is, ASCII-case-insensitively, `will-change`, `none`,
+/// `all`, `auto`, `default`, or a CSS-wide keyword -- the property-local
+/// exclusions from css-will-change-1 layered on top of the normal
+/// `<custom-ident>` exclusions. This test is the interpreted decoded
+/// identity, never the raw authored spelling. Critically, this leaf never
+/// tests whether the decoded identity names an existing built-in CSS
+/// property, resolves an alias, or expands a shorthand -- `Not-A-Property`,
+/// `transform`, `TRANSFORM`, `--var`, and `--Foo` are all ordinary qualified
+/// `CustomIdent` items, and their exact case-sensitive identity is preserved
+/// unchanged. This item grammar has no ordinary Function-backed branch, so
+/// any Function-headed item is directly `Invalid`. A qualified `CustomIdent`
+/// item's recognition-time evidence reference is the absolute retained
+/// lexical-item index of the exact selected Ident token, reusing the `page`
+/// / `transition-property` / `anchor-name` / `container-name` /
+/// `color-scheme` ownership pattern: the reference is a locator, not the
+/// tokenizer-owned decoded identity itself.
+fn classify_will_change_item(
+    item: &[CssLexicalItem],
+    absolute_item_start: usize,
+) -> CssWillChangeItemClass {
+    let mut tokens = item
+        .iter()
+        .enumerate()
+        .filter_map(|(relative_index, entry)| match entry {
+            CssLexicalItem::SemanticToken(token)
+                if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+            {
+                Some((relative_index, token))
+            }
+            _ => None,
+        });
+
+    let Some((relative_index, token)) = tokens.next() else {
+        return CssWillChangeItemClass::Invalid;
+    };
+    if tokens.next().is_some() {
+        return CssWillChangeItemClass::Invalid;
+    }
+
+    match token.kind() {
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("scroll-position") => {
+            CssWillChangeItemClass::Qualified(CssWillChangeItemValue::ScrollPosition)
+        }
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("contents") => {
+            CssWillChangeItemClass::Qualified(CssWillChangeItemValue::Contents)
+        }
+        CssTokenKind::Ident(identifier)
+            if identifier.eq_ignore_ascii_case("will-change")
+                || identifier.eq_ignore_ascii_case("none")
+                || identifier.eq_ignore_ascii_case("all")
+                || identifier.eq_ignore_ascii_case("auto")
+                || identifier.eq_ignore_ascii_case("default")
+                || is_css_wide_keyword(identifier) =>
+        {
+            CssWillChangeItemClass::Invalid
+        }
+        CssTokenKind::Ident(_) => CssWillChangeItemClass::Qualified(
+            CssWillChangeItemValue::CustomIdent(CssWillChangeCustomIdentEvidenceRef {
+                lexical_item_index: absolute_item_start + relative_index,
+            }),
+        ),
+        _ => CssWillChangeItemClass::Invalid,
+    }
+}
+
+/// Qualifies one retained `will-change` declaration value against
+/// `auto | <animateable-feature>#` (#598 / css-will-change-1), composing the
+/// accepted top-level comma-list theorem (#571/#573/#575/#577) with the
+/// accepted open-ended evidence-reference ownership theorem proven by
+/// `page` / `transition-property` / `hyphenate-character` / `animation-name`
+/// / `anchor-name` / `container-name` / `color-scheme`.
+///
+/// Deferred substitution and the whole-value Function boundary are checked
+/// first, exactly as for `anchor-name`/`container-name`; the depth-balanced
+/// walk below never sees their nested fallback commas as outer separators. A
+/// sole retained direct `auto` Ident, ASCII-case-insensitively, qualifies
+/// the dedicated whole-value branch and never reaches list segmentation --
+/// unlike `animation-name`'s `none`, `auto` is deliberately never a
+/// repeated-item sentinel here, so `auto, transform`, `transform, auto`, and
+/// `auto transform` all fail: either the whole-value single-token check
+/// does not match because more than one non-trivia token is present, or the
+/// resulting list item itself decodes to the excluded `auto` identity. A
+/// sole CSS-wide keyword preserves the existing whole-value Unsupported
+/// boundary. Otherwise every top-level depth-zero-comma-delimited item is
+/// classified independently; any decisive `Invalid` item anywhere in the
+/// list makes the whole declaration `InvalidForSelectedValueGrammar`,
+/// preserving exact authored order and duplicate items -- including
+/// case-differing duplicates such as `transform, TRANSFORM` -- in the
+/// resulting item vector when every item qualifies.
+fn qualify_will_change_value(
+    items: &[CssLexicalItem],
+    lexical_item_start: usize,
+) -> CssWillChangeQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssWillChangeQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssWillChangeUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssWillChangeQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssWillChangeUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    let mut whole_value_tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+    if let (Some(only_token), None) = (whole_value_tokens.next(), whole_value_tokens.next())
+        && let CssTokenKind::Ident(identifier) = only_token.kind()
+    {
+        if identifier.eq_ignore_ascii_case("auto") {
+            return CssWillChangeQualificationOutcome::Qualified(CssWillChangeValue::Auto);
+        }
+        if is_css_wide_keyword(identifier) {
+            return CssWillChangeQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssWillChangeUnsupportedReason::CssWideKeyword,
+            );
+        }
+    }
+
+    let mut item_classes = Vec::new();
+    let mut block_stack: Vec<CssValueBlockCloser> = Vec::new();
+    let mut item_start = 0usize;
+
+    for (index, item) in items.iter().enumerate() {
+        if block_stack.is_empty()
+            && matches!(
+                item,
+                CssLexicalItem::SemanticToken(token)
+                    if matches!(token.kind(), CssTokenKind::Comma)
+            )
+        {
+            item_classes.push(classify_will_change_item(
+                &items[item_start..index],
+                lexical_item_start + item_start,
+            ));
+            item_start = index + 1;
+            continue;
+        }
+
+        let CssLexicalItem::SemanticToken(token) = item else {
+            continue;
+        };
+        match token.kind() {
+            CssTokenKind::Function(_) | CssTokenKind::LeftParenthesis => {
+                block_stack.push(CssValueBlockCloser::Parenthesis);
+            }
+            CssTokenKind::LeftSquareBracket => {
+                block_stack.push(CssValueBlockCloser::SquareBracket);
+            }
+            CssTokenKind::LeftCurlyBracket => {
+                block_stack.push(CssValueBlockCloser::CurlyBracket);
+            }
+            CssTokenKind::RightParenthesis
+                if block_stack.last() == Some(&CssValueBlockCloser::Parenthesis) =>
+            {
+                block_stack.pop();
+            }
+            CssTokenKind::RightSquareBracket
+                if block_stack.last() == Some(&CssValueBlockCloser::SquareBracket) =>
+            {
+                block_stack.pop();
+            }
+            CssTokenKind::RightCurlyBracket
+                if block_stack.last() == Some(&CssValueBlockCloser::CurlyBracket) =>
+            {
+                block_stack.pop();
+            }
+            _ => {}
+        }
+    }
+    item_classes.push(classify_will_change_item(
+        &items[item_start..],
+        lexical_item_start + item_start,
+    ));
+
+    if item_classes
+        .iter()
+        .any(|class| matches!(class, CssWillChangeItemClass::Invalid))
+    {
+        return CssWillChangeQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    let features = item_classes
+        .into_iter()
+        .map(|class| match class {
+            CssWillChangeItemClass::Qualified(value) => value,
+            CssWillChangeItemClass::Invalid => {
+                unreachable!("Invalid item classes are filtered above")
+            }
+        })
+        .collect();
+
+    CssWillChangeQualificationOutcome::Qualified(CssWillChangeValue::Features(features))
 }
 
 fn qualify_scroll_snap_align_value(

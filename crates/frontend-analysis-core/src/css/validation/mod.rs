@@ -223,6 +223,8 @@ mod transition_property_value_qualification_tests;
 #[cfg(test)]
 mod unicode_bidi_value_qualification_tests;
 #[cfg(test)]
+mod will_change_value_qualification_tests;
+#[cfg(test)]
 mod word_spacing_value_qualification_tests;
 #[cfg(test)]
 mod z_index_value_qualification_tests;
