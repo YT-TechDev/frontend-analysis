@@ -224,3 +224,78 @@ mod unicode_bidi_value_qualification_tests;
 mod word_spacing_value_qualification_tests;
 #[cfg(test)]
 mod z_index_value_qualification_tests;
+
+// Focused evidence completion for #594: unlike the true-EOF positive case in
+// `counter_reset_value_qualification_tests`, this fixture has no authored `)`
+// for `reversed(` and includes later declaration-shaped material. The parser's
+// retained structure must therefore expose more than one inner semantic token,
+// making the grammar-native `reversed(<counter-name>)` branch invalid rather
+// than accepting every missing-close Function as the true-EOF one-Ident form.
+#[cfg(test)]
+mod counter_reset_missing_close_evidence_completion {
+    use crate::css::analysis::analyze_css_source;
+    use crate::css::parser::resource::CssParserLimits;
+    use crate::css::parser::result::CssParserExecutionCompletion;
+    use crate::css::token::{CssLexicalItem, CssTokenKind};
+    use crate::css::tokenizer::resource::CssTokenizerLimits;
+    use crate::css::value_qualification::{
+        CssCounterResetQualificationOutcome, run,
+    };
+    use crate::{SourceId, SourceText};
+
+    #[test]
+    fn actual_missing_reversed_close_absorbs_following_material_and_is_invalid() {
+        let source = SourceText::new(
+            SourceId::new(594132),
+            "a{counter-reset:reversed(foo;color:red;}".to_owned(),
+        );
+        let tokenizer_limits =
+            CssTokenizerLimits::new(4096, 100_000, 8192, 1024, 8192, 8192).unwrap();
+        let parser_limits = CssParserLimits::new(
+            100_000, 256, 256, 8192, 1024, 1024, 1024, 1024, 8192,
+        )
+        .unwrap();
+        let parser_result =
+            analyze_css_source(&source, tokenizer_limits, parser_limits).unwrap();
+        let result = run(parser_result).unwrap();
+
+        assert_eq!(
+            result.execution_completion(),
+            CssParserExecutionCompletion::Complete
+        );
+        assert_eq!(result.counter_reset_observations().len(), 1);
+        assert_eq!(
+            result.counter_reset_observations()[0].outcome(),
+            &CssCounterResetQualificationOutcome::InvalidForSelectedValueGrammar
+        );
+
+        let lexical_items = result
+            .upstream_parser_result()
+            .upstream_tokenizer_result()
+            .lexical_items();
+        assert!(
+            !lexical_items.iter().any(|item| matches!(
+                item,
+                CssLexicalItem::SemanticToken(token)
+                    if matches!(token.kind(), CssTokenKind::RightParenthesis)
+            )),
+            "fixture unexpectedly contains an authored right parenthesis"
+        );
+        assert!(
+            lexical_items.iter().any(|item| matches!(
+                item,
+                CssLexicalItem::SemanticToken(token)
+                    if matches!(token.kind(), CssTokenKind::Semicolon)
+            )),
+            "expected later semicolon material to remain in retained evidence"
+        );
+        assert!(
+            lexical_items.iter().any(|item| matches!(
+                item,
+                CssLexicalItem::SemanticToken(token)
+                    if matches!(token.kind(), CssTokenKind::Ident(value) if value == "color")
+            )),
+            "expected later declaration-shaped material to remain in retained evidence"
+        );
+    }
+}
