@@ -69,6 +69,8 @@ mod core_analysis_gate;
 #[cfg(test)]
 mod core_context_analysis_gate;
 #[cfg(test)]
+mod counter_increment_value_qualification_tests;
+#[cfg(test)]
 mod descriptor_conformance_tests;
 #[cfg(test)]
 mod descriptor_lifecycle_validation_tests;

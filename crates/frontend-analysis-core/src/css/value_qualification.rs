@@ -4380,6 +4380,140 @@ impl CssColorSchemeQualificationObservation {
     }
 }
 
+/// Run-local locator for the exact tokenizer item selected during
+/// authoritative `counter-increment` `<counter-name>` recognition, reusing
+/// the `page` / `transition-property` / `hyphenate-character` /
+/// `animation-name` / `anchor-name` / `container-name` / `color-scheme`
+/// evidence-reference ownership pattern. The index is evidence placement,
+/// not the interpreted identifier itself; the decoded `<counter-name>` text
+/// remains the tokenizer-owned decoded `Ident` value at that exact retained
+/// position, resolved through `counter_increment_name_value`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssCounterIncrementNameEvidenceRef {
+    lexical_item_index: usize,
+}
+
+impl CssCounterIncrementNameEvidenceRef {
+    pub(crate) const fn lexical_item_index(&self) -> usize {
+        self.lexical_item_index
+    }
+}
+
+/// Run-local locator for the exact tokenizer item selected during
+/// authoritative `counter-increment` direct explicit `<integer>`
+/// recognition. The index is evidence placement, not a copied numeric
+/// value; the exact retained `Number`-token structure (sign/zero spelling,
+/// magnitude) remains tokenizer-owned and is never converted to a machine
+/// integer for qualification, resolved through
+/// `counter_increment_integer_token`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssCounterIncrementIntegerEvidenceRef {
+    lexical_item_index: usize,
+}
+
+impl CssCounterIncrementIntegerEvidenceRef {
+    pub(crate) const fn lexical_item_index(&self) -> usize {
+        self.lexical_item_index
+    }
+}
+
+/// One direct authored `counter-increment` repeated item:
+/// `DirectCounterItem := DirectCounterNameEvidence DirectIntegerEvidence?`
+/// (#592 / #418 comment 5593320578). Authored omission of the integer is
+/// load-bearing and distinct from an explicit `1` -- this leaf never
+/// synthesizes the property's interpreted default increment of `1` for an
+/// omitted item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssCounterIncrementItem {
+    name: CssCounterIncrementNameEvidenceRef,
+    explicit_integer: Option<CssCounterIncrementIntegerEvidenceRef>,
+}
+
+impl CssCounterIncrementItem {
+    pub(crate) const fn name(&self) -> CssCounterIncrementNameEvidenceRef {
+        self.name
+    }
+
+    pub(crate) const fn explicit_integer(&self) -> Option<CssCounterIncrementIntegerEvidenceRef> {
+        self.explicit_integer
+    }
+}
+
+/// One authored `counter-increment` value under the narrowed
+/// direct-authored structured-repetition profile
+/// `QualifiedDirectCounterIncrement := none | DirectCounterItem+` (#592 /
+/// #418 comment 5593320578): either the dedicated whole-value `none`
+/// sentinel or an ordered, possibly duplicated, one-or-more list of
+/// qualified `DirectCounterItem`s. This is not a complete normative
+/// `counter-increment` grammar: it qualifies only direct-literal items.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CssCounterIncrementValue {
+    None,
+    Items(Vec<CssCounterIncrementItem>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssCounterIncrementUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+    FunctionValuedIntegerSlot,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CssCounterIncrementQualificationOutcome {
+    Qualified(CssCounterIncrementValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssCounterIncrementUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `counter-increment`
+/// qualification against the narrowed direct-authored profile `none |
+/// DirectCounterItem+` where `DirectCounterItem := <counter-name>
+/// <integer>?` (#592 / #418 comment 5593320578), composing the accepted
+/// delimiter-free top-level-component partitioning theorem
+/// (`container-name` / `color-scheme`) with a new structured-tuple
+/// sequential grouping pass over the classified components.
+///
+/// Deferred substitution and the whole-value Function boundary are checked
+/// first, exactly as for `container-name`/`color-scheme`. A sole retained
+/// direct `none` Ident, ASCII-case-insensitively, qualifies the dedicated
+/// whole-value branch and is never a repeated-item sentinel. Otherwise
+/// every top-level, delimiter-free (never comma-separated) component is
+/// classified, then components are walked left-to-right: each item
+/// requires one direct `<counter-name>` `Ident` (not `none`, `default`, or
+/// a CSS-wide keyword), optionally followed by one direct `Integer`-typed
+/// `Number` component. A Function occupying that optional-integer position
+/// is a provisional feasible-integer-slot ambiguity -- resolved to
+/// `UnsupportedBySelectedValueProfile(FunctionValuedIntegerSlot)` only if
+/// no later component decisively invalidates the declaration regardless of
+/// what the Function computes to. A Function can never satisfy the
+/// required name position; a recognized generic whole-value-only function
+/// name (e.g. `first-valid`) occupying a non-whole-value position is
+/// always decisively `InvalidForSelectedValueGrammar`, never softened to
+/// Unsupported. This leaf performs no numeric Function evaluation, no
+/// machine-integer conversion, and no runtime counter semantics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CssCounterIncrementQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssCounterIncrementQualificationOutcome,
+}
+
+impl CssCounterIncrementQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> &CssCounterIncrementQualificationOutcome {
+        &self.outcome
+    }
+}
+
 /// Run-owned result for the currently selected bounded CSS value capabilities.
 ///
 /// The exact Core-validated parser result is owned once here. Property-specific
@@ -4472,6 +4606,7 @@ pub(crate) struct CssValueQualificationRunResult {
     offset_rotate_observations: Vec<CssOffsetRotateQualificationObservation>,
     container_name_observations: Vec<CssContainerNameQualificationObservation>,
     color_scheme_observations: Vec<CssColorSchemeQualificationObservation>,
+    counter_increment_observations: Vec<CssCounterIncrementQualificationObservation>,
 }
 
 impl CssValueQualificationRunResult {
@@ -5066,6 +5201,56 @@ impl CssValueQualificationRunResult {
         };
         Some(value.as_str())
     }
+
+    pub(crate) fn counter_increment_observations(
+        &self,
+    ) -> &[CssCounterIncrementQualificationObservation] {
+        &self.counter_increment_observations
+    }
+
+    /// Resolves one qualified `counter-increment` item's tokenizer-owned
+    /// decoded `<counter-name>` identity through its run-local evidence
+    /// reference, mirroring `container_name_custom_ident_value` /
+    /// `color_scheme_custom_ident_value` without copying the payload into a
+    /// second owner. The retained token at the evidence position is always
+    /// a direct `Ident`, since this item grammar has no `<string>` branch.
+    pub(crate) fn counter_increment_name_value(
+        &self,
+        evidence: CssCounterIncrementNameEvidenceRef,
+    ) -> Option<&str> {
+        let item = self
+            .upstream_parser_result
+            .upstream_tokenizer_result()
+            .lexical_items()
+            .get(evidence.lexical_item_index())?;
+        let CssLexicalItem::SemanticToken(token) = item else {
+            return None;
+        };
+        let CssTokenKind::Ident(value) = token.kind() else {
+            return None;
+        };
+        Some(value.as_str())
+    }
+
+    /// Resolves one qualified `counter-increment` item's explicit direct
+    /// `<integer>` evidence to its exact retained tokenizer token kind,
+    /// preserving sign/zero spelling and magnitude without machine-integer
+    /// conversion. The retained token at the evidence position is always a
+    /// direct `Number` with `CssNumberType::Integer`.
+    pub(crate) fn counter_increment_integer_token(
+        &self,
+        evidence: CssCounterIncrementIntegerEvidenceRef,
+    ) -> Option<&CssTokenKind> {
+        let item = self
+            .upstream_parser_result
+            .upstream_tokenizer_result()
+            .lexical_items()
+            .get(evidence.lexical_item_index())?;
+        let CssLexicalItem::SemanticToken(token) = item else {
+            return None;
+        };
+        Some(token.kind())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -5203,6 +5388,7 @@ pub(crate) fn run(
         offset_rotate_observations,
         container_name_observations,
         color_scheme_observations,
+        counter_increment_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
         let mut cursor = LexicalWindowCursor::new(tokenizer_result);
@@ -5286,6 +5472,7 @@ pub(crate) fn run(
         let mut offset_rotate_observations = Vec::new();
         let mut container_name_observations = Vec::new();
         let mut color_scheme_observations = Vec::new();
+        let mut counter_increment_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
             let property_range = cursor.window_for(occurrence.property_name())?;
@@ -6069,6 +6256,19 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("counter-increment") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let lexical_item_start = value_range.start;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                let outcome = qualify_counter_increment_value(value_items, lexical_item_start);
+                counter_increment_observations.push(CssCounterIncrementQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome,
+                });
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("scroll-snap-align") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -6327,6 +6527,7 @@ pub(crate) fn run(
             offset_rotate_observations,
             container_name_observations,
             color_scheme_observations,
+            counter_increment_observations,
         )
     };
 
@@ -6412,6 +6613,7 @@ pub(crate) fn run(
         offset_rotate_observations,
         container_name_observations,
         color_scheme_observations,
+        counter_increment_observations,
     })
 }
 
@@ -12407,6 +12609,313 @@ fn qualify_container_name_value(
         .collect();
 
     CssContainerNameQualificationOutcome::Qualified(CssContainerNameValue::Names(names))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CssCounterIncrementComponentClass {
+    Name(CssCounterIncrementNameEvidenceRef),
+    Integer(CssCounterIncrementIntegerEvidenceRef),
+    EmbeddedWholeValueFunction,
+    ArbitraryFunction,
+    Invalid,
+}
+
+/// Classifies one already-partitioned top-level `counter-increment`
+/// component against the direct-authored profile's two required token
+/// shapes -- a direct `<counter-name>` `Ident` or a direct `Integer`-typed
+/// `Number` -- plus the Function-position boundary from #592 / #418
+/// comment 5593320578.
+///
+/// A component headed by a `Function` token is never a valid name or
+/// integer; it is `EmbeddedWholeValueFunction` when its name is one of the
+/// recognized generic whole-value-only functions (`is_whole_value_function`)
+/// occupying a non-whole-value position -- decisively invalid there, since
+/// whole-value syntax has no independent meaning when embedded inside the
+/// structured list -- or `ArbitraryFunction` for any other Function,
+/// preserving the conservative open envelope for a structurally feasible
+/// optional-integer slot without evaluating it. A component with more than
+/// one non-trivia token that is not Function-headed -- including a stray
+/// top-level `Comma` sharing a component with a neighboring token, since
+/// this grammar is `+`, never `#` comma-list repetition -- is directly
+/// `Invalid`. `none`, `default`, and CSS-wide keywords are reserved out of
+/// `<counter-name>` at this position; unrelated keywords such as
+/// `auto`/`normal`/`and`/`not`/`or` remain ordinary qualified names, since
+/// this property does not import `container-name`'s additional exclusions.
+fn classify_counter_increment_component(
+    item: &[CssLexicalItem],
+    absolute_item_start: usize,
+) -> CssCounterIncrementComponentClass {
+    let mut tokens = item
+        .iter()
+        .enumerate()
+        .filter_map(|(relative_index, entry)| match entry {
+            CssLexicalItem::SemanticToken(token)
+                if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+            {
+                Some((relative_index, token))
+            }
+            _ => None,
+        });
+
+    let Some((relative_index, token)) = tokens.next() else {
+        return CssCounterIncrementComponentClass::Invalid;
+    };
+
+    if matches!(token.kind(), CssTokenKind::Function(_)) {
+        return match entire_function_name(item) {
+            Some(name) if is_whole_value_function(name) => {
+                CssCounterIncrementComponentClass::EmbeddedWholeValueFunction
+            }
+            Some(_) => CssCounterIncrementComponentClass::ArbitraryFunction,
+            None => CssCounterIncrementComponentClass::Invalid,
+        };
+    }
+
+    if tokens.next().is_some() {
+        return CssCounterIncrementComponentClass::Invalid;
+    }
+
+    match token.kind() {
+        CssTokenKind::Ident(identifier)
+            if identifier.eq_ignore_ascii_case("none")
+                || identifier.eq_ignore_ascii_case("default")
+                || is_css_wide_keyword(identifier) =>
+        {
+            CssCounterIncrementComponentClass::Invalid
+        }
+        CssTokenKind::Ident(_) => {
+            CssCounterIncrementComponentClass::Name(CssCounterIncrementNameEvidenceRef {
+                lexical_item_index: absolute_item_start + relative_index,
+            })
+        }
+        CssTokenKind::Number {
+            number_type: CssNumberType::Integer,
+            ..
+        } => CssCounterIncrementComponentClass::Integer(CssCounterIncrementIntegerEvidenceRef {
+            lexical_item_index: absolute_item_start + relative_index,
+        }),
+        _ => CssCounterIncrementComponentClass::Invalid,
+    }
+}
+
+/// Sequentially groups already-classified top-level `counter-increment`
+/// components into ordered `DirectCounterItem`s per the exact algorithm in
+/// #592 / #418 comment 5593320578.
+///
+/// Each item requires a direct `<counter-name>` component; a Function can
+/// never satisfy this required position, so it is directly
+/// `InvalidForSelectedValueGrammar` there, regardless of whether the
+/// Function is otherwise `ArbitraryFunction` or
+/// `EmbeddedWholeValueFunction`. Once a name is recognized, the following
+/// component (if any) is inspected: a direct `Integer` attaches as that
+/// item's explicit authored integer and advances past it; another valid
+/// `<counter-name>` leaves the current item's integer authored-absent and
+/// is re-examined as the next item's required name (no advance); an
+/// `ArbitraryFunction` is a provisional feasible-integer-slot ambiguity --
+/// consumed as belonging to the current item and resolved to
+/// `UnsupportedBySelectedValueProfile(FunctionValuedIntegerSlot)` only if
+/// no later component makes the declaration decisively invalid regardless
+/// of what the Function computes to; any other component (a wrong token
+/// class, or an `EmbeddedWholeValueFunction`) is directly decisive
+/// `InvalidForSelectedValueGrammar`, since whole-value-only function syntax
+/// and non-name/non-integer tokens have no meaning in this position either.
+/// Decisive invalidity anywhere always outranks a provisional Function
+/// ambiguity found earlier.
+fn group_counter_increment_components(
+    components: &[CssCounterIncrementComponentClass],
+) -> CssCounterIncrementQualificationOutcome {
+    let mut items = Vec::new();
+    let mut has_function_ambiguity = false;
+    let mut index = 0;
+
+    while index < components.len() {
+        let name = match components[index] {
+            CssCounterIncrementComponentClass::Name(name) => name,
+            _ => return CssCounterIncrementQualificationOutcome::InvalidForSelectedValueGrammar,
+        };
+        index += 1;
+
+        if index >= components.len() {
+            items.push(CssCounterIncrementItem {
+                name,
+                explicit_integer: None,
+            });
+            break;
+        }
+
+        match components[index] {
+            CssCounterIncrementComponentClass::Integer(integer) => {
+                items.push(CssCounterIncrementItem {
+                    name,
+                    explicit_integer: Some(integer),
+                });
+                index += 1;
+            }
+            CssCounterIncrementComponentClass::Name(_) => {
+                items.push(CssCounterIncrementItem {
+                    name,
+                    explicit_integer: None,
+                });
+                // Do not advance: this component starts the next item.
+            }
+            CssCounterIncrementComponentClass::ArbitraryFunction => {
+                has_function_ambiguity = true;
+                index += 1;
+            }
+            CssCounterIncrementComponentClass::EmbeddedWholeValueFunction
+            | CssCounterIncrementComponentClass::Invalid => {
+                return CssCounterIncrementQualificationOutcome::InvalidForSelectedValueGrammar;
+            }
+        }
+    }
+
+    if has_function_ambiguity {
+        CssCounterIncrementQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssCounterIncrementUnsupportedReason::FunctionValuedIntegerSlot,
+        )
+    } else {
+        CssCounterIncrementQualificationOutcome::Qualified(CssCounterIncrementValue::Items(items))
+    }
+}
+
+/// Qualifies one retained `counter-increment` declaration value against the
+/// narrowed direct-authored profile `none | DirectCounterItem+` (#592 /
+/// #418 comment 5593320578).
+///
+/// Deferred substitution and the whole-value Function boundary are checked
+/// first, exactly as for `container-name`/`color-scheme`. A sole retained
+/// direct `none` Ident, ASCII-case-insensitively, qualifies the dedicated
+/// whole-value branch and never reaches component recognition -- `none` is
+/// never a repeated-item sentinel here. A sole CSS-wide keyword preserves
+/// the existing whole-value Unsupported boundary. Otherwise this single
+/// left-to-right recognition-time pass partitions the value into ordered
+/// top-level components using depth-zero Whitespace/Comment trivia as
+/// separators -- never raw-source whitespace splitting -- classifies each
+/// component the instant its block depth returns to zero (reusing the
+/// `container-name`/`color-scheme` delimiter-free partitioning theorem so a
+/// bare `Comma` never behaves as a permitted separator), and then
+/// sequentially groups the classified components into ordered
+/// `DirectCounterItem`s via `group_counter_increment_components`. An empty
+/// component sequence -- the empty value, or a value that is only trivia --
+/// is `InvalidForSelectedValueGrammar`, since `+` requires at least one
+/// component.
+fn qualify_counter_increment_value(
+    items: &[CssLexicalItem],
+    lexical_item_start: usize,
+) -> CssCounterIncrementQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssCounterIncrementQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssCounterIncrementUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssCounterIncrementQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssCounterIncrementUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    let mut whole_value_tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+    if let (Some(only_token), None) = (whole_value_tokens.next(), whole_value_tokens.next())
+        && let CssTokenKind::Ident(identifier) = only_token.kind()
+    {
+        if identifier.eq_ignore_ascii_case("none") {
+            return CssCounterIncrementQualificationOutcome::Qualified(
+                CssCounterIncrementValue::None,
+            );
+        }
+        if is_css_wide_keyword(identifier) {
+            return CssCounterIncrementQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssCounterIncrementUnsupportedReason::CssWideKeyword,
+            );
+        }
+    }
+
+    let mut component_classes = Vec::new();
+    let mut block_stack: Vec<CssValueBlockCloser> = Vec::new();
+    let mut item_start: Option<usize> = None;
+
+    for (index, item) in items.iter().enumerate() {
+        if block_stack.is_empty() {
+            let is_separator = match item {
+                CssLexicalItem::Comment(_) => true,
+                CssLexicalItem::SemanticToken(token) => {
+                    matches!(token.kind(), CssTokenKind::Whitespace)
+                }
+            };
+            if is_separator {
+                if let Some(start) = item_start.take() {
+                    component_classes.push(classify_counter_increment_component(
+                        &items[start..index],
+                        lexical_item_start + start,
+                    ));
+                }
+                continue;
+            }
+        }
+
+        if item_start.is_none() {
+            item_start = Some(index);
+        }
+
+        if let CssLexicalItem::SemanticToken(token) = item {
+            match token.kind() {
+                CssTokenKind::Function(_) | CssTokenKind::LeftParenthesis => {
+                    block_stack.push(CssValueBlockCloser::Parenthesis);
+                }
+                CssTokenKind::LeftSquareBracket => {
+                    block_stack.push(CssValueBlockCloser::SquareBracket);
+                }
+                CssTokenKind::LeftCurlyBracket => {
+                    block_stack.push(CssValueBlockCloser::CurlyBracket);
+                }
+                CssTokenKind::RightParenthesis
+                    if block_stack.last() == Some(&CssValueBlockCloser::Parenthesis) =>
+                {
+                    block_stack.pop();
+                }
+                CssTokenKind::RightSquareBracket
+                    if block_stack.last() == Some(&CssValueBlockCloser::SquareBracket) =>
+                {
+                    block_stack.pop();
+                }
+                CssTokenKind::RightCurlyBracket
+                    if block_stack.last() == Some(&CssValueBlockCloser::CurlyBracket) =>
+                {
+                    block_stack.pop();
+                }
+                _ => {}
+            }
+        }
+
+        if block_stack.is_empty()
+            && let Some(start) = item_start.take()
+        {
+            component_classes.push(classify_counter_increment_component(
+                &items[start..=index],
+                lexical_item_start + start,
+            ));
+        }
+    }
+    if let Some(start) = item_start {
+        component_classes.push(classify_counter_increment_component(
+            &items[start..],
+            lexical_item_start + start,
+        ));
+    }
+
+    if component_classes.is_empty() {
+        return CssCounterIncrementQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    group_counter_increment_components(&component_classes)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
