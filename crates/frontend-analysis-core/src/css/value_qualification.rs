@@ -4514,6 +4514,158 @@ impl CssCounterIncrementQualificationObservation {
     }
 }
 
+/// Run-local locator for the exact tokenizer item selected during
+/// authoritative `counter-reset` `<counter-name>` recognition, reusing the
+/// `counter-increment` evidence-reference ownership pattern (#594 / #418
+/// comment 5595916114). The index is evidence placement, not the
+/// interpreted identifier itself. For a `Direct` item name it points at the
+/// top-level authored `Ident`; for a `Reversed` item name it points at the
+/// exact tokenizer-owned INNER `Ident` retained inside the grammar-native
+/// `reversed(...)` Function component, never at the Function opener,
+/// parenthesis, or trivia. The decoded `<counter-name>` text is resolved
+/// through `counter_reset_name_value`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssCounterResetNameEvidenceRef {
+    lexical_item_index: usize,
+}
+
+impl CssCounterResetNameEvidenceRef {
+    pub(crate) const fn lexical_item_index(&self) -> usize {
+        self.lexical_item_index
+    }
+}
+
+/// One direct authored `counter-reset` item name: either the ordinary
+/// top-level `<counter-name>` `Direct` branch, or the grammar-native
+/// `reversed(<counter-name>)` Function branch carrying the exact
+/// tokenizer-owned inner `Ident` evidence (#594 / #418 comment
+/// 5595916114). Both variants share the same evidence-ref shape because
+/// each always resolves to a direct retained `Ident` token; only the
+/// selected branch differs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssCounterResetName {
+    Direct(CssCounterResetNameEvidenceRef),
+    Reversed(CssCounterResetNameEvidenceRef),
+}
+
+/// Run-local locator for the exact tokenizer item selected during
+/// authoritative `counter-reset` direct explicit `<integer>` recognition,
+/// reusing the `counter-increment` pattern unchanged. The exact retained
+/// `Number`-token structure (sign/zero spelling, magnitude) remains
+/// tokenizer-owned and is never converted to a machine integer for
+/// qualification, resolved through `counter_reset_integer_token`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssCounterResetIntegerEvidenceRef {
+    lexical_item_index: usize,
+}
+
+impl CssCounterResetIntegerEvidenceRef {
+    pub(crate) const fn lexical_item_index(&self) -> usize {
+        self.lexical_item_index
+    }
+}
+
+/// One authored `counter-reset` repeated item:
+/// `CounterResetItem := CssCounterResetName <integer>?` (#594 / #418
+/// comment 5595916114). Authored omission of the integer is load-bearing
+/// and distinct from an explicit `0` for a `Direct` name, and distinct
+/// from any synthesized reversed-counter starting value for a `Reversed`
+/// name -- this leaf never synthesizes either interpreted default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssCounterResetItem {
+    name: CssCounterResetName,
+    explicit_integer: Option<CssCounterResetIntegerEvidenceRef>,
+}
+
+impl CssCounterResetItem {
+    pub(crate) const fn name(&self) -> CssCounterResetName {
+        self.name
+    }
+
+    pub(crate) const fn explicit_integer(&self) -> Option<CssCounterResetIntegerEvidenceRef> {
+        self.explicit_integer
+    }
+}
+
+/// One authored `counter-reset` value under the narrowed direct-authored
+/// structured-repetition profile `QualifiedDirectCounterReset := none |
+/// CounterResetItem+` (#594 / #418 comment 5595916114): either the
+/// dedicated whole-value `none` sentinel or an ordered, possibly
+/// duplicated, one-or-more list of qualified `CounterResetItem`s. This is
+/// not a complete normative `counter-reset` grammar: it qualifies only
+/// direct-literal `Direct`/`Reversed` items.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CssCounterResetValue {
+    None,
+    Items(Vec<CssCounterResetItem>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssCounterResetUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+    FunctionValuedIntegerSlot,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CssCounterResetQualificationOutcome {
+    Qualified(CssCounterResetValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssCounterResetUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `counter-reset`
+/// qualification against the narrowed direct-authored profile `none |
+/// CounterResetItem+` where `CounterResetItem := CssCounterResetName
+/// <integer>?` and `CssCounterResetName := <counter-name> |
+/// reversed(<counter-name>)` (#594 / #418 comment 5595916114), composing
+/// the accepted `counter-increment` structured-repetition theorem with one
+/// new grammar-native Function branch recognized at the required item-name
+/// position.
+///
+/// Deferred substitution and the whole-value Function boundary are checked
+/// first, exactly as for `counter-increment`, over the entire flat token
+/// stream -- this already covers `reversed(var(--x))` and similar nested
+/// deferred forms without any reversed()-specific handling, since the
+/// existing any-occurrence preflight scans regardless of nesting depth. A
+/// sole retained direct `none` Ident, ASCII-case-insensitively, qualifies
+/// the dedicated whole-value branch and is never a repeated-item sentinel.
+/// Otherwise every top-level, delimiter-free (never comma-separated)
+/// component is classified, then components are walked left-to-right
+/// exactly as `counter-increment` does: each item requires either one
+/// direct `<counter-name>` `Ident` or one direct grammar-native
+/// `reversed(<counter-name>)` Function, optionally followed by one direct
+/// `Integer`-typed `Number` component. A `reversed` Function whose decoded
+/// name matches ASCII-case-insensitively but whose direct inner grammar is
+/// not exactly one valid `<counter-name>` `Ident` is never itself a valid
+/// item name; it is classified the same generic, unevaluated way as any
+/// other unrecognized Function, so it is decisively invalid at a required
+/// name position and a provisional feasible-integer-slot ambiguity at an
+/// optional-integer position, identically to `counter-increment`. This
+/// leaf performs no numeric Function evaluation, no machine-integer
+/// conversion, and no runtime counter semantics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CssCounterResetQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssCounterResetQualificationOutcome,
+}
+
+impl CssCounterResetQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> &CssCounterResetQualificationOutcome {
+        &self.outcome
+    }
+}
+
 /// Run-owned result for the currently selected bounded CSS value capabilities.
 ///
 /// The exact Core-validated parser result is owned once here. Property-specific
@@ -4607,6 +4759,7 @@ pub(crate) struct CssValueQualificationRunResult {
     container_name_observations: Vec<CssContainerNameQualificationObservation>,
     color_scheme_observations: Vec<CssColorSchemeQualificationObservation>,
     counter_increment_observations: Vec<CssCounterIncrementQualificationObservation>,
+    counter_reset_observations: Vec<CssCounterResetQualificationObservation>,
 }
 
 impl CssValueQualificationRunResult {
@@ -5251,6 +5404,56 @@ impl CssValueQualificationRunResult {
         };
         Some(token.kind())
     }
+
+    pub(crate) fn counter_reset_observations(&self) -> &[CssCounterResetQualificationObservation] {
+        &self.counter_reset_observations
+    }
+
+    /// Resolves one qualified `counter-reset` item's tokenizer-owned
+    /// decoded `<counter-name>` identity through its run-local evidence
+    /// reference, mirroring `counter_increment_name_value`. For a
+    /// `Direct` name the evidence points at the top-level authored
+    /// `Ident`; for a `Reversed` name it points at the exact tokenizer-
+    /// owned INNER `Ident` retained inside `reversed(...)`. Both resolve
+    /// through the same retained-token lookup since each evidence ref
+    /// always targets a direct `Ident` token.
+    pub(crate) fn counter_reset_name_value(
+        &self,
+        evidence: CssCounterResetNameEvidenceRef,
+    ) -> Option<&str> {
+        let item = self
+            .upstream_parser_result
+            .upstream_tokenizer_result()
+            .lexical_items()
+            .get(evidence.lexical_item_index())?;
+        let CssLexicalItem::SemanticToken(token) = item else {
+            return None;
+        };
+        let CssTokenKind::Ident(value) = token.kind() else {
+            return None;
+        };
+        Some(value.as_str())
+    }
+
+    /// Resolves one qualified `counter-reset` item's explicit direct
+    /// `<integer>` evidence to its exact retained tokenizer token kind,
+    /// preserving sign/zero spelling and magnitude without machine-integer
+    /// conversion. The retained token at the evidence position is always a
+    /// direct `Number` with `CssNumberType::Integer`.
+    pub(crate) fn counter_reset_integer_token(
+        &self,
+        evidence: CssCounterResetIntegerEvidenceRef,
+    ) -> Option<&CssTokenKind> {
+        let item = self
+            .upstream_parser_result
+            .upstream_tokenizer_result()
+            .lexical_items()
+            .get(evidence.lexical_item_index())?;
+        let CssLexicalItem::SemanticToken(token) = item else {
+            return None;
+        };
+        Some(token.kind())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -5389,6 +5592,7 @@ pub(crate) fn run(
         container_name_observations,
         color_scheme_observations,
         counter_increment_observations,
+        counter_reset_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
         let mut cursor = LexicalWindowCursor::new(tokenizer_result);
@@ -5473,6 +5677,7 @@ pub(crate) fn run(
         let mut container_name_observations = Vec::new();
         let mut color_scheme_observations = Vec::new();
         let mut counter_increment_observations = Vec::new();
+        let mut counter_reset_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
             let property_range = cursor.window_for(occurrence.property_name())?;
@@ -6269,6 +6474,19 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("counter-reset") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let lexical_item_start = value_range.start;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                let outcome = qualify_counter_reset_value(value_items, lexical_item_start);
+                counter_reset_observations.push(CssCounterResetQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome,
+                });
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("scroll-snap-align") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -6528,6 +6746,7 @@ pub(crate) fn run(
             container_name_observations,
             color_scheme_observations,
             counter_increment_observations,
+            counter_reset_observations,
         )
     };
 
@@ -6614,6 +6833,7 @@ pub(crate) fn run(
         container_name_observations,
         color_scheme_observations,
         counter_increment_observations,
+        counter_reset_observations,
     })
 }
 
@@ -12916,6 +13136,433 @@ fn qualify_counter_increment_value(
     }
 
     group_counter_increment_components(&component_classes)
+}
+
+/// Classifies the direct inner grammar of one grammar-native
+/// `reversed(...)` Function component -- `reversed(<counter-name>)` per
+/// #594 / #418 comment 5595916114 -- locating the exact tokenizer-owned
+/// inner `Ident` when, after grammar trivia (`Comment`/`Whitespace`) is
+/// discounted, the content strictly inside the outer Function's own
+/// matching parenthesis -- or, at true stylesheet EOF, everything after
+/// the Function opener when no matching closing parenthesis is ever
+/// retained -- is exactly one `Ident` token satisfying `<counter-name>`
+/// (excluding `none`, `default`, and CSS-wide keywords,
+/// ASCII-case-insensitively). Any nested bracket, extra token, or wrong
+/// token kind inside the parens necessarily changes this count away from
+/// exactly one and is therefore rejected here without being separately
+/// traversed for a nested name. Depth is tracked over the already
+/// depth-zero-partitioned component span passed in by the caller -- never
+/// by re-scanning raw source text or retokenizing.
+fn reversed_inner_name_evidence(
+    item: &[CssLexicalItem],
+    absolute_item_start: usize,
+) -> Option<CssCounterResetNameEvidenceRef> {
+    let mut block_stack = vec![CssValueBlockCloser::Parenthesis];
+    let mut inner_tokens: Vec<(usize, &CssToken)> = Vec::new();
+
+    for (relative_index, entry) in item.iter().enumerate().skip(1) {
+        let CssLexicalItem::SemanticToken(token) = entry else {
+            // Comment trivia inside the function body carries no semantic
+            // content.
+            continue;
+        };
+
+        if matches!(token.kind(), CssTokenKind::Whitespace) {
+            continue;
+        }
+
+        let closes_outer = matches!(token.kind(), CssTokenKind::RightParenthesis)
+            && block_stack.len() == 1
+            && block_stack.last() == Some(&CssValueBlockCloser::Parenthesis);
+
+        match token.kind() {
+            CssTokenKind::Function(_) | CssTokenKind::LeftParenthesis => {
+                block_stack.push(CssValueBlockCloser::Parenthesis);
+            }
+            CssTokenKind::LeftSquareBracket => {
+                block_stack.push(CssValueBlockCloser::SquareBracket);
+            }
+            CssTokenKind::LeftCurlyBracket => {
+                block_stack.push(CssValueBlockCloser::CurlyBracket);
+            }
+            CssTokenKind::RightParenthesis
+                if block_stack.last() == Some(&CssValueBlockCloser::Parenthesis) =>
+            {
+                block_stack.pop();
+            }
+            CssTokenKind::RightSquareBracket
+                if block_stack.last() == Some(&CssValueBlockCloser::SquareBracket) =>
+            {
+                block_stack.pop();
+            }
+            CssTokenKind::RightCurlyBracket
+                if block_stack.last() == Some(&CssValueBlockCloser::CurlyBracket) =>
+            {
+                block_stack.pop();
+            }
+            _ => {}
+        }
+
+        if !closes_outer {
+            inner_tokens.push((relative_index, token));
+        }
+    }
+
+    let mut inner_iter = inner_tokens.into_iter();
+    let (relative_index, token) = inner_iter.next()?;
+    if inner_iter.next().is_some() {
+        return None;
+    }
+
+    let CssTokenKind::Ident(identifier) = token.kind() else {
+        return None;
+    };
+
+    if identifier.eq_ignore_ascii_case("none")
+        || identifier.eq_ignore_ascii_case("default")
+        || is_css_wide_keyword(identifier)
+    {
+        return None;
+    }
+
+    Some(CssCounterResetNameEvidenceRef {
+        lexical_item_index: absolute_item_start + relative_index,
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CssCounterResetComponentClass {
+    Name(CssCounterResetName),
+    Integer(CssCounterResetIntegerEvidenceRef),
+    EmbeddedWholeValueFunction,
+    ArbitraryFunction,
+    Invalid,
+}
+
+/// Classifies one already-partitioned top-level `counter-reset` component
+/// against the direct-authored profile's three required token shapes -- a
+/// direct `<counter-name>` `Ident`, a direct `Integer`-typed `Number`, or a
+/// grammar-native `reversed(<counter-name>)` Function -- plus the
+/// Function-position boundary from `counter-increment` (#592 / #418
+/// comment 5593320578), reused unchanged (#594 / #418 comment
+/// 5595916114).
+///
+/// A component headed by a `Function` token whose decoded name matches
+/// `reversed` ASCII-case-insensitively is inspected by
+/// `reversed_inner_name_evidence`: when its direct inner grammar is
+/// exactly one valid `<counter-name>` `Ident`, the component is a
+/// qualified `Name(Reversed(_))`; otherwise -- including an empty,
+/// multi-token, nested-Function, or reserved-identifier body -- it falls
+/// through to the same generic, unevaluated `ArbitraryFunction` treatment
+/// as any other unrecognized Function, never a decisive Invalid by itself,
+/// since the grouping pass already makes an unrecognized-shape Function
+/// decisively Invalid at a required name position and a provisional
+/// ambiguity at an optional-integer position. A component headed by a
+/// Function whose name is one of the recognized generic whole-value-only
+/// functions (`is_whole_value_function`) is `EmbeddedWholeValueFunction`.
+/// A component with more than one non-trivia token that is not
+/// Function-headed -- including a stray top-level `Comma` sharing a
+/// component with a neighboring token, since this grammar is `+`, never
+/// `#` comma-list repetition -- is directly `Invalid`. `none`, `default`,
+/// and CSS-wide keywords are reserved out of `<counter-name>` at this
+/// position; unrelated keywords such as `auto`/`normal`/`and`/`not`/`or`
+/// remain ordinary qualified names, since this property does not import
+/// `container-name`'s additional exclusions.
+fn classify_counter_reset_component(
+    item: &[CssLexicalItem],
+    absolute_item_start: usize,
+) -> CssCounterResetComponentClass {
+    let mut tokens = item
+        .iter()
+        .enumerate()
+        .filter_map(|(relative_index, entry)| match entry {
+            CssLexicalItem::SemanticToken(token)
+                if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+            {
+                Some((relative_index, token))
+            }
+            _ => None,
+        });
+
+    let Some((relative_index, token)) = tokens.next() else {
+        return CssCounterResetComponentClass::Invalid;
+    };
+
+    if matches!(token.kind(), CssTokenKind::Function(_)) {
+        return match entire_function_name(item) {
+            Some(name) if name.eq_ignore_ascii_case("reversed") => {
+                match reversed_inner_name_evidence(item, absolute_item_start) {
+                    Some(evidence) => {
+                        CssCounterResetComponentClass::Name(CssCounterResetName::Reversed(evidence))
+                    }
+                    None => CssCounterResetComponentClass::ArbitraryFunction,
+                }
+            }
+            Some(name) if is_whole_value_function(name) => {
+                CssCounterResetComponentClass::EmbeddedWholeValueFunction
+            }
+            Some(_) => CssCounterResetComponentClass::ArbitraryFunction,
+            None => CssCounterResetComponentClass::Invalid,
+        };
+    }
+
+    if tokens.next().is_some() {
+        return CssCounterResetComponentClass::Invalid;
+    }
+
+    match token.kind() {
+        CssTokenKind::Ident(identifier)
+            if identifier.eq_ignore_ascii_case("none")
+                || identifier.eq_ignore_ascii_case("default")
+                || is_css_wide_keyword(identifier) =>
+        {
+            CssCounterResetComponentClass::Invalid
+        }
+        CssTokenKind::Ident(_) => CssCounterResetComponentClass::Name(CssCounterResetName::Direct(
+            CssCounterResetNameEvidenceRef {
+                lexical_item_index: absolute_item_start + relative_index,
+            },
+        )),
+        CssTokenKind::Number {
+            number_type: CssNumberType::Integer,
+            ..
+        } => CssCounterResetComponentClass::Integer(CssCounterResetIntegerEvidenceRef {
+            lexical_item_index: absolute_item_start + relative_index,
+        }),
+        _ => CssCounterResetComponentClass::Invalid,
+    }
+}
+
+/// Sequentially groups already-classified top-level `counter-reset`
+/// components into ordered `CounterResetItem`s, reusing the exact
+/// `counter-increment` algorithm unchanged (#592 / #418 comment
+/// 5593320578) over the widened `Name` classification that now also
+/// carries the grammar-native `Reversed` branch (#594 / #418 comment
+/// 5595916114).
+///
+/// Each item requires a direct `<counter-name>` `Ident` or a valid
+/// `reversed(<counter-name>)` Function; any other component -- including
+/// an unrecognized-shape Function, since a Function can never satisfy this
+/// required position regardless of what it might evaluate to -- is
+/// directly `InvalidForSelectedValueGrammar` there. Once a name is
+/// recognized, the following component (if any) is inspected: a direct
+/// `Integer` attaches as that item's explicit authored integer and
+/// advances past it; another valid name (`Direct` or `Reversed`) leaves
+/// the current item's integer authored-absent and is re-examined as the
+/// next item's required name (no advance); an `ArbitraryFunction` is a
+/// provisional feasible-integer-slot ambiguity -- consumed as belonging to
+/// the current item and resolved to
+/// `UnsupportedBySelectedValueProfile(FunctionValuedIntegerSlot)` only if
+/// no later component makes the declaration decisively invalid regardless
+/// of what the Function computes to; any other component (a wrong token
+/// class, or an `EmbeddedWholeValueFunction`) is directly decisive
+/// `InvalidForSelectedValueGrammar`. Decisive invalidity anywhere always
+/// outranks a provisional Function ambiguity found earlier.
+fn group_counter_reset_components(
+    components: &[CssCounterResetComponentClass],
+) -> CssCounterResetQualificationOutcome {
+    let mut items = Vec::new();
+    let mut has_function_ambiguity = false;
+    let mut index = 0;
+
+    while index < components.len() {
+        let name = match components[index] {
+            CssCounterResetComponentClass::Name(name) => name,
+            _ => return CssCounterResetQualificationOutcome::InvalidForSelectedValueGrammar,
+        };
+        index += 1;
+
+        if index >= components.len() {
+            items.push(CssCounterResetItem {
+                name,
+                explicit_integer: None,
+            });
+            break;
+        }
+
+        match components[index] {
+            CssCounterResetComponentClass::Integer(integer) => {
+                items.push(CssCounterResetItem {
+                    name,
+                    explicit_integer: Some(integer),
+                });
+                index += 1;
+            }
+            CssCounterResetComponentClass::Name(_) => {
+                items.push(CssCounterResetItem {
+                    name,
+                    explicit_integer: None,
+                });
+                // Do not advance: this component starts the next item.
+            }
+            CssCounterResetComponentClass::ArbitraryFunction => {
+                has_function_ambiguity = true;
+                index += 1;
+            }
+            CssCounterResetComponentClass::EmbeddedWholeValueFunction
+            | CssCounterResetComponentClass::Invalid => {
+                return CssCounterResetQualificationOutcome::InvalidForSelectedValueGrammar;
+            }
+        }
+    }
+
+    if has_function_ambiguity {
+        CssCounterResetQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssCounterResetUnsupportedReason::FunctionValuedIntegerSlot,
+        )
+    } else {
+        CssCounterResetQualificationOutcome::Qualified(CssCounterResetValue::Items(items))
+    }
+}
+
+/// Qualifies one retained `counter-reset` declaration value against the
+/// narrowed direct-authored profile `none | CounterResetItem+` where
+/// `CounterResetItem := CssCounterResetName <integer>?` and
+/// `CssCounterResetName := <counter-name> | reversed(<counter-name>)`
+/// (#594 / #418 comment 5595916114), composing the accepted
+/// `counter-increment` partitioning/grouping theorem with the new
+/// grammar-native `reversed` Function branch.
+///
+/// Deferred substitution and the whole-value Function boundary are
+/// checked first, exactly as for `counter-increment`, scanning the entire
+/// flat retained token stream regardless of nesting depth -- this already
+/// covers `reversed(var(--x))` and `reversed(var(--x), foo)` without any
+/// reversed()-specific handling, since the existing any-occurrence
+/// preflight does not distinguish top-level from nested Function
+/// occurrences. A sole retained direct `none` Ident, ASCII-case-
+/// insensitively, qualifies the dedicated whole-value branch and never
+/// reaches component recognition -- `none` is never a repeated-item
+/// sentinel here. A sole CSS-wide keyword preserves the existing
+/// whole-value Unsupported boundary. Otherwise this single left-to-right
+/// recognition-time pass partitions the value into ordered top-level
+/// components using depth-zero Whitespace/Comment trivia as separators --
+/// never raw-source whitespace splitting -- classifies each component the
+/// instant its block depth returns to zero (reusing the
+/// `counter-increment` delimiter-free partitioning theorem so a bare
+/// `Comma` never behaves as a permitted separator, and so a true
+/// stylesheet EOF inside an unclosed `reversed(...)` still yields one
+/// terminal component from parser-owned retained structure, never from a
+/// blanket missing-close acceptance), and then sequentially groups the
+/// classified components into ordered `CounterResetItem`s via
+/// `group_counter_reset_components`. An empty component sequence -- the
+/// empty value, or a value that is only trivia -- is
+/// `InvalidForSelectedValueGrammar`, since `+` requires at least one
+/// component.
+fn qualify_counter_reset_value(
+    items: &[CssLexicalItem],
+    lexical_item_start: usize,
+) -> CssCounterResetQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssCounterResetQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssCounterResetUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssCounterResetQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssCounterResetUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    let mut whole_value_tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+    if let (Some(only_token), None) = (whole_value_tokens.next(), whole_value_tokens.next())
+        && let CssTokenKind::Ident(identifier) = only_token.kind()
+    {
+        if identifier.eq_ignore_ascii_case("none") {
+            return CssCounterResetQualificationOutcome::Qualified(CssCounterResetValue::None);
+        }
+        if is_css_wide_keyword(identifier) {
+            return CssCounterResetQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssCounterResetUnsupportedReason::CssWideKeyword,
+            );
+        }
+    }
+
+    let mut component_classes = Vec::new();
+    let mut block_stack: Vec<CssValueBlockCloser> = Vec::new();
+    let mut item_start: Option<usize> = None;
+
+    for (index, item) in items.iter().enumerate() {
+        if block_stack.is_empty() {
+            let is_separator = match item {
+                CssLexicalItem::Comment(_) => true,
+                CssLexicalItem::SemanticToken(token) => {
+                    matches!(token.kind(), CssTokenKind::Whitespace)
+                }
+            };
+            if is_separator {
+                if let Some(start) = item_start.take() {
+                    component_classes.push(classify_counter_reset_component(
+                        &items[start..index],
+                        lexical_item_start + start,
+                    ));
+                }
+                continue;
+            }
+        }
+
+        if item_start.is_none() {
+            item_start = Some(index);
+        }
+
+        if let CssLexicalItem::SemanticToken(token) = item {
+            match token.kind() {
+                CssTokenKind::Function(_) | CssTokenKind::LeftParenthesis => {
+                    block_stack.push(CssValueBlockCloser::Parenthesis);
+                }
+                CssTokenKind::LeftSquareBracket => {
+                    block_stack.push(CssValueBlockCloser::SquareBracket);
+                }
+                CssTokenKind::LeftCurlyBracket => {
+                    block_stack.push(CssValueBlockCloser::CurlyBracket);
+                }
+                CssTokenKind::RightParenthesis
+                    if block_stack.last() == Some(&CssValueBlockCloser::Parenthesis) =>
+                {
+                    block_stack.pop();
+                }
+                CssTokenKind::RightSquareBracket
+                    if block_stack.last() == Some(&CssValueBlockCloser::SquareBracket) =>
+                {
+                    block_stack.pop();
+                }
+                CssTokenKind::RightCurlyBracket
+                    if block_stack.last() == Some(&CssValueBlockCloser::CurlyBracket) =>
+                {
+                    block_stack.pop();
+                }
+                _ => {}
+            }
+        }
+
+        if block_stack.is_empty()
+            && let Some(start) = item_start.take()
+        {
+            component_classes.push(classify_counter_reset_component(
+                &items[start..=index],
+                lexical_item_start + start,
+            ));
+        }
+    }
+    if let Some(start) = item_start {
+        component_classes.push(classify_counter_reset_component(
+            &items[start..],
+            lexical_item_start + start,
+        ));
+    }
+
+    if component_classes.is_empty() {
+        return CssCounterResetQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    group_counter_reset_components(&component_classes)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
