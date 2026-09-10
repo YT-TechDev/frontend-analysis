@@ -405,3 +405,305 @@ fn repeated_and_cross_source_runs_are_semantically_deterministic() {
         .collect();
     assert_eq!(first_outcomes, other_outcomes);
 }
+
+#[test]
+fn direct_values_do_not_collapse_into_each_other() {
+    let result = qualify(
+        86_030,
+        concat!(
+            "a{text-decoration-line:none;}",
+            "b{text-decoration-line:spelling-error;}",
+            "c{text-decoration-line:grammar-error;}",
+            "d{text-decoration-line:underline;}",
+            "e{text-decoration-line:overline;}",
+            "f{text-decoration-line:line-through;}",
+            "g{text-decoration-line:blink;}",
+        ),
+    );
+    let observations = result.text_decoration_line_observations();
+    for i in 0..observations.len() {
+        for j in (i + 1)..observations.len() {
+            assert_ne!(
+                observations[i].outcome(),
+                observations[j].outcome(),
+                "observations {i} and {j} unexpectedly collapsed"
+            );
+        }
+    }
+}
+
+#[test]
+fn all_six_unordered_pairs_qualify_in_both_authored_orders() {
+    use CssTextDecorationLineComponent::{Blink, LineThrough, Overline, Underline};
+    let result = qualify(
+        86_031,
+        concat!(
+            "a{text-decoration-line:underline overline;}",
+            "b{text-decoration-line:overline underline;}",
+            "c{text-decoration-line:underline line-through;}",
+            "d{text-decoration-line:line-through underline;}",
+            "e{text-decoration-line:underline blink;}",
+            "f{text-decoration-line:blink underline;}",
+            "g{text-decoration-line:overline line-through;}",
+            "h{text-decoration-line:line-through overline;}",
+            "i{text-decoration-line:overline blink;}",
+            "j{text-decoration-line:blink overline;}",
+            "k{text-decoration-line:line-through blink;}",
+            "l{text-decoration-line:blink line-through;}",
+        ),
+    );
+    assert_expected(
+        &result,
+        &[
+            ExpectedOutcome::Components(&[Underline, Overline]),
+            ExpectedOutcome::Components(&[Overline, Underline]),
+            ExpectedOutcome::Components(&[Underline, LineThrough]),
+            ExpectedOutcome::Components(&[LineThrough, Underline]),
+            ExpectedOutcome::Components(&[Underline, Blink]),
+            ExpectedOutcome::Components(&[Blink, Underline]),
+            ExpectedOutcome::Components(&[Overline, LineThrough]),
+            ExpectedOutcome::Components(&[LineThrough, Overline]),
+            ExpectedOutcome::Components(&[Overline, Blink]),
+            ExpectedOutcome::Components(&[Blink, Overline]),
+            ExpectedOutcome::Components(&[LineThrough, Blink]),
+            ExpectedOutcome::Components(&[Blink, LineThrough]),
+        ],
+    );
+}
+
+#[test]
+fn three_keyword_subset_qualifies_in_every_authored_permutation() {
+    use CssTextDecorationLineComponent::{Blink, Overline, Underline};
+    let result = qualify(
+        86_032,
+        concat!(
+            "a{text-decoration-line:underline overline blink;}",
+            "b{text-decoration-line:underline blink overline;}",
+            "c{text-decoration-line:overline underline blink;}",
+            "d{text-decoration-line:overline blink underline;}",
+            "e{text-decoration-line:blink underline overline;}",
+            "f{text-decoration-line:blink overline underline;}",
+        ),
+    );
+    assert_expected(
+        &result,
+        &[
+            ExpectedOutcome::Components(&[Underline, Overline, Blink]),
+            ExpectedOutcome::Components(&[Underline, Blink, Overline]),
+            ExpectedOutcome::Components(&[Overline, Underline, Blink]),
+            ExpectedOutcome::Components(&[Overline, Blink, Underline]),
+            ExpectedOutcome::Components(&[Blink, Underline, Overline]),
+            ExpectedOutcome::Components(&[Blink, Overline, Underline]),
+        ],
+    );
+}
+
+#[test]
+fn four_keyword_reverse_permutation_also_qualifies() {
+    use CssTextDecorationLineComponent::{Blink, LineThrough, Overline, Underline};
+    let result = qualify(
+        86_033,
+        "a{text-decoration-line:blink line-through overline underline;}",
+    );
+    assert_expected(
+        &result,
+        &[ExpectedOutcome::Components(&[
+            Blink,
+            LineThrough,
+            Overline,
+            Underline,
+        ])],
+    );
+}
+
+#[test]
+fn additional_duplicate_keyword_combinations_are_invalid() {
+    let result = qualify(
+        86_034,
+        concat!(
+            "a{text-decoration-line:overline overline;}",
+            "b{text-decoration-line:line-through line-through;}",
+            "c{text-decoration-line:overline underline overline;}",
+            "d{text-decoration-line:underline overline line-through blink blink;}",
+        ),
+    );
+    assert_expected(
+        &result,
+        &[
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+        ],
+    );
+}
+
+#[test]
+fn additional_exclusive_singleton_mixing_is_invalid_in_either_order() {
+    let result = qualify(
+        86_035,
+        concat!(
+            "a{text-decoration-line:underline none;}",
+            "b{text-decoration-line:none spelling-error;}",
+            "c{text-decoration-line:overline spelling-error;}",
+            "d{text-decoration-line:grammar-error blink;}",
+            "e{text-decoration-line:blink grammar-error;}",
+            "f{text-decoration-line:grammar-error spelling-error;}",
+        ),
+    );
+    assert_expected(
+        &result,
+        &[
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+        ],
+    );
+}
+
+#[test]
+fn unrecognized_identifiers_are_invalid() {
+    let result = qualify(
+        86_036,
+        concat!(
+            "a{text-decoration-line:normal;}",
+            "b{text-decoration-line:under-line;}",
+            "c{text-decoration-line:over-line;}",
+            "d{text-decoration-line:linethrough;}",
+            "e{text-decoration-line:foo;}",
+        ),
+    );
+    assert_expected(
+        &result,
+        &[
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+        ],
+    );
+}
+
+#[test]
+fn additional_embedded_css_wide_forms_are_invalid() {
+    let result = qualify(
+        86_037,
+        concat!(
+            "a{text-decoration-line:initial overline;}",
+            "b{text-decoration-line:none inherit;}",
+            "c{text-decoration-line:spelling-error revert;}",
+        ),
+    );
+    assert_expected(
+        &result,
+        &[
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+        ],
+    );
+}
+
+#[test]
+fn additional_deferred_substitution_functions_fail_open() {
+    let result = qualify(
+        86_038,
+        concat!(
+            "a{text-decoration-line:env(foo);}",
+            "b{text-decoration-line:attr(data-x);}",
+            "c{text-decoration-line:--custom();}",
+        ),
+    );
+    assert_expected(
+        &result,
+        &[
+            ExpectedOutcome::UnsupportedDeferredFunction,
+            ExpectedOutcome::UnsupportedDeferredFunction,
+            ExpectedOutcome::UnsupportedDeferredFunction,
+        ],
+    );
+}
+
+#[test]
+fn embedded_whole_value_function_is_invalid_regardless_of_position() {
+    let result = qualify(
+        86_039,
+        "a{text-decoration-line:first-valid(underline) overline;}",
+    );
+    assert_expected(&result, &[ExpectedOutcome::Invalid]);
+}
+
+#[test]
+fn additional_embedded_ordinary_functions_are_invalid() {
+    let result = qualify(
+        86_040,
+        concat!(
+            "a{text-decoration-line:foo() overline;}",
+            "b{text-decoration-line:blink calc(1);}",
+            "c{text-decoration-line:spelling-error foo();}",
+        ),
+    );
+    assert_expected(
+        &result,
+        &[
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+        ],
+    );
+}
+
+#[test]
+fn comma_delimited_forms_are_invalid() {
+    let result = qualify(
+        86_041,
+        concat!(
+            "a{text-decoration-line:underline, overline;}",
+            "b{text-decoration-line:underline,;}",
+            "c{text-decoration-line:,overline;}",
+            "d{text-decoration-line:underline overline,;}",
+            "e{text-decoration-line:none, underline;}",
+            "f{text-decoration-line:spelling-error, grammar-error;}",
+        ),
+    );
+    assert_expected(
+        &result,
+        &[
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+            ExpectedOutcome::Invalid,
+        ],
+    );
+}
+
+#[test]
+fn case_insensitive_recognition_covers_remaining_direct_keywords() {
+    use CssTextDecorationLineComponent::{Blink, LineThrough};
+    let result = qualify(
+        86_042,
+        concat!(
+            "a{text-decoration-line:NONE;}",
+            "b{text-decoration-line:BLINK;}",
+            "c{text-decoration-line:Line-Through;}",
+            "d{text-decoration-line:SPELLING-ERROR;}",
+            "e{text-decoration-line:Grammar-Error;}",
+        ),
+    );
+    assert_expected(
+        &result,
+        &[
+            ExpectedOutcome::None,
+            ExpectedOutcome::Components(&[Blink]),
+            ExpectedOutcome::Components(&[LineThrough]),
+            ExpectedOutcome::SpellingError,
+            ExpectedOutcome::GrammarError,
+        ],
+    );
+}
