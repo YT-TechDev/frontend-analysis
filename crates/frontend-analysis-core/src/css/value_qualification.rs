@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520/#522/#524/#526/#528/#530/#532/#534/#536/#538/#541/#546/#549/#551/#553/#555/#559/#561/#596/#598).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520/#522/#524/#526/#528/#530/#532/#534/#536/#538/#541/#546/#549/#551/#553/#555/#559/#561/#596/#598/#600).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -4737,6 +4737,142 @@ impl CssCounterResetQualificationObservation {
 }
 
 /// Run-local locator for the exact tokenizer item selected during
+/// authoritative `counter-set` `<counter-name>` recognition, reusing the
+/// `counter-increment` evidence-reference ownership pattern (#600). The
+/// index is evidence placement, not the interpreted identifier itself; the
+/// decoded `<counter-name>` text remains the tokenizer-owned decoded `Ident`
+/// value at that exact retained position, resolved through
+/// `counter_set_name_value`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssCounterSetNameEvidenceRef {
+    lexical_item_index: usize,
+}
+
+impl CssCounterSetNameEvidenceRef {
+    pub(crate) const fn lexical_item_index(&self) -> usize {
+        self.lexical_item_index
+    }
+}
+
+/// Run-local locator for the exact tokenizer item selected during
+/// authoritative `counter-set` direct explicit `<integer>` recognition. The
+/// index is evidence placement, not a copied numeric value; the exact
+/// retained `Number`-token structure (sign/zero spelling, magnitude) remains
+/// tokenizer-owned and is never converted to a machine integer for
+/// qualification, resolved through `counter_set_integer_token`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssCounterSetIntegerEvidenceRef {
+    lexical_item_index: usize,
+}
+
+impl CssCounterSetIntegerEvidenceRef {
+    pub(crate) const fn lexical_item_index(&self) -> usize {
+        self.lexical_item_index
+    }
+}
+
+/// One direct authored `counter-set` repeated item: `DirectCounterItem :=
+/// DirectCounterNameEvidence DirectIntegerEvidence?` (#600), reusing the
+/// `counter-increment` item shape unchanged. Authored omission of the
+/// integer is load-bearing and distinct from an explicit `0` -- this leaf
+/// never synthesizes the property's interpreted default reset-to-`0` for an
+/// omitted item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssCounterSetItem {
+    name: CssCounterSetNameEvidenceRef,
+    explicit_integer: Option<CssCounterSetIntegerEvidenceRef>,
+}
+
+impl CssCounterSetItem {
+    pub(crate) const fn name(&self) -> CssCounterSetNameEvidenceRef {
+        self.name
+    }
+
+    pub(crate) const fn explicit_integer(&self) -> Option<CssCounterSetIntegerEvidenceRef> {
+        self.explicit_integer
+    }
+}
+
+/// One authored `counter-set` value under the narrowed direct-authored
+/// structured-repetition profile `QualifiedDirectCounterSet := none |
+/// DirectCounterItem+` (#600): either the dedicated whole-value `none`
+/// sentinel or an ordered, possibly duplicated, one-or-more list of
+/// qualified `DirectCounterItem`s. This is not a complete normative
+/// `counter-set` grammar: it qualifies only direct-literal items, and it
+/// deliberately does not carry a `reversed(<counter-name>)` branch --
+/// `counter-set` has no such branch, unlike `counter-reset`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CssCounterSetValue {
+    None,
+    Items(Vec<CssCounterSetItem>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssCounterSetUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+    FunctionValuedIntegerSlot,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CssCounterSetQualificationOutcome {
+    Qualified(CssCounterSetValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssCounterSetUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `counter-set` qualification
+/// against the narrowed direct-authored profile `none | DirectCounterItem+`
+/// where `DirectCounterItem := <counter-name> <integer>?` (#600), composing
+/// the accepted `counter-increment` structured-repetition theorem
+/// (#592/#593) unchanged. `counter-increment`, not `counter-reset`, is the
+/// syntactic/mechanical transfer source, since `counter-set` has no
+/// `reversed(<counter-name>)` branch.
+///
+/// Deferred substitution and the whole-value Function boundary are checked
+/// first, exactly as for `counter-increment`. A sole retained direct `none`
+/// Ident, ASCII-case-insensitively, qualifies the dedicated whole-value
+/// branch and is never a repeated-item sentinel. Otherwise every top-level,
+/// delimiter-free (never comma-separated) component is classified, then
+/// components are walked left-to-right: each item requires one direct
+/// `<counter-name>` `Ident` (not `none`, `default`, or a CSS-wide keyword),
+/// optionally followed by one direct `Integer`-typed `Number` component. An
+/// unresolved Function occupying that optional-integer position is a
+/// provisional feasible-integer-slot ambiguity -- resolved to
+/// `UnsupportedBySelectedValueProfile(FunctionValuedIntegerSlot)` only if no
+/// later component decisively invalidates the declaration regardless of what
+/// the Function computes to. A Function can never satisfy the required name
+/// position; a recognized generic whole-value-only function name (e.g.
+/// `first-valid`) occupying a non-whole-value position is always decisively
+/// `InvalidForSelectedValueGrammar`, never softened to Unsupported -- and so
+/// is a `reversed(...)` Function at any position, since it is a known CSS
+/// Lists grammar-native Function belonging to `counter-reset`'s grammar,
+/// never merely an unresolved Function that might compute to an integer.
+/// This leaf performs no numeric Function evaluation, no machine-integer
+/// conversion, and no runtime counter semantics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CssCounterSetQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssCounterSetQualificationOutcome,
+}
+
+impl CssCounterSetQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> &CssCounterSetQualificationOutcome {
+        &self.outcome
+    }
+}
+
+/// Run-local locator for the exact tokenizer item selected during
 /// authoritative `will-change` `<custom-ident>` recognition, reusing the
 /// `page` / `transition-property` / `hyphenate-character` / `animation-name`
 /// / `anchor-name` / `container-name` / `color-scheme` evidence-reference
@@ -4940,6 +5076,7 @@ pub(crate) struct CssValueQualificationRunResult {
     color_scheme_observations: Vec<CssColorSchemeQualificationObservation>,
     counter_increment_observations: Vec<CssCounterIncrementQualificationObservation>,
     counter_reset_observations: Vec<CssCounterResetQualificationObservation>,
+    counter_set_observations: Vec<CssCounterSetQualificationObservation>,
     image_resolution_observations: Vec<CssImageResolutionQualificationObservation>,
     will_change_observations: Vec<CssWillChangeQualificationObservation>,
 }
@@ -5637,6 +5774,53 @@ impl CssValueQualificationRunResult {
         Some(token.kind())
     }
 
+    pub(crate) fn counter_set_observations(&self) -> &[CssCounterSetQualificationObservation] {
+        &self.counter_set_observations
+    }
+
+    /// Resolves one qualified `counter-set` item's tokenizer-owned decoded
+    /// `<counter-name>` identity through its run-local evidence reference,
+    /// mirroring `counter_increment_name_value`. The retained token at the
+    /// evidence position is always a direct `Ident`, since this item
+    /// grammar has no `<string>` branch.
+    pub(crate) fn counter_set_name_value(
+        &self,
+        evidence: CssCounterSetNameEvidenceRef,
+    ) -> Option<&str> {
+        let item = self
+            .upstream_parser_result
+            .upstream_tokenizer_result()
+            .lexical_items()
+            .get(evidence.lexical_item_index())?;
+        let CssLexicalItem::SemanticToken(token) = item else {
+            return None;
+        };
+        let CssTokenKind::Ident(value) = token.kind() else {
+            return None;
+        };
+        Some(value.as_str())
+    }
+
+    /// Resolves one qualified `counter-set` item's explicit direct
+    /// `<integer>` evidence to its exact retained tokenizer token kind,
+    /// preserving sign/zero spelling and magnitude without machine-integer
+    /// conversion. The retained token at the evidence position is always a
+    /// direct `Number` with `CssNumberType::Integer`.
+    pub(crate) fn counter_set_integer_token(
+        &self,
+        evidence: CssCounterSetIntegerEvidenceRef,
+    ) -> Option<&CssTokenKind> {
+        let item = self
+            .upstream_parser_result
+            .upstream_tokenizer_result()
+            .lexical_items()
+            .get(evidence.lexical_item_index())?;
+        let CssLexicalItem::SemanticToken(token) = item else {
+            return None;
+        };
+        Some(token.kind())
+    }
+
     pub(crate) fn image_resolution_observations(
         &self,
     ) -> &[CssImageResolutionQualificationObservation] {
@@ -5809,6 +5993,7 @@ pub(crate) fn run(
         color_scheme_observations,
         counter_increment_observations,
         counter_reset_observations,
+        counter_set_observations,
         image_resolution_observations,
         will_change_observations,
     ) = {
@@ -5896,6 +6081,7 @@ pub(crate) fn run(
         let mut color_scheme_observations = Vec::new();
         let mut counter_increment_observations = Vec::new();
         let mut counter_reset_observations = Vec::new();
+        let mut counter_set_observations = Vec::new();
         let mut image_resolution_observations = Vec::new();
         let mut will_change_observations = Vec::new();
 
@@ -6707,6 +6893,19 @@ pub(crate) fn run(
                 continue;
             }
 
+            if property_name.eq_ignore_ascii_case("counter-set") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let lexical_item_start = value_range.start;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                let outcome = qualify_counter_set_value(value_items, lexical_item_start);
+                counter_set_observations.push(CssCounterSetQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome,
+                });
+                continue;
+            }
+
             if property_name.eq_ignore_ascii_case("image-resolution") {
                 let value_range = cursor.window_for(occurrence.value())?;
                 let value_items = &tokenizer_result.lexical_items()[value_range];
@@ -6991,6 +7190,7 @@ pub(crate) fn run(
             color_scheme_observations,
             counter_increment_observations,
             counter_reset_observations,
+            counter_set_observations,
             image_resolution_observations,
             will_change_observations,
         )
@@ -7080,6 +7280,7 @@ pub(crate) fn run(
         color_scheme_observations,
         counter_increment_observations,
         counter_reset_observations,
+        counter_set_observations,
         image_resolution_observations,
         will_change_observations,
     })
@@ -13811,6 +14012,335 @@ fn qualify_counter_reset_value(
     }
 
     group_counter_reset_components(&component_classes)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CssCounterSetComponentClass {
+    Name(CssCounterSetNameEvidenceRef),
+    Integer(CssCounterSetIntegerEvidenceRef),
+    EmbeddedWholeValueFunction,
+    ReversedFunction,
+    ArbitraryFunction,
+    Invalid,
+}
+
+/// Classifies one already-partitioned top-level `counter-set` component
+/// against the direct-authored profile's two required token shapes -- a
+/// direct `<counter-name>` `Ident` or a direct `Integer`-typed `Number` --
+/// plus the Function-position boundary transferred unchanged from
+/// `counter-increment` (#592 / #600). Unlike `counter-reset`, no
+/// `reversed(<counter-name>)` grammar branch is recognized here:
+/// `counter-set` has no such branch, and current WPT explicitly rejects
+/// `counter-set: reversed(chapter)`. Per #600's `reversed()` boundary,
+/// `reversed(...)` is nonetheless a *known* CSS Lists grammar-native
+/// Function name -- not an unresolved arbitrary Function whose result
+/// might one day satisfy `<integer>` -- so it is classified into its own
+/// `ReversedFunction` class, decisively invalid at every placement,
+/// distinct from the conservative open-ended `ArbitraryFunction` envelope
+/// used for a genuinely unknown Function such as `calc(...)`.
+///
+/// A component headed by a `Function` token is never a valid name or
+/// integer; it is `ReversedFunction` when its decoded name matches
+/// `reversed` ASCII-case-insensitively (regardless of the Function's inner
+/// content, since no `reversed(<counter-name>)` grammar is recognized here
+/// to validate against), `EmbeddedWholeValueFunction` when its name is one
+/// of the recognized generic whole-value-only functions
+/// (`is_whole_value_function`) occupying a non-whole-value position --
+/// decisively invalid there, since whole-value syntax has no independent
+/// meaning when embedded inside the structured list -- or
+/// `ArbitraryFunction` for any other Function, preserving the conservative
+/// open envelope for a structurally feasible optional-integer slot without
+/// evaluating it. A component with more than one non-trivia token that is
+/// not Function-headed -- including a stray top-level `Comma` sharing a
+/// component with a neighboring token, since this grammar is `+`, never `#`
+/// comma-list repetition -- is directly `Invalid`. `none`, `default`, and
+/// CSS-wide keywords are reserved out of `<counter-name>` at this position;
+/// unrelated keywords such as `auto`/`normal`/`and`/`not`/`or` remain
+/// ordinary qualified names, since this property does not import
+/// `container-name`'s additional exclusions.
+fn classify_counter_set_component(
+    item: &[CssLexicalItem],
+    absolute_item_start: usize,
+) -> CssCounterSetComponentClass {
+    let mut tokens = item
+        .iter()
+        .enumerate()
+        .filter_map(|(relative_index, entry)| match entry {
+            CssLexicalItem::SemanticToken(token)
+                if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+            {
+                Some((relative_index, token))
+            }
+            _ => None,
+        });
+
+    let Some((relative_index, token)) = tokens.next() else {
+        return CssCounterSetComponentClass::Invalid;
+    };
+
+    if matches!(token.kind(), CssTokenKind::Function(_)) {
+        return match entire_function_name(item) {
+            Some(name) if name.eq_ignore_ascii_case("reversed") => {
+                CssCounterSetComponentClass::ReversedFunction
+            }
+            Some(name) if is_whole_value_function(name) => {
+                CssCounterSetComponentClass::EmbeddedWholeValueFunction
+            }
+            Some(_) => CssCounterSetComponentClass::ArbitraryFunction,
+            None => CssCounterSetComponentClass::Invalid,
+        };
+    }
+
+    if tokens.next().is_some() {
+        return CssCounterSetComponentClass::Invalid;
+    }
+
+    match token.kind() {
+        CssTokenKind::Ident(identifier)
+            if identifier.eq_ignore_ascii_case("none")
+                || identifier.eq_ignore_ascii_case("default")
+                || is_css_wide_keyword(identifier) =>
+        {
+            CssCounterSetComponentClass::Invalid
+        }
+        CssTokenKind::Ident(_) => CssCounterSetComponentClass::Name(CssCounterSetNameEvidenceRef {
+            lexical_item_index: absolute_item_start + relative_index,
+        }),
+        CssTokenKind::Number {
+            number_type: CssNumberType::Integer,
+            ..
+        } => CssCounterSetComponentClass::Integer(CssCounterSetIntegerEvidenceRef {
+            lexical_item_index: absolute_item_start + relative_index,
+        }),
+        _ => CssCounterSetComponentClass::Invalid,
+    }
+}
+
+/// Sequentially groups already-classified top-level `counter-set`
+/// components into ordered `DirectCounterItem`s, reusing the exact
+/// `counter-increment` algorithm unchanged (#592 / #600) over the widened
+/// classification that separates `ReversedFunction` from the generic
+/// `ArbitraryFunction` envelope.
+///
+/// Each item requires a direct `<counter-name>` component; a Function can
+/// never satisfy this required position, so it is directly
+/// `InvalidForSelectedValueGrammar` there, regardless of whether the
+/// Function is otherwise `ArbitraryFunction`, `EmbeddedWholeValueFunction`,
+/// or `ReversedFunction`. Once a name is recognized, the following
+/// component (if any) is inspected: a direct `Integer` attaches as that
+/// item's explicit authored integer and advances past it; another valid
+/// `<counter-name>` leaves the current item's integer authored-absent and
+/// is re-examined as the next item's required name (no advance); an
+/// `ArbitraryFunction` is a provisional feasible-integer-slot ambiguity --
+/// consumed as belonging to the current item and resolved to
+/// `UnsupportedBySelectedValueProfile(FunctionValuedIntegerSlot)` only if
+/// no later component makes the declaration decisively invalid regardless
+/// of what the Function computes to; any other component (a wrong token
+/// class, an `EmbeddedWholeValueFunction`, or a `ReversedFunction`) is
+/// directly decisive `InvalidForSelectedValueGrammar` -- unlike an
+/// unresolved `ArbitraryFunction`, `reversed(...)` is a known CSS Lists
+/// grammar-native Function with no meaning anywhere in `counter-set`'s
+/// grammar, so it is never given the conservative open-ended integer-slot
+/// treatment, even when it occupies a structurally feasible optional
+/// position. Decisive invalidity anywhere always outranks a provisional
+/// Function ambiguity found earlier.
+fn group_counter_set_components(
+    components: &[CssCounterSetComponentClass],
+) -> CssCounterSetQualificationOutcome {
+    let mut items = Vec::new();
+    let mut has_function_ambiguity = false;
+    let mut index = 0;
+
+    while index < components.len() {
+        let name = match components[index] {
+            CssCounterSetComponentClass::Name(name) => name,
+            _ => return CssCounterSetQualificationOutcome::InvalidForSelectedValueGrammar,
+        };
+        index += 1;
+
+        if index >= components.len() {
+            items.push(CssCounterSetItem {
+                name,
+                explicit_integer: None,
+            });
+            break;
+        }
+
+        match components[index] {
+            CssCounterSetComponentClass::Integer(integer) => {
+                items.push(CssCounterSetItem {
+                    name,
+                    explicit_integer: Some(integer),
+                });
+                index += 1;
+            }
+            CssCounterSetComponentClass::Name(_) => {
+                items.push(CssCounterSetItem {
+                    name,
+                    explicit_integer: None,
+                });
+                // Do not advance: this component starts the next item.
+            }
+            CssCounterSetComponentClass::ArbitraryFunction => {
+                has_function_ambiguity = true;
+                index += 1;
+            }
+            CssCounterSetComponentClass::ReversedFunction
+            | CssCounterSetComponentClass::EmbeddedWholeValueFunction
+            | CssCounterSetComponentClass::Invalid => {
+                return CssCounterSetQualificationOutcome::InvalidForSelectedValueGrammar;
+            }
+        }
+    }
+
+    if has_function_ambiguity {
+        CssCounterSetQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssCounterSetUnsupportedReason::FunctionValuedIntegerSlot,
+        )
+    } else {
+        CssCounterSetQualificationOutcome::Qualified(CssCounterSetValue::Items(items))
+    }
+}
+
+/// Qualifies one retained `counter-set` declaration value against the
+/// narrowed direct-authored profile `none | DirectCounterItem+` (#600),
+/// transferring the `counter-increment` partitioning/grouping theorem
+/// (#592 / #593) unchanged. `counter-increment`, not `counter-reset`, is
+/// the syntactic/mechanical transfer source, since `counter-set` has no
+/// `reversed(<counter-name>)` branch.
+///
+/// Deferred substitution and the whole-value Function boundary are checked
+/// first, exactly as for `counter-increment`. A sole retained direct `none`
+/// Ident, ASCII-case-insensitively, qualifies the dedicated whole-value
+/// branch and never reaches component recognition -- `none` is never a
+/// repeated-item sentinel here. A sole CSS-wide keyword preserves the
+/// existing whole-value Unsupported boundary. Otherwise this single
+/// left-to-right recognition-time pass partitions the value into ordered
+/// top-level components using depth-zero Whitespace/Comment trivia as
+/// separators -- never raw-source whitespace splitting -- classifies each
+/// component the instant its block depth returns to zero (reusing the
+/// `counter-increment` delimiter-free partitioning theorem so a bare
+/// `Comma` never behaves as a permitted separator), and then sequentially
+/// groups the classified components into ordered `DirectCounterItem`s via
+/// `group_counter_set_components`. An empty component sequence -- the empty
+/// value, or a value that is only trivia -- is
+/// `InvalidForSelectedValueGrammar`, since `+` requires at least one
+/// component.
+fn qualify_counter_set_value(
+    items: &[CssLexicalItem],
+    lexical_item_start: usize,
+) -> CssCounterSetQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssCounterSetQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssCounterSetUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssCounterSetQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssCounterSetUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    let mut whole_value_tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+    if let (Some(only_token), None) = (whole_value_tokens.next(), whole_value_tokens.next())
+        && let CssTokenKind::Ident(identifier) = only_token.kind()
+    {
+        if identifier.eq_ignore_ascii_case("none") {
+            return CssCounterSetQualificationOutcome::Qualified(CssCounterSetValue::None);
+        }
+        if is_css_wide_keyword(identifier) {
+            return CssCounterSetQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssCounterSetUnsupportedReason::CssWideKeyword,
+            );
+        }
+    }
+
+    let mut component_classes = Vec::new();
+    let mut block_stack: Vec<CssValueBlockCloser> = Vec::new();
+    let mut item_start: Option<usize> = None;
+
+    for (index, item) in items.iter().enumerate() {
+        if block_stack.is_empty() {
+            let is_separator = match item {
+                CssLexicalItem::Comment(_) => true,
+                CssLexicalItem::SemanticToken(token) => {
+                    matches!(token.kind(), CssTokenKind::Whitespace)
+                }
+            };
+            if is_separator {
+                if let Some(start) = item_start.take() {
+                    component_classes.push(classify_counter_set_component(
+                        &items[start..index],
+                        lexical_item_start + start,
+                    ));
+                }
+                continue;
+            }
+        }
+
+        if item_start.is_none() {
+            item_start = Some(index);
+        }
+
+        if let CssLexicalItem::SemanticToken(token) = item {
+            match token.kind() {
+                CssTokenKind::Function(_) | CssTokenKind::LeftParenthesis => {
+                    block_stack.push(CssValueBlockCloser::Parenthesis);
+                }
+                CssTokenKind::LeftSquareBracket => {
+                    block_stack.push(CssValueBlockCloser::SquareBracket);
+                }
+                CssTokenKind::LeftCurlyBracket => {
+                    block_stack.push(CssValueBlockCloser::CurlyBracket);
+                }
+                CssTokenKind::RightParenthesis
+                    if block_stack.last() == Some(&CssValueBlockCloser::Parenthesis) =>
+                {
+                    block_stack.pop();
+                }
+                CssTokenKind::RightSquareBracket
+                    if block_stack.last() == Some(&CssValueBlockCloser::SquareBracket) =>
+                {
+                    block_stack.pop();
+                }
+                CssTokenKind::RightCurlyBracket
+                    if block_stack.last() == Some(&CssValueBlockCloser::CurlyBracket) =>
+                {
+                    block_stack.pop();
+                }
+                _ => {}
+            }
+        }
+
+        if block_stack.is_empty()
+            && let Some(start) = item_start.take()
+        {
+            component_classes.push(classify_counter_set_component(
+                &items[start..=index],
+                lexical_item_start + start,
+            ));
+        }
+    }
+    if let Some(start) = item_start {
+        component_classes.push(classify_counter_set_component(
+            &items[start..],
+            lexical_item_start + start,
+        ));
+    }
+
+    if component_classes.is_empty() {
+        return CssCounterSetQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    group_counter_set_components(&component_classes)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

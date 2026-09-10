@@ -73,6 +73,8 @@ mod counter_increment_value_qualification_tests;
 #[cfg(test)]
 mod counter_reset_value_qualification_tests;
 #[cfg(test)]
+mod counter_set_value_qualification_tests;
+#[cfg(test)]
 mod descriptor_conformance_tests;
 #[cfg(test)]
 mod descriptor_lifecycle_validation_tests;
