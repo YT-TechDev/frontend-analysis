@@ -5585,6 +5585,63 @@ impl CssTransformBoxQualificationObservation {
     }
 }
 
+/// One direct authored `transform-style` keyword identity (#612), tokenizer-
+/// decoded ASCII-case-insensitively. This proves only authored grammar
+/// membership and exact authored keyword identity -- never the downstream
+/// used value, which CSS Transforms 2 defines as forced to `flat` whenever a
+/// grouping property is present regardless of the authored keyword. That
+/// grouping-property-forced used-value mapping is never imported here, and
+/// this leaf never rewrites `Preserve3d` into `Flat` or vice versa.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTransformStyleValue {
+    Flat,
+    Preserve3d,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTransformStyleUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTransformStyleQualificationOutcome {
+    Qualified(CssTransformStyleValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssTransformStyleUnsupportedReason),
+}
+
+/// One selected ordinary declaration's `transform-style` value qualification.
+///
+/// As with the other selected leaves, placement and `occurrence_index` remain
+/// run-local references into the exact parser result structurally owned by
+/// the enclosing [`CssValueQualificationRunResult`]. This qualifies only the
+/// pin-bounded exact two-keyword authored grammar; it proves no grouping-
+/// property evaluation, 3D rendering context, flattening, or other
+/// downstream used-value semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTransformStyleQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssTransformStyleQualificationOutcome,
+}
+
+impl CssTransformStyleQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssTransformStyleQualificationOutcome {
+        self.outcome
+    }
+}
+
 /// Run-owned result for the currently selected bounded CSS value capabilities.
 ///
 /// The exact Core-validated parser result is owned once here. Property-specific
@@ -5687,6 +5744,7 @@ pub(crate) struct CssValueQualificationRunResult {
     translate_observations: Vec<CssTranslateQualificationObservation>,
     transform_origin_observations: Vec<CssTransformOriginQualificationObservation>,
     transform_box_observations: Vec<CssTransformBoxQualificationObservation>,
+    transform_style_observations: Vec<CssTransformStyleQualificationObservation>,
 }
 
 impl CssValueQualificationRunResult {
@@ -6571,6 +6629,12 @@ impl CssValueQualificationRunResult {
     pub(crate) fn transform_box_observations(&self) -> &[CssTransformBoxQualificationObservation] {
         &self.transform_box_observations
     }
+
+    pub(crate) fn transform_style_observations(
+        &self,
+    ) -> &[CssTransformStyleQualificationObservation] {
+        &self.transform_style_observations
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -6718,6 +6782,7 @@ pub(crate) fn run(
         translate_observations,
         transform_origin_observations,
         transform_box_observations,
+        transform_style_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
         let mut cursor = LexicalWindowCursor::new(tokenizer_result);
@@ -6811,6 +6876,7 @@ pub(crate) fn run(
         let mut translate_observations = Vec::new();
         let mut transform_origin_observations = Vec::new();
         let mut transform_box_observations = Vec::new();
+        let mut transform_style_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
             let property_range = cursor.window_for(occurrence.property_name())?;
@@ -7894,6 +7960,17 @@ pub(crate) fn run(
                     placement: occurrence.placement(),
                     outcome: qualify_transform_box_value(value_items),
                 });
+                continue;
+            }
+
+            if property_name.eq_ignore_ascii_case("transform-style") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                transform_style_observations.push(CssTransformStyleQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_transform_style_value(value_items),
+                });
             }
         }
 
@@ -7988,6 +8065,7 @@ pub(crate) fn run(
             translate_observations,
             transform_origin_observations,
             transform_box_observations,
+            transform_style_observations,
         )
     };
 
@@ -8083,6 +8161,7 @@ pub(crate) fn run(
         translate_observations,
         transform_origin_observations,
         transform_box_observations,
+        transform_style_observations,
     })
 }
 
@@ -17398,6 +17477,69 @@ fn qualify_transform_box_value(items: &[CssLexicalItem]) -> CssTransformBoxQuali
             )
         }
         _ => CssTransformBoxQualificationOutcome::InvalidForSelectedValueGrammar,
+    }
+}
+
+/// Qualifies one retained `transform-style` declaration value against the
+/// pin-bounded exact two-keyword authored grammar (#612): `flat |
+/// preserve-3d`. This proves only authored grammar membership and authored
+/// keyword identity -- never the context-forced used value CSS Transforms 2
+/// defines for grouping properties (CSSWG #14054 remains unresolved and is
+/// not answered here). The historical `auto` keyword and the proposed
+/// `detached` keyword (CSSWG #4242) are both outside the pinned grammar and
+/// remain decisively `InvalidForSelectedValueGrammar`, exactly as any other
+/// multi-component or comma-delimited value is for the other accepted
+/// single-keyword leaves.
+fn qualify_transform_style_value(
+    items: &[CssLexicalItem],
+) -> CssTransformStyleQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssTransformStyleQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssTransformStyleUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssTransformStyleQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssTransformStyleUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    if entire_function_name(items).is_some() {
+        return CssTransformStyleQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssTransformStyleUnsupportedReason::FunctionValue,
+        );
+    }
+
+    let mut tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+
+    let Some(token) = tokens.next() else {
+        return CssTransformStyleQualificationOutcome::InvalidForSelectedValueGrammar;
+    };
+    if tokens.next().is_some() {
+        return CssTransformStyleQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    match token.kind() {
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("flat") => {
+            CssTransformStyleQualificationOutcome::Qualified(CssTransformStyleValue::Flat)
+        }
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("preserve-3d") => {
+            CssTransformStyleQualificationOutcome::Qualified(CssTransformStyleValue::Preserve3d)
+        }
+        CssTokenKind::Ident(identifier) if is_css_wide_keyword(identifier) => {
+            CssTransformStyleQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssTransformStyleUnsupportedReason::CssWideKeyword,
+            )
+        }
+        _ => CssTransformStyleQualificationOutcome::InvalidForSelectedValueGrammar,
     }
 }
 
