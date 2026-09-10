@@ -45,7 +45,7 @@ Do not include active vulnerability details in a public Pull Request.
 ## Validation
 
 Follow [Validation and Completion
-Evidence](../docs/development/VALIDATION.md).
+Evidence](../blob/main/docs/development/VALIDATION.md).
 
 ### Validation target
 
@@ -111,5 +111,5 @@ conversation exports, or model marketing.
       private AI links are included.
 - [ ] Known limitations and unresolved risks are recorded.
 
-Review the [Contributing](CONTRIBUTING.md) workflow and
-[Maintainership and Decision Authority](../docs/governance/MAINTAINERSHIP.md).
+Review the [Contributing](../blob/main/.github/CONTRIBUTING.md) workflow and
+[Maintainership and Decision Authority](../blob/main/docs/governance/MAINTAINERSHIP.md).
