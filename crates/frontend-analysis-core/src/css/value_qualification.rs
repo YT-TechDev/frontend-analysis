@@ -113,6 +113,55 @@ impl CssBoxSizingQualificationObservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssListStylePositionValue {
+    Inside,
+    Outside,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssListStylePositionUnsupportedReason {
+    CssWideKeyword,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssListStylePositionQualificationOutcome {
+    Qualified(CssListStylePositionValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssListStylePositionUnsupportedReason),
+}
+
+/// One selected ordinary declaration's `list-style-position` value
+/// qualification.
+///
+/// As with direction/box-sizing observations, placement and
+/// `occurrence_index` remain run-local references into the exact parser
+/// result structurally owned by the enclosing
+/// [`CssValueQualificationRunResult`]. This authored keyword identity is
+/// distinct from list-item applicability, `::marker` generation, marker
+/// attachment/geometry, and any other downstream layout semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssListStylePositionQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssListStylePositionQualificationOutcome,
+}
+
+impl CssListStylePositionQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssListStylePositionQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssIsolationValue {
     Auto,
     Isolate,
@@ -5983,6 +6032,7 @@ pub(crate) struct CssValueQualificationRunResult {
     text_indent_observations: Vec<CssTextIndentQualificationObservation>,
     letter_spacing_observations: Vec<CssLetterSpacingQualificationObservation>,
     text_underline_position_observations: Vec<CssTextUnderlinePositionQualificationObservation>,
+    list_style_position_observations: Vec<CssListStylePositionQualificationObservation>,
 }
 
 impl CssValueQualificationRunResult {
@@ -6890,6 +6940,12 @@ impl CssValueQualificationRunResult {
         &self.text_underline_position_observations
     }
 
+    pub(crate) fn list_style_position_observations(
+        &self,
+    ) -> &[CssListStylePositionQualificationObservation] {
+        &self.list_style_position_observations
+    }
+
     /// Resolves one qualified `text-indent` `Length`/`Percentage`
     /// component's run-local evidence reference to its exact retained
     /// tokenizer token kind, preserving sign/zero spelling, magnitude,
@@ -7062,6 +7118,7 @@ pub(crate) fn run(
         text_indent_observations,
         letter_spacing_observations,
         text_underline_position_observations,
+        list_style_position_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
         let mut cursor = LexicalWindowCursor::new(tokenizer_result);
@@ -7159,6 +7216,7 @@ pub(crate) fn run(
         let mut text_indent_observations = Vec::new();
         let mut letter_spacing_observations = Vec::new();
         let mut text_underline_position_observations = Vec::new();
+        let mut list_style_position_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
             let property_range = cursor.window_for(occurrence.property_name())?;
@@ -8290,6 +8348,19 @@ pub(crate) fn run(
                         outcome: qualify_text_underline_position_value(value_items),
                     },
                 );
+                continue;
+            }
+
+            if property_name.eq_ignore_ascii_case("list-style-position") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                list_style_position_observations.push(
+                    CssListStylePositionQualificationObservation {
+                        occurrence_index,
+                        placement: occurrence.placement(),
+                        outcome: qualify_list_style_position_value(value_items),
+                    },
+                );
             }
         }
 
@@ -8388,6 +8459,7 @@ pub(crate) fn run(
             text_indent_observations,
             letter_spacing_observations,
             text_underline_position_observations,
+            list_style_position_observations,
         )
     };
 
@@ -8487,6 +8559,7 @@ pub(crate) fn run(
         text_indent_observations,
         letter_spacing_observations,
         text_underline_position_observations,
+        list_style_position_observations,
     })
 }
 
@@ -8613,6 +8686,39 @@ fn qualify_box_sizing_value(items: &[CssLexicalItem]) -> CssBoxSizingQualificati
         }
         CssSingleKeywordValue::Identifier(_) => {
             CssBoxSizingQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+    }
+}
+
+fn qualify_list_style_position_value(
+    items: &[CssLexicalItem],
+) -> CssListStylePositionQualificationOutcome {
+    match classify_single_keyword_value(items) {
+        CssSingleKeywordValue::UnsupportedFunction => {
+            CssListStylePositionQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssListStylePositionUnsupportedReason::FunctionValue,
+            )
+        }
+        CssSingleKeywordValue::Invalid => {
+            CssListStylePositionQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("inside") =>
+        {
+            CssListStylePositionQualificationOutcome::Qualified(CssListStylePositionValue::Inside)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("outside") =>
+        {
+            CssListStylePositionQualificationOutcome::Qualified(CssListStylePositionValue::Outside)
+        }
+        CssSingleKeywordValue::Identifier(identifier) if is_css_wide_keyword(identifier) => {
+            CssListStylePositionQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssListStylePositionUnsupportedReason::CssWideKeyword,
+            )
+        }
+        CssSingleKeywordValue::Identifier(_) => {
+            CssListStylePositionQualificationOutcome::InvalidForSelectedValueGrammar
         }
     }
 }
