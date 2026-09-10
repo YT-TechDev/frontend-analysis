@@ -133,6 +133,8 @@ mod line_break_value_qualification_tests;
 #[cfg(test)]
 mod line_height_value_qualification_tests;
 #[cfg(test)]
+mod list_style_position_value_qualification_tests;
+#[cfg(test)]
 mod mask_type_value_qualification_tests;
 #[cfg(test)]
 mod math_shift_value_qualification_tests;
