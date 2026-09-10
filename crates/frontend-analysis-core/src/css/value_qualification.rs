@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520/#522/#524/#526/#528/#530/#532/#534/#536/#538/#541/#546/#549/#551/#553/#555/#559/#561/#596/#598/#600).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520/#522/#524/#526/#528/#530/#532/#534/#536/#538/#541/#546/#549/#551/#553/#555/#559/#561/#596/#598/#600/#602).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -4982,6 +4982,134 @@ impl CssWillChangeQualificationObservation {
     }
 }
 
+/// Run-local locator for the exact tokenizer item selected during
+/// authoritative `scale` direct component recognition (#602). The index is
+/// evidence placement, not a copied numeric value; the exact retained
+/// `Number`/`Percentage` token structure (sign/zero spelling, magnitude,
+/// decimal/exponent shape) remains tokenizer-owned and is never converted
+/// to a machine number for qualification, resolved through
+/// `scale_component_token`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssScaleComponentEvidenceRef {
+    lexical_item_index: usize,
+}
+
+impl CssScaleComponentEvidenceRef {
+    pub(crate) const fn lexical_item_index(&self) -> usize {
+        self.lexical_item_index
+    }
+}
+
+/// One direct authored `scale` component's tokenizer-owned kind (#602). A
+/// direct `<number>` and a direct `<percentage>` remain distinct authored
+/// branches even though CSS Transforms interprets them as equivalent scale
+/// factors downstream; this leaf never normalizes a Percentage token into
+/// an interpreted fraction or into a Number token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssScaleComponentKind {
+    Number,
+    Percentage,
+}
+
+/// One direct authored `scale` component: `ScaleComponent := DirectNumber |
+/// DirectPercentage` (#602), preserving authored kind and exact
+/// tokenizer-owned evidence without any interpreted scale-factor
+/// conversion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssScaleComponent {
+    kind: CssScaleComponentKind,
+    evidence_ref: CssScaleComponentEvidenceRef,
+}
+
+impl CssScaleComponent {
+    pub(crate) const fn kind(&self) -> CssScaleComponentKind {
+        self.kind
+    }
+
+    pub(crate) const fn evidence_ref(&self) -> CssScaleComponentEvidenceRef {
+        self.evidence_ref
+    }
+}
+
+/// One authored `scale` value under the narrowed direct-authored profile
+/// `QualifiedDirectScale := None | Components(ScaleComponent{1,3})` (#602):
+/// either the dedicated whole-value `none` sentinel or an ordered,
+/// authored-cardinality-preserving list of one to three qualified direct
+/// components. Authored omission of a trailing Y or Z component is never
+/// synthesized here -- `scale: 2`, `scale: 2 2`, and `scale: 2 2 1` remain
+/// three structurally distinct component vectors, never a materialized
+/// three-axis object.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CssScaleValue {
+    None,
+    Components(Vec<CssScaleComponent>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssScaleUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CssScaleQualificationOutcome {
+    Qualified(CssScaleValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssScaleUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `scale` qualification
+/// against the pin-bounded direct-authored profile `none | [ <number> |
+/// <percentage> ]{1,3}` (#602 / css-transforms-2 `scale`), reusing the
+/// accepted `border-spacing`/`aspect-ratio` block-depth-aware top-level
+/// component partition and residual-Function-profile theorem together with
+/// the accepted `opacity` direct Number-vs-Percentage evidence distinction.
+///
+/// Deferred substitution and the whole-value Function boundary are checked
+/// first, exactly as for the other selected leaves. A sole retained direct
+/// `none` Ident, ASCII-case-insensitively, qualifies the dedicated
+/// whole-value branch and never reaches component partitioning; `none` is
+/// never a numeric component or an omission sentinel, so it is decisively
+/// invalid combined with any other component. A sole CSS-wide keyword
+/// preserves the existing whole-value Unsupported boundary. Otherwise the
+/// value is partitioned into one to three ordered top-level components
+/// using depth-zero Whitespace/Comment trivia as separators -- never a
+/// `Comma`, since this grammar is whitespace-separated repetition, not a
+/// comma list. Each component qualifies only when it is exactly one direct
+/// `Number` or `Percentage` token; a Function-headed component is
+/// classified by placement and identity only -- a recognized generic
+/// whole-value-only Function embedded in a component position is
+/// decisively invalid, while any other Function is a provisional residual
+/// ambiguity resolved to `UnsupportedBySelectedValueProfile(FunctionValue)`
+/// only if no other component decisively invalidates the declaration
+/// regardless of what the Function computes to. More than three components
+/// or zero components is decisive `InvalidForSelectedValueGrammar`
+/// regardless of Function content. This leaf performs no CSS math
+/// evaluation, no machine-number conversion, and no downstream transform
+/// semantics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CssScaleQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssScaleQualificationOutcome,
+}
+
+impl CssScaleQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> &CssScaleQualificationOutcome {
+        &self.outcome
+    }
+}
+
 /// Run-owned result for the currently selected bounded CSS value capabilities.
 ///
 /// The exact Core-validated parser result is owned once here. Property-specific
@@ -5079,6 +5207,7 @@ pub(crate) struct CssValueQualificationRunResult {
     counter_set_observations: Vec<CssCounterSetQualificationObservation>,
     image_resolution_observations: Vec<CssImageResolutionQualificationObservation>,
     will_change_observations: Vec<CssWillChangeQualificationObservation>,
+    scale_observations: Vec<CssScaleQualificationObservation>,
 }
 
 impl CssValueQualificationRunResult {
@@ -5854,6 +5983,31 @@ impl CssValueQualificationRunResult {
         };
         Some(value.as_str())
     }
+
+    pub(crate) fn scale_observations(&self) -> &[CssScaleQualificationObservation] {
+        &self.scale_observations
+    }
+
+    /// Resolves one qualified `scale` component's run-local evidence
+    /// reference to its exact retained tokenizer token kind, preserving
+    /// sign/zero spelling, magnitude, and decimal/exponent shape without
+    /// machine-number conversion. The retained token at the evidence
+    /// position is always a direct `Number` or `Percentage`, matching the
+    /// component's `CssScaleComponentKind`.
+    pub(crate) fn scale_component_token(
+        &self,
+        evidence: CssScaleComponentEvidenceRef,
+    ) -> Option<&CssTokenKind> {
+        let item = self
+            .upstream_parser_result
+            .upstream_tokenizer_result()
+            .lexical_items()
+            .get(evidence.lexical_item_index())?;
+        let CssLexicalItem::SemanticToken(token) = item else {
+            return None;
+        };
+        Some(token.kind())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -5996,6 +6150,7 @@ pub(crate) fn run(
         counter_set_observations,
         image_resolution_observations,
         will_change_observations,
+        scale_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
         let mut cursor = LexicalWindowCursor::new(tokenizer_result);
@@ -6084,6 +6239,7 @@ pub(crate) fn run(
         let mut counter_set_observations = Vec::new();
         let mut image_resolution_observations = Vec::new();
         let mut will_change_observations = Vec::new();
+        let mut scale_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
             let property_range = cursor.window_for(occurrence.property_name())?;
@@ -7104,6 +7260,19 @@ pub(crate) fn run(
                         outcome: qualify_font_variant_position_value(value_items),
                     },
                 );
+                continue;
+            }
+
+            if property_name.eq_ignore_ascii_case("scale") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let lexical_item_start = value_range.start;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                let outcome = qualify_scale_value(value_items, lexical_item_start);
+                scale_observations.push(CssScaleQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome,
+                });
             }
         }
 
@@ -7193,6 +7362,7 @@ pub(crate) fn run(
             counter_set_observations,
             image_resolution_observations,
             will_change_observations,
+            scale_observations,
         )
     };
 
@@ -7283,6 +7453,7 @@ pub(crate) fn run(
         counter_set_observations,
         image_resolution_observations,
         will_change_observations,
+        scale_observations,
     })
 }
 
@@ -15147,6 +15318,250 @@ fn qualify_will_change_value(
         .collect();
 
     CssWillChangeQualificationOutcome::Qualified(CssWillChangeValue::Features(features))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CssScaleComponentClass {
+    Number(CssScaleComponentEvidenceRef),
+    Percentage(CssScaleComponentEvidenceRef),
+    MisplacedWholeValueFunction,
+    ResidualFunction,
+    Invalid,
+}
+
+/// Classifies one already-partitioned top-level `scale` component against
+/// the direct-authored profile's two accepted token shapes -- a direct
+/// `Number` or a direct `Percentage` -- plus the Function-position boundary
+/// shared with `border-spacing`/`aspect-ratio` (#602). A component headed by
+/// a `Function` token is never a valid direct component; it is
+/// `MisplacedWholeValueFunction` when its decoded name is one of the
+/// recognized generic whole-value-only functions (`is_whole_value_function`)
+/// occupying a non-whole-value position -- decisively invalid there, since
+/// whole-value syntax has no independent meaning embedded inside the
+/// bounded component sequence -- or `ResidualFunction` for any other
+/// Function, preserving the conservative open envelope for a structurally
+/// feasible numeric position without evaluating it. A component with more
+/// than one non-trivia token that is not Function-headed is directly
+/// `Invalid`. No range restriction or machine-number conversion is applied
+/// to a direct `Number`/`Percentage` token: exact authored evidence is
+/// authoritative for membership.
+fn classify_scale_component(
+    component: &[CssLexicalItem],
+    absolute_component_start: usize,
+) -> CssScaleComponentClass {
+    let mut tokens =
+        component
+            .iter()
+            .enumerate()
+            .filter_map(|(relative_index, entry)| match entry {
+                CssLexicalItem::SemanticToken(token)
+                    if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+                {
+                    Some((relative_index, token))
+                }
+                _ => None,
+            });
+
+    let Some((relative_index, first)) = tokens.next() else {
+        return CssScaleComponentClass::Invalid;
+    };
+
+    if let CssTokenKind::Function(name) = first.kind() {
+        return if is_whole_value_function(name) {
+            CssScaleComponentClass::MisplacedWholeValueFunction
+        } else {
+            CssScaleComponentClass::ResidualFunction
+        };
+    }
+
+    if tokens.next().is_some() {
+        return CssScaleComponentClass::Invalid;
+    }
+
+    match first.kind() {
+        CssTokenKind::Number { .. } => {
+            CssScaleComponentClass::Number(CssScaleComponentEvidenceRef {
+                lexical_item_index: absolute_component_start + relative_index,
+            })
+        }
+        CssTokenKind::Percentage { .. } => {
+            CssScaleComponentClass::Percentage(CssScaleComponentEvidenceRef {
+                lexical_item_index: absolute_component_start + relative_index,
+            })
+        }
+        _ => CssScaleComponentClass::Invalid,
+    }
+}
+
+/// Qualifies one retained `scale` declaration value against the pin-bounded
+/// direct-authored profile `none | [ <number> | <percentage> ]{1,3}` (#602),
+/// reusing the accepted `border-spacing`/`aspect-ratio` block-depth-aware
+/// top-level component partition and residual-Function-profile theorem.
+///
+/// Deferred substitution and the whole-value Function boundary are checked
+/// first. A sole retained direct `none` Ident, ASCII-case-insensitively,
+/// qualifies the dedicated whole-value branch and never reaches component
+/// partitioning -- `none` is never a numeric component here. A sole
+/// CSS-wide keyword preserves the existing whole-value Unsupported
+/// boundary. Otherwise this single left-to-right recognition-time pass
+/// partitions the value into ordered top-level components using
+/// depth-zero Whitespace/Comment trivia as separators -- never a `Comma`,
+/// since this grammar is whitespace-separated repetition, not a comma list
+/// -- classifying each component the instant its block depth returns to
+/// zero. Zero components, more than three components, or any decisively
+/// invalid/misplaced component makes the declaration
+/// `InvalidForSelectedValueGrammar` regardless of any residual Function
+/// found elsewhere -- structural/direct decisive invalidity always
+/// outranks a provisional Function ambiguity. Only once every component is
+/// confirmed structurally feasible does an unresolved residual Function
+/// resolve to `UnsupportedBySelectedValueProfile(FunctionValue)`.
+fn qualify_scale_value(
+    items: &[CssLexicalItem],
+    lexical_item_start: usize,
+) -> CssScaleQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssScaleQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssScaleUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssScaleQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssScaleUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    let mut whole_value_tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+    if let (Some(only_token), None) = (whole_value_tokens.next(), whole_value_tokens.next())
+        && let CssTokenKind::Ident(identifier) = only_token.kind()
+    {
+        if identifier.eq_ignore_ascii_case("none") {
+            return CssScaleQualificationOutcome::Qualified(CssScaleValue::None);
+        }
+        if is_css_wide_keyword(identifier) {
+            return CssScaleQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssScaleUnsupportedReason::CssWideKeyword,
+            );
+        }
+    }
+
+    let mut component_classes = Vec::new();
+    let mut block_stack: Vec<CssValueBlockCloser> = Vec::new();
+    let mut component_start: Option<usize> = None;
+
+    for (index, item) in items.iter().enumerate() {
+        if block_stack.is_empty() {
+            let is_separator = match item {
+                CssLexicalItem::Comment(_) => true,
+                CssLexicalItem::SemanticToken(token) => {
+                    matches!(token.kind(), CssTokenKind::Whitespace)
+                }
+            };
+            if is_separator {
+                if let Some(start) = component_start.take() {
+                    component_classes.push(classify_scale_component(
+                        &items[start..index],
+                        lexical_item_start + start,
+                    ));
+                }
+                continue;
+            }
+        }
+
+        if component_start.is_none() {
+            component_start = Some(index);
+        }
+
+        if let CssLexicalItem::SemanticToken(token) = item {
+            match token.kind() {
+                CssTokenKind::Function(_) | CssTokenKind::LeftParenthesis => {
+                    block_stack.push(CssValueBlockCloser::Parenthesis);
+                }
+                CssTokenKind::LeftSquareBracket => {
+                    block_stack.push(CssValueBlockCloser::SquareBracket);
+                }
+                CssTokenKind::LeftCurlyBracket => {
+                    block_stack.push(CssValueBlockCloser::CurlyBracket);
+                }
+                CssTokenKind::RightParenthesis
+                    if block_stack.last() == Some(&CssValueBlockCloser::Parenthesis) =>
+                {
+                    block_stack.pop();
+                }
+                CssTokenKind::RightSquareBracket
+                    if block_stack.last() == Some(&CssValueBlockCloser::SquareBracket) =>
+                {
+                    block_stack.pop();
+                }
+                CssTokenKind::RightCurlyBracket
+                    if block_stack.last() == Some(&CssValueBlockCloser::CurlyBracket) =>
+                {
+                    block_stack.pop();
+                }
+                _ => {}
+            }
+        }
+
+        if block_stack.is_empty()
+            && let Some(start) = component_start.take()
+        {
+            component_classes.push(classify_scale_component(
+                &items[start..=index],
+                lexical_item_start + start,
+            ));
+        }
+    }
+    if let Some(start) = component_start {
+        component_classes.push(classify_scale_component(
+            &items[start..],
+            lexical_item_start + start,
+        ));
+    }
+
+    if component_classes.is_empty() || component_classes.len() > 3 {
+        return CssScaleQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    let mut has_residual_function = false;
+    let mut components = Vec::with_capacity(component_classes.len());
+    for class in component_classes {
+        match class {
+            CssScaleComponentClass::Number(evidence_ref) => {
+                components.push(CssScaleComponent {
+                    kind: CssScaleComponentKind::Number,
+                    evidence_ref,
+                });
+            }
+            CssScaleComponentClass::Percentage(evidence_ref) => {
+                components.push(CssScaleComponent {
+                    kind: CssScaleComponentKind::Percentage,
+                    evidence_ref,
+                });
+            }
+            CssScaleComponentClass::ResidualFunction => {
+                has_residual_function = true;
+            }
+            CssScaleComponentClass::MisplacedWholeValueFunction
+            | CssScaleComponentClass::Invalid => {
+                return CssScaleQualificationOutcome::InvalidForSelectedValueGrammar;
+            }
+        }
+    }
+
+    if has_residual_function {
+        return CssScaleQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssScaleUnsupportedReason::FunctionValue,
+        );
+    }
+
+    CssScaleQualificationOutcome::Qualified(CssScaleValue::Components(components))
 }
 
 fn qualify_scroll_snap_align_value(
