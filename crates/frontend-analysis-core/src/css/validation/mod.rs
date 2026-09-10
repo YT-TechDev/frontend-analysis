@@ -223,6 +223,8 @@ mod text_transform_value_qualification_tests;
 #[cfg(test)]
 mod text_underline_offset_value_qualification_tests;
 #[cfg(test)]
+mod transform_origin_value_qualification_tests;
+#[cfg(test)]
 mod transition_duration_value_qualification_tests;
 #[cfg(test)]
 mod transition_property_value_qualification_tests;
