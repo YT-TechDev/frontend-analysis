@@ -5753,6 +5753,56 @@ impl CssTextIndentQualificationObservation {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssLetterSpacingValue {
+    Normal,
+    DirectLengthLiteral,
+    DirectPercentageLiteral,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssLetterSpacingUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssLetterSpacingQualificationOutcome {
+    Qualified(CssLetterSpacingValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssLetterSpacingUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `letter-spacing` qualification
+/// (#619), reusing the accepted direct `word-spacing` profile: `normal` and
+/// unrestricted signed `<length-percentage>` evidence.
+///
+/// This qualifies only authored grammar membership; it performs no
+/// percentage resolution, glyph advance adjustment, bidi distribution, or
+/// shaping/layout/rendering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssLetterSpacingQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssLetterSpacingQualificationOutcome,
+}
+
+impl CssLetterSpacingQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssLetterSpacingQualificationOutcome {
+        self.outcome
+    }
+}
+
 /// Run-owned result for the currently selected bounded CSS value capabilities.
 ///
 /// The exact Core-validated parser result is owned once here. Property-specific
@@ -5857,6 +5907,7 @@ pub(crate) struct CssValueQualificationRunResult {
     transform_box_observations: Vec<CssTransformBoxQualificationObservation>,
     transform_style_observations: Vec<CssTransformStyleQualificationObservation>,
     text_indent_observations: Vec<CssTextIndentQualificationObservation>,
+    letter_spacing_observations: Vec<CssLetterSpacingQualificationObservation>,
 }
 
 impl CssValueQualificationRunResult {
@@ -6752,6 +6803,12 @@ impl CssValueQualificationRunResult {
         &self.text_indent_observations
     }
 
+    pub(crate) fn letter_spacing_observations(
+        &self,
+    ) -> &[CssLetterSpacingQualificationObservation] {
+        &self.letter_spacing_observations
+    }
+
     /// Resolves one qualified `text-indent` `Length`/`Percentage`
     /// component's run-local evidence reference to its exact retained
     /// tokenizer token kind, preserving sign/zero spelling, magnitude,
@@ -6922,6 +6979,7 @@ pub(crate) fn run(
         transform_box_observations,
         transform_style_observations,
         text_indent_observations,
+        letter_spacing_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
         let mut cursor = LexicalWindowCursor::new(tokenizer_result);
@@ -7017,6 +7075,7 @@ pub(crate) fn run(
         let mut transform_box_observations = Vec::new();
         let mut transform_style_observations = Vec::new();
         let mut text_indent_observations = Vec::new();
+        let mut letter_spacing_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
             let property_range = cursor.window_for(occurrence.property_name())?;
@@ -8124,6 +8183,17 @@ pub(crate) fn run(
                     placement: occurrence.placement(),
                     outcome,
                 });
+                continue;
+            }
+
+            if property_name.eq_ignore_ascii_case("letter-spacing") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                letter_spacing_observations.push(CssLetterSpacingQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_letter_spacing_value(value_items),
+                });
             }
         }
 
@@ -8220,6 +8290,7 @@ pub(crate) fn run(
             transform_box_observations,
             transform_style_observations,
             text_indent_observations,
+            letter_spacing_observations,
         )
     };
 
@@ -8317,6 +8388,7 @@ pub(crate) fn run(
         transform_box_observations,
         transform_style_observations,
         text_indent_observations,
+        letter_spacing_observations,
     })
 }
 
@@ -11456,6 +11528,67 @@ fn qualify_word_spacing_value(items: &[CssLexicalItem]) -> CssWordSpacingQualifi
             )
         }
         _ => CssWordSpacingQualificationOutcome::InvalidForSelectedValueGrammar,
+    }
+}
+
+fn qualify_letter_spacing_value(items: &[CssLexicalItem]) -> CssLetterSpacingQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssLetterSpacingQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssLetterSpacingUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssLetterSpacingQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssLetterSpacingUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    if entire_function_name(items).is_some() {
+        return CssLetterSpacingQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssLetterSpacingUnsupportedReason::FunctionValue,
+        );
+    }
+
+    let mut tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+
+    let Some(token) = tokens.next() else {
+        return CssLetterSpacingQualificationOutcome::InvalidForSelectedValueGrammar;
+    };
+    if tokens.next().is_some() {
+        return CssLetterSpacingQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    match token.kind() {
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("normal") => {
+            CssLetterSpacingQualificationOutcome::Qualified(CssLetterSpacingValue::Normal)
+        }
+        CssTokenKind::Number { value, .. } if is_direct_zero_numeric_value(value) => {
+            CssLetterSpacingQualificationOutcome::Qualified(
+                CssLetterSpacingValue::DirectLengthLiteral,
+            )
+        }
+        CssTokenKind::Dimension { unit, .. } if is_css_length_unit(unit) => {
+            CssLetterSpacingQualificationOutcome::Qualified(
+                CssLetterSpacingValue::DirectLengthLiteral,
+            )
+        }
+        CssTokenKind::Percentage { .. } => CssLetterSpacingQualificationOutcome::Qualified(
+            CssLetterSpacingValue::DirectPercentageLiteral,
+        ),
+        CssTokenKind::Ident(identifier) if is_css_wide_keyword(identifier) => {
+            CssLetterSpacingQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssLetterSpacingUnsupportedReason::CssWideKeyword,
+            )
+        }
+        _ => CssLetterSpacingQualificationOutcome::InvalidForSelectedValueGrammar,
     }
 }
 
