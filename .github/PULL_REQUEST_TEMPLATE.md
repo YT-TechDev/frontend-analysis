@@ -44,8 +44,7 @@ Do not include active vulnerability details in a public Pull Request.
 
 ## Validation
 
-Follow [Validation and Completion
-Evidence](../docs/development/VALIDATION.md).
+Follow [Validation and Completion Evidence](https://github.com/YT-TechDev/frontend-analysis/blob/main/docs/development/VALIDATION.md).
 
 ### Validation target
 
@@ -111,5 +110,5 @@ conversation exports, or model marketing.
       private AI links are included.
 - [ ] Known limitations and unresolved risks are recorded.
 
-Review the [Contributing](CONTRIBUTING.md) workflow and
-[Maintainership and Decision Authority](../docs/governance/MAINTAINERSHIP.md).
+Review the [Contributing](https://github.com/YT-TechDev/frontend-analysis/blob/main/.github/CONTRIBUTING.md) workflow and
+[Maintainership and Decision Authority](https://github.com/YT-TechDev/frontend-analysis/blob/main/docs/governance/MAINTAINERSHIP.md).
