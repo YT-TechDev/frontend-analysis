@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520/#522/#524/#526/#528/#530/#532/#534/#536/#538/#541/#546/#549/#551/#553/#555/#559/#561/#596/#598/#600/#602).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520/#522/#524/#526/#528/#530/#532/#534/#536/#538/#541/#546/#549/#551/#553/#555/#559/#561/#596/#598/#600/#602/#604).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -5110,6 +5110,130 @@ impl CssScaleQualificationObservation {
     }
 }
 
+/// Run-local locator for the exact tokenizer item selected during
+/// authoritative `rotate` direct component recognition (#604). The index is
+/// evidence placement, not a copied numeric value; the exact retained
+/// `Number`/`Dimension` token structure (sign/zero spelling, magnitude,
+/// decimal/exponent shape, unit spelling) remains tokenizer-owned and is
+/// never converted to a machine number or normalized angle for
+/// qualification, resolved through `rotate_evidence_token`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssRotateEvidenceRef {
+    lexical_item_index: usize,
+}
+
+impl CssRotateEvidenceRef {
+    pub(crate) const fn lexical_item_index(&self) -> usize {
+        self.lexical_item_index
+    }
+}
+
+/// One authored `rotate` axis keyword (#604): tokenizer-decoded `x`, `y`, or
+/// `z`, matched using existing ASCII-case-insensitive CSS keyword
+/// comparison. Never converted into vector evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssRotateAxisKeyword {
+    X,
+    Y,
+    Z,
+}
+
+/// One authored `rotate` axis operand: either a keyword axis or an exact
+/// three-`<number>` vector axis (#604). A vector axis retains exact
+/// tokenizer-owned evidence for each of its three components in authored
+/// order; it is never normalized, never rejected for being the zero
+/// vector, and never canonicalized into (or from) a keyword axis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssRotateAxis {
+    Keyword(CssRotateAxisKeyword),
+    Vector([CssRotateEvidenceRef; 3]),
+}
+
+/// One authored `rotate` non-`none` value: an optional axis operand
+/// (absent for the angle-only authored form) plus a direct `<angle>`
+/// evidence reference (#604). Authored axis omission is never synthesized
+/// as `Z` or as a zero vector -- `30deg`, `z 30deg`, and `0 0 1 30deg`
+/// remain three distinct authored structures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssRotateRotation {
+    axis: Option<CssRotateAxis>,
+    angle: CssRotateEvidenceRef,
+}
+
+impl CssRotateRotation {
+    pub(crate) const fn axis(&self) -> Option<CssRotateAxis> {
+        self.axis
+    }
+
+    pub(crate) const fn angle(&self) -> CssRotateEvidenceRef {
+        self.angle
+    }
+}
+
+/// One authored `rotate` value under the pin-bounded finite-shape
+/// axis-angle profile `none | <angle> | [ x | y | z | <number>{3} ] &&
+/// <angle>` (#604 / css-transforms-2 `rotate`): either the dedicated
+/// whole-value `none` sentinel or a qualified `Rotation`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssRotateValue {
+    None,
+    Rotation(CssRotateRotation),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssRotateUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssRotateQualificationOutcome {
+    Qualified(CssRotateValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssRotateUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `rotate` qualification
+/// against the pin-bounded finite-shape axis-angle profile `none |
+/// <angle> | [ x | y | z | <number>{3} ] && <angle>` (#604 /
+/// css-transforms-2 `rotate`).
+///
+/// After existing block-depth-aware top-level component recognition,
+/// direct authored shapes are finite: one component (`<angle>`), two
+/// components (a keyword axis and an angle, in either order), or four
+/// components (an exact three-`<number>` vector axis and an angle, in
+/// either order, with the vector's three `<number>` positions never
+/// accepting the angle interleaved between them) -- plus the dedicated
+/// whole-value `none` branch. Any other component count is decisive
+/// `InvalidForSelectedValueGrammar` regardless of Function content. A
+/// residual Function occupying a structurally feasible `<number>` or
+/// `<angle>` position resolves to
+/// `UnsupportedBySelectedValueProfile(FunctionValue)` only once every
+/// other component in the shape is confirmed structurally feasible; a
+/// structurally impossible Function assignment is decisive Invalid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssRotateQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssRotateQualificationOutcome,
+}
+
+impl CssRotateQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssRotateQualificationOutcome {
+        self.outcome
+    }
+}
+
 /// Run-owned result for the currently selected bounded CSS value capabilities.
 ///
 /// The exact Core-validated parser result is owned once here. Property-specific
@@ -5208,6 +5332,7 @@ pub(crate) struct CssValueQualificationRunResult {
     image_resolution_observations: Vec<CssImageResolutionQualificationObservation>,
     will_change_observations: Vec<CssWillChangeQualificationObservation>,
     scale_observations: Vec<CssScaleQualificationObservation>,
+    rotate_observations: Vec<CssRotateQualificationObservation>,
 }
 
 impl CssValueQualificationRunResult {
@@ -6008,6 +6133,33 @@ impl CssValueQualificationRunResult {
         };
         Some(token.kind())
     }
+
+    pub(crate) fn rotate_observations(&self) -> &[CssRotateQualificationObservation] {
+        &self.rotate_observations
+    }
+
+    /// Resolves one qualified `rotate` evidence reference -- an axis
+    /// vector component or the angle -- to its exact retained tokenizer
+    /// token kind, preserving sign/zero spelling, magnitude, decimal/
+    /// exponent shape, and unit spelling without machine-number
+    /// conversion or angle normalization. The retained token at the
+    /// evidence position is always a direct `Number` or `Dimension`,
+    /// matching the evidence's structural position (vector component vs.
+    /// angle).
+    pub(crate) fn rotate_evidence_token(
+        &self,
+        evidence: CssRotateEvidenceRef,
+    ) -> Option<&CssTokenKind> {
+        let item = self
+            .upstream_parser_result
+            .upstream_tokenizer_result()
+            .lexical_items()
+            .get(evidence.lexical_item_index())?;
+        let CssLexicalItem::SemanticToken(token) = item else {
+            return None;
+        };
+        Some(token.kind())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -6151,6 +6303,7 @@ pub(crate) fn run(
         image_resolution_observations,
         will_change_observations,
         scale_observations,
+        rotate_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
         let mut cursor = LexicalWindowCursor::new(tokenizer_result);
@@ -6240,6 +6393,7 @@ pub(crate) fn run(
         let mut image_resolution_observations = Vec::new();
         let mut will_change_observations = Vec::new();
         let mut scale_observations = Vec::new();
+        let mut rotate_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
             let property_range = cursor.window_for(occurrence.property_name())?;
@@ -7273,6 +7427,19 @@ pub(crate) fn run(
                     placement: occurrence.placement(),
                     outcome,
                 });
+                continue;
+            }
+
+            if property_name.eq_ignore_ascii_case("rotate") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let lexical_item_start = value_range.start;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                let outcome = qualify_rotate_value(value_items, lexical_item_start);
+                rotate_observations.push(CssRotateQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome,
+                });
             }
         }
 
@@ -7363,6 +7530,7 @@ pub(crate) fn run(
             image_resolution_observations,
             will_change_observations,
             scale_observations,
+            rotate_observations,
         )
     };
 
@@ -7454,6 +7622,7 @@ pub(crate) fn run(
         image_resolution_observations,
         will_change_observations,
         scale_observations,
+        rotate_observations,
     })
 }
 
@@ -15562,6 +15731,385 @@ fn qualify_scale_value(
     }
 
     CssScaleQualificationOutcome::Qualified(CssScaleValue::Components(components))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CssRotateComponentClass {
+    Angle(CssRotateEvidenceRef),
+    Number(CssRotateEvidenceRef),
+    KeywordAxis(CssRotateAxisKeyword),
+    ResidualFunction,
+    MisplacedWholeValueFunction,
+    Invalid,
+}
+
+/// Classifies one already-partitioned top-level `rotate` component against
+/// the token shapes admitted anywhere in the finite direct-shape theorem
+/// (#604): a direct `<angle>` (a retained `Dimension` token whose decoded
+/// unit is ASCII-case-insensitively `deg`, `grad`, `rad`, or `turn`,
+/// reusing the accepted `offset-rotate` direct-angle theorem), a direct
+/// `<number>` (a retained `Number` token -- a unitless Number, including
+/// zero, never satisfies the `<angle>` shape), a direct keyword axis (`x`,
+/// `y`, or `z`, ASCII-case-insensitively), or a Function-headed component
+/// classified by placement/identity only, exactly as in
+/// `offset-rotate`/`scale`. A component with more than one non-trivia
+/// token that is not Function-headed is directly `Invalid`; a Percentage,
+/// a wrong Dimension unit, or any other token class never satisfies the
+/// `<number>` or `<angle>` shape.
+fn classify_rotate_component(
+    component: &[CssLexicalItem],
+    absolute_component_start: usize,
+) -> CssRotateComponentClass {
+    let mut tokens =
+        component
+            .iter()
+            .enumerate()
+            .filter_map(|(relative_index, entry)| match entry {
+                CssLexicalItem::SemanticToken(token)
+                    if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+                {
+                    Some((relative_index, token))
+                }
+                _ => None,
+            });
+
+    let Some((relative_index, first)) = tokens.next() else {
+        return CssRotateComponentClass::Invalid;
+    };
+
+    if let CssTokenKind::Function(name) = first.kind() {
+        return if is_whole_value_function(name) {
+            CssRotateComponentClass::MisplacedWholeValueFunction
+        } else {
+            CssRotateComponentClass::ResidualFunction
+        };
+    }
+
+    if tokens.next().is_some() {
+        return CssRotateComponentClass::Invalid;
+    }
+
+    match first.kind() {
+        CssTokenKind::Dimension { unit, .. } if is_css_angle_unit(unit) => {
+            CssRotateComponentClass::Angle(CssRotateEvidenceRef {
+                lexical_item_index: absolute_component_start + relative_index,
+            })
+        }
+        CssTokenKind::Number { .. } => CssRotateComponentClass::Number(CssRotateEvidenceRef {
+            lexical_item_index: absolute_component_start + relative_index,
+        }),
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("x") => {
+            CssRotateComponentClass::KeywordAxis(CssRotateAxisKeyword::X)
+        }
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("y") => {
+            CssRotateComponentClass::KeywordAxis(CssRotateAxisKeyword::Y)
+        }
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("z") => {
+            CssRotateComponentClass::KeywordAxis(CssRotateAxisKeyword::Z)
+        }
+        _ => CssRotateComponentClass::Invalid,
+    }
+}
+
+/// Partitions an already-retained `rotate` declaration value window into
+/// ordered top-level components using one left-to-right recognition-time
+/// pass and classifies each the instant its block depth returns to zero.
+/// Depth-zero Whitespace/Comment lexical items are separators; Function and
+/// bracket openers extend the current component until their matching
+/// closer, so nested content (e.g. `calc(min(1, 2))`) never inflates
+/// top-level cardinality. This intentionally duplicates the equivalent
+/// `scale`/`offset-rotate` walk rather than sharing it: this leaf keeps its
+/// own bounded local recognition.
+fn rotate_top_level_component_classes(
+    items: &[CssLexicalItem],
+    lexical_item_start: usize,
+) -> Vec<CssRotateComponentClass> {
+    let mut classes = Vec::new();
+    let mut block_stack: Vec<CssValueBlockCloser> = Vec::new();
+    let mut component_start: Option<usize> = None;
+
+    for (index, item) in items.iter().enumerate() {
+        if block_stack.is_empty() {
+            let is_separator = match item {
+                CssLexicalItem::Comment(_) => true,
+                CssLexicalItem::SemanticToken(token) => {
+                    matches!(token.kind(), CssTokenKind::Whitespace)
+                }
+            };
+            if is_separator {
+                if let Some(start) = component_start.take() {
+                    classes.push(classify_rotate_component(
+                        &items[start..index],
+                        lexical_item_start + start,
+                    ));
+                }
+                continue;
+            }
+        }
+
+        if component_start.is_none() {
+            component_start = Some(index);
+        }
+
+        if let CssLexicalItem::SemanticToken(token) = item {
+            match token.kind() {
+                CssTokenKind::Function(_) | CssTokenKind::LeftParenthesis => {
+                    block_stack.push(CssValueBlockCloser::Parenthesis);
+                }
+                CssTokenKind::LeftSquareBracket => {
+                    block_stack.push(CssValueBlockCloser::SquareBracket);
+                }
+                CssTokenKind::LeftCurlyBracket => {
+                    block_stack.push(CssValueBlockCloser::CurlyBracket);
+                }
+                CssTokenKind::RightParenthesis
+                    if block_stack.last() == Some(&CssValueBlockCloser::Parenthesis) =>
+                {
+                    block_stack.pop();
+                }
+                CssTokenKind::RightSquareBracket
+                    if block_stack.last() == Some(&CssValueBlockCloser::SquareBracket) =>
+                {
+                    block_stack.pop();
+                }
+                CssTokenKind::RightCurlyBracket
+                    if block_stack.last() == Some(&CssValueBlockCloser::CurlyBracket) =>
+                {
+                    block_stack.pop();
+                }
+                _ => {}
+            }
+        }
+
+        if block_stack.is_empty()
+            && let Some(start) = component_start.take()
+        {
+            classes.push(classify_rotate_component(
+                &items[start..=index],
+                lexical_item_start + start,
+            ));
+        }
+    }
+
+    if let Some(start) = component_start {
+        classes.push(classify_rotate_component(
+            &items[start..],
+            lexical_item_start + start,
+        ));
+    }
+
+    classes
+}
+
+/// Qualifies the sole component of a one-component candidate shape against
+/// the direct `<angle>`-only branch of the finite theorem (#604). A bare
+/// `<number>` (including unitless zero) or a keyword axis alone never
+/// satisfies this shape -- the individual `rotate` property grammar
+/// contains `<angle>`, not `<angle> | <zero>`, unlike transform functions
+/// such as `rotate()`.
+fn qualify_rotate_angle_only_shape(
+    class: CssRotateComponentClass,
+) -> CssRotateQualificationOutcome {
+    match class {
+        CssRotateComponentClass::Angle(angle) => {
+            CssRotateQualificationOutcome::Qualified(CssRotateValue::Rotation(CssRotateRotation {
+                axis: None,
+                angle,
+            }))
+        }
+        CssRotateComponentClass::ResidualFunction => {
+            CssRotateQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssRotateUnsupportedReason::FunctionValue,
+            )
+        }
+        _ => CssRotateQualificationOutcome::InvalidForSelectedValueGrammar,
+    }
+}
+
+/// Qualifies a two-component candidate shape against the keyword-axis
+/// branch of the finite theorem (#604): exactly one direct keyword axis
+/// and one direct `<angle>`, in either authored order. A Function can only
+/// stand in the `<angle>` operand -- a literal `x`/`y`/`z` keyword operand
+/// is never satisfied by Function-position ambiguity -- so a Function
+/// paired with anything other than a concrete keyword axis is decisively
+/// Invalid rather than Unsupported.
+fn qualify_rotate_keyword_axis_shape(
+    first: CssRotateComponentClass,
+    second: CssRotateComponentClass,
+) -> CssRotateQualificationOutcome {
+    match (first, second) {
+        (CssRotateComponentClass::KeywordAxis(keyword), CssRotateComponentClass::Angle(angle))
+        | (CssRotateComponentClass::Angle(angle), CssRotateComponentClass::KeywordAxis(keyword)) => {
+            CssRotateQualificationOutcome::Qualified(CssRotateValue::Rotation(CssRotateRotation {
+                axis: Some(CssRotateAxis::Keyword(keyword)),
+                angle,
+            }))
+        }
+        (CssRotateComponentClass::KeywordAxis(_), CssRotateComponentClass::ResidualFunction)
+        | (CssRotateComponentClass::ResidualFunction, CssRotateComponentClass::KeywordAxis(_)) => {
+            CssRotateQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssRotateUnsupportedReason::FunctionValue,
+            )
+        }
+        _ => CssRotateQualificationOutcome::InvalidForSelectedValueGrammar,
+    }
+}
+
+/// Qualifies a four-component candidate shape against the vector-axis
+/// branch of the finite theorem (#604): exactly three direct `<number>`
+/// components forming one axis operand plus one direct `<angle>`
+/// component, in either authored order -- `<number> <number> <number>
+/// <angle>` or `<angle> <number> <number> <number>` -- never with the
+/// angle interleaved among the three numbers. A concrete match (no
+/// residual Function needed) is `Qualified` directly. Otherwise, a
+/// residual Function is only `UnsupportedBySelectedValueProfile
+/// (FunctionValue)` when assigning it to the ambiguous `<number>`/
+/// `<angle>` slot it occupies would complete one of the two orderings;
+/// any component that can never occupy its position under either ordering
+/// (a keyword axis, a misplaced whole-value Function, or any other
+/// decisively invalid component) makes the whole shape decisively
+/// Invalid, since `is_number_position`/`is_angle_position` below never
+/// admit those classes.
+fn qualify_rotate_vector_axis_shape(
+    first: CssRotateComponentClass,
+    second: CssRotateComponentClass,
+    third: CssRotateComponentClass,
+    fourth: CssRotateComponentClass,
+) -> CssRotateQualificationOutcome {
+    if let (
+        CssRotateComponentClass::Number(x),
+        CssRotateComponentClass::Number(y),
+        CssRotateComponentClass::Number(z),
+        CssRotateComponentClass::Angle(angle),
+    ) = (first, second, third, fourth)
+    {
+        return CssRotateQualificationOutcome::Qualified(CssRotateValue::Rotation(
+            CssRotateRotation {
+                axis: Some(CssRotateAxis::Vector([x, y, z])),
+                angle,
+            },
+        ));
+    }
+
+    if let (
+        CssRotateComponentClass::Angle(angle),
+        CssRotateComponentClass::Number(x),
+        CssRotateComponentClass::Number(y),
+        CssRotateComponentClass::Number(z),
+    ) = (first, second, third, fourth)
+    {
+        return CssRotateQualificationOutcome::Qualified(CssRotateValue::Rotation(
+            CssRotateRotation {
+                axis: Some(CssRotateAxis::Vector([x, y, z])),
+                angle,
+            },
+        ));
+    }
+
+    let is_number_position = |class: CssRotateComponentClass| {
+        matches!(
+            class,
+            CssRotateComponentClass::Number(_) | CssRotateComponentClass::ResidualFunction
+        )
+    };
+    let is_angle_position = |class: CssRotateComponentClass| {
+        matches!(
+            class,
+            CssRotateComponentClass::Angle(_) | CssRotateComponentClass::ResidualFunction
+        )
+    };
+
+    let vector_then_angle_feasible = is_number_position(first)
+        && is_number_position(second)
+        && is_number_position(third)
+        && is_angle_position(fourth);
+    let angle_then_vector_feasible = is_angle_position(first)
+        && is_number_position(second)
+        && is_number_position(third)
+        && is_number_position(fourth);
+
+    if vector_then_angle_feasible || angle_then_vector_feasible {
+        CssRotateQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssRotateUnsupportedReason::FunctionValue,
+        )
+    } else {
+        CssRotateQualificationOutcome::InvalidForSelectedValueGrammar
+    }
+}
+
+/// Qualifies one retained `rotate` declaration value against the
+/// pin-bounded finite-shape axis-angle profile `none | <angle> | [ x | y |
+/// z | <number>{3} ] && <angle>` (#604 / css-transforms-2 `rotate`),
+/// reusing the accepted `offset-rotate` direct `<angle>` theorem and the
+/// accepted `scale` exact direct `<number>` evidence-reference and
+/// block-depth-aware top-level component partition.
+///
+/// Deferred substitution and the whole-value Function boundary are checked
+/// first, exactly as for the other selected leaves. A sole retained direct
+/// `none` Ident, ASCII-case-insensitively, qualifies the dedicated
+/// whole-value branch and never reaches component partitioning -- `none`
+/// is never a zero angle, an axis omission, or a zero-vector sentinel. A
+/// sole CSS-wide keyword preserves the existing whole-value Unsupported
+/// boundary.
+///
+/// Otherwise the value is partitioned into top-level components and
+/// dispatched purely on component count, since after partitioning the
+/// grammar's accepted direct shapes are finite: exactly one component
+/// (`<angle>`), exactly two components (a keyword axis and an angle, in
+/// either order), or exactly four components (an exact three-`<number>`
+/// vector axis and an angle, in either order). Any other component count
+/// -- zero, three, or more than four -- is decisive
+/// `InvalidForSelectedValueGrammar` regardless of any residual Function
+/// present, since no accepted shape has that cardinality; this also
+/// ensures a later decisive structural failure (e.g. a fifth trailing
+/// component) always outranks an earlier provisional Function ambiguity.
+fn qualify_rotate_value(
+    items: &[CssLexicalItem],
+    lexical_item_start: usize,
+) -> CssRotateQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssRotateQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssRotateUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssRotateQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssRotateUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    let mut whole_value_tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+    if let (Some(only_token), None) = (whole_value_tokens.next(), whole_value_tokens.next())
+        && let CssTokenKind::Ident(identifier) = only_token.kind()
+    {
+        if identifier.eq_ignore_ascii_case("none") {
+            return CssRotateQualificationOutcome::Qualified(CssRotateValue::None);
+        }
+        if is_css_wide_keyword(identifier) {
+            return CssRotateQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssRotateUnsupportedReason::CssWideKeyword,
+            );
+        }
+    }
+
+    let classes = rotate_top_level_component_classes(items, lexical_item_start);
+
+    match classes.as_slice() {
+        [class] => qualify_rotate_angle_only_shape(*class),
+        [first, second] => qualify_rotate_keyword_axis_shape(*first, *second),
+        [first, second, third, fourth] => {
+            qualify_rotate_vector_axis_shape(*first, *second, *third, *fourth)
+        }
+        _ => CssRotateQualificationOutcome::InvalidForSelectedValueGrammar,
+    }
 }
 
 fn qualify_scroll_snap_align_value(
