@@ -227,6 +227,8 @@ mod transition_duration_value_qualification_tests;
 #[cfg(test)]
 mod transition_property_value_qualification_tests;
 #[cfg(test)]
+mod translate_value_qualification_tests;
+#[cfg(test)]
 mod unicode_bidi_value_qualification_tests;
 #[cfg(test)]
 mod will_change_value_qualification_tests;

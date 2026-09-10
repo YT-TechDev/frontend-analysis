@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520/#522/#524/#526/#528/#530/#532/#534/#536/#538/#541/#546/#549/#551/#553/#555/#559/#561/#596/#598/#600/#602/#604).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520/#522/#524/#526/#528/#530/#532/#534/#536/#538/#541/#546/#549/#551/#553/#555/#559/#561/#596/#598/#600/#602/#604/#606).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -5234,6 +5234,143 @@ impl CssRotateQualificationObservation {
     }
 }
 
+/// Run-local locator for the exact tokenizer item selected during
+/// authoritative `translate` direct component recognition (#606). The index
+/// is evidence placement, not a copied numeric value; the exact retained
+/// `Number`/`Dimension`/`Percentage` token structure (sign/zero spelling,
+/// magnitude, decimal/exponent shape, unit spelling) remains tokenizer-owned
+/// and is never converted to a machine number for qualification, resolved
+/// through `translate_component_token`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTranslateComponentEvidenceRef {
+    lexical_item_index: usize,
+}
+
+impl CssTranslateComponentEvidenceRef {
+    pub(crate) const fn lexical_item_index(&self) -> usize {
+        self.lexical_item_index
+    }
+}
+
+/// One direct authored `translate` component's tokenizer-owned kind (#606).
+/// A direct exact-zero `Number`/`Dimension` `Length` and a direct
+/// `Percentage` remain distinct authored branches; this leaf never
+/// normalizes `0`, `0px`, or `0%` into a shared interpreted displacement,
+/// and never converts a `Percentage` token into a `Length` token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTranslateComponentKind {
+    Length,
+    Percentage,
+}
+
+/// One direct authored `translate` component: `TranslateComponent :=
+/// DirectLength | DirectPercentage` (#606), preserving authored kind and
+/// exact tokenizer-owned evidence without any interpreted displacement
+/// conversion. A `Length` evidence reference may resolve to either an
+/// exact-zero `Number` or a recognized CSS length `Dimension`; that
+/// distinction remains recoverable from the retained token itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTranslateComponent {
+    kind: CssTranslateComponentKind,
+    evidence_ref: CssTranslateComponentEvidenceRef,
+}
+
+impl CssTranslateComponent {
+    pub(crate) const fn kind(&self) -> CssTranslateComponentKind {
+        self.kind
+    }
+
+    pub(crate) const fn evidence_ref(&self) -> CssTranslateComponentEvidenceRef {
+        self.evidence_ref
+    }
+}
+
+/// One authored `translate` value under the pin-bounded heterogeneous
+/// positional-component profile `QualifiedDirectTranslate := None |
+/// Components(TranslateComponent{1,3})` (#606): either the dedicated
+/// whole-value `none` sentinel or an ordered, authored-cardinality-
+/// preserving list of one to three qualified direct components. Authored
+/// omission of a trailing Y or Z component is never synthesized here --
+/// `translate: 10px`, `translate: 10px 0`, and `translate: 10px 0 0` remain
+/// three structurally distinct component vectors, never a materialized
+/// three-axis object.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CssTranslateValue {
+    None,
+    Components(Vec<CssTranslateComponent>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTranslateUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CssTranslateQualificationOutcome {
+    Qualified(CssTranslateValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssTranslateUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `translate` qualification
+/// against the pin-bounded heterogeneous positional profile `none |
+/// <length-percentage> [ <length-percentage> <length>? ]?` (#606 /
+/// css-transforms-2 `translate`), reusing the accepted `scale`
+/// block-depth-aware top-level component partition and residual-Function-
+/// profile theorem together with the accepted `word-spacing`/
+/// `scroll-margin-top` direct exact-zero-`Number`-as-`Length` and CSS
+/// length-`Dimension` recognition.
+///
+/// Deferred substitution and the whole-value Function boundary are checked
+/// first, exactly as for the other selected leaves. A sole retained direct
+/// `none` Ident, ASCII-case-insensitively, qualifies the dedicated
+/// whole-value branch and never reaches component partitioning; `none` is
+/// never a translation component, so it is decisively invalid combined with
+/// any other component. A sole CSS-wide keyword preserves the existing
+/// whole-value Unsupported boundary. Otherwise the value is partitioned
+/// into one to three ordered top-level components using depth-zero
+/// Whitespace/Comment trivia as separators -- never a `Comma`, since this
+/// grammar is whitespace-separated repetition, not a comma list. Each
+/// component qualifies only when it is exactly one direct exact-zero
+/// `Number`, a `Dimension` with a recognized CSS length unit, or a
+/// `Percentage` token; a Function-headed component is classified by
+/// placement and identity only. The new semantic pressure over the
+/// accepted `scale` shape is positional heterogeneity: slots one and two
+/// accept either `Length` or `Percentage`, but the third slot accepts only
+/// `Length` -- a direct `Percentage` (including `0%`) in the third slot is
+/// decisive `InvalidForSelectedValueGrammar` regardless of any residual
+/// Function found elsewhere, since structural/direct decisive invalidity
+/// always outranks a provisional Function ambiguity. More than three
+/// components or zero components is likewise decisive
+/// `InvalidForSelectedValueGrammar`. Only once every component is confirmed
+/// structurally feasible does an unresolved residual Function resolve to
+/// `UnsupportedBySelectedValueProfile(FunctionValue)`. This leaf performs no
+/// CSS math evaluation, no machine-number conversion, no percentage-basis
+/// resolution, and no downstream transform semantics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CssTranslateQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssTranslateQualificationOutcome,
+}
+
+impl CssTranslateQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> &CssTranslateQualificationOutcome {
+        &self.outcome
+    }
+}
+
 /// Run-owned result for the currently selected bounded CSS value capabilities.
 ///
 /// The exact Core-validated parser result is owned once here. Property-specific
@@ -5333,6 +5470,7 @@ pub(crate) struct CssValueQualificationRunResult {
     will_change_observations: Vec<CssWillChangeQualificationObservation>,
     scale_observations: Vec<CssScaleQualificationObservation>,
     rotate_observations: Vec<CssRotateQualificationObservation>,
+    translate_observations: Vec<CssTranslateQualificationObservation>,
 }
 
 impl CssValueQualificationRunResult {
@@ -6160,6 +6298,31 @@ impl CssValueQualificationRunResult {
         };
         Some(token.kind())
     }
+
+    pub(crate) fn translate_observations(&self) -> &[CssTranslateQualificationObservation] {
+        &self.translate_observations
+    }
+
+    /// Resolves one qualified `translate` component's run-local evidence
+    /// reference to its exact retained tokenizer token kind, preserving
+    /// sign/zero spelling, magnitude, decimal/exponent shape, and unit
+    /// spelling without machine-number conversion. The retained token at
+    /// the evidence position is always a direct `Number`, `Dimension`, or
+    /// `Percentage`, matching the component's `CssTranslateComponentKind`.
+    pub(crate) fn translate_component_token(
+        &self,
+        evidence: CssTranslateComponentEvidenceRef,
+    ) -> Option<&CssTokenKind> {
+        let item = self
+            .upstream_parser_result
+            .upstream_tokenizer_result()
+            .lexical_items()
+            .get(evidence.lexical_item_index())?;
+        let CssLexicalItem::SemanticToken(token) = item else {
+            return None;
+        };
+        Some(token.kind())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -6304,6 +6467,7 @@ pub(crate) fn run(
         will_change_observations,
         scale_observations,
         rotate_observations,
+        translate_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
         let mut cursor = LexicalWindowCursor::new(tokenizer_result);
@@ -6394,6 +6558,7 @@ pub(crate) fn run(
         let mut will_change_observations = Vec::new();
         let mut scale_observations = Vec::new();
         let mut rotate_observations = Vec::new();
+        let mut translate_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
             let property_range = cursor.window_for(occurrence.property_name())?;
@@ -7440,6 +7605,19 @@ pub(crate) fn run(
                     placement: occurrence.placement(),
                     outcome,
                 });
+                continue;
+            }
+
+            if property_name.eq_ignore_ascii_case("translate") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let lexical_item_start = value_range.start;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                let outcome = qualify_translate_value(value_items, lexical_item_start);
+                translate_observations.push(CssTranslateQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome,
+                });
             }
         }
 
@@ -7531,6 +7709,7 @@ pub(crate) fn run(
             will_change_observations,
             scale_observations,
             rotate_observations,
+            translate_observations,
         )
     };
 
@@ -7623,6 +7802,7 @@ pub(crate) fn run(
         will_change_observations,
         scale_observations,
         rotate_observations,
+        translate_observations,
     })
 }
 
@@ -16110,6 +16290,269 @@ fn qualify_rotate_value(
         }
         _ => CssRotateQualificationOutcome::InvalidForSelectedValueGrammar,
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CssTranslateComponentClass {
+    Length(CssTranslateComponentEvidenceRef),
+    Percentage(CssTranslateComponentEvidenceRef),
+    MisplacedWholeValueFunction,
+    ResidualFunction,
+    Invalid,
+}
+
+/// Classifies one already-partitioned top-level `translate` component
+/// against the direct-authored profile's accepted token shapes -- a direct
+/// exact-zero `Number`, a `Dimension` with a recognized CSS length unit, or
+/// a `Percentage` -- plus the Function-position boundary shared with
+/// `scale`/`rotate` (#606). A component headed by a `Function` token is
+/// never a direct component; it is `MisplacedWholeValueFunction` when its
+/// decoded name is one of the recognized generic whole-value-only functions
+/// (`is_whole_value_function`) occupying a non-whole-value position --
+/// decisively invalid there -- or `ResidualFunction` for any other
+/// Function, preserving the conservative open envelope for a structurally
+/// feasible position without evaluating it. A component with more than one
+/// non-trivia token that is not Function-headed is directly `Invalid`. A
+/// non-zero unitless `Number` and a `Dimension` with an unrecognized unit
+/// (e.g. `deg`, `s`, `fr`) both fall through to `Invalid`: this leaf never
+/// interprets an arbitrary `Number` as `Length`. No range restriction or
+/// machine-number conversion is applied: exact authored evidence is
+/// authoritative for membership. This function is positionally unaware --
+/// the caller applies the third-slot `Length`-only restriction after
+/// partitioning, since only slot placement (not component identity) decides
+/// whether a direct `Percentage` is accepted.
+fn classify_translate_component(
+    component: &[CssLexicalItem],
+    absolute_component_start: usize,
+) -> CssTranslateComponentClass {
+    let mut tokens =
+        component
+            .iter()
+            .enumerate()
+            .filter_map(|(relative_index, entry)| match entry {
+                CssLexicalItem::SemanticToken(token)
+                    if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+                {
+                    Some((relative_index, token))
+                }
+                _ => None,
+            });
+
+    let Some((relative_index, first)) = tokens.next() else {
+        return CssTranslateComponentClass::Invalid;
+    };
+
+    if let CssTokenKind::Function(name) = first.kind() {
+        return if is_whole_value_function(name) {
+            CssTranslateComponentClass::MisplacedWholeValueFunction
+        } else {
+            CssTranslateComponentClass::ResidualFunction
+        };
+    }
+
+    if tokens.next().is_some() {
+        return CssTranslateComponentClass::Invalid;
+    }
+
+    match first.kind() {
+        CssTokenKind::Number { value, .. } if is_direct_zero_numeric_value(value) => {
+            CssTranslateComponentClass::Length(CssTranslateComponentEvidenceRef {
+                lexical_item_index: absolute_component_start + relative_index,
+            })
+        }
+        CssTokenKind::Dimension { unit, .. } if is_css_length_unit(unit) => {
+            CssTranslateComponentClass::Length(CssTranslateComponentEvidenceRef {
+                lexical_item_index: absolute_component_start + relative_index,
+            })
+        }
+        CssTokenKind::Percentage { .. } => {
+            CssTranslateComponentClass::Percentage(CssTranslateComponentEvidenceRef {
+                lexical_item_index: absolute_component_start + relative_index,
+            })
+        }
+        _ => CssTranslateComponentClass::Invalid,
+    }
+}
+
+/// Qualifies one retained `translate` declaration value against the
+/// pin-bounded heterogeneous positional profile `none | <length-percentage>
+/// [ <length-percentage> <length>? ]?` (#606), reusing the accepted `scale`
+/// block-depth-aware top-level component partition and residual-Function-
+/// profile theorem.
+///
+/// Deferred substitution and the whole-value Function boundary are checked
+/// first. A sole retained direct `none` Ident, ASCII-case-insensitively,
+/// qualifies the dedicated whole-value branch and never reaches component
+/// partitioning -- `none` is never a translation component here. A sole
+/// CSS-wide keyword preserves the existing whole-value Unsupported
+/// boundary. Otherwise this single left-to-right recognition-time pass
+/// partitions the value into ordered top-level components using
+/// depth-zero Whitespace/Comment trivia as separators -- never a `Comma` --
+/// classifying each component the instant its block depth returns to zero.
+/// Zero components, more than three components, or any decisively invalid/
+/// misplaced component makes the declaration `InvalidForSelectedValueGrammar`
+/// regardless of any residual Function found elsewhere.
+///
+/// The heterogeneous positional pressure is applied here, once partitioning
+/// is complete: a direct `Percentage` occupying the third (zero-indexed
+/// position two) component is decisive `InvalidForSelectedValueGrammar`,
+/// since the grammar's third slot accepts `<length>` only, never
+/// `<length-percentage>` -- this rejection applies even when the Percentage
+/// is `0%`, which remains authored Percentage syntax rather than a
+/// mathematical zero. A direct `Percentage` in the first or second slot
+/// qualifies normally. Only once every component is confirmed structurally
+/// feasible does an unresolved residual Function resolve to
+/// `UnsupportedBySelectedValueProfile(FunctionValue)`.
+fn qualify_translate_value(
+    items: &[CssLexicalItem],
+    lexical_item_start: usize,
+) -> CssTranslateQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssTranslateQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssTranslateUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssTranslateQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssTranslateUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    let mut whole_value_tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+    if let (Some(only_token), None) = (whole_value_tokens.next(), whole_value_tokens.next())
+        && let CssTokenKind::Ident(identifier) = only_token.kind()
+    {
+        if identifier.eq_ignore_ascii_case("none") {
+            return CssTranslateQualificationOutcome::Qualified(CssTranslateValue::None);
+        }
+        if is_css_wide_keyword(identifier) {
+            return CssTranslateQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssTranslateUnsupportedReason::CssWideKeyword,
+            );
+        }
+    }
+
+    let mut component_classes = Vec::new();
+    let mut block_stack: Vec<CssValueBlockCloser> = Vec::new();
+    let mut component_start: Option<usize> = None;
+
+    for (index, item) in items.iter().enumerate() {
+        if block_stack.is_empty() {
+            let is_separator = match item {
+                CssLexicalItem::Comment(_) => true,
+                CssLexicalItem::SemanticToken(token) => {
+                    matches!(token.kind(), CssTokenKind::Whitespace)
+                }
+            };
+            if is_separator {
+                if let Some(start) = component_start.take() {
+                    component_classes.push(classify_translate_component(
+                        &items[start..index],
+                        lexical_item_start + start,
+                    ));
+                }
+                continue;
+            }
+        }
+
+        if component_start.is_none() {
+            component_start = Some(index);
+        }
+
+        if let CssLexicalItem::SemanticToken(token) = item {
+            match token.kind() {
+                CssTokenKind::Function(_) | CssTokenKind::LeftParenthesis => {
+                    block_stack.push(CssValueBlockCloser::Parenthesis);
+                }
+                CssTokenKind::LeftSquareBracket => {
+                    block_stack.push(CssValueBlockCloser::SquareBracket);
+                }
+                CssTokenKind::LeftCurlyBracket => {
+                    block_stack.push(CssValueBlockCloser::CurlyBracket);
+                }
+                CssTokenKind::RightParenthesis
+                    if block_stack.last() == Some(&CssValueBlockCloser::Parenthesis) =>
+                {
+                    block_stack.pop();
+                }
+                CssTokenKind::RightSquareBracket
+                    if block_stack.last() == Some(&CssValueBlockCloser::SquareBracket) =>
+                {
+                    block_stack.pop();
+                }
+                CssTokenKind::RightCurlyBracket
+                    if block_stack.last() == Some(&CssValueBlockCloser::CurlyBracket) =>
+                {
+                    block_stack.pop();
+                }
+                _ => {}
+            }
+        }
+
+        if block_stack.is_empty()
+            && let Some(start) = component_start.take()
+        {
+            component_classes.push(classify_translate_component(
+                &items[start..=index],
+                lexical_item_start + start,
+            ));
+        }
+    }
+    if let Some(start) = component_start {
+        component_classes.push(classify_translate_component(
+            &items[start..],
+            lexical_item_start + start,
+        ));
+    }
+
+    if component_classes.is_empty() || component_classes.len() > 3 {
+        return CssTranslateQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    let mut has_residual_function = false;
+    let mut components = Vec::with_capacity(component_classes.len());
+    for (position, class) in component_classes.into_iter().enumerate() {
+        match class {
+            CssTranslateComponentClass::Length(evidence_ref) => {
+                components.push(CssTranslateComponent {
+                    kind: CssTranslateComponentKind::Length,
+                    evidence_ref,
+                });
+            }
+            CssTranslateComponentClass::Percentage(evidence_ref) => {
+                if position == 2 {
+                    return CssTranslateQualificationOutcome::InvalidForSelectedValueGrammar;
+                }
+                components.push(CssTranslateComponent {
+                    kind: CssTranslateComponentKind::Percentage,
+                    evidence_ref,
+                });
+            }
+            CssTranslateComponentClass::ResidualFunction => {
+                has_residual_function = true;
+            }
+            CssTranslateComponentClass::MisplacedWholeValueFunction
+            | CssTranslateComponentClass::Invalid => {
+                return CssTranslateQualificationOutcome::InvalidForSelectedValueGrammar;
+            }
+        }
+    }
+
+    if has_residual_function {
+        return CssTranslateQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssTranslateUnsupportedReason::FunctionValue,
+        );
+    }
+
+    CssTranslateQualificationOutcome::Qualified(CssTranslateValue::Components(components))
 }
 
 fn qualify_scroll_snap_align_value(
