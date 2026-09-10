@@ -2696,6 +2696,80 @@ impl CssTextEmphasisPositionQualificationObservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTextUnderlinePositionComponent {
+    FromFont,
+    Under,
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTextUnderlinePositionComponents {
+    authored: [CssTextUnderlinePositionComponent; 2],
+    count: usize,
+}
+
+impl CssTextUnderlinePositionComponents {
+    pub(crate) fn authored_components(&self) -> &[CssTextUnderlinePositionComponent] {
+        &self.authored[..self.count]
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTextUnderlinePositionValue {
+    Auto,
+    Components(CssTextUnderlinePositionComponents),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTextUnderlinePositionUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTextUnderlinePositionQualificationOutcome {
+    Qualified(CssTextUnderlinePositionValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssTextUnderlinePositionUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded authored
+/// `text-underline-position` qualification.
+///
+/// The selected normative grammar is
+/// `auto | [ from-font | under ] || [ left | right ]`: `auto` is an
+/// exclusive singleton branch, while the component branch accepts one or
+/// two authored direct identifiers with at most one occupying Slot A
+/// (`from-font`/`under`) and at most one occupying Slot B
+/// (`left`/`right`). Exact authored sequence is retained, including a
+/// side-only `left`/`right` singleton, which is never synthesized with an
+/// implied `auto`. This slice does not resolve font metrics, writing-mode
+/// behavior, layout, painting, or claim computed/used-value or rendering
+/// semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTextUnderlinePositionQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssTextUnderlinePositionQualificationOutcome,
+}
+
+impl CssTextUnderlinePositionQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssTextUnderlinePositionQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssOverscrollBehaviorXValue {
     Contain,
     None,
@@ -5908,6 +5982,7 @@ pub(crate) struct CssValueQualificationRunResult {
     transform_style_observations: Vec<CssTransformStyleQualificationObservation>,
     text_indent_observations: Vec<CssTextIndentQualificationObservation>,
     letter_spacing_observations: Vec<CssLetterSpacingQualificationObservation>,
+    text_underline_position_observations: Vec<CssTextUnderlinePositionQualificationObservation>,
 }
 
 impl CssValueQualificationRunResult {
@@ -6809,6 +6884,12 @@ impl CssValueQualificationRunResult {
         &self.letter_spacing_observations
     }
 
+    pub(crate) fn text_underline_position_observations(
+        &self,
+    ) -> &[CssTextUnderlinePositionQualificationObservation] {
+        &self.text_underline_position_observations
+    }
+
     /// Resolves one qualified `text-indent` `Length`/`Percentage`
     /// component's run-local evidence reference to its exact retained
     /// tokenizer token kind, preserving sign/zero spelling, magnitude,
@@ -6980,6 +7061,7 @@ pub(crate) fn run(
         transform_style_observations,
         text_indent_observations,
         letter_spacing_observations,
+        text_underline_position_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
         let mut cursor = LexicalWindowCursor::new(tokenizer_result);
@@ -7076,6 +7158,7 @@ pub(crate) fn run(
         let mut transform_style_observations = Vec::new();
         let mut text_indent_observations = Vec::new();
         let mut letter_spacing_observations = Vec::new();
+        let mut text_underline_position_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
             let property_range = cursor.window_for(occurrence.property_name())?;
@@ -8194,6 +8277,19 @@ pub(crate) fn run(
                     placement: occurrence.placement(),
                     outcome: qualify_letter_spacing_value(value_items),
                 });
+                continue;
+            }
+
+            if property_name.eq_ignore_ascii_case("text-underline-position") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                text_underline_position_observations.push(
+                    CssTextUnderlinePositionQualificationObservation {
+                        occurrence_index,
+                        placement: occurrence.placement(),
+                        outcome: qualify_text_underline_position_value(value_items),
+                    },
+                );
             }
         }
 
@@ -8291,6 +8387,7 @@ pub(crate) fn run(
             transform_style_observations,
             text_indent_observations,
             letter_spacing_observations,
+            text_underline_position_observations,
         )
     };
 
@@ -8389,6 +8486,7 @@ pub(crate) fn run(
         transform_style_observations,
         text_indent_observations,
         letter_spacing_observations,
+        text_underline_position_observations,
     })
 }
 
@@ -11193,6 +11291,100 @@ fn text_emphasis_position_component(
     }
     if identifier.eq_ignore_ascii_case("left") {
         return Some((CssTextEmphasisPositionComponent::Left, 0b10));
+    }
+    None
+}
+
+fn qualify_text_underline_position_value(
+    items: &[CssLexicalItem],
+) -> CssTextUnderlinePositionQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssTextUnderlinePositionQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssTextUnderlinePositionUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssTextUnderlinePositionQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssTextUnderlinePositionUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    let tokens: Vec<_> = items
+        .iter()
+        .filter_map(|item| match item {
+            CssLexicalItem::SemanticToken(token)
+                if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+            {
+                Some(token)
+            }
+            _ => None,
+        })
+        .collect();
+
+    if let [token] = tokens.as_slice()
+        && let CssTokenKind::Ident(identifier) = token.kind()
+        && is_css_wide_keyword(identifier)
+    {
+        return CssTextUnderlinePositionQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssTextUnderlinePositionUnsupportedReason::CssWideKeyword,
+        );
+    }
+
+    if tokens.is_empty() || tokens.len() > 2 {
+        return CssTextUnderlinePositionQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    if let [token] = tokens.as_slice()
+        && let CssTokenKind::Ident(identifier) = token.kind()
+        && identifier.eq_ignore_ascii_case("auto")
+    {
+        return CssTextUnderlinePositionQualificationOutcome::Qualified(
+            CssTextUnderlinePositionValue::Auto,
+        );
+    }
+
+    let mut authored = [CssTextUnderlinePositionComponent::FromFont; 2];
+    let mut count = 0usize;
+    let mut occupied_slots = 0u8;
+
+    for token in tokens {
+        let CssTokenKind::Ident(identifier) = token.kind() else {
+            return CssTextUnderlinePositionQualificationOutcome::InvalidForSelectedValueGrammar;
+        };
+        let Some((component, slot)) = text_underline_position_component(identifier) else {
+            return CssTextUnderlinePositionQualificationOutcome::InvalidForSelectedValueGrammar;
+        };
+        if occupied_slots & slot != 0 {
+            return CssTextUnderlinePositionQualificationOutcome::InvalidForSelectedValueGrammar;
+        }
+        occupied_slots |= slot;
+        authored[count] = component;
+        count += 1;
+    }
+
+    CssTextUnderlinePositionQualificationOutcome::Qualified(
+        CssTextUnderlinePositionValue::Components(CssTextUnderlinePositionComponents {
+            authored,
+            count,
+        }),
+    )
+}
+
+fn text_underline_position_component(
+    identifier: &str,
+) -> Option<(CssTextUnderlinePositionComponent, u8)> {
+    if identifier.eq_ignore_ascii_case("from-font") {
+        return Some((CssTextUnderlinePositionComponent::FromFont, 0b01));
+    }
+    if identifier.eq_ignore_ascii_case("under") {
+        return Some((CssTextUnderlinePositionComponent::Under, 0b01));
+    }
+    if identifier.eq_ignore_ascii_case("right") {
+        return Some((CssTextUnderlinePositionComponent::Right, 0b10));
+    }
+    if identifier.eq_ignore_ascii_case("left") {
+        return Some((CssTextUnderlinePositionComponent::Left, 0b10));
     }
     None
 }

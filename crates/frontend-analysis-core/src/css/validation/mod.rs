@@ -227,6 +227,8 @@ mod text_transform_value_qualification_tests;
 #[cfg(test)]
 mod text_underline_offset_value_qualification_tests;
 #[cfg(test)]
+mod text_underline_position_value_qualification_tests;
+#[cfg(test)]
 mod transform_box_value_qualification_tests;
 #[cfg(test)]
 mod transform_origin_value_qualification_tests;
