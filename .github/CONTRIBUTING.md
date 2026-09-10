@@ -119,6 +119,11 @@ durable technical result. Draft Pull Requests may be used before work is ready
 for final review. Final Pull Requests must not claim checks that were not run.
 Merge strategy and repository settings remain controlled by maintainers.
 
+When linking to repository files from GitHub Pull Request, Issue, or comment
+Markdown, use `../blob/main/<repository-relative-path>` rather than a plain
+filesystem-relative path such as `docs/...`, `../docs/...`, or
+`CONTRIBUTING.md`.
+
 ## Implementation Requirements
 
 Contributors must:
