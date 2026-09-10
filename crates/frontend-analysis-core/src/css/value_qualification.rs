@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520/#522/#524/#526/#528/#530/#532/#534/#536/#538/#541/#546/#549/#551/#553/#555/#559/#561/#596/#598/#600/#602/#604/#606).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520/#522/#524/#526/#528/#530/#532/#534/#536/#538/#541/#546/#549/#551/#553/#555/#559/#561/#596/#598/#600/#602/#604/#606/#608).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -5371,6 +5371,155 @@ impl CssTranslateQualificationObservation {
     }
 }
 
+/// Run-local locator for the exact tokenizer item selected during
+/// authoritative `transform-origin` direct Length/Percentage component
+/// recognition (#608). A direct keyword component carries no evidence
+/// reference -- its full authored identity is already captured by the
+/// decoded `CssTransformOriginKeyword` itself -- while a `Length` or
+/// `Percentage` component retains this run-local index, resolved through
+/// `transform_origin_component_token` without any machine-number
+/// conversion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTransformOriginComponentEvidenceRef {
+    lexical_item_index: usize,
+}
+
+impl CssTransformOriginComponentEvidenceRef {
+    pub(crate) const fn lexical_item_index(&self) -> usize {
+        self.lexical_item_index
+    }
+}
+
+/// One direct authored `transform-origin` position keyword (#608),
+/// tokenizer-decoded ASCII-case-insensitively. `Center` is retained as its
+/// own identity -- never collapsed into either axis role -- since a single
+/// authored `center` may satisfy the horizontal role, the vertical role, or
+/// (as a sole one-component value) neither role exclusively.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTransformOriginKeyword {
+    Left,
+    Center,
+    Right,
+    Top,
+    Bottom,
+}
+
+/// One direct authored `transform-origin` component under the pin-bounded
+/// role-sensitive finite position theorem (#608): a direct keyword, a
+/// direct `<length>` (an exact-zero `Number` or a `Dimension` with a
+/// recognized CSS length unit), or a direct `Percentage`. Authored kind and
+/// exact tokenizer-owned evidence are preserved without interpreted
+/// coordinate conversion; a `Length` and a `Percentage` remain distinct
+/// authored branches even where both would resolve to the same offset
+/// downstream (`0` vs `0%`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTransformOriginComponent {
+    Keyword(CssTransformOriginKeyword),
+    Length(CssTransformOriginComponentEvidenceRef),
+    Percentage(CssTransformOriginComponentEvidenceRef),
+}
+
+/// One authored `transform-origin` value under the pin-bounded role-
+/// sensitive finite position profile (#608): an ordered, authored-
+/// cardinality-preserving list of one to three qualified direct
+/// components. Authored omission of a downstream-assumed second `center`
+/// or third `0px` is never synthesized here, and authored keyword source
+/// order (`top left` vs `left top`) is never canonicalized.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CssTransformOriginValue {
+    Components(Vec<CssTransformOriginComponent>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTransformOriginUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CssTransformOriginQualificationOutcome {
+    Qualified(CssTransformOriginValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssTransformOriginUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `transform-origin`
+/// qualification against the pin-bounded property-local grammar (#608 /
+/// css-transforms-1 `transform-origin`):
+///
+/// ```text
+/// [ left | center | right | top | bottom | <length-percentage> ]
+/// |
+/// [ left | center | right | <length-percentage> ]
+/// [ top | center | bottom | <length-percentage> ] <length>?
+/// |
+/// [ [ center | left | right ] && [ center | top | bottom ] ] <length>?
+/// ```
+///
+/// This property-local grammar is deliberately not routed through a
+/// generic `<position>` matcher: the CSS Values explanatory shortcut
+/// treating `transform-origin` as `<position> <length>?` is insufficient
+/// here, since e.g. `top 20px` is valid `<position>` syntax but decisively
+/// invalid `transform-origin` syntax.
+///
+/// Deferred substitution and the whole-value Function boundary are checked
+/// first, exactly as for the other selected leaves; `transform-origin` has
+/// no dedicated whole-value keyword. Otherwise the value is partitioned
+/// into one to three ordered top-level components using depth-zero
+/// Whitespace/Comment trivia as separators. Once partitioned, qualification
+/// dispatches purely on component count: exactly one component (`H | V | C
+/// | LP`), exactly two components (the role-sensitive ordered/`&&` finite
+/// theorem below), or exactly three components (a valid two-component
+/// position plus a third, `<length>`-only, Z component). Any other
+/// cardinality -- zero, or four or more -- is decisive
+/// `InvalidForSelectedValueGrammar` regardless of any residual Function
+/// present.
+///
+/// The two-component theorem is role-sensitive and asymmetric: a component
+/// pair qualifies iff it satisfies the ordered branch (first component is
+/// `left | right | center | <length-percentage>`, second is `top | bottom |
+/// center | <length-percentage>`) or, when both components are direct
+/// keywords, the reversed keyword-only `&&` branch (first keyword satisfies
+/// the vertical-or-center role, second the horizontal-or-center role). A
+/// bare numeric component can only occupy the ordered branch's own slot
+/// order -- `left 20px` qualifies but `top 20px` does not, and `20px top`
+/// qualifies but `20px left` does not -- since a `<length-percentage>` can
+/// never stand in for a literal keyword role in the reversed `&&` branch.
+/// The third, Z, component of a three-component value must be a direct
+/// `<length>`: a direct `Percentage` there (including `0%`) is decisive
+/// `InvalidForSelectedValueGrammar` regardless of any residual Function
+/// found in the first two components, since structural/direct decisive
+/// invalidity always outranks a provisional Function ambiguity.
+///
+/// A residual Function is `UnsupportedBySelectedValueProfile(FunctionValue)`
+/// only when assigning it to the ordered branch's own `<length-percentage>`
+/// slot (never a keyword role) could complete a structurally valid finite
+/// shape; a Function that could never occupy its position under any such
+/// assignment (e.g. `top calc(20px)`, `calc(20px) left`) is decisive
+/// `InvalidForSelectedValueGrammar` instead.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CssTransformOriginQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssTransformOriginQualificationOutcome,
+}
+
+impl CssTransformOriginQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> &CssTransformOriginQualificationOutcome {
+        &self.outcome
+    }
+}
+
 /// Run-owned result for the currently selected bounded CSS value capabilities.
 ///
 /// The exact Core-validated parser result is owned once here. Property-specific
@@ -5471,6 +5620,7 @@ pub(crate) struct CssValueQualificationRunResult {
     scale_observations: Vec<CssScaleQualificationObservation>,
     rotate_observations: Vec<CssRotateQualificationObservation>,
     translate_observations: Vec<CssTranslateQualificationObservation>,
+    transform_origin_observations: Vec<CssTransformOriginQualificationObservation>,
 }
 
 impl CssValueQualificationRunResult {
@@ -6323,6 +6473,34 @@ impl CssValueQualificationRunResult {
         };
         Some(token.kind())
     }
+
+    pub(crate) fn transform_origin_observations(
+        &self,
+    ) -> &[CssTransformOriginQualificationObservation] {
+        &self.transform_origin_observations
+    }
+
+    /// Resolves one qualified `transform-origin` `Length`/`Percentage`
+    /// component's run-local evidence reference to its exact retained
+    /// tokenizer token kind, preserving sign/zero spelling, magnitude,
+    /// decimal/exponent shape, and unit spelling without machine-number
+    /// conversion. A `Keyword` component carries no evidence reference --
+    /// its authored identity is already fully captured by the decoded
+    /// keyword itself.
+    pub(crate) fn transform_origin_component_token(
+        &self,
+        evidence: CssTransformOriginComponentEvidenceRef,
+    ) -> Option<&CssTokenKind> {
+        let item = self
+            .upstream_parser_result
+            .upstream_tokenizer_result()
+            .lexical_items()
+            .get(evidence.lexical_item_index())?;
+        let CssLexicalItem::SemanticToken(token) = item else {
+            return None;
+        };
+        Some(token.kind())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -6468,6 +6646,7 @@ pub(crate) fn run(
         scale_observations,
         rotate_observations,
         translate_observations,
+        transform_origin_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
         let mut cursor = LexicalWindowCursor::new(tokenizer_result);
@@ -6559,6 +6738,7 @@ pub(crate) fn run(
         let mut scale_observations = Vec::new();
         let mut rotate_observations = Vec::new();
         let mut translate_observations = Vec::new();
+        let mut transform_origin_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
             let property_range = cursor.window_for(occurrence.property_name())?;
@@ -7618,6 +7798,19 @@ pub(crate) fn run(
                     placement: occurrence.placement(),
                     outcome,
                 });
+                continue;
+            }
+
+            if property_name.eq_ignore_ascii_case("transform-origin") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let lexical_item_start = value_range.start;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                let outcome = qualify_transform_origin_value(value_items, lexical_item_start);
+                transform_origin_observations.push(CssTransformOriginQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome,
+                });
             }
         }
 
@@ -7710,6 +7903,7 @@ pub(crate) fn run(
             scale_observations,
             rotate_observations,
             translate_observations,
+            transform_origin_observations,
         )
     };
 
@@ -7803,6 +7997,7 @@ pub(crate) fn run(
         scale_observations,
         rotate_observations,
         translate_observations,
+        transform_origin_observations,
     })
 }
 
@@ -16553,6 +16748,503 @@ fn qualify_translate_value(
     }
 
     CssTranslateQualificationOutcome::Qualified(CssTranslateValue::Components(components))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CssTransformOriginComponentClass {
+    Keyword(CssTransformOriginKeyword),
+    Length(CssTransformOriginComponentEvidenceRef),
+    Percentage(CssTransformOriginComponentEvidenceRef),
+    ResidualFunction,
+    MisplacedWholeValueFunction,
+    Invalid,
+}
+
+/// Classifies one already-partitioned top-level `transform-origin`
+/// component against the direct-authored token shapes admitted anywhere in
+/// the finite theorem (#608): one of the five direct position keywords
+/// (ASCII-case-insensitively), a direct exact-zero `Number`, a `Dimension`
+/// with a recognized CSS length unit, a `Percentage`, or a Function-headed
+/// component classified by placement/identity only, exactly as in
+/// `translate`/`rotate`/`scale`. This classification is positionally
+/// unaware and role-unaware -- the caller applies the ordered/`&&`
+/// role-sensitive theorem and the third-slot `<length>`-only restriction
+/// after partitioning.
+fn classify_transform_origin_component(
+    component: &[CssLexicalItem],
+    absolute_component_start: usize,
+) -> CssTransformOriginComponentClass {
+    let mut tokens =
+        component
+            .iter()
+            .enumerate()
+            .filter_map(|(relative_index, entry)| match entry {
+                CssLexicalItem::SemanticToken(token)
+                    if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+                {
+                    Some((relative_index, token))
+                }
+                _ => None,
+            });
+
+    let Some((relative_index, first)) = tokens.next() else {
+        return CssTransformOriginComponentClass::Invalid;
+    };
+
+    if let CssTokenKind::Function(name) = first.kind() {
+        return if is_whole_value_function(name) {
+            CssTransformOriginComponentClass::MisplacedWholeValueFunction
+        } else {
+            CssTransformOriginComponentClass::ResidualFunction
+        };
+    }
+
+    if tokens.next().is_some() {
+        return CssTransformOriginComponentClass::Invalid;
+    }
+
+    match first.kind() {
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("left") => {
+            CssTransformOriginComponentClass::Keyword(CssTransformOriginKeyword::Left)
+        }
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("center") => {
+            CssTransformOriginComponentClass::Keyword(CssTransformOriginKeyword::Center)
+        }
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("right") => {
+            CssTransformOriginComponentClass::Keyword(CssTransformOriginKeyword::Right)
+        }
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("top") => {
+            CssTransformOriginComponentClass::Keyword(CssTransformOriginKeyword::Top)
+        }
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("bottom") => {
+            CssTransformOriginComponentClass::Keyword(CssTransformOriginKeyword::Bottom)
+        }
+        CssTokenKind::Number { value, .. } if is_direct_zero_numeric_value(value) => {
+            CssTransformOriginComponentClass::Length(CssTransformOriginComponentEvidenceRef {
+                lexical_item_index: absolute_component_start + relative_index,
+            })
+        }
+        CssTokenKind::Dimension { unit, .. } if is_css_length_unit(unit) => {
+            CssTransformOriginComponentClass::Length(CssTransformOriginComponentEvidenceRef {
+                lexical_item_index: absolute_component_start + relative_index,
+            })
+        }
+        CssTokenKind::Percentage { .. } => {
+            CssTransformOriginComponentClass::Percentage(CssTransformOriginComponentEvidenceRef {
+                lexical_item_index: absolute_component_start + relative_index,
+            })
+        }
+        _ => CssTransformOriginComponentClass::Invalid,
+    }
+}
+
+/// Partitions an already-retained `transform-origin` declaration value
+/// window into ordered top-level components using one left-to-right
+/// recognition-time pass and classifies each the instant its block depth
+/// returns to zero, reusing the `translate`/`rotate`/`scale` block-depth-
+/// aware walk. Depth-zero Whitespace/Comment lexical items are separators
+/// -- never a `Comma`, since this grammar has no top-level comma list --
+/// and Function/bracket openers extend the current component until their
+/// matching closer, so nested content (e.g. `calc(min(10px, 20px))`) never
+/// inflates top-level cardinality. This intentionally duplicates the
+/// equivalent walk rather than sharing it: this leaf keeps its own bounded
+/// local recognition.
+fn transform_origin_top_level_component_classes(
+    items: &[CssLexicalItem],
+    lexical_item_start: usize,
+) -> Vec<CssTransformOriginComponentClass> {
+    let mut classes = Vec::new();
+    let mut block_stack: Vec<CssValueBlockCloser> = Vec::new();
+    let mut component_start: Option<usize> = None;
+
+    for (index, item) in items.iter().enumerate() {
+        if block_stack.is_empty() {
+            let is_separator = match item {
+                CssLexicalItem::Comment(_) => true,
+                CssLexicalItem::SemanticToken(token) => {
+                    matches!(token.kind(), CssTokenKind::Whitespace)
+                }
+            };
+            if is_separator {
+                if let Some(start) = component_start.take() {
+                    classes.push(classify_transform_origin_component(
+                        &items[start..index],
+                        lexical_item_start + start,
+                    ));
+                }
+                continue;
+            }
+        }
+
+        if component_start.is_none() {
+            component_start = Some(index);
+        }
+
+        if let CssLexicalItem::SemanticToken(token) = item {
+            match token.kind() {
+                CssTokenKind::Function(_) | CssTokenKind::LeftParenthesis => {
+                    block_stack.push(CssValueBlockCloser::Parenthesis);
+                }
+                CssTokenKind::LeftSquareBracket => {
+                    block_stack.push(CssValueBlockCloser::SquareBracket);
+                }
+                CssTokenKind::LeftCurlyBracket => {
+                    block_stack.push(CssValueBlockCloser::CurlyBracket);
+                }
+                CssTokenKind::RightParenthesis
+                    if block_stack.last() == Some(&CssValueBlockCloser::Parenthesis) =>
+                {
+                    block_stack.pop();
+                }
+                CssTokenKind::RightSquareBracket
+                    if block_stack.last() == Some(&CssValueBlockCloser::SquareBracket) =>
+                {
+                    block_stack.pop();
+                }
+                CssTokenKind::RightCurlyBracket
+                    if block_stack.last() == Some(&CssValueBlockCloser::CurlyBracket) =>
+                {
+                    block_stack.pop();
+                }
+                _ => {}
+            }
+        }
+
+        if block_stack.is_empty()
+            && let Some(start) = component_start.take()
+        {
+            classes.push(classify_transform_origin_component(
+                &items[start..=index],
+                lexical_item_start + start,
+            ));
+        }
+    }
+
+    if let Some(start) = component_start {
+        classes.push(classify_transform_origin_component(
+            &items[start..],
+            lexical_item_start + start,
+        ));
+    }
+
+    classes
+}
+
+fn transform_origin_direct_component(
+    class: CssTransformOriginComponentClass,
+) -> Option<CssTransformOriginComponent> {
+    match class {
+        CssTransformOriginComponentClass::Keyword(keyword) => {
+            Some(CssTransformOriginComponent::Keyword(keyword))
+        }
+        CssTransformOriginComponentClass::Length(evidence) => {
+            Some(CssTransformOriginComponent::Length(evidence))
+        }
+        CssTransformOriginComponentClass::Percentage(evidence) => {
+            Some(CssTransformOriginComponent::Percentage(evidence))
+        }
+        CssTransformOriginComponentClass::ResidualFunction
+        | CssTransformOriginComponentClass::MisplacedWholeValueFunction
+        | CssTransformOriginComponentClass::Invalid => None,
+    }
+}
+
+/// Qualifies the sole component of a one-component candidate shape against
+/// the direct `H | V | C | LP` branch of the finite theorem (#608): any one
+/// of the five direct position keywords, or a direct `<length-percentage>`.
+fn qualify_transform_origin_one_component_shape(
+    class: CssTransformOriginComponentClass,
+) -> CssTransformOriginQualificationOutcome {
+    if let Some(component) = transform_origin_direct_component(class) {
+        return CssTransformOriginQualificationOutcome::Qualified(
+            CssTransformOriginValue::Components(vec![component]),
+        );
+    }
+
+    match class {
+        CssTransformOriginComponentClass::ResidualFunction => {
+            CssTransformOriginQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssTransformOriginUnsupportedReason::FunctionValue,
+            )
+        }
+        _ => CssTransformOriginQualificationOutcome::InvalidForSelectedValueGrammar,
+    }
+}
+
+/// A component class occupies the ordered branch's first slot -- `left |
+/// right | center | <length-percentage>` -- directly, without a Function.
+fn is_transform_origin_ordered_first_slot(class: CssTransformOriginComponentClass) -> bool {
+    matches!(
+        class,
+        CssTransformOriginComponentClass::Keyword(
+            CssTransformOriginKeyword::Left
+                | CssTransformOriginKeyword::Right
+                | CssTransformOriginKeyword::Center
+        ) | CssTransformOriginComponentClass::Length(_)
+            | CssTransformOriginComponentClass::Percentage(_)
+    )
+}
+
+/// A component class occupies the ordered branch's second slot -- `top |
+/// bottom | center | <length-percentage>` -- directly, without a Function.
+fn is_transform_origin_ordered_second_slot(class: CssTransformOriginComponentClass) -> bool {
+    matches!(
+        class,
+        CssTransformOriginComponentClass::Keyword(
+            CssTransformOriginKeyword::Top
+                | CssTransformOriginKeyword::Bottom
+                | CssTransformOriginKeyword::Center
+        ) | CssTransformOriginComponentClass::Length(_)
+            | CssTransformOriginComponentClass::Percentage(_)
+    )
+}
+
+fn is_transform_origin_ordered_first_slot_or_function(
+    class: CssTransformOriginComponentClass,
+) -> bool {
+    is_transform_origin_ordered_first_slot(class)
+        || matches!(class, CssTransformOriginComponentClass::ResidualFunction)
+}
+
+fn is_transform_origin_ordered_second_slot_or_function(
+    class: CssTransformOriginComponentClass,
+) -> bool {
+    is_transform_origin_ordered_second_slot(class)
+        || matches!(class, CssTransformOriginComponentClass::ResidualFunction)
+}
+
+/// A direct keyword satisfies the reversed `&&` branch's horizontal-or-
+/// center role.
+fn is_transform_origin_horizontal_or_center(keyword: CssTransformOriginKeyword) -> bool {
+    matches!(
+        keyword,
+        CssTransformOriginKeyword::Left
+            | CssTransformOriginKeyword::Right
+            | CssTransformOriginKeyword::Center
+    )
+}
+
+/// A direct keyword satisfies the reversed `&&` branch's vertical-or-
+/// center role.
+fn is_transform_origin_vertical_or_center(keyword: CssTransformOriginKeyword) -> bool {
+    matches!(
+        keyword,
+        CssTransformOriginKeyword::Top
+            | CssTransformOriginKeyword::Bottom
+            | CssTransformOriginKeyword::Center
+    )
+}
+
+/// Resolves a concretely valid two-component direct position pair, or
+/// `None` when the pair needs a residual Function or is not role-valid. A
+/// pair qualifies iff the ordered branch matches (first component in the
+/// ordered first slot, second in the ordered second slot) or, when both
+/// components are direct keywords, the reversed keyword-only `&&` branch
+/// matches (first keyword satisfies the vertical-or-center role, second
+/// the horizontal-or-center role) -- authored source order is always
+/// preserved in the returned pair regardless of which branch proved
+/// validity, and neither branch identity is exposed in the result.
+fn transform_origin_concrete_two_component_pair(
+    first: CssTransformOriginComponentClass,
+    second: CssTransformOriginComponentClass,
+) -> Option<(CssTransformOriginComponent, CssTransformOriginComponent)> {
+    let ordered_branch_valid = is_transform_origin_ordered_first_slot(first)
+        && is_transform_origin_ordered_second_slot(second);
+
+    let reversed_keyword_branch_valid = match (first, second) {
+        (
+            CssTransformOriginComponentClass::Keyword(first_keyword),
+            CssTransformOriginComponentClass::Keyword(second_keyword),
+        ) => {
+            is_transform_origin_vertical_or_center(first_keyword)
+                && is_transform_origin_horizontal_or_center(second_keyword)
+        }
+        _ => false,
+    };
+
+    if !ordered_branch_valid && !reversed_keyword_branch_valid {
+        return None;
+    }
+
+    let first_component = transform_origin_direct_component(first)?;
+    let second_component = transform_origin_direct_component(second)?;
+    Some((first_component, second_component))
+}
+
+/// Qualifies a two-component candidate shape against the role-sensitive
+/// finite theorem (#608). A Function can only stand in for the ordered
+/// branch's own `<length-percentage>` slot -- never a literal keyword role
+/// in either branch -- so a Function paired with a keyword that cannot
+/// occupy the *other* ordered slot is decisively Invalid rather than
+/// Unsupported (e.g. `top calc(20px)`, `calc(20px) left`).
+fn qualify_transform_origin_two_component_shape(
+    first: CssTransformOriginComponentClass,
+    second: CssTransformOriginComponentClass,
+) -> CssTransformOriginQualificationOutcome {
+    if let Some((first_component, second_component)) =
+        transform_origin_concrete_two_component_pair(first, second)
+    {
+        return CssTransformOriginQualificationOutcome::Qualified(
+            CssTransformOriginValue::Components(vec![first_component, second_component]),
+        );
+    }
+
+    if matches!(
+        first,
+        CssTransformOriginComponentClass::Invalid
+            | CssTransformOriginComponentClass::MisplacedWholeValueFunction
+    ) || matches!(
+        second,
+        CssTransformOriginComponentClass::Invalid
+            | CssTransformOriginComponentClass::MisplacedWholeValueFunction
+    ) {
+        return CssTransformOriginQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    let ordered_branch_feasible_with_function =
+        is_transform_origin_ordered_first_slot_or_function(first)
+            && is_transform_origin_ordered_second_slot_or_function(second);
+
+    if ordered_branch_feasible_with_function {
+        CssTransformOriginQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssTransformOriginUnsupportedReason::FunctionValue,
+        )
+    } else {
+        CssTransformOriginQualificationOutcome::InvalidForSelectedValueGrammar
+    }
+}
+
+/// Qualifies a three-component candidate shape against the finite theorem
+/// (#608): `ValidTwoComponentPosition <length>`. The third, Z, slot is
+/// `<length>` only -- a direct `Percentage` there (including `0%`), a
+/// keyword, or any other decisively invalid/misplaced component is
+/// decisive `InvalidForSelectedValueGrammar` regardless of any residual
+/// Function found in the first two components, since structural/direct
+/// decisive invalidity always outranks a provisional Function ambiguity.
+fn qualify_transform_origin_three_component_shape(
+    first: CssTransformOriginComponentClass,
+    second: CssTransformOriginComponentClass,
+    third: CssTransformOriginComponentClass,
+) -> CssTransformOriginQualificationOutcome {
+    if matches!(
+        third,
+        CssTransformOriginComponentClass::Percentage(_)
+            | CssTransformOriginComponentClass::Keyword(_)
+            | CssTransformOriginComponentClass::Invalid
+            | CssTransformOriginComponentClass::MisplacedWholeValueFunction
+    ) {
+        return CssTransformOriginQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    if matches!(
+        first,
+        CssTransformOriginComponentClass::Invalid
+            | CssTransformOriginComponentClass::MisplacedWholeValueFunction
+    ) || matches!(
+        second,
+        CssTransformOriginComponentClass::Invalid
+            | CssTransformOriginComponentClass::MisplacedWholeValueFunction
+    ) {
+        return CssTransformOriginQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    if let Some((first_component, second_component)) =
+        transform_origin_concrete_two_component_pair(first, second)
+    {
+        return match third {
+            CssTransformOriginComponentClass::Length(evidence) => {
+                CssTransformOriginQualificationOutcome::Qualified(
+                    CssTransformOriginValue::Components(vec![
+                        first_component,
+                        second_component,
+                        CssTransformOriginComponent::Length(evidence),
+                    ]),
+                )
+            }
+            CssTransformOriginComponentClass::ResidualFunction => {
+                CssTransformOriginQualificationOutcome::UnsupportedBySelectedValueProfile(
+                    CssTransformOriginUnsupportedReason::FunctionValue,
+                )
+            }
+            _ => unreachable!("third slot already filtered to Length or ResidualFunction"),
+        };
+    }
+
+    let xy_ordered_feasible_with_function =
+        is_transform_origin_ordered_first_slot_or_function(first)
+            && is_transform_origin_ordered_second_slot_or_function(second);
+
+    if xy_ordered_feasible_with_function {
+        CssTransformOriginQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssTransformOriginUnsupportedReason::FunctionValue,
+        )
+    } else {
+        CssTransformOriginQualificationOutcome::InvalidForSelectedValueGrammar
+    }
+}
+
+/// Qualifies one retained `transform-origin` declaration value against the
+/// pin-bounded property-local role-sensitive finite position theorem
+/// (#608), reusing the accepted `translate`/`rotate`/`scale` block-depth-
+/// aware top-level component partition, the accepted `translate` direct
+/// exact-zero-`Number`-as-`Length` and CSS length-`Dimension`/`Percentage`
+/// recognition, and the accepted `rotate` residual-Function-viability
+/// precedent that a Function can never satisfy a literal keyword slot.
+///
+/// Deferred substitution and the whole-value Function boundary are checked
+/// first, exactly as for the other selected leaves; `transform-origin` has
+/// no dedicated whole-value keyword like `none`. A sole CSS-wide keyword
+/// preserves the existing whole-value Unsupported boundary. Otherwise the
+/// value is partitioned into ordered top-level components and dispatched
+/// purely on component count: one, two, or three components reach the
+/// role-sensitive finite theorem; zero, or four or more, is decisive
+/// `InvalidForSelectedValueGrammar` regardless of any residual Function
+/// present, so a later decisive structural failure (e.g. a fourth trailing
+/// component from a rejected generic `<position>` edge-offset form) always
+/// outranks an earlier provisional Function ambiguity.
+fn qualify_transform_origin_value(
+    items: &[CssLexicalItem],
+    lexical_item_start: usize,
+) -> CssTransformOriginQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssTransformOriginQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssTransformOriginUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssTransformOriginQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssTransformOriginUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    let mut whole_value_tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+    if let (Some(only_token), None) = (whole_value_tokens.next(), whole_value_tokens.next())
+        && let CssTokenKind::Ident(identifier) = only_token.kind()
+        && is_css_wide_keyword(identifier)
+    {
+        return CssTransformOriginQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssTransformOriginUnsupportedReason::CssWideKeyword,
+        );
+    }
+
+    let classes = transform_origin_top_level_component_classes(items, lexical_item_start);
+
+    match classes.as_slice() {
+        [class] => qualify_transform_origin_one_component_shape(*class),
+        [first, second] => qualify_transform_origin_two_component_shape(*first, *second),
+        [first, second, third] => {
+            qualify_transform_origin_three_component_shape(*first, *second, *third)
+        }
+        _ => CssTransformOriginQualificationOutcome::InvalidForSelectedValueGrammar,
+    }
 }
 
 fn qualify_scroll_snap_align_value(
