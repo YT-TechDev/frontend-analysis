@@ -5642,6 +5642,117 @@ impl CssTransformStyleQualificationObservation {
     }
 }
 
+/// Run-local locator for the exact tokenizer item selected during
+/// authoritative `text-indent` direct Length/Percentage component
+/// recognition (#615), resolved through `text_indent_component_token`
+/// without any machine-number conversion. A `Hanging`/`EachLine` component
+/// carries no evidence reference -- its full authored identity is already
+/// captured by the decoded keyword variant itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTextIndentComponentEvidenceRef {
+    lexical_item_index: usize,
+}
+
+impl CssTextIndentComponentEvidenceRef {
+    pub(crate) const fn lexical_item_index(&self) -> usize {
+        self.lexical_item_index
+    }
+}
+
+/// One direct authored `text-indent` component under the pin-bounded
+/// required-typed-anchor-plus-unique-optional-keyword unordered-composition
+/// theorem (#615 / css-text-3, css-text-4 `text-indent`:
+/// `[ <length-percentage> ] && hanging? && each-line?`): a direct `<length>`
+/// (an exact-zero `Number` or a `Dimension` with a recognized CSS length
+/// unit), a direct `Percentage`, or one of the two direct optional
+/// keywords. A `Length` and a `Percentage` remain distinct authored
+/// branches -- and `0`, `0px`, and `0%` each retain distinct run-local
+/// evidence -- even where all three would resolve to the same offset
+/// downstream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTextIndentComponent {
+    Length(CssTextIndentComponentEvidenceRef),
+    Percentage(CssTextIndentComponentEvidenceRef),
+    Hanging,
+    EachLine,
+}
+
+/// One authored `text-indent` value under the pin-bounded finite `&&`
+/// composition profile (#615): an ordered, authored-cardinality-preserving
+/// list of one to three qualified direct components. The `&&` combinator
+/// authorizes any authored order of the required `<length-percentage>`
+/// anchor and the two unique optional keywords, but never justifies
+/// canonicalizing that order -- authored component order is preserved
+/// exactly, never rewritten into a `<length-percentage> hanging each-line`
+/// or any other fixed shape, and never confused with CSSOM serialization
+/// order, computed representation, or layout effect.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CssTextIndentValue {
+    Components(Vec<CssTextIndentComponent>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTextIndentUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CssTextIndentQualificationOutcome {
+    Qualified(CssTextIndentValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssTextIndentUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `text-indent` qualification
+/// against the pin-bounded property-local grammar (#615 / css-text-3,
+/// css-text-4 `text-indent`):
+///
+/// ```text
+/// [ <length-percentage> ] && hanging? && each-line?
+/// ```
+///
+/// A direct value qualifies iff its ordered top-level components contain
+/// exactly one direct `<length-percentage>` anchor, zero or one `hanging`,
+/// and zero or one `each-line`, in any authored order -- direct authored
+/// cardinality is exactly one to three. An ordinary residual Function may
+/// only satisfy the single `<length-percentage>` role: it is
+/// `UnsupportedBySelectedValueProfile(FunctionValue)` only while a valid
+/// finite role assignment remains possible (e.g. `hanging calc(...)`), and
+/// decisively `InvalidForSelectedValueGrammar` whenever no assignment can
+/// complete the grammar (e.g. `10px calc(...)`, `calc(...) calc(...)`,
+/// `hanging hanging calc(...)`) -- structural/direct decisive invalidity,
+/// including any duplicate anchor or duplicate keyword, always outranks a
+/// provisional Function ambiguity.
+///
+/// This qualifies only authored grammar membership and authored component
+/// identity/order; it proves no first-formatted-line selection, forced/soft
+/// line-break behavior, block layout or indentation geometry, percentage
+/// basis resolution, inheritance, computed/used values, or CSSOM
+/// serialization.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CssTextIndentQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssTextIndentQualificationOutcome,
+}
+
+impl CssTextIndentQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> &CssTextIndentQualificationOutcome {
+        &self.outcome
+    }
+}
+
 /// Run-owned result for the currently selected bounded CSS value capabilities.
 ///
 /// The exact Core-validated parser result is owned once here. Property-specific
@@ -5745,6 +5856,7 @@ pub(crate) struct CssValueQualificationRunResult {
     transform_origin_observations: Vec<CssTransformOriginQualificationObservation>,
     transform_box_observations: Vec<CssTransformBoxQualificationObservation>,
     transform_style_observations: Vec<CssTransformStyleQualificationObservation>,
+    text_indent_observations: Vec<CssTextIndentQualificationObservation>,
 }
 
 impl CssValueQualificationRunResult {
@@ -6635,6 +6747,32 @@ impl CssValueQualificationRunResult {
     ) -> &[CssTransformStyleQualificationObservation] {
         &self.transform_style_observations
     }
+
+    pub(crate) fn text_indent_observations(&self) -> &[CssTextIndentQualificationObservation] {
+        &self.text_indent_observations
+    }
+
+    /// Resolves one qualified `text-indent` `Length`/`Percentage`
+    /// component's run-local evidence reference to its exact retained
+    /// tokenizer token kind, preserving sign/zero spelling, magnitude,
+    /// decimal/exponent shape, and unit spelling without machine-number
+    /// conversion. A `Hanging`/`EachLine` component carries no evidence
+    /// reference -- its authored identity is already fully captured by the
+    /// decoded keyword variant itself.
+    pub(crate) fn text_indent_component_token(
+        &self,
+        evidence: CssTextIndentComponentEvidenceRef,
+    ) -> Option<&CssTokenKind> {
+        let item = self
+            .upstream_parser_result
+            .upstream_tokenizer_result()
+            .lexical_items()
+            .get(evidence.lexical_item_index())?;
+        let CssLexicalItem::SemanticToken(token) = item else {
+            return None;
+        };
+        Some(token.kind())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -6783,6 +6921,7 @@ pub(crate) fn run(
         transform_origin_observations,
         transform_box_observations,
         transform_style_observations,
+        text_indent_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
         let mut cursor = LexicalWindowCursor::new(tokenizer_result);
@@ -6877,6 +7016,7 @@ pub(crate) fn run(
         let mut transform_origin_observations = Vec::new();
         let mut transform_box_observations = Vec::new();
         let mut transform_style_observations = Vec::new();
+        let mut text_indent_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
             let property_range = cursor.window_for(occurrence.property_name())?;
@@ -7971,6 +8111,19 @@ pub(crate) fn run(
                     placement: occurrence.placement(),
                     outcome: qualify_transform_style_value(value_items),
                 });
+                continue;
+            }
+
+            if property_name.eq_ignore_ascii_case("text-indent") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let lexical_item_start = value_range.start;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                let outcome = qualify_text_indent_value(value_items, lexical_item_start);
+                text_indent_observations.push(CssTextIndentQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome,
+                });
             }
         }
 
@@ -8066,6 +8219,7 @@ pub(crate) fn run(
             transform_origin_observations,
             transform_box_observations,
             transform_style_observations,
+            text_indent_observations,
         )
     };
 
@@ -8162,6 +8316,7 @@ pub(crate) fn run(
         transform_origin_observations,
         transform_box_observations,
         transform_style_observations,
+        text_indent_observations,
     })
 }
 
@@ -17730,6 +17885,327 @@ fn is_css_wide_keyword(identifier: &str) -> bool {
     ]
     .iter()
     .any(|keyword| identifier.eq_ignore_ascii_case(keyword))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CssTextIndentComponentClass {
+    Length(CssTextIndentComponentEvidenceRef),
+    Percentage(CssTextIndentComponentEvidenceRef),
+    Hanging,
+    EachLine,
+    ResidualFunction,
+    MisplacedWholeValueFunction,
+    Invalid,
+}
+
+/// Classifies one already-partitioned top-level `text-indent` component
+/// against the direct authored token shapes admitted anywhere in the finite
+/// LP/H/E theorem (#615): a direct exact-zero `Number`, a `Dimension` with a
+/// recognized CSS length unit, a `Percentage`, one of the two direct
+/// optional keywords (ASCII-case-insensitively), or a Function-headed
+/// component classified by placement/identity only, exactly as in
+/// `transform-origin`/`translate`/`rotate`/`scale`. This classification is
+/// role-unaware -- the caller applies the finite LP/H/E multiplicity theorem
+/// after partitioning.
+fn classify_text_indent_component(
+    component: &[CssLexicalItem],
+    absolute_component_start: usize,
+) -> CssTextIndentComponentClass {
+    let mut tokens =
+        component
+            .iter()
+            .enumerate()
+            .filter_map(|(relative_index, entry)| match entry {
+                CssLexicalItem::SemanticToken(token)
+                    if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+                {
+                    Some((relative_index, token))
+                }
+                _ => None,
+            });
+
+    let Some((relative_index, first)) = tokens.next() else {
+        return CssTextIndentComponentClass::Invalid;
+    };
+
+    if let CssTokenKind::Function(name) = first.kind() {
+        return if is_whole_value_function(name) {
+            CssTextIndentComponentClass::MisplacedWholeValueFunction
+        } else {
+            CssTextIndentComponentClass::ResidualFunction
+        };
+    }
+
+    if tokens.next().is_some() {
+        return CssTextIndentComponentClass::Invalid;
+    }
+
+    match first.kind() {
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("hanging") => {
+            CssTextIndentComponentClass::Hanging
+        }
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("each-line") => {
+            CssTextIndentComponentClass::EachLine
+        }
+        CssTokenKind::Number { value, .. } if is_direct_zero_numeric_value(value) => {
+            CssTextIndentComponentClass::Length(CssTextIndentComponentEvidenceRef {
+                lexical_item_index: absolute_component_start + relative_index,
+            })
+        }
+        CssTokenKind::Dimension { unit, .. } if is_css_length_unit(unit) => {
+            CssTextIndentComponentClass::Length(CssTextIndentComponentEvidenceRef {
+                lexical_item_index: absolute_component_start + relative_index,
+            })
+        }
+        CssTokenKind::Percentage { .. } => {
+            CssTextIndentComponentClass::Percentage(CssTextIndentComponentEvidenceRef {
+                lexical_item_index: absolute_component_start + relative_index,
+            })
+        }
+        _ => CssTextIndentComponentClass::Invalid,
+    }
+}
+
+/// Partitions an already-retained `text-indent` declaration value window
+/// into ordered top-level components using one left-to-right recognition-
+/// time pass and classifies each the instant its block depth returns to
+/// zero, reusing the `transform-origin`/`translate`/`rotate`/`scale` block-
+/// depth-aware walk. Depth-zero Whitespace/Comment lexical items are
+/// separators -- never a `Comma`, since this grammar has no top-level comma
+/// list -- and Function/bracket openers extend the current component until
+/// their matching closer, so nested content (e.g. `calc(min(10px, 20px))`)
+/// never inflates top-level cardinality. This intentionally duplicates the
+/// equivalent walk rather than sharing it: this leaf keeps its own bounded
+/// local recognition.
+fn text_indent_top_level_component_classes(
+    items: &[CssLexicalItem],
+    lexical_item_start: usize,
+) -> Vec<CssTextIndentComponentClass> {
+    let mut classes = Vec::new();
+    let mut block_stack: Vec<CssValueBlockCloser> = Vec::new();
+    let mut component_start: Option<usize> = None;
+
+    for (index, item) in items.iter().enumerate() {
+        if block_stack.is_empty() {
+            let is_separator = match item {
+                CssLexicalItem::Comment(_) => true,
+                CssLexicalItem::SemanticToken(token) => {
+                    matches!(token.kind(), CssTokenKind::Whitespace)
+                }
+            };
+            if is_separator {
+                if let Some(start) = component_start.take() {
+                    classes.push(classify_text_indent_component(
+                        &items[start..index],
+                        lexical_item_start + start,
+                    ));
+                }
+                continue;
+            }
+        }
+
+        if component_start.is_none() {
+            component_start = Some(index);
+        }
+
+        if let CssLexicalItem::SemanticToken(token) = item {
+            match token.kind() {
+                CssTokenKind::Function(_) | CssTokenKind::LeftParenthesis => {
+                    block_stack.push(CssValueBlockCloser::Parenthesis);
+                }
+                CssTokenKind::LeftSquareBracket => {
+                    block_stack.push(CssValueBlockCloser::SquareBracket);
+                }
+                CssTokenKind::LeftCurlyBracket => {
+                    block_stack.push(CssValueBlockCloser::CurlyBracket);
+                }
+                CssTokenKind::RightParenthesis
+                    if block_stack.last() == Some(&CssValueBlockCloser::Parenthesis) =>
+                {
+                    block_stack.pop();
+                }
+                CssTokenKind::RightSquareBracket
+                    if block_stack.last() == Some(&CssValueBlockCloser::SquareBracket) =>
+                {
+                    block_stack.pop();
+                }
+                CssTokenKind::RightCurlyBracket
+                    if block_stack.last() == Some(&CssValueBlockCloser::CurlyBracket) =>
+                {
+                    block_stack.pop();
+                }
+                _ => {}
+            }
+        }
+
+        if block_stack.is_empty()
+            && let Some(start) = component_start.take()
+        {
+            classes.push(classify_text_indent_component(
+                &items[start..=index],
+                lexical_item_start + start,
+            ));
+        }
+    }
+
+    if let Some(start) = component_start {
+        classes.push(classify_text_indent_component(
+            &items[start..],
+            lexical_item_start + start,
+        ));
+    }
+
+    classes
+}
+
+/// Qualifies one already-partitioned ordered sequence of top-level
+/// `text-indent` component classes against the finite required-typed-
+/// anchor-plus-unique-optional-keyword theorem (#615): exactly one direct
+/// `<length-percentage>` anchor, zero or one `hanging`, and zero or one
+/// `each-line`, in any authored order.
+///
+/// Any authored cardinality outside one to three, any `Invalid` or
+/// `MisplacedWholeValueFunction` component, or any duplicate `hanging`,
+/// duplicate `each-line`, or duplicate concrete anchor is decisive
+/// `InvalidForSelectedValueGrammar` regardless of any residual Function
+/// present -- structural/direct decisive invalidity always outranks a
+/// provisional Function ambiguity. Otherwise, a lone concrete anchor
+/// qualifies the value with authored order preserved exactly; a lone
+/// residual Function standing in for the absent concrete anchor is
+/// `UnsupportedBySelectedValueProfile(FunctionValue)`; any other
+/// combination (a concrete anchor plus a residual Function competing for
+/// the same single role, more than one residual Function, or no anchor at
+/// all) is decisive `InvalidForSelectedValueGrammar`.
+fn qualify_text_indent_component_classes(
+    classes: &[CssTextIndentComponentClass],
+) -> CssTextIndentQualificationOutcome {
+    if classes.is_empty() || classes.len() > 3 {
+        return CssTextIndentQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    if classes.iter().any(|class| {
+        matches!(
+            class,
+            CssTextIndentComponentClass::Invalid
+                | CssTextIndentComponentClass::MisplacedWholeValueFunction
+        )
+    }) {
+        return CssTextIndentQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    let concrete_anchor_count = classes
+        .iter()
+        .filter(|class| {
+            matches!(
+                class,
+                CssTextIndentComponentClass::Length(_) | CssTextIndentComponentClass::Percentage(_)
+            )
+        })
+        .count();
+    let residual_function_count = classes
+        .iter()
+        .filter(|class| matches!(class, CssTextIndentComponentClass::ResidualFunction))
+        .count();
+    let hanging_count = classes
+        .iter()
+        .filter(|class| matches!(class, CssTextIndentComponentClass::Hanging))
+        .count();
+    let each_line_count = classes
+        .iter()
+        .filter(|class| matches!(class, CssTextIndentComponentClass::EachLine))
+        .count();
+
+    if hanging_count > 1 || each_line_count > 1 || concrete_anchor_count > 1 {
+        return CssTextIndentQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    if concrete_anchor_count == 1 {
+        if residual_function_count > 0 {
+            return CssTextIndentQualificationOutcome::InvalidForSelectedValueGrammar;
+        }
+        let components = classes
+            .iter()
+            .map(|class| match *class {
+                CssTextIndentComponentClass::Length(evidence) => {
+                    CssTextIndentComponent::Length(evidence)
+                }
+                CssTextIndentComponentClass::Percentage(evidence) => {
+                    CssTextIndentComponent::Percentage(evidence)
+                }
+                CssTextIndentComponentClass::Hanging => CssTextIndentComponent::Hanging,
+                CssTextIndentComponentClass::EachLine => CssTextIndentComponent::EachLine,
+                CssTextIndentComponentClass::ResidualFunction
+                | CssTextIndentComponentClass::MisplacedWholeValueFunction
+                | CssTextIndentComponentClass::Invalid => {
+                    unreachable!("residual/misplaced/invalid components are excluded above")
+                }
+            })
+            .collect();
+        return CssTextIndentQualificationOutcome::Qualified(CssTextIndentValue::Components(
+            components,
+        ));
+    }
+
+    if residual_function_count == 1 {
+        return CssTextIndentQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssTextIndentUnsupportedReason::FunctionValue,
+        );
+    }
+
+    CssTextIndentQualificationOutcome::InvalidForSelectedValueGrammar
+}
+
+/// Qualifies one retained `text-indent` declaration value against the
+/// pin-bounded property-local finite `&&` composition theorem (#615 /
+/// css-text-3, css-text-4 `text-indent`):
+///
+/// ```text
+/// [ <length-percentage> ] && hanging? && each-line?
+/// ```
+///
+/// Deferred substitution and the whole-value Function boundary are checked
+/// first, exactly as for the other selected leaves; `text-indent` has no
+/// dedicated whole-value keyword. A sole CSS-wide keyword preserves the
+/// existing whole-value Unsupported boundary; an embedded CSS-wide
+/// identifier is never treated as that whole-property boundary and instead
+/// falls through to decisive component-level invalidity. Otherwise the
+/// value is partitioned into ordered top-level components and dispatched
+/// through the finite LP/H/E multiplicity theorem.
+fn qualify_text_indent_value(
+    items: &[CssLexicalItem],
+    lexical_item_start: usize,
+) -> CssTextIndentQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssTextIndentQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssTextIndentUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssTextIndentQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssTextIndentUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    let mut whole_value_tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+    if let (Some(only_token), None) = (whole_value_tokens.next(), whole_value_tokens.next())
+        && let CssTokenKind::Ident(identifier) = only_token.kind()
+        && is_css_wide_keyword(identifier)
+    {
+        return CssTextIndentQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssTextIndentUnsupportedReason::CssWideKeyword,
+        );
+    }
+
+    let classes = text_indent_top_level_component_classes(items, lexical_item_start);
+    qualify_text_indent_component_classes(&classes)
 }
 
 fn property_name_violation(occurrence_index: usize) -> CssValueQualificationError {
