@@ -1,5 +1,5 @@
 //! Bounded declaration-value qualification for selected post-freeze CSS
-//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520/#522/#524/#526/#528/#530/#532/#534/#536/#538/#541/#546/#549/#551/#553/#555/#559/#561/#596/#598/#600/#602/#604/#606/#608).
+//! semantic Leaves (#413/#414/#416/#419/#422/#424/#426/#428/#432/#434/#436/#438/#440/#442/#444/#446/#448/#450/#452/#454/#457/#459/#463/#465/#467/#469/#471/#473/#475/#477/#479/#481/#483/#485/#487/#489/#491/#493/#495/#497/#499/#501/#503/#505/#508/#510/#512/#514/#516/#518/#520/#522/#524/#526/#528/#530/#532/#534/#536/#538/#541/#546/#549/#551/#553/#555/#559/#561/#596/#598/#600/#602/#604/#606/#608/#610).
 //!
 //! This module consumes only the already Core-validated parser result and its
 //! retained tokenizer evidence. It does not search or decode raw source,
@@ -5520,6 +5520,71 @@ impl CssTransformOriginQualificationObservation {
     }
 }
 
+/// One direct authored `transform-box` keyword identity (#610), tokenizer-
+/// decoded ASCII-case-insensitively. These five authored identities remain
+/// pairwise distinct even where CSS Transforms defines a context-dependent
+/// downstream used-value mapping between two of them (e.g. an SVG element
+/// without an associated CSS layout box uses authored `content-box` as
+/// `fill-box`): that used-value equivalence is never imported here, and this
+/// leaf never rewrites one authored identity into another.
+// The pinned five-keyword `transform-box` grammar is itself exactly the set
+// `content-box | border-box | fill-box | stroke-box | view-box`; each variant
+// name mirrors its authoritative CSSWG keyword spelling rather than an
+// incidental naming choice, so the shared `Box` postfix is kept intact.
+#[allow(clippy::enum_variant_names)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTransformBoxValue {
+    ContentBox,
+    BorderBox,
+    FillBox,
+    StrokeBox,
+    ViewBox,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTransformBoxUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTransformBoxQualificationOutcome {
+    Qualified(CssTransformBoxValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssTransformBoxUnsupportedReason),
+}
+
+/// One selected ordinary declaration's `transform-box` value qualification.
+///
+/// As with the other selected leaves, placement and `occurrence_index` remain
+/// run-local references into the exact parser result structurally owned by
+/// the enclosing [`CssValueQualificationRunResult`]. This qualifies only the
+/// pin-bounded exact five-keyword authored grammar; it proves no transform
+/// reference-box selection, SVG/CSS layout-box mapping, or other downstream
+/// semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTransformBoxQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssTransformBoxQualificationOutcome,
+}
+
+impl CssTransformBoxQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssTransformBoxQualificationOutcome {
+        self.outcome
+    }
+}
+
 /// Run-owned result for the currently selected bounded CSS value capabilities.
 ///
 /// The exact Core-validated parser result is owned once here. Property-specific
@@ -5621,6 +5686,7 @@ pub(crate) struct CssValueQualificationRunResult {
     rotate_observations: Vec<CssRotateQualificationObservation>,
     translate_observations: Vec<CssTranslateQualificationObservation>,
     transform_origin_observations: Vec<CssTransformOriginQualificationObservation>,
+    transform_box_observations: Vec<CssTransformBoxQualificationObservation>,
 }
 
 impl CssValueQualificationRunResult {
@@ -6501,6 +6567,10 @@ impl CssValueQualificationRunResult {
         };
         Some(token.kind())
     }
+
+    pub(crate) fn transform_box_observations(&self) -> &[CssTransformBoxQualificationObservation] {
+        &self.transform_box_observations
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -6647,6 +6717,7 @@ pub(crate) fn run(
         rotate_observations,
         translate_observations,
         transform_origin_observations,
+        transform_box_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
         let mut cursor = LexicalWindowCursor::new(tokenizer_result);
@@ -6739,6 +6810,7 @@ pub(crate) fn run(
         let mut rotate_observations = Vec::new();
         let mut translate_observations = Vec::new();
         let mut transform_origin_observations = Vec::new();
+        let mut transform_box_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
             let property_range = cursor.window_for(occurrence.property_name())?;
@@ -7811,6 +7883,17 @@ pub(crate) fn run(
                     placement: occurrence.placement(),
                     outcome,
                 });
+                continue;
+            }
+
+            if property_name.eq_ignore_ascii_case("transform-box") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                transform_box_observations.push(CssTransformBoxQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_transform_box_value(value_items),
+                });
             }
         }
 
@@ -7904,6 +7987,7 @@ pub(crate) fn run(
             rotate_observations,
             translate_observations,
             transform_origin_observations,
+            transform_box_observations,
         )
     };
 
@@ -7998,6 +8082,7 @@ pub(crate) fn run(
         rotate_observations,
         translate_observations,
         transform_origin_observations,
+        transform_box_observations,
     })
 }
 
@@ -17244,6 +17329,75 @@ fn qualify_transform_origin_value(
             qualify_transform_origin_three_component_shape(*first, *second, *third)
         }
         _ => CssTransformOriginQualificationOutcome::InvalidForSelectedValueGrammar,
+    }
+}
+
+/// Qualifies one retained `transform-box` declaration value against the
+/// pin-bounded exact five-keyword authored grammar (#610):
+/// `content-box | border-box | fill-box | stroke-box | view-box`. This
+/// proves only authored grammar membership and authored keyword identity --
+/// never the transform reference-box selection those keywords go on to
+/// influence downstream. Unrelated CSS box-edge keywords (`padding-box`,
+/// `margin-box`) and any multi-component or comma-delimited value are
+/// decisively `InvalidForSelectedValueGrammar`, exactly as for the other
+/// accepted single-keyword leaves.
+fn qualify_transform_box_value(items: &[CssLexicalItem]) -> CssTransformBoxQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssTransformBoxQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssTransformBoxUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssTransformBoxQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssTransformBoxUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    if entire_function_name(items).is_some() {
+        return CssTransformBoxQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssTransformBoxUnsupportedReason::FunctionValue,
+        );
+    }
+
+    let mut tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+
+    let Some(token) = tokens.next() else {
+        return CssTransformBoxQualificationOutcome::InvalidForSelectedValueGrammar;
+    };
+    if tokens.next().is_some() {
+        return CssTransformBoxQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    match token.kind() {
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("content-box") => {
+            CssTransformBoxQualificationOutcome::Qualified(CssTransformBoxValue::ContentBox)
+        }
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("border-box") => {
+            CssTransformBoxQualificationOutcome::Qualified(CssTransformBoxValue::BorderBox)
+        }
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("fill-box") => {
+            CssTransformBoxQualificationOutcome::Qualified(CssTransformBoxValue::FillBox)
+        }
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("stroke-box") => {
+            CssTransformBoxQualificationOutcome::Qualified(CssTransformBoxValue::StrokeBox)
+        }
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("view-box") => {
+            CssTransformBoxQualificationOutcome::Qualified(CssTransformBoxValue::ViewBox)
+        }
+        CssTokenKind::Ident(identifier) if is_css_wide_keyword(identifier) => {
+            CssTransformBoxQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssTransformBoxUnsupportedReason::CssWideKeyword,
+            )
+        }
+        _ => CssTransformBoxQualificationOutcome::InvalidForSelectedValueGrammar,
     }
 }
 
