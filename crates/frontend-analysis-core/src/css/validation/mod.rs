@@ -91,6 +91,8 @@ mod flex_grow_value_qualification_tests;
 #[cfg(test)]
 mod flex_shrink_value_qualification_tests;
 #[cfg(test)]
+mod flood_opacity_value_qualification_tests;
+#[cfg(test)]
 mod font_kerning_value_qualification_tests;
 #[cfg(test)]
 mod font_synthesis_position_value_qualification_tests;

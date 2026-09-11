@@ -314,6 +314,57 @@ impl CssStopOpacityQualificationObservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFloodOpacityValue {
+    DirectNumberLiteral,
+    DirectPercentageLiteral,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFloodOpacityUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssFloodOpacityQualificationOutcome {
+    Qualified(CssFloodOpacityValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssFloodOpacityUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `flood-opacity`
+/// qualification.
+///
+/// This profile reuses the accepted direct authored `<opacity-value>`
+/// Number/Percentage boundary already used by `opacity`/`fill-opacity`/
+/// `stroke-opacity`/`stop-opacity`. Out-of-range authored values remain
+/// qualified; clamping, percentage-to-number conversion, filter primitive
+/// (`feFlood`/`feDropShadow`) applicability, CSSOM, and computed/used
+/// values remain outside this slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssFloodOpacityQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssFloodOpacityQualificationOutcome,
+}
+
+impl CssFloodOpacityQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssFloodOpacityQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssIsolationValue {
     Auto,
     Isolate,
@@ -6188,6 +6239,7 @@ pub(crate) struct CssValueQualificationRunResult {
     stroke_linecap_observations: Vec<CssStrokeLinecapQualificationObservation>,
     stroke_opacity_observations: Vec<CssStrokeOpacityQualificationObservation>,
     stop_opacity_observations: Vec<CssStopOpacityQualificationObservation>,
+    flood_opacity_observations: Vec<CssFloodOpacityQualificationObservation>,
 }
 
 impl CssValueQualificationRunResult {
@@ -7117,6 +7169,10 @@ impl CssValueQualificationRunResult {
         &self.stop_opacity_observations
     }
 
+    pub(crate) fn flood_opacity_observations(&self) -> &[CssFloodOpacityQualificationObservation] {
+        &self.flood_opacity_observations
+    }
+
     /// Resolves one qualified `text-indent` `Length`/`Percentage`
     /// component's run-local evidence reference to its exact retained
     /// tokenizer token kind, preserving sign/zero spelling, magnitude,
@@ -7293,6 +7349,7 @@ pub(crate) fn run(
         stroke_linecap_observations,
         stroke_opacity_observations,
         stop_opacity_observations,
+        flood_opacity_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
         let mut cursor = LexicalWindowCursor::new(tokenizer_result);
@@ -7394,6 +7451,7 @@ pub(crate) fn run(
         let mut stroke_linecap_observations = Vec::new();
         let mut stroke_opacity_observations = Vec::new();
         let mut stop_opacity_observations = Vec::new();
+        let mut flood_opacity_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
             let property_range = cursor.window_for(occurrence.property_name())?;
@@ -8571,6 +8629,17 @@ pub(crate) fn run(
                     placement: occurrence.placement(),
                     outcome: qualify_stop_opacity_value(value_items),
                 });
+                continue;
+            }
+
+            if property_name.eq_ignore_ascii_case("flood-opacity") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                flood_opacity_observations.push(CssFloodOpacityQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_flood_opacity_value(value_items),
+                });
             }
         }
 
@@ -8673,6 +8742,7 @@ pub(crate) fn run(
             stroke_linecap_observations,
             stroke_opacity_observations,
             stop_opacity_observations,
+            flood_opacity_observations,
         )
     };
 
@@ -8776,6 +8846,7 @@ pub(crate) fn run(
         stroke_linecap_observations,
         stroke_opacity_observations,
         stop_opacity_observations,
+        flood_opacity_observations,
     })
 }
 
@@ -10130,6 +10201,57 @@ fn qualify_stop_opacity_value(items: &[CssLexicalItem]) -> CssStopOpacityQualifi
             )
         }
         _ => CssStopOpacityQualificationOutcome::InvalidForSelectedValueGrammar,
+    }
+}
+
+fn qualify_flood_opacity_value(items: &[CssLexicalItem]) -> CssFloodOpacityQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssFloodOpacityQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssFloodOpacityUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssFloodOpacityQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssFloodOpacityUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    if entire_function_name(items).is_some() {
+        return CssFloodOpacityQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssFloodOpacityUnsupportedReason::FunctionValue,
+        );
+    }
+
+    let mut tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+
+    let Some(token) = tokens.next() else {
+        return CssFloodOpacityQualificationOutcome::InvalidForSelectedValueGrammar;
+    };
+    if tokens.next().is_some() {
+        return CssFloodOpacityQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    match token.kind() {
+        CssTokenKind::Number { .. } => CssFloodOpacityQualificationOutcome::Qualified(
+            CssFloodOpacityValue::DirectNumberLiteral,
+        ),
+        CssTokenKind::Percentage { .. } => CssFloodOpacityQualificationOutcome::Qualified(
+            CssFloodOpacityValue::DirectPercentageLiteral,
+        ),
+        CssTokenKind::Ident(identifier) if is_css_wide_keyword(identifier) => {
+            CssFloodOpacityQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssFloodOpacityUnsupportedReason::CssWideKeyword,
+            )
+        }
+        _ => CssFloodOpacityQualificationOutcome::InvalidForSelectedValueGrammar,
     }
 }
 
