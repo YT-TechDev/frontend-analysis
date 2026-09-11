@@ -6196,6 +6196,56 @@ impl CssLetterSpacingQualificationObservation {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssCaretAnimationValue {
+    Auto,
+    Manual,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssCaretAnimationUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssCaretAnimationQualificationOutcome {
+    Qualified(CssCaretAnimationValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssCaretAnimationUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded authored `caret-animation`
+/// qualification (#636): exactly one direct decoded Ident `auto` or `manual`.
+///
+/// This proves only authored keyword identity. `Auto` records that the UA
+/// decides whether/how to animate the caret; `Manual` records only that
+/// UA-driven caret animation is disabled -- CSS animations affecting the
+/// caret remain unaffected and are not represented here. This observation
+/// performs no UA/platform blink-or-fade timing, CSS animation execution,
+/// applicability filtering, or inheritance/cascade/computed-value semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssCaretAnimationQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssCaretAnimationQualificationOutcome,
+}
+
+impl CssCaretAnimationQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssCaretAnimationQualificationOutcome {
+        self.outcome
+    }
+}
+
 /// Run-owned result for the currently selected bounded CSS value capabilities.
 ///
 /// The exact Core-validated parser result is owned once here. Property-specific
@@ -6308,6 +6358,7 @@ pub(crate) struct CssValueQualificationRunResult {
     stop_opacity_observations: Vec<CssStopOpacityQualificationObservation>,
     flood_opacity_observations: Vec<CssFloodOpacityQualificationObservation>,
     paint_order_observations: Vec<CssPaintOrderQualificationObservation>,
+    caret_animation_observations: Vec<CssCaretAnimationQualificationObservation>,
 }
 
 impl CssValueQualificationRunResult {
@@ -7245,6 +7296,12 @@ impl CssValueQualificationRunResult {
         &self.paint_order_observations
     }
 
+    pub(crate) fn caret_animation_observations(
+        &self,
+    ) -> &[CssCaretAnimationQualificationObservation] {
+        &self.caret_animation_observations
+    }
+
     /// Resolves one qualified `text-indent` `Length`/`Percentage`
     /// component's run-local evidence reference to its exact retained
     /// tokenizer token kind, preserving sign/zero spelling, magnitude,
@@ -7423,6 +7480,7 @@ pub(crate) fn run(
         stop_opacity_observations,
         flood_opacity_observations,
         paint_order_observations,
+        caret_animation_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
         let mut cursor = LexicalWindowCursor::new(tokenizer_result);
@@ -7526,6 +7584,7 @@ pub(crate) fn run(
         let mut stop_opacity_observations = Vec::new();
         let mut flood_opacity_observations = Vec::new();
         let mut paint_order_observations = Vec::new();
+        let mut caret_animation_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
             let property_range = cursor.window_for(occurrence.property_name())?;
@@ -8725,6 +8784,17 @@ pub(crate) fn run(
                     placement: occurrence.placement(),
                     outcome: qualify_paint_order_value(value_items),
                 });
+                continue;
+            }
+
+            if property_name.eq_ignore_ascii_case("caret-animation") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                caret_animation_observations.push(CssCaretAnimationQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_caret_animation_value(value_items),
+                });
             }
         }
 
@@ -8829,6 +8899,7 @@ pub(crate) fn run(
             stop_opacity_observations,
             flood_opacity_observations,
             paint_order_observations,
+            caret_animation_observations,
         )
     };
 
@@ -8934,6 +9005,7 @@ pub(crate) fn run(
         stop_opacity_observations,
         flood_opacity_observations,
         paint_order_observations,
+        caret_animation_observations,
     })
 }
 
@@ -18770,6 +18842,66 @@ fn qualify_transform_style_value(
             )
         }
         _ => CssTransformStyleQualificationOutcome::InvalidForSelectedValueGrammar,
+    }
+}
+
+/// Qualifies one retained `caret-animation` declaration value against the
+/// pin-bounded exact two-keyword authored grammar (#636): `auto | manual`.
+/// This proves only authored grammar membership and authored keyword
+/// identity -- never UA-driven caret blink/fade timing, OS/platform caret
+/// settings, CSS animation execution, applicability filtering, or
+/// inheritance/cascade/computed-value semantics. The historical/proposal-only
+/// `none`, `fade`, and `blink` keywords remain outside the pinned grammar and
+/// stay decisively `InvalidForSelectedValueGrammar`, exactly as any other
+/// multi-component or comma-delimited value is for the other accepted
+/// single-keyword leaves. This property has no ordinary Function branch in
+/// the selected grammar, so an unrecognized Function (e.g. `foo()`,
+/// `calc(1)`) falls through to the same direct grammar mismatch as any other
+/// wrong token class.
+fn qualify_caret_animation_value(
+    items: &[CssLexicalItem],
+) -> CssCaretAnimationQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssCaretAnimationQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssCaretAnimationUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssCaretAnimationQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssCaretAnimationUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    let mut tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+
+    let Some(token) = tokens.next() else {
+        return CssCaretAnimationQualificationOutcome::InvalidForSelectedValueGrammar;
+    };
+    if tokens.next().is_some() {
+        return CssCaretAnimationQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    match token.kind() {
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("auto") => {
+            CssCaretAnimationQualificationOutcome::Qualified(CssCaretAnimationValue::Auto)
+        }
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("manual") => {
+            CssCaretAnimationQualificationOutcome::Qualified(CssCaretAnimationValue::Manual)
+        }
+        CssTokenKind::Ident(identifier) if is_css_wide_keyword(identifier) => {
+            CssCaretAnimationQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssCaretAnimationUnsupportedReason::CssWideKeyword,
+            )
+        }
+        _ => CssCaretAnimationQualificationOutcome::InvalidForSelectedValueGrammar,
     }
 }
 
