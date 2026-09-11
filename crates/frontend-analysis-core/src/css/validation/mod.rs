@@ -167,6 +167,8 @@ mod page_lifecycle_validation_tests;
 #[cfg(test)]
 mod page_value_qualification_tests;
 #[cfg(test)]
+mod paint_order_value_qualification_tests;
+#[cfg(test)]
 mod parser_conformance_tests;
 #[cfg(test)]
 mod parser_contract_tests;

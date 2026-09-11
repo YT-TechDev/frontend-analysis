@@ -3348,6 +3348,73 @@ impl CssContainQualificationObservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssPaintOrderComponent {
+    Fill,
+    Stroke,
+    Markers,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssPaintOrderComponents {
+    authored: [CssPaintOrderComponent; 3],
+    count: usize,
+}
+
+impl CssPaintOrderComponents {
+    pub(crate) fn authored_components(&self) -> &[CssPaintOrderComponent] {
+        &self.authored[..self.count]
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssPaintOrderValue {
+    Normal,
+    Components(CssPaintOrderComponents),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssPaintOrderUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssPaintOrderQualificationOutcome {
+    Qualified(CssPaintOrderValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssPaintOrderUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded authored `paint-order`
+/// qualification.
+///
+/// The `Components` branch preserves the author's exact component order and
+/// cardinality. Slot uniqueness is validated during qualification; this
+/// observation performs no omitted-operation synthesis, effective/rendering
+/// paint-order completion, or CSSOM shortest-serialization collapse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssPaintOrderQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssPaintOrderQualificationOutcome,
+}
+
+impl CssPaintOrderQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssPaintOrderQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssWordSpacingValue {
     Normal,
     DirectLengthLiteral,
@@ -6240,6 +6307,7 @@ pub(crate) struct CssValueQualificationRunResult {
     stroke_opacity_observations: Vec<CssStrokeOpacityQualificationObservation>,
     stop_opacity_observations: Vec<CssStopOpacityQualificationObservation>,
     flood_opacity_observations: Vec<CssFloodOpacityQualificationObservation>,
+    paint_order_observations: Vec<CssPaintOrderQualificationObservation>,
 }
 
 impl CssValueQualificationRunResult {
@@ -7173,6 +7241,10 @@ impl CssValueQualificationRunResult {
         &self.flood_opacity_observations
     }
 
+    pub(crate) fn paint_order_observations(&self) -> &[CssPaintOrderQualificationObservation] {
+        &self.paint_order_observations
+    }
+
     /// Resolves one qualified `text-indent` `Length`/`Percentage`
     /// component's run-local evidence reference to its exact retained
     /// tokenizer token kind, preserving sign/zero spelling, magnitude,
@@ -7350,6 +7422,7 @@ pub(crate) fn run(
         stroke_opacity_observations,
         stop_opacity_observations,
         flood_opacity_observations,
+        paint_order_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
         let mut cursor = LexicalWindowCursor::new(tokenizer_result);
@@ -7452,6 +7525,7 @@ pub(crate) fn run(
         let mut stroke_opacity_observations = Vec::new();
         let mut stop_opacity_observations = Vec::new();
         let mut flood_opacity_observations = Vec::new();
+        let mut paint_order_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
             let property_range = cursor.window_for(occurrence.property_name())?;
@@ -8640,6 +8714,17 @@ pub(crate) fn run(
                     placement: occurrence.placement(),
                     outcome: qualify_flood_opacity_value(value_items),
                 });
+                continue;
+            }
+
+            if property_name.eq_ignore_ascii_case("paint-order") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                paint_order_observations.push(CssPaintOrderQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_paint_order_value(value_items),
+                });
             }
         }
 
@@ -8743,6 +8828,7 @@ pub(crate) fn run(
             stroke_opacity_observations,
             stop_opacity_observations,
             flood_opacity_observations,
+            paint_order_observations,
         )
     };
 
@@ -8847,6 +8933,7 @@ pub(crate) fn run(
         stroke_opacity_observations,
         stop_opacity_observations,
         flood_opacity_observations,
+        paint_order_observations,
     })
 }
 
@@ -10253,6 +10340,87 @@ fn qualify_flood_opacity_value(items: &[CssLexicalItem]) -> CssFloodOpacityQuali
         }
         _ => CssFloodOpacityQualificationOutcome::InvalidForSelectedValueGrammar,
     }
+}
+
+fn qualify_paint_order_value(items: &[CssLexicalItem]) -> CssPaintOrderQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssPaintOrderQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssPaintOrderUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssPaintOrderQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssPaintOrderUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    let tokens: Vec<_> = items
+        .iter()
+        .filter_map(|item| match item {
+            CssLexicalItem::SemanticToken(token)
+                if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+            {
+                Some(token)
+            }
+            _ => None,
+        })
+        .collect();
+
+    if let [token] = tokens.as_slice()
+        && let CssTokenKind::Ident(identifier) = token.kind()
+    {
+        if is_css_wide_keyword(identifier) {
+            return CssPaintOrderQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssPaintOrderUnsupportedReason::CssWideKeyword,
+            );
+        }
+        if identifier.eq_ignore_ascii_case("normal") {
+            return CssPaintOrderQualificationOutcome::Qualified(CssPaintOrderValue::Normal);
+        }
+    }
+
+    if tokens.is_empty() {
+        return CssPaintOrderQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    let mut authored = [CssPaintOrderComponent::Fill; 3];
+    let mut count = 0usize;
+    let mut occupied_slots = 0u8;
+
+    for token in tokens {
+        let CssTokenKind::Ident(identifier) = token.kind() else {
+            return CssPaintOrderQualificationOutcome::InvalidForSelectedValueGrammar;
+        };
+
+        let Some((component, slot)) = paint_order_component(identifier) else {
+            return CssPaintOrderQualificationOutcome::InvalidForSelectedValueGrammar;
+        };
+
+        if occupied_slots & slot != 0 {
+            return CssPaintOrderQualificationOutcome::InvalidForSelectedValueGrammar;
+        }
+        occupied_slots |= slot;
+        authored[count] = component;
+        count += 1;
+    }
+
+    CssPaintOrderQualificationOutcome::Qualified(CssPaintOrderValue::Components(
+        CssPaintOrderComponents { authored, count },
+    ))
+}
+
+fn paint_order_component(identifier: &str) -> Option<(CssPaintOrderComponent, u8)> {
+    if identifier.eq_ignore_ascii_case("fill") {
+        return Some((CssPaintOrderComponent::Fill, 0b001));
+    }
+    if identifier.eq_ignore_ascii_case("stroke") {
+        return Some((CssPaintOrderComponent::Stroke, 0b010));
+    }
+    if identifier.eq_ignore_ascii_case("markers") {
+        return Some((CssPaintOrderComponent::Markers, 0b100));
+    }
+    None
 }
 
 fn qualify_shape_image_threshold_value(
