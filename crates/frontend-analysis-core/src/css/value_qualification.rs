@@ -162,6 +162,57 @@ impl CssListStylePositionQualificationObservation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssStrokeLinecapValue {
+    Butt,
+    Round,
+    Square,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssStrokeLinecapUnsupportedReason {
+    CssWideKeyword,
+    FunctionValue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssStrokeLinecapQualificationOutcome {
+    Qualified(CssStrokeLinecapValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssStrokeLinecapUnsupportedReason),
+}
+
+/// One selected ordinary declaration's `stroke-linecap` value
+/// qualification.
+///
+/// As with direction/box-sizing/list-style-position observations,
+/// placement and `occurrence_index` remain run-local references into the
+/// exact parser result structurally owned by the enclosing
+/// [`CssValueQualificationRunResult`]. This authored keyword identity is
+/// distinct from SVG presentation-attribute semantics, cap geometry
+/// construction, dash/marker interaction, and any other downstream
+/// painting or rendering semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssStrokeLinecapQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssStrokeLinecapQualificationOutcome,
+}
+
+impl CssStrokeLinecapQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssStrokeLinecapQualificationOutcome {
+        self.outcome
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssIsolationValue {
     Auto,
     Isolate,
@@ -6033,6 +6084,7 @@ pub(crate) struct CssValueQualificationRunResult {
     letter_spacing_observations: Vec<CssLetterSpacingQualificationObservation>,
     text_underline_position_observations: Vec<CssTextUnderlinePositionQualificationObservation>,
     list_style_position_observations: Vec<CssListStylePositionQualificationObservation>,
+    stroke_linecap_observations: Vec<CssStrokeLinecapQualificationObservation>,
 }
 
 impl CssValueQualificationRunResult {
@@ -6946,6 +6998,12 @@ impl CssValueQualificationRunResult {
         &self.list_style_position_observations
     }
 
+    pub(crate) fn stroke_linecap_observations(
+        &self,
+    ) -> &[CssStrokeLinecapQualificationObservation] {
+        &self.stroke_linecap_observations
+    }
+
     /// Resolves one qualified `text-indent` `Length`/`Percentage`
     /// component's run-local evidence reference to its exact retained
     /// tokenizer token kind, preserving sign/zero spelling, magnitude,
@@ -7119,6 +7177,7 @@ pub(crate) fn run(
         letter_spacing_observations,
         text_underline_position_observations,
         list_style_position_observations,
+        stroke_linecap_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
         let mut cursor = LexicalWindowCursor::new(tokenizer_result);
@@ -7217,6 +7276,7 @@ pub(crate) fn run(
         let mut letter_spacing_observations = Vec::new();
         let mut text_underline_position_observations = Vec::new();
         let mut list_style_position_observations = Vec::new();
+        let mut stroke_linecap_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
             let property_range = cursor.window_for(occurrence.property_name())?;
@@ -8361,6 +8421,17 @@ pub(crate) fn run(
                         outcome: qualify_list_style_position_value(value_items),
                     },
                 );
+                continue;
+            }
+
+            if property_name.eq_ignore_ascii_case("stroke-linecap") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                stroke_linecap_observations.push(CssStrokeLinecapQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_stroke_linecap_value(value_items),
+                });
             }
         }
 
@@ -8460,6 +8531,7 @@ pub(crate) fn run(
             letter_spacing_observations,
             text_underline_position_observations,
             list_style_position_observations,
+            stroke_linecap_observations,
         )
     };
 
@@ -8560,6 +8632,7 @@ pub(crate) fn run(
         letter_spacing_observations,
         text_underline_position_observations,
         list_style_position_observations,
+        stroke_linecap_observations,
     })
 }
 
@@ -8719,6 +8792,42 @@ fn qualify_list_style_position_value(
         }
         CssSingleKeywordValue::Identifier(_) => {
             CssListStylePositionQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+    }
+}
+
+fn qualify_stroke_linecap_value(items: &[CssLexicalItem]) -> CssStrokeLinecapQualificationOutcome {
+    match classify_single_keyword_value(items) {
+        CssSingleKeywordValue::UnsupportedFunction => {
+            CssStrokeLinecapQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssStrokeLinecapUnsupportedReason::FunctionValue,
+            )
+        }
+        CssSingleKeywordValue::Invalid => {
+            CssStrokeLinecapQualificationOutcome::InvalidForSelectedValueGrammar
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("butt") =>
+        {
+            CssStrokeLinecapQualificationOutcome::Qualified(CssStrokeLinecapValue::Butt)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("round") =>
+        {
+            CssStrokeLinecapQualificationOutcome::Qualified(CssStrokeLinecapValue::Round)
+        }
+        CssSingleKeywordValue::Identifier(identifier)
+            if identifier.eq_ignore_ascii_case("square") =>
+        {
+            CssStrokeLinecapQualificationOutcome::Qualified(CssStrokeLinecapValue::Square)
+        }
+        CssSingleKeywordValue::Identifier(identifier) if is_css_wide_keyword(identifier) => {
+            CssStrokeLinecapQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssStrokeLinecapUnsupportedReason::CssWideKeyword,
+            )
+        }
+        CssSingleKeywordValue::Identifier(_) => {
+            CssStrokeLinecapQualificationOutcome::InvalidForSelectedValueGrammar
         }
     }
 }
