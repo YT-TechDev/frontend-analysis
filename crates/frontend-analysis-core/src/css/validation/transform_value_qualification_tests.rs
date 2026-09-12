@@ -6,9 +6,10 @@ use crate::css::tokenizer::resource::CssTokenizerLimits;
 use crate::css::value_qualification::{
     CssTransformFunction, CssTransformQualificationOutcome, CssTransformRotate3dAngleArgument,
     CssTransformRotate3dFunction, CssTransformScaleArgumentKind, CssTransformScaleXArgumentKind,
-    CssTransformTranslate3dXyArgumentKind, CssTransformTranslateArgumentKind,
-    CssTransformTranslateXArgumentKind, CssTransformTranslateYArgumentKind,
-    CssTransformUnsupportedReason, CssTransformValue, CssValueQualificationRunResult, run,
+    CssTransformScaleYArgumentKind, CssTransformTranslate3dXyArgumentKind,
+    CssTransformTranslateArgumentKind, CssTransformTranslateXArgumentKind,
+    CssTransformTranslateYArgumentKind, CssTransformUnsupportedReason, CssTransformValue,
+    CssValueQualificationRunResult, run,
 };
 use crate::{SourceId, SourceText};
 
@@ -688,6 +689,77 @@ fn scalex_argument_spelling(
     (argument.kind(), authored_scalex_argument_spelling(token))
 }
 
+/// Reconstructs one retained `Number` or `Percentage` token's authored
+/// numeric structure from tokenizer-owned evidence alone, exactly like
+/// `authored_scalex_argument_spelling`, with a trailing `%` marker
+/// distinguishing a `Percentage` token so `2` and `2%` stay distinguishable
+/// in assertions and a `Percentage` is never collapsed into a `Number`.
+/// This is a dedicated `scaleY()` test helper, distinct from
+/// `authored_scalex_argument_spelling`: `scaleY()` argument placement,
+/// `scaleX()` argument placement, and `scale()` argument placement remain
+/// distinct semantic roles even though the underlying scalar spelling logic
+/// is identical (#661). No machine number is ever produced.
+fn authored_scaley_argument_spelling(token: &CssTokenKind) -> String {
+    let (value, is_percentage) = match token {
+        CssTokenKind::Number { value, .. } => (value, false),
+        CssTokenKind::Percentage { value } => (value, true),
+        other => panic!(
+            "scaleY argument evidence did not resolve to a Number/Percentage token, got {other:?}"
+        ),
+    };
+
+    let mut spelling = String::new();
+    match value.sign() {
+        Some(CssNumberSign::Plus) => spelling.push('+'),
+        Some(CssNumberSign::Minus) => spelling.push('-'),
+        None => {}
+    }
+    spelling.push_str(value.decimal().integer_digits());
+    let fraction_digits = value.decimal().fraction_digits();
+    if !fraction_digits.is_empty() {
+        spelling.push('.');
+        spelling.push_str(fraction_digits);
+    }
+    if let Some(exponent) = value.decimal().exponent() {
+        spelling.push('e');
+        match exponent.sign() {
+            Some(CssExponentSign::Plus) => spelling.push('+'),
+            Some(CssExponentSign::Minus) => spelling.push('-'),
+            None => {}
+        }
+        spelling.push_str(exponent.digits());
+    }
+    if is_percentage {
+        spelling.push('%');
+    }
+    spelling
+}
+
+/// Resolves one qualified `scaleY()` transform component's single authored
+/// argument at `function_index` within observation `index` into its
+/// `(kind, spelling)` pair, mirroring `scalex_argument_spelling`. Unlike
+/// `scale_argument_spellings`, this returns a single pair rather than an
+/// ordered vector: `scaleY()` has no optional second argument (#661).
+fn scaley_argument_spelling(
+    result: &CssValueQualificationRunResult,
+    index: usize,
+    function_index: usize,
+) -> (CssTransformScaleYArgumentKind, String) {
+    let functions = qualified_functions(result, index);
+    let function = functions
+        .get(function_index)
+        .unwrap_or_else(|| panic!("missing transform component {function_index} at {index}"));
+    let CssTransformFunction::ScaleY(scaley) = function else {
+        panic!("expected scaleY component {function_index} at {index}, got {function:?}");
+    };
+
+    let argument = scaley.argument();
+    let token = result
+        .transform_scaley_argument_token(argument.evidence_ref())
+        .expect("scaleY argument evidence did not resolve");
+    (argument.kind(), authored_scaley_argument_spelling(token))
+}
+
 /// Reconstructs one retained `Number` or `Dimension` token's authored
 /// numeric structure from tokenizer-owned evidence alone, exactly like
 /// `authored_number_spelling`, with the authored unit spelling appended for
@@ -1177,7 +1249,7 @@ fn unselected_transform_functions_remain_outside_selected_profile() {
             "rotate(1deg)",
             "matrix(1,0,0,1,0,0) rotate(1deg)",
             "rotate(1deg) matrix(1,0,0,1,0,0)",
-            "scaleY(2)",
+            "rotateX(1deg)",
             "scaleZ(2)",
             "scale3d(1,1,1)",
             "skew(1deg)",
@@ -1487,7 +1559,7 @@ fn repeated_and_cross_source_runs_are_deterministic() {
         "g{transform:matrix(1,0,0,1,0,0) none;}",
         "h{transform:scale(2) matrix(1,0,0,1,0,0);}",
         "i{transform:scale(calc(1),2);}",
-        "j{transform:scaleY(2);}",
+        "j{transform:scaleZ(2);}",
         "k{transform:scale(1,2,3);}",
     );
 
@@ -5081,25 +5153,20 @@ fn unselected_outer_function_precedence_covers_translatex() {
     assert_all_invalid(653440, &["translateX(1) rotate(10deg)"]);
 }
 
-// 112. `scaleY()`, `scaleZ()`, and `scale3d()` remain outside
-// selected-profile coverage after #653: extending coverage with
-// `translateX()` never widens the selected profile to an unrelated sibling,
-// in isolation or alongside a qualified `translateX()` (#653). `translateY()`
-// and `translateZ()` are qualified separately by #655 and #657, and
-// `scaleX()` is qualified separately by #659; each is covered by its own
-// dedicated test group.
+// 112. `scaleZ()` and `scale3d()` remain outside selected-profile coverage
+// after #653: extending coverage with `translateX()` never widens the
+// selected profile to an unrelated sibling, in isolation or alongside a
+// qualified `translateX()` (#653). `translateY()` and `translateZ()` are
+// qualified separately by #655 and #657, `scaleX()` is qualified separately
+// by #659, and `scaleY()` is qualified separately by #661; each is covered
+// by its own dedicated test group.
 
 #[test]
 fn scale_family_siblings_remain_unselected_after_translatex_coverage() {
     assert_all_unsupported(
         653450,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
-        &[
-            "scaleY(2)",
-            "scaleZ(2)",
-            "scale3d(1,1,1)",
-            "translateX(20px) scaleY(2)",
-        ],
+        &["scaleZ(2)", "scale3d(1,1,1)", "translateX(20px) scaleZ(2)"],
     );
 }
 
@@ -7506,10 +7573,11 @@ fn unselected_outer_function_precedence_covers_scalex() {
     assert_all_invalid(659400, &["scaleX(1px) rotate(10deg)"]);
 }
 
-// 184. `scaleY()`, `scaleZ()`, and `scale3d()` remain outside
-// selected-profile coverage after #659: adding `scaleX()` never widens the
-// selected profile to these unrelated siblings, in isolation or alongside
-// a qualified `scaleX()`, in either authored order (#659).
+// 184. `scaleZ()` and `scale3d()` remain outside selected-profile coverage
+// after #659: adding `scaleX()` never widens the selected profile to these
+// unrelated siblings, in isolation or alongside a qualified `scaleX()`, in
+// either authored order (#659). `scaleY()` is qualified separately by #661
+// and is covered by its own dedicated test group.
 
 #[test]
 fn scale_family_siblings_remain_unselected_alongside_scalex() {
@@ -7517,11 +7585,10 @@ fn scale_family_siblings_remain_unselected_alongside_scalex() {
         659420,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "scaleY(2)",
             "scaleZ(2)",
             "scale3d(1,1,1)",
-            "scaleX(2) scaleY(2)",
-            "scaleY(2) scaleX(2)",
+            "scaleX(2) scaleZ(2)",
+            "scaleZ(2) scaleX(2)",
         ],
     );
 }
@@ -7787,4 +7854,866 @@ fn scalex_cross_leaf_isolation_is_preserved() {
     assert_eq!(result.transform_style_observations().len(), 1);
 
     assert_all_invalid(659600, &["none scaleX(2)", "scaleX(2) none"]);
+}
+
+// 191. `scaleY() = scaleY([<number> | <percentage>])` under current CSS
+// Transforms Level 2 authority (#661): a direct `<number>` argument
+// qualifies, preserving exact authored sign/fraction/exponent evidence
+// without any machine-number conversion, reusing the accepted `scale()`
+// (#645) / `scaleX()` (#659) Number theorem. Like `scaleX()`, `scaleY()`
+// never restricts a `Number` to exact-zero: a nonzero `Number` is directly
+// valid here.
+
+#[test]
+fn canonical_scaley_number_qualifies() {
+    let result = qualify(
+        661100,
+        concat!(
+            "a{transform:scaleY(2);}",
+            "b{transform:scaleY(-1);}",
+            "c{transform:scaleY(0);}",
+            "d{transform:scaleY(+0);}",
+            "e{transform:scaleY(-0);}",
+            "f{transform:scaleY(.5);}",
+            "g{transform:scaleY(1.5);}",
+            "h{transform:scaleY(1e2);}",
+            "i{transform:scaleY(-1e-2);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 9);
+    let expected = [
+        "2", "-1", "0", "+0", "-0",
+        // Authored `.5`: the absent leading integer digit is canonicalized
+        // to `0` by the tokenizer's own retained numeric contract, upstream
+        // of this leaf, exactly as for `scale()`/`scaleX()` arguments.
+        "0.5", "1.5", "1e2", "-1e-2",
+    ];
+    for (index, spelling) in expected.into_iter().enumerate() {
+        assert_eq!(
+            scaley_argument_spelling(&result, index, 0),
+            (CssTransformScaleYArgumentKind::Number, spelling.to_string()),
+            "expected Number at {index}"
+        );
+    }
+}
+
+// 192. A direct `<percentage>` argument qualifies identically to `<number>`
+// under current CSS Transforms Level 2 authority, retaining current Level 2
+// Percentage support rather than regressing to the older Level 1
+// `<number>`-only grammar (#661).
+
+#[test]
+fn canonical_scaley_percentage_qualifies() {
+    let result = qualify(
+        661120,
+        concat!(
+            "a{transform:scaleY(250%);}",
+            "b{transform:scaleY(0%);}",
+            "c{transform:scaleY(-20%);}",
+            "d{transform:scaleY(+10%);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 4);
+    for (index, spelling) in ["250%", "0%", "-20%", "+10%"].into_iter().enumerate() {
+        assert_eq!(
+            scaley_argument_spelling(&result, index, 0),
+            (
+                CssTransformScaleYArgumentKind::Percentage,
+                spelling.to_string()
+            ),
+            "expected Percentage at {index}"
+        );
+    }
+}
+
+// 193. `scaleY(0)` and `scaleY(0%)` remain pairwise distinguishable: `0`
+// qualifies through `Number` evidence and `0%` qualifies through
+// `Percentage` evidence, never collapsed into each other merely because
+// their downstream transform semantics may be numerically equivalent. This
+// boundary is load-bearing for #661.
+
+#[test]
+fn scaley_zero_number_vs_zero_percent_identity() {
+    let result = qualify(
+        661140,
+        concat!("a{transform:scaleY(0);}", "b{transform:scaleY(0%);}",),
+    );
+
+    let number = scaley_argument_spelling(&result, 0, 0);
+    let percentage = scaley_argument_spelling(&result, 1, 0);
+    assert_eq!(
+        number,
+        (CssTransformScaleYArgumentKind::Number, "0".to_string())
+    );
+    assert_eq!(
+        percentage,
+        (CssTransformScaleYArgumentKind::Percentage, "0%".to_string())
+    );
+    assert_ne!(number.0, percentage.0);
+    assert_ne!(number.1, percentage.1);
+}
+
+// 194. `scaleY()` accepts exactly one authored argument: zero, two, three,
+// or more directly visible arguments are decisive
+// `InvalidForSelectedValueGrammar` (#661).
+
+#[test]
+fn scaley_argument_cardinality_other_than_one_is_invalid() {
+    assert_all_invalid(
+        661160,
+        &[
+            "scaleY()",
+            "scaleY(1,2)",
+            "scaleY(1,2,3)",
+            "scaleY(2,3,4,5)",
+        ],
+    );
+}
+
+// 195. A comma is the only accepted inner separator, and an authored-empty
+// position is preserved as its own ordered slot and rejected -- never
+// collapsed away (#661).
+
+#[test]
+fn scaley_argument_delimiter_failures_are_invalid() {
+    assert_all_invalid(
+        661180,
+        &["scaleY(,)", "scaleY(,1)", "scaleY(1,)", "scaleY(1,,2)"],
+    );
+}
+
+// 196. `ScaleYArgument := DirectNumber | DirectPercentage` admits no other
+// direct token category: a `Dimension` -- including a recognized length,
+// angle, or unrecognized unit -- and every other direct token category are
+// decisive direct token-category failures (#661). No direct `Dimension` is
+// ever accepted, unlike a proposed or historical scale-length theorem this
+// leaf does not implement.
+
+#[test]
+fn wrong_direct_categories_are_invalid_for_scaley() {
+    assert_all_invalid(
+        661200,
+        &[
+            "scaleY(1px)",
+            "scaleY(1em)",
+            "scaleY(45deg)",
+            "scaleY(1s)",
+            "scaleY(1fr)",
+            "scaleY(1unknownunit)",
+            "scaleY(foo)",
+            "scaleY(\"1\")",
+            "scaleY(#abc)",
+        ],
+    );
+}
+
+// 197. A complete non-deferred Function occupying the single `scaleY()`
+// argument slot is selected-profile Unsupported, mirroring the shared
+// `FunctionValuedTransformArgument` reason `scale()`/`scaleX()`/
+// `translate()`/`translate3d()`/`translateX()`/`translateY()`/
+// `translateZ()` opaque arguments use -- this leaf never evaluates `calc()`
+// and never decides an opaque Function's inner result type, so a `calc()`
+// whose inner content looks like a `Percentage` stays Unsupported via the
+// same shared boundary (#661).
+
+#[test]
+fn opaque_scaley_argument_function_is_unsupported() {
+    assert_all_unsupported(
+        661220,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
+        &[
+            "scaleY(calc(1))",
+            "scaleY(calc(100%))",
+            "scaleY(min(1,2))",
+            "scaleY(max(1,2))",
+            "scaleY(clamp(0,1,2))",
+            "scaleY(calc(0%))",
+            "scaleY(calc(50%))",
+            "matrix(1,0,0,1,0,0) scaleY(calc(1))",
+        ],
+    );
+}
+
+// 198. A Function followed by additional direct material in the same slot
+// is directly visible structural failure and stays decisively `Invalid`: a
+// structurally feasible complete opaque Function is never softened to
+// Unsupported by an unevaluated sibling in the same slot (#661).
+
+#[test]
+fn function_plus_junk_in_same_slot_is_invalid_for_scaley() {
+    assert_all_invalid(
+        661240,
+        &[
+            "scaleY(calc(1) 2)",
+            "scaleY(calc(1) foo)",
+            "scaleY(calc(1) 20%)",
+        ],
+    );
+}
+
+// 199. A comma nested inside a Function argument is at a deeper relative
+// depth and never becomes a scaleY-level argument separator. Once the
+// nesting closes, a genuine second scaleY-level slot is still counted and
+// makes the shell decisively Invalid, since `scaleY()` has no second slot
+// to occupy (#661).
+
+#[test]
+fn nested_commas_never_change_scaley_arity() {
+    assert_all_unsupported(
+        661260,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
+        &["scaleY(calc(1,2))"],
+    );
+
+    assert_all_invalid(661261, &["scaleY(calc(1,2),3)"]);
+}
+
+// 200. Deferred substitution can alter the enclosing token sequence,
+// separators, and cardinality, so it is resolved before any surrounding
+// scaleY shape conclusion -- including an arity that looks decisive (#661).
+
+#[test]
+fn scaley_deferred_substitution_outranks_surrounding_shape_conclusions() {
+    assert_all_unsupported(
+        661280,
+        CssTransformUnsupportedReason::DeferredSubstitutionFunction,
+        &[
+            "scaleY(var(--y))",
+            "scaleY(var(--y),2)",
+            "matrix(1,0,0,1,0,0) scaleY(var(--y))",
+            "scaleY(var(--y)) matrix(1,0,0,1,0,0)",
+        ],
+    );
+}
+
+// 201. Directly visible decisive invalidity outranks an opaque Function
+// found in a sibling slot; a direct wrong-category failure remains
+// decisive even alongside an outer unselected sibling, in either authored
+// order (#661).
+
+#[test]
+fn scaley_decisive_invalid_outranks_opaque_argument() {
+    assert_all_invalid(661300, &["scaleY(calc(1),1)"]);
+
+    assert_all_invalid(
+        661301,
+        &["scaleY(1px) rotate(10deg)", "rotate(10deg) scaleY(1px)"],
+    );
+}
+
+// 202. Selected `matrix()`, `scale()`, `translate3d()`, `rotate3d()`,
+// `translate()`, `translateX()`, `translateY()`, `translateZ()`,
+// `scaleX()`, and `scaleY()` components mix and repeat freely, preserving
+// exact authored order and repetition through the heterogeneous
+// `CssTransformFunction` alternation, and no selected leaf's evidence
+// drifts across another's index in a mixed sequence (#418 / #645 / #647 /
+// #649 / #651 / #653 / #655 / #657 / #659 / #661).
+
+#[test]
+fn mixed_selected_function_order_including_scaley_is_preserved() {
+    let result = qualify(
+        661320,
+        concat!(
+            "a{transform:matrix(1,0,0,1,0,0) scaleY(2);}",
+            "b{transform:scaleY(2) matrix(1,0,0,1,0,0);}",
+            "c{transform:scale(2) scaleY(3);}",
+            "d{transform:scaleY(3) scale(2);}",
+            "e{transform:translate3d(1px,2px,3px) scaleY(2);}",
+            "f{transform:scaleY(2) translate3d(1px,2px,3px);}",
+            "g{transform:rotate3d(1,0,0,90deg) scaleY(2);}",
+            "h{transform:scaleY(2) rotate3d(1,0,0,90deg);}",
+            "i{transform:translate(10px) scaleY(2);}",
+            "j{transform:scaleY(2) translate(10px);}",
+            "k{transform:translateX(10px) scaleY(2);}",
+            "l{transform:scaleY(2) translateX(10px);}",
+            "m{transform:translateY(10px) scaleY(2);}",
+            "n{transform:scaleY(2) translateY(10px);}",
+            "o{transform:translateZ(10px) scaleY(2);}",
+            "p{transform:scaleY(2) translateZ(10px);}",
+            "q{transform:scaleX(20%) scaleY(30%);}",
+            "r{transform:scaleY(40%) scaleX(50%);}",
+            "s{transform:scaleY(1) scaleY(2);}",
+            "t{transform:matrix(1,0,0,1,0,0) scale(2) translate3d(1px,2px,3px) rotate3d(1,0,0,90deg) translate(10px) translateX(20px) translateY(30px) translateZ(40px) scaleX(50) scaleY(60);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 20);
+
+    for index in 0..19 {
+        assert_eq!(
+            qualified_functions(&result, index).len(),
+            2,
+            "expected two components at {index}"
+        );
+    }
+    assert_eq!(qualified_functions(&result, 19).len(), 10);
+
+    assert!(matches!(
+        qualified_functions(&result, 0)[0],
+        CssTransformFunction::Matrix(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 0)[1],
+        CssTransformFunction::ScaleY(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 1)[0],
+        CssTransformFunction::ScaleY(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 1)[1],
+        CssTransformFunction::Matrix(_)
+    ));
+
+    let ten_kind_sequence = qualified_functions(&result, 19);
+    assert!(matches!(
+        ten_kind_sequence[0],
+        CssTransformFunction::Matrix(_)
+    ));
+    assert!(matches!(
+        ten_kind_sequence[1],
+        CssTransformFunction::Scale(_)
+    ));
+    assert!(matches!(
+        ten_kind_sequence[2],
+        CssTransformFunction::Translate3d(_)
+    ));
+    assert!(matches!(
+        ten_kind_sequence[3],
+        CssTransformFunction::Rotate3d(_)
+    ));
+    assert!(matches!(
+        ten_kind_sequence[4],
+        CssTransformFunction::Translate(_)
+    ));
+    assert!(matches!(
+        ten_kind_sequence[5],
+        CssTransformFunction::TranslateX(_)
+    ));
+    assert!(matches!(
+        ten_kind_sequence[6],
+        CssTransformFunction::TranslateY(_)
+    ));
+    assert!(matches!(
+        ten_kind_sequence[7],
+        CssTransformFunction::TranslateZ(_)
+    ));
+    assert!(matches!(
+        ten_kind_sequence[8],
+        CssTransformFunction::ScaleX(_)
+    ));
+    assert!(matches!(
+        ten_kind_sequence[9],
+        CssTransformFunction::ScaleY(_)
+    ));
+
+    // Repeated `scaleY()` preserves authored order and each component's own
+    // evidence.
+    let repeated = qualified_functions(&result, 18);
+    assert!(matches!(repeated[0], CssTransformFunction::ScaleY(_)));
+    assert!(matches!(repeated[1], CssTransformFunction::ScaleY(_)));
+    assert_eq!(
+        scaley_argument_spelling(&result, 18, 0),
+        (CssTransformScaleYArgumentKind::Number, "1".to_string())
+    );
+    assert_eq!(
+        scaley_argument_spelling(&result, 18, 1),
+        (CssTransformScaleYArgumentKind::Number, "2".to_string())
+    );
+
+    // `translate()` and `scaleY()` remain distinct evidence indices in a
+    // mixed sequence: neither drifts into the other's slot.
+    assert!(matches!(
+        qualified_functions(&result, 8)[0],
+        CssTransformFunction::Translate(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 8)[1],
+        CssTransformFunction::ScaleY(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 9)[0],
+        CssTransformFunction::ScaleY(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 9)[1],
+        CssTransformFunction::Translate(_)
+    ));
+
+    // `scaleX()` and `scaleY()` remain distinct semantic placements in
+    // either authored order: neither representation nor evidence leaks into
+    // the other, and evidence indices resolve independently.
+    assert!(matches!(
+        qualified_functions(&result, 16)[0],
+        CssTransformFunction::ScaleX(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 16)[1],
+        CssTransformFunction::ScaleY(_)
+    ));
+    assert_eq!(
+        scalex_argument_spelling(&result, 16, 0),
+        (
+            CssTransformScaleXArgumentKind::Percentage,
+            "20%".to_string()
+        )
+    );
+    assert_eq!(
+        scaley_argument_spelling(&result, 16, 1),
+        (
+            CssTransformScaleYArgumentKind::Percentage,
+            "30%".to_string()
+        )
+    );
+    assert!(matches!(
+        qualified_functions(&result, 17)[0],
+        CssTransformFunction::ScaleY(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 17)[1],
+        CssTransformFunction::ScaleX(_)
+    ));
+    assert_eq!(
+        scaley_argument_spelling(&result, 17, 0),
+        (
+            CssTransformScaleYArgumentKind::Percentage,
+            "40%".to_string()
+        )
+    );
+    assert_eq!(
+        scalex_argument_spelling(&result, 17, 1),
+        (
+            CssTransformScaleXArgumentKind::Percentage,
+            "50%".to_string()
+        )
+    );
+}
+
+// 203. `scale()`, `scaleX()`, and `scaleY()` remain distinct semantic
+// placements: neither their representation, cardinality, nor evidence
+// leaks into one another in a mixed sequence, in any authored order, and
+// `scale()` retains its accepted one-or-two authored cardinality
+// unaffected by `scaleX()`'s and `scaleY()`'s exact-one cardinality
+// (#645 / #659 / #661).
+
+#[test]
+fn scale_scalex_scaley_separation_preserves_distinct_representation_and_evidence() {
+    let result = qualify(
+        661340,
+        concat!(
+            "a{transform:scale(1,200%) scaleX(300%) scaleY(400%);}",
+            "b{transform:scaleY(400%) scaleX(300%) scale(1,200%);}",
+            "c{transform:scaleX(300%) scaleY(400%) scale(1,200%);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 3);
+
+    let first = qualified_functions(&result, 0);
+    assert_eq!(first.len(), 3);
+    assert!(matches!(first[0], CssTransformFunction::Scale(_)));
+    assert!(matches!(first[1], CssTransformFunction::ScaleX(_)));
+    assert!(matches!(first[2], CssTransformFunction::ScaleY(_)));
+    assert_eq!(
+        scale_argument_spellings(&result, 0, 0),
+        vec![
+            (CssTransformScaleArgumentKind::Number, "1".to_string()),
+            (
+                CssTransformScaleArgumentKind::Percentage,
+                "200%".to_string()
+            ),
+        ]
+    );
+    assert_eq!(
+        scalex_argument_spelling(&result, 0, 1),
+        (
+            CssTransformScaleXArgumentKind::Percentage,
+            "300%".to_string()
+        )
+    );
+    assert_eq!(
+        scaley_argument_spelling(&result, 0, 2),
+        (
+            CssTransformScaleYArgumentKind::Percentage,
+            "400%".to_string()
+        )
+    );
+
+    let second = qualified_functions(&result, 1);
+    assert_eq!(second.len(), 3);
+    assert!(matches!(second[0], CssTransformFunction::ScaleY(_)));
+    assert!(matches!(second[1], CssTransformFunction::ScaleX(_)));
+    assert!(matches!(second[2], CssTransformFunction::Scale(_)));
+    assert_eq!(
+        scaley_argument_spelling(&result, 1, 0),
+        (
+            CssTransformScaleYArgumentKind::Percentage,
+            "400%".to_string()
+        )
+    );
+    assert_eq!(
+        scalex_argument_spelling(&result, 1, 1),
+        (
+            CssTransformScaleXArgumentKind::Percentage,
+            "300%".to_string()
+        )
+    );
+    assert_eq!(
+        scale_argument_spellings(&result, 1, 2),
+        vec![
+            (CssTransformScaleArgumentKind::Number, "1".to_string()),
+            (
+                CssTransformScaleArgumentKind::Percentage,
+                "200%".to_string()
+            ),
+        ]
+    );
+
+    let third = qualified_functions(&result, 2);
+    assert_eq!(third.len(), 3);
+    assert!(matches!(third[0], CssTransformFunction::ScaleX(_)));
+    assert!(matches!(third[1], CssTransformFunction::ScaleY(_)));
+    assert!(matches!(third[2], CssTransformFunction::Scale(_)));
+    assert_eq!(
+        scalex_argument_spelling(&result, 2, 0),
+        (
+            CssTransformScaleXArgumentKind::Percentage,
+            "300%".to_string()
+        )
+    );
+    assert_eq!(
+        scaley_argument_spelling(&result, 2, 1),
+        (
+            CssTransformScaleYArgumentKind::Percentage,
+            "400%".to_string()
+        )
+    );
+    assert_eq!(
+        scale_argument_spellings(&result, 2, 2),
+        vec![
+            (CssTransformScaleArgumentKind::Number, "1".to_string()),
+            (
+                CssTransformScaleArgumentKind::Percentage,
+                "200%".to_string()
+            ),
+        ]
+    );
+}
+
+// 204. Every `<transform-function>` other than the selected leaves stays
+// outside selected-profile coverage, in either authored order and
+// regardless of a sibling qualified selected function, and the coarser
+// outer unselected-function coverage outranks an inner opaque `scaleY()`
+// argument (#661).
+
+#[test]
+fn unselected_outer_function_precedence_covers_scaley() {
+    assert_all_unsupported(
+        661360,
+        CssTransformUnsupportedReason::UnselectedTransformFunction,
+        &[
+            "scaleY(2) rotate(10deg)",
+            "rotate(10deg) scaleY(2)",
+            "scaleY(2) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
+        ],
+    );
+
+    // Coarser outer unselected-function coverage outranks an inner opaque
+    // scaleY argument, identically in both authored orders.
+    assert_all_unsupported(
+        661380,
+        CssTransformUnsupportedReason::UnselectedTransformFunction,
+        &[
+            "scaleY(calc(1)) rotate(10deg)",
+            "rotate(10deg) scaleY(calc(1))",
+        ],
+    );
+
+    // Decisive direct Invalid still wins over the outer unselected sibling.
+    assert_all_invalid(661400, &["scaleY(1px) rotate(10deg)"]);
+}
+
+// 205. `scaleZ()` and `scale3d()` remain outside selected-profile coverage
+// after #661: adding `scaleY()` never widens the selected profile to these
+// unrelated siblings, in isolation or alongside a qualified `scaleY()`, in
+// either authored order (#661).
+
+#[test]
+fn scale_family_siblings_remain_unselected_alongside_scaley() {
+    assert_all_unsupported(
+        661420,
+        CssTransformUnsupportedReason::UnselectedTransformFunction,
+        &[
+            "scaleZ(2)",
+            "scale3d(1,1,1)",
+            "scaleY(2) scaleZ(2)",
+            "scaleZ(2) scaleY(2)",
+        ],
+    );
+}
+
+// 206. `<transform-list>` is whitespace-separated repetition: a top-level
+// comma is never a permitted separator, including between two `scaleY()`
+// components or a `scaleY()` and a sibling selected function (#661).
+
+#[test]
+fn top_level_comma_is_invalid_around_scaley() {
+    assert_all_invalid(
+        661440,
+        &[
+            "scaleY(2), matrix(1,0,0,1,0,0)",
+            "scaleY(2), scale(2)",
+            "scaleY(2), translate3d(1px,2px,3px)",
+            "scaleY(2), rotate3d(1,0,0,90deg)",
+            "scaleY(2), translate(10px)",
+            "scaleY(2), translateX(20px)",
+            "scaleY(2), translateY(20px)",
+            "scaleY(2), translateZ(20px)",
+            "scaleY(2), scaleX(3)",
+            "scaleY(2), scaleY(3)",
+        ],
+    );
+}
+
+// 207. CSS Syntax function consumption may end at a true stylesheet EOF, so
+// a parser-committed EOF-ended `scaleY()` extent is qualified from retained
+// interior evidence alone. EOF never fills or repairs a missing argument, a
+// wrong direct category, or a second slot `scaleY()` has no room for
+// (#661).
+
+#[test]
+fn true_stylesheet_eof_ended_scaley_extent_follows_parser_authority() {
+    let number_eof = qualify(661460, "a{transform:scaleY(2");
+    assert_eq!(
+        number_eof.execution_completion(),
+        CssParserExecutionCompletion::Complete
+    );
+    assert_eq!(number_eof.transform_observations().len(), 1);
+    assert_eq!(
+        scaley_argument_spelling(&number_eof, 0, 0),
+        (CssTransformScaleYArgumentKind::Number, "2".to_string())
+    );
+
+    let percentage_eof = qualify(661461, "a{transform:scaleY(50%");
+    assert_eq!(
+        percentage_eof.execution_completion(),
+        CssParserExecutionCompletion::Complete
+    );
+    assert_eq!(percentage_eof.transform_observations().len(), 1);
+    assert_eq!(
+        scaley_argument_spelling(&percentage_eof, 0, 0),
+        (
+            CssTransformScaleYArgumentKind::Percentage,
+            "50%".to_string()
+        )
+    );
+
+    // Zero-slot EOF stays decisively Invalid.
+    let zero_slot = qualify(661462, "a{transform:scaleY(");
+    assert_invalid(&zero_slot, 0);
+
+    // A trailing comma at true EOF stays decisively Invalid: scaleY()
+    // never accepts a second slot.
+    let trailing_comma = qualify(661463, "a{transform:scaleY(2,");
+    assert_invalid(&trailing_comma, 0);
+
+    // EOF never repairs a direct Dimension category.
+    let wrong_category_eof = qualify(661464, "a{transform:scaleY(1px");
+    assert_invalid(&wrong_category_eof, 0);
+
+    // A second slot never widens scaleY() cardinality, even at true EOF.
+    let two_slots_eof = qualify(661465, "a{transform:scaleY(1,2");
+    assert_invalid(&two_slots_eof, 0);
+
+    // A closed component followed by stray material is invalid, proving
+    // the accepted EOF case is not "accept whatever trails a scaleY".
+    let trailing = qualify(661466, "a{transform:scaleY(2) 7;}");
+    assert_invalid(&trailing, 0);
+}
+
+// 208. Lower-layer lifecycle evidence stays owned by the tokenizer and
+// parser: comments/trivia never change slot interpretation, a comment
+// never fills an authored-empty slot, and `!important` remains outside the
+// semantic value window (#661).
+
+#[test]
+fn trivia_and_important_never_change_scaley_interpretation() {
+    let result = qualify(
+        661480,
+        concat!(
+            "a{transform:scaleY(2/**/);}",
+            "b{transform:scaleY(/**/2);}",
+            "c{transform:scaleY( 2 );}",
+            "d{transform:scaleY(2) !important;}",
+            "e{transform:scaleY(2)!important;}",
+            "f{transform:scaleY(/**/50%);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 6);
+    for index in 0..3 {
+        assert_eq!(
+            scaley_argument_spelling(&result, index, 0),
+            (CssTransformScaleYArgumentKind::Number, "2".to_string()),
+            "trivia changed slot interpretation at {index}"
+        );
+    }
+    for index in 3..5 {
+        assert_eq!(
+            scaley_argument_spelling(&result, index, 0),
+            (CssTransformScaleYArgumentKind::Number, "2".to_string())
+        );
+        assert!(
+            result.upstream_parser_result().occurrences()[index]
+                .priority()
+                .is_some(),
+            "expected retained priority evidence at {index}"
+        );
+    }
+    assert_eq!(
+        scaley_argument_spelling(&result, 5, 0),
+        (
+            CssTransformScaleYArgumentKind::Percentage,
+            "50%".to_string()
+        ),
+        "trivia changed Percentage slot interpretation"
+    );
+
+    // A comment is trivia, never an argument: it can neither fill the
+    // single authored slot nor stand in for a missing one.
+    assert_all_invalid(661500, &["scaleY(/**/)", "scaleY(2,/**/)"]);
+}
+
+// 209. Repeated and cross-source runs remain deterministic, and evidence
+// lookup resolves to the exact retained Number/Percentage tokens
+// identically across runs (#661).
+
+#[test]
+fn scaley_repeated_and_cross_source_runs_are_deterministic() {
+    let css = concat!(
+        "a{transform:scaleY(1,2);}",
+        "b{transform:scaleY(calc(1,2));}",
+        "c{transform:scaleY(1px);}",
+        "d{transform:matrix(1,0,0,1,0,0) scaleY(2);}",
+        "e{transform:scaleY(50%);}",
+    );
+
+    let first = qualify(661520, css);
+    let repeated = qualify(661520, css);
+    let another_source = qualify(661521, css);
+
+    assert_eq!(
+        first.transform_observations(),
+        repeated.transform_observations()
+    );
+    assert_eq!(
+        first.transform_observations(),
+        another_source.transform_observations()
+    );
+
+    assert_invalid(&first, 0);
+    assert_unsupported(
+        &first,
+        1,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
+    );
+    assert_invalid(&first, 2);
+    assert_eq!(qualified_functions(&first, 3).len(), 2);
+
+    assert_eq!(
+        scaley_argument_spelling(&first, 3, 1),
+        scaley_argument_spelling(&repeated, 3, 1)
+    );
+    assert_eq!(
+        scaley_argument_spelling(&first, 3, 1),
+        scaley_argument_spelling(&another_source, 3, 1)
+    );
+    assert_eq!(
+        scaley_argument_spelling(&first, 4, 0),
+        scaley_argument_spelling(&repeated, 4, 0)
+    );
+    assert_eq!(
+        scaley_argument_spelling(&first, 4, 0),
+        scaley_argument_spelling(&another_source, 4, 0)
+    );
+}
+
+// 210. `scaleY` function-name recognition is ASCII-case-insensitive,
+// matching the accepted `matrix`/`scale`/`translate3d`/`rotate3d`/
+// `translate`/`translateX`/`translateY`/`translateZ`/`scaleX` boundary, and
+// structurally malformed `scaleY` components -- a bare Function name, an
+// unbalanced/duplicated closer, or stray leading material -- stay
+// decisively `Invalid` (#661).
+
+#[test]
+fn scaley_function_name_recognition_and_malformed_components() {
+    let result = qualify(
+        661540,
+        concat!(
+            "a{transform:SCALEY(2);}",
+            "b{transform:ScAlEy(2);}",
+            "c{transform:s\\63 aley(2);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 3);
+    for index in 0..3 {
+        assert_eq!(
+            scaley_argument_spelling(&result, index, 0),
+            (CssTransformScaleYArgumentKind::Number, "2".to_string()),
+            "scaleY name recognition failed at {index}"
+        );
+    }
+
+    assert_all_invalid(
+        661560,
+        &[
+            "scaleY",
+            "scaleY(2))",
+            "scaleY((2)",
+            "1 scaleY(2)",
+            "[scaleY(2)]",
+        ],
+    );
+}
+
+// 211. Cross-leaf isolation: `scaleY()` recognition never leaks into the
+// accepted longhand `translate`/`scale`/`rotate` leaves, the other
+// `transform-*` single-value leaves, or the other selected `transform`
+// function branches, and `none` remains an exclusive whole-value branch
+// even when combined with `scaleY()` (#418 / #606 / #645 / #647 / #649 /
+// #651 / #653 / #655 / #657 / #659 / #661).
+
+#[test]
+fn scaley_cross_leaf_isolation_is_preserved() {
+    let result = qualify(
+        661580,
+        concat!(
+            "a{transform:scaleY(2);transform:none;}",
+            "b{translate:10px;}",
+            "c{scale:2;}",
+            "d{rotate:45deg;}",
+            "e{transform-origin:left top;}",
+            "f{transform-box:border-box;}",
+            "g{transform-style:flat;}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 2);
+    assert_eq!(
+        scaley_argument_spelling(&result, 0, 0),
+        (CssTransformScaleYArgumentKind::Number, "2".to_string())
+    );
+    assert_whole_none(&result, 1);
+
+    assert_eq!(result.translate_observations().len(), 1);
+    assert_eq!(result.scale_observations().len(), 1);
+    assert_eq!(result.rotate_observations().len(), 1);
+    assert_eq!(result.transform_origin_observations().len(), 1);
+    assert_eq!(result.transform_box_observations().len(), 1);
+    assert_eq!(result.transform_style_observations().len(), 1);
+
+    assert_all_invalid(661600, &["none scaleY(2)", "scaleY(2) none"]);
 }
