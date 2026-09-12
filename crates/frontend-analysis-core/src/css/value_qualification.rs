@@ -6300,6 +6300,61 @@ impl CssCaretShapeQualificationObservation {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssAnimationFillModeValue {
+    None,
+    Forwards,
+    Backwards,
+    Both,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssAnimationFillModeUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CssAnimationFillModeQualificationOutcome {
+    Qualified(Vec<CssAnimationFillModeValue>),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssAnimationFillModeUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `animation-fill-mode`
+/// qualification (#641): `<single-animation-fill-mode>#`, where each item is
+/// exactly one direct decoded Ident `none | forwards | backwards | both`.
+///
+/// This proves only authored comma-list sequence identity, in exact authored
+/// order and cardinality. CSS `animation-fill-mode` does not accept `auto`
+/// (that keyword belongs only to the Web Animations `FillMode` enum), so
+/// `auto` remains `InvalidForSelectedValueGrammar` here. This observation
+/// performs no runtime fill-effect application, `AnimationEffect`/
+/// `AnimationTrigger` semantics, playback/currentTime state, sibling
+/// animation-list synchronization, shorthand expansion, or
+/// inheritance/cascade/computed-value semantics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CssAnimationFillModeQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssAnimationFillModeQualificationOutcome,
+}
+
+impl CssAnimationFillModeQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> &CssAnimationFillModeQualificationOutcome {
+        &self.outcome
+    }
+}
+
 /// Run-owned result for the currently selected bounded CSS value capabilities.
 ///
 /// The exact Core-validated parser result is owned once here. Property-specific
@@ -6414,6 +6469,7 @@ pub(crate) struct CssValueQualificationRunResult {
     paint_order_observations: Vec<CssPaintOrderQualificationObservation>,
     caret_animation_observations: Vec<CssCaretAnimationQualificationObservation>,
     caret_shape_observations: Vec<CssCaretShapeQualificationObservation>,
+    animation_fill_mode_observations: Vec<CssAnimationFillModeQualificationObservation>,
 }
 
 impl CssValueQualificationRunResult {
@@ -7361,6 +7417,12 @@ impl CssValueQualificationRunResult {
         &self.caret_shape_observations
     }
 
+    pub(crate) fn animation_fill_mode_observations(
+        &self,
+    ) -> &[CssAnimationFillModeQualificationObservation] {
+        &self.animation_fill_mode_observations
+    }
+
     /// Resolves one qualified `text-indent` `Length`/`Percentage`
     /// component's run-local evidence reference to its exact retained
     /// tokenizer token kind, preserving sign/zero spelling, magnitude,
@@ -7541,6 +7603,7 @@ pub(crate) fn run(
         paint_order_observations,
         caret_animation_observations,
         caret_shape_observations,
+        animation_fill_mode_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
         let mut cursor = LexicalWindowCursor::new(tokenizer_result);
@@ -7646,6 +7709,7 @@ pub(crate) fn run(
         let mut paint_order_observations = Vec::new();
         let mut caret_animation_observations = Vec::new();
         let mut caret_shape_observations = Vec::new();
+        let mut animation_fill_mode_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
             let property_range = cursor.window_for(occurrence.property_name())?;
@@ -8867,6 +8931,19 @@ pub(crate) fn run(
                     placement: occurrence.placement(),
                     outcome: qualify_caret_shape_value(value_items),
                 });
+                continue;
+            }
+
+            if property_name.eq_ignore_ascii_case("animation-fill-mode") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                animation_fill_mode_observations.push(
+                    CssAnimationFillModeQualificationObservation {
+                        occurrence_index,
+                        placement: occurrence.placement(),
+                        outcome: qualify_animation_fill_mode_value(value_items),
+                    },
+                );
             }
         }
 
@@ -8973,6 +9050,7 @@ pub(crate) fn run(
             paint_order_observations,
             caret_animation_observations,
             caret_shape_observations,
+            animation_fill_mode_observations,
         )
     };
 
@@ -9080,6 +9158,7 @@ pub(crate) fn run(
         paint_order_observations,
         caret_animation_observations,
         caret_shape_observations,
+        animation_fill_mode_observations,
     })
 }
 
@@ -19042,6 +19121,143 @@ fn qualify_caret_shape_value(items: &[CssLexicalItem]) -> CssCaretShapeQualifica
         }
         _ => CssCaretShapeQualificationOutcome::InvalidForSelectedValueGrammar,
     }
+}
+
+fn animation_fill_mode_item_value(items: &[CssLexicalItem]) -> Option<CssAnimationFillModeValue> {
+    let mut tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+
+    let token = tokens.next()?;
+    if tokens.next().is_some() {
+        return None;
+    }
+
+    match token.kind() {
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("none") => {
+            Some(CssAnimationFillModeValue::None)
+        }
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("forwards") => {
+            Some(CssAnimationFillModeValue::Forwards)
+        }
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("backwards") => {
+            Some(CssAnimationFillModeValue::Backwards)
+        }
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("both") => {
+            Some(CssAnimationFillModeValue::Both)
+        }
+        _ => None,
+    }
+}
+
+/// Qualifies one retained `animation-fill-mode` declaration value against
+/// `<single-animation-fill-mode>#` (#641), where each item is exactly one
+/// direct decoded Ident `none | forwards | backwards | both`.
+///
+/// Mirrors the accepted `animation-play-state` comma-list mechanics:
+/// deferred substitution is checked before list recognition because it can
+/// change top-level separator structure, a sole CSS-wide keyword is
+/// unsupported only as the entire value, and the list walk splits only on
+/// retained depth-zero `Comma` tokens while commas inside Functions or other
+/// balanced blocks remain inside the current item. `auto` is not part of
+/// this CSS property's grammar (it belongs only to the Web Animations
+/// `FillMode` enum) and therefore falls through to
+/// `InvalidForSelectedValueGrammar` like any other unrecognized Ident.
+fn qualify_animation_fill_mode_value(
+    items: &[CssLexicalItem],
+) -> CssAnimationFillModeQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssAnimationFillModeQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssAnimationFillModeUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssAnimationFillModeQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssAnimationFillModeUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    let mut whole_value_tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+    if let (Some(only_token), None) = (whole_value_tokens.next(), whole_value_tokens.next())
+        && let CssTokenKind::Ident(identifier) = only_token.kind()
+        && is_css_wide_keyword(identifier)
+    {
+        return CssAnimationFillModeQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssAnimationFillModeUnsupportedReason::CssWideKeyword,
+        );
+    }
+
+    let mut values = Vec::new();
+    let mut block_stack: Vec<CssValueBlockCloser> = Vec::new();
+    let mut item_start = 0usize;
+
+    for (index, item) in items.iter().enumerate() {
+        if block_stack.is_empty()
+            && matches!(
+                item,
+                CssLexicalItem::SemanticToken(token)
+                    if matches!(token.kind(), CssTokenKind::Comma)
+            )
+        {
+            let Some(value) = animation_fill_mode_item_value(&items[item_start..index]) else {
+                return CssAnimationFillModeQualificationOutcome::InvalidForSelectedValueGrammar;
+            };
+            values.push(value);
+            item_start = index + 1;
+            continue;
+        }
+
+        let CssLexicalItem::SemanticToken(token) = item else {
+            continue;
+        };
+        match token.kind() {
+            CssTokenKind::Function(_) | CssTokenKind::LeftParenthesis => {
+                block_stack.push(CssValueBlockCloser::Parenthesis);
+            }
+            CssTokenKind::LeftSquareBracket => {
+                block_stack.push(CssValueBlockCloser::SquareBracket);
+            }
+            CssTokenKind::LeftCurlyBracket => {
+                block_stack.push(CssValueBlockCloser::CurlyBracket);
+            }
+            CssTokenKind::RightParenthesis
+                if block_stack.last() == Some(&CssValueBlockCloser::Parenthesis) =>
+            {
+                block_stack.pop();
+            }
+            CssTokenKind::RightSquareBracket
+                if block_stack.last() == Some(&CssValueBlockCloser::SquareBracket) =>
+            {
+                block_stack.pop();
+            }
+            CssTokenKind::RightCurlyBracket
+                if block_stack.last() == Some(&CssValueBlockCloser::CurlyBracket) =>
+            {
+                block_stack.pop();
+            }
+            _ => {}
+        }
+    }
+
+    let Some(value) = animation_fill_mode_item_value(&items[item_start..]) else {
+        return CssAnimationFillModeQualificationOutcome::InvalidForSelectedValueGrammar;
+    };
+    values.push(value);
+
+    CssAnimationFillModeQualificationOutcome::Qualified(values)
 }
 
 fn qualify_scroll_snap_align_value(

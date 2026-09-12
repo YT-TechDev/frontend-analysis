@@ -25,6 +25,8 @@ mod anchor_name_value_qualification_tests;
 #[cfg(test)]
 mod animation_delay_value_qualification_tests;
 #[cfg(test)]
+mod animation_fill_mode_value_qualification_tests;
+#[cfg(test)]
 mod animation_iteration_count_value_qualification_tests;
 #[cfg(test)]
 mod animation_name_value_qualification_tests;
