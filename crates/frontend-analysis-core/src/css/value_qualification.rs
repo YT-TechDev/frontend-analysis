@@ -6355,6 +6355,121 @@ impl CssAnimationFillModeQualificationObservation {
     }
 }
 
+/// Run-local locator for the exact tokenizer item selected during
+/// authoritative `transform` `matrix()` direct `<number>` argument
+/// recognition (#418). The index is evidence placement, not an interpreted
+/// numeric magnitude: it always points at the exact tokenizer-owned direct
+/// `Number` token retained inside one `matrix()` argument slot, never at
+/// the Function opener, an argument-separating `Comma`, a parenthesis, or
+/// trivia. The exact retained `Number`-token structure (sign spelling,
+/// integer/fraction digits, exponent spelling) remains tokenizer-owned and
+/// is never converted to a machine float for qualification, resolved
+/// through `transform_matrix_argument_token`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTransformMatrixArgumentEvidenceRef {
+    lexical_item_index: usize,
+}
+
+impl CssTransformMatrixArgumentEvidenceRef {
+    pub(crate) const fn lexical_item_index(&self) -> usize {
+        self.lexical_item_index
+    }
+}
+
+/// One qualified authored `matrix()` transform component: exactly six
+/// ordered direct authored `<number>` arguments (#418), each carrying the
+/// exact tokenizer-owned evidence retained at its own semantic argument
+/// slot. The arity is carried structurally by a fixed-size array, so a
+/// qualified component can never represent a short, long, or partially
+/// synthesized argument vector. This leaf constructs no matrix, performs
+/// no matrix multiplication, and resolves no computed transform.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTransformMatrixFunction {
+    arguments: [CssTransformMatrixArgumentEvidenceRef; 6],
+}
+
+impl CssTransformMatrixFunction {
+    pub(crate) const fn arguments(&self) -> &[CssTransformMatrixArgumentEvidenceRef; 6] {
+        &self.arguments
+    }
+}
+
+/// One authored `transform` value under the narrowed direct-authored
+/// matrix-only profile `QualifiedDirectTransform := none |
+/// matrix(<number>#{6})+` (#418): either the dedicated whole-value `none`
+/// sentinel or an ordered, possibly repeated, one-or-more list of
+/// qualified `matrix()` components in exact authored order. This is not a
+/// complete normative `transform` grammar: it qualifies only the
+/// `matrix()` branch of `<transform-function>`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CssTransformValue {
+    None,
+    Functions(Vec<CssTransformMatrixFunction>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTransformUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+    NonMatrixTransformFunction,
+    FunctionValuedMatrixArgument,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CssTransformQualificationOutcome {
+    Qualified(CssTransformValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssTransformUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded `transform` qualification
+/// against the narrowed direct-authored matrix-only profile
+/// `QualifiedDirectTransform := none | matrix(<number>#{6})+` (#418),
+/// acquiring this repository's first depth-scoped grammar-native
+/// multi-argument function capability.
+///
+/// Normative `transform` is `none | <transform-list>` where
+/// `<transform-list> = <transform-function>+` and `matrix() =
+/// matrix(<number>#{6})`. This observation deliberately selects only the
+/// `matrix()` branch: every other `<transform-function>` stays outside
+/// selected-profile coverage rather than being decided here, because
+/// deciding it would require the full `<transform-function>` dispatch and
+/// the length/angle semantics this leaf does not own.
+///
+/// The new semantic responsibility is argument qualification scoped to a
+/// grammar frame whose delimiter depth is relative to each selected
+/// `matrix()` function body: the body is partitioned on `Comma` tokens at
+/// that relative depth zero only, so a comma retained inside a nested
+/// Function or block never becomes a matrix argument separator, the
+/// resulting ordered slots are preserved (an authored-empty position is
+/// retained as a slot and rejected, never collapsed), and exactly six
+/// slots each holding exactly one direct retained `Number` token qualify.
+///
+/// This observation performs no machine-float normalization, constructs no
+/// matrix, multiplies no matrices, resolves no computed value, applies no
+/// `calc()` semantics, and adds no browser layout or rendering behavior.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CssTransformQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssTransformQualificationOutcome,
+}
+
+impl CssTransformQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> &CssTransformQualificationOutcome {
+        &self.outcome
+    }
+}
+
 /// Run-owned result for the currently selected bounded CSS value capabilities.
 ///
 /// The exact Core-validated parser result is owned once here. Property-specific
@@ -6470,6 +6585,7 @@ pub(crate) struct CssValueQualificationRunResult {
     caret_animation_observations: Vec<CssCaretAnimationQualificationObservation>,
     caret_shape_observations: Vec<CssCaretShapeQualificationObservation>,
     animation_fill_mode_observations: Vec<CssAnimationFillModeQualificationObservation>,
+    transform_observations: Vec<CssTransformQualificationObservation>,
 }
 
 impl CssValueQualificationRunResult {
@@ -7423,6 +7539,32 @@ impl CssValueQualificationRunResult {
         &self.animation_fill_mode_observations
     }
 
+    pub(crate) fn transform_observations(&self) -> &[CssTransformQualificationObservation] {
+        &self.transform_observations
+    }
+
+    /// Resolves one qualified `transform` `matrix()` argument's run-local
+    /// evidence reference to its exact retained tokenizer token kind,
+    /// preserving authored sign spelling, integer/fraction digits, and
+    /// exponent spelling without any machine-float conversion. The
+    /// retained token at the evidence position is always a direct
+    /// `Number`, so `1`, `1.0`, `1e0`, `+1`, and `-0` remain distinct
+    /// authored evidence here.
+    pub(crate) fn transform_matrix_argument_token(
+        &self,
+        evidence: CssTransformMatrixArgumentEvidenceRef,
+    ) -> Option<&CssTokenKind> {
+        let item = self
+            .upstream_parser_result
+            .upstream_tokenizer_result()
+            .lexical_items()
+            .get(evidence.lexical_item_index())?;
+        let CssLexicalItem::SemanticToken(token) = item else {
+            return None;
+        };
+        Some(token.kind())
+    }
+
     /// Resolves one qualified `text-indent` `Length`/`Percentage`
     /// component's run-local evidence reference to its exact retained
     /// tokenizer token kind, preserving sign/zero spelling, magnitude,
@@ -7604,6 +7746,7 @@ pub(crate) fn run(
         caret_animation_observations,
         caret_shape_observations,
         animation_fill_mode_observations,
+        transform_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
         let mut cursor = LexicalWindowCursor::new(tokenizer_result);
@@ -7710,6 +7853,7 @@ pub(crate) fn run(
         let mut caret_animation_observations = Vec::new();
         let mut caret_shape_observations = Vec::new();
         let mut animation_fill_mode_observations = Vec::new();
+        let mut transform_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
             let property_range = cursor.window_for(occurrence.property_name())?;
@@ -8944,6 +9088,18 @@ pub(crate) fn run(
                         outcome: qualify_animation_fill_mode_value(value_items),
                     },
                 );
+                continue;
+            }
+
+            if property_name.eq_ignore_ascii_case("transform") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let lexical_item_start = value_range.start;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                transform_observations.push(CssTransformQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_transform_value(value_items, lexical_item_start),
+                });
             }
         }
 
@@ -9051,6 +9207,7 @@ pub(crate) fn run(
             caret_animation_observations,
             caret_shape_observations,
             animation_fill_mode_observations,
+            transform_observations,
         )
     };
 
@@ -9159,6 +9316,7 @@ pub(crate) fn run(
         caret_animation_observations,
         caret_shape_observations,
         animation_fill_mode_observations,
+        transform_observations,
     })
 }
 
@@ -19258,6 +19416,465 @@ fn qualify_animation_fill_mode_value(
     values.push(value);
 
     CssAnimationFillModeQualificationOutcome::Qualified(values)
+}
+
+/// Partitions one selected `matrix()` component's retained function body
+/// into ordered semantic argument slots, using delimiter depth measured
+/// relative to that function body (#418).
+///
+/// This is the new depth-scoped capability. The walk starts one item past
+/// the retained `Function` token -- which in CSS Syntax already carries
+/// the opening parenthesis -- with a block stack seeded by that function's
+/// own parenthesis, so `block_stack.len() == 1` is exactly "at this matrix
+/// body's relative depth zero". Only a `Comma` retained at that relative
+/// depth zero separates argument slots: a comma inside a nested Function
+/// or a nested `(`/`[`/`{` block raises the depth first and therefore
+/// stays inside the current slot, never changing matrix arity. Every slot
+/// boundary is preserved exactly as authored, so an empty authored
+/// position survives as its own empty slot for the caller to reject
+/// rather than being collapsed away.
+///
+/// Termination follows retained parser/tokenizer evidence only, never a
+/// raw-source scan: the body ends at the retained `RightParenthesis` that
+/// returns the stack to relative depth zero, or -- when CSS Syntax
+/// function consumption ended the extent at a true stylesheet EOF, so the
+/// parser committed the occurrence with no authored closer -- at the end
+/// of the retained component itself. No closing parenthesis is ever
+/// synthesized, searched for, or reconstructed, and no source offset is
+/// inferred.
+///
+/// A body holding no retained semantic content at all (`matrix()`) yields
+/// zero slots rather than one empty slot, matching CSS component-value
+/// list semantics; every other shape yields `commas + 1` slots. Callers
+/// receive slot ranges relative to `component` and resolve evidence
+/// positions by adding the component's own absolute start.
+fn matrix_body_slot_ranges(component: &[CssLexicalItem]) -> Vec<Range<usize>> {
+    let Some(function_index) = component.iter().position(|item| {
+        matches!(
+            item,
+            CssLexicalItem::SemanticToken(token)
+                if matches!(token.kind(), CssTokenKind::Function(_))
+        )
+    }) else {
+        return Vec::new();
+    };
+
+    let mut block_stack = vec![CssValueBlockCloser::Parenthesis];
+    let mut slots: Vec<Range<usize>> = Vec::new();
+    let mut slot_start = function_index + 1;
+    let mut body_end = component.len();
+
+    for (index, entry) in component.iter().enumerate().skip(function_index + 1) {
+        let CssLexicalItem::SemanticToken(token) = entry else {
+            // Comment trivia never opens, closes, or separates anything.
+            continue;
+        };
+
+        if block_stack.len() == 1 {
+            match token.kind() {
+                CssTokenKind::Comma => {
+                    slots.push(slot_start..index);
+                    slot_start = index + 1;
+                    continue;
+                }
+                CssTokenKind::RightParenthesis => {
+                    body_end = index;
+                    break;
+                }
+                _ => {}
+            }
+        }
+
+        match token.kind() {
+            CssTokenKind::Function(_) | CssTokenKind::LeftParenthesis => {
+                block_stack.push(CssValueBlockCloser::Parenthesis);
+            }
+            CssTokenKind::LeftSquareBracket => {
+                block_stack.push(CssValueBlockCloser::SquareBracket);
+            }
+            CssTokenKind::LeftCurlyBracket => {
+                block_stack.push(CssValueBlockCloser::CurlyBracket);
+            }
+            CssTokenKind::RightParenthesis
+                if block_stack.last() == Some(&CssValueBlockCloser::Parenthesis) =>
+            {
+                block_stack.pop();
+            }
+            CssTokenKind::RightSquareBracket
+                if block_stack.last() == Some(&CssValueBlockCloser::SquareBracket) =>
+            {
+                block_stack.pop();
+            }
+            CssTokenKind::RightCurlyBracket
+                if block_stack.last() == Some(&CssValueBlockCloser::CurlyBracket) =>
+            {
+                block_stack.pop();
+            }
+            _ => {}
+        }
+    }
+
+    slots.push(slot_start..body_end);
+
+    if slots.len() == 1
+        && !component[slots[0].clone()]
+            .iter()
+            .any(|item| matches!(item, CssLexicalItem::SemanticToken(_)))
+    {
+        return Vec::new();
+    }
+
+    slots
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CssTransformMatrixArgumentClass {
+    Number(CssTransformMatrixArgumentEvidenceRef),
+    OpaqueFunction,
+    Invalid,
+}
+
+/// Classifies one already-partitioned `matrix()` argument slot against the
+/// selected profile's single accepted shape -- exactly one direct retained
+/// `<number>` token (#418).
+///
+/// Whitespace and Comment trivia are excluded here exactly as the accepted
+/// `counter-reset` inner-grammar recognition excludes them, so trivia
+/// around a separator or an argument never changes slot interpretation. An
+/// authored-empty slot has no retained semantic token and is decisively
+/// `Invalid` -- it is rejected as an argument while still having been
+/// preserved as an ordered position by `matrix_body_slot_ranges`.
+///
+/// A slot headed by a `Function` token is never a direct `<number>`. It is
+/// `OpaqueFunction` -- a structurally feasible numeric position whose
+/// validity depends on calculated-value semantics this leaf does not own
+/// and never evaluates -- only when the slot is exactly one complete
+/// Function extent, which `entire_function_name` establishes from retained
+/// structure. A Function followed by further retained material in the same
+/// slot is directly visible structural failure and stays decisively
+/// `Invalid`, so an unevaluated Function can never mask junk beside it.
+/// So does a decoded name that is one of the recognized generic
+/// whole-value-only functions occupying a non-whole-value position,
+/// mirroring the accepted `scale` misplaced-whole-value boundary.
+/// Deferred-substitution functions never reach here:
+/// `qualify_transform_value` resolves them first, at whole-value scope and
+/// at any nesting depth.
+///
+/// A direct `Number` qualifies regardless of `CssNumberType`, because
+/// `matrix()` takes `<number>` and not `<integer>`; no range restriction
+/// and no machine-float conversion is applied, so exact authored evidence
+/// stays authoritative for membership. A `Dimension`, `Percentage`,
+/// `Ident`, or `String` token is a direct token-category failure and is
+/// decisively `Invalid`, as is any slot carrying more than one retained
+/// semantic token.
+fn classify_matrix_argument(
+    slot: &[CssLexicalItem],
+    absolute_slot_start: usize,
+) -> CssTransformMatrixArgumentClass {
+    let mut tokens = slot
+        .iter()
+        .enumerate()
+        .filter_map(|(relative_index, entry)| match entry {
+            CssLexicalItem::SemanticToken(token)
+                if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+            {
+                Some((relative_index, token))
+            }
+            _ => None,
+        });
+
+    let Some((relative_index, first)) = tokens.next() else {
+        return CssTransformMatrixArgumentClass::Invalid;
+    };
+
+    if matches!(first.kind(), CssTokenKind::Function(_)) {
+        return match entire_function_name(slot) {
+            Some(name) if is_whole_value_function(name) => CssTransformMatrixArgumentClass::Invalid,
+            Some(_) => CssTransformMatrixArgumentClass::OpaqueFunction,
+            None => CssTransformMatrixArgumentClass::Invalid,
+        };
+    }
+
+    if tokens.next().is_some() {
+        return CssTransformMatrixArgumentClass::Invalid;
+    }
+
+    match first.kind() {
+        CssTokenKind::Number { .. } => {
+            CssTransformMatrixArgumentClass::Number(CssTransformMatrixArgumentEvidenceRef {
+                lexical_item_index: absolute_slot_start + relative_index,
+            })
+        }
+        _ => CssTransformMatrixArgumentClass::Invalid,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CssTransformComponentClass {
+    Matrix([CssTransformMatrixArgumentEvidenceRef; 6]),
+    OpaqueMatrixArgument,
+    NonMatrixFunction,
+    Invalid,
+}
+
+/// Classifies one already-partitioned top-level `transform` component
+/// against the selected matrix-only profile (#418).
+///
+/// `<transform-list>` admits only `<transform-function>` components, so a
+/// component that is not exactly one complete Function extent -- a bare
+/// `Ident` such as a non-exclusive `none`, a stray top-level `Comma`, a
+/// plain parenthesized block, or a Function followed by trailing material
+/// -- is decisively `Invalid`. `entire_function_name` supplies that
+/// whole-component Function test unchanged.
+///
+/// A Function named `matrix` ASCII-case-insensitively enters argument
+/// qualification. Its directly visible structural shell is decided first:
+/// a slot count other than six is decisive `Invalid` before any argument
+/// content is consulted, so `matrix(calc(1),0)` and
+/// `matrix(calc(1),0,0,1,0,0,2)` stay invalid on directly visible arity
+/// rather than being deferred to unsupported calculated-value semantics.
+/// Only at exactly six slots are arguments classified, and a decisive
+/// argument failure (empty slot, wrong token category, multi-token slot,
+/// misplaced whole-value Function) outranks any opaque Function found in a
+/// sibling slot -- so `matrix(1,,calc(1),1,0,0)` and
+/// `matrix(1px,calc(1),0,1,0,0)` remain `Invalid` regardless of slot order.
+///
+/// Any other Function name is `NonMatrixFunction`: `rotate(1deg)`,
+/// `matrix3d(...)`, and an unrecognized name alike stay outside selected-
+/// profile coverage instead of being decided here, because deciding them
+/// would require the full `<transform-function>` dispatch and the
+/// length/angle semantics this leaf does not own. A misplaced whole-value
+/// Function is the one exception: it has no independent meaning inside a
+/// `<transform-list>` and is decisively `Invalid`, mirroring the accepted
+/// `scale` boundary.
+fn classify_transform_component(
+    component: &[CssLexicalItem],
+    absolute_component_start: usize,
+) -> CssTransformComponentClass {
+    let Some(name) = entire_function_name(component) else {
+        return CssTransformComponentClass::Invalid;
+    };
+
+    if !name.eq_ignore_ascii_case("matrix") {
+        return if is_whole_value_function(name) {
+            CssTransformComponentClass::Invalid
+        } else {
+            CssTransformComponentClass::NonMatrixFunction
+        };
+    }
+
+    let slots = matrix_body_slot_ranges(component);
+    if slots.len() != 6 {
+        return CssTransformComponentClass::Invalid;
+    }
+
+    let mut arguments = Vec::with_capacity(6);
+    let mut has_opaque_argument = false;
+    for slot in slots {
+        let absolute_slot_start = absolute_component_start + slot.start;
+        match classify_matrix_argument(&component[slot], absolute_slot_start) {
+            CssTransformMatrixArgumentClass::Number(evidence) => arguments.push(evidence),
+            CssTransformMatrixArgumentClass::OpaqueFunction => has_opaque_argument = true,
+            CssTransformMatrixArgumentClass::Invalid => {
+                return CssTransformComponentClass::Invalid;
+            }
+        }
+    }
+
+    if has_opaque_argument {
+        return CssTransformComponentClass::OpaqueMatrixArgument;
+    }
+
+    match <[CssTransformMatrixArgumentEvidenceRef; 6]>::try_from(arguments) {
+        Ok(arguments) => CssTransformComponentClass::Matrix(arguments),
+        Err(_) => CssTransformComponentClass::Invalid,
+    }
+}
+
+/// Qualifies one retained `transform` declaration value against the
+/// narrowed direct-authored matrix-only profile `QualifiedDirectTransform
+/// := none | matrix(<number>#{6})+` (#418).
+///
+/// Outcome precedence follows evidence authority, never scan order.
+/// Lower-layer lifecycle evidence is never touched here at all: this
+/// function only ever sees a parser-committed ordinary declaration's
+/// retained value window, so incomplete, resource-terminated, uncommitted,
+/// and unsupported-region evidence stays owned by the tokenizer and parser
+/// and is neither upgraded nor reconstructed. Above that, deferred
+/// substitution is resolved first, because `var()` and its equivalents can
+/// change the surrounding token sequence, separators, and cardinality --
+/// the existing any-occurrence preflight already scans regardless of
+/// nesting depth, so `matrix(var(--x),0)` is unsupported rather than
+/// decided invalid on an arity that substitution may still change. The
+/// whole-value Function boundary and the sole CSS-wide keyword boundary
+/// are preserved exactly as for the other selected leaves.
+///
+/// A sole retained direct `none` Ident, ASCII-case-insensitively,
+/// qualifies the dedicated whole-value branch and never reaches component
+/// partitioning; `none` is never a `<transform-list>` component, so it is
+/// decisively invalid combined with anything else, in either order.
+///
+/// Otherwise this single left-to-right recognition-time pass partitions
+/// the value into ordered top-level components using depth-zero
+/// Whitespace/Comment trivia as separators -- never raw-source whitespace
+/// splitting, and never a `Comma`, since `<transform-list>` is
+/// whitespace-separated repetition, so a top-level comma lands in its own
+/// component and is decisively invalid there. Components are classified
+/// the instant their block depth returns to zero, which also lets two
+/// adjacent `matrix()` components with no authored whitespace partition
+/// correctly, and preserves repeated components in exact authored order.
+///
+/// Resolution then applies the fixed precedence: any decisively invalid
+/// component makes the declaration `InvalidForSelectedValueGrammar`
+/// regardless of what any other component would have contributed;
+/// otherwise an outer-level non-matrix `<transform-function>` is reported
+/// before an inner-level opaque matrix argument, because the coarser
+/// grammar level bounds coverage first. Both flags are collected across
+/// the whole component sequence before either is reported, so the outcome
+/// never depends on which component was encountered first.
+fn qualify_transform_value(
+    items: &[CssLexicalItem],
+    lexical_item_start: usize,
+) -> CssTransformQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssTransformQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssTransformUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssTransformQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssTransformUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    let mut whole_value_tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+    if let (Some(only_token), None) = (whole_value_tokens.next(), whole_value_tokens.next())
+        && let CssTokenKind::Ident(identifier) = only_token.kind()
+    {
+        if identifier.eq_ignore_ascii_case("none") {
+            return CssTransformQualificationOutcome::Qualified(CssTransformValue::None);
+        }
+        if is_css_wide_keyword(identifier) {
+            return CssTransformQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssTransformUnsupportedReason::CssWideKeyword,
+            );
+        }
+    }
+
+    let mut component_classes = Vec::new();
+    let mut block_stack: Vec<CssValueBlockCloser> = Vec::new();
+    let mut component_start: Option<usize> = None;
+
+    for (index, item) in items.iter().enumerate() {
+        if block_stack.is_empty() {
+            let is_separator = match item {
+                CssLexicalItem::Comment(_) => true,
+                CssLexicalItem::SemanticToken(token) => {
+                    matches!(token.kind(), CssTokenKind::Whitespace)
+                }
+            };
+            if is_separator {
+                if let Some(start) = component_start.take() {
+                    component_classes.push(classify_transform_component(
+                        &items[start..index],
+                        lexical_item_start + start,
+                    ));
+                }
+                continue;
+            }
+        }
+
+        if component_start.is_none() {
+            component_start = Some(index);
+        }
+
+        if let CssLexicalItem::SemanticToken(token) = item {
+            match token.kind() {
+                CssTokenKind::Function(_) | CssTokenKind::LeftParenthesis => {
+                    block_stack.push(CssValueBlockCloser::Parenthesis);
+                }
+                CssTokenKind::LeftSquareBracket => {
+                    block_stack.push(CssValueBlockCloser::SquareBracket);
+                }
+                CssTokenKind::LeftCurlyBracket => {
+                    block_stack.push(CssValueBlockCloser::CurlyBracket);
+                }
+                CssTokenKind::RightParenthesis
+                    if block_stack.last() == Some(&CssValueBlockCloser::Parenthesis) =>
+                {
+                    block_stack.pop();
+                }
+                CssTokenKind::RightSquareBracket
+                    if block_stack.last() == Some(&CssValueBlockCloser::SquareBracket) =>
+                {
+                    block_stack.pop();
+                }
+                CssTokenKind::RightCurlyBracket
+                    if block_stack.last() == Some(&CssValueBlockCloser::CurlyBracket) =>
+                {
+                    block_stack.pop();
+                }
+                _ => {}
+            }
+        }
+
+        if block_stack.is_empty()
+            && let Some(start) = component_start.take()
+        {
+            component_classes.push(classify_transform_component(
+                &items[start..=index],
+                lexical_item_start + start,
+            ));
+        }
+    }
+    if let Some(start) = component_start {
+        component_classes.push(classify_transform_component(
+            &items[start..],
+            lexical_item_start + start,
+        ));
+    }
+
+    if component_classes.is_empty() {
+        return CssTransformQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    let mut functions = Vec::with_capacity(component_classes.len());
+    let mut has_non_matrix_function = false;
+    let mut has_opaque_argument = false;
+    for class in component_classes {
+        match class {
+            CssTransformComponentClass::Matrix(arguments) => {
+                functions.push(CssTransformMatrixFunction { arguments });
+            }
+            CssTransformComponentClass::OpaqueMatrixArgument => has_opaque_argument = true,
+            CssTransformComponentClass::NonMatrixFunction => has_non_matrix_function = true,
+            CssTransformComponentClass::Invalid => {
+                return CssTransformQualificationOutcome::InvalidForSelectedValueGrammar;
+            }
+        }
+    }
+
+    if has_non_matrix_function {
+        return CssTransformQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssTransformUnsupportedReason::NonMatrixTransformFunction,
+        );
+    }
+
+    if has_opaque_argument {
+        return CssTransformQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssTransformUnsupportedReason::FunctionValuedMatrixArgument,
+        );
+    }
+
+    CssTransformQualificationOutcome::Qualified(CssTransformValue::Functions(functions))
 }
 
 fn qualify_scroll_snap_align_value(
