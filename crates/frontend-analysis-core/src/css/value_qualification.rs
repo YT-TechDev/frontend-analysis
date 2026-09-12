@@ -20638,9 +20638,14 @@ enum CssTransformComponentClass {
 /// invalid on directly visible arity. Only at exactly one or two slots are
 /// arguments classified, each accepting a direct `Length` or `Percentage`,
 /// with the same decisive-argument-over-opaque-sibling precedence as
-/// `matrix()`/`scale()`, so `translate(1px,calc(1))` and
-/// `translate(calc(1),1px)` both remain `Invalid` regardless of slot
-/// order. The qualified one-vs-two argument cardinality is carried by
+/// `matrix()`/`scale()`, so `translate(1,calc(20%))` and
+/// `translate(calc(10px),1)` both remain `Invalid` regardless of slot
+/// order -- the nonzero unitless `Number` `1` is a decisive direct
+/// category failure for `translate()`, unlike `1px`, which is itself a
+/// valid direct `Length` and therefore never decisive on its own:
+/// `translate(1px,calc(1))` has no direct-invalid sibling and is instead
+/// selected-profile `Unsupported`. The qualified one-vs-two argument
+/// cardinality is carried by
 /// `CssTransformTranslateArguments`, which cannot represent zero, three,
 /// or a synthesized argument -- an authored `translate(10px)` never gains
 /// a synthesized second argument.
