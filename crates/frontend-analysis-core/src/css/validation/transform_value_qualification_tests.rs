@@ -550,6 +550,74 @@ fn translatey_argument_spelling(
 
 /// Reconstructs one retained `Number` or `Dimension` token's authored
 /// numeric structure from tokenizer-owned evidence alone, exactly like
+/// `authored_translatey_argument_spelling`, with no `Percentage` arm: a
+/// qualified `translateZ()` argument can never resolve to a `Percentage`
+/// token, so this dedicated `translateZ()` test helper panics on one rather
+/// than silently spelling it, distinct from
+/// `authored_translatex_argument_spelling`/`authored_translatey_argument_spelling`
+/// (#657). No machine number or unit conversion is ever produced.
+fn authored_translatez_argument_spelling(token: &CssTokenKind) -> String {
+    let (value, suffix) = match token {
+        CssTokenKind::Number { value, .. } => (value, String::new()),
+        CssTokenKind::Dimension { value, unit, .. } => (value, unit.clone()),
+        other => panic!(
+            "translateZ argument evidence did not resolve to a Number/Dimension token, got {other:?}"
+        ),
+    };
+
+    let mut spelling = String::new();
+    match value.sign() {
+        Some(CssNumberSign::Plus) => spelling.push('+'),
+        Some(CssNumberSign::Minus) => spelling.push('-'),
+        None => {}
+    }
+    spelling.push_str(value.decimal().integer_digits());
+    let fraction_digits = value.decimal().fraction_digits();
+    if !fraction_digits.is_empty() {
+        spelling.push('.');
+        spelling.push_str(fraction_digits);
+    }
+    if let Some(exponent) = value.decimal().exponent() {
+        spelling.push('e');
+        match exponent.sign() {
+            Some(CssExponentSign::Plus) => spelling.push('+'),
+            Some(CssExponentSign::Minus) => spelling.push('-'),
+            None => {}
+        }
+        spelling.push_str(exponent.digits());
+    }
+    spelling.push_str(&suffix);
+    spelling
+}
+
+/// Resolves one qualified `translateZ()` transform component's single
+/// authored argument at `function_index` within observation `index` as its
+/// authored spelling alone. Unlike `translatex_argument_spelling`/
+/// `translatey_argument_spelling`, this returns a bare `String` rather than
+/// a `(kind, spelling)` pair: a qualified `translateZ()` argument has no
+/// Length/Percentage `kind` to distinguish, since it is always `Length`
+/// (#657).
+fn translatez_argument_spelling(
+    result: &CssValueQualificationRunResult,
+    index: usize,
+    function_index: usize,
+) -> String {
+    let functions = qualified_functions(result, index);
+    let function = functions
+        .get(function_index)
+        .unwrap_or_else(|| panic!("missing transform component {function_index} at {index}"));
+    let CssTransformFunction::TranslateZ(translatez) = function else {
+        panic!("expected translateZ component {function_index} at {index}, got {function:?}");
+    };
+
+    let token = result
+        .transform_translatez_argument_token(translatez.argument())
+        .expect("translateZ argument evidence did not resolve");
+    authored_translatez_argument_spelling(token)
+}
+
+/// Reconstructs one retained `Number` or `Dimension` token's authored
+/// numeric structure from tokenizer-owned evidence alone, exactly like
 /// `authored_number_spelling`, with the authored unit spelling appended for
 /// a `Dimension` so `0` and `0deg` stay distinguishable in assertions. No
 /// machine number or unit conversion is ever produced.
@@ -1037,7 +1105,6 @@ fn unselected_transform_functions_remain_outside_selected_profile() {
             "rotate(1deg)",
             "matrix(1,0,0,1,0,0) rotate(1deg)",
             "rotate(1deg) matrix(1,0,0,1,0,0)",
-            "translateZ(10px)",
             "scaleX(2)",
             "scaleY(2)",
             "scaleZ(2)",
@@ -4941,18 +5008,19 @@ fn unselected_outer_function_precedence_covers_translatex() {
     assert_all_invalid(653440, &["translateX(1) rotate(10deg)"]);
 }
 
-// 112. `translateZ()` remains outside selected-profile coverage after
-// #653: extending coverage with `translateX()` never widens the selected
-// profile to its Y/Z siblings, in isolation or alongside a qualified
-// `translateX()` (#653). `translateY()` itself is qualified separately by
-// #655 and is covered by its own dedicated test group below.
+// 112. `scaleX()` remains outside selected-profile coverage after #653:
+// extending coverage with `translateX()` never widens the selected profile
+// to an unrelated sibling, in isolation or alongside a qualified
+// `translateX()` (#653). `translateY()` and `translateZ()` are qualified
+// separately by #655 and #657 and are covered by their own dedicated test
+// groups below.
 
 #[test]
-fn translatez_remains_unselected_after_translatex_coverage() {
+fn scalex_remains_unselected_after_translatex_coverage() {
     assert_all_unsupported(
         653450,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
-        &["translateZ(10px)", "translateX(20px) translateZ(10px)"],
+        &["scaleX(2)", "translateX(20px) scaleX(2)"],
     );
 }
 
@@ -5818,20 +5886,23 @@ fn translatex_translatey_evidence_separation_never_drifts() {
 
 // 137. `translateZ()` remains outside selected-profile coverage after
 // #655: extending coverage with `translateY()` never widens the selected
-// profile to its Z sibling, in isolation, with any argument shape, or
-// alongside a qualified `translateY()` in either order (#655).
+// profile to a sibling `<transform-function>` still outside it -- unlike
+// `translateZ()`, which #657 goes on to select, `scale3d()`, `matrix3d()`,
+// and `perspective()` remain outside selected-profile coverage in
+// isolation, with any argument shape, or alongside a qualified
+// `translateY()` in either order (#655 / #657).
 
 #[test]
-fn translatez_remains_unselected_alongside_qualified_translatey() {
+fn remaining_transform_siblings_stay_unselected_alongside_qualified_translatey() {
     assert_all_unsupported(
         655460,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "translateZ(10px)",
-            "translateZ(0)",
-            "translateZ(calc(10px))",
-            "translateY(10px) translateZ(20px)",
-            "translateZ(20px) translateY(10px)",
+            "scale3d(1,1,1)",
+            "perspective(10px)",
+            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
+            "translateY(10px) scale3d(1,1,1)",
+            "scale3d(1,1,1) translateY(10px)",
         ],
     );
 }
@@ -6075,4 +6146,812 @@ fn translatey_cross_leaf_isolation_is_preserved() {
     assert_eq!(result.transform_style_observations().len(), 1);
 
     assert_all_invalid(655560, &["none translateY(10px)", "translateY(10px) none"]);
+}
+
+// 144. `translateZ() = translateZ(<length>)` (#657): a canonical single
+// direct `<length>` argument qualifies, preserving the `Length` role and
+// exact tokenizer-owned evidence. Unlike `translateX()`/`translateY()`,
+// `translateZ()` accepts only `<length>`, never `<percentage>`.
+
+#[test]
+fn canonical_translatez_length_qualifies() {
+    let result = qualify(
+        657100,
+        concat!(
+            "a{transform:translateZ(10px);}",
+            "b{transform:translateZ(1em);}",
+            "c{transform:translateZ(-2rem);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 3);
+    assert_eq!(translatez_argument_spelling(&result, 0, 0), "10px");
+    assert_eq!(translatez_argument_spelling(&result, 1, 0), "1em");
+    assert_eq!(translatez_argument_spelling(&result, 2, 0), "-2rem");
+}
+
+// 145. A direct exact-zero `Number` satisfies `<length>`, reusing the
+// accepted `translate` (#606) / `translate3d` (#647) / `translate()` (#651)
+// / `translateX()` (#653) / `translateY()` (#655) exact-zero-Number-as-
+// `Length` theorem; the retained evidence stays a `Number` token, never
+// converted to a `Dimension` or interpreted magnitude (#657).
+
+#[test]
+fn exact_zero_number_qualifies_as_length_for_translatez() {
+    let result = qualify(
+        657140,
+        concat!(
+            "a{transform:translateZ(0);}",
+            "b{transform:translateZ(+0);}",
+            "c{transform:translateZ(-0);}",
+            "d{transform:translateZ(.0);}",
+            "e{transform:translateZ(0.0);}",
+            "f{transform:translateZ(0e100);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 6);
+    assert_eq!(translatez_argument_spelling(&result, 0, 0), "0");
+    assert_eq!(translatez_argument_spelling(&result, 1, 0), "+0");
+    assert_eq!(translatez_argument_spelling(&result, 2, 0), "-0");
+    // Authored `.0`: the absent leading integer digit is canonicalized to
+    // `0` by the tokenizer's own retained numeric contract, upstream of
+    // this leaf, exactly as for `translate()`/`translate3d()`/
+    // `translateX()`/`translateY()` arguments.
+    assert_eq!(translatez_argument_spelling(&result, 3, 0), "0.0");
+    assert_eq!(translatez_argument_spelling(&result, 4, 0), "0.0");
+    assert_eq!(translatez_argument_spelling(&result, 5, 0), "0e100");
+}
+
+// 146. `0`, `0px`, and `0%` remain three distinct authored evidences at the
+// `translateZ()` boundary: `0` and `0px` both qualify as `Length` through
+// distinct Number/Dimension evidence, while `0%` is decisively `Invalid`
+// because `translateZ()` admits only `<length>` -- a `Percentage` is never
+// treated as zero `Length` merely because its numeric magnitude is zero.
+// This boundary is load-bearing for #657.
+
+#[test]
+fn translatez_zero_number_dimension_and_percentage_boundary_is_preserved() {
+    let result = qualify(
+        657160,
+        concat!(
+            "a{transform:translateZ(0);}",
+            "b{transform:translateZ(0px);}",
+        ),
+    );
+
+    let number = translatez_argument_spelling(&result, 0, 0);
+    let px = translatez_argument_spelling(&result, 1, 0);
+    assert_eq!(number, "0");
+    assert_eq!(px, "0px");
+    assert_ne!(number, px);
+
+    assert_all_invalid(657165, &["translateZ(0%)"]);
+}
+
+// 147. Direct `Percentage` is decisively `Invalid` for `translateZ()`,
+// including `0%`, `50%`, `-20%`, and `+10%`: this leaf never applies the
+// `translateX()`/`translateY()` `<length-percentage>` classifier, and never
+// resolves a percentage basis (#657).
+
+#[test]
+fn percentage_is_invalid_for_translatez_including_zero_percent() {
+    assert_all_invalid(
+        657180,
+        &[
+            "translateZ(0%)",
+            "translateZ(50%)",
+            "translateZ(-20%)",
+            "translateZ(+10%)",
+        ],
+    );
+}
+
+// 148. `translateX()`/`translateY()` `<length-percentage>` acceptance is
+// unaffected by adding `translateZ()`: representative `Percentage`
+// arguments remain `Qualified` for `translateX()`/`translateY()` while the
+// identical spelling is decisively `Invalid` for `translateZ()`, proving
+// this leaf never accidentally routed `translateZ()` through the X/Y
+// classifier, nor `translateX()`/`translateY()` through a Length-only one
+// (#657).
+
+#[test]
+fn translatex_translatey_percentage_regression_against_translatez() {
+    let result = qualify(
+        657200,
+        concat!(
+            "a{transform:translateX(50%);}",
+            "b{transform:translateY(50%);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 2);
+    assert_eq!(
+        translatex_argument_spelling(&result, 0, 0),
+        (
+            CssTransformTranslateXArgumentKind::Percentage,
+            "50%".to_string()
+        )
+    );
+    assert_eq!(
+        translatey_argument_spelling(&result, 1, 0),
+        (
+            CssTransformTranslateYArgumentKind::Percentage,
+            "50%".to_string()
+        )
+    );
+
+    assert_all_invalid(657210, &["translateZ(50%)"]);
+}
+
+// 149. Representative recognized CSS length units qualify identically to
+// `translate()`/`translate3d()`/`translateX()`/`translateY()` arguments,
+// including a useful ASCII-case unit variant, reusing the same
+// recognized-length-unit theorem (#657).
+
+#[test]
+fn recognized_css_length_units_qualify_for_translatez() {
+    let result = qualify(
+        657220,
+        concat!(
+            "a{transform:translateZ(1px);}",
+            "b{transform:translateZ(1em);}",
+            "c{transform:translateZ(1rem);}",
+            "d{transform:translateZ(1vh);}",
+            "e{transform:translateZ(1vw);}",
+            "f{transform:translateZ(1cm);}",
+            "g{transform:translateZ(1PX);}",
+            "h{transform:translateZ(1Px);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 8);
+    for (index, expected_unit) in ["px", "em", "rem", "vh", "vw", "cm", "PX", "Px"]
+        .into_iter()
+        .enumerate()
+    {
+        assert_eq!(
+            translatez_argument_spelling(&result, index, 0),
+            format!("1{expected_unit}"),
+            "expected Length at {index}"
+        );
+    }
+}
+
+// 150. Signed direct `Length` and exact-zero `Number` arguments preserve
+// exact authored sign/fraction/exponent evidence without any
+// machine-number conversion (#657).
+
+#[test]
+fn signed_direct_length_values_preserve_authored_evidence_for_translatez() {
+    let result = qualify(
+        657240,
+        concat!(
+            "a{transform:translateZ(-10px);}",
+            "b{transform:translateZ(-0);}",
+            "c{transform:translateZ(+0);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 3);
+    assert_eq!(translatez_argument_spelling(&result, 0, 0), "-10px");
+    assert_eq!(translatez_argument_spelling(&result, 1, 0), "-0");
+    assert_eq!(translatez_argument_spelling(&result, 2, 0), "+0");
+}
+
+// 151. `translateZ()` accepts exactly one authored argument: zero, two,
+// three, or more directly visible arguments are decisive
+// `InvalidForSelectedValueGrammar` (#657).
+
+#[test]
+fn translatez_argument_cardinality_other_than_one_is_invalid() {
+    assert_all_invalid(
+        657260,
+        &[
+            "translateZ()",
+            "translateZ(10px,20px)",
+            "translateZ(10px,20%,30px)",
+            "translateZ(1px,2px,3px,4px)",
+        ],
+    );
+}
+
+// 152. A comma is the only accepted inner separator, and an authored-empty
+// position is preserved as its own ordered slot and rejected -- never
+// collapsed away (#657).
+
+#[test]
+fn translatez_argument_delimiter_failures_are_invalid() {
+    assert_all_invalid(
+        657280,
+        &[
+            "translateZ(,)",
+            "translateZ(,10px)",
+            "translateZ(10px,)",
+            "translateZ(10px,,20px)",
+        ],
+    );
+}
+
+// 153. A nonzero unitless `Number` never satisfies `<length>`: this leaf
+// never interprets an arbitrary `Number` as `Length` (#657).
+
+#[test]
+fn nonzero_number_is_invalid_for_translatez() {
+    assert_all_invalid(
+        657300,
+        &["translateZ(1)", "translateZ(-1)", "translateZ(.5)"],
+    );
+}
+
+// 154. `<length>` admits only a direct recognized-length `Dimension` or an
+// exact-zero `Number`: every other direct token category at the
+// `translateZ()` argument position -- including `Percentage`, covered
+// separately above -- is a decisive direct token-category failure (#657).
+
+#[test]
+fn wrong_direct_categories_are_invalid_for_translatez() {
+    assert_all_invalid(
+        657320,
+        &[
+            "translateZ(45deg)",
+            "translateZ(1s)",
+            "translateZ(1hz)",
+            "translateZ(1dpi)",
+            "translateZ(1fr)",
+            "translateZ(1unknownunit)",
+            "translateZ(foo)",
+            "translateZ(\"1\")",
+            "translateZ(#abc)",
+        ],
+    );
+}
+
+// 155. A complete non-deferred Function occupying the single `translateZ()`
+// argument slot is selected-profile Unsupported, mirroring the shared
+// `FunctionValuedTransformArgument` reason `translate()`/`translate3d()`/
+// `translateX()`/`translateY()` opaque arguments use -- this leaf never
+// evaluates `calc()` (#657).
+
+#[test]
+fn opaque_translatez_argument_function_is_unsupported() {
+    assert_all_unsupported(
+        657340,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
+        &[
+            "translateZ(calc(10px))",
+            "translateZ(min(10px,20px))",
+            "translateZ(max(10px,20px))",
+            "translateZ(clamp(0px,10px,20px))",
+            "matrix(1,0,0,1,0,0) translateZ(calc(10px))",
+        ],
+    );
+}
+
+// 156. A Function followed by additional direct material in the same slot
+// is directly visible structural failure and stays decisively `Invalid`: a
+// structurally feasible complete opaque Function is never softened to
+// Unsupported by an unevaluated sibling in the same slot (#657).
+
+#[test]
+fn function_plus_junk_in_same_slot_is_invalid_for_translatez() {
+    assert_all_invalid(
+        657360,
+        &[
+            "translateZ(calc(10px) 1px)",
+            "translateZ(calc(10px) foo)",
+            "translateZ(calc(10px) 20%)",
+        ],
+    );
+}
+
+// 157. A comma nested inside a Function argument is at a deeper relative
+// depth and never becomes a translateZ-level argument separator. Once the
+// nesting closes, a genuine second translateZ-level slot is still counted
+// and makes the shell decisively Invalid, since translateZ() has no second
+// slot to occupy (#657).
+
+#[test]
+fn nested_commas_never_change_translatez_arity() {
+    assert_all_unsupported(
+        657380,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
+        &["translateZ(calc(10px,20px))"],
+    );
+
+    assert_all_invalid(657381, &["translateZ(calc(10px,20px),30px)"]);
+}
+
+// 158. An opaque Function whose inner content looks like a `Percentage` is
+// not directly classified by its unevaluated inner result type: this leaf
+// does not own CSS math type/value resolution, so `calc(0%)`/`calc(50%)`
+// occupying the single `translateZ()` slot stay selected-profile
+// Unsupported via the shared opaque-Function boundary, exactly like any
+// other complete non-deferred Function -- never a direct `Percentage`
+// `Invalid` (#657).
+
+#[test]
+fn opaque_percentage_looking_function_remains_unsupported_for_translatez() {
+    assert_all_unsupported(
+        657400,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
+        &["translateZ(calc(0%))", "translateZ(calc(50%))"],
+    );
+}
+
+// 159. Deferred substitution can alter the enclosing token sequence,
+// separators, and cardinality, so it is resolved before any surrounding
+// translateZ shape conclusion -- including an arity that looks decisive
+// (#657).
+
+#[test]
+fn translatez_deferred_substitution_outranks_surrounding_shape_conclusions() {
+    assert_all_unsupported(
+        657420,
+        CssTransformUnsupportedReason::DeferredSubstitutionFunction,
+        &[
+            "translateZ(var(--z))",
+            "translateZ(var(--z),20px)",
+            "matrix(1,0,0,1,0,0) translateZ(var(--z))",
+            "translateZ(var(--z)) matrix(1,0,0,1,0,0)",
+        ],
+    );
+}
+
+// 160. Directly visible decisive invalidity outranks an opaque Function
+// found in a sibling slot; a direct Percentage failure remains decisive
+// even alongside an outer unselected sibling, in either authored order
+// (#657).
+
+#[test]
+fn translatez_decisive_invalid_outranks_opaque_argument() {
+    assert_all_invalid(657440, &["translateZ(calc(10px),1)"]);
+
+    assert_all_invalid(
+        657441,
+        &[
+            "translateZ(0%) rotate(10deg)",
+            "rotate(10deg) translateZ(0%)",
+        ],
+    );
+}
+
+// 161. Selected `matrix()`, `scale()`, `translate3d()`, `rotate3d()`,
+// `translate()`, `translateX()`, `translateY()`, and `translateZ()`
+// components mix and repeat freely, preserving exact authored order and
+// repetition through the heterogeneous `CssTransformFunction` alternation,
+// and no selected leaf's evidence drifts across another's index in a mixed
+// sequence (#418 / #645 / #647 / #649 / #651 / #653 / #655 / #657).
+
+#[test]
+fn mixed_selected_function_order_including_translatez_is_preserved() {
+    let result = qualify(
+        657460,
+        concat!(
+            "a{transform:matrix(1,0,0,1,0,0) translateZ(10px);}",
+            "b{transform:translateZ(10px) matrix(1,0,0,1,0,0);}",
+            "c{transform:scale(2) translateZ(10px);}",
+            "d{transform:translateZ(10px) scale(2);}",
+            "e{transform:translate3d(1px,2px,3px) translateZ(10px);}",
+            "f{transform:translateZ(10px) translate3d(1px,2px,3px);}",
+            "g{transform:rotate3d(1,0,0,90deg) translateZ(10px);}",
+            "h{transform:translateZ(10px) rotate3d(1,0,0,90deg);}",
+            "i{transform:translate(10px) translateZ(20px);}",
+            "j{transform:translateZ(10px) translate(20px);}",
+            "k{transform:translateY(10px) translateZ(20px);}",
+            "l{transform:translateZ(10px) translateY(20px);}",
+            "m{transform:translateZ(1px) translateZ(2px);}",
+            "n{transform:matrix(1,0,0,1,0,0) scale(2) translate3d(1px,2px,3px) rotate3d(1,0,0,90deg) translate(10px) translateX(20px) translateY(30px) translateZ(40px);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 14);
+
+    for index in 0..13 {
+        assert_eq!(
+            qualified_functions(&result, index).len(),
+            2,
+            "expected two components at {index}"
+        );
+    }
+    assert_eq!(qualified_functions(&result, 13).len(), 8);
+
+    assert!(matches!(
+        qualified_functions(&result, 0)[0],
+        CssTransformFunction::Matrix(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 0)[1],
+        CssTransformFunction::TranslateZ(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 1)[0],
+        CssTransformFunction::TranslateZ(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 1)[1],
+        CssTransformFunction::Matrix(_)
+    ));
+
+    let eight_kind_sequence = qualified_functions(&result, 13);
+    assert!(matches!(
+        eight_kind_sequence[0],
+        CssTransformFunction::Matrix(_)
+    ));
+    assert!(matches!(
+        eight_kind_sequence[1],
+        CssTransformFunction::Scale(_)
+    ));
+    assert!(matches!(
+        eight_kind_sequence[2],
+        CssTransformFunction::Translate3d(_)
+    ));
+    assert!(matches!(
+        eight_kind_sequence[3],
+        CssTransformFunction::Rotate3d(_)
+    ));
+    assert!(matches!(
+        eight_kind_sequence[4],
+        CssTransformFunction::Translate(_)
+    ));
+    assert!(matches!(
+        eight_kind_sequence[5],
+        CssTransformFunction::TranslateX(_)
+    ));
+    assert!(matches!(
+        eight_kind_sequence[6],
+        CssTransformFunction::TranslateY(_)
+    ));
+    assert!(matches!(
+        eight_kind_sequence[7],
+        CssTransformFunction::TranslateZ(_)
+    ));
+
+    // Repeated `translateZ()` preserves authored order and each
+    // component's own evidence.
+    let repeated = qualified_functions(&result, 12);
+    assert!(matches!(repeated[0], CssTransformFunction::TranslateZ(_)));
+    assert!(matches!(repeated[1], CssTransformFunction::TranslateZ(_)));
+    assert_eq!(translatez_argument_spelling(&result, 12, 0), "1px");
+    assert_eq!(translatez_argument_spelling(&result, 12, 1), "2px");
+
+    // `translate()` and `translateZ()` remain distinct evidence indices in
+    // a mixed sequence: neither drifts into the other's slot.
+    assert!(matches!(
+        qualified_functions(&result, 8)[0],
+        CssTransformFunction::Translate(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 8)[1],
+        CssTransformFunction::TranslateZ(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 9)[0],
+        CssTransformFunction::TranslateZ(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 9)[1],
+        CssTransformFunction::Translate(_)
+    ));
+}
+
+// 162. `translateX()`, `translateY()`, and `translateZ()` evidence never
+// drifts across each other's index in a mixed authored sequence, in any
+// order: each resolves to its own argument's own evidence, and neither
+// variant nor evidence reference leaks into another's semantic placement.
+// This is load-bearing for #657's scope invariant that `TranslateX`,
+// `TranslateY`, and `TranslateZ` stay distinct representations despite
+// `TranslateX`/`TranslateY` sharing an identical argument grammar.
+
+#[test]
+fn translatex_translatey_translatez_evidence_separation_never_drifts() {
+    let result = qualify(
+        657480,
+        concat!(
+            "a{transform:translateX(10px) translateY(20%) translateZ(30px);}",
+            "b{transform:translateZ(40px) translateY(50%) translateX(60px);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 2);
+
+    let first = qualified_functions(&result, 0);
+    assert!(matches!(first[0], CssTransformFunction::TranslateX(_)));
+    assert!(matches!(first[1], CssTransformFunction::TranslateY(_)));
+    assert!(matches!(first[2], CssTransformFunction::TranslateZ(_)));
+    assert_eq!(
+        translatex_argument_spelling(&result, 0, 0),
+        (
+            CssTransformTranslateXArgumentKind::Length,
+            "10px".to_string()
+        )
+    );
+    assert_eq!(
+        translatey_argument_spelling(&result, 0, 1),
+        (
+            CssTransformTranslateYArgumentKind::Percentage,
+            "20%".to_string()
+        )
+    );
+    assert_eq!(translatez_argument_spelling(&result, 0, 2), "30px");
+
+    let second = qualified_functions(&result, 1);
+    assert!(matches!(second[0], CssTransformFunction::TranslateZ(_)));
+    assert!(matches!(second[1], CssTransformFunction::TranslateY(_)));
+    assert!(matches!(second[2], CssTransformFunction::TranslateX(_)));
+    assert_eq!(translatez_argument_spelling(&result, 1, 0), "40px");
+    assert_eq!(
+        translatey_argument_spelling(&result, 1, 1),
+        (
+            CssTransformTranslateYArgumentKind::Percentage,
+            "50%".to_string()
+        )
+    );
+    assert_eq!(
+        translatex_argument_spelling(&result, 1, 2),
+        (
+            CssTransformTranslateXArgumentKind::Length,
+            "60px".to_string()
+        )
+    );
+}
+
+// 163. Every `<transform-function>` other than the selected leaves stays
+// outside selected-profile coverage, in either authored order and
+// regardless of a sibling qualified selected function, and the coarser
+// outer unselected-function coverage outranks an inner opaque
+// `translateZ()` argument (#657).
+
+#[test]
+fn unselected_outer_function_precedence_covers_translatez() {
+    assert_all_unsupported(
+        657500,
+        CssTransformUnsupportedReason::UnselectedTransformFunction,
+        &[
+            "translateZ(10px) rotate(10deg)",
+            "rotate(10deg) translateZ(10px)",
+            "translateZ(10px) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
+        ],
+    );
+
+    // Coarser outer unselected-function coverage outranks an inner opaque
+    // translateZ argument, identically in both authored orders.
+    assert_all_unsupported(
+        657510,
+        CssTransformUnsupportedReason::UnselectedTransformFunction,
+        &[
+            "translateZ(calc(10px)) rotate(10deg)",
+            "rotate(10deg) translateZ(calc(10px))",
+        ],
+    );
+
+    // Decisive direct Invalid still wins over the outer unselected sibling.
+    assert_all_invalid(657520, &["translateZ(1) rotate(10deg)"]);
+}
+
+// 164. `<transform-list>` is whitespace-separated repetition: a top-level
+// comma is never a permitted separator, including between two
+// `translateZ()` components or a `translateZ()` and a sibling selected
+// function (#657).
+
+#[test]
+fn top_level_comma_is_invalid_around_translatez() {
+    assert_all_invalid(
+        657540,
+        &[
+            "translateZ(10px), matrix(1,0,0,1,0,0)",
+            "translateZ(10px), scale(2)",
+            "translateZ(10px), translate3d(1px,2px,3px)",
+            "translateZ(10px), rotate3d(1,0,0,90deg)",
+            "translateZ(10px), translate(10px)",
+            "translateZ(10px), translateX(20px)",
+            "translateZ(10px), translateY(20px)",
+            "translateZ(10px), translateZ(20px)",
+        ],
+    );
+}
+
+// 165. CSS Syntax function consumption may end at a true stylesheet EOF, so
+// a parser-committed EOF-ended `translateZ()` extent is qualified from
+// retained interior evidence alone. EOF never fills or repairs a missing
+// argument, a wrong direct category, a direct `Percentage`, or a second
+// slot `translateZ()` has no room for (#657).
+
+#[test]
+fn true_stylesheet_eof_ended_translatez_extent_follows_parser_authority() {
+    let one_slot = qualify(657560, "a{transform:translateZ(10px");
+    assert_eq!(
+        one_slot.execution_completion(),
+        CssParserExecutionCompletion::Complete
+    );
+    assert_eq!(one_slot.transform_observations().len(), 1);
+    assert_eq!(translatez_argument_spelling(&one_slot, 0, 0), "10px");
+
+    // Zero-slot EOF stays decisively Invalid.
+    let zero_slot = qualify(657561, "a{transform:translateZ(");
+    assert_invalid(&zero_slot, 0);
+
+    // A trailing comma at true EOF stays decisively Invalid: translateZ()
+    // never accepts a second slot.
+    let trailing_comma = qualify(657562, "a{transform:translateZ(10px,");
+    assert_invalid(&trailing_comma, 0);
+
+    // EOF never repairs a nonzero-Number direct category.
+    let invalid_argument = qualify(657563, "a{transform:translateZ(1");
+    assert_invalid(&invalid_argument, 0);
+
+    // EOF never repairs a direct Percentage into a Length.
+    let percentage_eof = qualify(657564, "a{transform:translateZ(0%");
+    assert_invalid(&percentage_eof, 0);
+
+    // A closed component followed by stray material is invalid, proving
+    // the accepted EOF case is not "accept whatever trails a translateZ".
+    let trailing = qualify(657565, "a{transform:translateZ(10px) 7;}");
+    assert_invalid(&trailing, 0);
+
+    // A second slot never widens translateZ() cardinality, even at true
+    // EOF.
+    let two_slots = qualify(657566, "a{transform:translateZ(10px,20px");
+    assert_invalid(&two_slots, 0);
+}
+
+// 166. Lower-layer lifecycle evidence stays owned by the tokenizer and
+// parser: comments/trivia never change slot interpretation, a comment
+// never fills an authored-empty slot, and `!important` remains outside the
+// semantic value window (#657).
+
+#[test]
+fn trivia_and_important_never_change_translatez_interpretation() {
+    let result = qualify(
+        657580,
+        concat!(
+            "a{transform:translateZ(10px/**/);}",
+            "b{transform:translateZ(/**/10px);}",
+            "c{transform:translateZ( 10px );}",
+            "d{transform:translateZ(10px) !important;}",
+            "e{transform:translateZ(10px)!important;}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 5);
+    for index in 0..3 {
+        assert_eq!(
+            translatez_argument_spelling(&result, index, 0),
+            "10px",
+            "trivia changed slot interpretation at {index}"
+        );
+    }
+    for index in 3..5 {
+        assert_eq!(translatez_argument_spelling(&result, index, 0), "10px");
+        assert!(
+            result.upstream_parser_result().occurrences()[index]
+                .priority()
+                .is_some(),
+            "expected retained priority evidence at {index}"
+        );
+    }
+
+    // A comment is trivia, never an argument: it can neither fill the
+    // single authored slot nor stand in for a missing one.
+    assert_all_invalid(657590, &["translateZ(/**/)", "translateZ(10px,/**/)"]);
+}
+
+// 167. Repeated and cross-source runs remain deterministic, and evidence
+// lookup resolves to the exact retained Number/Dimension tokens identically
+// across runs (#657).
+
+#[test]
+fn translatez_repeated_and_cross_source_runs_are_deterministic() {
+    let css = concat!(
+        "a{transform:translateZ(10px,20px);}",
+        "b{transform:translateZ(calc(10px,20px));}",
+        "c{transform:translateZ(1);}",
+        "d{transform:matrix(1,0,0,1,0,0) translateZ(10px);}",
+    );
+
+    let first = qualify(657600, css);
+    let repeated = qualify(657600, css);
+    let another_source = qualify(657601, css);
+
+    assert_eq!(
+        first.transform_observations(),
+        repeated.transform_observations()
+    );
+    assert_eq!(
+        first.transform_observations(),
+        another_source.transform_observations()
+    );
+
+    assert_invalid(&first, 0);
+    assert_unsupported(
+        &first,
+        1,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
+    );
+    assert_invalid(&first, 2);
+    assert_eq!(qualified_functions(&first, 3).len(), 2);
+
+    assert_eq!(
+        translatez_argument_spelling(&first, 3, 1),
+        translatez_argument_spelling(&repeated, 3, 1)
+    );
+    assert_eq!(
+        translatez_argument_spelling(&first, 3, 1),
+        translatez_argument_spelling(&another_source, 3, 1)
+    );
+}
+
+// 168. `translateZ` function-name recognition is ASCII-case-insensitive,
+// matching the accepted `matrix`/`scale`/`translate3d`/`rotate3d`/
+// `translate`/`translateX`/`translateY` boundary, and structurally
+// malformed `translateZ` components -- a bare Function name, an
+// unbalanced/duplicated closer, or stray leading material -- stay
+// decisively `Invalid` (#657).
+
+#[test]
+fn translatez_function_name_recognition_and_malformed_components() {
+    let result = qualify(
+        657620,
+        concat!(
+            "a{transform:TRANSLATEZ(10px);}",
+            "b{transform:TrAnSlAtEz(10px);}",
+            "c{transform:t\\72 anslateZ(10px);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 3);
+    for index in 0..3 {
+        assert_eq!(
+            translatez_argument_spelling(&result, index, 0),
+            "10px",
+            "translateZ name recognition failed at {index}"
+        );
+    }
+
+    assert_all_invalid(
+        657630,
+        &[
+            "translateZ",
+            "translateZ(10px))",
+            "translateZ((10px)",
+            "1 translateZ(10px)",
+            "[translateZ(10px)]",
+        ],
+    );
+}
+
+// 169. Cross-leaf isolation: `translateZ()` recognition never leaks into
+// the accepted longhand `translate`/`scale`/`rotate` leaves, the other
+// `transform-*` single-value leaves, or the other selected `transform`
+// function branches, and `none` remains an exclusive whole-value branch
+// even when combined with `translateZ()` (#418 / #606 / #645 / #647 / #649
+// / #651 / #653 / #655 / #657).
+
+#[test]
+fn translatez_cross_leaf_isolation_is_preserved() {
+    let result = qualify(
+        657640,
+        concat!(
+            "a{transform:translateZ(10px);transform:none;}",
+            "b{translate:10px;}",
+            "c{scale:2;}",
+            "d{rotate:45deg;}",
+            "e{transform-origin:left top;}",
+            "f{transform-box:border-box;}",
+            "g{transform-style:flat;}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 2);
+    assert_eq!(translatez_argument_spelling(&result, 0, 0), "10px");
+    assert_whole_none(&result, 1);
+
+    assert_eq!(result.translate_observations().len(), 1);
+    assert_eq!(result.scale_observations().len(), 1);
+    assert_eq!(result.rotate_observations().len(), 1);
+    assert_eq!(result.transform_origin_observations().len(), 1);
+    assert_eq!(result.transform_box_observations().len(), 1);
+    assert_eq!(result.transform_style_observations().len(), 1);
+
+    assert_all_invalid(657650, &["none translateZ(10px)", "translateZ(10px) none"]);
 }
