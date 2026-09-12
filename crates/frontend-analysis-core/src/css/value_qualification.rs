@@ -7103,22 +7103,102 @@ impl CssTransformScaleYFunction {
     }
 }
 
+/// One qualified authored `scaleZ()` argument's run-local reference to its
+/// exact tokenizer-owned `Number` or `Percentage` token, resolved through
+/// `transform_scalez_argument_token`. This is a distinct type from
+/// `CssTransformScaleArgumentEvidenceRef`, `CssTransformScaleXArgumentEvidenceRef`,
+/// and `CssTransformScaleYArgumentEvidenceRef`: `scaleZ()`, `scaleY()`,
+/// `scaleX()`, and `scale()` remain distinct semantic placements even
+/// though all four accept the same direct `<number> | <percentage>` scalar
+/// theorem (#663). `scaleZ()` also shares its `Z` suffix with
+/// `translateZ()`, but `translateZ()`'s argument grammar is `<length>`, not
+/// `<number> | <percentage>`, so this evidence type is never shared with
+/// `CssTransformTranslateZArgumentEvidenceRef` either.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTransformScaleZArgumentEvidenceRef {
+    lexical_item_index: usize,
+}
+
+impl CssTransformScaleZArgumentEvidenceRef {
+    pub(crate) const fn lexical_item_index(&self) -> usize {
+        self.lexical_item_index
+    }
+}
+
+/// One direct authored `scaleZ()` argument's tokenizer-owned kind (#663):
+/// `ScaleZArgument := DirectNumber | DirectPercentage`, reusing the accepted
+/// `scale()` (#645) / `scaleX()` (#659) / `scaleY()` (#661) Number/Percentage
+/// theorem under current CSS Transforms Level 2 authority. A direct
+/// `<number>` and a direct `<percentage>` remain distinct authored branches;
+/// this leaf never normalizes a Percentage token into an interpreted
+/// fraction or into a Number token, so `scaleZ(0)` and `scaleZ(0%)` stay
+/// pairwise distinguishable. This is a distinct type from
+/// `CssTransformScaleArgumentKind`, `CssTransformScaleXArgumentKind`, and
+/// `CssTransformScaleYArgumentKind`: `scaleZ()` transform-function argument
+/// placement remains a distinct semantic role from `scale()`, `scaleX()`,
+/// and `scaleY()` even though they share the same direct scalar membership.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTransformScaleZArgumentKind {
+    Number,
+    Percentage,
+}
+
+/// One qualified authored `scaleZ()` argument, preserving authored kind and
+/// exact tokenizer-owned evidence without any interpreted scale-factor
+/// conversion (#663).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTransformScaleZArgument {
+    kind: CssTransformScaleZArgumentKind,
+    evidence_ref: CssTransformScaleZArgumentEvidenceRef,
+}
+
+impl CssTransformScaleZArgument {
+    pub(crate) const fn kind(&self) -> CssTransformScaleZArgumentKind {
+        self.kind
+    }
+
+    pub(crate) const fn evidence_ref(&self) -> CssTransformScaleZArgumentEvidenceRef {
+        self.evidence_ref
+    }
+}
+
+/// One qualified authored `scaleZ()` transform component: exactly one
+/// direct authored `<number> | <percentage>` argument (#663), carrying the
+/// exact tokenizer-owned evidence retained at its own semantic argument
+/// slot. Mirrors `CssTransformScaleXFunction`/`CssTransformScaleYFunction`'s
+/// single-argument shape exactly, while remaining a distinct type: `scaleZ()`
+/// never shares representation with `scaleX()`, `scaleY()`, `scale()`, or
+/// `translateZ()`. This leaf constructs no scale factor, performs no matrix
+/// construction, and resolves no computed transform.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTransformScaleZFunction {
+    argument: CssTransformScaleZArgument,
+}
+
+impl CssTransformScaleZFunction {
+    pub(crate) const fn argument(&self) -> CssTransformScaleZArgument {
+        self.argument
+    }
+}
+
 /// One qualified selected `transform` component under the profile
 /// `SelectedTransformFunction := Matrix | Scale | Translate3d | Rotate3d |
-/// Translate | TranslateX | TranslateY | TranslateZ | ScaleX | ScaleY`
-/// (#418 / #645 / #647 / #649 / #651 / #653 / #655 / #657 / #659 / #661),
-/// preserving exact authored order between the ten selected function kinds.
-/// This is a closed property-local alternation, not a generic CSS function
-/// AST: it exists only to retain heterogeneous authored order for the
-/// selected `transform` branches. `TranslateX`, `TranslateY`, `TranslateZ`,
-/// `ScaleX`, and `ScaleY` are kept as distinct variants rather than merged
-/// into a generic axis-function abstraction: `TranslateX`/`TranslateY`
-/// share an identical argument grammar, but `TranslateZ`'s direct
-/// `<length>`-only grammar already differs from theirs, `ScaleX`/`ScaleY`
-/// share their direct `<number>`/`<percentage>` scalar theorem with
-/// `scale()` rather than with the translate family, their semantic
-/// placement inside `transform` is not shared either, and repeated Rust
-/// shape alone is never abstraction authority (#655 / #657 / #659 / #661).
+/// Translate | TranslateX | TranslateY | TranslateZ | ScaleX | ScaleY |
+/// ScaleZ` (#418 / #645 / #647 / #649 / #651 / #653 / #655 / #657 / #659 /
+/// #661 / #663), preserving exact authored order between the eleven
+/// selected function kinds. This is a closed property-local alternation,
+/// not a generic CSS function AST: it exists only to retain heterogeneous
+/// authored order for the selected `transform` branches. `TranslateX`,
+/// `TranslateY`, `TranslateZ`, `ScaleX`, `ScaleY`, and `ScaleZ` are kept as
+/// distinct variants rather than merged into a generic axis-function
+/// abstraction: `TranslateX`/`TranslateY` share an identical argument
+/// grammar, but `TranslateZ`'s direct `<length>`-only grammar already
+/// differs from theirs and from `ScaleZ`'s `<number>`/`<percentage>`
+/// grammar despite the shared `Z` suffix; `ScaleX`/`ScaleY`/`ScaleZ` share
+/// their direct `<number>`/`<percentage>` scalar theorem with `scale()`
+/// rather than with the translate family, their semantic placement inside
+/// `transform` is not shared either, and repeated Rust shape alone is never
+/// abstraction authority (#655 / #657 / #659 / #661 / #663).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssTransformFunction {
     Matrix(CssTransformMatrixFunction),
@@ -7131,6 +7211,7 @@ pub(crate) enum CssTransformFunction {
     TranslateZ(CssTransformTranslateZFunction),
     ScaleX(CssTransformScaleXFunction),
     ScaleY(CssTransformScaleYFunction),
+    ScaleZ(CssTransformScaleZFunction),
 }
 
 /// One authored `transform` value under the direct-authored profile
@@ -7141,16 +7222,17 @@ pub(crate) enum CssTransformFunction {
 /// <length-percentage>?) | translateX(<length-percentage>) |
 /// translateY(<length-percentage>) | translateZ(<length>) |
 /// scaleX([<number> | <percentage>]) |
-/// scaleY([<number> | <percentage>]) ]+` (#418 / #645 / #647 / #649 / #651 /
-/// #653 / #655 / #657 / #659 / #661): either the dedicated whole-value
-/// `none` sentinel or an ordered, possibly repeated, one-or-more list of
-/// qualified `matrix()`/`scale()`/`translate3d()`/`rotate3d()`/
+/// scaleY([<number> | <percentage>]) |
+/// scaleZ([<number> | <percentage>]) ]+` (#418 / #645 / #647 / #649 / #651 /
+/// #653 / #655 / #657 / #659 / #661 / #663): either the dedicated
+/// whole-value `none` sentinel or an ordered, possibly repeated, one-or-more
+/// list of qualified `matrix()`/`scale()`/`translate3d()`/`rotate3d()`/
 /// `translate()`/`translateX()`/`translateY()`/`translateZ()`/`scaleX()`/
-/// `scaleY()` components in exact authored order. This is not a complete
-/// normative `transform` grammar: it qualifies only the `matrix()`,
+/// `scaleY()`/`scaleZ()` components in exact authored order. This is not a
+/// complete normative `transform` grammar: it qualifies only the `matrix()`,
 /// `scale()`, `translate3d()`, `rotate3d()`, `translate()`, `translateX()`,
-/// `translateY()`, `translateZ()`, `scaleX()`, and `scaleY()` branches of
-/// `<transform-function>`.
+/// `translateY()`, `translateZ()`, `scaleX()`, `scaleY()`, and `scaleZ()`
+/// branches of `<transform-function>`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CssTransformValue {
     None,
@@ -8533,6 +8615,28 @@ impl CssValueQualificationRunResult {
     pub(crate) fn transform_scaley_argument_token(
         &self,
         evidence: CssTransformScaleYArgumentEvidenceRef,
+    ) -> Option<&CssTokenKind> {
+        let item = self
+            .upstream_parser_result
+            .upstream_tokenizer_result()
+            .lexical_items()
+            .get(evidence.lexical_item_index())?;
+        let CssLexicalItem::SemanticToken(token) = item else {
+            return None;
+        };
+        Some(token.kind())
+    }
+
+    /// Resolves one qualified `transform` `scaleZ()` argument's run-local
+    /// evidence reference to its exact retained tokenizer token kind,
+    /// preserving authored sign spelling, integer/fraction digits, and
+    /// exponent spelling without any machine-number conversion. The
+    /// retained token at the evidence position is always a direct `Number`
+    /// or `Percentage`, matching the argument's
+    /// `CssTransformScaleZArgumentKind`.
+    pub(crate) fn transform_scalez_argument_token(
+        &self,
+        evidence: CssTransformScaleZArgumentEvidenceRef,
     ) -> Option<&CssTokenKind> {
         let item = self
             .upstream_parser_result
@@ -21490,6 +21594,99 @@ fn classify_transform_scaley_argument(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CssTransformScaleZArgumentClass {
+    Number(CssTransformScaleZArgumentEvidenceRef),
+    Percentage(CssTransformScaleZArgumentEvidenceRef),
+    OpaqueFunction,
+    Invalid,
+}
+
+/// Classifies one already-partitioned `scaleZ()` argument slot against the
+/// selected profile's single accepted shape -- a direct retained `<number>`
+/// or a direct retained `<percentage>` (#663), mirroring
+/// `classify_transform_scaley_argument` exactly except for the distinct
+/// `CssTransformScaleZArgumentEvidenceRef` evidence type: `scaleZ()`
+/// argument placement, `scaleY()` argument placement, `scaleX()` argument
+/// placement, and `scale()` argument placement remain distinct semantic
+/// roles even though they share the same direct scalar theorem under
+/// current CSS Transforms Level 2 authority. `scaleZ()` shares its `Z`
+/// suffix with `translateZ()`, but this classifier never reuses
+/// `classify_transform_translatez_argument`: `translateZ()` accepts only a
+/// direct exact-zero `Number` or a recognized-length `Dimension`, while
+/// `scaleZ()` accepts any direct `Number` (no exact-zero restriction) or a
+/// direct `Percentage`, so `scaleZ(10px)` is `Invalid` where
+/// `translateZ(10px)` qualifies, and `scaleZ(2)` qualifies where
+/// `translateZ(2)` is `Invalid`.
+///
+/// Whitespace and Comment trivia are excluded exactly as for `scaleY()`
+/// arguments. An authored-empty slot has no retained semantic token and is
+/// decisively `Invalid`. A slot headed by a `Function` token is
+/// `OpaqueFunction` -- a structurally feasible position whose validity
+/// depends on calculated-value semantics this leaf does not own -- only
+/// when the slot is exactly one complete Function extent; a recognized
+/// generic whole-value-only Function name occupying this non-whole-value
+/// position is decisively `Invalid` instead, mirroring the accepted
+/// `scale`/`scaleX`/`scaleY` boundary. A Function followed by further
+/// retained material in the same slot is directly visible structural
+/// failure and stays decisively `Invalid`.
+///
+/// A direct `Number` or `Percentage` qualifies regardless of
+/// `CssNumberType`; no range restriction and no machine-number conversion
+/// is applied, so exact authored evidence stays authoritative for
+/// membership and a `Percentage` is never collapsed into a `Number` -- this
+/// retains current CSS Transforms Level 2 Percentage support rather than
+/// regressing to the older Level 1 `<number>`-only grammar. A `Dimension`,
+/// `Ident`, or `String` token is a direct token-category failure and is
+/// decisively `Invalid`, as is any slot carrying more than one retained
+/// semantic token.
+fn classify_transform_scalez_argument(
+    slot: &[CssLexicalItem],
+    absolute_slot_start: usize,
+) -> CssTransformScaleZArgumentClass {
+    let mut tokens = slot
+        .iter()
+        .enumerate()
+        .filter_map(|(relative_index, entry)| match entry {
+            CssLexicalItem::SemanticToken(token)
+                if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+            {
+                Some((relative_index, token))
+            }
+            _ => None,
+        });
+
+    let Some((relative_index, first)) = tokens.next() else {
+        return CssTransformScaleZArgumentClass::Invalid;
+    };
+
+    if matches!(first.kind(), CssTokenKind::Function(_)) {
+        return match entire_function_name(slot) {
+            Some(name) if is_whole_value_function(name) => CssTransformScaleZArgumentClass::Invalid,
+            Some(_) => CssTransformScaleZArgumentClass::OpaqueFunction,
+            None => CssTransformScaleZArgumentClass::Invalid,
+        };
+    }
+
+    if tokens.next().is_some() {
+        return CssTransformScaleZArgumentClass::Invalid;
+    }
+
+    match first.kind() {
+        CssTokenKind::Number { .. } => {
+            CssTransformScaleZArgumentClass::Number(CssTransformScaleZArgumentEvidenceRef {
+                lexical_item_index: absolute_slot_start + relative_index,
+            })
+        }
+        CssTokenKind::Percentage { .. } => {
+            CssTransformScaleZArgumentClass::Percentage(CssTransformScaleZArgumentEvidenceRef {
+                lexical_item_index: absolute_slot_start + relative_index,
+            })
+        }
+        _ => CssTransformScaleZArgumentClass::Invalid,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CssTransformComponentClass {
     Matrix([CssTransformMatrixArgumentEvidenceRef; 6]),
     Scale(CssTransformScaleArguments),
@@ -21501,6 +21698,7 @@ enum CssTransformComponentClass {
     TranslateZ(CssTransformTranslateZArgumentEvidenceRef),
     ScaleX(CssTransformScaleXArgument),
     ScaleY(CssTransformScaleYArgument),
+    ScaleZ(CssTransformScaleZArgument),
     OpaqueTransformArgument,
     UnselectedTransformFunction,
     Invalid,
@@ -21509,8 +21707,8 @@ enum CssTransformComponentClass {
 /// Classifies one already-partitioned top-level `transform` component
 /// against the selected profile `SelectedTransformFunction := Matrix |
 /// Scale | Translate3d | Rotate3d | Translate | TranslateX | TranslateY |
-/// TranslateZ | ScaleX | ScaleY` (#418 / #645 / #647 / #649 / #651 / #653 /
-/// #655 / #657 / #659 / #661).
+/// TranslateZ | ScaleX | ScaleY | ScaleZ` (#418 / #645 / #647 / #649 / #651 /
+/// #653 / #655 / #657 / #659 / #661 / #663).
 ///
 /// `<transform-list>` admits only `<transform-function>` components, so a
 /// component that is not exactly one complete Function extent -- a bare
@@ -21659,9 +21857,8 @@ enum CssTransformComponentClass {
 /// `scaleX()` and `scale()` are kept as separate semantic placements rather
 /// than merged into a generic scale-axis abstraction, so their evidence and
 /// representation never leak into each other regardless of authored order.
-/// `scaleZ()` and `scale3d()` remain outside selected-profile coverage:
-/// their similarity to `scaleX()` is not abstraction or selection
-/// authority.
+/// `scale3d()` remains outside selected-profile coverage: its similarity to
+/// `scaleX()` is not abstraction or selection authority.
 ///
 /// A Function named `scaley` ASCII-case-insensitively enters `scaleY()`
 /// argument qualification: a directly visible slot count other than one is
@@ -21678,20 +21875,43 @@ enum CssTransformComponentClass {
 /// `scale()` are kept as separate semantic placements rather than merged
 /// into a generic scale-axis abstraction, so their evidence and
 /// representation never leak into each other regardless of authored order.
-/// `scaleZ()` and `scale3d()` remain outside selected-profile coverage:
-/// their similarity to `scaleY()` is not abstraction or selection
-/// authority.
+/// `scale3d()` remains outside selected-profile coverage: its similarity to
+/// `scaleY()` is not abstraction or selection authority.
+///
+/// A Function named `scalez` ASCII-case-insensitively enters `scaleZ()`
+/// argument qualification: a directly visible slot count other than one is
+/// decisive `Invalid` before any argument is classified, so `scaleZ()` and
+/// `scaleZ(1,2)` both stay invalid on directly visible arity. Only at
+/// exactly one slot is the argument classified, accepting a direct `Number`
+/// or `Percentage` under current CSS Transforms Level 2 authority -- reusing
+/// the accepted `scale()` (#645) / `scaleX()` (#659) / `scaleY()` (#661)
+/// Number/Percentage theorem -- with the same decisive-argument-over-opaque-
+/// sibling precedence as the other selected leaves (#663). The qualified
+/// single argument is carried directly by `CssTransformScaleZArgument`, a
+/// distinct type from `CssTransformScaleArgument`, `CssTransformScaleXArgument`,
+/// and `CssTransformScaleYArgument` even though their grammar is identical:
+/// `scaleZ()`, `scaleY()`, `scaleX()`, and `scale()` are kept as separate
+/// semantic placements rather than merged into a generic scale-axis
+/// abstraction, so their evidence and representation never leak into each
+/// other regardless of authored order. `scaleZ()` also shares its `Z` suffix
+/// with `translateZ()`, but the two are never conflated: `translateZ()`
+/// admits only a direct exact-zero `Number` or a recognized-length
+/// `Dimension`, while `scaleZ()` admits any direct `Number` or a direct
+/// `Percentage`, so `scaleZ(10px)` is `Invalid` where `translateZ(10px)`
+/// qualifies, `scaleZ(2)` qualifies where `translateZ(2)` is `Invalid`, and
+/// `scaleZ(0%)` qualifies as a `Percentage` where `translateZ(0%)` is
+/// `Invalid`. `scale3d()` remains outside selected-profile coverage: its
+/// similarity to `scaleZ()` is not abstraction or selection authority.
 ///
 /// Any other Function name is `UnselectedTransformFunction`: `rotate(1deg)`,
-/// `matrix3d(...)`, `scaleZ(...)`, `scale3d(...)`, and an unrecognized name
-/// alike stay outside selected-profile coverage instead of being decided
-/// here, because deciding them would require the full
-/// `<transform-function>` dispatch and the length/angle/axis semantics this
-/// leaf does not own -- their remaining unselected is load-bearing scope
-/// containment for #657 / #659 / #661, not an oversight. A misplaced
-/// whole-value Function is the one exception: it has no independent meaning
-/// inside a `<transform-list>` and is decisively `Invalid`, mirroring the
-/// accepted `scale` boundary.
+/// `matrix3d(...)`, `scale3d(...)`, and an unrecognized name alike stay
+/// outside selected-profile coverage instead of being decided here, because
+/// deciding them would require the full `<transform-function>` dispatch and
+/// the length/angle/axis semantics this leaf does not own -- their
+/// remaining unselected is load-bearing scope containment for #657 / #659 /
+/// #661 / #663, not an oversight. A misplaced whole-value Function is the
+/// one exception: it has no independent meaning inside a `<transform-list>`
+/// and is decisively `Invalid`, mirroring the accepted `scale` boundary.
 fn classify_transform_component(
     component: &[CssLexicalItem],
     absolute_component_start: usize,
@@ -22140,6 +22360,38 @@ fn classify_transform_component(
         return CssTransformComponentClass::ScaleY(argument);
     }
 
+    if name.eq_ignore_ascii_case("scalez") {
+        let slots = transform_function_body_slot_ranges(component);
+        if slots.len() != 1 {
+            return CssTransformComponentClass::Invalid;
+        }
+
+        let slot_start = absolute_component_start + slots[0].start;
+        let argument_class =
+            classify_transform_scalez_argument(&component[slots[0].clone()], slot_start);
+
+        let argument = match argument_class {
+            CssTransformScaleZArgumentClass::Number(evidence_ref) => CssTransformScaleZArgument {
+                kind: CssTransformScaleZArgumentKind::Number,
+                evidence_ref,
+            },
+            CssTransformScaleZArgumentClass::Percentage(evidence_ref) => {
+                CssTransformScaleZArgument {
+                    kind: CssTransformScaleZArgumentKind::Percentage,
+                    evidence_ref,
+                }
+            }
+            CssTransformScaleZArgumentClass::OpaqueFunction => {
+                return CssTransformComponentClass::OpaqueTransformArgument;
+            }
+            CssTransformScaleZArgumentClass::Invalid => {
+                return CssTransformComponentClass::Invalid;
+            }
+        };
+
+        return CssTransformComponentClass::ScaleZ(argument);
+    }
+
     if is_whole_value_function(name) {
         CssTransformComponentClass::Invalid
     } else {
@@ -22155,8 +22407,9 @@ fn classify_transform_component(
 /// translate(<length-percentage>, <length-percentage>?) |
 /// translateX(<length-percentage>) | translateY(<length-percentage>) |
 /// translateZ(<length>) | scaleX([<number> | <percentage>]) |
-/// scaleY([<number> | <percentage>]) ]+`
-/// (#418 / #645 / #647 / #649 / #651 / #653 / #655 / #657 / #659 / #661).
+/// scaleY([<number> | <percentage>]) | scaleZ([<number> | <percentage>]) ]+`
+/// (#418 / #645 / #647 / #649 / #651 / #653 / #655 / #657 / #659 / #661 /
+/// #663).
 ///
 /// Outcome precedence follows evidence authority, never scan order.
 /// Lower-layer lifecycle evidence is never touched here at all: this
@@ -22364,6 +22617,11 @@ fn qualify_transform_value(
             }
             CssTransformComponentClass::ScaleY(argument) => {
                 functions.push(CssTransformFunction::ScaleY(CssTransformScaleYFunction {
+                    argument,
+                }));
+            }
+            CssTransformComponentClass::ScaleZ(argument) => {
+                functions.push(CssTransformFunction::ScaleZ(CssTransformScaleZFunction {
                     argument,
                 }));
             }
