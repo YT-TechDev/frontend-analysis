@@ -278,8 +278,9 @@ fn authored_translate3d_argument_spelling(token: &CssTokenKind) -> String {
 /// `function_index` within observation `index` into its ordered
 /// `(x_kind, x, y_kind, y, z)` authored evidence, preserving exact X/Y/Z
 /// positional order and X/Y Length-vs-Percentage kind. Z carries no kind
-/// because `CssTransformTranslate3dFunction::z` has no `Percentage`
-/// variant to hold -- a Z `Percentage` can never reach this resolver.
+/// because a Z `Percentage` is rejected by `classify_transform_component`
+/// before a `CssTransformTranslate3dFunction` is ever constructed, so a Z
+/// `Percentage` can never reach this resolver.
 fn translate3d_argument_spellings(
     result: &CssValueQualificationRunResult,
     index: usize,

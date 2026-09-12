@@ -6545,9 +6545,15 @@ impl CssTransformTranslate3dXyArgument {
 /// One qualified authored `translate3d()` transform component: exactly
 /// three ordered, position-sensitive direct authored arguments (#647) --
 /// `X`/`Y` may each be a direct `<length>` or `<percentage>`, while `Z` is
-/// restricted to a direct `<length>` only. `Z`'s field type carries no
-/// `Percentage` variant at all, so a qualified component can never
-/// represent a `Percentage` in the Z position; this leaf constructs no
+/// restricted to a direct `<length>` only. `Z`'s evidence is validated as a
+/// direct `<length>` by `classify_transform_component` before this value is
+/// ever constructed: a directly visible `Percentage` in the Z slot is
+/// rejected there, so no code path can reach construction with Z evidence
+/// that resolves to a `Percentage` token. (`CssTransformTranslate3dArgumentEvidenceRef`
+/// itself is only a lexical-item locator shared with X/Y evidence and has
+/// no Length/Percentage distinction of its own -- the restriction is
+/// enforced by that preceding classification and construction control
+/// flow, not by a dedicated Z-only evidence type.) This leaf constructs no
 /// translation, resolves no percentage basis, and performs no unit
 /// conversion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6566,9 +6572,12 @@ impl CssTransformTranslate3dFunction {
         self.y
     }
 
-    /// The Z argument's evidence, always a direct `<length>`: this type has
-    /// no `Percentage` variant to hold, so a Z `Percentage` can never reach
-    /// this field.
+    /// The Z argument's evidence, always a direct `<length>`: a Z
+    /// `Percentage` is rejected by `classify_transform_component` before a
+    /// `CssTransformTranslate3dFunction` is ever constructed, so this
+    /// accessor can never resolve to a `Percentage` token -- that
+    /// restriction is construction-time-enforced classification, not a
+    /// Length/Percentage distinction carried by the evidence type itself.
     pub(crate) const fn z(&self) -> CssTransformTranslate3dArgumentEvidenceRef {
         self.z
     }
@@ -7800,8 +7809,9 @@ impl CssValueQualificationRunResult {
     /// an X/Y evidence position is a direct exact-zero `Number`, a
     /// recognized-length `Dimension`, or a `Percentage`; the retained token
     /// at the Z evidence position is always a direct exact-zero `Number` or
-    /// a recognized-length `Dimension`, matching
-    /// `CssTransformTranslate3dFunction::z`'s `Percentage`-free type.
+    /// a recognized-length `Dimension`, because `classify_transform_component`
+    /// rejects a Z `Percentage` before a `CssTransformTranslate3dFunction`
+    /// is ever constructed.
     pub(crate) fn transform_translate3d_argument_token(
         &self,
         evidence: CssTransformTranslate3dArgumentEvidenceRef,
@@ -20103,8 +20113,9 @@ enum CssTransformComponentClass {
 /// which slot holds the opaque Function, since every slot's decisive
 /// category failure is checked before any opaque-Function sibling is
 /// consulted. The qualified `X`/`Y`/`Z` positional structure is carried by
-/// `CssTransformTranslate3dFunction`, whose Z field has no `Percentage`
-/// variant to hold, so a Z `Percentage` can never reach a qualified value.
+/// `CssTransformTranslate3dFunction`; a Z `Percentage` is rejected by this
+/// classification before that value is ever constructed, so a Z
+/// `Percentage` can never reach a qualified value.
 ///
 /// Any other Function name is `UnselectedTransformFunction`: `rotate(1deg)`,
 /// `matrix3d(...)`, `scaleX(...)`, and an unrecognized name alike stay
