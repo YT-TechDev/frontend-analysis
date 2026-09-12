@@ -7,8 +7,8 @@ use crate::css::value_qualification::{
     CssTransformFunction, CssTransformQualificationOutcome, CssTransformRotate3dAngleArgument,
     CssTransformRotate3dFunction, CssTransformScaleArgumentKind,
     CssTransformTranslate3dXyArgumentKind, CssTransformTranslateArgumentKind,
-    CssTransformTranslateXArgumentKind, CssTransformUnsupportedReason, CssTransformValue,
-    CssValueQualificationRunResult, run,
+    CssTransformTranslateXArgumentKind, CssTransformTranslateYArgumentKind,
+    CssTransformUnsupportedReason, CssTransformValue, CssValueQualificationRunResult, run,
 };
 use crate::{SourceId, SourceText};
 
@@ -472,6 +472,79 @@ fn translatex_argument_spelling(
     (
         argument.kind(),
         authored_translatex_argument_spelling(token),
+    )
+}
+
+/// Reconstructs one retained `Number`, `Dimension`, or `Percentage` token's
+/// authored numeric structure from tokenizer-owned evidence alone, exactly
+/// like `authored_translatex_argument_spelling`, so `0`, `0px`, and `0%`
+/// stay pairwise distinguishable in assertions and none is ever collapsed
+/// into another. This is a dedicated `translateY()` test helper, distinct
+/// from `authored_translatex_argument_spelling`: `translateX()` and
+/// `translateY()` argument placement remain distinct semantic roles even
+/// though the underlying scalar spelling logic is identical. No machine
+/// number or unit conversion is ever produced.
+fn authored_translatey_argument_spelling(token: &CssTokenKind) -> String {
+    let (value, suffix) = match token {
+        CssTokenKind::Number { value, .. } => (value, String::new()),
+        CssTokenKind::Dimension { value, unit, .. } => (value, unit.clone()),
+        CssTokenKind::Percentage { value } => (value, "%".to_string()),
+        other => panic!(
+            "translateY argument evidence did not resolve to a Number/Dimension/Percentage token, got {other:?}"
+        ),
+    };
+
+    let mut spelling = String::new();
+    match value.sign() {
+        Some(CssNumberSign::Plus) => spelling.push('+'),
+        Some(CssNumberSign::Minus) => spelling.push('-'),
+        None => {}
+    }
+    spelling.push_str(value.decimal().integer_digits());
+    let fraction_digits = value.decimal().fraction_digits();
+    if !fraction_digits.is_empty() {
+        spelling.push('.');
+        spelling.push_str(fraction_digits);
+    }
+    if let Some(exponent) = value.decimal().exponent() {
+        spelling.push('e');
+        match exponent.sign() {
+            Some(CssExponentSign::Plus) => spelling.push('+'),
+            Some(CssExponentSign::Minus) => spelling.push('-'),
+            None => {}
+        }
+        spelling.push_str(exponent.digits());
+    }
+    spelling.push_str(&suffix);
+    spelling
+}
+
+/// Resolves one qualified `translateY()` transform component's single
+/// authored argument at `function_index` within observation `index` as a
+/// `(kind, spelling)` pair. Unlike `translate_argument_spellings` and
+/// `scale_argument_spellings`, this never returns a vector: `translateY()`
+/// has no one-vs-two cardinality to preserve, since it accepts exactly one
+/// authored argument.
+fn translatey_argument_spelling(
+    result: &CssValueQualificationRunResult,
+    index: usize,
+    function_index: usize,
+) -> (CssTransformTranslateYArgumentKind, String) {
+    let functions = qualified_functions(result, index);
+    let function = functions
+        .get(function_index)
+        .unwrap_or_else(|| panic!("missing transform component {function_index} at {index}"));
+    let CssTransformFunction::TranslateY(translatey) = function else {
+        panic!("expected translateY component {function_index} at {index}, got {function:?}");
+    };
+
+    let argument = translatey.argument();
+    let token = result
+        .transform_translatey_argument_token(argument.evidence_ref())
+        .expect("translateY argument evidence did not resolve");
+    (
+        argument.kind(),
+        authored_translatey_argument_spelling(token),
     )
 }
 
@@ -964,7 +1037,7 @@ fn unselected_transform_functions_remain_outside_selected_profile() {
             "rotate(1deg)",
             "matrix(1,0,0,1,0,0) rotate(1deg)",
             "rotate(1deg) matrix(1,0,0,1,0,0)",
-            "translateY(10px)",
+            "translateZ(10px)",
             "scaleX(2)",
             "scaleY(2)",
             "scaleZ(2)",
@@ -4868,22 +4941,18 @@ fn unselected_outer_function_precedence_covers_translatex() {
     assert_all_invalid(653440, &["translateX(1) rotate(10deg)"]);
 }
 
-// 112. `translateY()` and `translateZ()` remain outside selected-profile
-// coverage after #653: extending coverage with `translateX()` never widens
-// the selected profile to its X/Y/Z siblings, in isolation or alongside a
-// qualified `translateX()` (#653).
+// 112. `translateZ()` remains outside selected-profile coverage after
+// #653: extending coverage with `translateX()` never widens the selected
+// profile to its Y/Z siblings, in isolation or alongside a qualified
+// `translateX()` (#653). `translateY()` itself is qualified separately by
+// #655 and is covered by its own dedicated test group below.
 
 #[test]
-fn translatey_and_translatez_remain_unselected_after_translatex_coverage() {
+fn translatez_remains_unselected_after_translatex_coverage() {
     assert_all_unsupported(
         653450,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
-        &[
-            "translateY(10px)",
-            "translateZ(10px)",
-            "translateY(10px) translateX(20px)",
-            "translateX(20px) translateZ(10px)",
-        ],
+        &["translateZ(10px)", "translateX(20px) translateZ(10px)"],
     );
 }
 
@@ -5124,4 +5193,886 @@ fn translatex_cross_leaf_isolation_is_preserved() {
     assert_eq!(result.transform_style_observations().len(), 1);
 
     assert_all_invalid(653560, &["none translateX(10px)", "translateX(10px) none"]);
+}
+
+// 119. `translateY() = translateY(<length-percentage>)` (#655): a canonical
+// single direct `<length>` argument qualifies, preserving the `Length`
+// role and exact tokenizer-owned evidence. Like `translateX()` and unlike
+// `translate()`, `translateY()` has no optional second argument.
+
+#[test]
+fn canonical_translatey_length_qualifies() {
+    let result = qualify(
+        655100,
+        concat!(
+            "a{transform:translateY(10px);}",
+            "b{transform:translateY(1em);}",
+            "c{transform:translateY(-2rem);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 3);
+    assert_eq!(
+        translatey_argument_spelling(&result, 0, 0),
+        (
+            CssTransformTranslateYArgumentKind::Length,
+            "10px".to_string()
+        )
+    );
+    assert_eq!(
+        translatey_argument_spelling(&result, 1, 0),
+        (
+            CssTransformTranslateYArgumentKind::Length,
+            "1em".to_string()
+        )
+    );
+    assert_eq!(
+        translatey_argument_spelling(&result, 2, 0),
+        (
+            CssTransformTranslateYArgumentKind::Length,
+            "-2rem".to_string()
+        )
+    );
+}
+
+// 120. A canonical single direct `<percentage>` argument qualifies,
+// preserving the `Percentage` role and exact tokenizer-owned evidence; a
+// `Percentage` is never collapsed into a `Length` (#655).
+
+#[test]
+fn canonical_translatey_percentage_qualifies() {
+    let result = qualify(
+        655120,
+        concat!(
+            "a{transform:translateY(50%);}",
+            "b{transform:translateY(-20%);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 2);
+    assert_eq!(
+        translatey_argument_spelling(&result, 0, 0),
+        (
+            CssTransformTranslateYArgumentKind::Percentage,
+            "50%".to_string()
+        )
+    );
+    assert_eq!(
+        translatey_argument_spelling(&result, 1, 0),
+        (
+            CssTransformTranslateYArgumentKind::Percentage,
+            "-20%".to_string()
+        )
+    );
+}
+
+// 121. A direct exact-zero `Number` satisfies `<length>`, reusing the
+// accepted `translate` (#606) / `translate3d` (#647) / `translate()`
+// (#651) / `translateX()` (#653) exact-zero-Number-as-`Length` theorem; the
+// retained evidence stays a `Number` token, never converted to a
+// `Dimension` or interpreted magnitude (#655).
+
+#[test]
+fn exact_zero_number_qualifies_as_length_for_translatey() {
+    let result = qualify(
+        655140,
+        concat!(
+            "a{transform:translateY(0);}",
+            "b{transform:translateY(+0);}",
+            "c{transform:translateY(-0);}",
+            "d{transform:translateY(.0);}",
+            "e{transform:translateY(0.0);}",
+            "f{transform:translateY(0e100);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 6);
+    assert_eq!(
+        translatey_argument_spelling(&result, 0, 0),
+        (CssTransformTranslateYArgumentKind::Length, "0".to_string())
+    );
+    assert_eq!(
+        translatey_argument_spelling(&result, 1, 0),
+        (CssTransformTranslateYArgumentKind::Length, "+0".to_string())
+    );
+    assert_eq!(
+        translatey_argument_spelling(&result, 2, 0),
+        (CssTransformTranslateYArgumentKind::Length, "-0".to_string())
+    );
+    // Authored `.0`: the absent leading integer digit is canonicalized to
+    // `0` by the tokenizer's own retained numeric contract, upstream of
+    // this leaf, exactly as for `translate()`/`translate3d()`/
+    // `translateX()` arguments.
+    assert_eq!(
+        translatey_argument_spelling(&result, 3, 0),
+        (
+            CssTransformTranslateYArgumentKind::Length,
+            "0.0".to_string()
+        )
+    );
+    assert_eq!(
+        translatey_argument_spelling(&result, 4, 0),
+        (
+            CssTransformTranslateYArgumentKind::Length,
+            "0.0".to_string()
+        )
+    );
+    assert_eq!(
+        translatey_argument_spelling(&result, 5, 0),
+        (
+            CssTransformTranslateYArgumentKind::Length,
+            "0e100".to_string()
+        )
+    );
+}
+
+// 122. `0`, `0px`, and `0%` remain three distinct authored evidences in
+// `translateY()`: none is ever normalized, synthesized, or collapsed into
+// another (#655).
+
+#[test]
+fn translatey_zero_number_dimension_and_percentage_identity_is_preserved() {
+    let result = qualify(
+        655160,
+        concat!(
+            "a{transform:translateY(0);}",
+            "b{transform:translateY(0px);}",
+            "c{transform:translateY(0%);}",
+        ),
+    );
+
+    let number = translatey_argument_spelling(&result, 0, 0);
+    let px = translatey_argument_spelling(&result, 1, 0);
+    let percentage = translatey_argument_spelling(&result, 2, 0);
+
+    assert_eq!(
+        number,
+        (CssTransformTranslateYArgumentKind::Length, "0".to_string())
+    );
+    assert_eq!(
+        px,
+        (
+            CssTransformTranslateYArgumentKind::Length,
+            "0px".to_string()
+        )
+    );
+    assert_eq!(
+        percentage,
+        (
+            CssTransformTranslateYArgumentKind::Percentage,
+            "0%".to_string()
+        )
+    );
+    assert_ne!(number, px);
+    assert_ne!(number, percentage);
+    assert_ne!(px, percentage);
+}
+
+// 123. Representative recognized CSS length units qualify identically to
+// `translate()`/`translate3d()`/`translateX()` arguments, including a
+// useful ASCII-case unit variant, reusing the same recognized-length-unit
+// theorem (#655).
+
+#[test]
+fn recognized_css_length_units_qualify_for_translatey() {
+    let result = qualify(
+        655180,
+        concat!(
+            "a{transform:translateY(1px);}",
+            "b{transform:translateY(1em);}",
+            "c{transform:translateY(1rem);}",
+            "d{transform:translateY(1vh);}",
+            "e{transform:translateY(1vw);}",
+            "f{transform:translateY(1cm);}",
+            "g{transform:translateY(1PX);}",
+            "h{transform:translateY(1Px);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 8);
+    for index in 0..8 {
+        let (kind, _) = translatey_argument_spelling(&result, index, 0);
+        assert_eq!(
+            kind,
+            CssTransformTranslateYArgumentKind::Length,
+            "expected Length at {index}"
+        );
+    }
+}
+
+// 124. Signed direct `Length`, `Percentage`, and exact-zero `Number`
+// arguments preserve exact authored sign/fraction/exponent evidence
+// without any machine-number conversion (#655).
+
+#[test]
+fn signed_direct_values_preserve_authored_evidence_for_translatey() {
+    let result = qualify(
+        655200,
+        concat!(
+            "a{transform:translateY(-10px);}",
+            "b{transform:translateY(+10%);}",
+            "c{transform:translateY(-20%);}",
+            "d{transform:translateY(-0);}",
+            "e{transform:translateY(+0);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 5);
+    assert_eq!(
+        translatey_argument_spelling(&result, 0, 0),
+        (
+            CssTransformTranslateYArgumentKind::Length,
+            "-10px".to_string()
+        )
+    );
+    assert_eq!(
+        translatey_argument_spelling(&result, 1, 0),
+        (
+            CssTransformTranslateYArgumentKind::Percentage,
+            "+10%".to_string()
+        )
+    );
+    assert_eq!(
+        translatey_argument_spelling(&result, 2, 0),
+        (
+            CssTransformTranslateYArgumentKind::Percentage,
+            "-20%".to_string()
+        )
+    );
+    assert_eq!(
+        translatey_argument_spelling(&result, 3, 0),
+        (CssTransformTranslateYArgumentKind::Length, "-0".to_string())
+    );
+    assert_eq!(
+        translatey_argument_spelling(&result, 4, 0),
+        (CssTransformTranslateYArgumentKind::Length, "+0".to_string())
+    );
+}
+
+// 125. `translateY()` accepts exactly one authored argument: zero, two,
+// three, or more directly visible arguments are decisive
+// `InvalidForSelectedValueGrammar`, unlike `translate()`'s one-or-two
+// cardinality (#655).
+
+#[test]
+fn translatey_argument_cardinality_other_than_one_is_invalid() {
+    assert_all_invalid(
+        655220,
+        &[
+            "translateY()",
+            "translateY(10px,20px)",
+            "translateY(10px,20%,30px)",
+            "translateY(1px,2px,3px,4px)",
+        ],
+    );
+}
+
+// 126. A comma is the only accepted inner separator, and an authored-empty
+// position is preserved as its own ordered slot and rejected -- never
+// collapsed away (#655).
+
+#[test]
+fn translatey_argument_delimiter_failures_are_invalid() {
+    assert_all_invalid(
+        655240,
+        &[
+            "translateY(,)",
+            "translateY(,10px)",
+            "translateY(10px,)",
+            "translateY(10px,,20px)",
+        ],
+    );
+}
+
+// 127. A nonzero unitless `Number` never satisfies `<length>`: this leaf
+// never interprets an arbitrary `Number` as `Length` (#655).
+
+#[test]
+fn nonzero_number_is_invalid_for_translatey() {
+    assert_all_invalid(
+        655260,
+        &["translateY(1)", "translateY(-1)", "translateY(.5)"],
+    );
+}
+
+// 128. `<length-percentage>` admits only a direct recognized-length
+// `Dimension`, an exact-zero `Number`, or a `Percentage`: every other
+// direct token category at the translateY argument position is a decisive
+// direct token-category failure (#655).
+
+#[test]
+fn wrong_direct_categories_are_invalid_for_translatey() {
+    assert_all_invalid(
+        655280,
+        &[
+            "translateY(45deg)",
+            "translateY(1s)",
+            "translateY(1hz)",
+            "translateY(1dpi)",
+            "translateY(1fr)",
+            "translateY(1unknownunit)",
+            "translateY(foo)",
+            "translateY(\"1\")",
+            "translateY(#abc)",
+        ],
+    );
+}
+
+// 129. A complete non-deferred Function occupying the single translateY
+// argument slot is selected-profile Unsupported, mirroring the shared
+// `FunctionValuedTransformArgument` reason `translate()`/`translate3d()`/
+// `translateX()` opaque arguments use -- this leaf never evaluates
+// `calc()` (#655).
+
+#[test]
+fn opaque_translatey_argument_function_is_unsupported() {
+    assert_all_unsupported(
+        655300,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
+        &[
+            "translateY(calc(10px))",
+            "translateY(min(10px,20px))",
+            "translateY(max(10px,20px))",
+            "translateY(clamp(0px,10px,20px))",
+            "matrix(1,0,0,1,0,0) translateY(calc(10px))",
+        ],
+    );
+}
+
+// 130. A Function followed by additional direct material in the same slot
+// is directly visible structural failure and stays decisively `Invalid`:
+// a structurally feasible complete opaque Function is never softened to
+// Unsupported by an unevaluated sibling in the same slot (#655).
+
+#[test]
+fn function_plus_junk_in_same_slot_is_invalid_for_translatey() {
+    assert_all_invalid(
+        655320,
+        &[
+            "translateY(calc(10px) 1px)",
+            "translateY(calc(10px) foo)",
+            "translateY(calc(10px) 20%)",
+        ],
+    );
+}
+
+// 131. A comma nested inside a Function argument is at a deeper relative
+// depth and never becomes a translateY-level argument separator. Once the
+// nesting closes, a genuine second translateY-level slot is still counted
+// and makes the shell decisively Invalid, since translateY() has no
+// second slot to occupy (#655).
+
+#[test]
+fn nested_commas_never_change_translatey_arity() {
+    assert_all_unsupported(
+        655340,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
+        &["translateY(calc(10px,20px))"],
+    );
+
+    assert_all_invalid(655341, &["translateY(calc(10px,20px),30%)"]);
+}
+
+// 132. Deferred substitution can alter the enclosing token sequence,
+// separators, and cardinality, so it is resolved before any surrounding
+// translateY shape conclusion -- including an arity that looks decisive
+// (#655).
+
+#[test]
+fn translatey_deferred_substitution_outranks_surrounding_shape_conclusions() {
+    assert_all_unsupported(
+        655360,
+        CssTransformUnsupportedReason::DeferredSubstitutionFunction,
+        &[
+            "translateY(var(--y))",
+            "translateY(var(--y),20px)",
+            "matrix(1,0,0,1,0,0) translateY(var(--y))",
+            "translateY(var(--y)) matrix(1,0,0,1,0,0)",
+        ],
+    );
+}
+
+// 133. Directly visible decisive invalidity outranks an opaque Function
+// found in a sibling slot (#655).
+
+#[test]
+fn translatey_decisive_invalid_outranks_opaque_argument() {
+    assert_all_invalid(655380, &["translateY(calc(10px),1)"]);
+}
+
+// 134. Selected `matrix()`, `scale()`, `translate3d()`, `rotate3d()`,
+// `translate()`, `translateX()`, and `translateY()` components mix and
+// repeat freely, preserving exact authored order and repetition through
+// the heterogeneous `CssTransformFunction` alternation, and no selected
+// leaf's evidence drifts across another's index in a mixed sequence
+// (#418 / #645 / #647 / #649 / #651 / #653 / #655).
+
+#[test]
+fn mixed_selected_function_order_including_translatey_is_preserved() {
+    let result = qualify(
+        655400,
+        concat!(
+            "a{transform:matrix(1,0,0,1,0,0) translateY(10px);}",
+            "b{transform:translateY(10px) matrix(1,0,0,1,0,0);}",
+            "c{transform:scale(2) translateY(10px);}",
+            "d{transform:translateY(10px) scale(2);}",
+            "e{transform:translate3d(1px,2px,3px) translateY(10px);}",
+            "f{transform:translateY(10px) translate3d(1px,2px,3px);}",
+            "g{transform:rotate3d(1,0,0,90deg) translateY(10px);}",
+            "h{transform:translateY(10px) rotate3d(1,0,0,90deg);}",
+            "i{transform:translate(10px) translateY(20px);}",
+            "j{transform:translateY(10px) translate(20px);}",
+            "k{transform:translateX(10px) translateY(20px);}",
+            "l{transform:translateY(10px) translateX(20px);}",
+            "m{transform:translateY(1px) translateY(2px);}",
+            "n{transform:matrix(1,0,0,1,0,0) scale(2) translate3d(1px,2px,3px) rotate3d(1,0,0,90deg) translate(10px) translateX(20px) translateY(30px);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 14);
+
+    for index in 0..13 {
+        assert_eq!(
+            qualified_functions(&result, index).len(),
+            2,
+            "expected two components at {index}"
+        );
+    }
+    assert_eq!(qualified_functions(&result, 13).len(), 7);
+
+    assert!(matches!(
+        qualified_functions(&result, 0)[0],
+        CssTransformFunction::Matrix(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 0)[1],
+        CssTransformFunction::TranslateY(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 1)[0],
+        CssTransformFunction::TranslateY(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 1)[1],
+        CssTransformFunction::Matrix(_)
+    ));
+
+    let seven_kind_sequence = qualified_functions(&result, 13);
+    assert!(matches!(
+        seven_kind_sequence[0],
+        CssTransformFunction::Matrix(_)
+    ));
+    assert!(matches!(
+        seven_kind_sequence[1],
+        CssTransformFunction::Scale(_)
+    ));
+    assert!(matches!(
+        seven_kind_sequence[2],
+        CssTransformFunction::Translate3d(_)
+    ));
+    assert!(matches!(
+        seven_kind_sequence[3],
+        CssTransformFunction::Rotate3d(_)
+    ));
+    assert!(matches!(
+        seven_kind_sequence[4],
+        CssTransformFunction::Translate(_)
+    ));
+    assert!(matches!(
+        seven_kind_sequence[5],
+        CssTransformFunction::TranslateX(_)
+    ));
+    assert!(matches!(
+        seven_kind_sequence[6],
+        CssTransformFunction::TranslateY(_)
+    ));
+
+    // Repeated `translateY()` preserves authored order and each
+    // component's own evidence.
+    let repeated = qualified_functions(&result, 12);
+    assert!(matches!(repeated[0], CssTransformFunction::TranslateY(_)));
+    assert!(matches!(repeated[1], CssTransformFunction::TranslateY(_)));
+    assert_eq!(
+        translatey_argument_spelling(&result, 12, 0),
+        (
+            CssTransformTranslateYArgumentKind::Length,
+            "1px".to_string()
+        )
+    );
+    assert_eq!(
+        translatey_argument_spelling(&result, 12, 1),
+        (
+            CssTransformTranslateYArgumentKind::Length,
+            "2px".to_string()
+        )
+    );
+
+    // `translate()` and `translateY()` remain distinct evidence indices in
+    // a mixed sequence: neither drifts into the other's slot.
+    assert!(matches!(
+        qualified_functions(&result, 8)[0],
+        CssTransformFunction::Translate(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 8)[1],
+        CssTransformFunction::TranslateY(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 9)[0],
+        CssTransformFunction::TranslateY(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 9)[1],
+        CssTransformFunction::Translate(_)
+    ));
+}
+
+// 135. Every `<transform-function>` other than the selected leaves stays
+// outside selected-profile coverage, in either authored order and
+// regardless of a sibling qualified selected function, and the coarser
+// outer unselected-function coverage outranks an inner opaque
+// `translateY()` argument (#655).
+
+#[test]
+fn unselected_outer_function_precedence_covers_translatey() {
+    assert_all_unsupported(
+        655420,
+        CssTransformUnsupportedReason::UnselectedTransformFunction,
+        &[
+            "translateY(10px) rotate(10deg)",
+            "rotate(10deg) translateY(10px)",
+            "translateY(10px) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
+        ],
+    );
+
+    // Coarser outer unselected-function coverage outranks an inner opaque
+    // translateY argument, identically in both authored orders.
+    assert_all_unsupported(
+        655430,
+        CssTransformUnsupportedReason::UnselectedTransformFunction,
+        &[
+            "translateY(calc(10px)) rotate(10deg)",
+            "rotate(10deg) translateY(calc(10px))",
+        ],
+    );
+
+    // Decisive direct Invalid still wins over the outer unselected sibling.
+    assert_all_invalid(655440, &["translateY(1) rotate(10deg)"]);
+}
+
+// 136. `translateX()` and `translateY()` evidence never drifts across each
+// other's index in a mixed authored sequence, in either order: each
+// resolves to its own argument's own evidence, and neither variant nor
+// evidence reference leaks into the other's semantic placement. This is
+// load-bearing for #655's scope invariant that `TranslateX` and
+// `TranslateY` stay distinct representations despite identical grammar.
+
+#[test]
+fn translatex_translatey_evidence_separation_never_drifts() {
+    let result = qualify(
+        655450,
+        concat!(
+            "a{transform:translateX(10px) translateY(20%);}",
+            "b{transform:translateY(30%) translateX(40px);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 2);
+
+    let first = qualified_functions(&result, 0);
+    assert!(matches!(first[0], CssTransformFunction::TranslateX(_)));
+    assert!(matches!(first[1], CssTransformFunction::TranslateY(_)));
+    assert_eq!(
+        translatex_argument_spelling(&result, 0, 0),
+        (
+            CssTransformTranslateXArgumentKind::Length,
+            "10px".to_string()
+        )
+    );
+    assert_eq!(
+        translatey_argument_spelling(&result, 0, 1),
+        (
+            CssTransformTranslateYArgumentKind::Percentage,
+            "20%".to_string()
+        )
+    );
+
+    let second = qualified_functions(&result, 1);
+    assert!(matches!(second[0], CssTransformFunction::TranslateY(_)));
+    assert!(matches!(second[1], CssTransformFunction::TranslateX(_)));
+    assert_eq!(
+        translatey_argument_spelling(&result, 1, 0),
+        (
+            CssTransformTranslateYArgumentKind::Percentage,
+            "30%".to_string()
+        )
+    );
+    assert_eq!(
+        translatex_argument_spelling(&result, 1, 1),
+        (
+            CssTransformTranslateXArgumentKind::Length,
+            "40px".to_string()
+        )
+    );
+}
+
+// 137. `translateZ()` remains outside selected-profile coverage after
+// #655: extending coverage with `translateY()` never widens the selected
+// profile to its Z sibling, in isolation, with any argument shape, or
+// alongside a qualified `translateY()` in either order (#655).
+
+#[test]
+fn translatez_remains_unselected_alongside_qualified_translatey() {
+    assert_all_unsupported(
+        655460,
+        CssTransformUnsupportedReason::UnselectedTransformFunction,
+        &[
+            "translateZ(10px)",
+            "translateZ(0)",
+            "translateZ(calc(10px))",
+            "translateY(10px) translateZ(20px)",
+            "translateZ(20px) translateY(10px)",
+        ],
+    );
+}
+
+// 138. `<transform-list>` is whitespace-separated repetition: a top-level
+// comma is never a permitted separator, including between two
+// `translateY()` components or a `translateY()` and a sibling selected
+// function (#655).
+
+#[test]
+fn top_level_comma_is_invalid_around_translatey() {
+    assert_all_invalid(
+        655470,
+        &[
+            "translateY(10px), matrix(1,0,0,1,0,0)",
+            "translateY(10px), scale(2)",
+            "translateY(10px), translate3d(1px,2px,3px)",
+            "translateY(10px), rotate3d(1,0,0,90deg)",
+            "translateY(10px), translate(10px)",
+            "translateY(10px), translateX(20px)",
+            "translateY(10px), translateY(20px)",
+        ],
+    );
+}
+
+// 139. CSS Syntax function consumption may end at a true stylesheet EOF, so
+// a parser-committed EOF-ended `translateY()` extent is qualified from
+// retained interior evidence alone. EOF never fills or repairs a missing
+// argument, a wrong direct category, or a second slot translateY() has no
+// room for (#655).
+
+#[test]
+fn true_stylesheet_eof_ended_translatey_extent_follows_parser_authority() {
+    let one_slot = qualify(655490, "a{transform:translateY(10px");
+    assert_eq!(
+        one_slot.execution_completion(),
+        CssParserExecutionCompletion::Complete
+    );
+    assert_eq!(one_slot.transform_observations().len(), 1);
+    assert_eq!(
+        translatey_argument_spelling(&one_slot, 0, 0),
+        (
+            CssTransformTranslateYArgumentKind::Length,
+            "10px".to_string()
+        )
+    );
+
+    // Zero-slot EOF stays decisively Invalid.
+    let zero_slot = qualify(655491, "a{transform:translateY(");
+    assert_invalid(&zero_slot, 0);
+
+    // A trailing comma at true EOF stays decisively Invalid: translateY()
+    // never accepts a second slot.
+    let trailing_comma = qualify(655492, "a{transform:translateY(10px,");
+    assert_invalid(&trailing_comma, 0);
+
+    // EOF never repairs an invalid direct category.
+    let invalid_argument = qualify(655493, "a{transform:translateY(1");
+    assert_invalid(&invalid_argument, 0);
+
+    // A closed component followed by stray material is invalid, proving
+    // the accepted EOF case is not "accept whatever trails a translateY".
+    let trailing = qualify(655494, "a{transform:translateY(10px) 7;}");
+    assert_invalid(&trailing, 0);
+
+    // A second slot never widens translateY() cardinality, even at true
+    // EOF.
+    let two_slots = qualify(655495, "a{transform:translateY(10px,20%");
+    assert_invalid(&two_slots, 0);
+}
+
+// 140. Lower-layer lifecycle evidence stays owned by the tokenizer and
+// parser: comments/trivia never change slot interpretation, a comment
+// never fills an authored-empty slot, and `!important` remains outside the
+// semantic value window (#655).
+
+#[test]
+fn trivia_and_important_never_change_translatey_interpretation() {
+    let result = qualify(
+        655500,
+        concat!(
+            "a{transform:translateY(10px/**/);}",
+            "b{transform:translateY(/**/10px);}",
+            "c{transform:translateY( 10px );}",
+            "d{transform:translateY(10px) !important;}",
+            "e{transform:translateY(10px)!important;}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 5);
+    let expected = (
+        CssTransformTranslateYArgumentKind::Length,
+        "10px".to_string(),
+    );
+    for index in 0..3 {
+        assert_eq!(
+            translatey_argument_spelling(&result, index, 0),
+            expected,
+            "trivia changed slot interpretation at {index}"
+        );
+    }
+    for index in 3..5 {
+        assert_eq!(translatey_argument_spelling(&result, index, 0), expected);
+        assert!(
+            result.upstream_parser_result().occurrences()[index]
+                .priority()
+                .is_some(),
+            "expected retained priority evidence at {index}"
+        );
+    }
+
+    // A comment is trivia, never an argument: it can neither fill the
+    // single authored slot nor stand in for a missing one.
+    assert_all_invalid(655510, &["translateY(/**/)", "translateY(10px,/**/)"]);
+}
+
+// 141. Repeated and cross-source runs remain deterministic, and evidence
+// lookup resolves to the exact retained Number/Dimension/Percentage tokens
+// identically across runs (#655).
+
+#[test]
+fn translatey_repeated_and_cross_source_runs_are_deterministic() {
+    let css = concat!(
+        "a{transform:translateY(10px,20%);}",
+        "b{transform:translateY(calc(10px,20px));}",
+        "c{transform:translateY(1);}",
+        "d{transform:matrix(1,0,0,1,0,0) translateY(10px);}",
+    );
+
+    let first = qualify(655520, css);
+    let repeated = qualify(655520, css);
+    let another_source = qualify(655521, css);
+
+    assert_eq!(
+        first.transform_observations(),
+        repeated.transform_observations()
+    );
+    assert_eq!(
+        first.transform_observations(),
+        another_source.transform_observations()
+    );
+
+    assert_invalid(&first, 0);
+    assert_unsupported(
+        &first,
+        1,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
+    );
+    assert_invalid(&first, 2);
+    assert_eq!(qualified_functions(&first, 3).len(), 2);
+
+    assert_eq!(
+        translatey_argument_spelling(&first, 3, 1),
+        translatey_argument_spelling(&repeated, 3, 1)
+    );
+    assert_eq!(
+        translatey_argument_spelling(&first, 3, 1),
+        translatey_argument_spelling(&another_source, 3, 1)
+    );
+}
+
+// 142. `translateY` function-name recognition is ASCII-case-insensitive,
+// matching the accepted `matrix`/`scale`/`translate3d`/`rotate3d`/
+// `translate`/`translateX` boundary, and structurally malformed
+// `translateY` components -- a bare Function name, an
+// unbalanced/duplicated closer, or stray leading material -- stay
+// decisively `Invalid` (#655).
+
+#[test]
+fn translatey_function_name_recognition_and_malformed_components() {
+    let result = qualify(
+        655530,
+        concat!(
+            "a{transform:TRANSLATEY(10px);}",
+            "b{transform:TrAnSlAtEy(10px);}",
+            "c{transform:t\\72 anslateY(10px);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 3);
+    for index in 0..3 {
+        assert_eq!(
+            translatey_argument_spelling(&result, index, 0),
+            (
+                CssTransformTranslateYArgumentKind::Length,
+                "10px".to_string()
+            ),
+            "translateY name recognition failed at {index}"
+        );
+    }
+
+    assert_all_invalid(
+        655540,
+        &[
+            "translateY",
+            "translateY(10px))",
+            "translateY((10px)",
+            "1 translateY(10px)",
+            "[translateY(10px)]",
+        ],
+    );
+}
+
+// 143. Cross-leaf isolation: `translateY()` recognition never leaks into
+// the accepted longhand `translate`/`scale`/`rotate` leaves, the other
+// `transform-*` single-value leaves, or the other selected `transform`
+// function branches, and `none` remains an exclusive whole-value branch
+// even when combined with `translateY()` (#418 / #606 / #645 / #647 /
+// #649 / #651 / #653 / #655).
+
+#[test]
+fn translatey_cross_leaf_isolation_is_preserved() {
+    let result = qualify(
+        655550,
+        concat!(
+            "a{transform:translateY(10px);transform:none;}",
+            "b{translate:10px;}",
+            "c{scale:2;}",
+            "d{rotate:45deg;}",
+            "e{transform-origin:left top;}",
+            "f{transform-box:border-box;}",
+            "g{transform-style:flat;}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 2);
+    assert_eq!(
+        translatey_argument_spelling(&result, 0, 0),
+        (
+            CssTransformTranslateYArgumentKind::Length,
+            "10px".to_string()
+        )
+    );
+    assert_whole_none(&result, 1);
+
+    assert_eq!(result.translate_observations().len(), 1);
+    assert_eq!(result.scale_observations().len(), 1);
+    assert_eq!(result.rotate_observations().len(), 1);
+    assert_eq!(result.transform_origin_observations().len(), 1);
+    assert_eq!(result.transform_box_observations().len(), 1);
+    assert_eq!(result.transform_style_observations().len(), 1);
+
+    assert_all_invalid(655560, &["none translateY(10px)", "translateY(10px) none"]);
 }
