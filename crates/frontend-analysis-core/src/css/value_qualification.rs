@@ -6754,13 +6754,86 @@ impl CssTransformTranslateFunction {
     }
 }
 
+/// Run-local locator for the exact tokenizer item selected during
+/// authoritative `transform` `translateX()` direct `<length-percentage>`
+/// argument recognition (#653). Mirrors
+/// `CssTransformTranslateArgumentEvidenceRef`: the index is evidence
+/// placement, not an interpreted numeric magnitude, and always points at
+/// the exact tokenizer-owned direct `Number`, `Dimension`, or `Percentage`
+/// token retained inside the single `translateX()` argument slot, resolved
+/// through `transform_translatex_argument_token`. This is a distinct type
+/// from `CssTransformTranslateArgumentEvidenceRef` and
+/// `CssTransformTranslate3dArgumentEvidenceRef`: `translateX()`,
+/// `translate()`, and `translate3d()` remain distinct semantic placements
+/// even though all three accept a direct `<length-percentage>` shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTransformTranslateXArgumentEvidenceRef {
+    lexical_item_index: usize,
+}
+
+impl CssTransformTranslateXArgumentEvidenceRef {
+    pub(crate) const fn lexical_item_index(&self) -> usize {
+        self.lexical_item_index
+    }
+}
+
+/// One direct authored `translateX()` argument's tokenizer-owned kind
+/// (#653): `TranslateXArgument := DirectLength | DirectPercentage`. A
+/// `Percentage` is never collapsed into a `Length`, mirroring
+/// `CssTransformTranslateArgumentKind`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTransformTranslateXArgumentKind {
+    Length,
+    Percentage,
+}
+
+/// One direct authored `translateX()` argument, preserving authored kind
+/// and exact tokenizer-owned evidence without any interpreted-length
+/// conversion (#653). `DirectLength` here is either a `Dimension` with a
+/// recognized CSS length unit or a direct exact-zero `Number`, reusing the
+/// accepted `translate` (#606) / `translate3d` (#647) / `translate()`
+/// (#651) zero-as-length theorem.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTransformTranslateXArgument {
+    kind: CssTransformTranslateXArgumentKind,
+    evidence_ref: CssTransformTranslateXArgumentEvidenceRef,
+}
+
+impl CssTransformTranslateXArgument {
+    pub(crate) const fn kind(&self) -> CssTransformTranslateXArgumentKind {
+        self.kind
+    }
+
+    pub(crate) const fn evidence_ref(&self) -> CssTransformTranslateXArgumentEvidenceRef {
+        self.evidence_ref
+    }
+}
+
+/// One qualified authored `translateX()` transform component: exactly one
+/// direct authored `<length-percentage>` argument (#653), carrying the
+/// exact tokenizer-owned evidence retained at its own semantic argument
+/// slot. Unlike `translate()`, `translateX()` has no optional second
+/// argument, so this leaf carries a single argument directly rather than an
+/// ordered one-or-two cardinality. This leaf constructs no displacement,
+/// resolves no percentage basis, and performs no unit conversion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTransformTranslateXFunction {
+    argument: CssTransformTranslateXArgument,
+}
+
+impl CssTransformTranslateXFunction {
+    pub(crate) const fn argument(&self) -> CssTransformTranslateXArgument {
+        self.argument
+    }
+}
+
 /// One qualified selected `transform` component under the profile
 /// `SelectedTransformFunction := Matrix | Scale | Translate3d | Rotate3d |
-/// Translate` (#418 / #645 / #647 / #649 / #651), preserving exact
-/// authored order between the five selected function kinds. This is a
-/// closed property-local alternation, not a generic CSS function AST: it
-/// exists only to retain heterogeneous authored order for the selected
-/// `transform` branches.
+/// Translate | TranslateX` (#418 / #645 / #647 / #649 / #651 / #653),
+/// preserving exact authored order between the six selected function
+/// kinds. This is a closed property-local alternation, not a generic CSS
+/// function AST: it exists only to retain heterogeneous authored order for
+/// the selected `transform` branches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssTransformFunction {
     Matrix(CssTransformMatrixFunction),
@@ -6768,6 +6841,7 @@ pub(crate) enum CssTransformFunction {
     Translate3d(CssTransformTranslate3dFunction),
     Rotate3d(CssTransformRotate3dFunction),
     Translate(CssTransformTranslateFunction),
+    TranslateX(CssTransformTranslateXFunction),
 }
 
 /// One authored `transform` value under the direct-authored profile
@@ -6775,13 +6849,14 @@ pub(crate) enum CssTransformFunction {
 /// scale([<number> | <percentage>]#{1,2}) | translate3d(<length-percentage>,
 /// <length-percentage>, <length>) | rotate3d(<number>, <number>, <number>,
 /// [<angle> | <zero>]) | translate(<length-percentage>,
-/// <length-percentage>?) ]+` (#418 / #645 / #647 / #649 / #651): either
-/// the dedicated whole-value `none` sentinel or an ordered, possibly
-/// repeated, one-or-more list of qualified `matrix()`/`scale()`/
-/// `translate3d()`/`rotate3d()`/`translate()` components in exact authored
-/// order. This is not a complete normative `transform` grammar: it
-/// qualifies only the `matrix()`, `scale()`, `translate3d()`, `rotate3d()`,
-/// and `translate()` branches of `<transform-function>`.
+/// <length-percentage>?) | translateX(<length-percentage>) ]+` (#418 /
+/// #645 / #647 / #649 / #651 / #653): either the dedicated whole-value
+/// `none` sentinel or an ordered, possibly repeated, one-or-more list of
+/// qualified `matrix()`/`scale()`/`translate3d()`/`rotate3d()`/
+/// `translate()`/`translateX()` components in exact authored order. This
+/// is not a complete normative `transform` grammar: it qualifies only the
+/// `matrix()`, `scale()`, `translate3d()`, `rotate3d()`, `translate()`,
+/// and `translateX()` branches of `<transform-function>`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CssTransformValue {
     None,
@@ -8049,6 +8124,29 @@ impl CssValueQualificationRunResult {
     pub(crate) fn transform_translate_argument_token(
         &self,
         evidence: CssTransformTranslateArgumentEvidenceRef,
+    ) -> Option<&CssTokenKind> {
+        let item = self
+            .upstream_parser_result
+            .upstream_tokenizer_result()
+            .lexical_items()
+            .get(evidence.lexical_item_index())?;
+        let CssLexicalItem::SemanticToken(token) = item else {
+            return None;
+        };
+        Some(token.kind())
+    }
+
+    /// Resolves one qualified `transform` `translateX()` argument's
+    /// run-local evidence reference to its exact retained tokenizer token
+    /// kind, preserving authored sign spelling, integer/fraction digits,
+    /// exponent spelling, and unit identity without any machine-number
+    /// conversion or percentage/unit normalization. The retained token at
+    /// the evidence position is always a direct exact-zero `Number`, a
+    /// recognized-length `Dimension`, or a `Percentage`, matching the
+    /// argument's `CssTransformTranslateXArgumentKind`.
+    pub(crate) fn transform_translatex_argument_token(
+        &self,
+        evidence: CssTransformTranslateXArgumentEvidenceRef,
     ) -> Option<&CssTokenKind> {
         let item = self
             .upstream_parser_result
@@ -20545,12 +20643,108 @@ fn classify_transform_translate_argument(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CssTransformTranslateXArgumentClass {
+    Length(CssTransformTranslateXArgumentEvidenceRef),
+    Percentage(CssTransformTranslateXArgumentEvidenceRef),
+    OpaqueFunction,
+    Invalid,
+}
+
+/// Classifies one already-partitioned `translateX()` argument slot against
+/// the selected profile's single accepted shape -- a direct exact-zero
+/// `Number`, a `Dimension` with a recognized CSS length unit, or a
+/// `Percentage` (#653), mirroring `classify_transform_translate_argument`
+/// exactly, reusing its exact-zero and recognized-length-unit theorem.
+/// This is a distinct classification function from
+/// `classify_transform_translate_argument` and
+/// `classify_transform_translate3d_argument`: `translateX()` argument
+/// placement, `translate()` argument placement, and `translate3d()`
+/// argument placement remain distinct semantic roles even though they
+/// share the same direct `<length-percentage>` scalar theorem.
+///
+/// Whitespace and Comment trivia are excluded exactly as for `matrix()`/
+/// `scale()`/`translate3d()`/`translate()` arguments. An authored-empty
+/// slot has no retained semantic token and is decisively `Invalid`. A slot
+/// headed by a `Function` token is `OpaqueFunction` -- a structurally
+/// feasible position whose validity depends on calculated-value semantics
+/// this leaf does not own -- only when the slot is exactly one complete
+/// Function extent; a recognized generic whole-value-only Function name
+/// occupying this non-whole-value position is decisively `Invalid`
+/// instead, mirroring the accepted `matrix`/`scale`/`translate3d`/
+/// `translate` boundary. A Function followed by further retained material
+/// in the same slot is directly visible structural failure and stays
+/// decisively `Invalid`.
+///
+/// A non-zero unitless `Number` and a `Dimension` with an unrecognized unit
+/// (e.g. `deg`) both fall through to `Invalid`: this leaf never interprets
+/// an arbitrary `Number` as `Length`, and no range restriction or
+/// machine-number conversion is applied, so exact authored evidence stays
+/// authoritative for membership. A `Dimension`, `Ident`, or `String` token
+/// that is not a recognized length is a direct token-category failure and
+/// is decisively `Invalid`, as is any slot carrying more than one retained
+/// semantic token.
+fn classify_transform_translatex_argument(
+    slot: &[CssLexicalItem],
+    absolute_slot_start: usize,
+) -> CssTransformTranslateXArgumentClass {
+    let mut tokens = slot
+        .iter()
+        .enumerate()
+        .filter_map(|(relative_index, entry)| match entry {
+            CssLexicalItem::SemanticToken(token)
+                if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+            {
+                Some((relative_index, token))
+            }
+            _ => None,
+        });
+
+    let Some((relative_index, first)) = tokens.next() else {
+        return CssTransformTranslateXArgumentClass::Invalid;
+    };
+
+    if matches!(first.kind(), CssTokenKind::Function(_)) {
+        return match entire_function_name(slot) {
+            Some(name) if is_whole_value_function(name) => {
+                CssTransformTranslateXArgumentClass::Invalid
+            }
+            Some(_) => CssTransformTranslateXArgumentClass::OpaqueFunction,
+            None => CssTransformTranslateXArgumentClass::Invalid,
+        };
+    }
+
+    if tokens.next().is_some() {
+        return CssTransformTranslateXArgumentClass::Invalid;
+    }
+
+    match first.kind() {
+        CssTokenKind::Number { value, .. } if is_direct_zero_numeric_value(value) => {
+            CssTransformTranslateXArgumentClass::Length(CssTransformTranslateXArgumentEvidenceRef {
+                lexical_item_index: absolute_slot_start + relative_index,
+            })
+        }
+        CssTokenKind::Dimension { unit, .. } if is_css_length_unit(unit) => {
+            CssTransformTranslateXArgumentClass::Length(CssTransformTranslateXArgumentEvidenceRef {
+                lexical_item_index: absolute_slot_start + relative_index,
+            })
+        }
+        CssTokenKind::Percentage { .. } => CssTransformTranslateXArgumentClass::Percentage(
+            CssTransformTranslateXArgumentEvidenceRef {
+                lexical_item_index: absolute_slot_start + relative_index,
+            },
+        ),
+        _ => CssTransformTranslateXArgumentClass::Invalid,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CssTransformComponentClass {
     Matrix([CssTransformMatrixArgumentEvidenceRef; 6]),
     Scale(CssTransformScaleArguments),
     Translate3d(CssTransformTranslate3dFunction),
     Rotate3d(CssTransformRotate3dFunction),
     Translate(CssTransformTranslateArguments),
+    TranslateX(CssTransformTranslateXArgument),
     OpaqueTransformArgument,
     UnselectedTransformFunction,
     Invalid,
@@ -20558,8 +20752,8 @@ enum CssTransformComponentClass {
 
 /// Classifies one already-partitioned top-level `transform` component
 /// against the selected profile `SelectedTransformFunction := Matrix |
-/// Scale | Translate3d | Rotate3d | Translate` (#418 / #645 / #647 / #649 /
-/// #651).
+/// Scale | Translate3d | Rotate3d | Translate | TranslateX` (#418 / #645 /
+/// #647 / #649 / #651 / #653).
 ///
 /// `<transform-list>` admits only `<transform-function>` components, so a
 /// component that is not exactly one complete Function extent -- a bare
@@ -20650,12 +20844,26 @@ enum CssTransformComponentClass {
 /// or a synthesized argument -- an authored `translate(10px)` never gains
 /// a synthesized second argument.
 ///
+/// A Function named `translatex` ASCII-case-insensitively enters
+/// `translateX()` argument qualification: a directly visible slot count
+/// other than one is decisive `Invalid` before any argument is classified,
+/// so `translateX()` and `translateX(10px,20px)` both stay invalid on
+/// directly visible arity. Only at exactly one slot is the argument
+/// classified, accepting a direct `Length` or `Percentage`, with the same
+/// decisive-argument-over-opaque-sibling precedence as the other selected
+/// leaves (#653). The qualified single argument is carried directly by
+/// `CssTransformTranslateXArgument`, which has no one-vs-two cardinality to
+/// represent: `translateX()` accepts exactly one authored argument, never
+/// an optional second one, unlike `translate()`.
+///
 /// Any other Function name is `UnselectedTransformFunction`: `rotate(1deg)`,
-/// `matrix3d(...)`, `scaleX(...)`, and an unrecognized name alike stay
-/// outside selected-profile coverage instead of being decided here,
-/// because deciding them would require the full `<transform-function>`
-/// dispatch and the length/angle semantics this leaf does not own. A
-/// misplaced whole-value Function is the one exception: it has no
+/// `matrix3d(...)`, `scaleX(...)`, `translateY(...)`, `translateZ(...)`,
+/// and an unrecognized name alike stay outside selected-profile coverage
+/// instead of being decided here, because deciding them would require the
+/// full `<transform-function>` dispatch and the length/angle semantics
+/// this leaf does not own -- `translateY()`/`translateZ()` remaining
+/// unselected is load-bearing scope containment for #653, not an oversight.
+/// A misplaced whole-value Function is the one exception: it has no
 /// independent meaning inside a `<transform-list>` and is decisively
 /// `Invalid`, mirroring the accepted `scale` boundary.
 fn classify_transform_component(
@@ -20951,6 +21159,40 @@ fn classify_transform_component(
         return CssTransformComponentClass::Translate(arguments);
     }
 
+    if name.eq_ignore_ascii_case("translatex") {
+        let slots = transform_function_body_slot_ranges(component);
+        if slots.len() != 1 {
+            return CssTransformComponentClass::Invalid;
+        }
+
+        let slot_start = absolute_component_start + slots[0].start;
+        let argument_class =
+            classify_transform_translatex_argument(&component[slots[0].clone()], slot_start);
+
+        let argument = match argument_class {
+            CssTransformTranslateXArgumentClass::Length(evidence_ref) => {
+                CssTransformTranslateXArgument {
+                    kind: CssTransformTranslateXArgumentKind::Length,
+                    evidence_ref,
+                }
+            }
+            CssTransformTranslateXArgumentClass::Percentage(evidence_ref) => {
+                CssTransformTranslateXArgument {
+                    kind: CssTransformTranslateXArgumentKind::Percentage,
+                    evidence_ref,
+                }
+            }
+            CssTransformTranslateXArgumentClass::OpaqueFunction => {
+                return CssTransformComponentClass::OpaqueTransformArgument;
+            }
+            CssTransformTranslateXArgumentClass::Invalid => {
+                return CssTransformComponentClass::Invalid;
+            }
+        };
+
+        return CssTransformComponentClass::TranslateX(argument);
+    }
+
     if is_whole_value_function(name) {
         CssTransformComponentClass::Invalid
     } else {
@@ -20963,8 +21205,9 @@ fn classify_transform_component(
 /// matrix(<number>#{6}) | scale([<number> | <percentage>]#{1,2}) |
 /// translate3d(<length-percentage>, <length-percentage>, <length>) |
 /// rotate3d(<number>, <number>, <number>, [<angle> | <zero>]) |
-/// translate(<length-percentage>, <length-percentage>?) ]+`
-/// (#418 / #645 / #647 / #649 / #651).
+/// translate(<length-percentage>, <length-percentage>?) |
+/// translateX(<length-percentage>) ]+`
+/// (#418 / #645 / #647 / #649 / #651 / #653).
 ///
 /// Outcome precedence follows evidence authority, never scan order.
 /// Lower-layer lifecycle evidence is never touched here at all: this
@@ -20994,16 +21237,17 @@ fn classify_transform_component(
 /// the instant their block depth returns to zero, which also lets two
 /// adjacent selected-function components with no authored whitespace
 /// partition correctly, and preserves repeated and heterogeneous
-/// `matrix()`/`scale()`/`translate3d()`/`rotate3d()`/`translate()`
-/// components in exact authored order via `CssTransformFunction`.
+/// `matrix()`/`scale()`/`translate3d()`/`rotate3d()`/`translate()`/
+/// `translateX()` components in exact authored order via
+/// `CssTransformFunction`.
 ///
 /// Resolution then applies the fixed precedence: any decisively invalid
 /// component makes the declaration `InvalidForSelectedValueGrammar`
 /// regardless of what any other component would have contributed;
 /// otherwise an outer-level unselected `<transform-function>` is reported
 /// before an inner-level opaque `matrix()`/`scale()`/`translate3d()`/
-/// `rotate3d()`/`translate()` argument, because the coarser grammar level
-/// bounds coverage first. Both
+/// `rotate3d()`/`translate()`/`translateX()` argument, because the coarser
+/// grammar level bounds coverage first. Both
 /// flags are collected across the whole component sequence before either
 /// is reported, so the outcome never depends on which component was
 /// encountered first, and a single shared `FunctionValuedTransformArgument`
@@ -21147,6 +21391,11 @@ fn qualify_transform_value(
             CssTransformComponentClass::Translate(arguments) => {
                 functions.push(CssTransformFunction::Translate(
                     CssTransformTranslateFunction { arguments },
+                ));
+            }
+            CssTransformComponentClass::TranslateX(argument) => {
+                functions.push(CssTransformFunction::TranslateX(
+                    CssTransformTranslateXFunction { argument },
                 ));
             }
             CssTransformComponentClass::OpaqueTransformArgument => has_opaque_argument = true,
