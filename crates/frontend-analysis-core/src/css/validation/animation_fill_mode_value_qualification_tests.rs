@@ -335,6 +335,30 @@ fn duplicate_occurrences_and_existing_leaf_dispatch_remain_separate() {
 }
 
 #[test]
+fn property_name_matching_is_ascii_case_insensitive() {
+    use CssAnimationFillModeValue::{Both, Forwards, None};
+
+    let result = qualify(
+        6429,
+        concat!(
+            "a{ANIMATION-FILL-MODE:none;}",
+            "b{Animation-Fill-Mode:both,forwards;}",
+            "c{animation-fill-mode:none;}",
+        ),
+    );
+
+    assert_expected(
+        &result,
+        &[
+            qualified(&[None]),
+            qualified(&[Both, Forwards]),
+            qualified(&[None]),
+        ],
+    );
+    assert_eq!(result.animation_fill_mode_observations().len(), 3);
+}
+
+#[test]
 fn nonordinary_contexts_do_not_enter_animation_fill_mode_dispatch() {
     for (source_id, css) in [
         (6422, "@font-face{animation-fill-mode:none;}"),
