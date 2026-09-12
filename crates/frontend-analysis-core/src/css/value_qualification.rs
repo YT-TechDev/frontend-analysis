@@ -6246,6 +6246,60 @@ impl CssCaretAnimationQualificationObservation {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssCaretShapeValue {
+    Auto,
+    Bar,
+    Block,
+    Underscore,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssCaretShapeUnsupportedReason {
+    CssWideKeyword,
+    DeferredSubstitutionFunction,
+    WholeValueFunction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssCaretShapeQualificationOutcome {
+    Qualified(CssCaretShapeValue),
+    InvalidForSelectedValueGrammar,
+    UnsupportedBySelectedValueProfile(CssCaretShapeUnsupportedReason),
+}
+
+/// One selected ordinary declaration's bounded authored `caret-shape`
+/// qualification (#638): exactly one direct decoded Ident `auto`, `bar`,
+/// `block`, or `underscore`.
+///
+/// This proves only authored keyword identity. `Auto` records that the UA
+/// selects the effective caret shape; `Bar`, `Block`, and `Underscore` record
+/// only the authored identity, even when downstream UA/runtime behavior
+/// (including IME composition) renders a different shape. This observation
+/// performs no UA/platform effective-shape selection, IME composition-state
+/// integration, caret rendering/geometry, applicability filtering, or
+/// inheritance/cascade/computed-value semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssCaretShapeQualificationObservation {
+    occurrence_index: usize,
+    placement: CssDeclarationPlacement,
+    outcome: CssCaretShapeQualificationOutcome,
+}
+
+impl CssCaretShapeQualificationObservation {
+    pub(crate) const fn occurrence_index(&self) -> usize {
+        self.occurrence_index
+    }
+
+    pub(crate) const fn placement(&self) -> CssDeclarationPlacement {
+        self.placement
+    }
+
+    pub(crate) const fn outcome(&self) -> CssCaretShapeQualificationOutcome {
+        self.outcome
+    }
+}
+
 /// Run-owned result for the currently selected bounded CSS value capabilities.
 ///
 /// The exact Core-validated parser result is owned once here. Property-specific
@@ -6359,6 +6413,7 @@ pub(crate) struct CssValueQualificationRunResult {
     flood_opacity_observations: Vec<CssFloodOpacityQualificationObservation>,
     paint_order_observations: Vec<CssPaintOrderQualificationObservation>,
     caret_animation_observations: Vec<CssCaretAnimationQualificationObservation>,
+    caret_shape_observations: Vec<CssCaretShapeQualificationObservation>,
 }
 
 impl CssValueQualificationRunResult {
@@ -7302,6 +7357,10 @@ impl CssValueQualificationRunResult {
         &self.caret_animation_observations
     }
 
+    pub(crate) fn caret_shape_observations(&self) -> &[CssCaretShapeQualificationObservation] {
+        &self.caret_shape_observations
+    }
+
     /// Resolves one qualified `text-indent` `Length`/`Percentage`
     /// component's run-local evidence reference to its exact retained
     /// tokenizer token kind, preserving sign/zero spelling, magnitude,
@@ -7481,6 +7540,7 @@ pub(crate) fn run(
         flood_opacity_observations,
         paint_order_observations,
         caret_animation_observations,
+        caret_shape_observations,
     ) = {
         let tokenizer_result = parser_result.upstream_tokenizer_result();
         let mut cursor = LexicalWindowCursor::new(tokenizer_result);
@@ -7585,6 +7645,7 @@ pub(crate) fn run(
         let mut flood_opacity_observations = Vec::new();
         let mut paint_order_observations = Vec::new();
         let mut caret_animation_observations = Vec::new();
+        let mut caret_shape_observations = Vec::new();
 
         for (occurrence_index, occurrence) in parser_result.occurrences().iter().enumerate() {
             let property_range = cursor.window_for(occurrence.property_name())?;
@@ -8795,6 +8856,17 @@ pub(crate) fn run(
                     placement: occurrence.placement(),
                     outcome: qualify_caret_animation_value(value_items),
                 });
+                continue;
+            }
+
+            if property_name.eq_ignore_ascii_case("caret-shape") {
+                let value_range = cursor.window_for(occurrence.value())?;
+                let value_items = &tokenizer_result.lexical_items()[value_range];
+                caret_shape_observations.push(CssCaretShapeQualificationObservation {
+                    occurrence_index,
+                    placement: occurrence.placement(),
+                    outcome: qualify_caret_shape_value(value_items),
+                });
             }
         }
 
@@ -8900,6 +8972,7 @@ pub(crate) fn run(
             flood_opacity_observations,
             paint_order_observations,
             caret_animation_observations,
+            caret_shape_observations,
         )
     };
 
@@ -9006,6 +9079,7 @@ pub(crate) fn run(
         flood_opacity_observations,
         paint_order_observations,
         caret_animation_observations,
+        caret_shape_observations,
     })
 }
 
@@ -18902,6 +18976,71 @@ fn qualify_caret_animation_value(
             )
         }
         _ => CssCaretAnimationQualificationOutcome::InvalidForSelectedValueGrammar,
+    }
+}
+
+/// Qualifies one retained `caret-shape` declaration value against the
+/// pin-bounded exact four-keyword authored grammar (#638): `auto | bar |
+/// block | underscore`. This proves only authored grammar membership and
+/// authored keyword identity -- never UA-selected/effective caret shape,
+/// IME composition-time override, rendered caret geometry, glyph metrics,
+/// writing-mode placement, applicability filtering, or
+/// inheritance/cascade/computed-value semantics. Aliases and
+/// historical-looking near-misses (`none`, `underline`, `vertical`, `rect`)
+/// remain outside the pinned grammar and stay decisively
+/// `InvalidForSelectedValueGrammar`, exactly as any other multi-component or
+/// comma-delimited value is for the other accepted single-keyword leaves.
+/// This property has no ordinary Function branch in the selected grammar, so
+/// an unrecognized Function (e.g. `foo()`, `calc(1)`) falls through to the
+/// same direct grammar mismatch as any other wrong token class.
+fn qualify_caret_shape_value(items: &[CssLexicalItem]) -> CssCaretShapeQualificationOutcome {
+    if contains_deferred_substitution_function(items) {
+        return CssCaretShapeQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssCaretShapeUnsupportedReason::DeferredSubstitutionFunction,
+        );
+    }
+
+    if is_entire_whole_value_function(items) {
+        return CssCaretShapeQualificationOutcome::UnsupportedBySelectedValueProfile(
+            CssCaretShapeUnsupportedReason::WholeValueFunction,
+        );
+    }
+
+    let mut tokens = items.iter().filter_map(|item| match item {
+        CssLexicalItem::SemanticToken(token)
+            if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+        {
+            Some(token)
+        }
+        _ => None,
+    });
+
+    let Some(token) = tokens.next() else {
+        return CssCaretShapeQualificationOutcome::InvalidForSelectedValueGrammar;
+    };
+    if tokens.next().is_some() {
+        return CssCaretShapeQualificationOutcome::InvalidForSelectedValueGrammar;
+    }
+
+    match token.kind() {
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("auto") => {
+            CssCaretShapeQualificationOutcome::Qualified(CssCaretShapeValue::Auto)
+        }
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("bar") => {
+            CssCaretShapeQualificationOutcome::Qualified(CssCaretShapeValue::Bar)
+        }
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("block") => {
+            CssCaretShapeQualificationOutcome::Qualified(CssCaretShapeValue::Block)
+        }
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("underscore") => {
+            CssCaretShapeQualificationOutcome::Qualified(CssCaretShapeValue::Underscore)
+        }
+        CssTokenKind::Ident(identifier) if is_css_wide_keyword(identifier) => {
+            CssCaretShapeQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssCaretShapeUnsupportedReason::CssWideKeyword,
+            )
+        }
+        _ => CssCaretShapeQualificationOutcome::InvalidForSelectedValueGrammar,
     }
 }
 
