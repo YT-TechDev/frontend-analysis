@@ -5,7 +5,7 @@ use crate::css::token::{CssExponentSign, CssNumberSign, CssTokenKind};
 use crate::css::tokenizer::resource::CssTokenizerLimits;
 use crate::css::value_qualification::{
     CssTransformFunction, CssTransformQualificationOutcome, CssTransformRotate3dAngleArgument,
-    CssTransformRotate3dFunction, CssTransformScaleArgumentKind,
+    CssTransformRotate3dFunction, CssTransformScaleArgumentKind, CssTransformScaleXArgumentKind,
     CssTransformTranslate3dXyArgumentKind, CssTransformTranslateArgumentKind,
     CssTransformTranslateXArgumentKind, CssTransformTranslateYArgumentKind,
     CssTransformUnsupportedReason, CssTransformValue, CssValueQualificationRunResult, run,
@@ -616,6 +616,78 @@ fn translatez_argument_spelling(
     authored_translatez_argument_spelling(token)
 }
 
+/// Reconstructs one retained `Number` or `Percentage` token's authored
+/// numeric structure from tokenizer-owned evidence alone, exactly like
+/// `authored_scale_argument_spelling`, with a trailing `%` marker
+/// distinguishing a `Percentage` token so `2` and `2%` stay distinguishable
+/// in assertions and a `Percentage` is never collapsed into a `Number`.
+/// This is a dedicated `scaleX()` test helper, distinct from
+/// `authored_scale_argument_spelling`: `scaleX()` argument placement and
+/// `scale()` argument placement remain distinct semantic roles even though
+/// the underlying scalar spelling logic is identical (#659). No machine
+/// number is ever produced.
+fn authored_scalex_argument_spelling(token: &CssTokenKind) -> String {
+    let (value, is_percentage) = match token {
+        CssTokenKind::Number { value, .. } => (value, false),
+        CssTokenKind::Percentage { value } => (value, true),
+        other => panic!(
+            "scaleX argument evidence did not resolve to a Number/Percentage token, got {other:?}"
+        ),
+    };
+
+    let mut spelling = String::new();
+    match value.sign() {
+        Some(CssNumberSign::Plus) => spelling.push('+'),
+        Some(CssNumberSign::Minus) => spelling.push('-'),
+        None => {}
+    }
+    spelling.push_str(value.decimal().integer_digits());
+    let fraction_digits = value.decimal().fraction_digits();
+    if !fraction_digits.is_empty() {
+        spelling.push('.');
+        spelling.push_str(fraction_digits);
+    }
+    if let Some(exponent) = value.decimal().exponent() {
+        spelling.push('e');
+        match exponent.sign() {
+            Some(CssExponentSign::Plus) => spelling.push('+'),
+            Some(CssExponentSign::Minus) => spelling.push('-'),
+            None => {}
+        }
+        spelling.push_str(exponent.digits());
+    }
+    if is_percentage {
+        spelling.push('%');
+    }
+    spelling
+}
+
+/// Resolves one qualified `scaleX()` transform component's single authored
+/// argument at `function_index` within observation `index` into its
+/// `(kind, spelling)` pair, mirroring `translatex_argument_spelling`.
+/// Unlike `scale_argument_spellings`, this returns a single pair rather
+/// than an ordered vector: `scaleX()` has no optional second argument
+/// (#659).
+fn scalex_argument_spelling(
+    result: &CssValueQualificationRunResult,
+    index: usize,
+    function_index: usize,
+) -> (CssTransformScaleXArgumentKind, String) {
+    let functions = qualified_functions(result, index);
+    let function = functions
+        .get(function_index)
+        .unwrap_or_else(|| panic!("missing transform component {function_index} at {index}"));
+    let CssTransformFunction::ScaleX(scalex) = function else {
+        panic!("expected scaleX component {function_index} at {index}, got {function:?}");
+    };
+
+    let argument = scalex.argument();
+    let token = result
+        .transform_scalex_argument_token(argument.evidence_ref())
+        .expect("scaleX argument evidence did not resolve");
+    (argument.kind(), authored_scalex_argument_spelling(token))
+}
+
 /// Reconstructs one retained `Number` or `Dimension` token's authored
 /// numeric structure from tokenizer-owned evidence alone, exactly like
 /// `authored_number_spelling`, with the authored unit spelling appended for
@@ -1105,7 +1177,6 @@ fn unselected_transform_functions_remain_outside_selected_profile() {
             "rotate(1deg)",
             "matrix(1,0,0,1,0,0) rotate(1deg)",
             "rotate(1deg) matrix(1,0,0,1,0,0)",
-            "scaleX(2)",
             "scaleY(2)",
             "scaleZ(2)",
             "scale3d(1,1,1)",
@@ -1416,7 +1487,7 @@ fn repeated_and_cross_source_runs_are_deterministic() {
         "g{transform:matrix(1,0,0,1,0,0) none;}",
         "h{transform:scale(2) matrix(1,0,0,1,0,0);}",
         "i{transform:scale(calc(1),2);}",
-        "j{transform:scaleX(2);}",
+        "j{transform:scaleY(2);}",
         "k{transform:scale(1,2,3);}",
     );
 
@@ -1607,11 +1678,13 @@ fn scale_function_name_recognition_is_ascii_case_insensitive() {
     }
 
     // A name that merely starts with `scale` is a different function and
-    // stays outside selected-profile coverage.
+    // stays outside selected-profile coverage. `scaleX()`/`scalex()` are
+    // selected separately by #659 and are covered by their own dedicated
+    // test group below, so they are no longer representative here.
     assert_all_unsupported(
         645290,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
-        &["scaleX(2)", "scale3d(1,1,1)", "scalex(2)"],
+        &["scale3d(1,1,1)"],
     );
 }
 
@@ -5008,19 +5081,25 @@ fn unselected_outer_function_precedence_covers_translatex() {
     assert_all_invalid(653440, &["translateX(1) rotate(10deg)"]);
 }
 
-// 112. `scaleX()` remains outside selected-profile coverage after #653:
-// extending coverage with `translateX()` never widens the selected profile
-// to an unrelated sibling, in isolation or alongside a qualified
-// `translateX()` (#653). `translateY()` and `translateZ()` are qualified
-// separately by #655 and #657 and are covered by their own dedicated test
-// groups below.
+// 112. `scaleY()`, `scaleZ()`, and `scale3d()` remain outside
+// selected-profile coverage after #653: extending coverage with
+// `translateX()` never widens the selected profile to an unrelated sibling,
+// in isolation or alongside a qualified `translateX()` (#653). `translateY()`
+// and `translateZ()` are qualified separately by #655 and #657, and
+// `scaleX()` is qualified separately by #659; each is covered by its own
+// dedicated test group.
 
 #[test]
-fn scalex_remains_unselected_after_translatex_coverage() {
+fn scale_family_siblings_remain_unselected_after_translatex_coverage() {
     assert_all_unsupported(
         653450,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
-        &["scaleX(2)", "translateX(20px) scaleX(2)"],
+        &[
+            "scaleY(2)",
+            "scaleZ(2)",
+            "scale3d(1,1,1)",
+            "translateX(20px) scaleY(2)",
+        ],
     );
 }
 
@@ -6954,4 +7033,758 @@ fn translatez_cross_leaf_isolation_is_preserved() {
     assert_eq!(result.transform_style_observations().len(), 1);
 
     assert_all_invalid(657650, &["none translateZ(10px)", "translateZ(10px) none"]);
+}
+
+// 170. `scaleX() = scaleX([<number> | <percentage>])` under current CSS
+// Transforms Level 2 authority (#659): a direct `<number>` argument
+// qualifies, preserving exact authored sign/fraction/exponent evidence
+// without any machine-number conversion, reusing the accepted `scale()`
+// (#645) Number theorem. Unlike `translateX()`/`translateY()`/`translateZ()`,
+// `scaleX()` never restricts a `Number` to exact-zero: a nonzero `Number`
+// is directly valid here.
+
+#[test]
+fn canonical_scalex_number_qualifies() {
+    let result = qualify(
+        659100,
+        concat!(
+            "a{transform:scaleX(2);}",
+            "b{transform:scaleX(-1);}",
+            "c{transform:scaleX(0);}",
+            "d{transform:scaleX(+0);}",
+            "e{transform:scaleX(-0);}",
+            "f{transform:scaleX(.5);}",
+            "g{transform:scaleX(1.5);}",
+            "h{transform:scaleX(1e2);}",
+            "i{transform:scaleX(-1e-2);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 9);
+    let expected = [
+        "2", "-1", "0", "+0", "-0",
+        // Authored `.5`: the absent leading integer digit is canonicalized
+        // to `0` by the tokenizer's own retained numeric contract, upstream
+        // of this leaf, exactly as for `scale()` arguments.
+        "0.5", "1.5", "1e2", "-1e-2",
+    ];
+    for (index, spelling) in expected.into_iter().enumerate() {
+        assert_eq!(
+            scalex_argument_spelling(&result, index, 0),
+            (CssTransformScaleXArgumentKind::Number, spelling.to_string()),
+            "expected Number at {index}"
+        );
+    }
+}
+
+// 171. A direct `<percentage>` argument qualifies identically to `<number>`
+// under current CSS Transforms Level 2 authority, retaining current Level 2
+// Percentage support rather than regressing to the older Level 1
+// `<number>`-only grammar (#659).
+
+#[test]
+fn canonical_scalex_percentage_qualifies() {
+    let result = qualify(
+        659120,
+        concat!(
+            "a{transform:scaleX(250%);}",
+            "b{transform:scaleX(0%);}",
+            "c{transform:scaleX(-20%);}",
+            "d{transform:scaleX(+10%);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 4);
+    for (index, spelling) in ["250%", "0%", "-20%", "+10%"].into_iter().enumerate() {
+        assert_eq!(
+            scalex_argument_spelling(&result, index, 0),
+            (
+                CssTransformScaleXArgumentKind::Percentage,
+                spelling.to_string()
+            ),
+            "expected Percentage at {index}"
+        );
+    }
+}
+
+// 172. `scaleX(0)` and `scaleX(0%)` remain pairwise distinguishable: `0`
+// qualifies through `Number` evidence and `0%` qualifies through
+// `Percentage` evidence, never collapsed into each other merely because
+// their downstream transform semantics may be numerically equivalent. This
+// boundary is load-bearing for #659.
+
+#[test]
+fn scalex_zero_number_vs_zero_percent_identity() {
+    let result = qualify(
+        659140,
+        concat!("a{transform:scaleX(0);}", "b{transform:scaleX(0%);}",),
+    );
+
+    let number = scalex_argument_spelling(&result, 0, 0);
+    let percentage = scalex_argument_spelling(&result, 1, 0);
+    assert_eq!(
+        number,
+        (CssTransformScaleXArgumentKind::Number, "0".to_string())
+    );
+    assert_eq!(
+        percentage,
+        (CssTransformScaleXArgumentKind::Percentage, "0%".to_string())
+    );
+    assert_ne!(number.0, percentage.0);
+    assert_ne!(number.1, percentage.1);
+}
+
+// 173. `scaleX()` accepts exactly one authored argument: zero, two, three,
+// or more directly visible arguments are decisive
+// `InvalidForSelectedValueGrammar` (#659).
+
+#[test]
+fn scalex_argument_cardinality_other_than_one_is_invalid() {
+    assert_all_invalid(
+        659160,
+        &[
+            "scaleX()",
+            "scaleX(1,2)",
+            "scaleX(1,2,3)",
+            "scaleX(2,3,4,5)",
+        ],
+    );
+}
+
+// 174. A comma is the only accepted inner separator, and an authored-empty
+// position is preserved as its own ordered slot and rejected -- never
+// collapsed away (#659).
+
+#[test]
+fn scalex_argument_delimiter_failures_are_invalid() {
+    assert_all_invalid(
+        659180,
+        &["scaleX(,)", "scaleX(,1)", "scaleX(1,)", "scaleX(1,,2)"],
+    );
+}
+
+// 175. `ScaleXArgument := DirectNumber | DirectPercentage` admits no other
+// direct token category: a `Dimension` -- including a recognized length,
+// angle, or unrecognized unit -- and every other direct token category are
+// decisive direct token-category failures (#659). No direct `Dimension` is
+// ever accepted, unlike a proposed or historical scale-length theorem this
+// leaf does not implement.
+
+#[test]
+fn wrong_direct_categories_are_invalid_for_scalex() {
+    assert_all_invalid(
+        659200,
+        &[
+            "scaleX(1px)",
+            "scaleX(1em)",
+            "scaleX(45deg)",
+            "scaleX(1s)",
+            "scaleX(1fr)",
+            "scaleX(1unknownunit)",
+            "scaleX(foo)",
+            "scaleX(\"1\")",
+            "scaleX(#abc)",
+        ],
+    );
+}
+
+// 176. A complete non-deferred Function occupying the single `scaleX()`
+// argument slot is selected-profile Unsupported, mirroring the shared
+// `FunctionValuedTransformArgument` reason `scale()`/`translate()`/
+// `translate3d()`/`translateX()`/`translateY()`/`translateZ()` opaque
+// arguments use -- this leaf never evaluates `calc()` and never decides an
+// opaque Function's inner result type, so a `calc()` whose inner content
+// looks like a `Percentage` stays Unsupported via the same shared boundary
+// (#659).
+
+#[test]
+fn opaque_scalex_argument_function_is_unsupported() {
+    assert_all_unsupported(
+        659220,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
+        &[
+            "scaleX(calc(1))",
+            "scaleX(calc(100%))",
+            "scaleX(min(1,2))",
+            "scaleX(max(1,2))",
+            "scaleX(clamp(0,1,2))",
+            "scaleX(calc(0%))",
+            "scaleX(calc(50%))",
+            "matrix(1,0,0,1,0,0) scaleX(calc(1))",
+        ],
+    );
+}
+
+// 177. A Function followed by additional direct material in the same slot
+// is directly visible structural failure and stays decisively `Invalid`: a
+// structurally feasible complete opaque Function is never softened to
+// Unsupported by an unevaluated sibling in the same slot (#659).
+
+#[test]
+fn function_plus_junk_in_same_slot_is_invalid_for_scalex() {
+    assert_all_invalid(
+        659240,
+        &[
+            "scaleX(calc(1) 2)",
+            "scaleX(calc(1) foo)",
+            "scaleX(calc(1) 20%)",
+        ],
+    );
+}
+
+// 178. A comma nested inside a Function argument is at a deeper relative
+// depth and never becomes a scaleX-level argument separator. Once the
+// nesting closes, a genuine second scaleX-level slot is still counted and
+// makes the shell decisively Invalid, since `scaleX()` has no second slot
+// to occupy (#659).
+
+#[test]
+fn nested_commas_never_change_scalex_arity() {
+    assert_all_unsupported(
+        659260,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
+        &["scaleX(calc(1,2))"],
+    );
+
+    assert_all_invalid(659261, &["scaleX(calc(1,2),3)"]);
+}
+
+// 179. Deferred substitution can alter the enclosing token sequence,
+// separators, and cardinality, so it is resolved before any surrounding
+// scaleX shape conclusion -- including an arity that looks decisive (#659).
+
+#[test]
+fn scalex_deferred_substitution_outranks_surrounding_shape_conclusions() {
+    assert_all_unsupported(
+        659280,
+        CssTransformUnsupportedReason::DeferredSubstitutionFunction,
+        &[
+            "scaleX(var(--x))",
+            "scaleX(var(--x),2)",
+            "matrix(1,0,0,1,0,0) scaleX(var(--x))",
+            "scaleX(var(--x)) matrix(1,0,0,1,0,0)",
+        ],
+    );
+}
+
+// 180. Directly visible decisive invalidity outranks an opaque Function
+// found in a sibling slot; a direct wrong-category failure remains
+// decisive even alongside an outer unselected sibling, in either authored
+// order (#659).
+
+#[test]
+fn scalex_decisive_invalid_outranks_opaque_argument() {
+    assert_all_invalid(659300, &["scaleX(calc(1),1)"]);
+
+    assert_all_invalid(
+        659301,
+        &["scaleX(1px) rotate(10deg)", "rotate(10deg) scaleX(1px)"],
+    );
+}
+
+// 181. Selected `matrix()`, `scale()`, `translate3d()`, `rotate3d()`,
+// `translate()`, `translateX()`, `translateY()`, `translateZ()`, and
+// `scaleX()` components mix and repeat freely, preserving exact authored
+// order and repetition through the heterogeneous `CssTransformFunction`
+// alternation, and no selected leaf's evidence drifts across another's
+// index in a mixed sequence (#418 / #645 / #647 / #649 / #651 / #653 /
+// #655 / #657 / #659).
+
+#[test]
+fn mixed_selected_function_order_including_scalex_is_preserved() {
+    let result = qualify(
+        659320,
+        concat!(
+            "a{transform:matrix(1,0,0,1,0,0) scaleX(2);}",
+            "b{transform:scaleX(2) matrix(1,0,0,1,0,0);}",
+            "c{transform:scale(2) scaleX(3);}",
+            "d{transform:scaleX(3) scale(2);}",
+            "e{transform:translate3d(1px,2px,3px) scaleX(2);}",
+            "f{transform:scaleX(2) translate3d(1px,2px,3px);}",
+            "g{transform:rotate3d(1,0,0,90deg) scaleX(2);}",
+            "h{transform:scaleX(2) rotate3d(1,0,0,90deg);}",
+            "i{transform:translate(10px) scaleX(2);}",
+            "j{transform:scaleX(2) translate(10px);}",
+            "k{transform:translateX(10px) scaleX(2);}",
+            "l{transform:scaleX(2) translateX(10px);}",
+            "m{transform:translateY(10px) scaleX(2);}",
+            "n{transform:scaleX(2) translateY(10px);}",
+            "o{transform:translateZ(10px) scaleX(2);}",
+            "p{transform:scaleX(2) translateZ(10px);}",
+            "q{transform:scaleX(1) scaleX(2);}",
+            "r{transform:matrix(1,0,0,1,0,0) scale(2) translate3d(1px,2px,3px) rotate3d(1,0,0,90deg) translate(10px) translateX(20px) translateY(30px) translateZ(40px) scaleX(50);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 18);
+
+    for index in 0..17 {
+        assert_eq!(
+            qualified_functions(&result, index).len(),
+            2,
+            "expected two components at {index}"
+        );
+    }
+    assert_eq!(qualified_functions(&result, 17).len(), 9);
+
+    assert!(matches!(
+        qualified_functions(&result, 0)[0],
+        CssTransformFunction::Matrix(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 0)[1],
+        CssTransformFunction::ScaleX(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 1)[0],
+        CssTransformFunction::ScaleX(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 1)[1],
+        CssTransformFunction::Matrix(_)
+    ));
+
+    let nine_kind_sequence = qualified_functions(&result, 17);
+    assert!(matches!(
+        nine_kind_sequence[0],
+        CssTransformFunction::Matrix(_)
+    ));
+    assert!(matches!(
+        nine_kind_sequence[1],
+        CssTransformFunction::Scale(_)
+    ));
+    assert!(matches!(
+        nine_kind_sequence[2],
+        CssTransformFunction::Translate3d(_)
+    ));
+    assert!(matches!(
+        nine_kind_sequence[3],
+        CssTransformFunction::Rotate3d(_)
+    ));
+    assert!(matches!(
+        nine_kind_sequence[4],
+        CssTransformFunction::Translate(_)
+    ));
+    assert!(matches!(
+        nine_kind_sequence[5],
+        CssTransformFunction::TranslateX(_)
+    ));
+    assert!(matches!(
+        nine_kind_sequence[6],
+        CssTransformFunction::TranslateY(_)
+    ));
+    assert!(matches!(
+        nine_kind_sequence[7],
+        CssTransformFunction::TranslateZ(_)
+    ));
+    assert!(matches!(
+        nine_kind_sequence[8],
+        CssTransformFunction::ScaleX(_)
+    ));
+
+    // Repeated `scaleX()` preserves authored order and each component's own
+    // evidence.
+    let repeated = qualified_functions(&result, 16);
+    assert!(matches!(repeated[0], CssTransformFunction::ScaleX(_)));
+    assert!(matches!(repeated[1], CssTransformFunction::ScaleX(_)));
+    assert_eq!(
+        scalex_argument_spelling(&result, 16, 0),
+        (CssTransformScaleXArgumentKind::Number, "1".to_string())
+    );
+    assert_eq!(
+        scalex_argument_spelling(&result, 16, 1),
+        (CssTransformScaleXArgumentKind::Number, "2".to_string())
+    );
+
+    // `translate()` and `scaleX()` remain distinct evidence indices in a
+    // mixed sequence: neither drifts into the other's slot.
+    assert!(matches!(
+        qualified_functions(&result, 8)[0],
+        CssTransformFunction::Translate(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 8)[1],
+        CssTransformFunction::ScaleX(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 9)[0],
+        CssTransformFunction::ScaleX(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 9)[1],
+        CssTransformFunction::Translate(_)
+    ));
+}
+
+// 182. `scale()` and `scaleX()` remain distinct semantic placements: neither
+// their representation, cardinality, nor evidence leaks into the other in a
+// mixed sequence, in either authored order, and `scale()` retains its
+// accepted one-or-two authored cardinality unaffected by `scaleX()`'s
+// exact-one cardinality (#645 / #659).
+
+#[test]
+fn scale_scalex_separation_preserves_distinct_representation_and_evidence() {
+    let result = qualify(
+        659340,
+        concat!(
+            "a{transform:scale(1,200%) scaleX(300%);}",
+            "b{transform:scaleX(400%) scale(2);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 2);
+
+    let first = qualified_functions(&result, 0);
+    assert_eq!(first.len(), 2);
+    assert!(matches!(first[0], CssTransformFunction::Scale(_)));
+    assert!(matches!(first[1], CssTransformFunction::ScaleX(_)));
+    assert_eq!(
+        scale_argument_spellings(&result, 0, 0),
+        vec![
+            (CssTransformScaleArgumentKind::Number, "1".to_string()),
+            (
+                CssTransformScaleArgumentKind::Percentage,
+                "200%".to_string()
+            ),
+        ]
+    );
+    assert_eq!(
+        scalex_argument_spelling(&result, 0, 1),
+        (
+            CssTransformScaleXArgumentKind::Percentage,
+            "300%".to_string()
+        )
+    );
+
+    let second = qualified_functions(&result, 1);
+    assert_eq!(second.len(), 2);
+    assert!(matches!(second[0], CssTransformFunction::ScaleX(_)));
+    assert!(matches!(second[1], CssTransformFunction::Scale(_)));
+    assert_eq!(
+        scalex_argument_spelling(&result, 1, 0),
+        (
+            CssTransformScaleXArgumentKind::Percentage,
+            "400%".to_string()
+        )
+    );
+    assert_eq!(
+        scale_argument_spellings(&result, 1, 1),
+        vec![(CssTransformScaleArgumentKind::Number, "2".to_string())]
+    );
+}
+
+// 183. Every `<transform-function>` other than the selected leaves stays
+// outside selected-profile coverage, in either authored order and
+// regardless of a sibling qualified selected function, and the coarser
+// outer unselected-function coverage outranks an inner opaque `scaleX()`
+// argument (#659).
+
+#[test]
+fn unselected_outer_function_precedence_covers_scalex() {
+    assert_all_unsupported(
+        659360,
+        CssTransformUnsupportedReason::UnselectedTransformFunction,
+        &[
+            "scaleX(2) rotate(10deg)",
+            "rotate(10deg) scaleX(2)",
+            "scaleX(2) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
+        ],
+    );
+
+    // Coarser outer unselected-function coverage outranks an inner opaque
+    // scaleX argument, identically in both authored orders.
+    assert_all_unsupported(
+        659380,
+        CssTransformUnsupportedReason::UnselectedTransformFunction,
+        &[
+            "scaleX(calc(1)) rotate(10deg)",
+            "rotate(10deg) scaleX(calc(1))",
+        ],
+    );
+
+    // Decisive direct Invalid still wins over the outer unselected sibling.
+    assert_all_invalid(659400, &["scaleX(1px) rotate(10deg)"]);
+}
+
+// 184. `scaleY()`, `scaleZ()`, and `scale3d()` remain outside
+// selected-profile coverage after #659: adding `scaleX()` never widens the
+// selected profile to these unrelated siblings, in isolation or alongside
+// a qualified `scaleX()`, in either authored order (#659).
+
+#[test]
+fn scale_family_siblings_remain_unselected_alongside_scalex() {
+    assert_all_unsupported(
+        659420,
+        CssTransformUnsupportedReason::UnselectedTransformFunction,
+        &[
+            "scaleY(2)",
+            "scaleZ(2)",
+            "scale3d(1,1,1)",
+            "scaleX(2) scaleY(2)",
+            "scaleY(2) scaleX(2)",
+        ],
+    );
+}
+
+// 185. `<transform-list>` is whitespace-separated repetition: a top-level
+// comma is never a permitted separator, including between two `scaleX()`
+// components or a `scaleX()` and a sibling selected function (#659).
+
+#[test]
+fn top_level_comma_is_invalid_around_scalex() {
+    assert_all_invalid(
+        659440,
+        &[
+            "scaleX(2), matrix(1,0,0,1,0,0)",
+            "scaleX(2), scale(2)",
+            "scaleX(2), translate3d(1px,2px,3px)",
+            "scaleX(2), rotate3d(1,0,0,90deg)",
+            "scaleX(2), translate(10px)",
+            "scaleX(2), translateX(20px)",
+            "scaleX(2), translateY(20px)",
+            "scaleX(2), translateZ(20px)",
+            "scaleX(2), scaleX(3)",
+        ],
+    );
+}
+
+// 186. CSS Syntax function consumption may end at a true stylesheet EOF, so
+// a parser-committed EOF-ended `scaleX()` extent is qualified from retained
+// interior evidence alone. EOF never fills or repairs a missing argument, a
+// wrong direct category, or a second slot `scaleX()` has no room for
+// (#659).
+
+#[test]
+fn true_stylesheet_eof_ended_scalex_extent_follows_parser_authority() {
+    let number_eof = qualify(659460, "a{transform:scaleX(2");
+    assert_eq!(
+        number_eof.execution_completion(),
+        CssParserExecutionCompletion::Complete
+    );
+    assert_eq!(number_eof.transform_observations().len(), 1);
+    assert_eq!(
+        scalex_argument_spelling(&number_eof, 0, 0),
+        (CssTransformScaleXArgumentKind::Number, "2".to_string())
+    );
+
+    let percentage_eof = qualify(659461, "a{transform:scaleX(50%");
+    assert_eq!(
+        percentage_eof.execution_completion(),
+        CssParserExecutionCompletion::Complete
+    );
+    assert_eq!(percentage_eof.transform_observations().len(), 1);
+    assert_eq!(
+        scalex_argument_spelling(&percentage_eof, 0, 0),
+        (
+            CssTransformScaleXArgumentKind::Percentage,
+            "50%".to_string()
+        )
+    );
+
+    // Zero-slot EOF stays decisively Invalid.
+    let zero_slot = qualify(659462, "a{transform:scaleX(");
+    assert_invalid(&zero_slot, 0);
+
+    // A trailing comma at true EOF stays decisively Invalid: scaleX()
+    // never accepts a second slot.
+    let trailing_comma = qualify(659463, "a{transform:scaleX(2,");
+    assert_invalid(&trailing_comma, 0);
+
+    // EOF never repairs a direct Dimension category.
+    let wrong_category_eof = qualify(659464, "a{transform:scaleX(1px");
+    assert_invalid(&wrong_category_eof, 0);
+
+    // A second slot never widens scaleX() cardinality, even at true EOF.
+    let two_slots_eof = qualify(659465, "a{transform:scaleX(1,2");
+    assert_invalid(&two_slots_eof, 0);
+
+    // A closed component followed by stray material is invalid, proving
+    // the accepted EOF case is not "accept whatever trails a scaleX".
+    let trailing = qualify(659466, "a{transform:scaleX(2) 7;}");
+    assert_invalid(&trailing, 0);
+}
+
+// 187. Lower-layer lifecycle evidence stays owned by the tokenizer and
+// parser: comments/trivia never change slot interpretation, a comment
+// never fills an authored-empty slot, and `!important` remains outside the
+// semantic value window (#659).
+
+#[test]
+fn trivia_and_important_never_change_scalex_interpretation() {
+    let result = qualify(
+        659480,
+        concat!(
+            "a{transform:scaleX(2/**/);}",
+            "b{transform:scaleX(/**/2);}",
+            "c{transform:scaleX( 2 );}",
+            "d{transform:scaleX(2) !important;}",
+            "e{transform:scaleX(2)!important;}",
+            "f{transform:scaleX(/**/50%);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 6);
+    for index in 0..3 {
+        assert_eq!(
+            scalex_argument_spelling(&result, index, 0),
+            (CssTransformScaleXArgumentKind::Number, "2".to_string()),
+            "trivia changed slot interpretation at {index}"
+        );
+    }
+    for index in 3..5 {
+        assert_eq!(
+            scalex_argument_spelling(&result, index, 0),
+            (CssTransformScaleXArgumentKind::Number, "2".to_string())
+        );
+        assert!(
+            result.upstream_parser_result().occurrences()[index]
+                .priority()
+                .is_some(),
+            "expected retained priority evidence at {index}"
+        );
+    }
+    assert_eq!(
+        scalex_argument_spelling(&result, 5, 0),
+        (
+            CssTransformScaleXArgumentKind::Percentage,
+            "50%".to_string()
+        ),
+        "trivia changed Percentage slot interpretation"
+    );
+
+    // A comment is trivia, never an argument: it can neither fill the
+    // single authored slot nor stand in for a missing one.
+    assert_all_invalid(659500, &["scaleX(/**/)", "scaleX(2,/**/)"]);
+}
+
+// 188. Repeated and cross-source runs remain deterministic, and evidence
+// lookup resolves to the exact retained Number/Percentage tokens
+// identically across runs (#659).
+
+#[test]
+fn scalex_repeated_and_cross_source_runs_are_deterministic() {
+    let css = concat!(
+        "a{transform:scaleX(1,2);}",
+        "b{transform:scaleX(calc(1,2));}",
+        "c{transform:scaleX(1px);}",
+        "d{transform:matrix(1,0,0,1,0,0) scaleX(2);}",
+        "e{transform:scaleX(50%);}",
+    );
+
+    let first = qualify(659520, css);
+    let repeated = qualify(659520, css);
+    let another_source = qualify(659521, css);
+
+    assert_eq!(
+        first.transform_observations(),
+        repeated.transform_observations()
+    );
+    assert_eq!(
+        first.transform_observations(),
+        another_source.transform_observations()
+    );
+
+    assert_invalid(&first, 0);
+    assert_unsupported(
+        &first,
+        1,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
+    );
+    assert_invalid(&first, 2);
+    assert_eq!(qualified_functions(&first, 3).len(), 2);
+
+    assert_eq!(
+        scalex_argument_spelling(&first, 3, 1),
+        scalex_argument_spelling(&repeated, 3, 1)
+    );
+    assert_eq!(
+        scalex_argument_spelling(&first, 3, 1),
+        scalex_argument_spelling(&another_source, 3, 1)
+    );
+    assert_eq!(
+        scalex_argument_spelling(&first, 4, 0),
+        scalex_argument_spelling(&repeated, 4, 0)
+    );
+    assert_eq!(
+        scalex_argument_spelling(&first, 4, 0),
+        scalex_argument_spelling(&another_source, 4, 0)
+    );
+}
+
+// 189. `scaleX` function-name recognition is ASCII-case-insensitive,
+// matching the accepted `matrix`/`scale`/`translate3d`/`rotate3d`/
+// `translate`/`translateX`/`translateY`/`translateZ` boundary, and
+// structurally malformed `scaleX` components -- a bare Function name, an
+// unbalanced/duplicated closer, or stray leading material -- stay
+// decisively `Invalid` (#659).
+
+#[test]
+fn scalex_function_name_recognition_and_malformed_components() {
+    let result = qualify(
+        659540,
+        concat!(
+            "a{transform:SCALEX(2);}",
+            "b{transform:ScAlEx(2);}",
+            "c{transform:s\\63 alex(2);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 3);
+    for index in 0..3 {
+        assert_eq!(
+            scalex_argument_spelling(&result, index, 0),
+            (CssTransformScaleXArgumentKind::Number, "2".to_string()),
+            "scaleX name recognition failed at {index}"
+        );
+    }
+
+    assert_all_invalid(
+        659560,
+        &[
+            "scaleX",
+            "scaleX(2))",
+            "scaleX((2)",
+            "1 scaleX(2)",
+            "[scaleX(2)]",
+        ],
+    );
+}
+
+// 190. Cross-leaf isolation: `scaleX()` recognition never leaks into the
+// accepted longhand `translate`/`scale`/`rotate` leaves, the other
+// `transform-*` single-value leaves, or the other selected `transform`
+// function branches, and `none` remains an exclusive whole-value branch
+// even when combined with `scaleX()` (#418 / #606 / #645 / #647 / #649 /
+// #651 / #653 / #655 / #657 / #659).
+
+#[test]
+fn scalex_cross_leaf_isolation_is_preserved() {
+    let result = qualify(
+        659580,
+        concat!(
+            "a{transform:scaleX(2);transform:none;}",
+            "b{translate:10px;}",
+            "c{scale:2;}",
+            "d{rotate:45deg;}",
+            "e{transform-origin:left top;}",
+            "f{transform-box:border-box;}",
+            "g{transform-style:flat;}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 2);
+    assert_eq!(
+        scalex_argument_spelling(&result, 0, 0),
+        (CssTransformScaleXArgumentKind::Number, "2".to_string())
+    );
+    assert_whole_none(&result, 1);
+
+    assert_eq!(result.translate_observations().len(), 1);
+    assert_eq!(result.scale_observations().len(), 1);
+    assert_eq!(result.rotate_observations().len(), 1);
+    assert_eq!(result.transform_origin_observations().len(), 1);
+    assert_eq!(result.transform_box_observations().len(), 1);
+    assert_eq!(result.transform_style_observations().len(), 1);
+
+    assert_all_invalid(659600, &["none scaleX(2)", "scaleX(2) none"]);
 }
