@@ -6583,28 +6583,100 @@ impl CssTransformTranslate3dFunction {
     }
 }
 
+/// Run-local locator for the exact tokenizer item selected during
+/// authoritative `transform` `rotate3d()` direct axis `<number>` or
+/// fourth-slot `<angle>`/`<zero>` argument recognition (#649). Mirrors
+/// `CssTransformTranslate3dArgumentEvidenceRef`: the index is evidence
+/// placement, not an interpreted numeric magnitude, and always points at
+/// the exact tokenizer-owned direct `Number` or `Dimension` token retained
+/// inside one `rotate3d()` argument slot, resolved through
+/// `transform_rotate3d_argument_token`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTransformRotate3dArgumentEvidenceRef {
+    lexical_item_index: usize,
+}
+
+impl CssTransformRotate3dArgumentEvidenceRef {
+    pub(crate) const fn lexical_item_index(&self) -> usize {
+        self.lexical_item_index
+    }
+}
+
+/// One direct authored `rotate3d()` fourth-slot argument's authored role
+/// (#649): `RotationArgument := DirectAngle | DirectZero`. A direct
+/// `<angle>` (a retained `Dimension` token with a recognized CSS angle
+/// unit) and a direct literal `<zero>` (a retained exact-zero `Number`
+/// token) remain distinct authored branches -- `0` and `0deg` are both
+/// qualified, but never collapsed into one generic scalar role, never
+/// normalized into each other, and a `<zero>` never gains a synthesized
+/// `deg` unit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTransformRotate3dAngleArgument {
+    Angle(CssTransformRotate3dArgumentEvidenceRef),
+    Zero(CssTransformRotate3dArgumentEvidenceRef),
+}
+
+/// One qualified authored `rotate3d()` transform component: exactly three
+/// ordered direct authored axis `<number>` arguments plus one direct
+/// authored `<angle> | <zero>` fourth argument (#649), each carrying the
+/// exact tokenizer-owned evidence retained at its own semantic argument
+/// slot. No axis-vector normalization, magnitude interpretation, or
+/// all-zero-vector rejection is performed by this leaf -- `rotate3d(0, 0,
+/// 0, 45deg)` is directly Qualified, since vector normalization and
+/// zero-vector validity are downstream transform-matrix/interpolation
+/// semantics this leaf does not own. This leaf constructs no rotation
+/// matrix, performs no unit-vector construction, and resolves no computed
+/// transform.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTransformRotate3dFunction {
+    x: CssTransformRotate3dArgumentEvidenceRef,
+    y: CssTransformRotate3dArgumentEvidenceRef,
+    z: CssTransformRotate3dArgumentEvidenceRef,
+    angle: CssTransformRotate3dAngleArgument,
+}
+
+impl CssTransformRotate3dFunction {
+    pub(crate) const fn x(&self) -> CssTransformRotate3dArgumentEvidenceRef {
+        self.x
+    }
+
+    pub(crate) const fn y(&self) -> CssTransformRotate3dArgumentEvidenceRef {
+        self.y
+    }
+
+    pub(crate) const fn z(&self) -> CssTransformRotate3dArgumentEvidenceRef {
+        self.z
+    }
+
+    pub(crate) const fn angle(&self) -> CssTransformRotate3dAngleArgument {
+        self.angle
+    }
+}
+
 /// One qualified selected `transform` component under the profile
-/// `SelectedTransformFunction := Matrix | Scale | Translate3d` (#418 /
-/// #645 / #647), preserving exact authored order between the three
-/// selected function kinds. This is a closed property-local alternation,
-/// not a generic CSS function AST: it exists only to retain heterogeneous
-/// authored order for the selected `transform` branches.
+/// `SelectedTransformFunction := Matrix | Scale | Translate3d | Rotate3d`
+/// (#418 / #645 / #647 / #649), preserving exact authored order between
+/// the four selected function kinds. This is a closed property-local
+/// alternation, not a generic CSS function AST: it exists only to retain
+/// heterogeneous authored order for the selected `transform` branches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssTransformFunction {
     Matrix(CssTransformMatrixFunction),
     Scale(CssTransformScaleFunction),
     Translate3d(CssTransformTranslate3dFunction),
+    Rotate3d(CssTransformRotate3dFunction),
 }
 
 /// One authored `transform` value under the direct-authored profile
 /// `QualifiedDirectTransform := none | [ matrix(<number>#{6}) |
 /// scale([<number> | <percentage>]#{1,2}) | translate3d(<length-percentage>,
-/// <length-percentage>, <length>) ]+` (#418 / #645 / #647): either the
+/// <length-percentage>, <length>) | rotate3d(<number>, <number>, <number>,
+/// [<angle> | <zero>]) ]+` (#418 / #645 / #647 / #649): either the
 /// dedicated whole-value `none` sentinel or an ordered, possibly
 /// repeated, one-or-more list of qualified `matrix()`/`scale()`/
-/// `translate3d()` components in exact authored order. This is not a
-/// complete normative `transform` grammar: it qualifies only the
-/// `matrix()`, `scale()`, and `translate3d()` branches of
+/// `translate3d()`/`rotate3d()` components in exact authored order. This
+/// is not a complete normative `transform` grammar: it qualifies only the
+/// `matrix()`, `scale()`, `translate3d()`, and `rotate3d()` branches of
 /// `<transform-function>`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CssTransformValue {
@@ -6631,21 +6703,23 @@ pub(crate) enum CssTransformQualificationOutcome {
 /// One selected ordinary declaration's bounded `transform` qualification
 /// against the direct-authored profile `QualifiedDirectTransform := none |
 /// [ matrix(<number>#{6}) | scale([<number> | <percentage>]#{1,2}) |
-/// translate3d(<length-percentage>, <length-percentage>, <length>) ]+`
-/// (#418 / #645 / #647), reusing this repository's depth-scoped
-/// grammar-native multi-argument function qualification for a third
+/// translate3d(<length-percentage>, <length-percentage>, <length>) |
+/// rotate3d(<number>, <number>, <number>, [<angle> | <zero>]) ]+` (#418 /
+/// #645 / #647 / #649), reusing this repository's depth-scoped
+/// grammar-native multi-argument function qualification for a fourth
 /// selected branch.
 ///
 /// Normative `transform` is `none | <transform-list>` where
 /// `<transform-list> = <transform-function>+`, `matrix() =
 /// matrix(<number>#{6})`, `scale() = scale([<number> |
-/// <percentage>]#{1,2})`, and `translate3d() =
-/// translate3d(<length-percentage>, <length-percentage>, <length>)`. This
-/// observation deliberately selects only the `matrix()`, `scale()`, and
-/// `translate3d()` branches: every other `<transform-function>` stays
-/// outside selected-profile coverage rather than being decided here,
-/// because deciding it would require the full `<transform-function>`
-/// dispatch and the length/angle semantics this leaf does not own.
+/// <percentage>]#{1,2})`, `translate3d() = translate3d(<length-percentage>,
+/// <length-percentage>, <length>)`, and `rotate3d() = rotate3d(<number>,
+/// <number>, <number>, [<angle> | <zero>])`. This observation deliberately
+/// selects only the `matrix()`, `scale()`, `translate3d()`, and
+/// `rotate3d()` branches: every other `<transform-function>` stays outside
+/// selected-profile coverage rather than being decided here, because
+/// deciding it would require the full `<transform-function>` dispatch and
+/// the length/angle semantics this leaf does not own.
 ///
 /// The shared semantic responsibility is argument qualification scoped to
 /// a grammar frame whose delimiter depth is relative to each selected
@@ -6656,9 +6730,13 @@ pub(crate) enum CssTransformQualificationOutcome {
 /// and rejected, never collapsed), and exactly six slots each holding
 /// exactly one direct retained `Number` token qualify a `matrix()`, one or
 /// two slots each holding exactly one direct retained `Number` or
-/// `Percentage` token qualify a `scale()`, and exactly three
+/// `Percentage` token qualify a `scale()`, exactly three
 /// position-sensitive slots -- `Length | Percentage`, `Length |
-/// Percentage`, then `Length` only -- qualify a `translate3d()`.
+/// Percentage`, then `Length` only -- qualify a `translate3d()`, and
+/// exactly four position-sensitive slots -- three direct `Number` axis
+/// slots, then a fourth direct `Angle | Zero` slot -- qualify a
+/// `rotate3d()`, with no axis-vector normalization or all-zero-vector
+/// rejection.
 ///
 /// This observation performs no machine-float normalization, constructs no
 /// matrix, multiplies no matrices, resolves no computed value, applies no
@@ -7815,6 +7893,31 @@ impl CssValueQualificationRunResult {
     pub(crate) fn transform_translate3d_argument_token(
         &self,
         evidence: CssTransformTranslate3dArgumentEvidenceRef,
+    ) -> Option<&CssTokenKind> {
+        let item = self
+            .upstream_parser_result
+            .upstream_tokenizer_result()
+            .lexical_items()
+            .get(evidence.lexical_item_index())?;
+        let CssLexicalItem::SemanticToken(token) = item else {
+            return None;
+        };
+        Some(token.kind())
+    }
+
+    /// Resolves one qualified `transform` `rotate3d()` argument's run-local
+    /// evidence reference to its exact retained tokenizer token kind,
+    /// preserving authored sign spelling, integer/fraction digits,
+    /// exponent spelling, and unit identity without any machine-number
+    /// conversion, axis-vector normalization, or angle normalization. The
+    /// retained token at an axis (X/Y/Z) evidence position is always a
+    /// direct `Number`; the retained token at the fourth-slot evidence
+    /// position is a recognized-angle `Dimension` when the argument's
+    /// `CssTransformRotate3dAngleArgument` is `Angle`, or an exact-zero
+    /// `Number` when it is `Zero`.
+    pub(crate) fn transform_rotate3d_argument_token(
+        &self,
+        evidence: CssTransformRotate3dArgumentEvidenceRef,
     ) -> Option<&CssTokenKind> {
         let item = self
             .upstream_parser_result
@@ -20055,10 +20158,173 @@ fn classify_transform_translate3d_argument(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CssTransformRotate3dAxisArgumentClass {
+    Number(CssTransformRotate3dArgumentEvidenceRef),
+    OpaqueFunction,
+    Invalid,
+}
+
+/// Classifies one already-partitioned `rotate3d()` axis argument slot
+/// (slot 1, 2, or 3) against the selected profile's single accepted shape
+/// -- exactly one direct retained `<number>` token (#649), mirroring
+/// `classify_matrix_argument` exactly. No value-range restriction,
+/// axis-vector normalization, or all-zero-vector rejection is applied here
+/// or by any caller, so an authored `0` axis Number qualifies exactly like
+/// any other direct Number, and `rotate3d(0, 0, 0, 45deg)` is not rejected
+/// here.
+///
+/// Whitespace and Comment trivia are excluded exactly as for `matrix()`/
+/// `scale()`/`translate3d()` arguments. An authored-empty slot has no
+/// retained semantic token and is decisively `Invalid`. A slot headed by a
+/// `Function` token is `OpaqueFunction` -- a structurally feasible numeric
+/// position whose validity depends on calculated-value semantics this leaf
+/// does not own -- only when the slot is exactly one complete Function
+/// extent; a recognized generic whole-value-only Function name occupying
+/// this non-whole-value position is decisively `Invalid` instead,
+/// mirroring the accepted `matrix`/`scale`/`translate3d` boundary. A
+/// Function followed by further retained material in the same slot is
+/// directly visible structural failure and stays decisively `Invalid`.
+///
+/// A `Dimension`, `Percentage`, `Ident`, or `String` token is a direct
+/// token-category failure and is decisively `Invalid`, as is any slot
+/// carrying more than one retained semantic token.
+fn classify_transform_rotate3d_axis_argument(
+    slot: &[CssLexicalItem],
+    absolute_slot_start: usize,
+) -> CssTransformRotate3dAxisArgumentClass {
+    let mut tokens = slot
+        .iter()
+        .enumerate()
+        .filter_map(|(relative_index, entry)| match entry {
+            CssLexicalItem::SemanticToken(token)
+                if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+            {
+                Some((relative_index, token))
+            }
+            _ => None,
+        });
+
+    let Some((relative_index, first)) = tokens.next() else {
+        return CssTransformRotate3dAxisArgumentClass::Invalid;
+    };
+
+    if matches!(first.kind(), CssTokenKind::Function(_)) {
+        return match entire_function_name(slot) {
+            Some(name) if is_whole_value_function(name) => {
+                CssTransformRotate3dAxisArgumentClass::Invalid
+            }
+            Some(_) => CssTransformRotate3dAxisArgumentClass::OpaqueFunction,
+            None => CssTransformRotate3dAxisArgumentClass::Invalid,
+        };
+    }
+
+    if tokens.next().is_some() {
+        return CssTransformRotate3dAxisArgumentClass::Invalid;
+    }
+
+    match first.kind() {
+        CssTokenKind::Number { .. } => {
+            CssTransformRotate3dAxisArgumentClass::Number(CssTransformRotate3dArgumentEvidenceRef {
+                lexical_item_index: absolute_slot_start + relative_index,
+            })
+        }
+        _ => CssTransformRotate3dAxisArgumentClass::Invalid,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CssTransformRotate3dAngleArgumentClass {
+    Angle(CssTransformRotate3dArgumentEvidenceRef),
+    Zero(CssTransformRotate3dArgumentEvidenceRef),
+    OpaqueFunction,
+    Invalid,
+}
+
+/// Classifies one already-partitioned `rotate3d()` fourth-slot argument
+/// against the selected profile's two accepted shapes -- a direct
+/// retained `<angle>` Dimension or a direct retained literal `<zero>`
+/// Number (#649): `RotationArgument := DirectAngle | DirectZero`. `0` and
+/// `0deg` remain distinct authored branches here -- a `<zero>` is never
+/// synthesized into an `Angle`, a recognized-angle `Dimension` is never
+/// collapsed into `Zero` merely because its magnitude is zero, and this
+/// leaf never broadens the general `<angle>` grammar to accept a unitless
+/// Number: `rotate3d(..., 0)` qualifies only through this property-local
+/// `<angle> | <zero>` alternative, not through any change to `<angle>`
+/// itself.
+///
+/// Whitespace and Comment trivia are excluded exactly as for the axis
+/// slots. An authored-empty slot has no retained semantic token and is
+/// decisively `Invalid`. A slot headed by a `Function` token is
+/// `OpaqueFunction` -- a structurally feasible position whose validity
+/// depends on calculated-value semantics this leaf does not own, so
+/// `calc(0)` is never direct `<zero>` -- only when the slot is exactly one
+/// complete Function extent; a recognized generic whole-value-only
+/// Function name occupying this non-whole-value position is decisively
+/// `Invalid` instead. A Function followed by further retained material in
+/// the same slot is directly visible structural failure and stays
+/// decisively `Invalid`.
+///
+/// A nonzero unitless `Number`, a `Percentage`, a `Dimension` with an
+/// unrecognized (non-angle) unit, an `Ident`, or a `String` is a direct
+/// token-category failure and is decisively `Invalid`, as is any slot
+/// carrying more than one retained semantic token. No range restriction
+/// and no machine-number conversion is applied, so exact authored evidence
+/// stays authoritative for membership.
+fn classify_transform_rotate3d_angle_argument(
+    slot: &[CssLexicalItem],
+    absolute_slot_start: usize,
+) -> CssTransformRotate3dAngleArgumentClass {
+    let mut tokens = slot
+        .iter()
+        .enumerate()
+        .filter_map(|(relative_index, entry)| match entry {
+            CssLexicalItem::SemanticToken(token)
+                if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+            {
+                Some((relative_index, token))
+            }
+            _ => None,
+        });
+
+    let Some((relative_index, first)) = tokens.next() else {
+        return CssTransformRotate3dAngleArgumentClass::Invalid;
+    };
+
+    if matches!(first.kind(), CssTokenKind::Function(_)) {
+        return match entire_function_name(slot) {
+            Some(name) if is_whole_value_function(name) => {
+                CssTransformRotate3dAngleArgumentClass::Invalid
+            }
+            Some(_) => CssTransformRotate3dAngleArgumentClass::OpaqueFunction,
+            None => CssTransformRotate3dAngleArgumentClass::Invalid,
+        };
+    }
+
+    if tokens.next().is_some() {
+        return CssTransformRotate3dAngleArgumentClass::Invalid;
+    }
+
+    match first.kind() {
+        CssTokenKind::Dimension { unit, .. } if is_css_angle_unit(unit) => {
+            CssTransformRotate3dAngleArgumentClass::Angle(CssTransformRotate3dArgumentEvidenceRef {
+                lexical_item_index: absolute_slot_start + relative_index,
+            })
+        }
+        CssTokenKind::Number { value, .. } if is_direct_zero_numeric_value(value) => {
+            CssTransformRotate3dAngleArgumentClass::Zero(CssTransformRotate3dArgumentEvidenceRef {
+                lexical_item_index: absolute_slot_start + relative_index,
+            })
+        }
+        _ => CssTransformRotate3dAngleArgumentClass::Invalid,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CssTransformComponentClass {
     Matrix([CssTransformMatrixArgumentEvidenceRef; 6]),
     Scale(CssTransformScaleArguments),
     Translate3d(CssTransformTranslate3dFunction),
+    Rotate3d(CssTransformRotate3dFunction),
     OpaqueTransformArgument,
     UnselectedTransformFunction,
     Invalid,
@@ -20066,7 +20332,7 @@ enum CssTransformComponentClass {
 
 /// Classifies one already-partitioned top-level `transform` component
 /// against the selected profile `SelectedTransformFunction := Matrix |
-/// Scale | Translate3d` (#418 / #645 / #647).
+/// Scale | Translate3d | Rotate3d` (#418 / #645 / #647 / #649).
 ///
 /// `<transform-list>` admits only `<transform-function>` components, so a
 /// component that is not exactly one complete Function extent -- a bare
@@ -20116,6 +20382,26 @@ enum CssTransformComponentClass {
 /// `CssTransformTranslate3dFunction`; a Z `Percentage` is rejected by this
 /// classification before that value is ever constructed, so a Z
 /// `Percentage` can never reach a qualified value.
+///
+/// A Function named `rotate3d` ASCII-case-insensitively enters
+/// `rotate3d()` argument qualification: a directly visible slot count
+/// other than four is decisive `Invalid` before any argument is
+/// classified, so `rotate3d(1,0,0)` and `rotate3d(1,0,0,90deg,2)` both
+/// stay invalid on directly visible arity. Only at exactly four slots are
+/// arguments classified, positionally: the first three (axis X, Y, Z) each
+/// accept a direct `Number` with no value-range restriction and no
+/// all-zero-vector rejection, while the fourth accepts a direct
+/// recognized-angle `Dimension` or a direct literal exact-zero `Number`
+/// (`<angle> | <zero>`), so a directly visible non-angle/non-zero fourth
+/// slot is decisive `Invalid` even when an axis slot holds an opaque
+/// Function -- `rotate3d(calc(1),0,0,1)` and `rotate3d(1%,calc(0),0,90deg)`
+/// both remain `Invalid` regardless of which slot holds the opaque
+/// Function, since every slot's decisive category failure is checked
+/// before any opaque-Function sibling is consulted. The qualified axis/
+/// angle positional structure is carried by `CssTransformRotate3dFunction`,
+/// which preserves the fourth slot's authored `Angle`-vs-`Zero` role
+/// (`0` and `0deg` never collapse into one generic scalar) and never
+/// normalizes or rejects the all-zero axis vector.
 ///
 /// Any other Function name is `UnselectedTransformFunction`: `rotate(1deg)`,
 /// `matrix3d(...)`, `scaleX(...)`, and an unrecognized name alike stay
@@ -20285,6 +20571,96 @@ fn classify_transform_component(
         });
     }
 
+    if name.eq_ignore_ascii_case("rotate3d") {
+        let slots = transform_function_body_slot_ranges(component);
+        if slots.len() != 4 {
+            return CssTransformComponentClass::Invalid;
+        }
+
+        let x_start = absolute_component_start + slots[0].start;
+        let y_start = absolute_component_start + slots[1].start;
+        let z_start = absolute_component_start + slots[2].start;
+        let angle_start = absolute_component_start + slots[3].start;
+
+        let x_class =
+            classify_transform_rotate3d_axis_argument(&component[slots[0].clone()], x_start);
+        let y_class =
+            classify_transform_rotate3d_axis_argument(&component[slots[1].clone()], y_start);
+        let z_class =
+            classify_transform_rotate3d_axis_argument(&component[slots[2].clone()], z_start);
+        let angle_class =
+            classify_transform_rotate3d_angle_argument(&component[slots[3].clone()], angle_start);
+
+        // A directly visible category failure in any position is decisive,
+        // including a non-angle/non-zero fourth slot, regardless of what
+        // any sibling slot contains (#649).
+        let x_invalid = matches!(x_class, CssTransformRotate3dAxisArgumentClass::Invalid);
+        let y_invalid = matches!(y_class, CssTransformRotate3dAxisArgumentClass::Invalid);
+        let z_invalid = matches!(z_class, CssTransformRotate3dAxisArgumentClass::Invalid);
+        let angle_invalid = matches!(angle_class, CssTransformRotate3dAngleArgumentClass::Invalid);
+        if x_invalid || y_invalid || z_invalid || angle_invalid {
+            return CssTransformComponentClass::Invalid;
+        }
+
+        let has_opaque_argument = matches!(
+            x_class,
+            CssTransformRotate3dAxisArgumentClass::OpaqueFunction
+        ) || matches!(
+            y_class,
+            CssTransformRotate3dAxisArgumentClass::OpaqueFunction
+        ) || matches!(
+            z_class,
+            CssTransformRotate3dAxisArgumentClass::OpaqueFunction
+        ) || matches!(
+            angle_class,
+            CssTransformRotate3dAngleArgumentClass::OpaqueFunction
+        );
+        if has_opaque_argument {
+            return CssTransformComponentClass::OpaqueTransformArgument;
+        }
+
+        let x = match x_class {
+            CssTransformRotate3dAxisArgumentClass::Number(evidence_ref) => evidence_ref,
+            CssTransformRotate3dAxisArgumentClass::OpaqueFunction
+            | CssTransformRotate3dAxisArgumentClass::Invalid => {
+                unreachable!("opaque and invalid X classes are already handled above")
+            }
+        };
+        let y = match y_class {
+            CssTransformRotate3dAxisArgumentClass::Number(evidence_ref) => evidence_ref,
+            CssTransformRotate3dAxisArgumentClass::OpaqueFunction
+            | CssTransformRotate3dAxisArgumentClass::Invalid => {
+                unreachable!("opaque and invalid Y classes are already handled above")
+            }
+        };
+        let z = match z_class {
+            CssTransformRotate3dAxisArgumentClass::Number(evidence_ref) => evidence_ref,
+            CssTransformRotate3dAxisArgumentClass::OpaqueFunction
+            | CssTransformRotate3dAxisArgumentClass::Invalid => {
+                unreachable!("opaque and invalid Z classes are already handled above")
+            }
+        };
+        let angle = match angle_class {
+            CssTransformRotate3dAngleArgumentClass::Angle(evidence_ref) => {
+                CssTransformRotate3dAngleArgument::Angle(evidence_ref)
+            }
+            CssTransformRotate3dAngleArgumentClass::Zero(evidence_ref) => {
+                CssTransformRotate3dAngleArgument::Zero(evidence_ref)
+            }
+            CssTransformRotate3dAngleArgumentClass::OpaqueFunction
+            | CssTransformRotate3dAngleArgumentClass::Invalid => {
+                unreachable!("opaque and invalid angle classes are already handled above")
+            }
+        };
+
+        return CssTransformComponentClass::Rotate3d(CssTransformRotate3dFunction {
+            x,
+            y,
+            z,
+            angle,
+        });
+    }
+
     if is_whole_value_function(name) {
         CssTransformComponentClass::Invalid
     } else {
@@ -20295,8 +20671,9 @@ fn classify_transform_component(
 /// Qualifies one retained `transform` declaration value against the
 /// direct-authored profile `QualifiedDirectTransform := none | [
 /// matrix(<number>#{6}) | scale([<number> | <percentage>]#{1,2}) |
-/// translate3d(<length-percentage>, <length-percentage>, <length>) ]+`
-/// (#418 / #645 / #647).
+/// translate3d(<length-percentage>, <length-percentage>, <length>) |
+/// rotate3d(<number>, <number>, <number>, [<angle> | <zero>]) ]+`
+/// (#418 / #645 / #647 / #649).
 ///
 /// Outcome precedence follows evidence authority, never scan order.
 /// Lower-layer lifecycle evidence is never touched here at all: this
@@ -20471,6 +20848,9 @@ fn qualify_transform_value(
             }
             CssTransformComponentClass::Translate3d(function) => {
                 functions.push(CssTransformFunction::Translate3d(function));
+            }
+            CssTransformComponentClass::Rotate3d(function) => {
+                functions.push(CssTransformFunction::Rotate3d(function));
             }
             CssTransformComponentClass::OpaqueTransformArgument => has_opaque_argument = true,
             CssTransformComponentClass::UnselectedTransformFunction => {

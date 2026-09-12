@@ -4,7 +4,8 @@ use crate::css::parser::result::CssParserExecutionCompletion;
 use crate::css::token::{CssExponentSign, CssNumberSign, CssTokenKind};
 use crate::css::tokenizer::resource::CssTokenizerLimits;
 use crate::css::value_qualification::{
-    CssTransformFunction, CssTransformQualificationOutcome, CssTransformScaleArgumentKind,
+    CssTransformFunction, CssTransformQualificationOutcome, CssTransformRotate3dAngleArgument,
+    CssTransformRotate3dFunction, CssTransformScaleArgumentKind,
     CssTransformTranslate3dXyArgumentKind, CssTransformUnsupportedReason, CssTransformValue,
     CssValueQualificationRunResult, run,
 };
@@ -319,6 +320,113 @@ fn translate3d_argument_spellings(
         authored_translate3d_argument_spelling(y_token),
         authored_translate3d_argument_spelling(z_token),
     )
+}
+
+/// Reconstructs one retained `Number` or `Dimension` token's authored
+/// numeric structure from tokenizer-owned evidence alone, exactly like
+/// `authored_number_spelling`, with the authored unit spelling appended for
+/// a `Dimension` so `0` and `0deg` stay distinguishable in assertions. No
+/// machine number or unit conversion is ever produced.
+fn authored_rotate3d_argument_spelling(token: &CssTokenKind) -> String {
+    let (value, suffix) = match token {
+        CssTokenKind::Number { value, .. } => (value, String::new()),
+        CssTokenKind::Dimension { value, unit, .. } => (value, unit.clone()),
+        other => panic!(
+            "rotate3d argument evidence did not resolve to a Number/Dimension token, got {other:?}"
+        ),
+    };
+
+    let mut spelling = String::new();
+    match value.sign() {
+        Some(CssNumberSign::Plus) => spelling.push('+'),
+        Some(CssNumberSign::Minus) => spelling.push('-'),
+        None => {}
+    }
+    spelling.push_str(value.decimal().integer_digits());
+    let fraction_digits = value.decimal().fraction_digits();
+    if !fraction_digits.is_empty() {
+        spelling.push('.');
+        spelling.push_str(fraction_digits);
+    }
+    if let Some(exponent) = value.decimal().exponent() {
+        spelling.push('e');
+        match exponent.sign() {
+            Some(CssExponentSign::Plus) => spelling.push('+'),
+            Some(CssExponentSign::Minus) => spelling.push('-'),
+            None => {}
+        }
+        spelling.push_str(exponent.digits());
+    }
+    spelling.push_str(&suffix);
+    spelling
+}
+
+fn rotate3d_function(
+    result: &CssValueQualificationRunResult,
+    index: usize,
+    function_index: usize,
+) -> CssTransformRotate3dFunction {
+    let functions = qualified_functions(result, index);
+    let function = functions
+        .get(function_index)
+        .unwrap_or_else(|| panic!("missing transform component {function_index} at {index}"));
+    let CssTransformFunction::Rotate3d(rotate3d) = function else {
+        panic!("expected rotate3d component {function_index} at {index}, got {function:?}");
+    };
+    *rotate3d
+}
+
+/// Resolves one qualified `rotate3d()` transform component's ordered axis
+/// evidence at `function_index` within observation `index`, preserving
+/// exact X/Y/Z positional order. Axis Numbers are never normalized into a
+/// unit vector.
+fn rotate3d_axis_spellings(
+    result: &CssValueQualificationRunResult,
+    index: usize,
+    function_index: usize,
+) -> (String, String, String) {
+    let rotate3d = rotate3d_function(result, index, function_index);
+    let x = result
+        .transform_rotate3d_argument_token(rotate3d.x())
+        .expect("rotate3d X evidence did not resolve");
+    let y = result
+        .transform_rotate3d_argument_token(rotate3d.y())
+        .expect("rotate3d Y evidence did not resolve");
+    let z = result
+        .transform_rotate3d_argument_token(rotate3d.z())
+        .expect("rotate3d Z evidence did not resolve");
+    (
+        authored_rotate3d_argument_spelling(x),
+        authored_rotate3d_argument_spelling(y),
+        authored_rotate3d_argument_spelling(z),
+    )
+}
+
+/// Resolves one qualified `rotate3d()` transform component's fourth-slot
+/// authored role and evidence at `function_index` within observation
+/// `index`, returning `(is_angle, spelling)` -- `is_angle` is `true` for
+/// the `Angle` branch and `false` for the `Zero` branch, so `0` and `0deg`
+/// stay distinguishable by authored role, never merely by spelling.
+fn rotate3d_angle_spelling(
+    result: &CssValueQualificationRunResult,
+    index: usize,
+    function_index: usize,
+) -> (bool, String) {
+    let rotate3d = rotate3d_function(result, index, function_index);
+    match rotate3d.angle() {
+        CssTransformRotate3dAngleArgument::Angle(evidence_ref) => {
+            let token = result
+                .transform_rotate3d_argument_token(evidence_ref)
+                .expect("rotate3d angle evidence did not resolve");
+            (true, authored_rotate3d_argument_spelling(token))
+        }
+        CssTransformRotate3dAngleArgument::Zero(evidence_ref) => {
+            let token = result
+                .transform_rotate3d_argument_token(evidence_ref)
+                .expect("rotate3d zero evidence did not resolve");
+            (false, authored_rotate3d_argument_spelling(token))
+        }
+    }
 }
 
 fn assert_all_invalid(source_id: u64, values: &[&str]) {
@@ -2391,4 +2499,731 @@ fn translate3d_cross_leaf_isolation_is_preserved() {
     assert_eq!(result.transform_origin_observations().len(), 1);
     assert_eq!(result.transform_box_observations().len(), 1);
     assert_eq!(result.transform_style_observations().len(), 1);
+}
+
+// 47. `rotate3d() = rotate3d(<number>, <number>, <number>, [<angle> |
+// <zero>])` (#418 / #645 / #647 / #649): exactly four ordered,
+// position-sensitive arguments qualify. The first three (axis X, Y, Z)
+// accept a direct `<number>` with no value-range restriction; the fourth
+// accepts a direct `<angle>` or a direct literal `<zero>`. Canonical direct
+// forms qualify, and authored numeric/unit identity stays source-backed
+// tokenizer evidence -- never normalized through machine floating point,
+// unit conversion, or axis-vector normalization.
+
+#[test]
+fn canonical_rotate3d_qualifies_with_four_ordered_arguments() {
+    let result = qualify(
+        649100,
+        concat!(
+            "a{transform:rotate3d(1,0,0,90deg);}",
+            "b{transform:rotate3d(0,1,0,180deg);}",
+            "c{transform:rotate3d(0,0,1,1rad);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 3);
+    assert_eq!(qualified_functions(&result, 0).len(), 1);
+
+    assert_eq!(
+        rotate3d_axis_spellings(&result, 0, 0),
+        ("1".to_string(), "0".to_string(), "0".to_string())
+    );
+    assert_eq!(
+        rotate3d_angle_spelling(&result, 0, 0),
+        (true, "90deg".to_string())
+    );
+
+    assert_eq!(
+        rotate3d_axis_spellings(&result, 1, 0),
+        ("0".to_string(), "1".to_string(), "0".to_string())
+    );
+    assert_eq!(
+        rotate3d_angle_spelling(&result, 1, 0),
+        (true, "180deg".to_string())
+    );
+
+    assert_eq!(
+        rotate3d_axis_spellings(&result, 2, 0),
+        ("0".to_string(), "0".to_string(), "1".to_string())
+    );
+    assert_eq!(
+        rotate3d_angle_spelling(&result, 2, 0),
+        (true, "1rad".to_string())
+    );
+}
+
+// 48. Signed, fractional, and exponential axis `<number>` spellings qualify
+// in every axis slot, preserving exact tokenizer-owned evidence without
+// normalization (#649).
+
+#[test]
+fn axis_number_spellings_are_preserved_without_normalization() {
+    let result = qualify(
+        649110,
+        concat!(
+            "a{transform:rotate3d(-1,+2,.5,45deg);}",
+            "b{transform:rotate3d(1e2,-3e-2,+0,45deg);}",
+            "c{transform:rotate3d(-0,+0,.0,90deg);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 3);
+    assert_eq!(
+        rotate3d_axis_spellings(&result, 0, 0),
+        ("-1".to_string(), "+2".to_string(), "0.5".to_string())
+    );
+    assert_eq!(
+        rotate3d_axis_spellings(&result, 1, 0),
+        ("1e2".to_string(), "-3e-2".to_string(), "+0".to_string())
+    );
+    assert_eq!(
+        rotate3d_axis_spellings(&result, 2, 0),
+        ("-0".to_string(), "+0".to_string(), "0.0".to_string())
+    );
+}
+
+// 49. The all-zero axis vector `rotate3d(0, 0, 0, <angle>)` is directly
+// Qualified: axis-vector normalization and all-zero-vector rejection are
+// downstream transform-matrix/interpolation semantics this leaf does not
+// own. This is load-bearing (#649).
+
+#[test]
+fn all_zero_axis_vector_is_qualified() {
+    let result = qualify(649120, "a{transform:rotate3d(0,0,0,45deg);}");
+    assert_eq!(result.transform_observations().len(), 1);
+    assert_eq!(
+        rotate3d_axis_spellings(&result, 0, 0),
+        ("0".to_string(), "0".to_string(), "0".to_string())
+    );
+    assert_eq!(
+        rotate3d_angle_spelling(&result, 0, 0),
+        (true, "45deg".to_string())
+    );
+}
+
+// 50. Every recognized CSS angle unit qualifies the fourth slot as a direct
+// `<angle>`, ASCII-case-insensitively, reusing the accepted
+// `is_css_angle_unit` theorem without a second independent unit table
+// (#649).
+
+#[test]
+fn recognized_angle_units_qualify_the_fourth_slot() {
+    let result = qualify(
+        649130,
+        concat!(
+            "a{transform:rotate3d(1,0,0,90deg);}",
+            "b{transform:rotate3d(1,0,0,100grad);}",
+            "c{transform:rotate3d(1,0,0,1rad);}",
+            "d{transform:rotate3d(1,0,0,0.25turn);}",
+            "e{transform:rotate3d(1,0,0,90DEG);}",
+            "f{transform:rotate3d(1,0,0,1RAD);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 6);
+    for index in 0..6 {
+        let (is_angle, _) = rotate3d_angle_spelling(&result, index, 0);
+        assert!(is_angle, "expected Angle role at {index}");
+    }
+    assert_eq!(rotate3d_angle_spelling(&result, 0, 0).1, "90deg");
+    assert_eq!(rotate3d_angle_spelling(&result, 1, 0).1, "100grad");
+    assert_eq!(rotate3d_angle_spelling(&result, 2, 0).1, "1rad");
+    assert_eq!(rotate3d_angle_spelling(&result, 3, 0).1, "0.25turn");
+    assert_eq!(rotate3d_angle_spelling(&result, 4, 0).1, "90DEG");
+    assert_eq!(rotate3d_angle_spelling(&result, 5, 0).1, "1RAD");
+}
+
+// 51. Representative exact-zero `Number` spellings qualify the fourth slot
+// through the `<zero>` branch, reusing the accepted
+// `is_direct_zero_numeric_value` theorem; the retained evidence stays a
+// `Number` token (#649).
+
+#[test]
+fn exact_zero_spellings_qualify_the_fourth_slot_as_zero() {
+    let result = qualify(
+        649140,
+        concat!(
+            "a{transform:rotate3d(1,0,0,0);}",
+            "b{transform:rotate3d(1,0,0,+0);}",
+            "c{transform:rotate3d(1,0,0,-0);}",
+            "d{transform:rotate3d(1,0,0,.0);}",
+            "e{transform:rotate3d(1,0,0,0.0);}",
+            "f{transform:rotate3d(1,0,0,0e100);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 6);
+    for index in 0..6 {
+        let (is_angle, _) = rotate3d_angle_spelling(&result, index, 0);
+        assert!(!is_angle, "expected Zero role at {index}");
+    }
+    assert_eq!(rotate3d_angle_spelling(&result, 0, 0).1, "0");
+    assert_eq!(rotate3d_angle_spelling(&result, 1, 0).1, "+0");
+    assert_eq!(rotate3d_angle_spelling(&result, 2, 0).1, "-0");
+    assert_eq!(rotate3d_angle_spelling(&result, 3, 0).1, "0.0");
+    assert_eq!(rotate3d_angle_spelling(&result, 4, 0).1, "0.0");
+    assert_eq!(rotate3d_angle_spelling(&result, 5, 0).1, "0e100");
+}
+
+// 52. `0` and `0deg` remain distinct authored roles -- `<zero>` and
+// `<angle>` respectively -- never collapsed into one generic scalar, never
+// normalized into each other, and a `<zero>` never gains a synthesized
+// `deg` unit. This is load-bearing (#649).
+
+#[test]
+fn zero_and_zero_deg_authored_roles_remain_distinct() {
+    let result = qualify(
+        649150,
+        concat!(
+            "a{transform:rotate3d(1,0,0,0);}",
+            "b{transform:rotate3d(1,0,0,0deg);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 2);
+    let (zero_is_angle, zero_spelling) = rotate3d_angle_spelling(&result, 0, 0);
+    let (angle_is_angle, angle_spelling) = rotate3d_angle_spelling(&result, 1, 0);
+    assert!(!zero_is_angle, "expected authored `0` to qualify as Zero");
+    assert!(
+        angle_is_angle,
+        "expected authored `0deg` to qualify as Angle"
+    );
+    assert_eq!(zero_spelling, "0");
+    assert_eq!(angle_spelling, "0deg");
+}
+
+// 53. Every direct token category other than `<number>` -- `<percentage>`,
+// an angle `Dimension`, a length `Dimension`, `Ident`, `String`, `Hash` --
+// is a decisive direct token-category failure in any axis position (#649).
+
+#[test]
+fn wrong_axis_token_categories_are_invalid() {
+    assert_all_invalid(
+        649160,
+        &[
+            "rotate3d(1%,0,0,90deg)",
+            "rotate3d(1deg,0,0,90deg)",
+            "rotate3d(1px,0,0,90deg)",
+            "rotate3d(foo,0,0,90deg)",
+            "rotate3d(\"1\",0,0,90deg)",
+            "rotate3d(#abc,0,0,90deg)",
+            "rotate3d(0,1%,0,90deg)",
+            "rotate3d(0,1deg,0,90deg)",
+            "rotate3d(0,1px,0,90deg)",
+            "rotate3d(0,0,1%,90deg)",
+            "rotate3d(0,0,1deg,90deg)",
+            "rotate3d(0,0,1px,90deg)",
+        ],
+    );
+}
+
+// 54. Every direct token category other than a recognized `<angle>` or a
+// literal `<zero>` -- a nonzero `Number`, `<percentage>`, a length
+// `Dimension` (including `0px`), a non-angle time `Dimension`, `Ident`,
+// `String`, `Hash` -- is a decisive direct token-category failure in the
+// fourth slot (#649).
+
+#[test]
+fn wrong_fourth_slot_categories_are_invalid() {
+    assert_all_invalid(
+        649170,
+        &[
+            "rotate3d(1,0,0,1)",
+            "rotate3d(1,0,0,-1)",
+            "rotate3d(1,0,0,.5)",
+            "rotate3d(1,0,0,0px)",
+            "rotate3d(1,0,0,90px)",
+            "rotate3d(1,0,0,0%)",
+            "rotate3d(1,0,0,90%)",
+            "rotate3d(1,0,0,0s)",
+            "rotate3d(1,0,0,foo)",
+            "rotate3d(1,0,0,\"90deg\")",
+            "rotate3d(1,0,0,#abc)",
+        ],
+    );
+}
+
+// 55. Exact arity is four: zero, one, two, three, five, or more directly
+// visible arguments are decisive `InvalidForSelectedValueGrammar` before
+// any argument content is consulted (#649).
+
+#[test]
+fn rotate3d_argument_cardinality_other_than_four_is_invalid() {
+    assert_all_invalid(
+        649180,
+        &[
+            "rotate3d()",
+            "rotate3d(1)",
+            "rotate3d(1,0)",
+            "rotate3d(1,0,0)",
+            "rotate3d(1,0,0,90deg,2)",
+            "rotate3d(1,0,0,90deg,2,3)",
+        ],
+    );
+
+    // The adjacent accepted arity is the only qualifying one, sealing the
+    // off-by-one boundary from both sides.
+    let result = qualify(649189, "a{transform:rotate3d(1,0,0,90deg);}");
+    let (is_angle, spelling) = rotate3d_angle_spelling(&result, 0, 0);
+    assert!(is_angle);
+    assert_eq!(spelling, "90deg");
+}
+
+// 56. `,` is comma-separated repetition, never whitespace-separated SVG
+// transform-attribute syntax, and an authored-empty argument position is
+// preserved as its own ordered slot and rejected -- never collapsed away
+// (#649).
+
+#[test]
+fn rotate3d_argument_delimiter_failures_are_invalid() {
+    assert_all_invalid(
+        649190,
+        &[
+            "rotate3d(1 0 0 90deg)",
+            "rotate3d(,0,0,90deg)",
+            "rotate3d(1,,0,90deg)",
+            "rotate3d(1,0,,90deg)",
+            "rotate3d(1,0,0,)",
+            "rotate3d(1,,,90deg)",
+            "rotate3d(,,,)",
+        ],
+    );
+}
+
+// 57. An opaque non-deferred Function occupying an otherwise structurally
+// feasible argument slot is selected-profile Unsupported, mirroring the
+// shared `FunctionValuedTransformArgument` reason the other selected
+// functions use -- this leaf never evaluates `calc()`, so `calc(0)` is
+// never direct `<zero>` (#649).
+
+#[test]
+fn opaque_rotate3d_argument_function_is_unsupported() {
+    assert_all_unsupported(
+        649200,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
+        &[
+            "rotate3d(calc(1),0,0,90deg)",
+            "rotate3d(1,calc(0),0,90deg)",
+            "rotate3d(1,0,calc(0),90deg)",
+            "rotate3d(1,0,0,calc(0))",
+            "rotate3d(1,0,0,calc(90deg))",
+            "matrix(1,0,0,1,0,0) rotate3d(calc(1),0,0,90deg)",
+        ],
+    );
+}
+
+// 58. A comma nested inside a Function argument is at a deeper relative
+// depth and never becomes a rotate3d-level argument separator -- the
+// Unsupported outcome for exactly four slots is itself the depth-isolation
+// proof, and a nested comma that genuinely does add or remove a
+// rotate3d-level slot once the nesting closes is still counted (#649).
+
+#[test]
+fn nested_commas_never_change_rotate3d_arity() {
+    assert_all_unsupported(
+        649210,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
+        &[
+            "rotate3d(calc(1,2),0,0,90deg)",
+            "rotate3d(0,calc(1,2),0,90deg)",
+            "rotate3d(0,0,calc(1,2),90deg)",
+            "rotate3d(calc([1,2]),0,0,90deg)",
+            "rotate3d(calc({1,2}),0,0,90deg)",
+        ],
+    );
+
+    // Once the nesting closes, the genuinely different rotate3d-level slot
+    // count is still counted and makes the shell decisively Invalid.
+    assert_all_invalid(
+        649220,
+        &["rotate3d(calc(1,2),0,0,90deg,2)", "rotate3d(calc(1,2),0,0)"],
+    );
+}
+
+// 59. Directly visible decisive invalidity outranks an opaque Function
+// found in a sibling slot, in either authored order (#649).
+
+#[test]
+fn decisive_invalid_outranks_opaque_rotate3d_argument_in_either_order() {
+    assert_all_invalid(
+        649230,
+        &[
+            "rotate3d(calc(1),0,0,1)",
+            "rotate3d(1%,calc(0),0,90deg)",
+            "rotate3d(calc(1),0,90deg)",
+            "rotate3d(calc(1),0,0,90deg,2)",
+        ],
+    );
+}
+
+// 60. Deferred substitution can still change the surrounding token
+// sequence, separators, and cardinality, so it is resolved before any
+// surrounding rotate3d shape conclusion -- including an arity that looks
+// decisive (#649).
+
+#[test]
+fn rotate3d_deferred_substitution_outranks_surrounding_shape_conclusions() {
+    assert_all_unsupported(
+        649240,
+        CssTransformUnsupportedReason::DeferredSubstitutionFunction,
+        &[
+            "rotate3d(var(--x),0,0,90deg)",
+            "rotate3d(1,var(--y),0,90deg)",
+            "rotate3d(1,0,var(--z),90deg)",
+            "rotate3d(1,0,0,var(--angle))",
+            "rotate3d(1,0,0,90deg,var(--extra))",
+            "matrix(1,0,0,1,0,0) rotate3d(var(--x),0,0,90deg)",
+        ],
+    );
+}
+
+// 61. Selected `matrix()`, `scale()`, `translate3d()`, and `rotate3d()`
+// components mix freely, preserve exact authored order and repetition, and
+// stay distinguishable through the heterogeneous `CssTransformFunction`
+// alternation (#418 / #645 / #647 / #649).
+
+#[test]
+fn mixed_selected_function_order_including_rotate3d_is_preserved() {
+    let result = qualify(
+        649250,
+        concat!(
+            "a{transform:matrix(1,0,0,1,0,0) rotate3d(1,0,0,90deg);}",
+            "b{transform:rotate3d(1,0,0,90deg) matrix(1,0,0,1,0,0);}",
+            "c{transform:scale(2) rotate3d(1,0,0,90deg);}",
+            "d{transform:rotate3d(1,0,0,90deg) scale(2);}",
+            "e{transform:translate3d(1px,2px,3px) rotate3d(1,0,0,90deg);}",
+            "f{transform:rotate3d(1,0,0,90deg) translate3d(1px,2px,3px);}",
+            "g{transform:matrix(1,0,0,1,0,0) scale(2) translate3d(1px,2px,3px) rotate3d(1,0,0,90deg);}",
+            "h{transform:rotate3d(1,0,0,90deg) rotate3d(0,1,0,45deg);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 8);
+
+    let functions_a = qualified_functions(&result, 0);
+    assert_eq!(functions_a.len(), 2);
+    assert!(matches!(functions_a[0], CssTransformFunction::Matrix(_)));
+    assert!(matches!(functions_a[1], CssTransformFunction::Rotate3d(_)));
+
+    let functions_b = qualified_functions(&result, 1);
+    assert_eq!(functions_b.len(), 2);
+    assert!(matches!(functions_b[0], CssTransformFunction::Rotate3d(_)));
+    assert!(matches!(functions_b[1], CssTransformFunction::Matrix(_)));
+
+    let functions_g = qualified_functions(&result, 6);
+    assert_eq!(functions_g.len(), 4);
+    assert!(matches!(functions_g[0], CssTransformFunction::Matrix(_)));
+    assert!(matches!(functions_g[1], CssTransformFunction::Scale(_)));
+    assert!(matches!(
+        functions_g[2],
+        CssTransformFunction::Translate3d(_)
+    ));
+    assert!(matches!(functions_g[3], CssTransformFunction::Rotate3d(_)));
+
+    let functions_h = qualified_functions(&result, 7);
+    assert_eq!(functions_h.len(), 2);
+    assert!(matches!(functions_h[0], CssTransformFunction::Rotate3d(_)));
+    assert!(matches!(functions_h[1], CssTransformFunction::Rotate3d(_)));
+    assert_eq!(
+        rotate3d_axis_spellings(&result, 7, 0),
+        ("1".to_string(), "0".to_string(), "0".to_string())
+    );
+    assert_eq!(
+        rotate3d_axis_spellings(&result, 7, 1),
+        ("0".to_string(), "1".to_string(), "0".to_string())
+    );
+
+    for index in 2..6 {
+        assert_eq!(
+            qualified_functions(&result, index).len(),
+            2,
+            "expected two components at {index}"
+        );
+    }
+}
+
+// 62. Every `<transform-function>` other than selected `matrix()`/
+// `scale()`/`translate3d()`/`rotate3d()` stays outside selected-profile
+// coverage, in either authored order and regardless of a sibling qualified
+// selected function, and the coarser outer unselected-function coverage
+// outranks an inner opaque `rotate3d()` argument (#649).
+
+#[test]
+fn unselected_outer_function_precedence_covers_rotate3d() {
+    assert_all_unsupported(
+        649260,
+        CssTransformUnsupportedReason::UnselectedTransformFunction,
+        &[
+            "rotate(1deg)",
+            "rotate3d(1,0,0,90deg) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
+            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1) rotate3d(1,0,0,90deg)",
+            "rotate3dx(1,0,0,90deg)",
+        ],
+    );
+
+    // Coarser outer unselected-function coverage outranks an inner opaque
+    // rotate3d argument, identically in both authored orders.
+    assert_all_unsupported(
+        649270,
+        CssTransformUnsupportedReason::UnselectedTransformFunction,
+        &[
+            "rotate3d(calc(1),0,0,90deg) rotate(1deg)",
+            "rotate(1deg) rotate3d(calc(1),0,0,90deg)",
+        ],
+    );
+}
+
+// 63. `<transform-list>` is whitespace-separated repetition: a top-level
+// comma is never a permitted separator, including between two
+// `rotate3d()` components or a `rotate3d()` and a sibling selected
+// function (#649).
+
+#[test]
+fn top_level_comma_is_invalid_around_rotate3d() {
+    assert_all_invalid(
+        649280,
+        &[
+            "rotate3d(1,0,0,90deg), matrix(1,0,0,1,0,0)",
+            "rotate3d(1,0,0,90deg), scale(2)",
+            "rotate3d(1,0,0,90deg), translate3d(1px,2px,3px)",
+            "rotate3d(1,0,0,90deg), rotate3d(1,0,0,90deg)",
+            ",rotate3d(1,0,0,90deg)",
+            "rotate3d(1,0,0,90deg),",
+            "none, rotate3d(1,0,0,90deg)",
+        ],
+    );
+}
+
+// 64. CSS Syntax function consumption may end at a true stylesheet EOF, so
+// a parser-committed EOF-ended `rotate3d()` extent is qualified from
+// retained interior evidence alone. EOF never fills or repairs missing
+// slots, empty slots, or a decisive fourth-slot category (#649).
+
+#[test]
+fn true_stylesheet_eof_ended_rotate3d_extent_follows_parser_authority() {
+    let complete = qualify(649290, "a{transform:rotate3d(1,0,0,90deg");
+    assert_eq!(
+        complete.execution_completion(),
+        CssParserExecutionCompletion::Complete
+    );
+    assert_eq!(complete.transform_observations().len(), 1);
+    let (is_angle, spelling) = rotate3d_angle_spelling(&complete, 0, 0);
+    assert!(is_angle);
+    assert_eq!(spelling, "90deg");
+
+    // A short EOF-ended extent stays short: EOF never fills missing slots.
+    let short = qualify(649291, "a{transform:rotate3d(1,0,0");
+    assert_invalid(&short, 0);
+
+    // EOF never repairs a decisive fourth-slot category.
+    let wrong_angle = qualify(649292, "a{transform:rotate3d(1,0,0,1");
+    assert_invalid(&wrong_angle, 0);
+
+    // A trailing comma at EOF is still invalid: EOF never fills the empty
+    // slot it leaves behind.
+    let trailing_comma = qualify(649293, "a{transform:rotate3d(1,0,0,");
+    assert_invalid(&trailing_comma, 0);
+
+    // Without a closer, later authored material is absorbed into the final
+    // slot by real retained structure, so it no longer satisfies exactly
+    // one direct Angle/Zero.
+    let absorbed = qualify(649294, "a{transform:rotate3d(1,0,0,90deg 7");
+    assert_eq!(
+        absorbed.execution_completion(),
+        CssParserExecutionCompletion::Complete
+    );
+    assert_invalid(&absorbed, 0);
+
+    // A closed component followed by stray material is invalid, proving
+    // the accepted EOF case is not "accept whatever trails a rotate3d".
+    let trailing = qualify(649295, "a{transform:rotate3d(1,0,0,90deg) 7;}");
+    assert_invalid(&trailing, 0);
+}
+
+// 65. Lower-layer lifecycle evidence stays owned by the tokenizer and
+// parser: comments/trivia never change slot interpretation, and
+// `!important` remains outside the semantic value window (#649).
+
+#[test]
+fn trivia_and_important_never_change_rotate3d_interpretation() {
+    let result = qualify(
+        649300,
+        concat!(
+            "a{transform:rotate3d(1,/**/0,0,90deg);}",
+            "b{transform:rotate3d(1/**/,0,0,90deg);}",
+            "c{transform:rotate3d(1,0,0,90deg/**/);}",
+            "d{transform:rotate3d(/**/1,0,0,90deg);}",
+            "e{transform:rotate3d( 1 , 0 , 0 , 90deg );}",
+            "f{transform:rotate3d(1,/*,*/0,0,90deg);}",
+            "g{transform:rotate3d(1,0,0,90deg) !important;}",
+            "h{transform:rotate3d(1,0,0,90deg)!important;}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 8);
+    for index in 0..6 {
+        assert_eq!(
+            rotate3d_axis_spellings(&result, index, 0),
+            ("1".to_string(), "0".to_string(), "0".to_string()),
+            "trivia changed axis interpretation at {index}"
+        );
+        assert_eq!(
+            rotate3d_angle_spelling(&result, index, 0),
+            (true, "90deg".to_string()),
+            "trivia changed angle interpretation at {index}"
+        );
+    }
+    for index in 6..8 {
+        let (is_angle, spelling) = rotate3d_angle_spelling(&result, index, 0);
+        assert!(is_angle);
+        assert_eq!(spelling, "90deg");
+        assert!(
+            result.upstream_parser_result().occurrences()[index]
+                .priority()
+                .is_some(),
+            "expected retained priority evidence at {index}"
+        );
+    }
+
+    // A comment is trivia, never an argument: it can neither fill an
+    // authored-empty slot nor stand in for a missing one.
+    assert_all_invalid(
+        649310,
+        &["rotate3d(1,/**/,0,0,90deg)", "rotate3d(1,0,0,/**/)"],
+    );
+}
+
+// 66. Repeated and cross-source runs remain deterministic, and evidence
+// lookup resolves to the exact retained Number/Dimension tokens
+// identically across runs, exactly like matrix/scale/translate3d evidence
+// lookup (#649).
+
+#[test]
+fn rotate3d_repeated_and_cross_source_runs_are_deterministic() {
+    let css = concat!(
+        "a{transform:rotate3d(1,0,0,90deg);}",
+        "b{transform:rotate3d(calc(1,2),0,0,90deg);}",
+        "c{transform:rotate3d(1,0,0,1);}",
+        "d{transform:matrix(1,0,0,1,0,0) rotate3d(1,0,0,90deg);}",
+    );
+
+    let first = qualify(649320, css);
+    let repeated = qualify(649320, css);
+    let another_source = qualify(649321, css);
+
+    assert_eq!(
+        first.transform_observations(),
+        repeated.transform_observations()
+    );
+    assert_eq!(
+        first.transform_observations(),
+        another_source.transform_observations()
+    );
+
+    assert_eq!(qualified_functions(&first, 0).len(), 1);
+    assert_unsupported(
+        &first,
+        1,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
+    );
+    assert_invalid(&first, 2);
+    assert_eq!(qualified_functions(&first, 3).len(), 2);
+
+    assert_eq!(
+        rotate3d_axis_spellings(&first, 0, 0),
+        rotate3d_axis_spellings(&repeated, 0, 0)
+    );
+    assert_eq!(
+        rotate3d_axis_spellings(&first, 0, 0),
+        rotate3d_axis_spellings(&another_source, 0, 0)
+    );
+}
+
+// 67. `rotate3d` function-name recognition is ASCII-case-insensitive,
+// matching the accepted `matrix`/`scale`/`translate3d` boundary; a name
+// that merely starts with `rotate3d` is a different function and stays
+// outside selected-profile coverage (#649).
+
+#[test]
+fn rotate3d_function_name_recognition_is_ascii_case_insensitive() {
+    let result = qualify(
+        649330,
+        concat!(
+            "a{transform:ROTATE3D(1,0,0,90deg);}",
+            "b{transform:RoTaTe3d(1,0,0,90deg);}",
+            "c{transform:r\\6f tate3d(1,0,0,90deg);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 3);
+    for index in 0..3 {
+        let (is_angle, spelling) = rotate3d_angle_spelling(&result, index, 0);
+        assert!(is_angle, "rotate3d name recognition failed at {index}");
+        assert_eq!(spelling, "90deg");
+    }
+}
+
+// 68. Structurally malformed `rotate3d` components -- a bare Function
+// name, an unbalanced/duplicated closer, or stray leading material -- stay
+// decisively `Invalid`, mirroring the accepted `matrix`/`scale`/
+// `translate3d` structural boundary (#649).
+
+#[test]
+fn structurally_malformed_rotate3d_components_are_invalid() {
+    assert_all_invalid(
+        649340,
+        &[
+            "rotate3d",
+            "rotate3d(1,0,0,90deg))",
+            "rotate3d((1,0,0,90deg)",
+            "1 rotate3d(1,0,0,90deg)",
+            "[rotate3d(1,0,0,90deg)]",
+        ],
+    );
+}
+
+// 69. Cross-leaf isolation: `rotate3d()` recognition never leaks into the
+// accepted longhand `rotate`/`translate`/`scale` leaves or the other
+// `transform-*` single-value leaves, and coexists with a sibling matrix
+// declaration in the same ordinary declaration list (#418 / #606 / #645 /
+// #647 / #649).
+
+#[test]
+fn rotate3d_cross_leaf_isolation_is_preserved() {
+    let result = qualify(
+        649350,
+        concat!(
+            "a{transform:rotate3d(1,0,0,90deg);transform:none;}",
+            "b{translate:10px;}",
+            "c{scale:2;}",
+            "d{rotate:45deg;}",
+            "e{transform-origin:left top;}",
+            "f{transform-box:border-box;}",
+            "g{transform-style:flat;}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 2);
+    let (is_angle, spelling) = rotate3d_angle_spelling(&result, 0, 0);
+    assert!(is_angle);
+    assert_eq!(spelling, "90deg");
+    assert_whole_none(&result, 1);
+
+    assert_eq!(result.translate_observations().len(), 1);
+    assert_eq!(result.scale_observations().len(), 1);
+    assert_eq!(result.rotate_observations().len(), 1);
+    assert_eq!(result.transform_origin_observations().len(), 1);
+    assert_eq!(result.transform_box_observations().len(), 1);
+    assert_eq!(result.transform_style_observations().len(), 1);
+}
+
+// 70. `none` remains an exclusive whole-value branch even when combined
+// with `rotate3d()`, in either authored order (#418 / #649).
+
+#[test]
+fn whole_none_remains_exclusive_with_rotate3d() {
+    assert_all_invalid(
+        649360,
+        &["none rotate3d(1,0,0,90deg)", "rotate3d(1,0,0,90deg) none"],
+    );
 }
