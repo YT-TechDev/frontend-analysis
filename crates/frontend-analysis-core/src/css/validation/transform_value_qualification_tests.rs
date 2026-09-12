@@ -5,7 +5,8 @@ use crate::css::token::{CssExponentSign, CssNumberSign, CssTokenKind};
 use crate::css::tokenizer::resource::CssTokenizerLimits;
 use crate::css::value_qualification::{
     CssTransformFunction, CssTransformQualificationOutcome, CssTransformScaleArgumentKind,
-    CssTransformUnsupportedReason, CssTransformValue, CssValueQualificationRunResult, run,
+    CssTransformTranslate3dXyArgumentKind, CssTransformUnsupportedReason, CssTransformValue,
+    CssValueQualificationRunResult, run,
 };
 use crate::{SourceId, SourceText};
 
@@ -229,6 +230,95 @@ fn scale_argument_spellings(
             (argument.kind(), authored_scale_argument_spelling(token))
         })
         .collect()
+}
+
+/// Reconstructs one retained `Number`, `Dimension`, or `Percentage` token's
+/// authored numeric structure from tokenizer-owned evidence alone, exactly
+/// like `authored_scale_argument_spelling`, with the authored unit spelling
+/// appended for a `Dimension` and a trailing `%` marker for a `Percentage`,
+/// so `0`, `0px`, and `0%` stay pairwise distinguishable in assertions and
+/// none is ever collapsed into another. No machine number or unit
+/// conversion is ever produced.
+fn authored_translate3d_argument_spelling(token: &CssTokenKind) -> String {
+    let (value, suffix) = match token {
+        CssTokenKind::Number { value, .. } => (value, String::new()),
+        CssTokenKind::Dimension { value, unit, .. } => (value, unit.clone()),
+        CssTokenKind::Percentage { value } => (value, "%".to_string()),
+        other => panic!(
+            "translate3d argument evidence did not resolve to a Number/Dimension/Percentage token, got {other:?}"
+        ),
+    };
+
+    let mut spelling = String::new();
+    match value.sign() {
+        Some(CssNumberSign::Plus) => spelling.push('+'),
+        Some(CssNumberSign::Minus) => spelling.push('-'),
+        None => {}
+    }
+    spelling.push_str(value.decimal().integer_digits());
+    let fraction_digits = value.decimal().fraction_digits();
+    if !fraction_digits.is_empty() {
+        spelling.push('.');
+        spelling.push_str(fraction_digits);
+    }
+    if let Some(exponent) = value.decimal().exponent() {
+        spelling.push('e');
+        match exponent.sign() {
+            Some(CssExponentSign::Plus) => spelling.push('+'),
+            Some(CssExponentSign::Minus) => spelling.push('-'),
+            None => {}
+        }
+        spelling.push_str(exponent.digits());
+    }
+    spelling.push_str(&suffix);
+    spelling
+}
+
+/// Resolves one qualified `translate3d()` transform component at
+/// `function_index` within observation `index` into its ordered
+/// `(x_kind, x, y_kind, y, z)` authored evidence, preserving exact X/Y/Z
+/// positional order and X/Y Length-vs-Percentage kind. Z carries no kind
+/// because a Z `Percentage` is rejected by `classify_transform_component`
+/// before a `CssTransformTranslate3dFunction` is ever constructed, so a Z
+/// `Percentage` can never reach this resolver.
+fn translate3d_argument_spellings(
+    result: &CssValueQualificationRunResult,
+    index: usize,
+    function_index: usize,
+) -> (
+    CssTransformTranslate3dXyArgumentKind,
+    String,
+    CssTransformTranslate3dXyArgumentKind,
+    String,
+    String,
+) {
+    let functions = qualified_functions(result, index);
+    let function = functions
+        .get(function_index)
+        .unwrap_or_else(|| panic!("missing transform component {function_index} at {index}"));
+    let CssTransformFunction::Translate3d(translate3d) = function else {
+        panic!("expected translate3d component {function_index} at {index}, got {function:?}");
+    };
+
+    let x = translate3d.x();
+    let y = translate3d.y();
+    let x_token = result
+        .transform_translate3d_argument_token(x.evidence_ref())
+        .expect("translate3d X evidence did not resolve");
+    let y_token = result
+        .transform_translate3d_argument_token(y.evidence_ref())
+        .expect("translate3d Y evidence did not resolve");
+    let z_token = result
+        .transform_translate3d_argument_token(translate3d.z())
+        .expect("translate3d Z evidence did not resolve");
+
+    (
+        x.kind(),
+        authored_translate3d_argument_spelling(x_token),
+        y.kind(),
+        authored_translate3d_argument_spelling(y_token),
+        authored_translate3d_argument_spelling(z_token),
+    )
 }
 
 fn assert_all_invalid(source_id: u64, values: &[&str]) {
@@ -1575,4 +1665,730 @@ fn cross_dispatch_separation_from_other_qualified_leaves() {
     assert_eq!(result.rotate_observations().len(), 1);
     assert_eq!(result.translate_observations().len(), 1);
     assert_eq!(result.counter_reset_observations().len(), 1);
+}
+
+// 25. `translate3d() = translate3d(<length-percentage>, <length-percentage>,
+// <length>)` (#418 / #647): exactly three ordered, position-sensitive
+// arguments qualify. X and Y accept a direct `<length>` or `<percentage>`;
+// Z accepts a direct `<length>` only. Canonical direct-`<length>` forms in
+// every slot qualify, and authored numeric/unit identity stays
+// source-backed tokenizer evidence -- never normalized through machine
+// floating point or unit conversion.
+
+#[test]
+fn canonical_translate3d_lengths_qualify_with_three_ordered_arguments() {
+    let result = qualify(
+        647100,
+        concat!(
+            "a{transform:translate3d(0,0,0);}",
+            "b{transform:translate3d(10px,20px,30px);}",
+            "c{transform:translate3d(-1px,-2em,-3rem);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 3);
+    assert_eq!(qualified_functions(&result, 0).len(), 1);
+
+    assert_eq!(
+        translate3d_argument_spellings(&result, 0, 0),
+        (
+            CssTransformTranslate3dXyArgumentKind::Length,
+            "0".to_string(),
+            CssTransformTranslate3dXyArgumentKind::Length,
+            "0".to_string(),
+            "0".to_string(),
+        )
+    );
+    assert_eq!(
+        translate3d_argument_spellings(&result, 1, 0),
+        (
+            CssTransformTranslate3dXyArgumentKind::Length,
+            "10px".to_string(),
+            CssTransformTranslate3dXyArgumentKind::Length,
+            "20px".to_string(),
+            "30px".to_string(),
+        )
+    );
+    assert_eq!(
+        translate3d_argument_spellings(&result, 2, 0),
+        (
+            CssTransformTranslate3dXyArgumentKind::Length,
+            "-1px".to_string(),
+            CssTransformTranslate3dXyArgumentKind::Length,
+            "-2em".to_string(),
+            "-3rem".to_string(),
+        )
+    );
+}
+
+// 26. XY `<percentage>` and mixed Length/Percentage combinations qualify in
+// either X or Y position, preserving authored kind distinctly (#647).
+
+#[test]
+fn xy_percentage_and_mixed_combinations_qualify() {
+    let result = qualify(
+        647110,
+        concat!(
+            "a{transform:translate3d(10%,20%,30px);}",
+            "b{transform:translate3d(10%,20px,30px);}",
+            "c{transform:translate3d(10px,20%,30px);}",
+            "d{transform:translate3d(0%,0%,0);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 4);
+    assert_eq!(
+        translate3d_argument_spellings(&result, 0, 0),
+        (
+            CssTransformTranslate3dXyArgumentKind::Percentage,
+            "10%".to_string(),
+            CssTransformTranslate3dXyArgumentKind::Percentage,
+            "20%".to_string(),
+            "30px".to_string(),
+        )
+    );
+    assert_eq!(
+        translate3d_argument_spellings(&result, 1, 0),
+        (
+            CssTransformTranslate3dXyArgumentKind::Percentage,
+            "10%".to_string(),
+            CssTransformTranslate3dXyArgumentKind::Length,
+            "20px".to_string(),
+            "30px".to_string(),
+        )
+    );
+    assert_eq!(
+        translate3d_argument_spellings(&result, 2, 0),
+        (
+            CssTransformTranslate3dXyArgumentKind::Length,
+            "10px".to_string(),
+            CssTransformTranslate3dXyArgumentKind::Percentage,
+            "20%".to_string(),
+            "30px".to_string(),
+        )
+    );
+    assert_eq!(
+        translate3d_argument_spellings(&result, 3, 0),
+        (
+            CssTransformTranslate3dXyArgumentKind::Percentage,
+            "0%".to_string(),
+            CssTransformTranslate3dXyArgumentKind::Percentage,
+            "0%".to_string(),
+            "0".to_string(),
+        )
+    );
+}
+
+// 27. Z is restricted to a direct `<length>`: a direct `<percentage>` in
+// the Z position is decisive `InvalidForSelectedValueGrammar` even when it
+// is mathematically zero -- this boundary is load-bearing and is never
+// softened by X/Y accepting `<percentage>` (#418 / #647).
+
+#[test]
+fn z_percentage_is_decisively_invalid() {
+    assert_all_invalid(
+        647120,
+        &[
+            "translate3d(1px,2px,3%)",
+            "translate3d(1px,2px,0%)",
+            "translate3d(10%,20%,30%)",
+            "translate3d(0px,0px,0%)",
+        ],
+    );
+}
+
+// 28. A direct exact-zero `Number` satisfies `<length>` in every slot,
+// reusing the accepted `translate` (#606) exact-zero-Number-as-`Length`
+// theorem; the retained evidence stays a `Number` token, never converted
+// to a `Dimension` or interpreted magnitude (#647).
+
+#[test]
+fn exact_zero_number_qualifies_as_length_in_every_slot() {
+    let result = qualify(
+        647130,
+        concat!(
+            "a{transform:translate3d(0,1px,2px);}",
+            "b{transform:translate3d(1px,+0,2px);}",
+            "c{transform:translate3d(1px,2px,-0);}",
+            "d{transform:translate3d(.0,0.0,0e100);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 4);
+    let (x_kind, x, _, _, _) = translate3d_argument_spellings(&result, 0, 0);
+    assert_eq!(x_kind, CssTransformTranslate3dXyArgumentKind::Length);
+    assert_eq!(x, "0");
+
+    let (_, _, y_kind, y, _) = translate3d_argument_spellings(&result, 1, 0);
+    assert_eq!(y_kind, CssTransformTranslate3dXyArgumentKind::Length);
+    assert_eq!(y, "+0");
+
+    let (.., z) = translate3d_argument_spellings(&result, 2, 0);
+    assert_eq!(z, "-0");
+
+    // Authored `.0`: the absent leading integer digit is canonicalized to
+    // `0` by the tokenizer's own retained numeric contract, upstream of
+    // this leaf, exactly as for `matrix()`/`scale()` arguments.
+    assert_eq!(
+        translate3d_argument_spellings(&result, 3, 0),
+        (
+            CssTransformTranslate3dXyArgumentKind::Length,
+            "0.0".to_string(),
+            CssTransformTranslate3dXyArgumentKind::Length,
+            "0.0".to_string(),
+            "0e100".to_string(),
+        )
+    );
+}
+
+// 29. A non-zero unitless `Number` never satisfies `<length>` or
+// `<percentage>` in any slot: this leaf never interprets an arbitrary
+// `Number` as `Length` (#418 / #647).
+
+#[test]
+fn non_zero_unitless_number_is_invalid_in_every_slot() {
+    assert_all_invalid(
+        647140,
+        &[
+            "translate3d(1,2px,3px)",
+            "translate3d(1px,2,3px)",
+            "translate3d(1px,2px,3)",
+            "translate3d(1px,2px,-3)",
+            "translate3d(1px,2px,0.5)",
+        ],
+    );
+}
+
+// 30. `0`, `0px`, and `0%` remain three distinct authored evidences: none
+// is ever normalized, synthesized, or collapsed into another, and a `0%`
+// Z is invalid precisely because it is a `Percentage`, not because it is
+// mathematically zero (#418 / #647).
+
+#[test]
+fn zero_number_dimension_and_percentage_identity_is_preserved() {
+    let result = qualify(
+        647150,
+        concat!(
+            "a{transform:translate3d(0,0,0);}",
+            "b{transform:translate3d(0px,0px,0px);}",
+            "c{transform:translate3d(0%,0%,0px);}",
+        ),
+    );
+
+    let all_number = translate3d_argument_spellings(&result, 0, 0);
+    let all_px = translate3d_argument_spellings(&result, 1, 0);
+    let percentage_xy = translate3d_argument_spellings(&result, 2, 0);
+
+    assert_eq!(all_number.1, "0");
+    assert_eq!(all_px.1, "0px");
+    assert_eq!(percentage_xy.1, "0%");
+    assert_ne!(all_number.1, all_px.1);
+    assert_ne!(all_number.1, percentage_xy.1);
+    assert_ne!(all_px.1, percentage_xy.1);
+    assert_eq!(
+        percentage_xy.0,
+        CssTransformTranslate3dXyArgumentKind::Percentage
+    );
+
+    // `0%` remains decisively Invalid in the Z position even paired with
+    // every other Z form qualifying.
+    assert_all_invalid(647151, &["translate3d(0px,0px,0%)"]);
+}
+
+// 31. Every other direct token category -- an angle `Dimension`, `Ident`,
+// `String`, or `Hash` -- is a decisive direct token-category failure in
+// any of the three positions (#418 / #647).
+
+#[test]
+fn wrong_direct_token_categories_are_invalid() {
+    assert_all_invalid(
+        647160,
+        &[
+            "translate3d(1deg,2px,3px)",
+            "translate3d(1px,2deg,3px)",
+            "translate3d(1px,2px,3deg)",
+            "translate3d(foo,2px,3px)",
+            "translate3d(1px,foo,3px)",
+            "translate3d(1px,2px,foo)",
+            "translate3d(\"1\",2px,3px)",
+            "translate3d(1px,\"2\",3px)",
+            "translate3d(1px,2px,\"3\")",
+            "translate3d(#abc,2px,3px)",
+            "translate3d(1px,#abc,3px)",
+            "translate3d(1px,2px,#abc)",
+        ],
+    );
+}
+
+// 32. Exact arity is three: zero, one, two, four, or more directly visible
+// arguments are decisive `InvalidForSelectedValueGrammar` before any
+// argument content is consulted (#418 / #647).
+
+#[test]
+fn translate3d_argument_cardinality_other_than_three_is_invalid() {
+    assert_all_invalid(
+        647170,
+        &[
+            "translate3d()",
+            "translate3d(1px)",
+            "translate3d(1px,2px)",
+            "translate3d(1px,2px,3px,4px)",
+            "translate3d(1px,2px,3px,4px,5px)",
+        ],
+    );
+
+    // The adjacent accepted arity is the only qualifying one, sealing the
+    // off-by-one boundary from both sides.
+    let result = qualify(647179, "a{transform:translate3d(1px,2px,3px);}");
+    let (.., z) = translate3d_argument_spellings(&result, 0, 0);
+    assert_eq!(z, "3px");
+}
+
+// 33. `#` is comma-separated repetition, never whitespace-separated SVG
+// transform-attribute syntax, and an authored-empty argument position is
+// preserved as its own ordered slot and rejected -- never collapsed away
+// (#418 / #647).
+
+#[test]
+fn translate3d_argument_delimiter_failures_are_invalid() {
+    assert_all_invalid(
+        647180,
+        &[
+            "translate3d(1px 2px 3px)",
+            "translate3d(1 2 3)",
+            "translate3d(,2px,3px)",
+            "translate3d(1px,,3px)",
+            "translate3d(1px,2px,)",
+            "translate3d(1px,,,3px)",
+            "translate3d(,,)",
+        ],
+    );
+}
+
+// 34. An opaque non-deferred Function occupying an otherwise structurally
+// feasible argument slot is selected-profile Unsupported, mirroring the
+// shared `FunctionValuedTransformArgument` reason `matrix()`/`scale()`
+// opaque arguments use -- this leaf never evaluates `calc()` (#418 /
+// #647).
+
+#[test]
+fn opaque_translate3d_argument_function_is_unsupported() {
+    assert_all_unsupported(
+        647190,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
+        &[
+            "translate3d(calc(1px),2px,3px)",
+            "translate3d(1px,calc(2%),3px)",
+            "translate3d(1px,2px,calc(3px))",
+            "translate3d(min(1px,2px),2px,3px)",
+            "matrix(1,0,0,1,0,0) translate3d(calc(1px),2px,3px)",
+        ],
+    );
+}
+
+// 35. A comma nested inside a Function argument is at a deeper relative
+// depth and never becomes a translate3d-level argument separator -- the
+// Unsupported outcome for exactly three slots is itself the
+// depth-isolation proof, and a nested comma that genuinely does add a
+// translate3d-level slot once the nesting closes is still counted (#647).
+
+#[test]
+fn nested_commas_never_change_translate3d_arity() {
+    assert_all_unsupported(
+        647200,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
+        &[
+            "translate3d(calc(1px,2px),2px,3px)",
+            "translate3d(2px,calc(1px,2px),3px)",
+            "translate3d(2px,3px,calc(1px,2px))",
+            "translate3d(calc([1px,2px]),2px,3px)",
+            "translate3d(calc({1px,2px}),2px,3px)",
+        ],
+    );
+
+    // Once the nesting closes, a genuine fourth translate3d-level slot is
+    // still counted and makes the shell decisively Invalid.
+    assert_all_invalid(
+        647210,
+        &[
+            "translate3d(calc(1px,2px),2px,3px,4px)",
+            "translate3d(calc(1px,2px),2px)",
+        ],
+    );
+}
+
+// 36. Directly visible decisive invalidity outranks an opaque Function
+// found in a sibling slot, in either authored order -- including the
+// position-sensitive Z `Percentage` boundary, which never depends on
+// which slot the walk reaches first (#418 / #647).
+
+#[test]
+fn decisive_invalid_outranks_opaque_argument_in_either_order() {
+    assert_all_invalid(
+        647220,
+        &[
+            "translate3d(calc(1px),2px,30%)",
+            "translate3d(30%,calc(2px),30%)",
+            "translate3d(calc(1px),2px)",
+            "translate3d(calc(1px),2px,3px,4px)",
+            "translate3d(1px,calc(2px),3%)",
+            "translate3d(1%,calc(2px),3%)",
+        ],
+    );
+}
+
+// 37. Deferred substitution can still change the surrounding token
+// sequence, separators, and cardinality, so it is resolved before any
+// surrounding translate3d shape conclusion -- including an arity that
+// looks decisive (#418 / #647).
+
+#[test]
+fn translate3d_deferred_substitution_outranks_surrounding_shape_conclusions() {
+    assert_all_unsupported(
+        647230,
+        CssTransformUnsupportedReason::DeferredSubstitutionFunction,
+        &[
+            "translate3d(var(--x),2px)",
+            "translate3d(1px,var(--y),3px)",
+            "translate3d(var(--x),2px,3px)",
+            "translate3d(1px,2px,3px,var(--x))",
+            "matrix(1,0,0,1,0,0) translate3d(var(--x),2px)",
+            "translate3d(var(--x),2px) matrix(1,0,0,1,0,0)",
+        ],
+    );
+}
+
+// 38. Selected `matrix()`, `scale()`, and `translate3d()` components mix
+// freely, preserve exact authored order and repetition, and stay
+// distinguishable through the heterogeneous `CssTransformFunction`
+// alternation (#418 / #645 / #647).
+
+#[test]
+fn mixed_matrix_scale_translate3d_order_is_preserved() {
+    let result = qualify(
+        647240,
+        concat!(
+            "a{transform:matrix(1,0,0,1,0,0) translate3d(10%,20px,30px) scale(2);}",
+            "b{transform:scale(2) translate3d(10px,20%,30px) matrix(1,0,0,1,0,0);}",
+            "c{transform:translate3d(1px,2px,3px) translate3d(4%,5px,6px);}",
+            "d{transform:translate3d(1px,2px,3px) matrix(1,0,0,1,0,0);}",
+            "e{transform:matrix(1,0,0,1,0,0) translate3d(1px,2px,3px);}",
+            "f{transform:scale(2) translate3d(1px,2px,3px);}",
+            "g{transform:translate3d(1px,2px,3px) scale(2);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 7);
+
+    let functions_a = qualified_functions(&result, 0);
+    assert_eq!(functions_a.len(), 3);
+    assert!(matches!(functions_a[0], CssTransformFunction::Matrix(_)));
+    assert!(matches!(
+        functions_a[1],
+        CssTransformFunction::Translate3d(_)
+    ));
+    assert!(matches!(functions_a[2], CssTransformFunction::Scale(_)));
+
+    let functions_b = qualified_functions(&result, 1);
+    assert_eq!(functions_b.len(), 3);
+    assert!(matches!(functions_b[0], CssTransformFunction::Scale(_)));
+    assert!(matches!(
+        functions_b[1],
+        CssTransformFunction::Translate3d(_)
+    ));
+    assert!(matches!(functions_b[2], CssTransformFunction::Matrix(_)));
+
+    let functions_c = qualified_functions(&result, 2);
+    assert_eq!(functions_c.len(), 2);
+    assert!(matches!(
+        functions_c[0],
+        CssTransformFunction::Translate3d(_)
+    ));
+    assert!(matches!(
+        functions_c[1],
+        CssTransformFunction::Translate3d(_)
+    ));
+    assert_eq!(
+        translate3d_argument_spellings(&result, 2, 0).4,
+        "3px".to_string()
+    );
+    assert_eq!(
+        translate3d_argument_spellings(&result, 2, 1).4,
+        "6px".to_string()
+    );
+
+    for index in 3..7 {
+        assert_eq!(
+            qualified_functions(&result, index).len(),
+            2,
+            "expected two components at {index}"
+        );
+    }
+}
+
+// 39. Every `<transform-function>` other than selected `matrix()`/
+// `scale()`/`translate3d()` stays outside selected-profile coverage, in
+// either authored order and regardless of a sibling qualified selected
+// function, and the coarser outer unselected-function coverage outranks
+// an inner opaque `translate3d()` argument (#418 / #647).
+
+#[test]
+fn unselected_outer_function_precedence_covers_translate3d() {
+    assert_all_unsupported(
+        647250,
+        CssTransformUnsupportedReason::UnselectedTransformFunction,
+        &[
+            "rotate(1deg)",
+            "translate3d(1px,2px,3px) rotate(1deg)",
+            "rotate(1deg) translate3d(1px,2px,3px)",
+            "translate3dx(1px,2px,3px)",
+        ],
+    );
+
+    // Coarser outer unselected-function coverage outranks an inner opaque
+    // translate3d argument, identically in both authored orders.
+    assert_all_unsupported(
+        647260,
+        CssTransformUnsupportedReason::UnselectedTransformFunction,
+        &[
+            "translate3d(calc(1px),2px,3px) rotate(1deg)",
+            "rotate(1deg) translate3d(calc(1px),2px,3px)",
+        ],
+    );
+}
+
+// 40. `<transform-list>` is whitespace-separated repetition: a top-level
+// comma is never a permitted separator, including between two
+// `translate3d()` components or a `translate3d()` and a sibling selected
+// function (#418 / #647).
+
+#[test]
+fn top_level_comma_is_invalid_around_translate3d() {
+    assert_all_invalid(
+        647270,
+        &[
+            "translate3d(1px,2px,3px), matrix(1,0,0,1,0,0)",
+            "translate3d(1px,2px,3px), scale(2)",
+            "translate3d(1px,2px,3px), translate3d(1px,2px,3px)",
+            ",translate3d(1px,2px,3px)",
+            "translate3d(1px,2px,3px),",
+            "none, translate3d(1px,2px,3px)",
+            "translate3d(1px,2px,3px), none",
+        ],
+    );
+}
+
+// 41. CSS Syntax function consumption may end at a true stylesheet EOF, so
+// a parser-committed EOF-ended `translate3d()` extent is qualified from
+// retained interior evidence alone. EOF never fills or repairs missing
+// slots, empty slots, or a decisive Z `Percentage` (#418 / #647).
+
+#[test]
+fn true_stylesheet_eof_ended_translate3d_extent_follows_parser_authority() {
+    let complete = qualify(647280, "a{transform:translate3d(1px,2px,3px");
+    assert_eq!(
+        complete.execution_completion(),
+        CssParserExecutionCompletion::Complete
+    );
+    assert_eq!(complete.transform_observations().len(), 1);
+    let (.., z) = translate3d_argument_spellings(&complete, 0, 0);
+    assert_eq!(z, "3px");
+
+    // A short EOF-ended extent stays short: EOF never fills missing slots.
+    let short = qualify(647281, "a{transform:translate3d(1px,2px");
+    assert_invalid(&short, 0);
+
+    // EOF never repairs a decisive Z Percentage.
+    let z_percentage = qualify(647282, "a{transform:translate3d(1px,2px,3%");
+    assert_invalid(&z_percentage, 0);
+
+    // Without a closer, later authored material is absorbed into the final
+    // slot by real retained structure, so it no longer satisfies exactly
+    // one direct Length.
+    let absorbed = qualify(647283, "a{transform:translate3d(1px,2px,3px 7");
+    assert_eq!(
+        absorbed.execution_completion(),
+        CssParserExecutionCompletion::Complete
+    );
+    assert_invalid(&absorbed, 0);
+
+    // A closed component followed by stray material is invalid, proving
+    // the accepted EOF case is not "accept whatever trails a translate3d".
+    let trailing = qualify(647284, "a{transform:translate3d(1px,2px,3px) 7;}");
+    assert_invalid(&trailing, 0);
+}
+
+// 42. Lower-layer lifecycle evidence stays owned by the tokenizer and
+// parser: comments/trivia never change slot interpretation, and
+// `!important` remains outside the semantic value window (#418 / #647).
+
+#[test]
+fn trivia_and_important_never_change_translate3d_interpretation() {
+    let result = qualify(
+        647290,
+        concat!(
+            "a{transform:translate3d(1px,/**/2px,3px);}",
+            "b{transform:translate3d(1px/**/,2px,3px);}",
+            "c{transform:translate3d(1px,2px,3px/**/);}",
+            "d{transform:translate3d(/**/1px,2px,3px);}",
+            "e{transform:translate3d( 1px , 2px , 3px );}",
+            "f{transform:translate3d(1px,/*,*/2px,3px);}",
+            "g{transform:translate3d(1px,2px,3px) !important;}",
+            "h{transform:translate3d(1px,2px,3px)!important;}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 8);
+    for index in 0..6 {
+        assert_eq!(
+            translate3d_argument_spellings(&result, index, 0),
+            (
+                CssTransformTranslate3dXyArgumentKind::Length,
+                "1px".to_string(),
+                CssTransformTranslate3dXyArgumentKind::Length,
+                "2px".to_string(),
+                "3px".to_string(),
+            ),
+            "trivia changed slot interpretation at {index}"
+        );
+    }
+    for index in 6..8 {
+        let (.., z) = translate3d_argument_spellings(&result, index, 0);
+        assert_eq!(z, "3px");
+        assert!(
+            result.upstream_parser_result().occurrences()[index]
+                .priority()
+                .is_some(),
+            "expected retained priority evidence at {index}"
+        );
+    }
+
+    // A comment is trivia, never an argument: it can neither fill an
+    // authored-empty slot nor stand in for a missing one.
+    assert_all_invalid(
+        647300,
+        &["translate3d(1px,/**/,2px,3px)", "translate3d(1px,2px,/**/)"],
+    );
+}
+
+// 43. Repeated and cross-source runs remain deterministic, and evidence
+// lookup resolves to the exact retained Number/Dimension/Percentage
+// tokens identically across runs, exactly like matrix/scale evidence
+// lookup (#418 / #647).
+
+#[test]
+fn translate3d_repeated_and_cross_source_runs_are_deterministic() {
+    let css = concat!(
+        "a{transform:translate3d(10%,20px,30px);}",
+        "b{transform:translate3d(calc(1px,2px),2px,3px);}",
+        "c{transform:translate3d(1px,2px,3%);}",
+        "d{transform:matrix(1,0,0,1,0,0) translate3d(1px,2px,3px);}",
+    );
+
+    let first = qualify(647310, css);
+    let repeated = qualify(647310, css);
+    let another_source = qualify(647311, css);
+
+    assert_eq!(
+        first.transform_observations(),
+        repeated.transform_observations()
+    );
+    assert_eq!(
+        first.transform_observations(),
+        another_source.transform_observations()
+    );
+
+    assert_eq!(qualified_functions(&first, 0).len(), 1);
+    assert_unsupported(
+        &first,
+        1,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
+    );
+    assert_invalid(&first, 2);
+    assert_eq!(qualified_functions(&first, 3).len(), 2);
+
+    assert_eq!(
+        translate3d_argument_spellings(&first, 0, 0),
+        translate3d_argument_spellings(&repeated, 0, 0)
+    );
+    assert_eq!(
+        translate3d_argument_spellings(&first, 0, 0),
+        translate3d_argument_spellings(&another_source, 0, 0)
+    );
+}
+
+// 44. `translate3d` function-name recognition is ASCII-case-insensitive,
+// matching the accepted `matrix`/`scale` boundary; a name that merely
+// starts with `translate3d` is a different function and stays outside
+// selected-profile coverage (#647).
+
+#[test]
+fn translate3d_function_name_recognition_is_ascii_case_insensitive() {
+    let result = qualify(
+        647320,
+        concat!(
+            "a{transform:TRANSLATE3D(1px,2px,3px);}",
+            "b{transform:TrAnSlAtE3d(1px,2px,3px);}",
+            "c{transform:t\\72 anslate3d(1px,2px,3px);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 3);
+    for index in 0..3 {
+        let (.., z) = translate3d_argument_spellings(&result, index, 0);
+        assert_eq!(z, "3px", "translate3d name recognition failed at {index}");
+    }
+}
+
+// 45. Structurally malformed `translate3d` components -- a bare Function
+// name, an unbalanced/duplicated closer, or stray leading material -- stay
+// decisively `Invalid`, mirroring the accepted `matrix`/`scale` structural
+// boundary (#647).
+
+#[test]
+fn structurally_malformed_translate3d_components_are_invalid() {
+    assert_all_invalid(
+        647330,
+        &[
+            "translate3d",
+            "translate3d(1px,2px,3px))",
+            "translate3d((1px,2px,3px)",
+            "1 translate3d(1px,2px,3px)",
+            "[translate3d(1px,2px,3px)]",
+        ],
+    );
+}
+
+// 46. Cross-leaf isolation: `translate3d()` recognition never leaks into
+// the accepted longhand `translate`/`scale`/`rotate` leaves or the other
+// `transform-*` single-value leaves, and coexists with a sibling matrix
+// declaration in the same ordinary declaration list (#418 / #606 / #645 /
+// #647).
+
+#[test]
+fn translate3d_cross_leaf_isolation_is_preserved() {
+    let result = qualify(
+        647340,
+        concat!(
+            "a{transform:translate3d(1px,2px,3px);transform:none;}",
+            "b{translate:10px;}",
+            "c{scale:2;}",
+            "d{rotate:45deg;}",
+            "e{transform-origin:left top;}",
+            "f{transform-box:border-box;}",
+            "g{transform-style:flat;}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 2);
+    let (.., z) = translate3d_argument_spellings(&result, 0, 0);
+    assert_eq!(z, "3px");
+    assert_whole_none(&result, 1);
+
+    assert_eq!(result.translate_observations().len(), 1);
+    assert_eq!(result.scale_observations().len(), 1);
+    assert_eq!(result.rotate_observations().len(), 1);
+    assert_eq!(result.transform_origin_observations().len(), 1);
+    assert_eq!(result.transform_box_observations().len(), 1);
+    assert_eq!(result.transform_style_observations().len(), 1);
 }
