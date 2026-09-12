@@ -47,6 +47,8 @@ mod box_sizing_value_qualification_tests;
 #[cfg(test)]
 mod caret_animation_value_qualification_tests;
 #[cfg(test)]
+mod caret_shape_value_qualification_tests;
+#[cfg(test)]
 mod clip_rule_value_qualification_tests;
 #[cfg(test)]
 mod color_interpolation_filters_value_qualification_tests;
