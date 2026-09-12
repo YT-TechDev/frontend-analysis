@@ -7,7 +7,8 @@ use crate::css::value_qualification::{
     CssTransformFunction, CssTransformQualificationOutcome, CssTransformRotate3dAngleArgument,
     CssTransformRotate3dFunction, CssTransformScaleArgumentKind,
     CssTransformTranslate3dXyArgumentKind, CssTransformTranslateArgumentKind,
-    CssTransformUnsupportedReason, CssTransformValue, CssValueQualificationRunResult, run,
+    CssTransformTranslateXArgumentKind, CssTransformUnsupportedReason, CssTransformValue,
+    CssValueQualificationRunResult, run,
 };
 use crate::{SourceId, SourceText};
 
@@ -398,6 +399,80 @@ fn translate_argument_spellings(
             (argument.kind(), authored_translate_argument_spelling(token))
         })
         .collect()
+}
+
+/// Reconstructs one retained `Number`, `Dimension`, or `Percentage` token's
+/// authored numeric structure from tokenizer-owned evidence alone, exactly
+/// like `authored_translate_argument_spelling`, so `0`, `0px`, and `0%`
+/// stay pairwise distinguishable in assertions and none is ever collapsed
+/// into another. This is a dedicated `translateX()` test helper, distinct
+/// from `authored_translate_argument_spelling` and
+/// `authored_translate3d_argument_spelling`: `translateX()` argument
+/// placement remains a distinct semantic role even though the underlying
+/// scalar spelling logic is identical. No machine number or unit
+/// conversion is ever produced.
+fn authored_translatex_argument_spelling(token: &CssTokenKind) -> String {
+    let (value, suffix) = match token {
+        CssTokenKind::Number { value, .. } => (value, String::new()),
+        CssTokenKind::Dimension { value, unit, .. } => (value, unit.clone()),
+        CssTokenKind::Percentage { value } => (value, "%".to_string()),
+        other => panic!(
+            "translateX argument evidence did not resolve to a Number/Dimension/Percentage token, got {other:?}"
+        ),
+    };
+
+    let mut spelling = String::new();
+    match value.sign() {
+        Some(CssNumberSign::Plus) => spelling.push('+'),
+        Some(CssNumberSign::Minus) => spelling.push('-'),
+        None => {}
+    }
+    spelling.push_str(value.decimal().integer_digits());
+    let fraction_digits = value.decimal().fraction_digits();
+    if !fraction_digits.is_empty() {
+        spelling.push('.');
+        spelling.push_str(fraction_digits);
+    }
+    if let Some(exponent) = value.decimal().exponent() {
+        spelling.push('e');
+        match exponent.sign() {
+            Some(CssExponentSign::Plus) => spelling.push('+'),
+            Some(CssExponentSign::Minus) => spelling.push('-'),
+            None => {}
+        }
+        spelling.push_str(exponent.digits());
+    }
+    spelling.push_str(&suffix);
+    spelling
+}
+
+/// Resolves one qualified `translateX()` transform component's single
+/// authored argument at `function_index` within observation `index` as a
+/// `(kind, spelling)` pair. Unlike `translate_argument_spellings` and
+/// `scale_argument_spellings`, this never returns a vector: `translateX()`
+/// has no one-vs-two cardinality to preserve, since it accepts exactly one
+/// authored argument.
+fn translatex_argument_spelling(
+    result: &CssValueQualificationRunResult,
+    index: usize,
+    function_index: usize,
+) -> (CssTransformTranslateXArgumentKind, String) {
+    let functions = qualified_functions(result, index);
+    let function = functions
+        .get(function_index)
+        .unwrap_or_else(|| panic!("missing transform component {function_index} at {index}"));
+    let CssTransformFunction::TranslateX(translatex) = function else {
+        panic!("expected translateX component {function_index} at {index}, got {function:?}");
+    };
+
+    let argument = translatex.argument();
+    let token = result
+        .transform_translatex_argument_token(argument.evidence_ref())
+        .expect("translateX argument evidence did not resolve");
+    (
+        argument.kind(),
+        authored_translatex_argument_spelling(token),
+    )
 }
 
 /// Reconstructs one retained `Number` or `Dimension` token's authored
@@ -3941,11 +4016,12 @@ fn mixed_selected_function_order_including_translate_is_preserved() {
     );
 }
 
-// 88. Every `<transform-function>` other than the five selected leaves
-// stays outside selected-profile coverage, in either authored order and
+// 88. Every `<transform-function>` other than the selected leaves stays
+// outside selected-profile coverage, in either authored order and
 // regardless of a sibling qualified selected function, and the coarser
 // outer unselected-function coverage outranks an inner opaque
-// `translate()` argument (#651).
+// `translate()` argument (#651). `translateX()` itself becomes a selected
+// leaf under #653 and is exercised separately, not here.
 
 #[test]
 fn unselected_outer_function_precedence_covers_translate() {
@@ -3956,7 +4032,6 @@ fn unselected_outer_function_precedence_covers_translate() {
             "translate(10px) rotate(10deg)",
             "rotate(10deg) translate(10px)",
             "translate(10px) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
-            "translateX(10px)",
         ],
     );
 
@@ -4235,4 +4310,818 @@ fn translate_cross_leaf_isolation_is_preserved() {
     assert_eq!(result.transform_style_observations().len(), 1);
 
     assert_all_invalid(651390, &["none translate(10px)", "translate(10px) none"]);
+}
+
+// 95. `translateX() = translateX(<length-percentage>)` (#653): a canonical
+// single direct `<length>` argument qualifies, preserving the `Length`
+// role and exact tokenizer-owned evidence. Unlike `translate()`,
+// `translateX()` has no optional second argument.
+
+#[test]
+fn canonical_translatex_length_qualifies() {
+    let result = qualify(
+        653100,
+        concat!(
+            "a{transform:translateX(10px);}",
+            "b{transform:translateX(1em);}",
+            "c{transform:translateX(-2rem);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 3);
+    assert_eq!(
+        translatex_argument_spelling(&result, 0, 0),
+        (
+            CssTransformTranslateXArgumentKind::Length,
+            "10px".to_string()
+        )
+    );
+    assert_eq!(
+        translatex_argument_spelling(&result, 1, 0),
+        (
+            CssTransformTranslateXArgumentKind::Length,
+            "1em".to_string()
+        )
+    );
+    assert_eq!(
+        translatex_argument_spelling(&result, 2, 0),
+        (
+            CssTransformTranslateXArgumentKind::Length,
+            "-2rem".to_string()
+        )
+    );
+}
+
+// 96. A canonical single direct `<percentage>` argument qualifies,
+// preserving the `Percentage` role and exact tokenizer-owned evidence; a
+// `Percentage` is never collapsed into a `Length` (#653).
+
+#[test]
+fn canonical_translatex_percentage_qualifies() {
+    let result = qualify(
+        653120,
+        concat!(
+            "a{transform:translateX(50%);}",
+            "b{transform:translateX(-20%);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 2);
+    assert_eq!(
+        translatex_argument_spelling(&result, 0, 0),
+        (
+            CssTransformTranslateXArgumentKind::Percentage,
+            "50%".to_string()
+        )
+    );
+    assert_eq!(
+        translatex_argument_spelling(&result, 1, 0),
+        (
+            CssTransformTranslateXArgumentKind::Percentage,
+            "-20%".to_string()
+        )
+    );
+}
+
+// 97. A direct exact-zero `Number` satisfies `<length>`, reusing the
+// accepted `translate` (#606) / `translate3d` (#647) / `translate()`
+// (#651) exact-zero-Number-as-`Length` theorem; the retained evidence
+// stays a `Number` token, never converted to a `Dimension` or interpreted
+// magnitude (#653).
+
+#[test]
+fn exact_zero_number_qualifies_as_length_for_translatex() {
+    let result = qualify(
+        653140,
+        concat!(
+            "a{transform:translateX(0);}",
+            "b{transform:translateX(+0);}",
+            "c{transform:translateX(-0);}",
+            "d{transform:translateX(.0);}",
+            "e{transform:translateX(0.0);}",
+            "f{transform:translateX(0e100);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 6);
+    assert_eq!(
+        translatex_argument_spelling(&result, 0, 0),
+        (CssTransformTranslateXArgumentKind::Length, "0".to_string())
+    );
+    assert_eq!(
+        translatex_argument_spelling(&result, 1, 0),
+        (CssTransformTranslateXArgumentKind::Length, "+0".to_string())
+    );
+    assert_eq!(
+        translatex_argument_spelling(&result, 2, 0),
+        (CssTransformTranslateXArgumentKind::Length, "-0".to_string())
+    );
+    // Authored `.0`: the absent leading integer digit is canonicalized to
+    // `0` by the tokenizer's own retained numeric contract, upstream of
+    // this leaf, exactly as for `translate()`/`translate3d()` arguments.
+    assert_eq!(
+        translatex_argument_spelling(&result, 3, 0),
+        (
+            CssTransformTranslateXArgumentKind::Length,
+            "0.0".to_string()
+        )
+    );
+    assert_eq!(
+        translatex_argument_spelling(&result, 4, 0),
+        (
+            CssTransformTranslateXArgumentKind::Length,
+            "0.0".to_string()
+        )
+    );
+    assert_eq!(
+        translatex_argument_spelling(&result, 5, 0),
+        (
+            CssTransformTranslateXArgumentKind::Length,
+            "0e100".to_string()
+        )
+    );
+}
+
+// 98. `0`, `0px`, and `0%` remain three distinct authored evidences in
+// `translateX()`: none is ever normalized, synthesized, or collapsed into
+// another (#653).
+
+#[test]
+fn translatex_zero_number_dimension_and_percentage_identity_is_preserved() {
+    let result = qualify(
+        653160,
+        concat!(
+            "a{transform:translateX(0);}",
+            "b{transform:translateX(0px);}",
+            "c{transform:translateX(0%);}",
+        ),
+    );
+
+    let number = translatex_argument_spelling(&result, 0, 0);
+    let px = translatex_argument_spelling(&result, 1, 0);
+    let percentage = translatex_argument_spelling(&result, 2, 0);
+
+    assert_eq!(
+        number,
+        (CssTransformTranslateXArgumentKind::Length, "0".to_string())
+    );
+    assert_eq!(
+        px,
+        (
+            CssTransformTranslateXArgumentKind::Length,
+            "0px".to_string()
+        )
+    );
+    assert_eq!(
+        percentage,
+        (
+            CssTransformTranslateXArgumentKind::Percentage,
+            "0%".to_string()
+        )
+    );
+    assert_ne!(number, px);
+    assert_ne!(number, percentage);
+    assert_ne!(px, percentage);
+}
+
+// 99. Representative recognized CSS length units qualify identically to
+// `translate()`/`translate3d()` arguments, including a useful ASCII-case
+// unit variant, reusing the same recognized-length-unit theorem (#653).
+
+#[test]
+fn recognized_css_length_units_qualify_for_translatex() {
+    let result = qualify(
+        653180,
+        concat!(
+            "a{transform:translateX(1px);}",
+            "b{transform:translateX(1em);}",
+            "c{transform:translateX(1rem);}",
+            "d{transform:translateX(1vh);}",
+            "e{transform:translateX(1vw);}",
+            "f{transform:translateX(1cm);}",
+            "g{transform:translateX(1PX);}",
+            "h{transform:translateX(1Px);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 8);
+    for index in 0..8 {
+        let (kind, _) = translatex_argument_spelling(&result, index, 0);
+        assert_eq!(
+            kind,
+            CssTransformTranslateXArgumentKind::Length,
+            "expected Length at {index}"
+        );
+    }
+}
+
+// 100. Signed direct `Length`, `Percentage`, and exact-zero `Number`
+// arguments preserve exact authored sign/fraction/exponent evidence
+// without any machine-number conversion (#653).
+
+#[test]
+fn signed_direct_values_preserve_authored_evidence_for_translatex() {
+    let result = qualify(
+        653200,
+        concat!(
+            "a{transform:translateX(-10px);}",
+            "b{transform:translateX(+10%);}",
+            "c{transform:translateX(-20%);}",
+            "d{transform:translateX(-0);}",
+            "e{transform:translateX(+0);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 5);
+    assert_eq!(
+        translatex_argument_spelling(&result, 0, 0),
+        (
+            CssTransformTranslateXArgumentKind::Length,
+            "-10px".to_string()
+        )
+    );
+    assert_eq!(
+        translatex_argument_spelling(&result, 1, 0),
+        (
+            CssTransformTranslateXArgumentKind::Percentage,
+            "+10%".to_string()
+        )
+    );
+    assert_eq!(
+        translatex_argument_spelling(&result, 2, 0),
+        (
+            CssTransformTranslateXArgumentKind::Percentage,
+            "-20%".to_string()
+        )
+    );
+    assert_eq!(
+        translatex_argument_spelling(&result, 3, 0),
+        (CssTransformTranslateXArgumentKind::Length, "-0".to_string())
+    );
+    assert_eq!(
+        translatex_argument_spelling(&result, 4, 0),
+        (CssTransformTranslateXArgumentKind::Length, "+0".to_string())
+    );
+}
+
+// 101. `translateX()` accepts exactly one authored argument: zero, two,
+// three, or more directly visible arguments are decisive
+// `InvalidForSelectedValueGrammar`, unlike `translate()`'s one-or-two
+// cardinality (#653).
+
+#[test]
+fn translatex_argument_cardinality_other_than_one_is_invalid() {
+    assert_all_invalid(
+        653220,
+        &[
+            "translateX()",
+            "translateX(10px,20px)",
+            "translateX(10px,20%,30px)",
+            "translateX(1px,2px,3px,4px)",
+        ],
+    );
+}
+
+// 102. A comma is the only accepted inner separator, and an authored-empty
+// position is preserved as its own ordered slot and rejected -- never
+// collapsed away (#653).
+
+#[test]
+fn translatex_argument_delimiter_failures_are_invalid() {
+    assert_all_invalid(
+        653240,
+        &[
+            "translateX(,)",
+            "translateX(,10px)",
+            "translateX(10px,)",
+            "translateX(10px,,20px)",
+        ],
+    );
+}
+
+// 103. A nonzero unitless `Number` never satisfies `<length>`: this leaf
+// never interprets an arbitrary `Number` as `Length` (#653).
+
+#[test]
+fn nonzero_number_is_invalid_for_translatex() {
+    assert_all_invalid(
+        653260,
+        &["translateX(1)", "translateX(-1)", "translateX(.5)"],
+    );
+}
+
+// 104. `<length-percentage>` admits only a direct recognized-length
+// `Dimension`, an exact-zero `Number`, or a `Percentage`: every other
+// direct token category at the translateX argument position is a decisive
+// direct token-category failure (#653).
+
+#[test]
+fn wrong_direct_categories_are_invalid_for_translatex() {
+    assert_all_invalid(
+        653280,
+        &[
+            "translateX(45deg)",
+            "translateX(1s)",
+            "translateX(1hz)",
+            "translateX(1dpi)",
+            "translateX(1fr)",
+            "translateX(1unknownunit)",
+            "translateX(foo)",
+            "translateX(\"1\")",
+            "translateX(#abc)",
+        ],
+    );
+}
+
+// 105. A complete non-deferred Function occupying the single translateX
+// argument slot is selected-profile Unsupported, mirroring the shared
+// `FunctionValuedTransformArgument` reason `translate()`/`translate3d()`
+// opaque arguments use -- this leaf never evaluates `calc()` (#653).
+
+#[test]
+fn opaque_translatex_argument_function_is_unsupported() {
+    assert_all_unsupported(
+        653300,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
+        &[
+            "translateX(calc(10px))",
+            "translateX(min(10px,20px))",
+            "translateX(max(10px,20px))",
+            "translateX(clamp(0px,10px,20px))",
+            "matrix(1,0,0,1,0,0) translateX(calc(10px))",
+        ],
+    );
+}
+
+// 106. A Function followed by additional direct material in the same slot
+// is directly visible structural failure and stays decisively `Invalid`:
+// a structurally feasible complete opaque Function is never softened to
+// Unsupported by an unevaluated sibling in the same slot (#653).
+
+#[test]
+fn function_plus_junk_in_same_slot_is_invalid_for_translatex() {
+    assert_all_invalid(
+        653320,
+        &[
+            "translateX(calc(10px) 1px)",
+            "translateX(calc(10px) foo)",
+            "translateX(calc(10px) 20%)",
+        ],
+    );
+}
+
+// 107. A comma nested inside a Function argument is at a deeper relative
+// depth and never becomes a translateX-level argument separator. Once the
+// nesting closes, a genuine second translateX-level slot is still counted
+// and makes the shell decisively Invalid, since translateX() has no
+// second slot to occupy (#653).
+
+#[test]
+fn nested_commas_never_change_translatex_arity() {
+    assert_all_unsupported(
+        653340,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
+        &["translateX(calc(10px,20px))"],
+    );
+
+    assert_all_invalid(653341, &["translateX(calc(10px,20px),30%)"]);
+}
+
+// 108. Deferred substitution can alter the enclosing token sequence,
+// separators, and cardinality, so it is resolved before any surrounding
+// translateX shape conclusion -- including an arity that looks decisive
+// (#653).
+
+#[test]
+fn translatex_deferred_substitution_outranks_surrounding_shape_conclusions() {
+    assert_all_unsupported(
+        653360,
+        CssTransformUnsupportedReason::DeferredSubstitutionFunction,
+        &[
+            "translateX(var(--x))",
+            "translateX(var(--x),20px)",
+            "matrix(1,0,0,1,0,0) translateX(var(--x))",
+            "translateX(var(--x)) matrix(1,0,0,1,0,0)",
+        ],
+    );
+}
+
+// 109. Directly visible decisive invalidity outranks an opaque Function
+// found in a sibling slot (#653).
+
+#[test]
+fn translatex_decisive_invalid_outranks_opaque_argument() {
+    assert_all_invalid(653380, &["translateX(calc(10px),1)"]);
+}
+
+// 110. Selected `matrix()`, `scale()`, `translate3d()`, `rotate3d()`,
+// `translate()`, and `translateX()` components mix and repeat freely,
+// preserving exact authored order and repetition through the
+// heterogeneous `CssTransformFunction` alternation, and `translate()`/
+// `translateX()` evidence never drifts across each other's index in a
+// mixed sequence (#418 / #645 / #647 / #649 / #651 / #653).
+
+#[test]
+fn mixed_selected_function_order_including_translatex_is_preserved() {
+    let result = qualify(
+        653400,
+        concat!(
+            "a{transform:matrix(1,0,0,1,0,0) translateX(10px);}",
+            "b{transform:translateX(10px) matrix(1,0,0,1,0,0);}",
+            "c{transform:scale(2) translateX(10px);}",
+            "d{transform:translateX(10px) scale(2);}",
+            "e{transform:translate3d(1px,2px,3px) translateX(10px);}",
+            "f{transform:translateX(10px) translate3d(1px,2px,3px);}",
+            "g{transform:rotate3d(1,0,0,90deg) translateX(10px);}",
+            "h{transform:translateX(10px) rotate3d(1,0,0,90deg);}",
+            "i{transform:translate(10px) translateX(20px);}",
+            "j{transform:translateX(10px) translate(20px);}",
+            "k{transform:translateX(1px) translateX(2px);}",
+            "l{transform:matrix(1,0,0,1,0,0) scale(2) translate3d(1px,2px,3px) rotate3d(1,0,0,90deg) translate(10px) translateX(20px);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 12);
+
+    for index in 0..11 {
+        assert_eq!(
+            qualified_functions(&result, index).len(),
+            2,
+            "expected two components at {index}"
+        );
+    }
+    assert_eq!(qualified_functions(&result, 11).len(), 6);
+
+    assert!(matches!(
+        qualified_functions(&result, 0)[0],
+        CssTransformFunction::Matrix(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 0)[1],
+        CssTransformFunction::TranslateX(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 1)[0],
+        CssTransformFunction::TranslateX(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 1)[1],
+        CssTransformFunction::Matrix(_)
+    ));
+
+    let six_kind_sequence = qualified_functions(&result, 11);
+    assert!(matches!(
+        six_kind_sequence[0],
+        CssTransformFunction::Matrix(_)
+    ));
+    assert!(matches!(
+        six_kind_sequence[1],
+        CssTransformFunction::Scale(_)
+    ));
+    assert!(matches!(
+        six_kind_sequence[2],
+        CssTransformFunction::Translate3d(_)
+    ));
+    assert!(matches!(
+        six_kind_sequence[3],
+        CssTransformFunction::Rotate3d(_)
+    ));
+    assert!(matches!(
+        six_kind_sequence[4],
+        CssTransformFunction::Translate(_)
+    ));
+    assert!(matches!(
+        six_kind_sequence[5],
+        CssTransformFunction::TranslateX(_)
+    ));
+
+    // Repeated `translateX()` preserves authored order and each
+    // component's own evidence.
+    let repeated = qualified_functions(&result, 10);
+    assert!(matches!(repeated[0], CssTransformFunction::TranslateX(_)));
+    assert!(matches!(repeated[1], CssTransformFunction::TranslateX(_)));
+    assert_eq!(
+        translatex_argument_spelling(&result, 10, 0),
+        (
+            CssTransformTranslateXArgumentKind::Length,
+            "1px".to_string()
+        )
+    );
+    assert_eq!(
+        translatex_argument_spelling(&result, 10, 1),
+        (
+            CssTransformTranslateXArgumentKind::Length,
+            "2px".to_string()
+        )
+    );
+
+    // `translate()` and `translateX()` remain distinct evidence indices in
+    // a mixed sequence: neither drifts into the other's slot.
+    assert!(matches!(
+        qualified_functions(&result, 8)[0],
+        CssTransformFunction::Translate(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 8)[1],
+        CssTransformFunction::TranslateX(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 9)[0],
+        CssTransformFunction::TranslateX(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 9)[1],
+        CssTransformFunction::Translate(_)
+    ));
+}
+
+// 111. Every `<transform-function>` other than the selected leaves stays
+// outside selected-profile coverage, in either authored order and
+// regardless of a sibling qualified selected function, and the coarser
+// outer unselected-function coverage outranks an inner opaque
+// `translateX()` argument (#653).
+
+#[test]
+fn unselected_outer_function_precedence_covers_translatex() {
+    assert_all_unsupported(
+        653420,
+        CssTransformUnsupportedReason::UnselectedTransformFunction,
+        &[
+            "translateX(10px) rotate(10deg)",
+            "rotate(10deg) translateX(10px)",
+            "translateX(10px) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
+        ],
+    );
+
+    // Coarser outer unselected-function coverage outranks an inner opaque
+    // translateX argument, identically in both authored orders.
+    assert_all_unsupported(
+        653430,
+        CssTransformUnsupportedReason::UnselectedTransformFunction,
+        &[
+            "translateX(calc(10px)) rotate(10deg)",
+            "rotate(10deg) translateX(calc(10px))",
+        ],
+    );
+
+    // Decisive direct Invalid still wins over the outer unselected sibling.
+    assert_all_invalid(653440, &["translateX(1) rotate(10deg)"]);
+}
+
+// 112. `translateY()` and `translateZ()` remain outside selected-profile
+// coverage after #653: extending coverage with `translateX()` never widens
+// the selected profile to its X/Y/Z siblings, in isolation or alongside a
+// qualified `translateX()` (#653).
+
+#[test]
+fn translatey_and_translatez_remain_unselected_after_translatex_coverage() {
+    assert_all_unsupported(
+        653450,
+        CssTransformUnsupportedReason::UnselectedTransformFunction,
+        &[
+            "translateY(10px)",
+            "translateZ(10px)",
+            "translateY(10px) translateX(20px)",
+            "translateX(20px) translateZ(10px)",
+        ],
+    );
+}
+
+// 113. `<transform-list>` is whitespace-separated repetition: a top-level
+// comma is never a permitted separator, including between two
+// `translateX()` components or a `translateX()` and a sibling selected
+// function (#653).
+
+#[test]
+fn top_level_comma_is_invalid_around_translatex() {
+    assert_all_invalid(
+        653470,
+        &[
+            "translateX(10px), matrix(1,0,0,1,0,0)",
+            "translateX(10px), scale(2)",
+            "translateX(10px), translate3d(1px,2px,3px)",
+            "translateX(10px), rotate3d(1,0,0,90deg)",
+            "translateX(10px), translate(10px)",
+            "translateX(10px), translateX(20px)",
+        ],
+    );
+}
+
+// 114. CSS Syntax function consumption may end at a true stylesheet EOF, so
+// a parser-committed EOF-ended `translateX()` extent is qualified from
+// retained interior evidence alone. EOF never fills or repairs a missing
+// argument, a wrong direct category, or a second slot translateX() has no
+// room for (#653).
+
+#[test]
+fn true_stylesheet_eof_ended_translatex_extent_follows_parser_authority() {
+    let one_slot = qualify(653490, "a{transform:translateX(10px");
+    assert_eq!(
+        one_slot.execution_completion(),
+        CssParserExecutionCompletion::Complete
+    );
+    assert_eq!(one_slot.transform_observations().len(), 1);
+    assert_eq!(
+        translatex_argument_spelling(&one_slot, 0, 0),
+        (
+            CssTransformTranslateXArgumentKind::Length,
+            "10px".to_string()
+        )
+    );
+
+    // Zero-slot EOF stays decisively Invalid.
+    let zero_slot = qualify(653491, "a{transform:translateX(");
+    assert_invalid(&zero_slot, 0);
+
+    // A trailing comma at true EOF stays decisively Invalid: translateX()
+    // never accepts a second slot.
+    let trailing_comma = qualify(653492, "a{transform:translateX(10px,");
+    assert_invalid(&trailing_comma, 0);
+
+    // EOF never repairs an invalid direct category.
+    let invalid_argument = qualify(653493, "a{transform:translateX(1");
+    assert_invalid(&invalid_argument, 0);
+
+    // A closed component followed by stray material is invalid, proving
+    // the accepted EOF case is not "accept whatever trails a translateX".
+    let trailing = qualify(653494, "a{transform:translateX(10px) 7;}");
+    assert_invalid(&trailing, 0);
+
+    // A second slot never widens translateX() cardinality, even at true
+    // EOF.
+    let two_slots = qualify(653495, "a{transform:translateX(10px,20%");
+    assert_invalid(&two_slots, 0);
+}
+
+// 115. Lower-layer lifecycle evidence stays owned by the tokenizer and
+// parser: comments/trivia never change slot interpretation, a comment
+// never fills an authored-empty slot, and `!important` remains outside the
+// semantic value window (#653).
+
+#[test]
+fn trivia_and_important_never_change_translatex_interpretation() {
+    let result = qualify(
+        653500,
+        concat!(
+            "a{transform:translateX(10px/**/);}",
+            "b{transform:translateX(/**/10px);}",
+            "c{transform:translateX( 10px );}",
+            "d{transform:translateX(10px) !important;}",
+            "e{transform:translateX(10px)!important;}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 5);
+    let expected = (
+        CssTransformTranslateXArgumentKind::Length,
+        "10px".to_string(),
+    );
+    for index in 0..3 {
+        assert_eq!(
+            translatex_argument_spelling(&result, index, 0),
+            expected,
+            "trivia changed slot interpretation at {index}"
+        );
+    }
+    for index in 3..5 {
+        assert_eq!(translatex_argument_spelling(&result, index, 0), expected);
+        assert!(
+            result.upstream_parser_result().occurrences()[index]
+                .priority()
+                .is_some(),
+            "expected retained priority evidence at {index}"
+        );
+    }
+
+    // A comment is trivia, never an argument: it can neither fill the
+    // single authored slot nor stand in for a missing one.
+    assert_all_invalid(653510, &["translateX(/**/)", "translateX(10px,/**/)"]);
+}
+
+// 116. Repeated and cross-source runs remain deterministic, and evidence
+// lookup resolves to the exact retained Number/Dimension/Percentage tokens
+// identically across runs (#653).
+
+#[test]
+fn translatex_repeated_and_cross_source_runs_are_deterministic() {
+    let css = concat!(
+        "a{transform:translateX(10px,20%);}",
+        "b{transform:translateX(calc(10px,20px));}",
+        "c{transform:translateX(1);}",
+        "d{transform:matrix(1,0,0,1,0,0) translateX(10px);}",
+    );
+
+    let first = qualify(653520, css);
+    let repeated = qualify(653520, css);
+    let another_source = qualify(653521, css);
+
+    assert_eq!(
+        first.transform_observations(),
+        repeated.transform_observations()
+    );
+    assert_eq!(
+        first.transform_observations(),
+        another_source.transform_observations()
+    );
+
+    assert_invalid(&first, 0);
+    assert_unsupported(
+        &first,
+        1,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
+    );
+    assert_invalid(&first, 2);
+    assert_eq!(qualified_functions(&first, 3).len(), 2);
+
+    assert_eq!(
+        translatex_argument_spelling(&first, 3, 1),
+        translatex_argument_spelling(&repeated, 3, 1)
+    );
+    assert_eq!(
+        translatex_argument_spelling(&first, 3, 1),
+        translatex_argument_spelling(&another_source, 3, 1)
+    );
+}
+
+// 117. `translateX` function-name recognition is ASCII-case-insensitive,
+// matching the accepted `matrix`/`scale`/`translate3d`/`rotate3d`/
+// `translate` boundary, and structurally malformed `translateX`
+// components -- a bare Function name, an unbalanced/duplicated closer, or
+// stray leading material -- stay decisively `Invalid` (#653).
+
+#[test]
+fn translatex_function_name_recognition_and_malformed_components() {
+    let result = qualify(
+        653530,
+        concat!(
+            "a{transform:TRANSLATEX(10px);}",
+            "b{transform:TrAnSlAtEx(10px);}",
+            "c{transform:t\\72 anslateX(10px);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 3);
+    for index in 0..3 {
+        assert_eq!(
+            translatex_argument_spelling(&result, index, 0),
+            (
+                CssTransformTranslateXArgumentKind::Length,
+                "10px".to_string()
+            ),
+            "translateX name recognition failed at {index}"
+        );
+    }
+
+    assert_all_invalid(
+        653540,
+        &[
+            "translateX",
+            "translateX(10px))",
+            "translateX((10px)",
+            "1 translateX(10px)",
+            "[translateX(10px)]",
+        ],
+    );
+}
+
+// 118. Cross-leaf isolation: `translateX()` recognition never leaks into
+// the accepted longhand `translate`/`scale`/`rotate` leaves, the other
+// `transform-*` single-value leaves, or the other selected `transform`
+// function branches, and `none` remains an exclusive whole-value branch
+// even when combined with `translateX()` (#418 / #606 / #645 / #647 /
+// #649 / #651 / #653).
+
+#[test]
+fn translatex_cross_leaf_isolation_is_preserved() {
+    let result = qualify(
+        653550,
+        concat!(
+            "a{transform:translateX(10px);transform:none;}",
+            "b{translate:10px;}",
+            "c{scale:2;}",
+            "d{rotate:45deg;}",
+            "e{transform-origin:left top;}",
+            "f{transform-box:border-box;}",
+            "g{transform-style:flat;}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 2);
+    assert_eq!(
+        translatex_argument_spelling(&result, 0, 0),
+        (
+            CssTransformTranslateXArgumentKind::Length,
+            "10px".to_string()
+        )
+    );
+    assert_whole_none(&result, 1);
+
+    assert_eq!(result.translate_observations().len(), 1);
+    assert_eq!(result.scale_observations().len(), 1);
+    assert_eq!(result.rotate_observations().len(), 1);
+    assert_eq!(result.transform_origin_observations().len(), 1);
+    assert_eq!(result.transform_box_observations().len(), 1);
+    assert_eq!(result.transform_style_observations().len(), 1);
+
+    assert_all_invalid(653560, &["none translateX(10px)", "translateX(10px) none"]);
 }
