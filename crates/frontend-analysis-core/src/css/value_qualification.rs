@@ -6394,17 +6394,129 @@ impl CssTransformMatrixFunction {
     }
 }
 
-/// One authored `transform` value under the narrowed direct-authored
-/// matrix-only profile `QualifiedDirectTransform := none |
-/// matrix(<number>#{6})+` (#418): either the dedicated whole-value `none`
-/// sentinel or an ordered, possibly repeated, one-or-more list of
-/// qualified `matrix()` components in exact authored order. This is not a
-/// complete normative `transform` grammar: it qualifies only the
-/// `matrix()` branch of `<transform-function>`.
+/// Run-local locator for the exact tokenizer item selected during
+/// authoritative `transform` `scale()` direct `<number>`/`<percentage>`
+/// argument recognition (#645). Mirrors
+/// `CssTransformMatrixArgumentEvidenceRef`: the index is evidence
+/// placement, not an interpreted numeric magnitude, and always points at
+/// the exact tokenizer-owned direct `Number` or `Percentage` token
+/// retained inside one `scale()` argument slot, resolved through
+/// `transform_scale_argument_token`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTransformScaleArgumentEvidenceRef {
+    lexical_item_index: usize,
+}
+
+impl CssTransformScaleArgumentEvidenceRef {
+    pub(crate) const fn lexical_item_index(&self) -> usize {
+        self.lexical_item_index
+    }
+}
+
+/// One direct authored `scale()` transform-function argument's
+/// tokenizer-owned kind (#645). A direct `<number>` and a direct
+/// `<percentage>` remain distinct authored branches; this leaf never
+/// normalizes a Percentage token into an interpreted fraction or into a
+/// Number token. This is a distinct type from the longhand `scale`
+/// property's `CssScaleComponentKind`: longhand property component
+/// placement and `transform` function argument placement remain distinct
+/// semantic roles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTransformScaleArgumentKind {
+    Number,
+    Percentage,
+}
+
+/// One direct authored `scale()` transform-function argument:
+/// `ScaleArgument := DirectNumber | DirectPercentage` (#645), preserving
+/// authored kind and exact tokenizer-owned evidence without any
+/// interpreted scale-factor conversion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTransformScaleArgument {
+    kind: CssTransformScaleArgumentKind,
+    evidence_ref: CssTransformScaleArgumentEvidenceRef,
+}
+
+impl CssTransformScaleArgument {
+    pub(crate) const fn kind(&self) -> CssTransformScaleArgumentKind {
+        self.kind
+    }
+
+    pub(crate) const fn evidence_ref(&self) -> CssTransformScaleArgumentEvidenceRef {
+        self.evidence_ref
+    }
+}
+
+/// One qualified `scale()` transform component's ordered argument list
+/// (#645), carrying authored one-vs-two cardinality structurally so a
+/// qualified component can never represent zero, three, or a synthesized
+/// omitted argument. `scale(2)` is `One`; `scale(2, 3)` is `Two`; there is
+/// no third shape to construct.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTransformScaleArguments {
+    One(CssTransformScaleArgument),
+    Two(CssTransformScaleArgument, CssTransformScaleArgument),
+}
+
+impl CssTransformScaleArguments {
+    /// The always-present first authored argument.
+    pub(crate) const fn first(&self) -> CssTransformScaleArgument {
+        match self {
+            Self::One(first) | Self::Two(first, _) => *first,
+        }
+    }
+
+    /// The second authored argument, or `None` when only one was authored.
+    /// Never synthesized: an authored one-argument `scale()` has no second
+    /// evidence to report.
+    pub(crate) const fn second(&self) -> Option<CssTransformScaleArgument> {
+        match self {
+            Self::One(_) => None,
+            Self::Two(_, second) => Some(*second),
+        }
+    }
+}
+
+/// One qualified authored `scale()` transform component: one or two
+/// ordered direct authored `<number>`/`<percentage>` arguments (#645),
+/// each carrying the exact tokenizer-owned evidence retained at its own
+/// semantic argument slot. This leaf constructs no scale factor, performs
+/// no matrix construction, and resolves no computed transform.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTransformScaleFunction {
+    arguments: CssTransformScaleArguments,
+}
+
+impl CssTransformScaleFunction {
+    pub(crate) const fn arguments(&self) -> &CssTransformScaleArguments {
+        &self.arguments
+    }
+}
+
+/// One qualified selected `transform` component under the profile
+/// `SelectedTransformFunction := Matrix | Scale` (#645), preserving exact
+/// authored order between the two selected function kinds. This is a
+/// closed property-local alternation, not a generic CSS function AST: it
+/// exists only to retain heterogeneous authored order for the two
+/// selected `transform` branches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTransformFunction {
+    Matrix(CssTransformMatrixFunction),
+    Scale(CssTransformScaleFunction),
+}
+
+/// One authored `transform` value under the direct-authored profile
+/// `QualifiedDirectTransform := none | [ matrix(<number>#{6}) |
+/// scale([<number> | <percentage>]#{1,2}) ]+` (#418 / #645): either the
+/// dedicated whole-value `none` sentinel or an ordered, possibly
+/// repeated, one-or-more list of qualified `matrix()`/`scale()`
+/// components in exact authored order. This is not a complete normative
+/// `transform` grammar: it qualifies only the `matrix()` and `scale()`
+/// branches of `<transform-function>`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CssTransformValue {
     None,
-    Functions(Vec<CssTransformMatrixFunction>),
+    Functions(Vec<CssTransformFunction>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6412,8 +6524,8 @@ pub(crate) enum CssTransformUnsupportedReason {
     CssWideKeyword,
     DeferredSubstitutionFunction,
     WholeValueFunction,
-    NonMatrixTransformFunction,
-    FunctionValuedMatrixArgument,
+    UnselectedTransformFunction,
+    FunctionValuedTransformArgument,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -6424,27 +6536,30 @@ pub(crate) enum CssTransformQualificationOutcome {
 }
 
 /// One selected ordinary declaration's bounded `transform` qualification
-/// against the narrowed direct-authored matrix-only profile
-/// `QualifiedDirectTransform := none | matrix(<number>#{6})+` (#418),
-/// acquiring this repository's first depth-scoped grammar-native
-/// multi-argument function capability.
+/// against the direct-authored profile `QualifiedDirectTransform := none |
+/// [ matrix(<number>#{6}) | scale([<number> | <percentage>]#{1,2}) ]+`
+/// (#418 / #645), acquiring this repository's second property-local use of
+/// depth-scoped grammar-native multi-argument function qualification.
 ///
 /// Normative `transform` is `none | <transform-list>` where
-/// `<transform-list> = <transform-function>+` and `matrix() =
-/// matrix(<number>#{6})`. This observation deliberately selects only the
-/// `matrix()` branch: every other `<transform-function>` stays outside
-/// selected-profile coverage rather than being decided here, because
-/// deciding it would require the full `<transform-function>` dispatch and
-/// the length/angle semantics this leaf does not own.
+/// `<transform-list> = <transform-function>+`, `matrix() =
+/// matrix(<number>#{6})`, and `scale() = scale([<number> |
+/// <percentage>]#{1,2})`. This observation deliberately selects only the
+/// `matrix()` and `scale()` branches: every other `<transform-function>`
+/// stays outside selected-profile coverage rather than being decided
+/// here, because deciding it would require the full `<transform-function>`
+/// dispatch and the length/angle semantics this leaf does not own.
 ///
-/// The new semantic responsibility is argument qualification scoped to a
-/// grammar frame whose delimiter depth is relative to each selected
-/// `matrix()` function body: the body is partitioned on `Comma` tokens at
-/// that relative depth zero only, so a comma retained inside a nested
-/// Function or block never becomes a matrix argument separator, the
-/// resulting ordered slots are preserved (an authored-empty position is
-/// retained as a slot and rejected, never collapsed), and exactly six
-/// slots each holding exactly one direct retained `Number` token qualify.
+/// The shared semantic responsibility is argument qualification scoped to
+/// a grammar frame whose delimiter depth is relative to each selected
+/// function's own body: the body is partitioned on `Comma` tokens at that
+/// relative depth zero only, so a comma retained inside a nested Function
+/// or block never becomes an argument separator, the resulting ordered
+/// slots are preserved (an authored-empty position is retained as a slot
+/// and rejected, never collapsed), and exactly six slots each holding
+/// exactly one direct retained `Number` token qualify a `matrix()`, while
+/// one or two slots each holding exactly one direct retained `Number` or
+/// `Percentage` token qualify a `scale()`.
 ///
 /// This observation performs no machine-float normalization, constructs no
 /// matrix, multiplies no matrices, resolves no computed value, applies no
@@ -7553,6 +7668,28 @@ impl CssValueQualificationRunResult {
     pub(crate) fn transform_matrix_argument_token(
         &self,
         evidence: CssTransformMatrixArgumentEvidenceRef,
+    ) -> Option<&CssTokenKind> {
+        let item = self
+            .upstream_parser_result
+            .upstream_tokenizer_result()
+            .lexical_items()
+            .get(evidence.lexical_item_index())?;
+        let CssLexicalItem::SemanticToken(token) = item else {
+            return None;
+        };
+        Some(token.kind())
+    }
+
+    /// Resolves one qualified `transform` `scale()` argument's run-local
+    /// evidence reference to its exact retained tokenizer token kind,
+    /// preserving authored sign spelling, integer/fraction digits, and
+    /// exponent spelling without any machine-number conversion. The
+    /// retained token at the evidence position is always a direct
+    /// `Number` or `Percentage`, matching the argument's
+    /// `CssTransformScaleArgumentKind`.
+    pub(crate) fn transform_scale_argument_token(
+        &self,
+        evidence: CssTransformScaleArgumentEvidenceRef,
     ) -> Option<&CssTokenKind> {
         let item = self
             .upstream_parser_result
@@ -19418,21 +19555,26 @@ fn qualify_animation_fill_mode_value(
     CssAnimationFillModeQualificationOutcome::Qualified(values)
 }
 
-/// Partitions one selected `matrix()` component's retained function body
-/// into ordered semantic argument slots, using delimiter depth measured
-/// relative to that function body (#418).
+/// Partitions one selected `transform` function component's (`matrix()` or
+/// `scale()`) retained function body into ordered semantic argument
+/// slots, using delimiter depth measured relative to that function body
+/// (#418 / #645).
 ///
-/// This is the new depth-scoped capability. The walk starts one item past
-/// the retained `Function` token -- which in CSS Syntax already carries
-/// the opening parenthesis -- with a block stack seeded by that function's
-/// own parenthesis, so `block_stack.len() == 1` is exactly "at this matrix
-/// body's relative depth zero". Only a `Comma` retained at that relative
-/// depth zero separates argument slots: a comma inside a nested Function
-/// or a nested `(`/`[`/`{` block raises the depth first and therefore
-/// stays inside the current slot, never changing matrix arity. Every slot
-/// boundary is preserved exactly as authored, so an empty authored
-/// position survives as its own empty slot for the caller to reject
-/// rather than being collapsed away.
+/// This is the depth-scoped capability first proven for `matrix()` (#418)
+/// and reused unchanged for `scale()` (#645), since both selected
+/// functions share identical body-relative comma-partitioning mechanics;
+/// this helper stays scoped to the `transform` property and does not
+/// generalize to a cross-property argument parser. The walk starts one
+/// item past the retained `Function` token -- which in CSS Syntax already
+/// carries the opening parenthesis -- with a block stack seeded by that
+/// function's own parenthesis, so `block_stack.len() == 1` is exactly "at
+/// this function body's relative depth zero". Only a `Comma` retained at
+/// that relative depth zero separates argument slots: a comma inside a
+/// nested Function or a nested `(`/`[`/`{` block raises the depth first
+/// and therefore stays inside the current slot, never changing the
+/// selected function's arity. Every slot boundary is preserved exactly as
+/// authored, so an empty authored position survives as its own empty slot
+/// for the caller to reject rather than being collapsed away.
 ///
 /// Termination follows retained parser/tokenizer evidence only, never a
 /// raw-source scan: the body ends at the retained `RightParenthesis` that
@@ -19443,12 +19585,12 @@ fn qualify_animation_fill_mode_value(
 /// synthesized, searched for, or reconstructed, and no source offset is
 /// inferred.
 ///
-/// A body holding no retained semantic content at all (`matrix()`) yields
-/// zero slots rather than one empty slot, matching CSS component-value
-/// list semantics; every other shape yields `commas + 1` slots. Callers
-/// receive slot ranges relative to `component` and resolve evidence
-/// positions by adding the component's own absolute start.
-fn matrix_body_slot_ranges(component: &[CssLexicalItem]) -> Vec<Range<usize>> {
+/// A body holding no retained semantic content at all (`matrix()` or
+/// `scale()`) yields zero slots rather than one empty slot, matching CSS
+/// component-value list semantics; every other shape yields `commas + 1`
+/// slots. Callers receive slot ranges relative to `component` and resolve
+/// evidence positions by adding the component's own absolute start.
+fn transform_function_body_slot_ranges(component: &[CssLexicalItem]) -> Vec<Range<usize>> {
     let Some(function_index) = component.iter().position(|item| {
         matches!(
             item,
@@ -19543,7 +19685,7 @@ enum CssTransformMatrixArgumentClass {
 /// around a separator or an argument never changes slot interpretation. An
 /// authored-empty slot has no retained semantic token and is decisively
 /// `Invalid` -- it is rejected as an argument while still having been
-/// preserved as an ordered position by `matrix_body_slot_ranges`.
+/// preserved as an ordered position by `transform_function_body_slot_ranges`.
 ///
 /// A slot headed by a `Function` token is never a direct `<number>`. It is
 /// `OpaqueFunction` -- a structurally feasible numeric position whose
@@ -19610,15 +19752,97 @@ fn classify_matrix_argument(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CssTransformScaleArgumentClass {
+    Number(CssTransformScaleArgumentEvidenceRef),
+    Percentage(CssTransformScaleArgumentEvidenceRef),
+    OpaqueFunction,
+    Invalid,
+}
+
+/// Classifies one already-partitioned `scale()` argument slot against the
+/// selected profile's two accepted shapes -- a direct retained `<number>`
+/// or a direct retained `<percentage>` -- mirroring `classify_matrix_argument`
+/// exactly except for the added `Percentage` branch (#645).
+///
+/// Whitespace and Comment trivia are excluded exactly as for `matrix()`
+/// arguments, so trivia around a separator never changes slot
+/// interpretation. An authored-empty slot has no retained semantic token
+/// and is decisively `Invalid`. A slot headed by a `Function` token is
+/// `OpaqueFunction` -- a structurally feasible numeric position whose
+/// validity depends on calculated-value semantics this leaf does not own
+/// -- only when the slot is exactly one complete Function extent; a
+/// recognized generic whole-value-only Function name occupying this
+/// non-whole-value position is decisively `Invalid` instead, mirroring the
+/// accepted `matrix`/longhand-`scale` boundary. A Function followed by
+/// further retained material in the same slot is directly visible
+/// structural failure and stays decisively `Invalid`.
+///
+/// A direct `Number` or `Percentage` qualifies regardless of
+/// `CssNumberType`; no range restriction and no machine-number conversion
+/// is applied, so exact authored evidence stays authoritative for
+/// membership and a `Percentage` is never collapsed into a `Number`. A
+/// `Dimension`, `Ident`, or `String` token is a direct token-category
+/// failure and is decisively `Invalid`, as is any slot carrying more than
+/// one retained semantic token.
+fn classify_transform_scale_argument(
+    slot: &[CssLexicalItem],
+    absolute_slot_start: usize,
+) -> CssTransformScaleArgumentClass {
+    let mut tokens = slot
+        .iter()
+        .enumerate()
+        .filter_map(|(relative_index, entry)| match entry {
+            CssLexicalItem::SemanticToken(token)
+                if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+            {
+                Some((relative_index, token))
+            }
+            _ => None,
+        });
+
+    let Some((relative_index, first)) = tokens.next() else {
+        return CssTransformScaleArgumentClass::Invalid;
+    };
+
+    if matches!(first.kind(), CssTokenKind::Function(_)) {
+        return match entire_function_name(slot) {
+            Some(name) if is_whole_value_function(name) => CssTransformScaleArgumentClass::Invalid,
+            Some(_) => CssTransformScaleArgumentClass::OpaqueFunction,
+            None => CssTransformScaleArgumentClass::Invalid,
+        };
+    }
+
+    if tokens.next().is_some() {
+        return CssTransformScaleArgumentClass::Invalid;
+    }
+
+    match first.kind() {
+        CssTokenKind::Number { .. } => {
+            CssTransformScaleArgumentClass::Number(CssTransformScaleArgumentEvidenceRef {
+                lexical_item_index: absolute_slot_start + relative_index,
+            })
+        }
+        CssTokenKind::Percentage { .. } => {
+            CssTransformScaleArgumentClass::Percentage(CssTransformScaleArgumentEvidenceRef {
+                lexical_item_index: absolute_slot_start + relative_index,
+            })
+        }
+        _ => CssTransformScaleArgumentClass::Invalid,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CssTransformComponentClass {
     Matrix([CssTransformMatrixArgumentEvidenceRef; 6]),
-    OpaqueMatrixArgument,
-    NonMatrixFunction,
+    Scale(CssTransformScaleArguments),
+    OpaqueTransformArgument,
+    UnselectedTransformFunction,
     Invalid,
 }
 
 /// Classifies one already-partitioned top-level `transform` component
-/// against the selected matrix-only profile (#418).
+/// against the selected profile `SelectedTransformFunction := Matrix |
+/// Scale` (#418 / #645).
 ///
 /// `<transform-list>` admits only `<transform-function>` components, so a
 /// component that is not exactly one complete Function extent -- a bare
@@ -19627,10 +19851,10 @@ enum CssTransformComponentClass {
 /// -- is decisively `Invalid`. `entire_function_name` supplies that
 /// whole-component Function test unchanged.
 ///
-/// A Function named `matrix` ASCII-case-insensitively enters argument
-/// qualification. Its directly visible structural shell is decided first:
-/// a slot count other than six is decisive `Invalid` before any argument
-/// content is consulted, so `matrix(calc(1),0)` and
+/// A Function named `matrix` ASCII-case-insensitively enters `matrix()`
+/// argument qualification. Its directly visible structural shell is
+/// decided first: a slot count other than six is decisive `Invalid`
+/// before any argument content is consulted, so `matrix(calc(1),0)` and
 /// `matrix(calc(1),0,0,1,0,0,2)` stay invalid on directly visible arity
 /// rather than being deferred to unsupported calculated-value semantics.
 /// Only at exactly six slots are arguments classified, and a decisive
@@ -19639,14 +19863,26 @@ enum CssTransformComponentClass {
 /// sibling slot -- so `matrix(1,,calc(1),1,0,0)` and
 /// `matrix(1px,calc(1),0,1,0,0)` remain `Invalid` regardless of slot order.
 ///
-/// Any other Function name is `NonMatrixFunction`: `rotate(1deg)`,
-/// `matrix3d(...)`, and an unrecognized name alike stay outside selected-
-/// profile coverage instead of being decided here, because deciding them
-/// would require the full `<transform-function>` dispatch and the
-/// length/angle semantics this leaf does not own. A misplaced whole-value
-/// Function is the one exception: it has no independent meaning inside a
-/// `<transform-list>` and is decisively `Invalid`, mirroring the accepted
-/// `scale` boundary.
+/// A Function named `scale` ASCII-case-insensitively enters `scale()`
+/// argument qualification the same way: a directly visible slot count of
+/// zero or more than two is decisive `Invalid` before any argument is
+/// classified, so `scale()`, `scale(1,2,3)`, and `scale(calc(1),2,3)` all
+/// stay invalid on directly visible arity. Only at exactly one or two
+/// slots are arguments classified, with the same decisive-argument-over-
+/// opaque-sibling precedence as `matrix()`, so `scale(1px,calc(1))` and
+/// `scale(calc(1),1px)` both remain `Invalid` regardless of slot order.
+/// The qualified one-vs-two argument cardinality is carried by
+/// `CssTransformScaleArguments`, which cannot represent zero, three, or a
+/// synthesized argument.
+///
+/// Any other Function name is `UnselectedTransformFunction`: `rotate(1deg)`,
+/// `matrix3d(...)`, `scaleX(...)`, and an unrecognized name alike stay
+/// outside selected-profile coverage instead of being decided here,
+/// because deciding them would require the full `<transform-function>`
+/// dispatch and the length/angle semantics this leaf does not own. A
+/// misplaced whole-value Function is the one exception: it has no
+/// independent meaning inside a `<transform-list>` and is decisively
+/// `Invalid`, mirroring the accepted `scale` boundary.
 fn classify_transform_component(
     component: &[CssLexicalItem],
     absolute_component_start: usize,
@@ -19655,45 +19891,89 @@ fn classify_transform_component(
         return CssTransformComponentClass::Invalid;
     };
 
-    if !name.eq_ignore_ascii_case("matrix") {
-        return if is_whole_value_function(name) {
-            CssTransformComponentClass::Invalid
-        } else {
-            CssTransformComponentClass::NonMatrixFunction
+    if name.eq_ignore_ascii_case("matrix") {
+        let slots = transform_function_body_slot_ranges(component);
+        if slots.len() != 6 {
+            return CssTransformComponentClass::Invalid;
+        }
+
+        let mut arguments = Vec::with_capacity(6);
+        let mut has_opaque_argument = false;
+        for slot in slots {
+            let absolute_slot_start = absolute_component_start + slot.start;
+            match classify_matrix_argument(&component[slot], absolute_slot_start) {
+                CssTransformMatrixArgumentClass::Number(evidence) => arguments.push(evidence),
+                CssTransformMatrixArgumentClass::OpaqueFunction => has_opaque_argument = true,
+                CssTransformMatrixArgumentClass::Invalid => {
+                    return CssTransformComponentClass::Invalid;
+                }
+            }
+        }
+
+        if has_opaque_argument {
+            return CssTransformComponentClass::OpaqueTransformArgument;
+        }
+
+        return match <[CssTransformMatrixArgumentEvidenceRef; 6]>::try_from(arguments) {
+            Ok(arguments) => CssTransformComponentClass::Matrix(arguments),
+            Err(_) => CssTransformComponentClass::Invalid,
         };
     }
 
-    let slots = matrix_body_slot_ranges(component);
-    if slots.len() != 6 {
-        return CssTransformComponentClass::Invalid;
-    }
+    if name.eq_ignore_ascii_case("scale") {
+        let slots = transform_function_body_slot_ranges(component);
+        if slots.is_empty() || slots.len() > 2 {
+            return CssTransformComponentClass::Invalid;
+        }
 
-    let mut arguments = Vec::with_capacity(6);
-    let mut has_opaque_argument = false;
-    for slot in slots {
-        let absolute_slot_start = absolute_component_start + slot.start;
-        match classify_matrix_argument(&component[slot], absolute_slot_start) {
-            CssTransformMatrixArgumentClass::Number(evidence) => arguments.push(evidence),
-            CssTransformMatrixArgumentClass::OpaqueFunction => has_opaque_argument = true,
-            CssTransformMatrixArgumentClass::Invalid => {
-                return CssTransformComponentClass::Invalid;
+        let mut arguments = Vec::with_capacity(slots.len());
+        let mut has_opaque_argument = false;
+        for slot in slots {
+            let absolute_slot_start = absolute_component_start + slot.start;
+            match classify_transform_scale_argument(&component[slot], absolute_slot_start) {
+                CssTransformScaleArgumentClass::Number(evidence_ref) => {
+                    arguments.push(CssTransformScaleArgument {
+                        kind: CssTransformScaleArgumentKind::Number,
+                        evidence_ref,
+                    });
+                }
+                CssTransformScaleArgumentClass::Percentage(evidence_ref) => {
+                    arguments.push(CssTransformScaleArgument {
+                        kind: CssTransformScaleArgumentKind::Percentage,
+                        evidence_ref,
+                    });
+                }
+                CssTransformScaleArgumentClass::OpaqueFunction => has_opaque_argument = true,
+                CssTransformScaleArgumentClass::Invalid => {
+                    return CssTransformComponentClass::Invalid;
+                }
             }
         }
+
+        if has_opaque_argument {
+            return CssTransformComponentClass::OpaqueTransformArgument;
+        }
+
+        let arguments = match arguments.len() {
+            1 => CssTransformScaleArguments::One(arguments[0]),
+            2 => CssTransformScaleArguments::Two(arguments[0], arguments[1]),
+            _ => unreachable!("scale slot count is already bounded to 1..=2 above"),
+        };
+
+        return CssTransformComponentClass::Scale(arguments);
     }
 
-    if has_opaque_argument {
-        return CssTransformComponentClass::OpaqueMatrixArgument;
-    }
-
-    match <[CssTransformMatrixArgumentEvidenceRef; 6]>::try_from(arguments) {
-        Ok(arguments) => CssTransformComponentClass::Matrix(arguments),
-        Err(_) => CssTransformComponentClass::Invalid,
+    if is_whole_value_function(name) {
+        CssTransformComponentClass::Invalid
+    } else {
+        CssTransformComponentClass::UnselectedTransformFunction
     }
 }
 
 /// Qualifies one retained `transform` declaration value against the
-/// narrowed direct-authored matrix-only profile `QualifiedDirectTransform
-/// := none | matrix(<number>#{6})+` (#418).
+/// direct-authored profile `QualifiedDirectTransform := none | [
+/// matrix(<number>#{6}) | scale([<number> | <percentage>]#{1,2}) ]+`
+/// (#418 / #645).
 ///
 /// Outcome precedence follows evidence authority, never scan order.
 /// Lower-layer lifecycle evidence is never touched here at all: this
@@ -19721,17 +20001,22 @@ fn classify_transform_component(
 /// whitespace-separated repetition, so a top-level comma lands in its own
 /// component and is decisively invalid there. Components are classified
 /// the instant their block depth returns to zero, which also lets two
-/// adjacent `matrix()` components with no authored whitespace partition
-/// correctly, and preserves repeated components in exact authored order.
+/// adjacent selected-function components with no authored whitespace
+/// partition correctly, and preserves repeated and heterogeneous
+/// `matrix()`/`scale()` components in exact authored order via
+/// `CssTransformFunction`.
 ///
 /// Resolution then applies the fixed precedence: any decisively invalid
 /// component makes the declaration `InvalidForSelectedValueGrammar`
 /// regardless of what any other component would have contributed;
-/// otherwise an outer-level non-matrix `<transform-function>` is reported
-/// before an inner-level opaque matrix argument, because the coarser
-/// grammar level bounds coverage first. Both flags are collected across
-/// the whole component sequence before either is reported, so the outcome
-/// never depends on which component was encountered first.
+/// otherwise an outer-level unselected `<transform-function>` is reported
+/// before an inner-level opaque `matrix()`/`scale()` argument, because the
+/// coarser grammar level bounds coverage first. Both flags are collected
+/// across the whole component sequence before either is reported, so the
+/// outcome never depends on which component was encountered first, and a
+/// single shared `FunctionValuedTransformArgument` reason keeps the
+/// opaque-argument outcome deterministic regardless of whether the opaque
+/// argument occurred inside a `matrix()` or a `scale()`.
 fn qualify_transform_value(
     items: &[CssLexicalItem],
     lexical_item_start: usize,
@@ -19847,30 +20132,39 @@ fn qualify_transform_value(
     }
 
     let mut functions = Vec::with_capacity(component_classes.len());
-    let mut has_non_matrix_function = false;
+    let mut has_unselected_function = false;
     let mut has_opaque_argument = false;
     for class in component_classes {
         match class {
             CssTransformComponentClass::Matrix(arguments) => {
-                functions.push(CssTransformMatrixFunction { arguments });
+                functions.push(CssTransformFunction::Matrix(CssTransformMatrixFunction {
+                    arguments,
+                }));
             }
-            CssTransformComponentClass::OpaqueMatrixArgument => has_opaque_argument = true,
-            CssTransformComponentClass::NonMatrixFunction => has_non_matrix_function = true,
+            CssTransformComponentClass::Scale(arguments) => {
+                functions.push(CssTransformFunction::Scale(CssTransformScaleFunction {
+                    arguments,
+                }));
+            }
+            CssTransformComponentClass::OpaqueTransformArgument => has_opaque_argument = true,
+            CssTransformComponentClass::UnselectedTransformFunction => {
+                has_unselected_function = true;
+            }
             CssTransformComponentClass::Invalid => {
                 return CssTransformQualificationOutcome::InvalidForSelectedValueGrammar;
             }
         }
     }
 
-    if has_non_matrix_function {
+    if has_unselected_function {
         return CssTransformQualificationOutcome::UnsupportedBySelectedValueProfile(
-            CssTransformUnsupportedReason::NonMatrixTransformFunction,
+            CssTransformUnsupportedReason::UnselectedTransformFunction,
         );
     }
 
     if has_opaque_argument {
         return CssTransformQualificationOutcome::UnsupportedBySelectedValueProfile(
-            CssTransformUnsupportedReason::FunctionValuedMatrixArgument,
+            CssTransformUnsupportedReason::FunctionValuedTransformArgument,
         );
     }
 

@@ -4,8 +4,8 @@ use crate::css::parser::result::CssParserExecutionCompletion;
 use crate::css::token::{CssExponentSign, CssNumberSign, CssTokenKind};
 use crate::css::tokenizer::resource::CssTokenizerLimits;
 use crate::css::value_qualification::{
-    CssTransformMatrixFunction, CssTransformQualificationOutcome, CssTransformUnsupportedReason,
-    CssTransformValue, CssValueQualificationRunResult, run,
+    CssTransformFunction, CssTransformQualificationOutcome, CssTransformScaleArgumentKind,
+    CssTransformUnsupportedReason, CssTransformValue, CssValueQualificationRunResult, run,
 };
 use crate::{SourceId, SourceText};
 
@@ -88,12 +88,12 @@ fn assert_unsupported(
 fn qualified_functions(
     result: &CssValueQualificationRunResult,
     index: usize,
-) -> &[CssTransformMatrixFunction] {
+) -> &[CssTransformFunction] {
     match outcome_at(result, index) {
         CssTransformQualificationOutcome::Qualified(CssTransformValue::Functions(functions)) => {
             functions
         }
-        other => panic!("expected qualified matrix components at {index}, got {other:?}"),
+        other => panic!("expected qualified transform components at {index}, got {other:?}"),
     }
 }
 
@@ -132,7 +132,7 @@ fn authored_number_spelling(token: &CssTokenKind) -> String {
     spelling
 }
 
-fn argument_spellings(
+fn matrix_argument_spellings(
     result: &CssValueQualificationRunResult,
     index: usize,
     function_index: usize,
@@ -140,8 +140,11 @@ fn argument_spellings(
     let functions = qualified_functions(result, index);
     let function = functions
         .get(function_index)
-        .unwrap_or_else(|| panic!("missing matrix component {function_index} at {index}"));
-    function
+        .unwrap_or_else(|| panic!("missing transform component {function_index} at {index}"));
+    let CssTransformFunction::Matrix(matrix) = function else {
+        panic!("expected matrix component {function_index} at {index}, got {function:?}");
+    };
+    matrix
         .arguments()
         .iter()
         .map(|evidence| {
@@ -149,6 +152,81 @@ fn argument_spellings(
                 .transform_matrix_argument_token(*evidence)
                 .expect("matrix argument evidence did not resolve");
             authored_number_spelling(token)
+        })
+        .collect()
+}
+
+/// Reconstructs one retained `Number` or `Percentage` token's authored
+/// numeric structure from tokenizer-owned evidence alone, exactly like
+/// `authored_number_spelling`, with a trailing `%` marker distinguishing a
+/// `Percentage` token so `2` and `2%` stay distinguishable in assertions
+/// and a `Percentage` is never collapsed into a `Number`. No machine
+/// number is ever produced.
+fn authored_scale_argument_spelling(token: &CssTokenKind) -> String {
+    let (value, is_percentage) = match token {
+        CssTokenKind::Number { value, .. } => (value, false),
+        CssTokenKind::Percentage { value } => (value, true),
+        other => panic!(
+            "scale argument evidence did not resolve to a Number/Percentage token, got {other:?}"
+        ),
+    };
+
+    let mut spelling = String::new();
+    match value.sign() {
+        Some(CssNumberSign::Plus) => spelling.push('+'),
+        Some(CssNumberSign::Minus) => spelling.push('-'),
+        None => {}
+    }
+    spelling.push_str(value.decimal().integer_digits());
+    let fraction_digits = value.decimal().fraction_digits();
+    if !fraction_digits.is_empty() {
+        spelling.push('.');
+        spelling.push_str(fraction_digits);
+    }
+    if let Some(exponent) = value.decimal().exponent() {
+        spelling.push('e');
+        match exponent.sign() {
+            Some(CssExponentSign::Plus) => spelling.push('+'),
+            Some(CssExponentSign::Minus) => spelling.push('-'),
+            None => {}
+        }
+        spelling.push_str(exponent.digits());
+    }
+    if is_percentage {
+        spelling.push('%');
+    }
+    spelling
+}
+
+/// Resolves one qualified `scale()` transform component at `function_index`
+/// within observation `index`, preserving authored one-vs-two cardinality
+/// as an ordered `(kind, spelling)` vector of length 1 or 2 -- never
+/// synthesizing a second entry for an authored one-argument `scale()`.
+fn scale_argument_spellings(
+    result: &CssValueQualificationRunResult,
+    index: usize,
+    function_index: usize,
+) -> Vec<(CssTransformScaleArgumentKind, String)> {
+    let functions = qualified_functions(result, index);
+    let function = functions
+        .get(function_index)
+        .unwrap_or_else(|| panic!("missing transform component {function_index} at {index}"));
+    let CssTransformFunction::Scale(scale) = function else {
+        panic!("expected scale component {function_index} at {index}, got {function:?}");
+    };
+
+    let mut arguments = vec![scale.arguments().first()];
+    if let Some(second) = scale.arguments().second() {
+        arguments.push(second);
+    }
+
+    arguments
+        .into_iter()
+        .map(|argument| {
+            let token = result
+                .transform_scale_argument_token(argument.evidence_ref())
+                .expect("scale argument evidence did not resolve");
+            (argument.kind(), authored_scale_argument_spelling(token))
         })
         .collect()
 }
@@ -203,10 +281,12 @@ fn whole_none_qualifies_and_remains_exclusive() {
             "e{transform:none matrix(1,0,0,1,0,0);}",
             "f{transform:matrix(1,0,0,1,0,0) none;}",
             "g{transform:none none;}",
+            "h{transform:none scale(2);}",
+            "i{transform:scale(2) none;}",
         ),
     );
 
-    assert_eq!(result.transform_observations().len(), 7);
+    assert_eq!(result.transform_observations().len(), 9);
     assert_whole_none(&result, 0);
     assert_whole_none(&result, 1);
     assert_whole_none(&result, 2);
@@ -214,6 +294,8 @@ fn whole_none_qualifies_and_remains_exclusive() {
     assert_invalid(&result, 4);
     assert_invalid(&result, 5);
     assert_invalid(&result, 6);
+    assert_invalid(&result, 7);
+    assert_invalid(&result, 8);
 }
 
 // 2. `matrix() = matrix(<number>#{6})`: exactly six ordered direct
@@ -228,7 +310,7 @@ fn canonical_matrix_qualifies_with_six_ordered_arguments() {
     assert_eq!(result.transform_observations().len(), 1);
     assert_eq!(qualified_functions(&result, 0).len(), 1);
     assert_eq!(
-        argument_spellings(&result, 0, 0),
+        matrix_argument_spellings(&result, 0, 0),
         ["1", "0", "0", "1", "0", "0"]
     );
 }
@@ -245,7 +327,7 @@ fn authored_numeric_identity_is_preserved_without_normalization() {
     );
 
     assert_eq!(
-        argument_spellings(&result, 0, 0),
+        matrix_argument_spellings(&result, 0, 0),
         ["+1", "-0", "0.0", "1e0", "10", "-10"]
     );
     // The final argument is authored `.5`: the absent leading integer digit
@@ -253,18 +335,18 @@ fn authored_numeric_identity_is_preserved_without_normalization() {
     // contract, upstream of this leaf. This slice preserves exactly what
     // the tokenizer retained and normalizes nothing further itself.
     assert_eq!(
-        argument_spellings(&result, 1, 0),
+        matrix_argument_spellings(&result, 1, 0),
         ["1", "1.0", "1e0", "1e+2", "1e-2", "0.5"]
     );
     assert_eq!(
-        argument_spellings(&result, 2, 0),
+        matrix_argument_spellings(&result, 2, 0),
         ["0", "-0", "+0", "0.0", "0e0", "00"]
     );
 
     // The five authored spellings the profile must keep distinguishable
     // are pairwise distinct as retained evidence, never collapsed to one
     // interpreted magnitude.
-    let distinct = argument_spellings(&result, 1, 0);
+    let distinct = matrix_argument_spellings(&result, 1, 0);
     assert_ne!(distinct[0], distinct[1]);
     assert_ne!(distinct[1], distinct[2]);
     assert_ne!(distinct[0], distinct[2]);
@@ -288,28 +370,28 @@ fn repeated_matrix_components_preserve_authored_order() {
 
     assert_eq!(qualified_functions(&result, 0).len(), 2);
     assert_eq!(
-        argument_spellings(&result, 0, 0),
+        matrix_argument_spellings(&result, 0, 0),
         ["1", "0", "0", "1", "0", "0"]
     );
     assert_eq!(
-        argument_spellings(&result, 0, 1),
+        matrix_argument_spellings(&result, 0, 1),
         ["2", "0", "0", "2", "10", "-10"]
     );
 
     // The reversed authoring order yields the reversed component order:
     // repetition order is authored evidence, never sorted or deduplicated.
     assert_eq!(
-        argument_spellings(&result, 1, 0),
+        matrix_argument_spellings(&result, 1, 0),
         ["2", "0", "0", "2", "10", "-10"]
     );
     assert_eq!(
-        argument_spellings(&result, 1, 1),
+        matrix_argument_spellings(&result, 1, 1),
         ["1", "0", "0", "1", "0", "0"]
     );
 
     assert_eq!(qualified_functions(&result, 2).len(), 3);
     assert_eq!(
-        argument_spellings(&result, 2, 2),
+        matrix_argument_spellings(&result, 2, 2),
         ["3", "0", "0", "3", "0", "0"]
     );
 }
@@ -327,11 +409,11 @@ fn adjacent_matrix_components_without_whitespace_partition_correctly() {
     for index in 0..2 {
         assert_eq!(qualified_functions(&result, index).len(), 2);
         assert_eq!(
-            argument_spellings(&result, index, 0),
+            matrix_argument_spellings(&result, index, 0),
             ["1", "0", "0", "1", "0", "0"]
         );
         assert_eq!(
-            argument_spellings(&result, index, 1),
+            matrix_argument_spellings(&result, index, 1),
             ["2", "0", "0", "2", "10", "-10"]
         );
     }
@@ -358,7 +440,7 @@ fn matrix_argument_cardinality_other_than_six_is_invalid() {
     // off-by-one boundary from both sides.
     let result = qualify(418139, "a{transform:matrix(1,2,3,4,5,6);}");
     assert_eq!(
-        argument_spellings(&result, 0, 0),
+        matrix_argument_spellings(&result, 0, 0),
         ["1", "2", "3", "4", "5", "6"]
     );
 }
@@ -415,7 +497,7 @@ fn direct_non_number_argument_categories_are_invalid() {
 fn opaque_matrix_argument_function_is_unsupported() {
     assert_all_unsupported(
         418160,
-        CssTransformUnsupportedReason::FunctionValuedMatrixArgument,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
         &[
             "matrix(calc(1),0,0,1,0,0)",
             "matrix(1,0,0,1,0,calc(1))",
@@ -434,7 +516,7 @@ fn nested_commas_never_change_matrix_arity() {
     // Unsupported outcome is itself the depth-isolation proof.
     assert_all_unsupported(
         418170,
-        CssTransformUnsupportedReason::FunctionValuedMatrixArgument,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
         &[
             "matrix(calc(1,2),0,0,1,0,0)",
             "matrix(1,0,0,1,0,calc(1,2))",
@@ -446,7 +528,7 @@ fn nested_commas_never_change_matrix_arity() {
     // Nested non-parenthesis blocks isolate their commas identically.
     assert_all_unsupported(
         418180,
-        CssTransformUnsupportedReason::FunctionValuedMatrixArgument,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
         &[
             "matrix(calc([1,2]),0,0,1,0,0)",
             "matrix(calc({1,2}),0,0,1,0,0)",
@@ -517,26 +599,32 @@ fn deferred_substitution_outranks_surrounding_shape_conclusions() {
     );
 }
 
-// 10. Outer coverage boundary: every non-`matrix` `<transform-function>`
-// stays outside selected-profile coverage rather than being decided here,
-// in either authored order and regardless of a sibling qualified matrix.
+// 10. Outer coverage boundary: every `<transform-function>` other than
+// selected `matrix()`/`scale()` stays outside selected-profile coverage
+// rather than being decided here, in either authored order and regardless
+// of a sibling qualified matrix/scale.
 
 #[test]
-fn non_matrix_transform_functions_remain_outside_selected_profile() {
+fn unselected_transform_functions_remain_outside_selected_profile() {
     assert_all_unsupported(
         418220,
-        CssTransformUnsupportedReason::NonMatrixTransformFunction,
+        CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
             "rotate(1deg)",
             "matrix(1,0,0,1,0,0) rotate(1deg)",
             "rotate(1deg) matrix(1,0,0,1,0,0)",
             "translate(10px,20px)",
-            "scale(2)",
+            "scaleX(2)",
+            "scaleY(2)",
+            "scaleZ(2)",
+            "scale3d(1,1,1)",
             "skew(1deg)",
             "perspective(1px)",
             "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
             "unknownfunction(1,0,0,1,0,0)",
             "rotate(1deg) rotate(2deg)",
+            "scale(2) rotate(1deg)",
+            "rotate(1deg) scale(2)",
         ],
     );
 }
@@ -557,6 +645,13 @@ fn top_level_comma_is_never_a_transform_list_separator() {
             "none,none",
             ",matrix(1,0,0,1,0,0)",
             "matrix(1,0,0,1,0,0),",
+            "scale(2), scale(2)",
+            "scale(2),matrix(1,0,0,1,0,0)",
+            "matrix(1,0,0,1,0,0),scale(2)",
+            "none, scale(2)",
+            "scale(2), none",
+            ",scale(2)",
+            "scale(2),",
         ],
     );
 }
@@ -577,7 +672,7 @@ fn true_stylesheet_eof_ended_matrix_extent_follows_parser_authority() {
     );
     assert_eq!(result.transform_observations().len(), 1);
     assert_eq!(
-        argument_spellings(&result, 0, 0),
+        matrix_argument_spellings(&result, 0, 0),
         ["1", "0", "0", "1", "0", "0"]
     );
 
@@ -601,6 +696,61 @@ fn true_stylesheet_eof_ended_matrix_extent_follows_parser_authority() {
     assert_invalid(&trailing, 0);
 }
 
+// Same true-EOF parser-authority theorem applied to `scale()` (#645): a
+// one- or two-argument body ending at true stylesheet EOF with no authored
+// closer still qualifies from retained interior evidence, while a short or
+// wrong-arity EOF-ended extent stays invalid -- EOF never fills or repairs
+// missing slots.
+
+#[test]
+fn true_stylesheet_eof_ended_scale_extent_follows_parser_authority() {
+    let one_argument = qualify(645250, "a{transform:scale(2");
+    assert_eq!(
+        one_argument.execution_completion(),
+        CssParserExecutionCompletion::Complete
+    );
+    assert_eq!(one_argument.transform_observations().len(), 1);
+    assert_eq!(
+        scale_argument_spellings(&one_argument, 0, 0),
+        vec![(CssTransformScaleArgumentKind::Number, "2".to_string())]
+    );
+
+    let two_arguments = qualify(645251, "a{transform:scale(2,100%");
+    assert_eq!(
+        two_arguments.execution_completion(),
+        CssParserExecutionCompletion::Complete
+    );
+    assert_eq!(
+        scale_argument_spellings(&two_arguments, 0, 0),
+        vec![
+            (CssTransformScaleArgumentKind::Number, "2".to_string()),
+            (
+                CssTransformScaleArgumentKind::Percentage,
+                "100%".to_string()
+            ),
+        ]
+    );
+
+    // Without a closer, later authored material is absorbed into the final
+    // slot by real retained structure, so it no longer satisfies exactly
+    // one direct Number/Percentage.
+    let absorbed = qualify(645252, "a{transform:scale(2 7");
+    assert_eq!(
+        absorbed.execution_completion(),
+        CssParserExecutionCompletion::Complete
+    );
+    assert_invalid(&absorbed, 0);
+
+    // An EOF-ended empty body stays empty: EOF never fills missing slots.
+    let empty = qualify(645253, "a{transform:scale(");
+    assert_invalid(&empty, 0);
+
+    // A closed component followed by stray material is invalid, proving
+    // the accepted EOF case is not "accept whatever trails a scale".
+    let trailing = qualify(645254, "a{transform:scale(2) 7;}");
+    assert_invalid(&trailing, 0);
+}
+
 #[test]
 fn trivia_never_changes_matrix_slot_interpretation() {
     let result = qualify(
@@ -618,7 +768,7 @@ fn trivia_never_changes_matrix_slot_interpretation() {
     assert_eq!(result.transform_observations().len(), 6);
     for index in 0..6 {
         assert_eq!(
-            argument_spellings(&result, index, 0),
+            matrix_argument_spellings(&result, index, 0),
             ["1", "0", "0", "1", "0", "0"],
             "trivia changed slot interpretation at {index}"
         );
@@ -627,6 +777,40 @@ fn trivia_never_changes_matrix_slot_interpretation() {
     // A comment is trivia, never an argument: it can neither fill an
     // authored-empty slot nor stand in for a missing one.
     assert_all_invalid(418260, &["matrix(1,/**/,0,1,0,0)", "matrix(1,0,0,1,0/**/)"]);
+}
+
+#[test]
+fn trivia_never_changes_scale_slot_interpretation() {
+    let result = qualify(
+        645260,
+        concat!(
+            "a{transform:scale(2,/**/100%);}",
+            "b{transform:scale(2/**/,100%);}",
+            "c{transform:scale(2,100%/**/);}",
+            "d{transform:scale(/**/2,100%);}",
+            "e{transform:scale( 2 , 100% );}",
+            "f{transform:scale(2,/*,*/100%);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 6);
+    for index in 0..6 {
+        assert_eq!(
+            scale_argument_spellings(&result, index, 0),
+            vec![
+                (CssTransformScaleArgumentKind::Number, "2".to_string()),
+                (
+                    CssTransformScaleArgumentKind::Percentage,
+                    "100%".to_string()
+                ),
+            ],
+            "trivia changed slot interpretation at {index}"
+        );
+    }
+
+    // A comment is trivia, never an argument: it can neither fill an
+    // authored-empty slot nor stand in for a missing one.
+    assert_all_invalid(645270, &["scale(2,/**/,100%)", "scale(2,100/**/%)"]);
 }
 
 // 13. Lower-layer lifecycle evidence stays owned by the tokenizer and
@@ -645,11 +829,11 @@ fn important_priority_is_outside_the_semantic_value_window() {
 
     assert_eq!(result.transform_observations().len(), 3);
     assert_eq!(
-        argument_spellings(&result, 0, 0),
+        matrix_argument_spellings(&result, 0, 0),
         ["1", "0", "0", "1", "0", "0"]
     );
     assert_eq!(
-        argument_spellings(&result, 1, 0),
+        matrix_argument_spellings(&result, 1, 0),
         ["1", "0", "0", "1", "0", "0"]
     );
     assert_whole_none(&result, 2);
@@ -696,7 +880,7 @@ fn parser_resource_termination_preserves_committed_prefix_only() {
     );
     assert_eq!(incomplete.transform_observations().len(), 1);
     assert_eq!(
-        argument_spellings(&incomplete, 0, 0),
+        matrix_argument_spellings(&incomplete, 0, 0),
         ["1", "0", "0", "1", "0", "0"]
     );
 }
@@ -724,7 +908,7 @@ fn unsupported_region_material_never_produces_transform_observations() {
     // reconstructed into a qualified occurrence.
     assert_eq!(result.transform_observations().len(), 1);
     assert_eq!(
-        argument_spellings(&result, 0, 0),
+        matrix_argument_spellings(&result, 0, 0),
         ["1", "0", "0", "1", "0", "0"]
     );
 }
@@ -739,6 +923,10 @@ fn repeated_and_cross_source_runs_are_deterministic() {
         "e{transform:matrix(var(--x),0);}",
         "f{transform:matrix(1,2);}",
         "g{transform:matrix(1,0,0,1,0,0) none;}",
+        "h{transform:scale(2) matrix(1,0,0,1,0,0);}",
+        "i{transform:scale(calc(1),2);}",
+        "j{transform:scaleX(2);}",
+        "k{transform:scale(1,2,3);}",
     );
 
     let first = qualify(418300, css);
@@ -759,12 +947,12 @@ fn repeated_and_cross_source_runs_are_deterministic() {
     assert_unsupported(
         &first,
         2,
-        CssTransformUnsupportedReason::FunctionValuedMatrixArgument,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
     );
     assert_unsupported(
         &first,
         3,
-        CssTransformUnsupportedReason::NonMatrixTransformFunction,
+        CssTransformUnsupportedReason::UnselectedTransformFunction,
     );
     assert_unsupported(
         &first,
@@ -773,6 +961,30 @@ fn repeated_and_cross_source_runs_are_deterministic() {
     );
     assert_invalid(&first, 5);
     assert_invalid(&first, 6);
+    assert_eq!(qualified_functions(&first, 7).len(), 2);
+    assert_unsupported(
+        &first,
+        8,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
+    );
+    assert_unsupported(
+        &first,
+        9,
+        CssTransformUnsupportedReason::UnselectedTransformFunction,
+    );
+    assert_invalid(&first, 10);
+
+    // Scale evidence lookup remains deterministic and resolves to the exact
+    // retained Number/Percentage tokens across repeated and cross-source
+    // runs, exactly like matrix evidence lookup above.
+    assert_eq!(
+        scale_argument_spellings(&first, 7, 0),
+        scale_argument_spellings(&repeated, 7, 0)
+    );
+    assert_eq!(
+        scale_argument_spellings(&first, 7, 0),
+        scale_argument_spellings(&another_source, 7, 0)
+    );
 }
 
 // Adversarial sealing: outcome precedence must follow evidence authority,
@@ -797,7 +1009,7 @@ fn invalid_unsupported_precedence_is_scan_order_independent() {
     // is reported first, identically in both authored orders.
     assert_all_unsupported(
         418320,
-        CssTransformUnsupportedReason::NonMatrixTransformFunction,
+        CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
             "matrix(calc(1),0,0,1,0,0) rotate(1deg)",
             "rotate(1deg) matrix(calc(1),0,0,1,0,0)",
@@ -831,19 +1043,26 @@ fn whole_value_boundaries_are_preserved() {
     );
 
     // A whole-value-only Function has no independent meaning embedded in a
-    // `<transform-list>` or at a matrix argument position.
+    // `<transform-list>` or at a matrix/scale argument position.
     assert_all_invalid(
         418360,
         &[
             "matrix(1,0,0,1,0,0) first-valid(none)",
             "matrix(first-valid(1),0,0,1,0,0)",
+            "scale(2) first-valid(none)",
+            "scale(first-valid(1))",
         ],
     );
 
     // A CSS-wide keyword is a whole-value branch only.
     assert_all_invalid(
         418370,
-        &["inherit matrix(1,0,0,1,0,0)", "matrix(1,0,0,1,0,inherit)"],
+        &[
+            "inherit matrix(1,0,0,1,0,0)",
+            "matrix(1,0,0,1,0,inherit)",
+            "inherit scale(2)",
+            "scale(inherit)",
+        ],
     );
 }
 
@@ -861,7 +1080,7 @@ fn matrix_function_name_recognition_is_ascii_case_insensitive() {
     assert_eq!(result.transform_observations().len(), 3);
     for index in 0..3 {
         assert_eq!(
-            argument_spellings(&result, index, 0),
+            matrix_argument_spellings(&result, index, 0),
             ["1", "0", "0", "1", "0", "0"],
             "matrix name recognition failed at {index}"
         );
@@ -871,8 +1090,431 @@ fn matrix_function_name_recognition_is_ascii_case_insensitive() {
     // stays outside selected-profile coverage.
     assert_all_unsupported(
         418390,
-        CssTransformUnsupportedReason::NonMatrixTransformFunction,
+        CssTransformUnsupportedReason::UnselectedTransformFunction,
         &["matrix3d(1,0,0,1,0,0)", "matrixx(1,0,0,1,0,0)"],
+    );
+}
+
+#[test]
+fn scale_function_name_recognition_is_ascii_case_insensitive() {
+    let result = qualify(
+        645280,
+        concat!(
+            "a{transform:SCALE(2);}",
+            "b{transform:ScAlE(2);}",
+            "c{transform:s\\63 ale(2);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 3);
+    for index in 0..3 {
+        assert_eq!(
+            scale_argument_spellings(&result, index, 0),
+            vec![(CssTransformScaleArgumentKind::Number, "2".to_string())],
+            "scale name recognition failed at {index}"
+        );
+    }
+
+    // A name that merely starts with `scale` is a different function and
+    // stays outside selected-profile coverage.
+    assert_all_unsupported(
+        645290,
+        CssTransformUnsupportedReason::UnselectedTransformFunction,
+        &["scaleX(2)", "scale3d(1,1,1)", "scalex(2)"],
+    );
+}
+
+// 14. `scale() = scale([<number> | <percentage>]#{1,2})` (#645): one
+// direct `<number>` argument qualifies as `CssTransformScaleArguments::One`,
+// and each argument's authored numeric identity stays source-backed
+// tokenizer evidence -- never normalized through machine floating point.
+
+#[test]
+fn direct_one_argument_number_scale_qualifies() {
+    let result = qualify(
+        645300,
+        concat!(
+            "a{transform:scale(0);}",
+            "b{transform:scale(+0);}",
+            "c{transform:scale(-0);}",
+            "d{transform:scale(1);}",
+            "e{transform:scale(-1);}",
+            "f{transform:scale(.5);}",
+            "g{transform:scale(1e100);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 7);
+    assert_eq!(
+        scale_argument_spellings(&result, 0, 0),
+        vec![(CssTransformScaleArgumentKind::Number, "0".to_string())]
+    );
+    assert_eq!(
+        scale_argument_spellings(&result, 1, 0),
+        vec![(CssTransformScaleArgumentKind::Number, "+0".to_string())]
+    );
+    assert_eq!(
+        scale_argument_spellings(&result, 2, 0),
+        vec![(CssTransformScaleArgumentKind::Number, "-0".to_string())]
+    );
+    assert_eq!(
+        scale_argument_spellings(&result, 3, 0),
+        vec![(CssTransformScaleArgumentKind::Number, "1".to_string())]
+    );
+    assert_eq!(
+        scale_argument_spellings(&result, 4, 0),
+        vec![(CssTransformScaleArgumentKind::Number, "-1".to_string())]
+    );
+    // Authored `.5`: the absent leading integer digit is canonicalized to
+    // `0` by the tokenizer's own retained numeric contract, upstream of
+    // this leaf, exactly as for `matrix()` arguments.
+    assert_eq!(
+        scale_argument_spellings(&result, 5, 0),
+        vec![(CssTransformScaleArgumentKind::Number, "0.5".to_string())]
+    );
+    assert_eq!(
+        scale_argument_spellings(&result, 6, 0),
+        vec![(CssTransformScaleArgumentKind::Number, "1e100".to_string())]
+    );
+}
+
+// 15. Direct `<percentage>` arguments qualify identically to `<number>`
+// arguments, and Number vs Percentage token kind is preserved distinctly
+// -- never collapsed into an interpreted scale factor (#645).
+
+#[test]
+fn direct_percentage_scale_arguments_qualify_and_preserve_kind() {
+    let result = qualify(
+        645310,
+        concat!(
+            "a{transform:scale(0%);}",
+            "b{transform:scale(+0%);}",
+            "c{transform:scale(-0%);}",
+            "d{transform:scale(100%);}",
+            "e{transform:scale(-2%);}",
+            "f{transform:scale(.5%);}",
+            "g{transform:scale(1e100%);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 7);
+    assert_eq!(
+        scale_argument_spellings(&result, 0, 0),
+        vec![(CssTransformScaleArgumentKind::Percentage, "0%".to_string())]
+    );
+    assert_eq!(
+        scale_argument_spellings(&result, 3, 0),
+        vec![(
+            CssTransformScaleArgumentKind::Percentage,
+            "100%".to_string()
+        )]
+    );
+    assert_eq!(
+        scale_argument_spellings(&result, 6, 0),
+        vec![(
+            CssTransformScaleArgumentKind::Percentage,
+            "1e100%".to_string()
+        )]
+    );
+
+    // `100%` and `1` remain distinct authored evidence -- never collapsed
+    // into an equivalent interpreted scale factor.
+    let percent = qualify(645320, "a{transform:scale(100%);}");
+    let number = qualify(645321, "a{transform:scale(1);}");
+    assert_ne!(
+        scale_argument_spellings(&percent, 0, 0),
+        scale_argument_spellings(&number, 0, 0)
+    );
+}
+
+// 16. Two ordered `scale()` arguments qualify as
+// `CssTransformScaleArguments::Two`, preserving authored order and every
+// Number/Percentage combination (#645).
+
+#[test]
+fn two_argument_scale_preserves_order_and_kind_combinations() {
+    let result = qualify(
+        645330,
+        concat!(
+            "a{transform:scale(1,2);}",
+            "b{transform:scale(100%,200%);}",
+            "c{transform:scale(1,200%);}",
+            "d{transform:scale(150%,-2);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 4);
+    assert_eq!(
+        scale_argument_spellings(&result, 0, 0),
+        vec![
+            (CssTransformScaleArgumentKind::Number, "1".to_string()),
+            (CssTransformScaleArgumentKind::Number, "2".to_string()),
+        ]
+    );
+    assert_eq!(
+        scale_argument_spellings(&result, 1, 0),
+        vec![
+            (
+                CssTransformScaleArgumentKind::Percentage,
+                "100%".to_string()
+            ),
+            (
+                CssTransformScaleArgumentKind::Percentage,
+                "200%".to_string()
+            ),
+        ]
+    );
+    assert_eq!(
+        scale_argument_spellings(&result, 2, 0),
+        vec![
+            (CssTransformScaleArgumentKind::Number, "1".to_string()),
+            (
+                CssTransformScaleArgumentKind::Percentage,
+                "200%".to_string()
+            ),
+        ]
+    );
+    assert_eq!(
+        scale_argument_spellings(&result, 3, 0),
+        vec![
+            (
+                CssTransformScaleArgumentKind::Percentage,
+                "150%".to_string()
+            ),
+            (CssTransformScaleArgumentKind::Number, "-2".to_string()),
+        ]
+    );
+}
+
+// 17. Authored one-vs-two cardinality is preserved structurally:
+// `CssTransformScaleArguments` cannot represent zero, three, or a
+// synthesized argument, and an authored one-argument `scale()` never gains
+// a materialized second factor (#645).
+
+#[test]
+fn authored_scale_cardinality_is_never_synthesized() {
+    let result = qualify(
+        645340,
+        concat!("a{transform:scale(2);}", "b{transform:scale(2,3);}"),
+    );
+
+    assert_eq!(scale_argument_spellings(&result, 0, 0).len(), 1);
+    assert_eq!(scale_argument_spellings(&result, 1, 0).len(), 2);
+
+    let functions = qualified_functions(&result, 0);
+    let CssTransformFunction::Scale(scale) = &functions[0] else {
+        panic!("expected a qualified scale component");
+    };
+    assert!(scale.arguments().second().is_none());
+}
+
+// 18. `#{1,2}` bounds scale arity to one or two: zero, three, or more
+// directly visible arguments are decisive `InvalidForSelectedValueGrammar`
+// before any argument content is consulted, so an opaque Function in
+// another slot never relaxes the directly visible arity boundary (#645).
+
+#[test]
+fn scale_argument_cardinality_outside_one_or_two_is_invalid() {
+    assert_all_invalid(
+        645350,
+        &[
+            "scale()",
+            "scale(1,2,3)",
+            "scale(1,2,3,4)",
+            "scale(calc(1),2,3)",
+            "scale(1,calc(2),3)",
+            "scale(1,2,calc(3))",
+        ],
+    );
+}
+
+// 19. `#` is comma-separated repetition, never whitespace-separated SVG
+// transform-attribute syntax, and an authored-empty position is preserved
+// as its own ordered slot and rejected -- never collapsed away (#645).
+
+#[test]
+fn scale_argument_delimiter_failures_are_invalid() {
+    assert_all_invalid(
+        645360,
+        &[
+            "scale(1 2)",
+            "scale(,1)",
+            "scale(1,)",
+            "scale(1,,2)",
+            "scale(,,)",
+            "scale( , )",
+        ],
+    );
+}
+
+// 20. `<number> | <percentage>` admits only a direct retained `Number` or
+// `Percentage` token: every other direct token category at a scale
+// argument position is a decisive direct token-category failure. CSSWG
+// #5273 (`<length>` support) remains an open proposal, so a direct
+// `Dimension` such as `1px` stays decisively Invalid under the current
+// pinned grammar (#645) -- the proposal is not pre-implemented.
+
+#[test]
+fn direct_non_number_percentage_scale_argument_categories_are_invalid() {
+    assert_all_invalid(
+        645370,
+        &[
+            "scale(1px)",
+            "scale(1px,2)",
+            "scale(1,2px)",
+            "scale(foo)",
+            "scale(none)",
+            "scale(\"1\")",
+            "scale(#abc)",
+            "scale(1deg)",
+        ],
+    );
+}
+
+// 21. An opaque non-deferred Function at a scale argument position is
+// structurally feasible but its validity depends on calculated-value
+// semantics this leaf does not own, so it stays unsupported under the
+// same shared `FunctionValuedTransformArgument` reason a `matrix()` opaque
+// argument uses -- both sit at the same evidence-authority level (#645). A
+// comma nested inside that Function is at a deeper relative depth and
+// never becomes a scale argument separator.
+
+#[test]
+fn opaque_scale_argument_function_is_unsupported() {
+    assert_all_unsupported(
+        645380,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
+        &[
+            "scale(calc(1))",
+            "scale(calc(100%))",
+            "scale(calc(1),2)",
+            "scale(1,calc(2))",
+            "scale(min(1,2))",
+            "matrix(1,0,0,1,0,0) scale(calc(1))",
+        ],
+    );
+
+    // `calc(1,2)` contributes exactly ONE scale-level slot: its inner comma
+    // is at scale-body relative depth one. Were it leaking, `scale(calc(1,2),3)`
+    // would be a three-slot shell and therefore decisively Invalid, so the
+    // Unsupported outcome is itself the depth-isolation proof.
+    assert_all_unsupported(
+        645390,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
+        &[
+            "scale(calc(1,2),3)",
+            "scale(calc([1,2]))",
+            "scale(calc({1,2}))",
+        ],
+    );
+
+    // A nested comma that genuinely does add a scale-level slot once the
+    // nesting closes is still counted, ruling out "ignore every comma
+    // after a Function" as an accidental passing implementation.
+    assert_all_invalid(645400, &["scale(calc(1,2),3,4)"]);
+}
+
+// 22. Outcome precedence is scan-order independent for `scale()` exactly
+// as for `matrix()`: decisive Invalid outranks opaque Unsupported content
+// regardless of authored position, and the coarser outer unselected-
+// function coverage outranks an inner opaque scale argument (#645).
+
+#[test]
+fn scale_invalid_unsupported_precedence_is_scan_order_independent() {
+    assert_all_invalid(
+        645410,
+        &[
+            "scale(1px,calc(1))",
+            "scale(calc(1),1px)",
+            "scale(calc(1) 2)",
+            "scale(calc(1),2,3)",
+            "scale(1,2,calc(3))",
+        ],
+    );
+
+    assert_all_unsupported(
+        645420,
+        CssTransformUnsupportedReason::UnselectedTransformFunction,
+        &["scale(calc(1)) rotate(1deg)", "rotate(1deg) scale(calc(1))"],
+    );
+}
+
+// 23. Deferred substitution can alter the enclosing token sequence,
+// separators, and cardinality, so it is resolved before any surrounding
+// scale shape conclusion -- including an arity that looks decisive (#645).
+
+#[test]
+fn scale_deferred_substitution_outranks_surrounding_shape_conclusions() {
+    assert_all_unsupported(
+        645430,
+        CssTransformUnsupportedReason::DeferredSubstitutionFunction,
+        &[
+            "scale(var(--x))",
+            "scale(var(--x),0,0)",
+            "scale(1,var(--x))",
+            "matrix(1,0,0,1,0,0) scale(var(--x))",
+            "scale(var(--x)) matrix(1,0,0,1,0,0)",
+        ],
+    );
+}
+
+// 24. Selected `matrix()` and `scale()` components mix freely and preserve
+// exact authored order and repetition, retained through the heterogeneous
+// `CssTransformFunction` alternation (#645).
+
+#[test]
+fn heterogeneous_matrix_and_scale_components_preserve_authored_order() {
+    let result = qualify(
+        645440,
+        concat!(
+            "a{transform:matrix(1,0,0,1,0,0) scale(2);}",
+            "b{transform:scale(2) matrix(1,0,0,1,0,0);}",
+            "c{transform:scale(2) matrix(1,0,0,1,0,0) scale(100%,200%);}",
+            "d{transform:matrix(1,0,0,1,0,0) matrix(2,0,0,2,0,0);}",
+            "e{transform:scale(1) scale(2);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 5);
+
+    let functions_a = qualified_functions(&result, 0);
+    assert_eq!(functions_a.len(), 2);
+    assert!(matches!(functions_a[0], CssTransformFunction::Matrix(_)));
+    assert!(matches!(functions_a[1], CssTransformFunction::Scale(_)));
+
+    let functions_b = qualified_functions(&result, 1);
+    assert_eq!(functions_b.len(), 2);
+    assert!(matches!(functions_b[0], CssTransformFunction::Scale(_)));
+    assert!(matches!(functions_b[1], CssTransformFunction::Matrix(_)));
+
+    let functions_c = qualified_functions(&result, 2);
+    assert_eq!(functions_c.len(), 3);
+    assert!(matches!(functions_c[0], CssTransformFunction::Scale(_)));
+    assert!(matches!(functions_c[1], CssTransformFunction::Matrix(_)));
+    assert!(matches!(functions_c[2], CssTransformFunction::Scale(_)));
+    assert_eq!(
+        scale_argument_spellings(&result, 2, 2),
+        vec![
+            (
+                CssTransformScaleArgumentKind::Percentage,
+                "100%".to_string()
+            ),
+            (
+                CssTransformScaleArgumentKind::Percentage,
+                "200%".to_string()
+            ),
+        ]
+    );
+
+    assert_eq!(qualified_functions(&result, 3).len(), 2);
+    assert_eq!(qualified_functions(&result, 4).len(), 2);
+    assert_eq!(
+        scale_argument_spellings(&result, 4, 0),
+        vec![(CssTransformScaleArgumentKind::Number, "1".to_string())]
+    );
+    assert_eq!(
+        scale_argument_spellings(&result, 4, 1),
+        vec![(CssTransformScaleArgumentKind::Number, "2".to_string())]
     );
 }
 
@@ -883,11 +1525,17 @@ fn structurally_malformed_components_are_invalid() {
         &[
             "1",
             "matrix",
+            "scale",
             "(1,0,0,1,0,0)",
+            "(2)",
             "[matrix(1,0,0,1,0,0)]",
+            "[scale(2)]",
             "matrix(1,0,0,1,0,0))",
+            "scale(2))",
             "matrix((1,0,0,1,0,0)",
+            "scale((2)",
             "1 matrix(1,0,0,1,0,0)",
+            "1 scale(2)",
         ],
     );
 }
@@ -912,7 +1560,7 @@ fn cross_dispatch_separation_from_other_qualified_leaves() {
     assert_eq!(result.transform_observations()[0].occurrence_index(), 0);
     assert_eq!(result.transform_observations()[1].occurrence_index(), 1);
     assert_eq!(
-        argument_spellings(&result, 0, 0),
+        matrix_argument_spellings(&result, 0, 0),
         ["1", "0", "0", "1", "0", "0"]
     );
     assert_whole_none(&result, 1);
