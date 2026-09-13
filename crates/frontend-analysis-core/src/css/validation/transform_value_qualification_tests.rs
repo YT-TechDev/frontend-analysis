@@ -165,6 +165,35 @@ fn matrix_argument_spellings(
         .collect()
 }
 
+/// Mirrors `matrix_argument_spellings` for `matrix3d()`'s own dedicated
+/// sixteen-slot evidence type: `matrix()` and `matrix3d()` never share
+/// representation, so this resolves through
+/// `transform_matrix3d_argument_token` rather than
+/// `transform_matrix_argument_token`.
+fn matrix3d_argument_spellings(
+    result: &CssValueQualificationRunResult,
+    index: usize,
+    function_index: usize,
+) -> Vec<String> {
+    let functions = qualified_functions(result, index);
+    let function = functions
+        .get(function_index)
+        .unwrap_or_else(|| panic!("missing transform component {function_index} at {index}"));
+    let CssTransformFunction::Matrix3d(matrix3d) = function else {
+        panic!("expected matrix3d component {function_index} at {index}, got {function:?}");
+    };
+    matrix3d
+        .arguments()
+        .iter()
+        .map(|evidence| {
+            let token = result
+                .transform_matrix3d_argument_token(*evidence)
+                .expect("matrix3d argument evidence did not resolve");
+            authored_number_spelling(token)
+        })
+        .collect()
+}
+
 /// Reconstructs one retained `Number` or `Percentage` token's authored
 /// numeric structure from tokenizer-owned evidence alone, exactly like
 /// `authored_number_spelling`, with a trailing `%` marker distinguishing a
@@ -2007,13 +2036,10 @@ fn unselected_transform_functions_remain_outside_selected_profile() {
         418220,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "matrix(1,0,0,1,0,0) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
-            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1) matrix(1,0,0,1,0,0)",
             "perspective(1px)",
             "perspective(1px)",
-            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
             "unknownfunction(1,0,0,1,0,0)",
-            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1) perspective(1px)",
+            "unknownfunction(1,0,0,1,0,0) perspective(1px)",
             "scale(2) perspective(1px)",
             "perspective(1px) scale(2)",
         ],
@@ -2478,11 +2504,13 @@ fn matrix_function_name_recognition_is_ascii_case_insensitive() {
     }
 
     // A name that merely starts with `matrix` is a different function and
-    // stays outside selected-profile coverage.
+    // stays outside selected-profile coverage. `matrix3d()` no longer
+    // illustrates this once #682 selects it as its own distinct function;
+    // `matrixx` alone still proves the boundary.
     assert_all_unsupported(
         418390,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
-        &["matrix3d(1,0,0,1,0,0)", "matrixx(1,0,0,1,0,0)"],
+        &["matrixx(1,0,0,1,0,0)"],
     );
 }
 
@@ -4156,8 +4184,8 @@ fn unselected_outer_function_precedence_covers_rotate3d() {
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
             "perspective(1px)",
-            "rotate3d(1,0,0,90deg) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
-            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1) rotate3d(1,0,0,90deg)",
+            "rotate3d(1,0,0,90deg) perspective(1px)",
+            "perspective(1px) rotate3d(1,0,0,90deg)",
             "rotate3dx(1,0,0,90deg)",
         ],
     );
@@ -5083,7 +5111,6 @@ fn unselected_outer_function_precedence_covers_translate() {
         &[
             "translate(10px) perspective(1px)",
             "perspective(1px) translate(10px)",
-            "translate(10px) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
         ],
     );
 
@@ -5901,7 +5928,6 @@ fn unselected_outer_function_precedence_covers_translatex() {
         &[
             "translateX(10px) perspective(1px)",
             "perspective(1px) translateX(10px)",
-            "translateX(10px) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
         ],
     );
 
@@ -6737,7 +6763,6 @@ fn unselected_outer_function_precedence_covers_translatey() {
         &[
             "translateY(10px) perspective(1px)",
             "perspective(1px) translateY(10px)",
-            "translateY(10px) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
         ],
     );
 
@@ -6815,16 +6840,17 @@ fn translatex_translatey_evidence_separation_never_drifts() {
 // 137. `translateZ()` remains outside selected-profile coverage after
 // #655: extending coverage with `translateY()` never widens the selected
 // profile to a sibling `<transform-function>` still outside it -- unlike
-// `translateZ()`, which #657 goes on to select, `matrix3d()` and
-// `perspective()` remain outside selected-profile coverage in isolation,
-// with any argument shape, or alongside a qualified `translateY()` in
-// either order (#655 / #657). `scale3d()` was formerly listed here too;
-// #665 selects it separately, so this generic sentinel was retargeted to
-// `rotate()`. #667 selects `rotate()` too, superseding that retarget in
-// turn, and the sentinel became `skewX()`; #677 selects `skewX()` as well,
-// superseding it once more, so this generic sentinel is now `perspective()`
-// and `matrix3d()`, which remain outside `<transform-function>`
-// selected-profile coverage.
+// `translateZ()`, which #657 goes on to select, `perspective()` remains
+// outside selected-profile coverage in isolation, with any argument shape,
+// or alongside a qualified `translateY()` in either order (#655 / #657).
+// `scale3d()` was formerly listed here too; #665 selects it separately, so
+// this generic sentinel was retargeted to `rotate()`. #667 selects
+// `rotate()` too, superseding that retarget in turn, and the sentinel
+// became `skewX()`; #677 selects `skewX()` as well, superseding it once
+// more, and the sentinel became `matrix3d()`; #682 selects `matrix3d()`
+// too, superseding it in turn, so this generic sentinel is now
+// `perspective()` alone, the sole current normative unselected transform
+// Function remaining after #682.
 
 #[test]
 fn remaining_transform_siblings_stay_unselected_alongside_qualified_translatey() {
@@ -6833,7 +6859,6 @@ fn remaining_transform_siblings_stay_unselected_alongside_qualified_translatey()
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
             "perspective(10px)",
-            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
             "translateY(10px) perspective(1px)",
             "perspective(1px) translateY(10px)",
         ],
@@ -7643,7 +7668,6 @@ fn unselected_outer_function_precedence_covers_translatez() {
         &[
             "translateZ(10px) perspective(1px)",
             "perspective(1px) translateZ(10px)",
-            "translateZ(10px) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
         ],
     );
 
@@ -8341,11 +8365,7 @@ fn unselected_outer_function_precedence_covers_scalex() {
     assert_all_unsupported(
         659360,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
-        &[
-            "scaleX(2) perspective(1px)",
-            "perspective(1px) scaleX(2)",
-            "scaleX(2) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
-        ],
+        &["scaleX(2) perspective(1px)", "perspective(1px) scaleX(2)"],
     );
 
     // Coarser outer unselected-function coverage outranks an inner opaque
@@ -9218,11 +9238,7 @@ fn unselected_outer_function_precedence_covers_scaley() {
     assert_all_unsupported(
         661360,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
-        &[
-            "scaleY(2) perspective(1px)",
-            "perspective(1px) scaleY(2)",
-            "scaleY(2) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
-        ],
+        &["scaleY(2) perspective(1px)", "perspective(1px) scaleY(2)"],
     );
 
     // Coarser outer unselected-function coverage outranks an inner opaque
@@ -10139,11 +10155,7 @@ fn unselected_outer_function_precedence_covers_scalez() {
     assert_all_unsupported(
         663360,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
-        &[
-            "scaleZ(2) perspective(1px)",
-            "perspective(1px) scaleZ(2)",
-            "scaleZ(2) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
-        ],
+        &["scaleZ(2) perspective(1px)", "perspective(1px) scaleZ(2)"],
     );
 
     // Coarser outer unselected-function coverage outranks an inner opaque
@@ -11349,7 +11361,6 @@ fn unselected_outer_function_precedence_covers_scale3d() {
         &[
             "scale3d(2,3,4) perspective(1px)",
             "perspective(1px) scale3d(2,3,4)",
-            "scale3d(2,3,4) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
         ],
     );
 
@@ -11939,11 +11950,12 @@ fn rotate_decisive_invalid_outranks_opaque_argument() {
 // outside selected-profile coverage, in either authored order and
 // regardless of a sibling qualified `rotate()`, and the coarser outer
 // unselected-function coverage outranks an inner opaque `rotate()`
-// argument. `perspective()`/`matrix3d()` are used as the still-unselected
-// outer sentinels here -- `skewX()` served this role before #677 selected
-// it too -- rather than `rotateX()`, because #669 selects `rotateX()` and
-// this sentinel choice avoids repeated churn as the rotate family is
-// completed (#667 / #669 / #677).
+// argument. `perspective()` is used as the still-unselected outer sentinel
+// here -- `skewX()` served this role before #677 selected it too, and
+// `matrix3d()` served it too until #682 selected it -- rather than
+// `rotateX()`, because #669 selects `rotateX()` and this sentinel choice
+// avoids repeated churn as the rotate family is completed
+// (#667 / #669 / #677 / #682).
 
 #[test]
 fn unselected_outer_function_precedence_covers_rotate() {
@@ -11953,7 +11965,6 @@ fn unselected_outer_function_precedence_covers_rotate() {
         &[
             "rotate(90deg) perspective(1px)",
             "perspective(1px) rotate(90deg)",
-            "rotate(90deg) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
         ],
     );
 
@@ -12724,11 +12735,12 @@ fn rotatex_decisive_invalid_outranks_opaque_argument() {
 // outside selected-profile coverage, in either authored order and
 // regardless of a sibling qualified `rotateX()`, and the coarser outer
 // unselected-function coverage outranks an inner opaque `rotateX()`
-// argument. `perspective()`/`matrix3d()` are used as the still-unselected
-// outer sentinels here (`skewX()` served this role after being retargeted
-// by #671 from `rotateY()`, which this leaf now selects, until #677
-// selected `skewX()` too), since they remain outside selected-profile
-// coverage after this leaf (#669 / #671 / #677).
+// argument. `perspective()` is used as the still-unselected outer sentinel
+// here (`skewX()` served this role after being retargeted by #671 from
+// `rotateY()`, which this leaf now selects, until #677 selected `skewX()`
+// too; `matrix3d()` served it too until #682 selected it), since it
+// remains outside selected-profile coverage after this leaf
+// (#669 / #671 / #677 / #682).
 
 #[test]
 fn unselected_outer_function_precedence_covers_rotatex() {
@@ -12738,7 +12750,6 @@ fn unselected_outer_function_precedence_covers_rotatex() {
         &[
             "rotateX(90deg) perspective(1px)",
             "perspective(1px) rotateX(90deg)",
-            "rotateX(90deg) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
         ],
     );
 
@@ -13526,10 +13537,10 @@ fn rotatey_decisive_invalid_outranks_opaque_argument() {
 // outside selected-profile coverage, in either authored order and
 // regardless of a sibling qualified `rotateY()`, and the coarser outer
 // unselected-function coverage outranks an inner opaque `rotateY()`
-// argument. `perspective()`/`matrix3d()` are used as the still-unselected
-// outer sentinels here (`skewX()` served this role until #677 selected it
-// too), since they remain outside selected-profile coverage after this
-// leaf (#671 / #677).
+// argument. `perspective()` is used as the still-unselected outer sentinel
+// here (`skewX()` served this role until #677 selected it too, and
+// `matrix3d()` served it too until #682 selected it), since it remains
+// outside selected-profile coverage after this leaf (#671 / #677 / #682).
 
 #[test]
 fn unselected_outer_function_precedence_covers_rotatey() {
@@ -13539,7 +13550,6 @@ fn unselected_outer_function_precedence_covers_rotatey() {
         &[
             "rotateY(90deg) perspective(1px)",
             "perspective(1px) rotateY(90deg)",
-            "rotateY(90deg) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
         ],
     );
 
@@ -14387,10 +14397,10 @@ fn rotatez_decisive_invalid_outranks_opaque_argument() {
 // outside selected-profile coverage, in either authored order and
 // regardless of a sibling qualified `rotateZ()`, and the coarser outer
 // unselected-function coverage outranks an inner opaque `rotateZ()`
-// argument. `perspective()`/`matrix3d()` are used as the still-unselected
-// outer sentinels here (`skewX()` served this role until #677 selected it
-// too), since they remain outside selected-profile coverage after this
-// leaf (#673 / #677).
+// argument. `perspective()` is used as the still-unselected outer sentinel
+// here (`skewX()` served this role until #677 selected it too, and
+// `matrix3d()` served it too until #682 selected it), since it remains
+// outside selected-profile coverage after this leaf (#673 / #677 / #682).
 
 #[test]
 fn unselected_outer_function_precedence_covers_rotatez() {
@@ -14400,7 +14410,6 @@ fn unselected_outer_function_precedence_covers_rotatez() {
         &[
             "rotateZ(90deg) perspective(1px)",
             "perspective(1px) rotateZ(90deg)",
-            "rotateZ(90deg) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
         ],
     );
 
@@ -15570,14 +15579,14 @@ fn skew_deferred_substitution_outranks_surrounding_shape_conclusions() {
 // outside selected-profile coverage, in either authored order and
 // regardless of a sibling qualified `skew()`, and the coarser outer
 // unselected-function coverage outranks an inner opaque `skew()` argument
-// in either slot. `matrix3d()` and `perspective()` are used as the
-// still-unselected outer sentinels here, outside the skew family: `skewX()`
-// served this role too until #677 selected it, and `skewY()` served it too
-// until #679 selected it -- the remaining "skew(1) skewX(10deg)" and
-// "skew(10deg,1) skewY(10deg)" cases below stay valid because decisive
-// direct Invalid wins regardless of whether the sibling is unselected or
-// qualified. Decisive direct Invalid still wins over any outer sibling
-// (#675 / #677 / #679).
+// in either slot. `perspective()` is used as the still-unselected outer
+// sentinel here, outside the skew family: `skewX()` served this role too
+// until #677 selected it, `skewY()` served it too until #679 selected it,
+// and `matrix3d()` served it too until #682 selected it -- the remaining
+// "skew(1) skewX(10deg)" and "skew(10deg,1) skewY(10deg)" cases below stay
+// valid because decisive direct Invalid wins regardless of whether the
+// sibling is unselected or qualified. Decisive direct Invalid still wins
+// over any outer sibling (#675 / #677 / #679 / #682).
 
 #[test]
 fn unselected_outer_function_precedence_covers_skew() {
@@ -15585,8 +15594,8 @@ fn unselected_outer_function_precedence_covers_skew() {
         675380,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "skew(90deg) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
-            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1) skew(90deg)",
+            "skew(90deg) perspective(1px)",
+            "perspective(1px) skew(90deg)",
             "skew(90deg,45deg) perspective(1px)",
             "perspective(1px) skew(90deg,45deg)",
         ],
@@ -15594,16 +15603,16 @@ fn unselected_outer_function_precedence_covers_skew() {
 
     // Coarser outer unselected-function coverage outranks an inner opaque
     // skew argument, identically in both authored orders and
-    // independently for the X and Y slot. `perspective()` covers the X slot
-    // and `matrix3d()` covers the Y slot.
+    // independently for the X and Y slot. `perspective()` covers both the
+    // X and Y slot.
     assert_all_unsupported(
         675390,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
             "skew(calc(90deg)) perspective(1px)",
             "perspective(1px) skew(calc(90deg))",
-            "skew(10deg,calc(90deg)) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
-            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1) skew(10deg,calc(90deg))",
+            "skew(10deg,calc(90deg)) perspective(1px)",
+            "perspective(1px) skew(10deg,calc(90deg))",
         ],
     );
 
@@ -16049,22 +16058,41 @@ fn mixed_selected_function_order_including_skew_is_preserved() {
     );
 }
 
-// 367. `matrix3d()` and `perspective()` remain outside selected-profile
-// coverage even alongside a sibling qualified `skew()`, in either authored
-// order: this leaf selects `skew()` alone and widens nothing else (#675).
+// 367. `matrix()` and `matrix3d()` are both selected (#418 / #682) and
+// remain authored-distinct even alongside a sibling qualified `skew()`, in
+// either authored order: this superseded the original theorem that
+// `matrix3d()` remains outside selected-profile coverage here, which #682
+// falsifies by selecting `matrix3d()` in its own right; `perspective()`
+// takes over as the still-unselected outer sentinel for `skew()`,
+// unchanged from `unselected_outer_function_precedence_covers_skew`.
 
 #[test]
-fn matrix3d_and_perspective_remain_unselected_alongside_skew() {
-    assert_all_unsupported(
+fn matrix_and_matrix3d_remain_authored_distinct_alongside_skew() {
+    let result = qualify(
         675540,
-        CssTransformUnsupportedReason::UnselectedTransformFunction,
-        &[
-            "skew(90deg) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
-            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1) skew(90deg)",
-            "skew(90deg,45deg) perspective(1px)",
-            "perspective(1px) skew(90deg,45deg)",
-        ],
+        concat!(
+            "a{transform:skew(90deg) matrix(1,0,0,1,0,0);}",
+            "b{transform:matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1) skew(90deg);}",
+        ),
     );
+
+    assert_eq!(result.transform_observations().len(), 2);
+    assert!(matches!(
+        qualified_functions(&result, 0)[0],
+        CssTransformFunction::Skew(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 0)[1],
+        CssTransformFunction::Matrix(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 1)[0],
+        CssTransformFunction::Matrix3d(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 1)[1],
+        CssTransformFunction::Skew(_)
+    ));
 }
 
 // 368. Cross-leaf isolation: `skew()` recognition never leaks into the
@@ -16333,9 +16361,9 @@ fn skewx_deferred_substitution_outranks_surrounding_shape_conclusions() {
 // outside selected-profile coverage, in either authored order and
 // regardless of a sibling qualified `skewX()`, and the coarser outer
 // unselected-function coverage outranks an inner opaque `skewX()`
-// argument. `matrix3d()` and `perspective()` are used as the still-
-// unselected outer sentinels here. Decisive direct Invalid still wins over
-// any outer sibling (#677).
+// argument. `perspective()` is used as the still-unselected outer sentinel
+// here (`matrix3d()` served this role too until #682 selected it).
+// Decisive direct Invalid still wins over any outer sibling (#677 / #682).
 
 #[test]
 fn unselected_outer_function_precedence_covers_skewx() {
@@ -16343,8 +16371,6 @@ fn unselected_outer_function_precedence_covers_skewx() {
         677280,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "skewX(90deg) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
-            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1) skewX(90deg)",
             "skewX(90deg) perspective(1px)",
             "perspective(1px) skewX(90deg)",
         ],
@@ -16736,23 +16762,41 @@ fn mixed_selected_function_order_including_skewx_is_preserved() {
     );
 }
 
-// 385. `matrix3d()` and `perspective()` remain outside selected-profile
-// coverage even alongside a sibling qualified `skewX()`, in either
-// authored order: this leaf selects `skewX()` alone and widens nothing
-// else (#677).
+// 385. `matrix()` and `matrix3d()` are both selected (#418 / #682) and
+// remain authored-distinct even alongside a sibling qualified `skewX()`,
+// in either authored order: this superseded the original theorem that
+// `matrix3d()` remains outside selected-profile coverage here, which #682
+// falsifies by selecting `matrix3d()` in its own right; `perspective()`
+// takes over as the still-unselected outer sentinel for `skewX()`,
+// unchanged from `unselected_outer_function_precedence_covers_skewx`.
 
 #[test]
-fn matrix3d_and_perspective_remain_unselected_alongside_skewx() {
-    assert_all_unsupported(
+fn matrix_and_matrix3d_remain_authored_distinct_alongside_skewx() {
+    let result = qualify(
         677440,
-        CssTransformUnsupportedReason::UnselectedTransformFunction,
-        &[
-            "skewX(90deg) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
-            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1) skewX(90deg)",
-            "skewX(90deg) perspective(1px)",
-            "perspective(1px) skewX(90deg)",
-        ],
+        concat!(
+            "a{transform:skewX(90deg) matrix(1,0,0,1,0,0);}",
+            "b{transform:matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1) skewX(90deg);}",
+        ),
     );
+
+    assert_eq!(result.transform_observations().len(), 2);
+    assert!(matches!(
+        qualified_functions(&result, 0)[0],
+        CssTransformFunction::SkewX(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 0)[1],
+        CssTransformFunction::Matrix(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 1)[0],
+        CssTransformFunction::Matrix3d(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 1)[1],
+        CssTransformFunction::SkewX(_)
+    ));
 }
 
 // 386. Cross-leaf isolation: `skewX()` recognition never leaks into the
@@ -17143,9 +17187,9 @@ fn skewy_deferred_substitution_outranks_surrounding_shape_conclusions() {
 // outside selected-profile coverage, in either authored order and
 // regardless of a sibling qualified `skewY()`, and the coarser outer
 // unselected-function coverage outranks an inner opaque `skewY()`
-// argument. `matrix3d()` and `perspective()` are used as the still-
-// unselected outer sentinels here. Decisive direct Invalid still wins over
-// any outer sibling (#679).
+// argument. `perspective()` is used as the still-unselected outer sentinel
+// here (`matrix3d()` served this role too until #682 selected it).
+// Decisive direct Invalid still wins over any outer sibling (#679 / #682).
 
 #[test]
 fn unselected_outer_function_precedence_covers_skewy() {
@@ -17153,8 +17197,6 @@ fn unselected_outer_function_precedence_covers_skewy() {
         679280,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "skewY(90deg) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
-            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1) skewY(90deg)",
             "skewY(90deg) perspective(1px)",
             "perspective(1px) skewY(90deg)",
         ],
@@ -17382,23 +17424,41 @@ fn skewy_function_name_recognition_and_malformed_components() {
     );
 }
 
-// 404. `matrix3d()` and `perspective()` remain outside selected-profile
-// coverage even alongside a sibling qualified `skewY()`, in either
-// authored order: this leaf selects `skewY()` alone and widens nothing
-// else (#679).
+// 404. `matrix()` and `matrix3d()` are both selected (#418 / #682) and
+// remain authored-distinct even alongside a sibling qualified `skewY()`,
+// in either authored order: this superseded the original theorem that
+// `matrix3d()` remains outside selected-profile coverage here, which #682
+// falsifies by selecting `matrix3d()` in its own right; `perspective()`
+// takes over as the still-unselected outer sentinel for `skewY()`,
+// unchanged from `unselected_outer_function_precedence_covers_skewy`.
 
 #[test]
-fn matrix3d_and_perspective_remain_unselected_alongside_skewy() {
-    assert_all_unsupported(
+fn matrix_and_matrix3d_remain_authored_distinct_alongside_skewy() {
+    let result = qualify(
         679440,
-        CssTransformUnsupportedReason::UnselectedTransformFunction,
-        &[
-            "skewY(90deg) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
-            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1) skewY(90deg)",
-            "skewY(90deg) perspective(1px)",
-            "perspective(1px) skewY(90deg)",
-        ],
+        concat!(
+            "a{transform:skewY(90deg) matrix(1,0,0,1,0,0);}",
+            "b{transform:matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1) skewY(90deg);}",
+        ),
     );
+
+    assert_eq!(result.transform_observations().len(), 2);
+    assert!(matches!(
+        qualified_functions(&result, 0)[0],
+        CssTransformFunction::SkewY(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 0)[1],
+        CssTransformFunction::Matrix(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 1)[0],
+        CssTransformFunction::Matrix3d(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 1)[1],
+        CssTransformFunction::SkewY(_)
+    ));
 }
 
 // 405. Cross-leaf isolation: `skewY()` recognition never leaks into the
@@ -17717,5 +17777,634 @@ fn mixed_selected_function_order_including_skewy_is_preserved() {
     assert_eq!(
         skewy_argument_spelling(&result, 3, 18),
         (true, "85deg".to_string())
+    );
+}
+
+// 408. `matrix3d() = matrix3d(<number>#{16})` (#682): exactly sixteen
+// ordered direct `<number>` arguments qualify, reusing `matrix()`'s
+// accepted fixed-cardinality direct-`<number>` theorem (#418) at
+// `matrix3d()`'s own sixteen-slot authored shell, with no range
+// restriction and no machine-float conversion.
+
+#[test]
+fn canonical_matrix3d_qualifies_with_sixteen_ordered_arguments() {
+    let result = qualify(
+        682100,
+        "a{transform:matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1);}",
+    );
+
+    assert_eq!(result.transform_observations().len(), 1);
+    assert_eq!(qualified_functions(&result, 0).len(), 1);
+    assert_eq!(
+        matrix3d_argument_spellings(&result, 0, 0),
+        [
+            "1", "0", "0", "0", "0", "1", "0", "0", "0", "0", "1", "0", "0", "0", "0", "1"
+        ]
+    );
+}
+
+// 409. Every one of the sixteen authored slots carries its own
+// independent tokenizer-owned evidence: sixteen pairwise-distinct
+// spellings, exercising signed, `-0`, fractional, and exponent Number
+// forms, resolve to their own exact positions with no index drift,
+// aliasing, swap, or normalization (#682).
+
+#[test]
+fn matrix3d_evidence_positions_are_independent_and_unnormalized() {
+    let result = qualify(
+        682110,
+        "a{transform:matrix3d(+1,-0,.5,1e2,2,-2,3.5,4e-1,5,-5,6.25,7e0,8,-8,9.9,-2.5e-3);}",
+    );
+
+    let spellings = matrix3d_argument_spellings(&result, 0, 0);
+    assert_eq!(
+        spellings,
+        [
+            "+1", "-0", "0.5", "1e2", "2", "-2", "3.5", "4e-1", "5", "-5", "6.25", "7e0", "8",
+            "-8", "9.9", "-2.5e-3"
+        ]
+    );
+
+    // All sixteen retained spellings are pairwise distinct, ruling out an
+    // implementation that accidentally aliases, swaps, or duplicates one
+    // evidence position onto another.
+    for i in 0..spellings.len() {
+        for j in (i + 1)..spellings.len() {
+            assert_ne!(
+                spellings[i], spellings[j],
+                "positions {i} and {j} unexpectedly share evidence"
+            );
+        }
+    }
+}
+
+// 410. `#{16}` is an exact arity: every other directly visible
+// matrix3d-level argument count is decisive selected-profile invalidity,
+// sealing the off-by-one boundary from both sides (#682).
+
+#[test]
+fn matrix3d_argument_cardinality_other_than_sixteen_is_invalid() {
+    assert_all_invalid(
+        682120,
+        &[
+            "matrix3d()",
+            "matrix3d(1)",
+            "matrix3d(1,2,3)",
+            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0)",
+            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1,0)",
+            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1,0,0)",
+        ],
+    );
+
+    // The adjacent accepted arity is the only qualifying one.
+    let result = qualify(
+        682129,
+        "a{transform:matrix3d(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16);}",
+    );
+    assert_eq!(
+        matrix3d_argument_spellings(&result, 0, 0),
+        [
+            "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16"
+        ]
+    );
+}
+
+// 411. `#` is a comma-separated repetition: an authored-empty argument
+// position is preserved as its own ordered slot and then rejected --
+// never collapsed away -- independently at the leading, middle, and
+// trailing position (#682).
+
+#[test]
+fn matrix3d_argument_delimiter_failures_are_invalid() {
+    assert_all_invalid(
+        682130,
+        &[
+            "matrix3d(,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
+            "matrix3d(1,0,0,0,0,1,0,,0,0,1,0,0,0,0,1)",
+            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,)",
+            "matrix3d(1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1)",
+            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1,)",
+        ],
+    );
+}
+
+// 412. `<number>` admits only a direct retained `Number` token: every
+// other direct token category at an argument position is a decisive
+// direct token-category failure, independently at varied positions
+// (#682).
+
+#[test]
+fn matrix3d_direct_non_number_argument_categories_are_invalid() {
+    assert_all_invalid(
+        682140,
+        &[
+            "matrix3d(1px,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
+            "matrix3d(1,0,0,0,0,1,0,0,50%,0,1,0,0,0,0,1)",
+            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,foo)",
+            "matrix3d(1,0,0,\"1\",0,1,0,0,0,0,1,0,0,0,0,1)",
+            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,none)",
+            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,#1)",
+            "matrix3d(1deg,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
+        ],
+    );
+}
+
+// 413. An opaque non-deferred Function at an argument position is
+// structurally feasible but its validity depends on calculated-value
+// semantics this leaf does not own, so it stays unsupported,
+// independently in an early, middle, or late slot; `calc(1)` never
+// becomes direct `<number>` here (#682).
+
+#[test]
+fn opaque_matrix3d_argument_function_is_unsupported() {
+    assert_all_unsupported(
+        682150,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
+        &[
+            "matrix3d(calc(1),0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
+            "matrix3d(1,0,0,0,0,1,0,0,min(1,2),0,1,0,0,0,0,1)",
+            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,calc(1))",
+            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1) matrix3d(calc(1),0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
+        ],
+    );
+}
+
+#[test]
+fn nested_commas_never_change_matrix3d_arity() {
+    // `calc(1,2)` contributes exactly ONE matrix3d-level slot: its inner
+    // comma is at matrix3d-body relative depth one. Were it leaking, this
+    // would be a seventeen-slot shell and therefore decisively Invalid, so
+    // the Unsupported outcome is itself the depth-isolation proof.
+    assert_all_unsupported(
+        682160,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
+        &[
+            "matrix3d(calc(1,2),0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
+            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,calc(1,2))",
+        ],
+    );
+
+    // A nested comma that genuinely does add a matrix3d-level slot once
+    // the nesting closes is still counted, ruling out "ignore every comma
+    // after a Function" as an accidental passing implementation.
+    assert_all_invalid(
+        682170,
+        &["matrix3d(calc(1,2),0,0,0,0,1,0,0,0,0,1,0,0,0,0,1,7)"],
+    );
+}
+
+// 414. Mixed shapes: directly visible structural shell (arity, empty
+// slot) and direct token-category failure both outrank opaque unsupported
+// semantics found in a sibling slot, regardless of which slot holds which
+// (#682).
+
+#[test]
+fn matrix3d_directly_visible_structure_outranks_opaque_argument_semantics() {
+    assert_all_invalid(
+        682180,
+        &[
+            "matrix3d(calc(1),0,0,0,0,1,0,0,0,0,1,0,0,0,0)",
+            "matrix3d(calc(1),0,0,0,0,1,0,0,0,0,1,0,0,0,0,1,2)",
+            "matrix3d(1,,calc(1),0,0,1,0,0,0,0,1,0,0,0,0,1)",
+            "matrix3d(1px,calc(1),0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
+            "matrix3d(calc(1),1px,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
+            "matrix3d(calc(1),0,0,0,0,1,0,0,0,0,1,0,0,0,0,foo)",
+            // Near-miss arity beside an opaque argument: the directly
+            // visible seventeen-slot shell stays decisive regardless of
+            // which end holds the opaque Function (compare the sixteen-
+            // slot-plus-one line above, where the opaque Function was
+            // first).
+            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,calc(1),0)",
+        ],
+    );
+}
+
+// 415. Deferred substitution can still change the surrounding token
+// sequence, separators, and cardinality, so it is resolved before any
+// surrounding shape conclusion -- including an apparent arity that looks
+// decisive (#682).
+
+#[test]
+fn matrix3d_deferred_substitution_outranks_surrounding_shape_conclusions() {
+    assert_all_unsupported(
+        682190,
+        CssTransformUnsupportedReason::DeferredSubstitutionFunction,
+        &[
+            "matrix3d(var(--x),0)",
+            "matrix3d(var(--x),0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
+            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1,var(--x))",
+            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1) var(--x)",
+            "var(--x) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
+            "matrix3d(calc(var(--x)),0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
+        ],
+    );
+}
+
+// 416. CSS Syntax function consumption may end at a true stylesheet EOF,
+// so a parser-committed EOF-ended `matrix3d()` extent is qualified from
+// retained interior evidence alone. EOF never fills or repairs missing
+// slots, and a closed component followed by stray material is invalid
+// (#682).
+
+#[test]
+fn true_stylesheet_eof_ended_matrix3d_extent_follows_parser_authority() {
+    let complete = qualify(
+        682200,
+        "a{transform:matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1",
+    );
+    assert_eq!(
+        complete.execution_completion(),
+        CssParserExecutionCompletion::Complete
+    );
+    assert_eq!(complete.transform_observations().len(), 1);
+    assert_eq!(
+        matrix3d_argument_spellings(&complete, 0, 0),
+        [
+            "1", "0", "0", "0", "0", "1", "0", "0", "0", "0", "1", "0", "0", "0", "0", "1"
+        ]
+    );
+
+    // A short EOF-ended extent stays short: EOF never fills missing slots.
+    let short = qualify(682201, "a{transform:matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0");
+    assert_invalid(&short, 0);
+
+    // Sixteen slots with a decisive wrong-category final slot at EOF stays
+    // Invalid: EOF never repairs a direct category failure.
+    let wrong_category = qualify(
+        682202,
+        "a{transform:matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1px",
+    );
+    assert_invalid(&wrong_category, 0);
+
+    // Sixteen slots with a sole opaque Function and otherwise-feasible
+    // shape at EOF stays Unsupported, according to existing parser
+    // authority, never Invalid for lack of a closer.
+    let opaque = qualify(
+        682203,
+        "a{transform:matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,calc(1)",
+    );
+    assert_unsupported(
+        &opaque,
+        0,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
+    );
+
+    // Sixteen valid slots plus a trailing comma is an authored seventeenth
+    // empty slot, not sixteen: EOF never collapses it away.
+    let trailing_comma = qualify(
+        682204,
+        "a{transform:matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1,",
+    );
+    assert_invalid(&trailing_comma, 0);
+
+    // A closed component followed by stray material is invalid.
+    let trailing = qualify(
+        682205,
+        "a{transform:matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1) 7;}",
+    );
+    assert_invalid(&trailing, 0);
+}
+
+#[test]
+fn trivia_and_important_never_change_matrix3d_interpretation() {
+    let result = qualify(
+        682210,
+        concat!(
+            "a{transform:matrix3d(1,/**/0,0,0,0,1,0,0,0,0,1,0,0,0,0,1);}",
+            "b{transform: matrix3d( 1 , 0 , 0 , 0 , 0 , 1 , 0 , 0 , 0 , 0 , 1 , 0 , 0 , 0 , 0 , 1 );}",
+            "c{transform:matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1) !important;}",
+            "d{transform:matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)!important;}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 4);
+    for index in 0..4 {
+        assert_eq!(
+            matrix3d_argument_spellings(&result, index, 0),
+            [
+                "1", "0", "0", "0", "0", "1", "0", "0", "0", "0", "1", "0", "0", "0", "0", "1"
+            ],
+            "trivia/important changed slot interpretation at {index}"
+        );
+    }
+    for index in 2..4 {
+        assert!(
+            result.upstream_parser_result().occurrences()[index]
+                .priority()
+                .is_some(),
+            "expected retained priority evidence at {index}"
+        );
+    }
+
+    // A comment is trivia, never an argument.
+    assert_all_invalid(682220, &["matrix3d(1,/**/,0,0,0,1,0,0,0,0,1,0,0,0,0,1)"]);
+}
+
+// 417. Repeated and cross-source runs remain deterministic, and evidence
+// lookup resolves to the exact retained Number tokens identically across
+// runs (#682).
+
+#[test]
+fn matrix3d_repeated_and_cross_source_runs_are_deterministic() {
+    let css = concat!(
+        "a{transform:matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1);}",
+        "b{transform:matrix3d(calc(1,2),0,0,0,0,1,0,0,0,0,1,0,0,0,0,1);}",
+        "c{transform:matrix3d(1px,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1);}",
+        "d{transform:matrix(1,0,0,1,0,0) matrix3d(2,0,0,0,0,2,0,0,0,0,2,0,0,0,0,2);}",
+    );
+
+    let first = qualify(682230, css);
+    let repeated = qualify(682230, css);
+    let another_source = qualify(682231, css);
+
+    assert_eq!(
+        first.transform_observations(),
+        repeated.transform_observations()
+    );
+    assert_eq!(
+        first.transform_observations(),
+        another_source.transform_observations()
+    );
+
+    assert_eq!(
+        matrix3d_argument_spellings(&first, 0, 0),
+        matrix3d_argument_spellings(&repeated, 0, 0)
+    );
+    assert_eq!(
+        matrix3d_argument_spellings(&first, 0, 0),
+        matrix3d_argument_spellings(&another_source, 0, 0)
+    );
+    assert_unsupported(
+        &first,
+        1,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
+    );
+    assert_invalid(&first, 2);
+    assert_eq!(qualified_functions(&first, 3).len(), 2);
+    assert_eq!(
+        matrix3d_argument_spellings(&first, 3, 1),
+        matrix3d_argument_spellings(&repeated, 3, 1)
+    );
+    assert_eq!(
+        matrix3d_argument_spellings(&first, 3, 1),
+        matrix3d_argument_spellings(&another_source, 3, 1)
+    );
+}
+
+// 418. `matrix3d` function-name recognition is ASCII-case-insensitive,
+// matching the accepted `matrix`/`scale`/`translate3d`/`rotate3d` boundary,
+// and structurally malformed `matrix3d` components stay decisively
+// `Invalid`; a name that merely starts with `matrix3d` is a different
+// function and stays outside selected-profile coverage (#682).
+
+#[test]
+fn matrix3d_function_name_recognition_and_malformed_components() {
+    let result = qualify(
+        682240,
+        concat!(
+            "a{transform:MATRIX3D(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1);}",
+            "b{transform:Matrix3D(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1);}",
+            "c{transform:m\\61trix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 3);
+    for index in 0..3 {
+        assert_eq!(
+            matrix3d_argument_spellings(&result, index, 0),
+            [
+                "1", "0", "0", "0", "0", "1", "0", "0", "0", "0", "1", "0", "0", "0", "0", "1"
+            ],
+            "matrix3d name recognition failed at {index}"
+        );
+    }
+
+    assert_all_invalid(
+        682250,
+        &[
+            "matrix3d",
+            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1))",
+            "matrix3d((1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
+            "1 matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
+            "[matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)]",
+        ],
+    );
+
+    // A name that merely starts with `matrix3d` is a different function
+    // and stays outside selected-profile coverage.
+    assert_all_unsupported(
+        682260,
+        CssTransformUnsupportedReason::UnselectedTransformFunction,
+        &["matrix3dx(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)"],
+    );
+}
+
+// 419. Cross-leaf isolation: `matrix3d()` recognition never leaks into the
+// accepted longhand `translate`/`scale`/`rotate` leaves, the other
+// `transform-*` single-value leaves, or the other selected `transform`
+// function branches, and `none` remains an exclusive whole-value branch
+// even when combined with `matrix3d()` (#418 / #682).
+
+#[test]
+fn matrix3d_cross_leaf_isolation_is_preserved() {
+    let result = qualify(
+        682270,
+        concat!(
+            "a{transform:matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1);transform:none;}",
+            "b{translate:10px;}",
+            "c{scale:2;}",
+            "d{rotate:45deg;}",
+            "e{transform-origin:left top;}",
+            "f{transform-box:border-box;}",
+            "g{transform-style:flat;}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 2);
+    assert_eq!(
+        matrix3d_argument_spellings(&result, 0, 0),
+        [
+            "1", "0", "0", "0", "0", "1", "0", "0", "0", "0", "1", "0", "0", "0", "0", "1"
+        ]
+    );
+    assert_whole_none(&result, 1);
+
+    assert_eq!(result.translate_observations().len(), 1);
+    assert_eq!(result.scale_observations().len(), 1);
+    assert_eq!(result.rotate_observations().len(), 1);
+    assert_eq!(result.transform_origin_observations().len(), 1);
+    assert_eq!(result.transform_box_observations().len(), 1);
+    assert_eq!(result.transform_style_observations().len(), 1);
+
+    assert_all_invalid(
+        682280,
+        &[
+            "none matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
+            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1) none",
+        ],
+    );
+}
+
+// 420. `<transform-list>` is whitespace-separated repetition: a top-level
+// comma is never a permitted separator, including between two `matrix3d()`
+// components or a `matrix3d()` and a sibling selected function (#682).
+
+#[test]
+fn top_level_comma_is_invalid_around_matrix3d() {
+    assert_all_invalid(
+        682290,
+        &[
+            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1), matrix(1,0,0,1,0,0)",
+            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1), matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
+            ",matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
+            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1),",
+            "none, matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
+        ],
+    );
+}
+
+// 421. Outer coverage precedence around `matrix3d()` (#682): absent a
+// direct Invalid, `perspective()` -- the sole remaining current normative
+// unselected transform Function -- outranks a selected-inner opaque
+// `matrix3d()` slot in either authored order; a directly visible wrong
+// `matrix3d()` arity or category is decisive Invalid regardless of an
+// outer `perspective()` sibling, in either authored order; and a fully
+// qualified `matrix3d()` beside `perspective()` yields the coarser outer
+// `UnselectedTransformFunction` outcome, in either authored order,
+// identically to every other selected leaf.
+
+#[test]
+fn unselected_outer_function_precedence_covers_matrix3d() {
+    // Fully qualified `matrix3d()` beside `perspective()`: the outer
+    // unselected function still decides the outcome for the whole value.
+    assert_all_unsupported(
+        682300,
+        CssTransformUnsupportedReason::UnselectedTransformFunction,
+        &[
+            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1) perspective(1px)",
+            "perspective(1px) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
+        ],
+    );
+
+    // Outer `perspective()` outranks a selected-inner opaque `matrix3d()`
+    // slot, in either authored order.
+    assert_all_unsupported(
+        682310,
+        CssTransformUnsupportedReason::UnselectedTransformFunction,
+        &[
+            "matrix3d(calc(1),0,0,0,0,1,0,0,0,0,1,0,0,0,0,1) perspective(1px)",
+            "perspective(1px) matrix3d(calc(1),0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
+        ],
+    );
+
+    // A directly visible wrong `matrix3d()` arity or category is decisive
+    // Invalid regardless of an outer `perspective()` sibling, in either
+    // authored order.
+    assert_all_invalid(
+        682320,
+        &[
+            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0) perspective(1px)",
+            "perspective(1px) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0)",
+            "matrix3d(1px,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1) perspective(1px)",
+            "perspective(1px) matrix3d(1px,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
+        ],
+    );
+}
+
+// 422. `matrix()` and `matrix3d()` remain authored-distinct selected
+// components (#418 / #682): distinct `CssTransformFunction` variants, each
+// carrying its own independent evidence with no normalization, projection,
+// or identity-matrix inference between them, even when both are authored
+// together with distinguishable argument spellings.
+
+#[test]
+fn matrix_and_matrix3d_are_authored_distinct_with_independent_evidence() {
+    let result = qualify(
+        682330,
+        "a{transform:matrix(1,2,3,4,5,6) matrix3d(11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26);}",
+    );
+
+    assert_eq!(qualified_functions(&result, 0).len(), 2);
+    assert!(matches!(
+        qualified_functions(&result, 0)[0],
+        CssTransformFunction::Matrix(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 0)[1],
+        CssTransformFunction::Matrix3d(_)
+    ));
+    assert_eq!(
+        matrix_argument_spellings(&result, 0, 0),
+        ["1", "2", "3", "4", "5", "6"]
+    );
+    assert_eq!(
+        matrix3d_argument_spellings(&result, 0, 1),
+        [
+            "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24",
+            "25", "26"
+        ]
+    );
+}
+
+// 423. Selected `matrix()`, `scale()`, `translate3d()`, `rotate3d()`,
+// `translate()`, `translateX()`, `translateY()`, `translateZ()`,
+// `scaleX()`, `scaleY()`, `scaleZ()`, `scale3d()`, `rotate()`, `rotateX()`,
+// `rotateY()`, `rotateZ()`, `skew()`, `skewX()`, `skewY()`, and now
+// `matrix3d()` components mix and repeat freely, preserving exact authored
+// order and repetition through the heterogeneous `CssTransformFunction`
+// alternation, extending the accepted nineteen-kind regression to the
+// complete twenty-kind selected profile (#418 / #645 / #647 / #649 / #651 /
+// #653 / #655 / #657 / #659 / #661 / #663 / #665 / #667 / #669 / #671 /
+// #673 / #675 / #677 / #679 / #682).
+
+#[test]
+fn mixed_selected_function_order_including_matrix3d_is_preserved() {
+    let result = qualify(
+        682340,
+        concat!(
+            "a{transform:matrix(1,0,0,1,0,0) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1);}",
+            "b{transform:matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1) matrix(1,0,0,1,0,0);}",
+            "c{transform:matrix(1,0,0,1,0,0) scale(2) translate3d(1px,2px,3px) rotate3d(1,0,0,90deg) translate(10px) translateX(20px) translateY(30px) translateZ(40px) scaleX(50) scaleY(60) scaleZ(70) scale3d(80,90,100) rotate(45deg) rotateX(45deg) rotateY(45deg) rotateZ(45deg) skew(55deg,65deg) skewX(75deg) skewY(85deg) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 3);
+
+    assert!(matches!(
+        qualified_functions(&result, 0)[0],
+        CssTransformFunction::Matrix(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 0)[1],
+        CssTransformFunction::Matrix3d(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 1)[0],
+        CssTransformFunction::Matrix3d(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 1)[1],
+        CssTransformFunction::Matrix(_)
+    ));
+
+    let twenty_kind_sequence = qualified_functions(&result, 2);
+    assert_eq!(twenty_kind_sequence.len(), 20);
+    assert!(matches!(
+        twenty_kind_sequence[0],
+        CssTransformFunction::Matrix(_)
+    ));
+    assert!(matches!(
+        twenty_kind_sequence[18],
+        CssTransformFunction::SkewY(_)
+    ));
+    assert!(matches!(
+        twenty_kind_sequence[19],
+        CssTransformFunction::Matrix3d(_)
+    ));
+    assert_eq!(
+        matrix3d_argument_spellings(&result, 2, 19),
+        [
+            "1", "0", "0", "0", "0", "1", "0", "0", "0", "0", "1", "0", "0", "0", "0", "1"
+        ]
     );
 }

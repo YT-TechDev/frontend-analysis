@@ -7843,14 +7843,60 @@ impl CssTransformSkewYFunction {
     }
 }
 
+/// Run-local locator for the exact tokenizer item selected during
+/// authoritative `transform` `matrix3d()` direct `<number>` argument
+/// recognition (#682). Mirrors `CssTransformMatrixArgumentEvidenceRef`'s
+/// role -- the index is evidence placement, not an interpreted numeric
+/// magnitude, and always points at the exact tokenizer-owned direct
+/// `Number` token retained inside one `matrix3d()` argument slot, never at
+/// the Function opener, an argument-separating `Comma`, a parenthesis, or
+/// trivia -- but remains its own distinct type: `matrix3d()` never shares
+/// evidence identity with `matrix()` merely because both grammars accept
+/// only direct `<number>`. The exact retained `Number`-token structure
+/// (sign spelling, integer/fraction digits, exponent spelling) remains
+/// tokenizer-owned and is never converted to a machine float for
+/// qualification, resolved through `transform_matrix3d_argument_token`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTransformMatrix3dArgumentEvidenceRef {
+    lexical_item_index: usize,
+}
+
+impl CssTransformMatrix3dArgumentEvidenceRef {
+    pub(crate) const fn lexical_item_index(&self) -> usize {
+        self.lexical_item_index
+    }
+}
+
+/// One qualified authored `matrix3d()` transform component: exactly
+/// sixteen ordered direct authored `<number>` arguments (#682), each
+/// carrying the exact tokenizer-owned evidence retained at its own
+/// semantic argument slot. The arity is carried structurally by a
+/// fixed-size array, so a qualified component can never represent a
+/// short, long, or partially synthesized argument vector. `matrix3d()`
+/// remains its own distinct semantic placement from `matrix()`: this leaf
+/// never normalizes, projects, or infers equivalence between `matrix()`
+/// and `matrix3d()`, never recognizes an identity-matrix spelling
+/// specially, and constructs no matrix, matrix multiplication,
+/// decomposition, inversion, or computed transform.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTransformMatrix3dFunction {
+    arguments: [CssTransformMatrix3dArgumentEvidenceRef; 16],
+}
+
+impl CssTransformMatrix3dFunction {
+    pub(crate) const fn arguments(&self) -> &[CssTransformMatrix3dArgumentEvidenceRef; 16] {
+        &self.arguments
+    }
+}
+
 /// One qualified selected `transform` component under the profile
 /// `SelectedTransformFunction := Matrix | Scale | Translate3d | Rotate3d |
 /// Translate | TranslateX | TranslateY | TranslateZ | ScaleX | ScaleY |
 /// ScaleZ | Scale3d | Rotate | RotateX | RotateY | RotateZ | Skew | SkewX |
-/// SkewY` (#418 / #645 / #647 / #649 / #651 / #653 / #655 / #657 / #659 /
-/// #661 / #663 / #665 / #667 / #669 / #671 / #673 / #675 / #677 / #679),
-/// preserving exact authored order between the nineteen selected function
-/// kinds. This is a closed
+/// SkewY | Matrix3d` (#418 / #645 / #647 / #649 / #651 / #653 / #655 /
+/// #657 / #659 / #661 / #663 / #665 / #667 / #669 / #671 / #673 / #675 /
+/// #677 / #679 / #682), preserving exact authored order between the twenty
+/// selected function kinds. This is a closed
 /// property-local alternation, not a generic CSS function AST: it exists
 /// only to retain heterogeneous authored order for the selected `transform`
 /// branches. `TranslateX`, `TranslateY`, `TranslateZ`, `ScaleX`, `ScaleY`,
@@ -7890,6 +7936,15 @@ impl CssTransformSkewYFunction {
 /// selected coverage under the current normative set: `skew()`, `skewX()`,
 /// and `skewY()` are all selected and remain authored-distinct. Family
 /// completion here is a coverage fact, not new capability authority.
+/// `Matrix3d` (#682) extends the accepted `matrix()` fixed-cardinality
+/// direct `<number>` theorem to `matrix3d()`'s own sixteen-slot authored
+/// shell, reusing `matrix()`'s accepted body-partitioning/evidence/
+/// precedence mechanics without sharing its representation or evidence
+/// identity: `matrix()` and `matrix3d()` remain authored-distinct, and
+/// repeated `<number>` membership alone is never abstraction authority.
+/// This completes the current selected-coverage leaf set at twenty kinds;
+/// `perspective()` remains the sole current normative unselected transform
+/// Function in this coverage plan.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssTransformFunction {
     Matrix(CssTransformMatrixFunction),
@@ -7911,6 +7966,7 @@ pub(crate) enum CssTransformFunction {
     Skew(CssTransformSkewFunction),
     SkewX(CssTransformSkewXFunction),
     SkewY(CssTransformSkewYFunction),
+    Matrix3d(CssTransformMatrix3dFunction),
 }
 
 /// One authored `transform` value under the direct-authored profile
@@ -9540,6 +9596,28 @@ impl CssValueQualificationRunResult {
     pub(crate) fn transform_skewy_argument_token(
         &self,
         evidence: CssTransformSkewYArgumentEvidenceRef,
+    ) -> Option<&CssTokenKind> {
+        let item = self
+            .upstream_parser_result
+            .upstream_tokenizer_result()
+            .lexical_items()
+            .get(evidence.lexical_item_index())?;
+        let CssLexicalItem::SemanticToken(token) = item else {
+            return None;
+        };
+        Some(token.kind())
+    }
+
+    /// Resolves one qualified `transform` `matrix3d()` argument's run-local
+    /// evidence reference to its exact retained tokenizer token kind,
+    /// preserving authored sign spelling, integer/fraction digits, and
+    /// exponent spelling without any machine-float conversion, mirroring
+    /// `transform_matrix_argument_token` for `matrix3d()`'s own dedicated
+    /// evidence type (#682). The retained token at the evidence position is
+    /// always a direct `Number`.
+    pub(crate) fn transform_matrix3d_argument_token(
+        &self,
+        evidence: CssTransformMatrix3dArgumentEvidenceRef,
     ) -> Option<&CssTokenKind> {
         let item = self
             .upstream_parser_result
@@ -21602,6 +21680,81 @@ fn classify_matrix_argument(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CssTransformMatrix3dArgumentClass {
+    Number(CssTransformMatrix3dArgumentEvidenceRef),
+    OpaqueFunction,
+    Invalid,
+}
+
+/// Classifies one already-partitioned `matrix3d()` argument slot against
+/// the selected profile's single accepted shape -- exactly one direct
+/// retained `<number>` token (#682). Mirrors `classify_matrix_argument`'s
+/// mechanics exactly, but resolves to `matrix3d()`'s own dedicated
+/// evidence type rather than reusing `CssTransformMatrixArgumentEvidenceRef`:
+/// mechanical shape similarity between `matrix()` and `matrix3d()` slots is
+/// never semantic identity authority.
+///
+/// Whitespace and Comment trivia are excluded exactly as in
+/// `classify_matrix_argument`. An authored-empty slot has no retained
+/// semantic token and is decisively `Invalid`. A slot headed by a
+/// `Function` token is `OpaqueFunction` only when the slot is exactly one
+/// complete Function extent and that Function is not one of the
+/// recognized generic whole-value-only functions occupying a non-whole-
+/// value position; a Function followed by further retained material in
+/// the same slot is directly visible structural failure and stays
+/// decisively `Invalid`, so an unevaluated Function (such as `calc(1)`)
+/// can never mask junk beside it, and `calc(1)` never becomes a direct
+/// `<number>` here. A direct `Number` qualifies regardless of
+/// `CssNumberType` and with no range restriction, because `matrix3d()`
+/// takes `<number>` and not `<integer>`, and no machine-float conversion
+/// is applied. A `Dimension`, `Percentage`, `Ident`, `String`, or `Hash`
+/// token is a direct token-category failure and is decisively `Invalid`,
+/// as is any slot carrying more than one retained semantic token.
+fn classify_matrix3d_argument(
+    slot: &[CssLexicalItem],
+    absolute_slot_start: usize,
+) -> CssTransformMatrix3dArgumentClass {
+    let mut tokens = slot
+        .iter()
+        .enumerate()
+        .filter_map(|(relative_index, entry)| match entry {
+            CssLexicalItem::SemanticToken(token)
+                if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+            {
+                Some((relative_index, token))
+            }
+            _ => None,
+        });
+
+    let Some((relative_index, first)) = tokens.next() else {
+        return CssTransformMatrix3dArgumentClass::Invalid;
+    };
+
+    if matches!(first.kind(), CssTokenKind::Function(_)) {
+        return match entire_function_name(slot) {
+            Some(name) if is_whole_value_function(name) => {
+                CssTransformMatrix3dArgumentClass::Invalid
+            }
+            Some(_) => CssTransformMatrix3dArgumentClass::OpaqueFunction,
+            None => CssTransformMatrix3dArgumentClass::Invalid,
+        };
+    }
+
+    if tokens.next().is_some() {
+        return CssTransformMatrix3dArgumentClass::Invalid;
+    }
+
+    match first.kind() {
+        CssTokenKind::Number { .. } => {
+            CssTransformMatrix3dArgumentClass::Number(CssTransformMatrix3dArgumentEvidenceRef {
+                lexical_item_index: absolute_slot_start + relative_index,
+            })
+        }
+        _ => CssTransformMatrix3dArgumentClass::Invalid,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CssTransformScaleArgumentClass {
     Number(CssTransformScaleArgumentEvidenceRef),
     Percentage(CssTransformScaleArgumentEvidenceRef),
@@ -23333,6 +23486,7 @@ enum CssTransformComponentClass {
     Skew(CssTransformSkewFunction),
     SkewX(CssTransformSkewXArgument),
     SkewY(CssTransformSkewYArgument),
+    Matrix3d([CssTransformMatrix3dArgumentEvidenceRef; 16]),
     OpaqueTransformArgument,
     UnselectedTransformFunction,
     Invalid,
@@ -23582,15 +23736,35 @@ enum CssTransformComponentClass {
 /// scalar mechanism already accepted for `rotate3d()`.
 ///
 /// Any other Function name is `UnselectedTransformFunction`: `rotateX(1deg)`,
-/// `matrix3d(...)`, and an unrecognized name alike stay outside
+/// `perspective(...)`, and an unrecognized name alike stay outside
 /// selected-profile coverage instead of being decided here, because
 /// deciding them would require the full `<transform-function>` dispatch and
 /// the length/angle/axis semantics this leaf does not own -- their
 /// remaining unselected is load-bearing scope containment for #657 / #659 /
-/// #661 / #663 / #665 / #667, not an oversight. A misplaced whole-value
-/// Function is the one exception: it has no independent meaning inside a
-/// `<transform-list>` and is decisively `Invalid`, mirroring the accepted
-/// `scale` boundary.
+/// #661 / #663 / #665 / #667, not an oversight. `perspective()` is the sole
+/// current normative unselected transform Function remaining after
+/// `matrix3d()` selection (#682). A misplaced whole-value Function is the
+/// one exception: it has no independent meaning inside a `<transform-list>`
+/// and is decisively `Invalid`, mirroring the accepted `scale` boundary.
+///
+/// A Function named `matrix3d` ASCII-case-insensitively enters
+/// `matrix3d()` argument qualification: a directly visible slot count
+/// other than sixteen is decisive `Invalid` before any argument is
+/// classified, so `matrix3d()`, `matrix3d(1,2,3)`, and
+/// `matrix3d(calc(1),0,0,0,0,1,0,0,0,0,1,0,0,0,0)` (fifteen slots) all stay
+/// invalid on directly visible arity. Only at exactly sixteen slots are
+/// arguments classified, with the same decisive-argument-over-opaque-
+/// sibling precedence as `matrix()`: a directly visible wrong-category or
+/// multi-token slot outranks an opaque Function found in any sibling slot,
+/// so `matrix3d(1,,0,0,0,1,0,0,calc(1),0,1,0,0,0,0,1)` remains `Invalid`
+/// regardless of slot order. The qualified sixteen-slot cardinality is
+/// carried by a fixed-size array, so a qualified component can never
+/// represent a short, long, or partially synthesized argument vector.
+/// `matrix3d()` reuses `matrix()`'s accepted body-partitioning/evidence/
+/// precedence mechanics but never shares `matrix()`'s representation or
+/// evidence type (#682): `matrix()` and `matrix3d()` remain
+/// authored-distinct, with no normalization, projection, or
+/// identity-matrix inference between them.
 fn classify_transform_component(
     component: &[CssLexicalItem],
     absolute_component_start: usize,
@@ -24346,6 +24520,35 @@ fn classify_transform_component(
         return CssTransformComponentClass::SkewY(argument);
     }
 
+    if name.eq_ignore_ascii_case("matrix3d") {
+        let slots = transform_function_body_slot_ranges(component);
+        if slots.len() != 16 {
+            return CssTransformComponentClass::Invalid;
+        }
+
+        let mut arguments = Vec::with_capacity(16);
+        let mut has_opaque_argument = false;
+        for slot in slots {
+            let absolute_slot_start = absolute_component_start + slot.start;
+            match classify_matrix3d_argument(&component[slot], absolute_slot_start) {
+                CssTransformMatrix3dArgumentClass::Number(evidence) => arguments.push(evidence),
+                CssTransformMatrix3dArgumentClass::OpaqueFunction => has_opaque_argument = true,
+                CssTransformMatrix3dArgumentClass::Invalid => {
+                    return CssTransformComponentClass::Invalid;
+                }
+            }
+        }
+
+        if has_opaque_argument {
+            return CssTransformComponentClass::OpaqueTransformArgument;
+        }
+
+        return match <[CssTransformMatrix3dArgumentEvidenceRef; 16]>::try_from(arguments) {
+            Ok(arguments) => CssTransformComponentClass::Matrix3d(arguments),
+            Err(_) => CssTransformComponentClass::Invalid,
+        };
+    }
+
     if is_whole_value_function(name) {
         CssTransformComponentClass::Invalid
     } else {
@@ -24630,6 +24833,11 @@ fn qualify_transform_value(
                 functions.push(CssTransformFunction::SkewY(CssTransformSkewYFunction {
                     argument,
                 }));
+            }
+            CssTransformComponentClass::Matrix3d(arguments) => {
+                functions.push(CssTransformFunction::Matrix3d(
+                    CssTransformMatrix3dFunction { arguments },
+                ));
             }
             CssTransformComponentClass::OpaqueTransformArgument => has_opaque_argument = true,
             CssTransformComponentClass::UnselectedTransformFunction => {
