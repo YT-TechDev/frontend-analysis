@@ -7282,27 +7282,107 @@ impl CssTransformScale3dFunction {
     }
 }
 
+/// One qualified `transform` `rotate()` argument's run-local evidence
+/// reference, resolved through `transform_rotate_argument_token` (#667).
+/// This is a distinct type from `CssTransformRotate3dArgumentEvidenceRef`:
+/// `rotate()`'s single authored slot and `rotate3d()`'s positional
+/// fourth-slot angle argument remain distinct semantic placements even
+/// though both accept the same direct `<angle> | <zero>` scalar theorem.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTransformRotateArgumentEvidenceRef {
+    lexical_item_index: usize,
+}
+
+impl CssTransformRotateArgumentEvidenceRef {
+    pub(crate) const fn lexical_item_index(&self) -> usize {
+        self.lexical_item_index
+    }
+}
+
+/// One direct authored `rotate()` argument's tokenizer-owned kind (#667):
+/// `RotateArgument := DirectAngle | DirectZero`, reusing the accepted
+/// `rotate3d()` (#649) fourth-slot `<angle> | <zero>` theorem under current
+/// CSS Transforms Level 2 / CSS Values authority. A direct `<angle>` and a
+/// direct literal `<zero>` remain distinct authored branches: this leaf
+/// never collapses `rotate(0)` into the `Angle` branch, never collapses
+/// `rotate(0deg)` into the `Zero` branch merely because its magnitude is
+/// zero, and never widens the general `<angle>` grammar to accept a
+/// unitless Number. This is a distinct type from
+/// `CssTransformRotate3dAngleArgument`: `rotate()` transform-function
+/// argument placement and `rotate3d()`'s fourth-slot placement remain
+/// distinct semantic roles even though they share the same direct scalar
+/// membership.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTransformRotateArgumentKind {
+    Angle,
+    Zero,
+}
+
+/// One qualified authored `rotate()` argument, preserving authored kind and
+/// exact tokenizer-owned evidence without any angle normalization or
+/// machine-number conversion (#667).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTransformRotateArgument {
+    kind: CssTransformRotateArgumentKind,
+    evidence_ref: CssTransformRotateArgumentEvidenceRef,
+}
+
+impl CssTransformRotateArgument {
+    pub(crate) const fn kind(&self) -> CssTransformRotateArgumentKind {
+        self.kind
+    }
+
+    pub(crate) const fn evidence_ref(&self) -> CssTransformRotateArgumentEvidenceRef {
+        self.evidence_ref
+    }
+}
+
+/// One qualified authored `rotate()` transform component: exactly one
+/// direct authored `<angle> | <zero>` argument (#667), carrying the exact
+/// tokenizer-owned evidence retained at its own semantic argument slot.
+/// `rotate()` never synthesizes an axis, never normalizes into
+/// `rotate3d()`, and never shares representation with the accepted
+/// longhand `rotate` property qualifier (#604) or a future `rotateX()`/
+/// `rotateY()`/`rotateZ()` leaf, even though all of them can carry angle
+/// evidence: repeated grammar shape alone is never abstraction authority.
+/// This leaf constructs no rotation matrix and resolves no computed
+/// transform.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTransformRotateFunction {
+    argument: CssTransformRotateArgument,
+}
+
+impl CssTransformRotateFunction {
+    pub(crate) const fn argument(&self) -> CssTransformRotateArgument {
+        self.argument
+    }
+}
+
 /// One qualified selected `transform` component under the profile
 /// `SelectedTransformFunction := Matrix | Scale | Translate3d | Rotate3d |
 /// Translate | TranslateX | TranslateY | TranslateZ | ScaleX | ScaleY |
-/// ScaleZ | Scale3d` (#418 / #645 / #647 / #649 / #651 / #653 / #655 /
-/// #657 / #659 / #661 / #663 / #665), preserving exact authored order
-/// between the twelve selected function kinds. This is a closed
-/// property-local alternation, not a generic CSS function AST: it exists
-/// only to retain heterogeneous authored order for the selected `transform`
-/// branches. `TranslateX`, `TranslateY`, `TranslateZ`, `ScaleX`, `ScaleY`,
-/// `ScaleZ`, and `Scale3d` are kept as distinct variants rather than merged
-/// into a generic axis-function abstraction: `TranslateX`/`TranslateY`
-/// share an identical argument grammar, but `TranslateZ`'s direct
-/// `<length>`-only grammar already differs from theirs and from `ScaleZ`'s
-/// `<number>`/`<percentage>` grammar despite the shared `Z` suffix;
-/// `ScaleX`/`ScaleY`/`ScaleZ`/`Scale3d` share their direct
-/// `<number>`/`<percentage>` scalar theorem with `scale()` rather than with
-/// the translate family, their semantic placement inside `transform` is not
-/// shared either, `Scale3d` additionally shares `Translate3d`'s exact-three
-/// positional structure without sharing its representation, and repeated
-/// Rust shape alone is never abstraction authority (#655 / #657 / #659 /
-/// #661 / #663 / #665).
+/// ScaleZ | Scale3d | Rotate` (#418 / #645 / #647 / #649 / #651 / #653 /
+/// #655 / #657 / #659 / #661 / #663 / #665 / #667), preserving exact
+/// authored order between the thirteen selected function kinds. This is a
+/// closed property-local alternation, not a generic CSS function AST: it
+/// exists only to retain heterogeneous authored order for the selected
+/// `transform` branches. `TranslateX`, `TranslateY`, `TranslateZ`, `ScaleX`,
+/// `ScaleY`, `ScaleZ`, `Scale3d`, and `Rotate` are kept as distinct variants
+/// rather than merged into a generic axis-function abstraction:
+/// `TranslateX`/`TranslateY` share an identical argument grammar, but
+/// `TranslateZ`'s direct `<length>`-only grammar already differs from
+/// theirs and from `ScaleZ`'s `<number>`/`<percentage>` grammar despite the
+/// shared `Z` suffix; `ScaleX`/`ScaleY`/`ScaleZ`/`Scale3d` share their
+/// direct `<number>`/`<percentage>` scalar theorem with `scale()` rather
+/// than with the translate family, their semantic placement inside
+/// `transform` is not shared either, `Scale3d` additionally shares
+/// `Translate3d`'s exact-three positional structure without sharing its
+/// representation; `Rotate` shares its direct `<angle> | <zero>` scalar
+/// theorem with `Rotate3d`'s fourth slot, yet remains a distinct semantic
+/// placement from `Rotate3d`, from the accepted longhand `rotate` property
+/// qualifier (#604), and from any future `RotateX`/`RotateY`/`RotateZ`
+/// leaf, and repeated Rust shape alone is never abstraction authority
+/// (#655 / #657 / #659 / #661 / #663 / #665 / #667).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssTransformFunction {
     Matrix(CssTransformMatrixFunction),
@@ -7317,6 +7397,7 @@ pub(crate) enum CssTransformFunction {
     ScaleY(CssTransformScaleYFunction),
     ScaleZ(CssTransformScaleZFunction),
     Scale3d(CssTransformScale3dFunction),
+    Rotate(CssTransformRotateFunction),
 }
 
 /// One authored `transform` value under the direct-authored profile
@@ -7329,17 +7410,18 @@ pub(crate) enum CssTransformFunction {
 /// scaleX([<number> | <percentage>]) |
 /// scaleY([<number> | <percentage>]) |
 /// scaleZ([<number> | <percentage>]) |
-/// scale3d([<number> | <percentage>]#{3}) ]+` (#418 / #645 / #647 / #649 /
-/// #651 / #653 / #655 / #657 / #659 / #661 / #663 / #665): either the
-/// dedicated whole-value `none` sentinel or an ordered, possibly repeated,
-/// one-or-more list of qualified `matrix()`/`scale()`/`translate3d()`/
-/// `rotate3d()`/`translate()`/`translateX()`/`translateY()`/`translateZ()`/
-/// `scaleX()`/`scaleY()`/`scaleZ()`/`scale3d()` components in exact
-/// authored order. This is not a complete normative `transform` grammar: it
+/// scale3d([<number> | <percentage>]#{3}) |
+/// rotate([<angle> | <zero>]) ]+` (#418 / #645 / #647 / #649 / #651 / #653 /
+/// #655 / #657 / #659 / #661 / #663 / #665 / #667): either the dedicated
+/// whole-value `none` sentinel or an ordered, possibly repeated, one-or-more
+/// list of qualified `matrix()`/`scale()`/`translate3d()`/`rotate3d()`/
+/// `translate()`/`translateX()`/`translateY()`/`translateZ()`/`scaleX()`/
+/// `scaleY()`/`scaleZ()`/`scale3d()`/`rotate()` components in exact authored
+/// order. This is not a complete normative `transform` grammar: it
 /// qualifies only the `matrix()`, `scale()`, `translate3d()`, `rotate3d()`,
 /// `translate()`, `translateX()`, `translateY()`, `translateZ()`,
-/// `scaleX()`, `scaleY()`, `scaleZ()`, and `scale3d()` branches of
-/// `<transform-function>`.
+/// `scaleX()`, `scaleY()`, `scaleZ()`, `scale3d()`, and `rotate()` branches
+/// of `<transform-function>`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CssTransformValue {
     None,
@@ -8767,6 +8849,31 @@ impl CssValueQualificationRunResult {
     pub(crate) fn transform_scale3d_argument_token(
         &self,
         evidence: CssTransformScale3dArgumentEvidenceRef,
+    ) -> Option<&CssTokenKind> {
+        let item = self
+            .upstream_parser_result
+            .upstream_tokenizer_result()
+            .lexical_items()
+            .get(evidence.lexical_item_index())?;
+        let CssLexicalItem::SemanticToken(token) = item else {
+            return None;
+        };
+        Some(token.kind())
+    }
+
+    /// Resolves one qualified `transform` `rotate()` argument's run-local
+    /// evidence reference to its exact retained tokenizer token kind,
+    /// preserving authored sign spelling, integer/fraction digits, exponent
+    /// spelling, and unit identity without any machine-number conversion or
+    /// angle normalization. The retained token at the evidence position is a
+    /// recognized-angle `Dimension` when the argument's
+    /// `CssTransformRotateArgumentKind` is `Angle`, or an exact-zero `Number`
+    /// when it is `Zero`, mirroring `transform_rotate3d_argument_token`'s
+    /// fourth-slot resolution while remaining a distinct accessor for a
+    /// distinct evidence type (#667).
+    pub(crate) fn transform_rotate_argument_token(
+        &self,
+        evidence: CssTransformRotateArgumentEvidenceRef,
     ) -> Option<&CssTokenKind> {
         let item = self
             .upstream_parser_result
@@ -21911,6 +22018,94 @@ fn classify_transform_scale3d_argument(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CssTransformRotateArgumentClass {
+    Angle(CssTransformRotateArgumentEvidenceRef),
+    Zero(CssTransformRotateArgumentEvidenceRef),
+    OpaqueFunction,
+    Invalid,
+}
+
+/// Classifies one already-partitioned `rotate()` argument slot against the
+/// selected profile's single accepted shape -- a direct retained `<angle>`
+/// Dimension or a direct retained literal `<zero>` Number (#667), mirroring
+/// `classify_transform_rotate3d_angle_argument` exactly except for the
+/// distinct `CssTransformRotateArgumentEvidenceRef` evidence type:
+/// `rotate()`'s single authored slot and `rotate3d()`'s positional
+/// fourth-slot angle argument remain distinct semantic placements even
+/// though both accept the same direct `<angle> | <zero>` scalar theorem
+/// under current CSS Transforms Level 2 / CSS Values authority. `0` and
+/// `0deg` remain distinct authored branches here exactly as for
+/// `rotate3d()`: a `<zero>` is never synthesized into an `Angle`, a
+/// recognized-angle `Dimension` is never collapsed into `Zero` merely
+/// because its magnitude is zero, and this leaf never broadens the general
+/// `<angle>` grammar to accept a unitless Number.
+///
+/// Whitespace and Comment trivia are excluded exactly as for `rotate3d()`'s
+/// fourth slot. An authored-empty slot has no retained semantic token and
+/// is decisively `Invalid`. A slot headed by a `Function` token is
+/// `OpaqueFunction` -- a structurally feasible position whose validity
+/// depends on calculated-value semantics this leaf does not own, so
+/// `calc(0)` is never direct `<zero>` -- only when the slot is exactly one
+/// complete Function extent; a recognized generic whole-value-only
+/// Function name occupying this non-whole-value position is decisively
+/// `Invalid` instead. A Function followed by further retained material in
+/// the same slot is directly visible structural failure and stays
+/// decisively `Invalid`.
+///
+/// A nonzero unitless `Number`, a `Percentage`, a `Dimension` with an
+/// unrecognized (non-angle) unit, an `Ident`, or a `String` is a direct
+/// token-category failure and is decisively `Invalid`, as is any slot
+/// carrying more than one retained semantic token. No range restriction
+/// and no machine-number conversion is applied, so exact authored evidence
+/// stays authoritative for membership.
+fn classify_transform_rotate_argument(
+    slot: &[CssLexicalItem],
+    absolute_slot_start: usize,
+) -> CssTransformRotateArgumentClass {
+    let mut tokens = slot
+        .iter()
+        .enumerate()
+        .filter_map(|(relative_index, entry)| match entry {
+            CssLexicalItem::SemanticToken(token)
+                if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+            {
+                Some((relative_index, token))
+            }
+            _ => None,
+        });
+
+    let Some((relative_index, first)) = tokens.next() else {
+        return CssTransformRotateArgumentClass::Invalid;
+    };
+
+    if matches!(first.kind(), CssTokenKind::Function(_)) {
+        return match entire_function_name(slot) {
+            Some(name) if is_whole_value_function(name) => CssTransformRotateArgumentClass::Invalid,
+            Some(_) => CssTransformRotateArgumentClass::OpaqueFunction,
+            None => CssTransformRotateArgumentClass::Invalid,
+        };
+    }
+
+    if tokens.next().is_some() {
+        return CssTransformRotateArgumentClass::Invalid;
+    }
+
+    match first.kind() {
+        CssTokenKind::Dimension { unit, .. } if is_css_angle_unit(unit) => {
+            CssTransformRotateArgumentClass::Angle(CssTransformRotateArgumentEvidenceRef {
+                lexical_item_index: absolute_slot_start + relative_index,
+            })
+        }
+        CssTokenKind::Number { value, .. } if is_direct_zero_numeric_value(value) => {
+            CssTransformRotateArgumentClass::Zero(CssTransformRotateArgumentEvidenceRef {
+                lexical_item_index: absolute_slot_start + relative_index,
+            })
+        }
+        _ => CssTransformRotateArgumentClass::Invalid,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CssTransformComponentClass {
     Matrix([CssTransformMatrixArgumentEvidenceRef; 6]),
     Scale(CssTransformScaleArguments),
@@ -21924,6 +22119,7 @@ enum CssTransformComponentClass {
     ScaleY(CssTransformScaleYArgument),
     ScaleZ(CssTransformScaleZArgument),
     Scale3d(CssTransformScale3dFunction),
+    Rotate(CssTransformRotateArgument),
     OpaqueTransformArgument,
     UnselectedTransformFunction,
     Invalid,
@@ -21932,8 +22128,9 @@ enum CssTransformComponentClass {
 /// Classifies one already-partitioned top-level `transform` component
 /// against the selected profile `SelectedTransformFunction := Matrix |
 /// Scale | Translate3d | Rotate3d | Translate | TranslateX | TranslateY |
-/// TranslateZ | ScaleX | ScaleY | ScaleZ | Scale3d` (#418 / #645 / #647 /
-/// #649 / #651 / #653 / #655 / #657 / #659 / #661 / #663 / #665).
+/// TranslateZ | ScaleX | ScaleY | ScaleZ | Scale3d | Rotate` (#418 / #645 /
+/// #647 / #649 / #651 / #653 / #655 / #657 / #659 / #661 / #663 / #665 /
+/// #667).
 ///
 /// `<transform-list>` admits only `<transform-function>` components, so a
 /// component that is not exactly one complete Function extent -- a bare
@@ -22155,14 +22352,30 @@ enum CssTransformComponentClass {
 /// `translate3d()`, even though it composes mechanisms already accepted for
 /// each of them.
 ///
-/// Any other Function name is `UnselectedTransformFunction`: `rotate(1deg)`,
+/// A Function named `rotate` ASCII-case-insensitively enters `rotate()`
+/// argument qualification: a directly visible slot count other than one is
+/// decisive `Invalid` before any argument is classified, so `rotate()` and
+/// `rotate(0,90deg)` both stay invalid on directly visible arity. Only at
+/// exactly one slot is the argument classified, accepting a direct `<angle>`
+/// Dimension or a direct literal `<zero>` Number under current CSS
+/// Transforms Level 2 / CSS Values authority -- reusing the exact
+/// `Angle`/`Zero` scalar theorem already accepted for `rotate3d()`'s fourth
+/// slot (#649), so `calc(0)` is never direct `<zero>` here either (#667).
+/// The qualified argument is carried by `CssTransformRotateFunction`, a
+/// distinct type from `CssTransformRotate3dFunction`: `rotate()` never
+/// shares representation with `rotate3d()`, with the accepted longhand
+/// `rotate` property qualifier (#604), or with a future `rotateX()`/
+/// `rotateY()`/`rotateZ()` leaf, even though it composes the fourth-slot
+/// scalar mechanism already accepted for `rotate3d()`.
+///
+/// Any other Function name is `UnselectedTransformFunction`: `rotateX(1deg)`,
 /// `matrix3d(...)`, and an unrecognized name alike stay outside
 /// selected-profile coverage instead of being decided here, because
 /// deciding them would require the full `<transform-function>` dispatch and
 /// the length/angle/axis semantics this leaf does not own -- their
 /// remaining unselected is load-bearing scope containment for #657 / #659 /
-/// #661 / #663 / #665, not an oversight. A misplaced whole-value Function is
-/// the one exception: it has no independent meaning inside a
+/// #661 / #663 / #665 / #667, not an oversight. A misplaced whole-value
+/// Function is the one exception: it has no independent meaning inside a
 /// `<transform-list>` and is decisively `Invalid`, mirroring the accepted
 /// `scale` boundary.
 fn classify_transform_component(
@@ -22700,6 +22913,36 @@ fn classify_transform_component(
         });
     }
 
+    if name.eq_ignore_ascii_case("rotate") {
+        let slots = transform_function_body_slot_ranges(component);
+        if slots.len() != 1 {
+            return CssTransformComponentClass::Invalid;
+        }
+
+        let slot_start = absolute_component_start + slots[0].start;
+        let argument_class =
+            classify_transform_rotate_argument(&component[slots[0].clone()], slot_start);
+
+        let argument = match argument_class {
+            CssTransformRotateArgumentClass::Angle(evidence_ref) => CssTransformRotateArgument {
+                kind: CssTransformRotateArgumentKind::Angle,
+                evidence_ref,
+            },
+            CssTransformRotateArgumentClass::Zero(evidence_ref) => CssTransformRotateArgument {
+                kind: CssTransformRotateArgumentKind::Zero,
+                evidence_ref,
+            },
+            CssTransformRotateArgumentClass::OpaqueFunction => {
+                return CssTransformComponentClass::OpaqueTransformArgument;
+            }
+            CssTransformRotateArgumentClass::Invalid => {
+                return CssTransformComponentClass::Invalid;
+            }
+        };
+
+        return CssTransformComponentClass::Rotate(argument);
+    }
+
     if is_whole_value_function(name) {
         CssTransformComponentClass::Invalid
     } else {
@@ -22716,9 +22959,9 @@ fn classify_transform_component(
 /// translateX(<length-percentage>) | translateY(<length-percentage>) |
 /// translateZ(<length>) | scaleX([<number> | <percentage>]) |
 /// scaleY([<number> | <percentage>]) | scaleZ([<number> | <percentage>]) |
-/// scale3d([<number> | <percentage>]#{3}) ]+`
+/// scale3d([<number> | <percentage>]#{3}) | rotate([<angle> | <zero>]) ]+`
 /// (#418 / #645 / #647 / #649 / #651 / #653 / #655 / #657 / #659 / #661 /
-/// #663 / #665).
+/// #663 / #665 / #667).
 ///
 /// Outcome precedence follows evidence authority, never scan order.
 /// Lower-layer lifecycle evidence is never touched here at all: this
@@ -22936,6 +23179,11 @@ fn qualify_transform_value(
             }
             CssTransformComponentClass::Scale3d(function) => {
                 functions.push(CssTransformFunction::Scale3d(function));
+            }
+            CssTransformComponentClass::Rotate(argument) => {
+                functions.push(CssTransformFunction::Rotate(CssTransformRotateFunction {
+                    argument,
+                }));
             }
             CssTransformComponentClass::OpaqueTransformArgument => has_opaque_argument = true,
             CssTransformComponentClass::UnselectedTransformFunction => {
