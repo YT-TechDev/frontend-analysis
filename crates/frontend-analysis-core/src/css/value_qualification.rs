@@ -7665,9 +7665,8 @@ impl CssTransformSkewArgument {
 /// `None` only for a genuinely omitted authored second argument -- an
 /// omitted `y` never carries synthesized `Zero`/`Angle` evidence, and an
 /// explicit second `0` or `0deg` is never collapsed into omission.
-/// `skew()` never decomposes into `skewX()`/`skewY()`, which both remain
-/// unselected after this leaf, and this leaf constructs no skew matrix and
-/// resolves no computed transform.
+/// `skew()` never decomposes into `skewX()`/`skewY()`, and this leaf
+/// constructs no skew matrix and resolves no computed transform.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct CssTransformSkewFunction {
     x: CssTransformSkewArgument,
@@ -7747,11 +7746,10 @@ impl CssTransformSkewXArgument {
 /// tokenizer-owned evidence retained at its own dedicated semantic argument
 /// slot. `skewX()` never synthesizes a second argument or an axis, never
 /// normalizes into `skew()`, and never decomposes from `skew()` or shares
-/// representation with it or with `skewY()`, which remains unselected after
-/// this leaf, even though all three accept the same direct `<angle> | <zero>`
-/// scalar theorem: repeated grammar shape alone is never abstraction
-/// authority. This leaf constructs no skew matrix and resolves no computed
-/// transform.
+/// representation with it or with `skewY()`, even though all three accept
+/// the same direct `<angle> | <zero>` scalar theorem: repeated grammar
+/// shape alone is never abstraction authority. This leaf constructs no
+/// skew matrix and resolves no computed transform.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct CssTransformSkewXFunction {
     argument: CssTransformSkewXArgument,
@@ -7763,13 +7761,96 @@ impl CssTransformSkewXFunction {
     }
 }
 
+/// One qualified authored `skewY()` argument's tokenizer-owned position
+/// (#679). `skewY()` carries exactly one authored slot, so unlike
+/// `CssTransformSkewArgumentEvidenceRef` this evidence type serves only that
+/// single slot; it remains a distinct type from
+/// `CssTransformSkewArgumentEvidenceRef`,
+/// `CssTransformSkewXArgumentEvidenceRef`, and every rotate-family
+/// single-slot evidence type even though the underlying lookup shape is
+/// identical, because mechanical lookup similarity is never semantic
+/// identity authority.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTransformSkewYArgumentEvidenceRef {
+    lexical_item_index: usize,
+}
+
+impl CssTransformSkewYArgumentEvidenceRef {
+    pub(crate) const fn lexical_item_index(&self) -> usize {
+        self.lexical_item_index
+    }
+}
+
+/// One direct authored `skewY()` argument's tokenizer-owned kind (#679):
+/// `SkewYArgument := DirectAngle | DirectZero`, reusing the accepted
+/// rotate-family (#667 / #669 / #671 / #673), `skew()` (#675), and
+/// `skewX()` (#677) direct `<angle> | <zero>` theorem under current CSS
+/// Transforms / CSS Values authority. A direct `<angle>` and a direct
+/// literal `<zero>` remain distinct authored branches: this leaf never
+/// collapses `skewY(0)` into the `Angle` branch, never collapses
+/// `skewY(0deg)` into the `Zero` branch merely because its magnitude is
+/// zero, and never widens the general `<angle>` grammar to accept a
+/// unitless Number. This is a distinct type from
+/// `CssTransformSkewArgumentKind`, `CssTransformSkewXArgumentKind`, and
+/// every rotate-family kind type: `skewY()`'s single authored slot remains
+/// its own distinct semantic placement even though all of them share the
+/// same direct scalar membership, and `skewY()` is never normalized into
+/// `skew()`/`skewX()` nor decomposed from `skew()`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTransformSkewYArgumentKind {
+    Angle,
+    Zero,
+}
+
+/// One qualified authored `skewY()` argument, preserving authored kind and
+/// exact tokenizer-owned evidence without any angle normalization or
+/// machine-number conversion (#679).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTransformSkewYArgument {
+    kind: CssTransformSkewYArgumentKind,
+    evidence_ref: CssTransformSkewYArgumentEvidenceRef,
+}
+
+impl CssTransformSkewYArgument {
+    pub(crate) const fn kind(&self) -> CssTransformSkewYArgumentKind {
+        self.kind
+    }
+
+    pub(crate) const fn evidence_ref(&self) -> CssTransformSkewYArgumentEvidenceRef {
+        self.evidence_ref
+    }
+}
+
+/// One qualified authored `skewY()` transform component: exactly one direct
+/// authored `<angle> | <zero>` argument (#679), carrying the exact
+/// tokenizer-owned evidence retained at its own dedicated semantic argument
+/// slot. `skewY()` never synthesizes a second argument or an axis, never
+/// normalizes into `skew()`/`skewX()`, and never decomposes from `skew()`
+/// or shares representation with `skew()` or `skewX()`, even though all
+/// three accept the same direct `<angle> | <zero>` scalar theorem: repeated
+/// grammar shape alone is never abstraction authority. This is the final
+/// skew-family selected-coverage leaf: `skew()`, `skewX()`, and `skewY()`
+/// are all selected and remain authored-distinct, and this leaf constructs
+/// no skew matrix and resolves no computed transform.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTransformSkewYFunction {
+    argument: CssTransformSkewYArgument,
+}
+
+impl CssTransformSkewYFunction {
+    pub(crate) const fn argument(&self) -> CssTransformSkewYArgument {
+        self.argument
+    }
+}
+
 /// One qualified selected `transform` component under the profile
 /// `SelectedTransformFunction := Matrix | Scale | Translate3d | Rotate3d |
 /// Translate | TranslateX | TranslateY | TranslateZ | ScaleX | ScaleY |
-/// ScaleZ | Scale3d | Rotate | RotateX | RotateY | RotateZ | Skew` (#418 /
-/// #645 / #647 / #649 / #651 / #653 / #655 / #657 / #659 / #661 / #663 /
-/// #665 / #667 / #669 / #671 / #673 / #675), preserving exact authored
-/// order between the eighteen selected function kinds. This is a closed
+/// ScaleZ | Scale3d | Rotate | RotateX | RotateY | RotateZ | Skew | SkewX |
+/// SkewY` (#418 / #645 / #647 / #649 / #651 / #653 / #655 / #657 / #659 /
+/// #661 / #663 / #665 / #667 / #669 / #671 / #673 / #675 / #677 / #679),
+/// preserving exact authored order between the nineteen selected function
+/// kinds. This is a closed
 /// property-local alternation, not a generic CSS function AST: it exists
 /// only to retain heterogeneous authored order for the selected `transform`
 /// branches. `TranslateX`, `TranslateY`, `TranslateZ`, `ScaleX`, `ScaleY`,
@@ -7800,8 +7881,15 @@ impl CssTransformSkewXFunction {
 /// theorem for `skewX()`'s single authored slot, remaining its own distinct
 /// semantic placement from `Skew`'s `x`/`y` slots and from the rotate
 /// family's single slots; `skewX()` is never normalized into `skew()`, and
-/// `skew()` is never decomposed into `skewX()`/`skewY()`. `skewY()` remains
-/// unselected after this leaf.
+/// `skew()` is never decomposed into `skewX()`/`skewY()`. `SkewY` (#679)
+/// reuses the same exact-one `<angle> | <zero>` theorem for `skewY()`'s
+/// single authored slot, remaining its own distinct semantic placement
+/// from `Skew`, `SkewX`, and the rotate family's single slots; `skewY()` is
+/// never normalized into `skew()`/`skewX()`, and `skew()` is never
+/// decomposed into `skewX()`/`skewY()`. This completes the skew-family
+/// selected coverage under the current normative set: `skew()`, `skewX()`,
+/// and `skewY()` are all selected and remain authored-distinct. Family
+/// completion here is a coverage fact, not new capability authority.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssTransformFunction {
     Matrix(CssTransformMatrixFunction),
@@ -7822,6 +7910,7 @@ pub(crate) enum CssTransformFunction {
     RotateZ(CssTransformRotateZFunction),
     Skew(CssTransformSkewFunction),
     SkewX(CssTransformSkewXFunction),
+    SkewY(CssTransformSkewYFunction),
 }
 
 /// One authored `transform` value under the direct-authored profile
@@ -9426,6 +9515,31 @@ impl CssValueQualificationRunResult {
     pub(crate) fn transform_skewx_argument_token(
         &self,
         evidence: CssTransformSkewXArgumentEvidenceRef,
+    ) -> Option<&CssTokenKind> {
+        let item = self
+            .upstream_parser_result
+            .upstream_tokenizer_result()
+            .lexical_items()
+            .get(evidence.lexical_item_index())?;
+        let CssLexicalItem::SemanticToken(token) = item else {
+            return None;
+        };
+        Some(token.kind())
+    }
+
+    /// Resolves one qualified `transform` `skewY()` argument's run-local
+    /// evidence reference to its exact retained tokenizer token kind,
+    /// preserving authored sign spelling, integer/fraction digits, exponent
+    /// spelling, and unit identity without any machine-number conversion or
+    /// angle normalization. The retained token at the evidence position is
+    /// a recognized-angle `Dimension` when the argument's
+    /// `CssTransformSkewYArgumentKind` is `Angle`, or an exact-zero `Number`
+    /// when it is `Zero`, mirroring `transform_skew_argument_token` and
+    /// `transform_skewx_argument_token` while remaining a distinct accessor
+    /// for a distinct evidence type (#679).
+    pub(crate) fn transform_skewy_argument_token(
+        &self,
+        evidence: CssTransformSkewYArgumentEvidenceRef,
     ) -> Option<&CssTokenKind> {
         let item = self
             .upstream_parser_result
@@ -23110,6 +23224,95 @@ fn classify_transform_skewx_argument(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CssTransformSkewYArgumentClass {
+    Angle(CssTransformSkewYArgumentEvidenceRef),
+    Zero(CssTransformSkewYArgumentEvidenceRef),
+    OpaqueFunction,
+    Invalid,
+}
+
+/// Classifies one already-partitioned `skewY()` argument slot against the
+/// selected profile's single accepted shape -- a direct retained `<angle>`
+/// Dimension or a direct retained literal `<zero>` Number (#679), mirroring
+/// `classify_transform_skewx_argument` exactly except for the distinct
+/// `CssTransformSkewYArgumentEvidenceRef` evidence type: `skewY()`'s single
+/// authored slot, `skewX()`'s single authored slot, `skew()`'s `x`/`y`
+/// slots, and every rotate-family single authored slot remain distinct
+/// semantic placements even though all accept the same direct
+/// `<angle> | <zero>` scalar theorem under current CSS Transforms / CSS
+/// Values authority. `0` and `0deg` remain distinct authored branches here
+/// exactly as for `skew()`, `skewX()`, and the rotate family: a `<zero>` is
+/// never synthesized into an `Angle`, a recognized-angle `Dimension` is
+/// never collapsed into `Zero` merely because its magnitude is zero, and
+/// this leaf never broadens the general `<angle>` grammar to accept a
+/// unitless Number.
+///
+/// Whitespace and Comment trivia are excluded exactly as for `skewX()`'s
+/// slot. An authored-empty slot has no retained semantic token and is
+/// decisively `Invalid`. A slot headed by a `Function` token is
+/// `OpaqueFunction` -- a structurally feasible position whose validity
+/// depends on calculated-value semantics this leaf does not own, so
+/// `calc(0)` is never direct `<zero>` -- only when the slot is exactly one
+/// complete Function extent; a recognized generic whole-value-only
+/// Function name occupying this non-whole-value position is decisively
+/// `Invalid` instead. A Function followed by further retained material in
+/// the same slot is directly visible structural failure and stays
+/// decisively `Invalid`.
+///
+/// A nonzero unitless `Number`, a `Percentage`, a `Dimension` with an
+/// unrecognized (non-angle) unit, an `Ident`, a `String`, or a `Hash` is a
+/// direct token-category failure and is decisively `Invalid`, as is any
+/// slot carrying more than one retained semantic token. No range
+/// restriction and no machine-number conversion is applied, so exact
+/// authored evidence stays authoritative for membership.
+fn classify_transform_skewy_argument(
+    slot: &[CssLexicalItem],
+    absolute_slot_start: usize,
+) -> CssTransformSkewYArgumentClass {
+    let mut tokens = slot
+        .iter()
+        .enumerate()
+        .filter_map(|(relative_index, entry)| match entry {
+            CssLexicalItem::SemanticToken(token)
+                if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+            {
+                Some((relative_index, token))
+            }
+            _ => None,
+        });
+
+    let Some((relative_index, first)) = tokens.next() else {
+        return CssTransformSkewYArgumentClass::Invalid;
+    };
+
+    if matches!(first.kind(), CssTokenKind::Function(_)) {
+        return match entire_function_name(slot) {
+            Some(name) if is_whole_value_function(name) => CssTransformSkewYArgumentClass::Invalid,
+            Some(_) => CssTransformSkewYArgumentClass::OpaqueFunction,
+            None => CssTransformSkewYArgumentClass::Invalid,
+        };
+    }
+
+    if tokens.next().is_some() {
+        return CssTransformSkewYArgumentClass::Invalid;
+    }
+
+    match first.kind() {
+        CssTokenKind::Dimension { unit, .. } if is_css_angle_unit(unit) => {
+            CssTransformSkewYArgumentClass::Angle(CssTransformSkewYArgumentEvidenceRef {
+                lexical_item_index: absolute_slot_start + relative_index,
+            })
+        }
+        CssTokenKind::Number { value, .. } if is_direct_zero_numeric_value(value) => {
+            CssTransformSkewYArgumentClass::Zero(CssTransformSkewYArgumentEvidenceRef {
+                lexical_item_index: absolute_slot_start + relative_index,
+            })
+        }
+        _ => CssTransformSkewYArgumentClass::Invalid,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CssTransformComponentClass {
     Matrix([CssTransformMatrixArgumentEvidenceRef; 6]),
     Scale(CssTransformScaleArguments),
@@ -23129,6 +23332,7 @@ enum CssTransformComponentClass {
     RotateZ(CssTransformRotateZArgument),
     Skew(CssTransformSkewFunction),
     SkewX(CssTransformSkewXArgument),
+    SkewY(CssTransformSkewYArgument),
     OpaqueTransformArgument,
     UnselectedTransformFunction,
     Invalid,
@@ -24112,6 +24316,36 @@ fn classify_transform_component(
         return CssTransformComponentClass::SkewX(argument);
     }
 
+    if name.eq_ignore_ascii_case("skewy") {
+        let slots = transform_function_body_slot_ranges(component);
+        if slots.len() != 1 {
+            return CssTransformComponentClass::Invalid;
+        }
+
+        let slot_start = absolute_component_start + slots[0].start;
+        let argument_class =
+            classify_transform_skewy_argument(&component[slots[0].clone()], slot_start);
+
+        let argument = match argument_class {
+            CssTransformSkewYArgumentClass::Angle(evidence_ref) => CssTransformSkewYArgument {
+                kind: CssTransformSkewYArgumentKind::Angle,
+                evidence_ref,
+            },
+            CssTransformSkewYArgumentClass::Zero(evidence_ref) => CssTransformSkewYArgument {
+                kind: CssTransformSkewYArgumentKind::Zero,
+                evidence_ref,
+            },
+            CssTransformSkewYArgumentClass::OpaqueFunction => {
+                return CssTransformComponentClass::OpaqueTransformArgument;
+            }
+            CssTransformSkewYArgumentClass::Invalid => {
+                return CssTransformComponentClass::Invalid;
+            }
+        };
+
+        return CssTransformComponentClass::SkewY(argument);
+    }
+
     if is_whole_value_function(name) {
         CssTransformComponentClass::Invalid
     } else {
@@ -24132,17 +24366,20 @@ fn classify_transform_component(
 /// rotateX([<angle> | <zero>]) | rotateY([<angle> | <zero>]) |
 /// rotateZ([<angle> | <zero>]) |
 /// skew([<angle> | <zero>], [<angle> | <zero>]?) |
-/// skewX([<angle> | <zero>]) ]+` (#418 / #645 / #647 / #649 / #651 / #653 /
-/// #655 / #657 / #659 / #661 / #663 / #665 / #667 / #669 / #671 / #673 /
-/// #675 / #677). `skew()`'s optional second authored slot reuses
-/// `scale()`'s accepted one-or-two authored-cardinality/omission theorem:
-/// an authored one-argument `skew()` never synthesizes a second authored
-/// zero, and an authored second `0`/`0deg` is never collapsed into
-/// omission. `skewX()` carries exactly one authored slot, mirroring the
-/// rotate family's exact-one cardinality, and remains its own distinct
-/// semantic placement from `skew()` and from the still-unselected
-/// `skewY()`: `skewX()` is never normalized into `skew()`, and `skew()` is
-/// never decomposed into `skewX()`/`skewY()`.
+/// skewX([<angle> | <zero>]) | skewY([<angle> | <zero>]) ]+` (#418 / #645 /
+/// #647 / #649 / #651 / #653 / #655 / #657 / #659 / #661 / #663 / #665 /
+/// #667 / #669 / #671 / #673 / #675 / #677 / #679). `skew()`'s optional
+/// second authored slot reuses `scale()`'s accepted one-or-two
+/// authored-cardinality/omission theorem: an authored one-argument `skew()`
+/// never synthesizes a second authored zero, and an authored second
+/// `0`/`0deg` is never collapsed into omission. `skewX()` and `skewY()`
+/// each carry exactly one authored slot, mirroring the rotate family's
+/// exact-one cardinality, and each remains its own distinct semantic
+/// placement from `skew()` and from each other: none of `skew()`,
+/// `skewX()`, or `skewY()` is ever normalized into or decomposed from
+/// another family member. This is the final skew-family selected-coverage
+/// leaf: `skew()`, `skewX()`, and `skewY()` are all selected and remain
+/// authored-distinct.
 ///
 /// Outcome precedence follows evidence authority, never scan order.
 /// Lower-layer lifecycle evidence is never touched here at all: this
@@ -24386,6 +24623,11 @@ fn qualify_transform_value(
             }
             CssTransformComponentClass::SkewX(argument) => {
                 functions.push(CssTransformFunction::SkewX(CssTransformSkewXFunction {
+                    argument,
+                }));
+            }
+            CssTransformComponentClass::SkewY(argument) => {
+                functions.push(CssTransformFunction::SkewY(CssTransformSkewYFunction {
                     argument,
                 }));
             }
