@@ -5,8 +5,8 @@ use crate::css::token::{CssExponentSign, CssNumberSign, CssTokenKind};
 use crate::css::tokenizer::resource::CssTokenizerLimits;
 use crate::css::value_qualification::{
     CssTransformFunction, CssTransformQualificationOutcome, CssTransformRotate3dAngleArgument,
-    CssTransformRotate3dFunction, CssTransformScaleArgumentKind, CssTransformScaleXArgumentKind,
-    CssTransformScaleYArgumentKind, CssTransformScaleZArgumentKind,
+    CssTransformRotate3dFunction, CssTransformScale3dArgumentKind, CssTransformScaleArgumentKind,
+    CssTransformScaleXArgumentKind, CssTransformScaleYArgumentKind, CssTransformScaleZArgumentKind,
     CssTransformTranslate3dXyArgumentKind, CssTransformTranslateArgumentKind,
     CssTransformTranslateXArgumentKind, CssTransformTranslateYArgumentKind,
     CssTransformUnsupportedReason, CssTransformValue, CssValueQualificationRunResult, run,
@@ -832,6 +832,103 @@ fn scalez_argument_spelling(
     (argument.kind(), authored_scalez_argument_spelling(token))
 }
 
+/// Reconstructs one retained `Number` or `Percentage` token's authored
+/// numeric structure from tokenizer-owned evidence alone, exactly like
+/// `authored_scalez_argument_spelling`, with a trailing `%` marker
+/// distinguishing a `Percentage` token so `2` and `2%` stay distinguishable
+/// in assertions and a `Percentage` is never collapsed into a `Number`.
+/// This is a dedicated `scale3d()` test helper, distinct from
+/// `authored_scalez_argument_spelling`: `scale3d()` argument placement,
+/// `scaleZ()` argument placement, `scaleY()` argument placement, `scaleX()`
+/// argument placement, and `scale()` argument placement remain distinct
+/// semantic roles even though the underlying scalar spelling logic is
+/// identical (#665). No machine number is ever produced.
+fn authored_scale3d_argument_spelling(token: &CssTokenKind) -> String {
+    let (value, is_percentage) = match token {
+        CssTokenKind::Number { value, .. } => (value, false),
+        CssTokenKind::Percentage { value } => (value, true),
+        other => panic!(
+            "scale3d argument evidence did not resolve to a Number/Percentage token, got {other:?}"
+        ),
+    };
+
+    let mut spelling = String::new();
+    match value.sign() {
+        Some(CssNumberSign::Plus) => spelling.push('+'),
+        Some(CssNumberSign::Minus) => spelling.push('-'),
+        None => {}
+    }
+    spelling.push_str(value.decimal().integer_digits());
+    let fraction_digits = value.decimal().fraction_digits();
+    if !fraction_digits.is_empty() {
+        spelling.push('.');
+        spelling.push_str(fraction_digits);
+    }
+    if let Some(exponent) = value.decimal().exponent() {
+        spelling.push('e');
+        match exponent.sign() {
+            Some(CssExponentSign::Plus) => spelling.push('+'),
+            Some(CssExponentSign::Minus) => spelling.push('-'),
+            None => {}
+        }
+        spelling.push_str(exponent.digits());
+    }
+    if is_percentage {
+        spelling.push('%');
+    }
+    spelling
+}
+
+/// Resolves one qualified `scale3d()` transform component at
+/// `function_index` within observation `index` into its ordered
+/// `(x_kind, x, y_kind, y, z_kind, z)` authored evidence, preserving exact
+/// X/Y/Z positional order and each slot's independent Number-vs-Percentage
+/// kind, mirroring `translate3d_argument_spellings` except that all three
+/// slots -- not just X/Y -- carry a kind, since `scale3d()`'s Z slot admits
+/// `<percentage>` unlike `translate3d()`'s Z slot (#665).
+fn scale3d_argument_spellings(
+    result: &CssValueQualificationRunResult,
+    index: usize,
+    function_index: usize,
+) -> (
+    CssTransformScale3dArgumentKind,
+    String,
+    CssTransformScale3dArgumentKind,
+    String,
+    CssTransformScale3dArgumentKind,
+    String,
+) {
+    let functions = qualified_functions(result, index);
+    let function = functions
+        .get(function_index)
+        .unwrap_or_else(|| panic!("missing transform component {function_index} at {index}"));
+    let CssTransformFunction::Scale3d(scale3d) = function else {
+        panic!("expected scale3d component {function_index} at {index}, got {function:?}");
+    };
+
+    let x = scale3d.x();
+    let y = scale3d.y();
+    let z = scale3d.z();
+    let x_token = result
+        .transform_scale3d_argument_token(x.evidence_ref())
+        .expect("scale3d X evidence did not resolve");
+    let y_token = result
+        .transform_scale3d_argument_token(y.evidence_ref())
+        .expect("scale3d Y evidence did not resolve");
+    let z_token = result
+        .transform_scale3d_argument_token(z.evidence_ref())
+        .expect("scale3d Z evidence did not resolve");
+
+    (
+        x.kind(),
+        authored_scale3d_argument_spelling(x_token),
+        y.kind(),
+        authored_scale3d_argument_spelling(y_token),
+        z.kind(),
+        authored_scale3d_argument_spelling(z_token),
+    )
+}
+
 /// Reconstructs one retained `Number` or `Dimension` token's authored
 /// numeric structure from tokenizer-owned evidence alone, exactly like
 /// `authored_number_spelling`, with the authored unit spelling appended for
@@ -1322,8 +1419,8 @@ fn unselected_transform_functions_remain_outside_selected_profile() {
             "matrix(1,0,0,1,0,0) rotate(1deg)",
             "rotate(1deg) matrix(1,0,0,1,0,0)",
             "rotateX(1deg)",
+            "rotateY(1deg)",
             "skewX(1deg)",
-            "scale3d(1,1,1)",
             "skew(1deg)",
             "perspective(1px)",
             "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
@@ -1631,7 +1728,7 @@ fn repeated_and_cross_source_runs_are_deterministic() {
         "g{transform:matrix(1,0,0,1,0,0) none;}",
         "h{transform:scale(2) matrix(1,0,0,1,0,0);}",
         "i{transform:scale(calc(1),2);}",
-        "j{transform:scale3d(1,1,1);}",
+        "j{transform:skew(1deg);}",
         "k{transform:scale(1,2,3);}",
     );
 
@@ -1822,13 +1919,16 @@ fn scale_function_name_recognition_is_ascii_case_insensitive() {
     }
 
     // A name that merely starts with `scale` is a different function and
-    // stays outside selected-profile coverage. `scaleX()`/`scalex()` are
-    // selected separately by #659 and are covered by their own dedicated
-    // test group below, so they are no longer representative here.
+    // stays outside selected-profile coverage. `scaleX()`/`scalex()`,
+    // `scaleY()`/`scaley()`, `scaleZ()`/`scalez()`, and `scale3d()` are all
+    // now selected separately (#659 / #661 / #663 / #665) and are covered by
+    // their own dedicated test groups, so none of them is representative
+    // here anymore; an unrecognized name that merely starts with `scale`
+    // preserves the surviving invariant instead.
     assert_all_unsupported(
         645290,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
-        &["scale3d(1,1,1)"],
+        &["scalefoo(1)"],
     );
 }
 
@@ -5225,24 +5325,36 @@ fn unselected_outer_function_precedence_covers_translatex() {
     assert_all_invalid(653440, &["translateX(1) rotate(10deg)"]);
 }
 
-// 112. `scale3d()` remains outside selected-profile coverage after #653:
-// extending coverage with `translateX()` never widens the selected profile
-// to an unrelated sibling, in isolation or alongside a qualified
-// `translateX()` (#653). `translateY()` and `translateZ()` are qualified
-// separately by #655 and #657, `scaleX()` is qualified separately by #659,
-// `scaleY()` is qualified separately by #661, and `scaleZ()` is qualified
-// separately by #663; each is covered by its own dedicated test group.
-// `scaleZ()` was formerly listed here as a remaining unselected sibling;
-// #663 retargets this sentinel to `scale3d()` alone, the only scale-family
-// sibling still outside selected-profile coverage.
+// 112. `scale3d()` was formerly the remaining scale-family sibling this test
+// proved stayed unselected alongside `translateX()` coverage (#653). #665
+// selects `scale3d()` too, superseding that premise: there is no remaining
+// unselected scale-family sibling to retarget this sentinel to. The
+// surviving invariant -- that `translateX()` coverage never conflates a
+// sibling selected function's representation or evidence with its own --
+// is preserved instead by proving `translateX()` and `scale3d()` now
+// compose correctly and remain distinct in either authored order (#665).
 
 #[test]
-fn scale_family_siblings_remain_unselected_after_translatex_coverage() {
-    assert_all_unsupported(
+fn translatex_and_scale3d_remain_distinct_selected_components() {
+    let result = qualify(
         653450,
-        CssTransformUnsupportedReason::UnselectedTransformFunction,
-        &["scale3d(1,1,1)", "translateX(20px) scale3d(1,1,1)"],
+        concat!(
+            "a{transform:translateX(20px) scale3d(1,2,3);}",
+            "b{transform:scale3d(1,2,3) translateX(20px);}",
+        ),
     );
+
+    assert_eq!(result.transform_observations().len(), 2);
+
+    let first = qualified_functions(&result, 0);
+    assert_eq!(first.len(), 2);
+    assert!(matches!(first[0], CssTransformFunction::TranslateX(_)));
+    assert!(matches!(first[1], CssTransformFunction::Scale3d(_)));
+
+    let second = qualified_functions(&result, 1);
+    assert_eq!(second.len(), 2);
+    assert!(matches!(second[0], CssTransformFunction::Scale3d(_)));
+    assert!(matches!(second[1], CssTransformFunction::TranslateX(_)));
 }
 
 // 113. `<transform-list>` is whitespace-separated repetition: a top-level
@@ -6108,10 +6220,13 @@ fn translatex_translatey_evidence_separation_never_drifts() {
 // 137. `translateZ()` remains outside selected-profile coverage after
 // #655: extending coverage with `translateY()` never widens the selected
 // profile to a sibling `<transform-function>` still outside it -- unlike
-// `translateZ()`, which #657 goes on to select, `scale3d()`, `matrix3d()`,
+// `translateZ()`, which #657 goes on to select, `rotate()`, `matrix3d()`,
 // and `perspective()` remain outside selected-profile coverage in
 // isolation, with any argument shape, or alongside a qualified
-// `translateY()` in either order (#655 / #657).
+// `translateY()` in either order (#655 / #657). `scale3d()` was formerly
+// listed here too; #665 selects it separately, so this generic sentinel is
+// retargeted to `rotate()` to preserve the "sibling stays unselected"
+// invariant without depending on `scale3d()`.
 
 #[test]
 fn remaining_transform_siblings_stay_unselected_alongside_qualified_translatey() {
@@ -6119,11 +6234,11 @@ fn remaining_transform_siblings_stay_unselected_alongside_qualified_translatey()
         655460,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "scale3d(1,1,1)",
+            "rotate(1deg)",
             "perspective(10px)",
             "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
-            "translateY(10px) scale3d(1,1,1)",
-            "scale3d(1,1,1) translateY(10px)",
+            "translateY(10px) rotate(1deg)",
+            "rotate(1deg) translateY(10px)",
         ],
     );
 }
@@ -7648,25 +7763,36 @@ fn unselected_outer_function_precedence_covers_scalex() {
     assert_all_invalid(659400, &["scaleX(1px) rotate(10deg)"]);
 }
 
-// 184. `scale3d()` remains outside selected-profile coverage after #659:
-// adding `scaleX()` never widens the selected profile to this unrelated
-// sibling, in isolation or alongside a qualified `scaleX()`, in either
-// authored order (#659). `scaleY()` is qualified separately by #661 and
-// `scaleZ()` is qualified separately by #663; each is covered by its own
-// dedicated test group. `scaleZ()` was formerly listed here as a remaining
-// unselected sibling; #663 retargets this sentinel to `scale3d()` alone.
+// 184. `scale3d()` was formerly the remaining scale-family sibling this
+// test proved stayed unselected alongside `scaleX()` coverage (#659). #665
+// selects `scale3d()` too, superseding that premise: there is no remaining
+// unselected scale-family sibling to retarget this sentinel to. The
+// surviving invariant -- that `scaleX()` coverage never conflates a sibling
+// selected function's representation or evidence with its own -- is
+// preserved instead by proving `scaleX()` and `scale3d()` now compose
+// correctly and remain distinct in either authored order (#665).
 
 #[test]
-fn scale_family_siblings_remain_unselected_alongside_scalex() {
-    assert_all_unsupported(
+fn scalex_and_scale3d_remain_distinct_selected_components() {
+    let result = qualify(
         659420,
-        CssTransformUnsupportedReason::UnselectedTransformFunction,
-        &[
-            "scale3d(1,1,1)",
-            "scaleX(2) scale3d(1,1,1)",
-            "scale3d(1,1,1) scaleX(2)",
-        ],
+        concat!(
+            "a{transform:scaleX(2) scale3d(1,2,3);}",
+            "b{transform:scale3d(1,2,3) scaleX(2);}",
+        ),
     );
+
+    assert_eq!(result.transform_observations().len(), 2);
+
+    let first = qualified_functions(&result, 0);
+    assert_eq!(first.len(), 2);
+    assert!(matches!(first[0], CssTransformFunction::ScaleX(_)));
+    assert!(matches!(first[1], CssTransformFunction::Scale3d(_)));
+
+    let second = qualified_functions(&result, 1);
+    assert_eq!(second.len(), 2);
+    assert!(matches!(second[0], CssTransformFunction::Scale3d(_)));
+    assert!(matches!(second[1], CssTransformFunction::ScaleX(_)));
 }
 
 // 185. `<transform-list>` is whitespace-separated repetition: a top-level
@@ -8511,26 +8637,36 @@ fn unselected_outer_function_precedence_covers_scaley() {
     assert_all_invalid(661400, &["scaleY(1px) rotate(10deg)"]);
 }
 
-// 205. `scale3d()` remains outside selected-profile coverage after #661:
-// adding `scaleY()` never widens the selected profile to this unrelated
-// sibling, in isolation or alongside a qualified `scaleY()`, in either
-// authored order (#661). `scaleZ()` is qualified separately by #663 and is
-// covered by its own dedicated test group. `scaleZ()` was formerly listed
-// here as a remaining unselected sibling; #663 retargets this sentinel to
-// `scale3d()` alone, the only scale-family sibling still outside
-// selected-profile coverage after #663.
+// 205. `scale3d()` was formerly the remaining scale-family sibling this
+// test proved stayed unselected alongside `scaleY()` coverage (#661). #665
+// selects `scale3d()` too, superseding that premise: there is no remaining
+// unselected scale-family sibling to retarget this sentinel to. The
+// surviving invariant -- that `scaleY()` coverage never conflates a sibling
+// selected function's representation or evidence with its own -- is
+// preserved instead by proving `scaleY()` and `scale3d()` now compose
+// correctly and remain distinct in either authored order (#665).
 
 #[test]
-fn scale_family_siblings_remain_unselected_alongside_scaley() {
-    assert_all_unsupported(
+fn scaley_and_scale3d_remain_distinct_selected_components() {
+    let result = qualify(
         661420,
-        CssTransformUnsupportedReason::UnselectedTransformFunction,
-        &[
-            "scale3d(1,1,1)",
-            "scaleY(2) scale3d(1,1,1)",
-            "scale3d(1,1,1) scaleY(2)",
-        ],
+        concat!(
+            "a{transform:scaleY(2) scale3d(1,2,3);}",
+            "b{transform:scale3d(1,2,3) scaleY(2);}",
+        ),
     );
+
+    assert_eq!(result.transform_observations().len(), 2);
+
+    let first = qualified_functions(&result, 0);
+    assert_eq!(first.len(), 2);
+    assert!(matches!(first[0], CssTransformFunction::ScaleY(_)));
+    assert!(matches!(first[1], CssTransformFunction::Scale3d(_)));
+
+    let second = qualified_functions(&result, 1);
+    assert_eq!(second.len(), 2);
+    assert!(matches!(second[0], CssTransformFunction::Scale3d(_)));
+    assert!(matches!(second[1], CssTransformFunction::ScaleY(_)));
 }
 
 // 206. `<transform-list>` is whitespace-separated repetition: a top-level
@@ -9419,22 +9555,44 @@ fn unselected_outer_function_precedence_covers_scalez() {
     assert_all_invalid(663400, &["scaleZ(1px) rotate(10deg)"]);
 }
 
-// 226. `scale3d()` remains outside selected-profile coverage after #663:
-// adding `scaleZ()` never widens the selected profile to this unrelated
-// sibling, in isolation or alongside a qualified `scaleZ()`, in either
-// authored order (#663). `scale3d()` is now the sole remaining scale-family
-// sibling outside selected-profile coverage.
+// 226. `scale3d()` was formerly the sole remaining scale-family sibling
+// this test proved stayed unselected alongside `scaleZ()` coverage (#663).
+// #665 selects `scale3d()` too, superseding that premise: there is no
+// remaining unselected scale-family sibling at all after #665. The
+// surviving invariant -- that `scaleZ()` coverage never conflates a sibling
+// selected function's representation or evidence with its own -- is
+// preserved instead by proving `scaleZ()` and `scale3d()` now compose
+// correctly and remain distinct in either authored order, including their
+// independent Number/Percentage evidence (#665).
 
 #[test]
-fn scale_family_sibling_remains_unselected_alongside_scalez() {
-    assert_all_unsupported(
+fn scalez_and_scale3d_remain_distinct_selected_components() {
+    let result = qualify(
         663420,
-        CssTransformUnsupportedReason::UnselectedTransformFunction,
-        &[
-            "scale3d(1,1,1)",
-            "scaleZ(2) scale3d(1,1,1)",
-            "scale3d(1,1,1) scaleZ(2)",
-        ],
+        concat!(
+            "a{transform:scaleZ(2) scale3d(1,2,3);}",
+            "b{transform:scale3d(1,2,3) scaleZ(2);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 2);
+
+    let first = qualified_functions(&result, 0);
+    assert_eq!(first.len(), 2);
+    assert!(matches!(first[0], CssTransformFunction::ScaleZ(_)));
+    assert!(matches!(first[1], CssTransformFunction::Scale3d(_)));
+    assert_eq!(
+        scalez_argument_spelling(&result, 0, 0),
+        (CssTransformScaleZArgumentKind::Number, "2".to_string())
+    );
+
+    let second = qualified_functions(&result, 1);
+    assert_eq!(second.len(), 2);
+    assert!(matches!(second[0], CssTransformFunction::Scale3d(_)));
+    assert!(matches!(second[1], CssTransformFunction::ScaleZ(_)));
+    assert_eq!(
+        scalez_argument_spelling(&result, 1, 1),
+        (CssTransformScaleZArgumentKind::Number, "2".to_string())
     );
 }
 
@@ -9815,4 +9973,1109 @@ fn scalez_translatez_separation_preserves_distinct_grammar_and_evidence() {
         translatez_argument_spelling(&mixed, 1, 1),
         "10px".to_string()
     );
+}
+
+// 234. `scale3d() = scale3d([<number> | <percentage>]#{3})` under current
+// CSS Transforms Level 2 authority (#665): composing `translate3d()`'s
+// (#647) exact-three ordered function-local slot structure with
+// `scale()`/`scaleX()`/`scaleY()`/`scaleZ()`'s direct `Number` theorem. A
+// direct `<number>` argument in every slot qualifies, preserving exact
+// authored sign/fraction/exponent evidence without any machine-number
+// conversion. Like `scaleX()`/`scaleY()`/`scaleZ()`, `scale3d()` never
+// restricts a `Number` to exact-zero in any slot.
+
+#[test]
+fn canonical_scale3d_all_number_triple_qualifies() {
+    let result = qualify(
+        665100,
+        concat!(
+            "a{transform:scale3d(1,2,3);}",
+            "b{transform:scale3d(-1,2,3);}",
+            "c{transform:scale3d(1,-2,3);}",
+            "d{transform:scale3d(1,2,-3);}",
+            "e{transform:scale3d(+1,+2,+3);}",
+            "f{transform:scale3d(-0,+0,0);}",
+            "g{transform:scale3d(.5,1.5,1e2);}",
+            "h{transform:scale3d(-1e-2,+2,-3);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 8);
+
+    let expected = [
+        ("1", "2", "3"),
+        ("-1", "2", "3"),
+        ("1", "-2", "3"),
+        ("1", "2", "-3"),
+        ("+1", "+2", "+3"),
+        ("-0", "+0", "0"),
+        // Authored `.5`: the absent leading integer digit is canonicalized
+        // to `0` by the tokenizer's own retained numeric contract, upstream
+        // of this leaf, exactly as for `scale()`/`scaleX()`/`scaleY()`/
+        // `scaleZ()` arguments.
+        ("0.5", "1.5", "1e2"),
+        ("-1e-2", "+2", "-3"),
+    ];
+    for (index, (x, y, z)) in expected.into_iter().enumerate() {
+        assert_eq!(
+            scale3d_argument_spellings(&result, index, 0),
+            (
+                CssTransformScale3dArgumentKind::Number,
+                x.to_string(),
+                CssTransformScale3dArgumentKind::Number,
+                y.to_string(),
+                CssTransformScale3dArgumentKind::Number,
+                z.to_string(),
+            ),
+            "expected Number/Number/Number at {index}"
+        );
+    }
+}
+
+// 235. A direct `<percentage>` argument qualifies identically to `<number>`
+// in every slot under current CSS Transforms Level 2 authority, retaining
+// current Level 2 Percentage support rather than regressing to the older
+// Level 1 `<number>`-only grammar (#665).
+
+#[test]
+fn canonical_scale3d_all_percentage_triple_qualifies() {
+    let result = qualify(
+        665120,
+        concat!(
+            "a{transform:scale3d(100%,200%,300%);}",
+            "b{transform:scale3d(0%,0%,0%);}",
+            "c{transform:scale3d(-20%,+10%,0%);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 3);
+
+    let expected = [
+        ("100%", "200%", "300%"),
+        ("0%", "0%", "0%"),
+        ("-20%", "+10%", "0%"),
+    ];
+    for (index, (x, y, z)) in expected.into_iter().enumerate() {
+        assert_eq!(
+            scale3d_argument_spellings(&result, index, 0),
+            (
+                CssTransformScale3dArgumentKind::Percentage,
+                x.to_string(),
+                CssTransformScale3dArgumentKind::Percentage,
+                y.to_string(),
+                CssTransformScale3dArgumentKind::Percentage,
+                z.to_string(),
+            ),
+            "expected Percentage/Percentage/Percentage at {index}"
+        );
+    }
+}
+
+// 236. Each of `scale3d()`'s three slots independently admits `<number>` or
+// `<percentage>`: a mixed triple qualifies with each slot's own kind and
+// evidence resolved independently, and `0` versus `0%` remain pairwise
+// distinguishable in every position -- this positional Number/Percentage
+// identity is load-bearing for #665.
+
+#[test]
+fn scale3d_mixed_number_percentage_per_slot_identity() {
+    let result = qualify(
+        665140,
+        concat!(
+            "a{transform:scale3d(100%,2,300%);}",
+            "b{transform:scale3d(1,200%,3);}",
+            "c{transform:scale3d(1,2,300%);}",
+            "d{transform:scale3d(0%,0,0);}",
+            "e{transform:scale3d(0,0%,0);}",
+            "f{transform:scale3d(0,0,0%);}",
+            "g{transform:scale3d(0%,0,0%);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 7);
+
+    use CssTransformScale3dArgumentKind::{Number, Percentage};
+    let expected = [
+        (Percentage, "100%", Number, "2", Percentage, "300%"),
+        (Number, "1", Percentage, "200%", Number, "3"),
+        (Number, "1", Number, "2", Percentage, "300%"),
+        (Percentage, "0%", Number, "0", Number, "0"),
+        (Number, "0", Percentage, "0%", Number, "0"),
+        (Number, "0", Number, "0", Percentage, "0%"),
+        (Percentage, "0%", Number, "0", Percentage, "0%"),
+    ];
+    for (index, (x_kind, x, y_kind, y, z_kind, z)) in expected.into_iter().enumerate() {
+        assert_eq!(
+            scale3d_argument_spellings(&result, index, 0),
+            (
+                x_kind,
+                x.to_string(),
+                y_kind,
+                y.to_string(),
+                z_kind,
+                z.to_string()
+            ),
+            "expected mixed per-slot kind/evidence at {index}"
+        );
+    }
+
+    // `0` and `0%` never collapse into each other in any position.
+    let (x_kind, x, _, _, _, _) = scale3d_argument_spellings(&result, 3, 0);
+    assert_eq!((x_kind, x.as_str()), (Percentage, "0%"));
+    let (_, _, y_kind, y, _, _) = scale3d_argument_spellings(&result, 4, 0);
+    assert_eq!((y_kind, y.as_str()), (Percentage, "0%"));
+    let (_, _, _, _, z_kind, z) = scale3d_argument_spellings(&result, 5, 0);
+    assert_eq!((z_kind, z.as_str()), (Percentage, "0%"));
+}
+
+// 237. `scale3d()` accepts exactly three authored arguments: zero, one, two,
+// four, or more directly visible arguments are decisive
+// `InvalidForSelectedValueGrammar` -- wrong cardinality is never
+// synthesized into a missing Y/Z, truncated, or reinterpreted as `scale()`/
+// `scaleX()`/`scaleY()`/`scaleZ()` (#665).
+
+#[test]
+fn scale3d_argument_cardinality_other_than_three_is_invalid() {
+    assert_all_invalid(
+        665160,
+        &[
+            "scale3d()",
+            "scale3d(1)",
+            "scale3d(1,2)",
+            "scale3d(1,2,3,4)",
+            "scale3d(1,2,3,4,5)",
+        ],
+    );
+}
+
+// 238. A comma is the only accepted inner separator, and an authored-empty
+// position is preserved as its own ordered slot and rejected -- never
+// collapsed away, in any of the three positions (#665).
+
+#[test]
+fn scale3d_argument_delimiter_failures_are_invalid() {
+    assert_all_invalid(
+        665180,
+        &[
+            "scale3d(,,)",
+            "scale3d(,2,3)",
+            "scale3d(1,,3)",
+            "scale3d(1,2,)",
+            "scale3d(1,,)",
+            "scale3d(,2,)",
+            "scale3d(,,3)",
+            "scale3d(1,,,3)",
+        ],
+    );
+}
+
+// 239. `Scale3dArgument := DirectNumber | DirectPercentage` admits no other
+// direct token category in any of the three slots: a `Dimension` --
+// including a recognized length, angle, or unrecognized unit -- and every
+// other direct token category are decisive direct token-category failures,
+// independently in the X, Y, and Z positions. No direct `Dimension` is ever
+// accepted, unlike `translate3d()`'s X/Y `<length-percentage>` theorem this
+// leaf does not implement: `scale3d(1px,2,3)` is decisively `Invalid` even
+// though `translate3d(1px,2px,3px)` qualifies (#665).
+
+#[test]
+fn wrong_direct_categories_are_invalid_for_scale3d() {
+    assert_all_invalid(
+        665200,
+        &[
+            // Wrong category in X.
+            "scale3d(1px,2,3)",
+            "scale3d(45deg,2,3)",
+            "scale3d(1s,2,3)",
+            "scale3d(1unknownunit,2,3)",
+            "scale3d(foo,2,3)",
+            "scale3d(\"1\",2,3)",
+            "scale3d(#abc,2,3)",
+            // Wrong category in Y.
+            "scale3d(1,1px,3)",
+            "scale3d(1,45deg,3)",
+            "scale3d(1,foo,3)",
+            "scale3d(1,\"1\",3)",
+            "scale3d(1,#abc,3)",
+            // Wrong category in Z.
+            "scale3d(1,2,1px)",
+            "scale3d(1,2,45deg)",
+            "scale3d(1,2,foo)",
+            "scale3d(1,2,\"1\")",
+            "scale3d(1,2,#abc)",
+        ],
+    );
+}
+
+// 240. A complete non-deferred Function occupying any one of the three
+// `scale3d()` argument slots is selected-profile Unsupported, mirroring the
+// shared `FunctionValuedTransformArgument` reason `scale()`/`scaleX()`/
+// `scaleY()`/`scaleZ()`/`translate3d()` opaque arguments use -- sealed
+// independently for X, Y, and Z, proving no positional classifier
+// accidentally skips one axis. This leaf never evaluates `calc()` and never
+// decides an opaque Function's inner result type, so a `calc()` whose inner
+// content looks like a `Percentage` stays Unsupported via the same shared
+// boundary (#665).
+
+#[test]
+fn opaque_scale3d_argument_function_is_unsupported() {
+    assert_all_unsupported(
+        665220,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
+        &[
+            // Opaque X.
+            "scale3d(calc(1),2,3)",
+            "scale3d(max(1,2),2,3)",
+            // Opaque Y.
+            "scale3d(1,calc(1),3)",
+            "scale3d(1,calc(100%),3)",
+            "scale3d(1,clamp(0,1,2),3)",
+            // Opaque Z.
+            "scale3d(1,2,calc(1))",
+            "scale3d(1,2,min(1,2))",
+            // Alongside a sibling selected component.
+            "matrix(1,0,0,1,0,0) scale3d(calc(1),2,3)",
+        ],
+    );
+}
+
+// 241. A Function followed by additional direct material in the same slot
+// is directly visible structural failure and stays decisively `Invalid`: a
+// structurally feasible complete opaque Function is never softened to
+// Unsupported by an unevaluated sibling in the same slot, in any of the
+// three positions (#665).
+
+#[test]
+fn function_plus_junk_in_same_slot_is_invalid_for_scale3d() {
+    assert_all_invalid(
+        665240,
+        &[
+            "scale3d(calc(1) 2,3,4)",
+            "scale3d(1,calc(2) foo,3)",
+            "scale3d(1,2,calc(3) 20%)",
+        ],
+    );
+}
+
+// 242. A comma nested inside a Function argument is at a deeper relative
+// depth and never becomes a scale3d-level argument separator. Once the
+// nesting closes, a genuine fourth scale3d-level slot is still counted and
+// makes the shell decisively Invalid, since `scale3d()` has no fourth slot
+// to occupy (#665).
+
+#[test]
+fn nested_commas_never_change_scale3d_arity() {
+    assert_all_unsupported(
+        665260,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
+        &["scale3d(calc(1,2),2,3)", "scale3d(1,min(1,2),3)"],
+    );
+
+    assert_all_invalid(665261, &["scale3d(calc(1,2),2,3,4)"]);
+}
+
+// 243. Deferred substitution can alter the enclosing token sequence,
+// separators, and cardinality, so it is resolved before any surrounding
+// scale3d shape conclusion -- including an arity that looks decisive,
+// exercised in each of the three positions (#665).
+
+#[test]
+fn scale3d_deferred_substitution_outranks_surrounding_shape_conclusions() {
+    assert_all_unsupported(
+        665280,
+        CssTransformUnsupportedReason::DeferredSubstitutionFunction,
+        &[
+            "scale3d(var(--x),2,3)",
+            "scale3d(1,var(--y),3)",
+            "scale3d(1,2,var(--z))",
+            "scale3d(var(--all))",
+            "scale3d(var(--x),2)",
+            "scale3d(var(--x),2,3,4)",
+            "matrix(1,0,0,1,0,0) scale3d(var(--x),2,3)",
+            "scale3d(var(--x),2,3) matrix(1,0,0,1,0,0)",
+        ],
+    );
+}
+
+// 244. Directly visible decisive invalidity outranks an opaque Function
+// found in a sibling slot, regardless of which slot holds which; a direct
+// wrong-category failure remains decisive even alongside an outer
+// unselected sibling, in either authored order (#665).
+
+#[test]
+fn scale3d_decisive_invalid_outranks_opaque_argument() {
+    assert_all_invalid(
+        665300,
+        &[
+            "scale3d(calc(1),1px,3)",
+            "scale3d(1px,calc(1),3)",
+            "scale3d(calc(1),2,1px)",
+            "scale3d(1,1px,calc(1))",
+            "scale3d(1px,2,calc(1))",
+            "scale3d(calc(1),1px,1px)",
+        ],
+    );
+
+    assert_all_invalid(
+        665301,
+        &[
+            "scale3d(1px,2,3) rotate(10deg)",
+            "rotate(10deg) scale3d(1px,2,3)",
+        ],
+    );
+}
+
+// 245. Selected `matrix()`, `scale()`, `translate3d()`, `rotate3d()`,
+// `translate()`, `translateX()`, `translateY()`, `translateZ()`,
+// `scaleX()`, `scaleY()`, `scaleZ()`, and `scale3d()` components mix and
+// repeat freely, preserving exact authored order and repetition through the
+// heterogeneous `CssTransformFunction` alternation, and no selected leaf's
+// evidence drifts across another's index in a mixed sequence (#418 / #645 /
+// #647 / #649 / #651 / #653 / #655 / #657 / #659 / #661 / #663 / #665).
+
+#[test]
+fn mixed_selected_function_order_including_scale3d_is_preserved() {
+    let result = qualify(
+        665320,
+        concat!(
+            "a{transform:matrix(1,0,0,1,0,0) scale3d(2,3,4);}",
+            "b{transform:scale3d(2,3,4) matrix(1,0,0,1,0,0);}",
+            "c{transform:scaleZ(5) scale3d(2,3,4);}",
+            "d{transform:scale3d(2,3,4) scaleZ(5);}",
+            "e{transform:scale3d(1,1,1) scale3d(2,2,2);}",
+            "f{transform:matrix(1,0,0,1,0,0) scale(2) translate3d(1px,2px,3px) rotate3d(1,0,0,90deg) translate(10px) translateX(20px) translateY(30px) translateZ(40px) scaleX(50) scaleY(60) scaleZ(70) scale3d(80,90,100);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 6);
+
+    assert!(matches!(
+        qualified_functions(&result, 0)[0],
+        CssTransformFunction::Matrix(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 0)[1],
+        CssTransformFunction::Scale3d(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 1)[0],
+        CssTransformFunction::Scale3d(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 1)[1],
+        CssTransformFunction::Matrix(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 2)[0],
+        CssTransformFunction::ScaleZ(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 2)[1],
+        CssTransformFunction::Scale3d(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 3)[0],
+        CssTransformFunction::Scale3d(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 3)[1],
+        CssTransformFunction::ScaleZ(_)
+    ));
+
+    // Repeated `scale3d()` preserves authored order and each component's
+    // own evidence.
+    let repeated = qualified_functions(&result, 4);
+    assert_eq!(repeated.len(), 2);
+    assert!(matches!(repeated[0], CssTransformFunction::Scale3d(_)));
+    assert!(matches!(repeated[1], CssTransformFunction::Scale3d(_)));
+    assert_eq!(
+        scale3d_argument_spellings(&result, 4, 0),
+        (
+            CssTransformScale3dArgumentKind::Number,
+            "1".to_string(),
+            CssTransformScale3dArgumentKind::Number,
+            "1".to_string(),
+            CssTransformScale3dArgumentKind::Number,
+            "1".to_string(),
+        )
+    );
+    assert_eq!(
+        scale3d_argument_spellings(&result, 4, 1),
+        (
+            CssTransformScale3dArgumentKind::Number,
+            "2".to_string(),
+            CssTransformScale3dArgumentKind::Number,
+            "2".to_string(),
+            CssTransformScale3dArgumentKind::Number,
+            "2".to_string(),
+        )
+    );
+
+    let twelve_kind_sequence = qualified_functions(&result, 5);
+    assert_eq!(twelve_kind_sequence.len(), 12);
+    assert!(matches!(
+        twelve_kind_sequence[0],
+        CssTransformFunction::Matrix(_)
+    ));
+    assert!(matches!(
+        twelve_kind_sequence[1],
+        CssTransformFunction::Scale(_)
+    ));
+    assert!(matches!(
+        twelve_kind_sequence[2],
+        CssTransformFunction::Translate3d(_)
+    ));
+    assert!(matches!(
+        twelve_kind_sequence[3],
+        CssTransformFunction::Rotate3d(_)
+    ));
+    assert!(matches!(
+        twelve_kind_sequence[4],
+        CssTransformFunction::Translate(_)
+    ));
+    assert!(matches!(
+        twelve_kind_sequence[5],
+        CssTransformFunction::TranslateX(_)
+    ));
+    assert!(matches!(
+        twelve_kind_sequence[6],
+        CssTransformFunction::TranslateY(_)
+    ));
+    assert!(matches!(
+        twelve_kind_sequence[7],
+        CssTransformFunction::TranslateZ(_)
+    ));
+    assert!(matches!(
+        twelve_kind_sequence[8],
+        CssTransformFunction::ScaleX(_)
+    ));
+    assert!(matches!(
+        twelve_kind_sequence[9],
+        CssTransformFunction::ScaleY(_)
+    ));
+    assert!(matches!(
+        twelve_kind_sequence[10],
+        CssTransformFunction::ScaleZ(_)
+    ));
+    assert!(matches!(
+        twelve_kind_sequence[11],
+        CssTransformFunction::Scale3d(_)
+    ));
+    assert_eq!(
+        scale3d_argument_spellings(&result, 5, 11),
+        (
+            CssTransformScale3dArgumentKind::Number,
+            "80".to_string(),
+            CssTransformScale3dArgumentKind::Number,
+            "90".to_string(),
+            CssTransformScale3dArgumentKind::Number,
+            "100".to_string(),
+        )
+    );
+}
+
+// 246. `scale()`, `scaleX()`, `scaleY()`, `scaleZ()`, and `scale3d()` remain
+// distinct semantic placements: neither their representation, cardinality,
+// nor evidence leaks into one another in a mixed sequence, in any authored
+// order, and `scale()` retains its accepted one-or-two authored cardinality
+// unaffected by the other four's exact-one/exact-three cardinality (#645 /
+// #659 / #661 / #663 / #665).
+
+#[test]
+fn scale_family_five_way_separation_preserves_distinct_representation_and_evidence() {
+    let result = qualify(
+        665340,
+        concat!(
+            "a{transform:scale(1,200%) scaleX(300%) scaleY(400%) scaleZ(500%) scale3d(1,2,3);}",
+            "b{transform:scale3d(1,2,3) scaleZ(500%) scaleY(400%) scaleX(300%) scale(1,200%);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 2);
+
+    let first = qualified_functions(&result, 0);
+    assert_eq!(first.len(), 5);
+    assert!(matches!(first[0], CssTransformFunction::Scale(_)));
+    assert!(matches!(first[1], CssTransformFunction::ScaleX(_)));
+    assert!(matches!(first[2], CssTransformFunction::ScaleY(_)));
+    assert!(matches!(first[3], CssTransformFunction::ScaleZ(_)));
+    assert!(matches!(first[4], CssTransformFunction::Scale3d(_)));
+    assert_eq!(
+        scale3d_argument_spellings(&result, 0, 4),
+        (
+            CssTransformScale3dArgumentKind::Number,
+            "1".to_string(),
+            CssTransformScale3dArgumentKind::Number,
+            "2".to_string(),
+            CssTransformScale3dArgumentKind::Number,
+            "3".to_string(),
+        )
+    );
+
+    let second = qualified_functions(&result, 1);
+    assert_eq!(second.len(), 5);
+    assert!(matches!(second[0], CssTransformFunction::Scale3d(_)));
+    assert!(matches!(second[1], CssTransformFunction::ScaleZ(_)));
+    assert!(matches!(second[2], CssTransformFunction::ScaleY(_)));
+    assert!(matches!(second[3], CssTransformFunction::ScaleX(_)));
+    assert!(matches!(second[4], CssTransformFunction::Scale(_)));
+    assert_eq!(
+        scale3d_argument_spellings(&result, 1, 0),
+        (
+            CssTransformScale3dArgumentKind::Number,
+            "1".to_string(),
+            CssTransformScale3dArgumentKind::Number,
+            "2".to_string(),
+            CssTransformScale3dArgumentKind::Number,
+            "3".to_string(),
+        )
+    );
+}
+
+// 247. `scale3d()`'s three positions are fixed and semantically meaningful
+// (X/Y/Z): reversing the authored values proves index resolution is
+// position-driven, not value-driven, and no evidence-index swap occurs
+// between the X, Y, and Z slots (#665).
+
+#[test]
+fn scale3d_x_y_z_positional_order_and_evidence_are_independent() {
+    let result = qualify(
+        665360,
+        concat!(
+            "a{transform:scale3d(10%,20,30%);}",
+            "b{transform:scale3d(30%,20,10%);}",
+            "c{transform:scale3d(1,2,3);}",
+            "d{transform:scale3d(3,2,1);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 4);
+
+    use CssTransformScale3dArgumentKind::{Number, Percentage};
+    assert_eq!(
+        scale3d_argument_spellings(&result, 0, 0),
+        (
+            Percentage,
+            "10%".to_string(),
+            Number,
+            "20".to_string(),
+            Percentage,
+            "30%".to_string()
+        )
+    );
+    assert_eq!(
+        scale3d_argument_spellings(&result, 1, 0),
+        (
+            Percentage,
+            "30%".to_string(),
+            Number,
+            "20".to_string(),
+            Percentage,
+            "10%".to_string()
+        )
+    );
+    assert_eq!(
+        scale3d_argument_spellings(&result, 2, 0),
+        (
+            Number,
+            "1".to_string(),
+            Number,
+            "2".to_string(),
+            Number,
+            "3".to_string()
+        )
+    );
+    assert_eq!(
+        scale3d_argument_spellings(&result, 3, 0),
+        (
+            Number,
+            "3".to_string(),
+            Number,
+            "2".to_string(),
+            Number,
+            "1".to_string()
+        )
+    );
+}
+
+// 248. `scale3d()` and `translate3d()` share the same exact-three ordered
+// function-local slot structure but their authored argument grammars are
+// entirely different and must never be conflated: `translate3d()`'s X/Y
+// admit `<length-percentage>` and Z admits `<length>` only (#647), while
+// `scale3d()` admits `<number> | <percentage>` in all three slots (#665).
+// This is a high-value regression boundary: `translate3d(1px,2px,3px)`
+// qualifies where `scale3d(1px,2px,3px)` is `Invalid`, `scale3d(1,2,3)`
+// qualifies where `translate3d(1,2,3)` is `Invalid` (a nonzero unitless
+// Number is not a `<length>`), and `scale3d(0%,0%,0%)` qualifies as three
+// Percentages where `translate3d(0%,0%,0%)` is `Invalid` because its Z slot
+// admits `<length>` only. Evidence and representation for the two functions
+// must never leak into each other, even mixed in the same declaration.
+
+#[test]
+fn scale3d_translate3d_separation_preserves_distinct_grammar_and_evidence() {
+    // `translate3d()` accepts three Lengths; `scale3d()` rejects the same
+    // Dimensions.
+    let px_result = qualify(
+        665380,
+        concat!(
+            "a{transform:translate3d(1px,2px,3px);}",
+            "b{transform:scale3d(1px,2px,3px);}",
+        ),
+    );
+    assert_eq!(
+        translate3d_argument_spellings(&px_result, 0, 0),
+        (
+            CssTransformTranslate3dXyArgumentKind::Length,
+            "1px".to_string(),
+            CssTransformTranslate3dXyArgumentKind::Length,
+            "2px".to_string(),
+            "3px".to_string(),
+        )
+    );
+    assert_invalid(&px_result, 1);
+
+    // `scale3d()` accepts three nonzero Numbers; `translate3d()` rejects
+    // the same Numbers, since a nonzero unitless Number is not a `<length>`.
+    let number_result = qualify(
+        665381,
+        concat!(
+            "a{transform:translate3d(1,2,3);}",
+            "b{transform:scale3d(1,2,3);}",
+        ),
+    );
+    assert_invalid(&number_result, 0);
+    assert_eq!(
+        scale3d_argument_spellings(&number_result, 1, 0),
+        (
+            CssTransformScale3dArgumentKind::Number,
+            "1".to_string(),
+            CssTransformScale3dArgumentKind::Number,
+            "2".to_string(),
+            CssTransformScale3dArgumentKind::Number,
+            "3".to_string(),
+        )
+    );
+
+    // `0%` in every position is decisively Invalid for `translate3d()`
+    // (its Z slot is `<length>` only), but qualifies as three Percentages
+    // for `scale3d()`.
+    let zero_percent_result = qualify(
+        665382,
+        concat!(
+            "a{transform:translate3d(0%,0%,0%);}",
+            "b{transform:scale3d(0%,0%,0%);}",
+        ),
+    );
+    assert_invalid(&zero_percent_result, 0);
+    assert_eq!(
+        scale3d_argument_spellings(&zero_percent_result, 1, 0),
+        (
+            CssTransformScale3dArgumentKind::Percentage,
+            "0%".to_string(),
+            CssTransformScale3dArgumentKind::Percentage,
+            "0%".to_string(),
+            CssTransformScale3dArgumentKind::Percentage,
+            "0%".to_string(),
+        )
+    );
+
+    // Representation and evidence remain separate when both functions
+    // appear together in one declaration, in either authored order, with
+    // no evidence-index drift between them.
+    let mixed = qualify(
+        665383,
+        concat!(
+            "a{transform:translate3d(1px,2px,3px) scale3d(4,5,6);}",
+            "b{transform:scale3d(4,5,6) translate3d(1px,2px,3px);}",
+        ),
+    );
+    assert!(matches!(
+        qualified_functions(&mixed, 0)[0],
+        CssTransformFunction::Translate3d(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&mixed, 0)[1],
+        CssTransformFunction::Scale3d(_)
+    ));
+    assert_eq!(
+        scale3d_argument_spellings(&mixed, 0, 1),
+        (
+            CssTransformScale3dArgumentKind::Number,
+            "4".to_string(),
+            CssTransformScale3dArgumentKind::Number,
+            "5".to_string(),
+            CssTransformScale3dArgumentKind::Number,
+            "6".to_string(),
+        )
+    );
+    assert!(matches!(
+        qualified_functions(&mixed, 1)[0],
+        CssTransformFunction::Scale3d(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&mixed, 1)[1],
+        CssTransformFunction::Translate3d(_)
+    ));
+    assert_eq!(
+        scale3d_argument_spellings(&mixed, 1, 0),
+        (
+            CssTransformScale3dArgumentKind::Number,
+            "4".to_string(),
+            CssTransformScale3dArgumentKind::Number,
+            "5".to_string(),
+            CssTransformScale3dArgumentKind::Number,
+            "6".to_string(),
+        )
+    );
+}
+
+// 249. Every `<transform-function>` other than the selected leaves stays
+// outside selected-profile coverage, in either authored order and
+// regardless of a sibling qualified selected function, and the coarser
+// outer unselected-function coverage outranks an inner opaque `scale3d()`
+// argument, independently of which of the three slots holds it (#665).
+
+#[test]
+fn unselected_outer_function_precedence_covers_scale3d() {
+    assert_all_unsupported(
+        665400,
+        CssTransformUnsupportedReason::UnselectedTransformFunction,
+        &[
+            "scale3d(2,3,4) rotate(10deg)",
+            "rotate(10deg) scale3d(2,3,4)",
+            "scale3d(2,3,4) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
+        ],
+    );
+
+    // Coarser outer unselected-function coverage outranks an inner opaque
+    // scale3d argument, identically in both authored orders and
+    // independently of which slot is opaque.
+    assert_all_unsupported(
+        665410,
+        CssTransformUnsupportedReason::UnselectedTransformFunction,
+        &[
+            "scale3d(calc(1),2,3) rotate(10deg)",
+            "rotate(10deg) scale3d(calc(1),2,3)",
+            "scale3d(1,calc(1),3) rotate(10deg)",
+            "rotate(10deg) scale3d(1,2,calc(1))",
+        ],
+    );
+}
+
+// 250. `<transform-list>` is whitespace-separated repetition: a top-level
+// comma is never a permitted separator, including between two `scale3d()`
+// components or a `scale3d()` and a sibling selected function (#665).
+
+#[test]
+fn top_level_comma_is_invalid_around_scale3d() {
+    assert_all_invalid(
+        665440,
+        &[
+            "scale3d(2,3,4), matrix(1,0,0,1,0,0)",
+            "scale3d(2,3,4), scale(2)",
+            "scale3d(2,3,4), translate3d(1px,2px,3px)",
+            "scale3d(2,3,4), rotate3d(1,0,0,90deg)",
+            "scale3d(2,3,4), translate(10px)",
+            "scale3d(2,3,4), translateX(20px)",
+            "scale3d(2,3,4), translateY(20px)",
+            "scale3d(2,3,4), translateZ(20px)",
+            "scale3d(2,3,4), scaleX(3)",
+            "scale3d(2,3,4), scaleY(3)",
+            "scale3d(2,3,4), scaleZ(3)",
+            "scale3d(2,3,4), scale3d(5,6,7)",
+        ],
+    );
+}
+
+// 251. CSS Syntax function consumption may end at a true stylesheet EOF, so
+// a parser-committed EOF-ended `scale3d()` extent is qualified from
+// retained interior evidence alone once all three slots are complete. EOF
+// never fills or repairs a missing argument, a wrong direct category, or a
+// fourth slot `scale3d()` has no room for (#665).
+
+#[test]
+fn true_stylesheet_eof_ended_scale3d_extent_follows_parser_authority() {
+    let number_eof = qualify(665460, "a{transform:scale3d(1,2,3");
+    assert_eq!(
+        number_eof.execution_completion(),
+        CssParserExecutionCompletion::Complete
+    );
+    assert_eq!(number_eof.transform_observations().len(), 1);
+    assert_eq!(
+        scale3d_argument_spellings(&number_eof, 0, 0),
+        (
+            CssTransformScale3dArgumentKind::Number,
+            "1".to_string(),
+            CssTransformScale3dArgumentKind::Number,
+            "2".to_string(),
+            CssTransformScale3dArgumentKind::Number,
+            "3".to_string(),
+        )
+    );
+
+    let mixed_eof = qualify(665461, "a{transform:scale3d(100%,2,300%");
+    assert_eq!(
+        mixed_eof.execution_completion(),
+        CssParserExecutionCompletion::Complete
+    );
+    assert_eq!(mixed_eof.transform_observations().len(), 1);
+    assert_eq!(
+        scale3d_argument_spellings(&mixed_eof, 0, 0),
+        (
+            CssTransformScale3dArgumentKind::Percentage,
+            "100%".to_string(),
+            CssTransformScale3dArgumentKind::Number,
+            "2".to_string(),
+            CssTransformScale3dArgumentKind::Percentage,
+            "300%".to_string(),
+        )
+    );
+
+    // Zero/one/two-slot EOF all stay decisively Invalid.
+    let zero_slot = qualify(665462, "a{transform:scale3d(");
+    assert_invalid(&zero_slot, 0);
+    let one_slot = qualify(665463, "a{transform:scale3d(1");
+    assert_invalid(&one_slot, 0);
+    let two_slots = qualify(665464, "a{transform:scale3d(1,2");
+    assert_invalid(&two_slots, 0);
+
+    // A trailing empty third slot at true EOF stays decisively Invalid.
+    let trailing_empty = qualify(665465, "a{transform:scale3d(1,2,");
+    assert_invalid(&trailing_empty, 0);
+
+    // A fourth slot never widens scale3d() cardinality, even at true EOF.
+    let four_slots_eof = qualify(665466, "a{transform:scale3d(1,2,3,4");
+    assert_invalid(&four_slots_eof, 0);
+
+    // EOF never repairs a direct Dimension category.
+    let wrong_category_eof = qualify(665467, "a{transform:scale3d(1px,2,3");
+    assert_invalid(&wrong_category_eof, 0);
+
+    // A closed component followed by stray material is invalid, proving
+    // the accepted EOF case is not "accept whatever trails a scale3d".
+    let trailing = qualify(665468, "a{transform:scale3d(1,2,3) 7;}");
+    assert_invalid(&trailing, 0);
+}
+
+// 252. Lower-layer lifecycle evidence stays owned by the tokenizer and
+// parser: comments/trivia never change slot interpretation in any of the
+// three positions, a comment never fills an authored-empty slot, and
+// `!important` remains outside the semantic value window (#665).
+
+#[test]
+fn trivia_and_important_never_change_scale3d_interpretation() {
+    let result = qualify(
+        665480,
+        concat!(
+            "a{transform:scale3d(1/**/,2,3);}",
+            "b{transform:scale3d(1,/**/2,3);}",
+            "c{transform:scale3d( 1 , 2 , 3 );}",
+            "d{transform:scale3d(1,2,3) !important;}",
+            "e{transform:scale3d(1,2,3)!important;}",
+            "f{transform:scale3d(/**/50%,2,300%);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 6);
+    for index in 0..3 {
+        assert_eq!(
+            scale3d_argument_spellings(&result, index, 0),
+            (
+                CssTransformScale3dArgumentKind::Number,
+                "1".to_string(),
+                CssTransformScale3dArgumentKind::Number,
+                "2".to_string(),
+                CssTransformScale3dArgumentKind::Number,
+                "3".to_string(),
+            ),
+            "trivia changed slot interpretation at {index}"
+        );
+    }
+    for index in 3..5 {
+        assert_eq!(
+            scale3d_argument_spellings(&result, index, 0),
+            (
+                CssTransformScale3dArgumentKind::Number,
+                "1".to_string(),
+                CssTransformScale3dArgumentKind::Number,
+                "2".to_string(),
+                CssTransformScale3dArgumentKind::Number,
+                "3".to_string(),
+            )
+        );
+        assert!(
+            result.upstream_parser_result().occurrences()[index]
+                .priority()
+                .is_some(),
+            "expected retained priority evidence at {index}"
+        );
+    }
+    assert_eq!(
+        scale3d_argument_spellings(&result, 5, 0),
+        (
+            CssTransformScale3dArgumentKind::Percentage,
+            "50%".to_string(),
+            CssTransformScale3dArgumentKind::Number,
+            "2".to_string(),
+            CssTransformScale3dArgumentKind::Percentage,
+            "300%".to_string(),
+        ),
+        "trivia changed Percentage slot interpretation"
+    );
+
+    // A comment is trivia, never an argument: it can neither fill an
+    // authored-empty slot nor stand in for a missing one.
+    assert_all_invalid(665500, &["scale3d(/**/,/**/,/**/)", "scale3d(1,2,/**/)"]);
+}
+
+// 253. Repeated and cross-source runs remain deterministic, and evidence
+// lookup resolves to the exact retained Number/Percentage tokens
+// identically across runs, independently in all three positions (#665).
+
+#[test]
+fn scale3d_repeated_and_cross_source_runs_are_deterministic() {
+    let css = concat!(
+        "a{transform:scale3d(1,2,3);}",
+        "b{transform:scale3d(calc(1,2),2,3);}",
+        "c{transform:scale3d(1px,2,3);}",
+        "d{transform:matrix(1,0,0,1,0,0) scale3d(2,3,4);}",
+        "e{transform:scale3d(50%,60%,70%);}",
+    );
+
+    let first = qualify(665520, css);
+    let repeated = qualify(665520, css);
+    let another_source = qualify(665521, css);
+
+    assert_eq!(
+        first.transform_observations(),
+        repeated.transform_observations()
+    );
+    assert_eq!(
+        first.transform_observations(),
+        another_source.transform_observations()
+    );
+
+    assert_eq!(
+        scale3d_argument_spellings(&first, 0, 0),
+        scale3d_argument_spellings(&repeated, 0, 0)
+    );
+    assert_eq!(
+        scale3d_argument_spellings(&first, 0, 0),
+        scale3d_argument_spellings(&another_source, 0, 0)
+    );
+    assert_unsupported(
+        &first,
+        1,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
+    );
+    assert_invalid(&first, 2);
+    assert_eq!(qualified_functions(&first, 3).len(), 2);
+    assert_eq!(
+        scale3d_argument_spellings(&first, 3, 1),
+        scale3d_argument_spellings(&repeated, 3, 1)
+    );
+    assert_eq!(
+        scale3d_argument_spellings(&first, 3, 1),
+        scale3d_argument_spellings(&another_source, 3, 1)
+    );
+    assert_eq!(
+        scale3d_argument_spellings(&first, 4, 0),
+        scale3d_argument_spellings(&repeated, 4, 0)
+    );
+    assert_eq!(
+        scale3d_argument_spellings(&first, 4, 0),
+        scale3d_argument_spellings(&another_source, 4, 0)
+    );
+}
+
+// 254. `scale3d` function-name recognition is ASCII-case-insensitive,
+// matching the accepted `matrix`/`scale`/`translate3d`/`rotate3d`/
+// `translate`/`translateX`/`translateY`/`translateZ`/`scaleX`/`scaleY`/
+// `scaleZ` boundary, and structurally malformed `scale3d` components -- a
+// bare Function name, an unbalanced/duplicated closer, or stray leading
+// material -- stay decisively `Invalid` (#665).
+
+#[test]
+fn scale3d_function_name_recognition_and_malformed_components() {
+    let result = qualify(
+        665540,
+        concat!(
+            "a{transform:SCALE3D(1,2,3);}",
+            "b{transform:ScAlE3d(1,2,3);}",
+            "c{transform:s\\63 ale3d(1,2,3);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 3);
+    for index in 0..3 {
+        assert_eq!(
+            scale3d_argument_spellings(&result, index, 0),
+            (
+                CssTransformScale3dArgumentKind::Number,
+                "1".to_string(),
+                CssTransformScale3dArgumentKind::Number,
+                "2".to_string(),
+                CssTransformScale3dArgumentKind::Number,
+                "3".to_string(),
+            ),
+            "scale3d name recognition failed at {index}"
+        );
+    }
+
+    assert_all_invalid(
+        665560,
+        &[
+            "scale3d",
+            "scale3d(1,2,3))",
+            "scale3d((1,2,3)",
+            "1 scale3d(1,2,3)",
+            "[scale3d(1,2,3)]",
+        ],
+    );
+}
+
+// 255. Cross-leaf isolation: `scale3d()` recognition never leaks into the
+// accepted longhand `translate`/`scale`/`rotate` leaves, the other
+// `transform-*` single-value leaves, or the other selected `transform`
+// function branches, and `none` remains an exclusive whole-value branch
+// even when combined with `scale3d()` (#418 / #606 / #645 / #647 / #649 /
+// #651 / #653 / #655 / #657 / #659 / #661 / #663 / #665).
+
+#[test]
+fn scale3d_cross_leaf_isolation_is_preserved() {
+    let result = qualify(
+        665580,
+        concat!(
+            "a{transform:scale3d(1,2,3);transform:none;}",
+            "b{translate:10px;}",
+            "c{scale:2;}",
+            "d{rotate:45deg;}",
+            "e{transform-origin:left top;}",
+            "f{transform-box:border-box;}",
+            "g{transform-style:flat;}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 2);
+    assert_eq!(
+        scale3d_argument_spellings(&result, 0, 0),
+        (
+            CssTransformScale3dArgumentKind::Number,
+            "1".to_string(),
+            CssTransformScale3dArgumentKind::Number,
+            "2".to_string(),
+            CssTransformScale3dArgumentKind::Number,
+            "3".to_string(),
+        )
+    );
+    assert_whole_none(&result, 1);
+
+    assert_eq!(result.translate_observations().len(), 1);
+    assert_eq!(result.scale_observations().len(), 1);
+    assert_eq!(result.rotate_observations().len(), 1);
+    assert_eq!(result.transform_origin_observations().len(), 1);
+    assert_eq!(result.transform_box_observations().len(), 1);
+    assert_eq!(result.transform_style_observations().len(), 1);
+
+    assert_all_invalid(665600, &["none scale3d(1,2,3)", "scale3d(1,2,3) none"]);
 }
