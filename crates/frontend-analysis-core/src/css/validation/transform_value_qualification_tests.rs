@@ -17975,15 +17975,35 @@ fn matrix3d_directly_visible_structure_outranks_opaque_argument_semantics() {
             // slot-plus-one line above, where the opaque Function was
             // first).
             "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,calc(1),0)",
-            // Function-plus-junk within one otherwise-feasible slot, at
-            // exactly sixteen visible slots, is directly visible
-            // structural failure and stays decisively Invalid rather than
-            // Unsupported: an unevaluated Function can never mask trailing
-            // material beside it, independently in an early and a late
-            // slot, and independently of whether the trailing material is
-            // itself a second Function.
-            "matrix3d(calc(1) 1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
-            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,calc(1) 1)",
+        ],
+    );
+}
+
+// 414a. Function-only vs Function-plus-junk within one otherwise-feasible
+// matrix3d() slot, at exactly sixteen visible slots, are decisively
+// different outcomes: a complete Function alone in a slot is structurally
+// feasible and stays Unsupported (sealed above by
+// `matrix3d_directly_visible_structure_outranks_opaque_argument_semantics`'s
+// `calc(1)`-only cases), but that same Function followed by further
+// retained material in the SAME slot is directly visible structural
+// failure and stays decisively Invalid -- an unevaluated Function can
+// never mask trailing material beside it. Sealed independently in an
+// early and a late slot position, and independently of whether the
+// trailing material is itself a second Function (#682).
+
+#[test]
+fn matrix3d_function_plus_junk_in_one_slot_is_invalid() {
+    assert_all_invalid(
+        682181,
+        &[
+            // Early position: complete `calc(1)` immediately followed by
+            // retained `0` in the same (first) slot.
+            "matrix3d(calc(1) 0,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
+            // Late position: the same Function-plus-junk shape in the
+            // final (sixteenth) slot instead.
+            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,calc(1) 0)",
+            // Function-plus-Function in the same slot is the same
+            // structural failure, not two arguments.
             "matrix3d(calc(1)calc(2),0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
         ],
     );
