@@ -17975,6 +17975,16 @@ fn matrix3d_directly_visible_structure_outranks_opaque_argument_semantics() {
             // slot-plus-one line above, where the opaque Function was
             // first).
             "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,calc(1),0)",
+            // Function-plus-junk within one otherwise-feasible slot, at
+            // exactly sixteen visible slots, is directly visible
+            // structural failure and stays decisively Invalid rather than
+            // Unsupported: an unevaluated Function can never mask trailing
+            // material beside it, independently in an early and a late
+            // slot, and independently of whether the trailing material is
+            // itself a second Function.
+            "matrix3d(calc(1) 1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
+            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,calc(1) 1)",
+            "matrix3d(calc(1)calc(2),0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
         ],
     );
 }
