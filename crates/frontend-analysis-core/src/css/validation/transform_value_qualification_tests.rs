@@ -10,10 +10,10 @@ use crate::css::value_qualification::{
     CssTransformRotateYFunction, CssTransformRotateZArgumentKind, CssTransformRotateZFunction,
     CssTransformScale3dArgumentKind, CssTransformScaleArgumentKind, CssTransformScaleXArgumentKind,
     CssTransformScaleYArgumentKind, CssTransformScaleZArgumentKind, CssTransformSkewArgumentKind,
-    CssTransformSkewFunction, CssTransformTranslate3dXyArgumentKind,
-    CssTransformTranslateArgumentKind, CssTransformTranslateXArgumentKind,
-    CssTransformTranslateYArgumentKind, CssTransformUnsupportedReason, CssTransformValue,
-    CssValueQualificationRunResult, run,
+    CssTransformSkewFunction, CssTransformSkewXArgumentKind, CssTransformSkewXFunction,
+    CssTransformTranslate3dXyArgumentKind, CssTransformTranslateArgumentKind,
+    CssTransformTranslateXArgumentKind, CssTransformTranslateYArgumentKind,
+    CssTransformUnsupportedReason, CssTransformValue, CssValueQualificationRunResult, run,
 };
 use crate::{SourceId, SourceText};
 
@@ -1460,6 +1460,88 @@ fn skew_y_argument_spelling(
     })
 }
 
+/// This is a dedicated `skewX()` test helper, distinct from
+/// `authored_skew_argument_spelling` and from every rotate-family authored
+/// spelling helper: `skewX()`'s single authored slot remains a distinct
+/// semantic role from `skew()`'s `x`/`y` slots and from the rotate family's
+/// single authored slots even though the underlying Number/Dimension
+/// spelling logic is identical (#677). No machine number is ever produced.
+fn authored_skewx_argument_spelling(token: &CssTokenKind) -> String {
+    let (value, suffix) = match token {
+        CssTokenKind::Number { value, .. } => (value, String::new()),
+        CssTokenKind::Dimension { value, unit, .. } => (value, unit.clone()),
+        other => {
+            panic!(
+                "skewX argument evidence did not resolve to a Number/Dimension token, got {other:?}"
+            )
+        }
+    };
+
+    let mut spelling = String::new();
+    match value.sign() {
+        Some(CssNumberSign::Plus) => spelling.push('+'),
+        Some(CssNumberSign::Minus) => spelling.push('-'),
+        None => {}
+    }
+    spelling.push_str(value.decimal().integer_digits());
+    let fraction_digits = value.decimal().fraction_digits();
+    if !fraction_digits.is_empty() {
+        spelling.push('.');
+        spelling.push_str(fraction_digits);
+    }
+    if let Some(exponent) = value.decimal().exponent() {
+        spelling.push('e');
+        match exponent.sign() {
+            Some(CssExponentSign::Plus) => spelling.push('+'),
+            Some(CssExponentSign::Minus) => spelling.push('-'),
+            None => {}
+        }
+        spelling.push_str(exponent.digits());
+    }
+    spelling.push_str(&suffix);
+    spelling
+}
+
+/// Resolves the qualified `skewX()` transform component at `function_index`
+/// within observation `index`. This is a dedicated `skewX()` helper,
+/// distinct from `skew_function`: `skewX()` is never routed through
+/// `CssTransformFunction::Skew`.
+fn skewx_function(
+    result: &CssValueQualificationRunResult,
+    index: usize,
+    function_index: usize,
+) -> CssTransformSkewXFunction {
+    let functions = qualified_functions(result, index);
+    let function = functions
+        .get(function_index)
+        .unwrap_or_else(|| panic!("missing transform component {function_index} at {index}"));
+    let CssTransformFunction::SkewX(skewx) = function else {
+        panic!("expected skewX component {function_index} at {index}, got {function:?}");
+    };
+    *skewx
+}
+
+/// Resolves one qualified `skewX()` transform component's single authored
+/// argument at `function_index` within observation `index`, returning
+/// `(is_angle, spelling)` -- `is_angle` is `true` for the `Angle` branch and
+/// `false` for the `Zero` branch, so `0` and `0deg` stay distinguishable by
+/// authored role, never merely by spelling (#677).
+fn skewx_argument_spelling(
+    result: &CssValueQualificationRunResult,
+    index: usize,
+    function_index: usize,
+) -> (bool, String) {
+    let skewx = skewx_function(result, index, function_index);
+    let argument = skewx.argument();
+    let token = result
+        .transform_skewx_argument_token(argument.evidence_ref())
+        .expect("skewX argument evidence did not resolve");
+    match argument.kind() {
+        CssTransformSkewXArgumentKind::Angle => (true, authored_skewx_argument_spelling(token)),
+        CssTransformSkewXArgumentKind::Zero => (false, authored_skewx_argument_spelling(token)),
+    }
+}
+
 fn assert_all_invalid(source_id: u64, values: &[&str]) {
     for (offset, value) in values.iter().enumerate() {
         let css = format!("a{{transform:{value};}}");
@@ -1842,13 +1924,13 @@ fn unselected_transform_functions_remain_outside_selected_profile() {
             "matrix(1,0,0,1,0,0) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
             "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1) matrix(1,0,0,1,0,0)",
             "skewY(1deg)",
-            "skewX(1deg)",
+            "perspective(1px)",
             "perspective(1px)",
             "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
             "unknownfunction(1,0,0,1,0,0)",
-            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1) skewX(1deg)",
-            "scale(2) skewX(1deg)",
-            "skewX(1deg) scale(2)",
+            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1) perspective(1px)",
+            "scale(2) perspective(1px)",
+            "perspective(1px) scale(2)",
         ],
     );
 }
@@ -2143,7 +2225,7 @@ fn repeated_and_cross_source_runs_are_deterministic() {
         "a{transform:none;}",
         "b{transform:matrix(1,0,0,1,0,0) matrix(2,0,0,2,0,0);}",
         "c{transform:matrix(calc(1,2),0,0,1,0,0);}",
-        "d{transform:skewX(1deg);}",
+        "d{transform:perspective(1px);}",
         "e{transform:matrix(var(--x),0);}",
         "f{transform:matrix(1,2);}",
         "g{transform:matrix(1,0,0,1,0,0) none;}",
@@ -2220,8 +2302,8 @@ fn invalid_unsupported_precedence_is_scan_order_independent() {
     assert_all_invalid(
         418310,
         &[
-            "skewX(1deg) matrix(1,2)",
-            "matrix(1,2) skewX(1deg)",
+            "perspective(1px) matrix(1,2)",
+            "matrix(1,2) perspective(1px)",
             "calc(1) matrix(1,2)",
             "matrix(1,2) calc(1)",
             "matrix(calc(1),0,0,1,0,0) matrix(1,2)",
@@ -2235,8 +2317,8 @@ fn invalid_unsupported_precedence_is_scan_order_independent() {
         418320,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "matrix(calc(1),0,0,1,0,0) skewX(1deg)",
-            "skewX(1deg) matrix(calc(1),0,0,1,0,0)",
+            "matrix(calc(1),0,0,1,0,0) perspective(1px)",
+            "perspective(1px) matrix(calc(1),0,0,1,0,0)",
         ],
     );
 
@@ -2245,9 +2327,9 @@ fn invalid_unsupported_precedence_is_scan_order_independent() {
         418330,
         CssTransformUnsupportedReason::DeferredSubstitutionFunction,
         &[
-            "var(--x) skewX(1deg) matrix(1,2)",
-            "matrix(1,2) skewX(1deg) var(--x)",
-            "skewX(1deg) matrix(var(--x),0) matrix(1,2)",
+            "var(--x) perspective(1px) matrix(1,2)",
+            "matrix(1,2) perspective(1px) var(--x)",
+            "perspective(1px) matrix(var(--x),0) matrix(1,2)",
         ],
     );
 }
@@ -2664,7 +2746,10 @@ fn scale_invalid_unsupported_precedence_is_scan_order_independent() {
     assert_all_unsupported(
         645420,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
-        &["scale(calc(1)) skewX(1deg)", "skewX(1deg) scale(calc(1))"],
+        &[
+            "scale(calc(1)) perspective(1px)",
+            "perspective(1px) scale(calc(1))",
+        ],
     );
 }
 
@@ -3277,9 +3362,9 @@ fn unselected_outer_function_precedence_covers_translate3d() {
         647250,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "skewX(1deg)",
-            "translate3d(1px,2px,3px) skewX(1deg)",
-            "skewX(1deg) translate3d(1px,2px,3px)",
+            "perspective(1px)",
+            "translate3d(1px,2px,3px) perspective(1px)",
+            "perspective(1px) translate3d(1px,2px,3px)",
             "translate3dx(1px,2px,3px)",
         ],
     );
@@ -3290,8 +3375,8 @@ fn unselected_outer_function_precedence_covers_translate3d() {
         647260,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "translate3d(calc(1px),2px,3px) skewX(1deg)",
-            "skewX(1deg) translate3d(calc(1px),2px,3px)",
+            "translate3d(calc(1px),2px,3px) perspective(1px)",
+            "perspective(1px) translate3d(calc(1px),2px,3px)",
         ],
     );
 }
@@ -3985,7 +4070,7 @@ fn unselected_outer_function_precedence_covers_rotate3d() {
         649260,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "skewX(1deg)",
+            "perspective(1px)",
             "rotate3d(1,0,0,90deg) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
             "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1) rotate3d(1,0,0,90deg)",
             "rotate3dx(1,0,0,90deg)",
@@ -3993,16 +4078,17 @@ fn unselected_outer_function_precedence_covers_rotate3d() {
     );
 
     // Coarser outer unselected-function coverage outranks an inner opaque
-    // rotate3d argument, identically in both authored orders. `skewX()` is
-    // used as the outer sentinel rather than `rotate()`, which #667 selects
-    // as its own distinct semantic placement, to avoid conflating this
-    // rotate3d-only invariant with the newly qualified `rotate()` leaf.
+    // rotate3d argument, identically in both authored orders. `perspective()`
+    // is used as the outer sentinel rather than `rotate()`, which #667
+    // selects as its own distinct semantic placement, to avoid conflating
+    // this rotate3d-only invariant with the newly qualified `rotate()` leaf;
+    // `skewX()` served this role before #677 selected it too.
     assert_all_unsupported(
         649270,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "rotate3d(calc(1),0,0,90deg) skewX(1deg)",
-            "skewX(1deg) rotate3d(calc(1),0,0,90deg)",
+            "rotate3d(calc(1),0,0,90deg) perspective(1px)",
+            "perspective(1px) rotate3d(calc(1),0,0,90deg)",
         ],
     );
 }
@@ -4910,8 +4996,8 @@ fn unselected_outer_function_precedence_covers_translate() {
         651280,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "translate(10px) skewX(10deg)",
-            "skewX(10deg) translate(10px)",
+            "translate(10px) perspective(1px)",
+            "perspective(1px) translate(10px)",
             "translate(10px) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
         ],
     );
@@ -4922,13 +5008,13 @@ fn unselected_outer_function_precedence_covers_translate() {
         651290,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "translate(calc(10px)) skewX(10deg)",
-            "skewX(10deg) translate(calc(10px))",
+            "translate(calc(10px)) perspective(1px)",
+            "perspective(1px) translate(calc(10px))",
         ],
     );
 
     // Decisive direct Invalid still wins over the outer unselected sibling.
-    assert_all_invalid(651300, &["translate(1) skewX(10deg)"]);
+    assert_all_invalid(651300, &["translate(1) perspective(1px)"]);
 }
 
 // 89. `<transform-list>` is whitespace-separated repetition: a top-level
@@ -5728,8 +5814,8 @@ fn unselected_outer_function_precedence_covers_translatex() {
         653420,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "translateX(10px) skewX(10deg)",
-            "skewX(10deg) translateX(10px)",
+            "translateX(10px) perspective(1px)",
+            "perspective(1px) translateX(10px)",
             "translateX(10px) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
         ],
     );
@@ -5740,13 +5826,13 @@ fn unselected_outer_function_precedence_covers_translatex() {
         653430,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "translateX(calc(10px)) skewX(10deg)",
-            "skewX(10deg) translateX(calc(10px))",
+            "translateX(calc(10px)) perspective(1px)",
+            "perspective(1px) translateX(calc(10px))",
         ],
     );
 
     // Decisive direct Invalid still wins over the outer unselected sibling.
-    assert_all_invalid(653440, &["translateX(1) skewX(10deg)"]);
+    assert_all_invalid(653440, &["translateX(1) perspective(1px)"]);
 }
 
 // 112. `scale3d()` was formerly the remaining scale-family sibling this test
@@ -6564,8 +6650,8 @@ fn unselected_outer_function_precedence_covers_translatey() {
         655420,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "translateY(10px) skewX(10deg)",
-            "skewX(10deg) translateY(10px)",
+            "translateY(10px) perspective(1px)",
+            "perspective(1px) translateY(10px)",
             "translateY(10px) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
         ],
     );
@@ -6576,13 +6662,13 @@ fn unselected_outer_function_precedence_covers_translatey() {
         655430,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "translateY(calc(10px)) skewX(10deg)",
-            "skewX(10deg) translateY(calc(10px))",
+            "translateY(calc(10px)) perspective(1px)",
+            "perspective(1px) translateY(calc(10px))",
         ],
     );
 
     // Decisive direct Invalid still wins over the outer unselected sibling.
-    assert_all_invalid(655440, &["translateY(1) skewX(10deg)"]);
+    assert_all_invalid(655440, &["translateY(1) perspective(1px)"]);
 }
 
 // 136. `translateX()` and `translateY()` evidence never drifts across each
@@ -6644,16 +6730,16 @@ fn translatex_translatey_evidence_separation_never_drifts() {
 // 137. `translateZ()` remains outside selected-profile coverage after
 // #655: extending coverage with `translateY()` never widens the selected
 // profile to a sibling `<transform-function>` still outside it -- unlike
-// `translateZ()`, which #657 goes on to select, `skewX()`, `matrix3d()`,
-// and `perspective()` remain outside selected-profile coverage in
-// isolation, with any argument shape, or alongside a qualified
-// `translateY()` in either order (#655 / #657). `scale3d()` was formerly
-// listed here too; #665 selects it separately, so this generic sentinel was
-// retargeted to `rotate()`. #667 selects `rotate()` too, superseding that
-// retarget in turn: the sentinel is now `skewX()`, a function this task's
-// scope keeps outside `<transform-function>` selected-profile coverage, to
-// preserve the "sibling stays unselected" invariant without depending on
-// `rotate()`.
+// `translateZ()`, which #657 goes on to select, `matrix3d()` and
+// `perspective()` remain outside selected-profile coverage in isolation,
+// with any argument shape, or alongside a qualified `translateY()` in
+// either order (#655 / #657). `scale3d()` was formerly listed here too;
+// #665 selects it separately, so this generic sentinel was retargeted to
+// `rotate()`. #667 selects `rotate()` too, superseding that retarget in
+// turn, and the sentinel became `skewX()`; #677 selects `skewX()` as well,
+// superseding it once more, so this generic sentinel is now `perspective()`
+// and `matrix3d()`, which remain outside `<transform-function>`
+// selected-profile coverage.
 
 #[test]
 fn remaining_transform_siblings_stay_unselected_alongside_qualified_translatey() {
@@ -6661,11 +6747,10 @@ fn remaining_transform_siblings_stay_unselected_alongside_qualified_translatey()
         655460,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "skewX(1deg)",
             "perspective(10px)",
             "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
-            "translateY(10px) skewX(1deg)",
-            "skewX(1deg) translateY(10px)",
+            "translateY(10px) perspective(1px)",
+            "perspective(1px) translateY(10px)",
         ],
     );
 }
@@ -7272,7 +7357,10 @@ fn translatez_decisive_invalid_outranks_opaque_argument() {
 
     assert_all_invalid(
         657441,
-        &["translateZ(0%) skewX(10deg)", "skewX(10deg) translateZ(0%)"],
+        &[
+            "translateZ(0%) perspective(1px)",
+            "perspective(1px) translateZ(0%)",
+        ],
     );
 }
 
@@ -7468,8 +7556,8 @@ fn unselected_outer_function_precedence_covers_translatez() {
         657500,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "translateZ(10px) skewX(10deg)",
-            "skewX(10deg) translateZ(10px)",
+            "translateZ(10px) perspective(1px)",
+            "perspective(1px) translateZ(10px)",
             "translateZ(10px) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
         ],
     );
@@ -7480,13 +7568,13 @@ fn unselected_outer_function_precedence_covers_translatez() {
         657510,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "translateZ(calc(10px)) skewX(10deg)",
-            "skewX(10deg) translateZ(calc(10px))",
+            "translateZ(calc(10px)) perspective(1px)",
+            "perspective(1px) translateZ(calc(10px))",
         ],
     );
 
     // Decisive direct Invalid still wins over the outer unselected sibling.
-    assert_all_invalid(657520, &["translateZ(1) skewX(10deg)"]);
+    assert_all_invalid(657520, &["translateZ(1) perspective(1px)"]);
 }
 
 // 164. `<transform-list>` is whitespace-separated repetition: a top-level
@@ -7959,7 +8047,10 @@ fn scalex_decisive_invalid_outranks_opaque_argument() {
 
     assert_all_invalid(
         659301,
-        &["scaleX(1px) skewX(10deg)", "skewX(10deg) scaleX(1px)"],
+        &[
+            "scaleX(1px) perspective(1px)",
+            "perspective(1px) scaleX(1px)",
+        ],
     );
 }
 
@@ -8166,8 +8257,8 @@ fn unselected_outer_function_precedence_covers_scalex() {
         659360,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "scaleX(2) skewX(10deg)",
-            "skewX(10deg) scaleX(2)",
+            "scaleX(2) perspective(1px)",
+            "perspective(1px) scaleX(2)",
             "scaleX(2) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
         ],
     );
@@ -8178,13 +8269,13 @@ fn unselected_outer_function_precedence_covers_scalex() {
         659380,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "scaleX(calc(1)) skewX(10deg)",
-            "skewX(10deg) scaleX(calc(1))",
+            "scaleX(calc(1)) perspective(1px)",
+            "perspective(1px) scaleX(calc(1))",
         ],
     );
 
     // Decisive direct Invalid still wins over the outer unselected sibling.
-    assert_all_invalid(659400, &["scaleX(1px) skewX(10deg)"]);
+    assert_all_invalid(659400, &["scaleX(1px) perspective(1px)"]);
 }
 
 // 184. `scale3d()` was formerly the remaining scale-family sibling this
@@ -8725,7 +8816,10 @@ fn scaley_decisive_invalid_outranks_opaque_argument() {
 
     assert_all_invalid(
         661301,
-        &["scaleY(1px) skewX(10deg)", "skewX(10deg) scaleY(1px)"],
+        &[
+            "scaleY(1px) perspective(1px)",
+            "perspective(1px) scaleY(1px)",
+        ],
     );
 }
 
@@ -9040,8 +9134,8 @@ fn unselected_outer_function_precedence_covers_scaley() {
         661360,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "scaleY(2) skewX(10deg)",
-            "skewX(10deg) scaleY(2)",
+            "scaleY(2) perspective(1px)",
+            "perspective(1px) scaleY(2)",
             "scaleY(2) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
         ],
     );
@@ -9052,13 +9146,13 @@ fn unselected_outer_function_precedence_covers_scaley() {
         661380,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "scaleY(calc(1)) skewX(10deg)",
-            "skewX(10deg) scaleY(calc(1))",
+            "scaleY(calc(1)) perspective(1px)",
+            "perspective(1px) scaleY(calc(1))",
         ],
     );
 
     // Decisive direct Invalid still wins over the outer unselected sibling.
-    assert_all_invalid(661400, &["scaleY(1px) skewX(10deg)"]);
+    assert_all_invalid(661400, &["scaleY(1px) perspective(1px)"]);
 }
 
 // 205. `scale3d()` was formerly the remaining scale-family sibling this
@@ -9605,7 +9699,10 @@ fn scalez_decisive_invalid_outranks_opaque_argument() {
 
     assert_all_invalid(
         663301,
-        &["scaleZ(1px) skewX(10deg)", "skewX(10deg) scaleZ(1px)"],
+        &[
+            "scaleZ(1px) perspective(1px)",
+            "perspective(1px) scaleZ(1px)",
+        ],
     );
 }
 
@@ -9958,8 +10055,8 @@ fn unselected_outer_function_precedence_covers_scalez() {
         663360,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "scaleZ(2) skewX(10deg)",
-            "skewX(10deg) scaleZ(2)",
+            "scaleZ(2) perspective(1px)",
+            "perspective(1px) scaleZ(2)",
             "scaleZ(2) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
         ],
     );
@@ -9970,13 +10067,13 @@ fn unselected_outer_function_precedence_covers_scalez() {
         663380,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "scaleZ(calc(1)) skewX(10deg)",
-            "skewX(10deg) scaleZ(calc(1))",
+            "scaleZ(calc(1)) perspective(1px)",
+            "perspective(1px) scaleZ(calc(1))",
         ],
     );
 
     // Decisive direct Invalid still wins over the outer unselected sibling.
-    assert_all_invalid(663400, &["scaleZ(1px) skewX(10deg)"]);
+    assert_all_invalid(663400, &["scaleZ(1px) perspective(1px)"]);
 }
 
 // 226. `scale3d()` was formerly the sole remaining scale-family sibling
@@ -10743,8 +10840,8 @@ fn scale3d_decisive_invalid_outranks_opaque_argument() {
     assert_all_invalid(
         665301,
         &[
-            "scale3d(1px,2,3) skewX(10deg)",
-            "skewX(10deg) scale3d(1px,2,3)",
+            "scale3d(1px,2,3) perspective(1px)",
+            "perspective(1px) scale3d(1px,2,3)",
         ],
     );
 }
@@ -11165,8 +11262,8 @@ fn unselected_outer_function_precedence_covers_scale3d() {
         665400,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "scale3d(2,3,4) skewX(10deg)",
-            "skewX(10deg) scale3d(2,3,4)",
+            "scale3d(2,3,4) perspective(1px)",
+            "perspective(1px) scale3d(2,3,4)",
             "scale3d(2,3,4) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
         ],
     );
@@ -11178,10 +11275,10 @@ fn unselected_outer_function_precedence_covers_scale3d() {
         665410,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "scale3d(calc(1),2,3) skewX(10deg)",
-            "skewX(10deg) scale3d(calc(1),2,3)",
-            "scale3d(1,calc(1),3) skewX(10deg)",
-            "skewX(10deg) scale3d(1,2,calc(1))",
+            "scale3d(calc(1),2,3) perspective(1px)",
+            "perspective(1px) scale3d(calc(1),2,3)",
+            "scale3d(1,calc(1),3) perspective(1px)",
+            "perspective(1px) scale3d(1,2,calc(1))",
         ],
     );
 }
@@ -11737,25 +11834,31 @@ fn rotate_deferred_substitution_outranks_surrounding_shape_conclusions() {
 // 266. Directly visible decisive invalidity outranks an opaque Function
 // found in a sibling slot; a direct wrong-category failure remains
 // decisive even alongside an outer unselected sibling, in either authored
-// order (#667). `skewX()` is used as the still-unselected outer sentinel
-// here, rather than `rotateX()`, because #669 selects `rotateX()` and this
-// sentinel choice avoids repeated churn as the rotate family is completed.
+// order (#667). `perspective()` is used as the still-unselected outer
+// sentinel here -- `skewX()` served this role instead, rather than
+// `rotateX()`, because #669 selects `rotateX()` and this sentinel choice
+// avoided repeated churn as the rotate family was completed, but #677
+// selects `skewX()` too, so the sentinel is retargeted to `perspective()`.
 
 #[test]
 fn rotate_decisive_invalid_outranks_opaque_argument() {
     assert_all_invalid(667300, &["rotate(calc(0),1)"]);
 
-    assert_all_invalid(667301, &["rotate(1) skewX(1deg)", "skewX(1deg) rotate(1)"]);
+    assert_all_invalid(
+        667301,
+        &["rotate(1) perspective(1px)", "perspective(1px) rotate(1)"],
+    );
 }
 
 // 267. Every `<transform-function>` other than the selected leaves stays
 // outside selected-profile coverage, in either authored order and
 // regardless of a sibling qualified `rotate()`, and the coarser outer
 // unselected-function coverage outranks an inner opaque `rotate()`
-// argument. `skewX()`/`matrix3d()` are used as the still-unselected outer
-// sentinels here, rather than `rotateX()`, because #669 selects `rotateX()`
-// and this sentinel choice avoids repeated churn as the rotate family is
-// completed (#667 / #669).
+// argument. `perspective()`/`matrix3d()` are used as the still-unselected
+// outer sentinels here -- `skewX()` served this role before #677 selected
+// it too -- rather than `rotateX()`, because #669 selects `rotateX()` and
+// this sentinel choice avoids repeated churn as the rotate family is
+// completed (#667 / #669 / #677).
 
 #[test]
 fn unselected_outer_function_precedence_covers_rotate() {
@@ -11763,8 +11866,8 @@ fn unselected_outer_function_precedence_covers_rotate() {
         667310,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "rotate(90deg) skewX(1deg)",
-            "skewX(1deg) rotate(90deg)",
+            "rotate(90deg) perspective(1px)",
+            "perspective(1px) rotate(90deg)",
             "rotate(90deg) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
         ],
     );
@@ -11775,13 +11878,13 @@ fn unselected_outer_function_precedence_covers_rotate() {
         667320,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "rotate(calc(90deg)) skewX(1deg)",
-            "skewX(1deg) rotate(calc(90deg))",
+            "rotate(calc(90deg)) perspective(1px)",
+            "perspective(1px) rotate(calc(90deg))",
         ],
     );
 
     // Decisive direct Invalid still wins over the outer unselected sibling.
-    assert_all_invalid(667330, &["rotate(1) skewX(1deg)"]);
+    assert_all_invalid(667330, &["rotate(1) perspective(1px)"]);
 }
 
 // 268. Selected `matrix()`, `scale()`, `translate3d()`, `rotate3d()`,
@@ -12516,10 +12619,11 @@ fn rotatex_deferred_substitution_outranks_surrounding_shape_conclusions() {
 // 287. Directly visible decisive invalidity outranks an opaque Function
 // found in a sibling slot; a direct wrong-category failure remains
 // decisive even alongside an outer unselected sibling, in either authored
-// order. `skewX()` is used as the still-unselected outer sentinel here
-// (retargeted by #671 from `rotateY()`, which this leaf now selects),
-// since `skewX()` remains outside selected-profile coverage after this
-// leaf (#669 / #671).
+// order. `perspective()` is used as the still-unselected outer sentinel
+// here -- `skewX()` served this role after being retargeted by #671 from
+// `rotateY()`, which this leaf now selects, but #677 selects `skewX()`
+// too, so the sentinel is retargeted again to `perspective()` (#669 /
+// #671 / #677).
 
 #[test]
 fn rotatex_decisive_invalid_outranks_opaque_argument() {
@@ -12527,7 +12631,7 @@ fn rotatex_decisive_invalid_outranks_opaque_argument() {
 
     assert_all_invalid(
         669301,
-        &["rotateX(1) skewX(10deg)", "skewX(10deg) rotateX(1)"],
+        &["rotateX(1) perspective(1px)", "perspective(1px) rotateX(1)"],
     );
 }
 
@@ -12535,10 +12639,11 @@ fn rotatex_decisive_invalid_outranks_opaque_argument() {
 // outside selected-profile coverage, in either authored order and
 // regardless of a sibling qualified `rotateX()`, and the coarser outer
 // unselected-function coverage outranks an inner opaque `rotateX()`
-// argument. `skewX()`/`matrix3d()` are used as the still-unselected outer
-// sentinels here (retargeted by #671 from `rotateY()`, which this leaf now
-// selects), since they remain outside selected-profile coverage after this
-// leaf (#669 / #671).
+// argument. `perspective()`/`matrix3d()` are used as the still-unselected
+// outer sentinels here (`skewX()` served this role after being retargeted
+// by #671 from `rotateY()`, which this leaf now selects, until #677
+// selected `skewX()` too), since they remain outside selected-profile
+// coverage after this leaf (#669 / #671 / #677).
 
 #[test]
 fn unselected_outer_function_precedence_covers_rotatex() {
@@ -12546,8 +12651,8 @@ fn unselected_outer_function_precedence_covers_rotatex() {
         669310,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "rotateX(90deg) skewX(10deg)",
-            "skewX(10deg) rotateX(90deg)",
+            "rotateX(90deg) perspective(1px)",
+            "perspective(1px) rotateX(90deg)",
             "rotateX(90deg) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
         ],
     );
@@ -12558,13 +12663,13 @@ fn unselected_outer_function_precedence_covers_rotatex() {
         669320,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "rotateX(calc(90deg)) skewX(10deg)",
-            "skewX(10deg) rotateX(calc(90deg))",
+            "rotateX(calc(90deg)) perspective(1px)",
+            "perspective(1px) rotateX(calc(90deg))",
         ],
     );
 
     // Decisive direct Invalid still wins over the outer unselected sibling.
-    assert_all_invalid(669330, &["rotateX(1) skewX(10deg)"]);
+    assert_all_invalid(669330, &["rotateX(1) perspective(1px)"]);
 }
 
 // 289. Selected `matrix()`, `scale()`, `translate3d()`, `rotate3d()`,
@@ -13316,10 +13421,11 @@ fn rotatey_deferred_substitution_outranks_surrounding_shape_conclusions() {
 // 309. Directly visible decisive invalidity outranks an opaque Function
 // found in a sibling slot; a direct wrong-category failure remains
 // decisive even alongside an outer unselected sibling, in either authored
-// order. `skewX()` is used as the still-unselected outer sentinel here,
-// since it remains outside selected-profile coverage after this leaf, and
-// `rotateY()` itself is no longer available as an unselected sentinel now
-// that this leaf selects it (#671).
+// order. `perspective()` is used as the still-unselected outer sentinel
+// here -- `skewX()` served this role until #677 selected it too -- since
+// `perspective()` remains outside selected-profile coverage after this
+// leaf, and `rotateY()` itself is no longer available as an unselected
+// sentinel now that this leaf selects it (#671 / #677).
 
 #[test]
 fn rotatey_decisive_invalid_outranks_opaque_argument() {
@@ -13327,7 +13433,7 @@ fn rotatey_decisive_invalid_outranks_opaque_argument() {
 
     assert_all_invalid(
         671301,
-        &["rotateY(1) skewX(10deg)", "skewX(10deg) rotateY(1)"],
+        &["rotateY(1) perspective(1px)", "perspective(1px) rotateY(1)"],
     );
 }
 
@@ -13335,9 +13441,10 @@ fn rotatey_decisive_invalid_outranks_opaque_argument() {
 // outside selected-profile coverage, in either authored order and
 // regardless of a sibling qualified `rotateY()`, and the coarser outer
 // unselected-function coverage outranks an inner opaque `rotateY()`
-// argument. `skewX()`/`matrix3d()` are used as the still-unselected outer
-// sentinels here, since they remain outside selected-profile coverage
-// after this leaf (#671).
+// argument. `perspective()`/`matrix3d()` are used as the still-unselected
+// outer sentinels here (`skewX()` served this role until #677 selected it
+// too), since they remain outside selected-profile coverage after this
+// leaf (#671 / #677).
 
 #[test]
 fn unselected_outer_function_precedence_covers_rotatey() {
@@ -13345,8 +13452,8 @@ fn unselected_outer_function_precedence_covers_rotatey() {
         671310,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "rotateY(90deg) skewX(10deg)",
-            "skewX(10deg) rotateY(90deg)",
+            "rotateY(90deg) perspective(1px)",
+            "perspective(1px) rotateY(90deg)",
             "rotateY(90deg) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
         ],
     );
@@ -13357,13 +13464,13 @@ fn unselected_outer_function_precedence_covers_rotatey() {
         671320,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "rotateY(calc(90deg)) skewX(10deg)",
-            "skewX(10deg) rotateY(calc(90deg))",
+            "rotateY(calc(90deg)) perspective(1px)",
+            "perspective(1px) rotateY(calc(90deg))",
         ],
     );
 
     // Decisive direct Invalid still wins over the outer unselected sibling.
-    assert_all_invalid(671330, &["rotateY(1) skewX(10deg)"]);
+    assert_all_invalid(671330, &["rotateY(1) perspective(1px)"]);
 }
 
 // 311. Selected `matrix()`, `scale()`, `translate3d()`, `rotate3d()`,
@@ -14173,12 +14280,13 @@ fn rotatez_deferred_substitution_outranks_surrounding_shape_conclusions() {
 // 332. Directly visible decisive invalidity outranks an opaque Function
 // found in a sibling slot; a direct wrong-category failure remains
 // decisive even alongside an outer unselected sibling, in either authored
-// order. `skewX()` is used as the still-unselected outer sentinel here,
-// since it remains outside selected-profile coverage after this leaf, and
-// `rotateZ()` itself is no longer available as an unselected sentinel now
-// that this leaf selects it -- this leaf completes the axis-specific
-// rotate family, so no rotate-family sibling remains as an unselected
-// sentinel anywhere in this module (#673).
+// order. `perspective()` is used as the still-unselected outer sentinel
+// here -- `skewX()` served this role until #677 selected it too -- since
+// `perspective()` remains outside selected-profile coverage after this
+// leaf, and `rotateZ()` itself is no longer available as an unselected
+// sentinel now that this leaf selects it -- this leaf completes the
+// axis-specific rotate family, so no rotate-family sibling remains as an
+// unselected sentinel anywhere in this module (#673 / #677).
 
 #[test]
 fn rotatez_decisive_invalid_outranks_opaque_argument() {
@@ -14186,7 +14294,7 @@ fn rotatez_decisive_invalid_outranks_opaque_argument() {
 
     assert_all_invalid(
         673301,
-        &["rotateZ(1) skewX(10deg)", "skewX(10deg) rotateZ(1)"],
+        &["rotateZ(1) perspective(1px)", "perspective(1px) rotateZ(1)"],
     );
 }
 
@@ -14194,9 +14302,10 @@ fn rotatez_decisive_invalid_outranks_opaque_argument() {
 // outside selected-profile coverage, in either authored order and
 // regardless of a sibling qualified `rotateZ()`, and the coarser outer
 // unselected-function coverage outranks an inner opaque `rotateZ()`
-// argument. `skewX()`/`matrix3d()` are used as the still-unselected outer
-// sentinels here, since they remain outside selected-profile coverage
-// after this leaf (#673).
+// argument. `perspective()`/`matrix3d()` are used as the still-unselected
+// outer sentinels here (`skewX()` served this role until #677 selected it
+// too), since they remain outside selected-profile coverage after this
+// leaf (#673 / #677).
 
 #[test]
 fn unselected_outer_function_precedence_covers_rotatez() {
@@ -14204,8 +14313,8 @@ fn unselected_outer_function_precedence_covers_rotatez() {
         673310,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "rotateZ(90deg) skewX(10deg)",
-            "skewX(10deg) rotateZ(90deg)",
+            "rotateZ(90deg) perspective(1px)",
+            "perspective(1px) rotateZ(90deg)",
             "rotateZ(90deg) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
         ],
     );
@@ -14216,13 +14325,13 @@ fn unselected_outer_function_precedence_covers_rotatez() {
         673320,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "rotateZ(calc(90deg)) skewX(10deg)",
-            "skewX(10deg) rotateZ(calc(90deg))",
+            "rotateZ(calc(90deg)) perspective(1px)",
+            "perspective(1px) rotateZ(calc(90deg))",
         ],
     );
 
     // Decisive direct Invalid still wins over the outer unselected sibling.
-    assert_all_invalid(673330, &["rotateZ(1) skewX(10deg)"]);
+    assert_all_invalid(673330, &["rotateZ(1) perspective(1px)"]);
 }
 
 // 334. Selected `matrix()`, `scale()`, `translate3d()`, `rotate3d()`,
@@ -15376,11 +15485,14 @@ fn skew_deferred_substitution_outranks_surrounding_shape_conclusions() {
 // outside selected-profile coverage, in either authored order and
 // regardless of a sibling qualified `skew()`, and the coarser outer
 // unselected-function coverage outranks an inner opaque `skew()` argument
-// in either slot. `skewX()`/`skewY()` are used as the still-unselected
-// outer sentinels here, since this leaf selects `skew()` alone and both
-// siblings remain outside selected-profile coverage after it; `matrix3d()`
-// and `perspective()` are used identically for the same reason. Decisive
-// direct Invalid still wins over any outer unselected sibling (#675).
+// in either slot. `skewY()` is used as the still-unselected outer sentinel
+// here, since this leaf selects `skew()` alone and `skewY()` remains
+// outside selected-profile coverage after it; `matrix3d()` and
+// `perspective()` are used identically for the same reason. `skewX()`
+// served this role too until #677 selected it -- its remaining "skew(1)
+// skewX(10deg)" case below stays valid because decisive direct Invalid
+// wins regardless of whether the sibling is unselected or qualified.
+// Decisive direct Invalid still wins over any outer sibling (#675 / #677).
 
 #[test]
 fn unselected_outer_function_precedence_covers_skew() {
@@ -15388,8 +15500,6 @@ fn unselected_outer_function_precedence_covers_skew() {
         675380,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "skew(90deg) skewX(10deg)",
-            "skewX(10deg) skew(90deg)",
             "skew(90deg) skewY(10deg)",
             "skewY(10deg) skew(90deg)",
             "skew(90deg) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
@@ -15399,20 +15509,23 @@ fn unselected_outer_function_precedence_covers_skew() {
 
     // Coarser outer unselected-function coverage outranks an inner opaque
     // skew argument, identically in both authored orders and
-    // independently for the X and Y slot.
+    // independently for the X and Y slot. `perspective()` now covers the X
+    // slot in place of the newly selected `skewX()`.
     assert_all_unsupported(
         675390,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "skew(calc(90deg)) skewX(10deg)",
-            "skewX(10deg) skew(calc(90deg))",
+            "skew(calc(90deg)) perspective(1px)",
+            "perspective(1px) skew(calc(90deg))",
             "skew(10deg,calc(90deg)) skewY(10deg)",
             "skewY(10deg) skew(10deg,calc(90deg))",
         ],
     );
 
-    // Decisive direct Invalid still wins over the outer unselected
-    // sibling.
+    // Decisive direct Invalid still wins over any sibling regardless of its
+    // own status: `skewX(10deg)` is now a qualified sibling rather than an
+    // unselected one, and `skewY(10deg)` remains unselected, yet `skew(1)`
+    // and `skew(10deg,1)` stay decisively Invalid either way.
     assert_all_invalid(
         675400,
         &["skew(1) skewX(10deg)", "skew(10deg,1) skewY(10deg)"],
@@ -15909,4 +16022,795 @@ fn skew_cross_leaf_isolation_is_preserved() {
     assert_eq!(result.transform_style_observations().len(), 1);
 
     assert_all_invalid(675570, &["none skew(90deg)", "skew(90deg) none"]);
+}
+
+// 369. `skewX() = skewX([<angle> | <zero>])` under current CSS Transforms /
+// CSS Values authority (#677): a direct `<angle>` argument qualifies in
+// every recognized unit, ASCII-case-insensitively, and with signed spelling
+// preserved, reusing the accepted rotate-family (#667) `is_css_angle_unit`
+// theorem without a second independent unit table. `skewX()` is the second
+// selected skew-family leaf, composing the accepted rotate-family exact-one
+// `<angle> | <zero>` scalar theorem with its own dedicated semantic
+// placement, distinct from `skew()`'s `x`/`y` slots.
+
+#[test]
+fn canonical_skewx_only_angle_qualifies() {
+    let result = qualify(
+        677100,
+        concat!(
+            "a{transform:skewX(90deg);}",
+            "b{transform:skewX(100grad);}",
+            "c{transform:skewX(1rad);}",
+            "d{transform:skewX(0.25turn);}",
+            "e{transform:skewX(90DEG);}",
+            "f{transform:skewX(1RAD);}",
+            "g{transform:skewX(-45deg);}",
+            "h{transform:skewX(+30deg);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 8);
+    for index in 0..8 {
+        let (is_angle, _) = skewx_argument_spelling(&result, index, 0);
+        assert!(is_angle, "expected Angle role at {index}");
+    }
+    assert_eq!(skewx_argument_spelling(&result, 0, 0).1, "90deg");
+    assert_eq!(skewx_argument_spelling(&result, 1, 0).1, "100grad");
+    assert_eq!(skewx_argument_spelling(&result, 2, 0).1, "1rad");
+    assert_eq!(skewx_argument_spelling(&result, 3, 0).1, "0.25turn");
+    assert_eq!(skewx_argument_spelling(&result, 4, 0).1, "90DEG");
+    assert_eq!(skewx_argument_spelling(&result, 5, 0).1, "1RAD");
+    assert_eq!(skewx_argument_spelling(&result, 6, 0).1, "-45deg");
+    assert_eq!(skewx_argument_spelling(&result, 7, 0).1, "+30deg");
+}
+
+// 370. Representative exact-zero `Number` spellings qualify the single
+// authored slot through the `<zero>` branch, reusing the accepted
+// `is_direct_zero_numeric_value` theorem; the retained evidence stays a
+// `Number` token (#677).
+
+#[test]
+fn canonical_skewx_only_zero_qualifies() {
+    let result = qualify(
+        677120,
+        concat!(
+            "a{transform:skewX(0);}",
+            "b{transform:skewX(+0);}",
+            "c{transform:skewX(-0);}",
+            "d{transform:skewX(.0);}",
+            "e{transform:skewX(0.0);}",
+            "f{transform:skewX(0e100);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 6);
+    for index in 0..6 {
+        let (is_angle, _) = skewx_argument_spelling(&result, index, 0);
+        assert!(!is_angle, "expected Zero role at {index}");
+    }
+    assert_eq!(skewx_argument_spelling(&result, 0, 0).1, "0");
+    assert_eq!(skewx_argument_spelling(&result, 1, 0).1, "+0");
+    assert_eq!(skewx_argument_spelling(&result, 2, 0).1, "-0");
+    assert_eq!(skewx_argument_spelling(&result, 3, 0).1, "0.0");
+    assert_eq!(skewx_argument_spelling(&result, 4, 0).1, "0.0");
+    assert_eq!(skewx_argument_spelling(&result, 5, 0).1, "0e100");
+}
+
+// 371. `0` and `0deg` remain distinct authored roles -- `<zero>` and
+// `<angle>` respectively -- never collapsed into one generic scalar, never
+// normalized into each other, and a `<zero>` never gains a synthesized
+// `deg` unit. This is load-bearing (#677).
+
+#[test]
+fn skewx_zero_vs_angle_authored_identity_is_preserved() {
+    let result = qualify(
+        677140,
+        concat!("a{transform:skewX(0);}", "b{transform:skewX(0deg);}",),
+    );
+
+    assert_eq!(result.transform_observations().len(), 2);
+    let (zero_is_angle, zero_spelling) = skewx_argument_spelling(&result, 0, 0);
+    let (angle_is_angle, angle_spelling) = skewx_argument_spelling(&result, 1, 0);
+    assert!(!zero_is_angle, "expected authored `0` to qualify as Zero");
+    assert!(
+        angle_is_angle,
+        "expected authored `0deg` to qualify as Angle"
+    );
+    assert_eq!(zero_spelling, "0");
+    assert_eq!(angle_spelling, "0deg");
+}
+
+// 372. `SkewXArgument := DirectAngle | DirectZero` admits no other direct
+// category: a nonzero unitless `Number`, a `Percentage`, a `Dimension` with
+// an unrecognized (non-angle) unit, an `Ident`, a `String`, and a `Hash` are
+// all decisively `Invalid` (#677).
+
+#[test]
+fn wrong_direct_categories_are_invalid_for_skewx() {
+    assert_all_invalid(
+        677160,
+        &[
+            "skewX(1)",
+            "skewX(-1)",
+            "skewX(.5)",
+            "skewX(1e0)",
+            "skewX(0%)",
+            "skewX(100%)",
+            "skewX(1px)",
+            "skewX(1em)",
+            "skewX(1s)",
+            "skewX(1fr)",
+            "skewX(1unknownunit)",
+            "skewX(foo)",
+            "skewX(\"0\")",
+            "skewX(#abc)",
+        ],
+    );
+}
+
+// 373. `skewX()` accepts exactly one authored argument: zero, two, or more
+// slots are decisively `Invalid`, and an authored-empty sole slot is
+// decisively `Invalid` -- never synthesizing a missing argument, dropping
+// an extra one, or reinterpreting the component as `skew()` (#677).
+
+#[test]
+fn skewx_cardinality_is_exactly_one() {
+    assert_all_invalid(
+        677180,
+        &[
+            "skewX()",
+            "skewX(0,90deg)",
+            "skewX(90deg,0)",
+            "skewX(0,0)",
+            "skewX(90deg,180deg)",
+            "skewX(,)",
+            "skewX(,0)",
+            "skewX(0,)",
+        ],
+    );
+}
+
+// 374. A complete non-deferred Function occupying the sole authored slot is
+// `Unsupported(FunctionValuedTransformArgument)` rather than direct
+// `<zero>` or direct `<angle>`: `calc(0)` never satisfies direct `<zero>`,
+// and `calc(90deg)` never satisfies direct `<angle>`. No CSS math
+// evaluation or constant folding occurs (#677).
+
+#[test]
+fn skewx_opaque_function_argument_is_unsupported() {
+    assert_all_unsupported(
+        677200,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
+        &[
+            "skewX(calc(0))",
+            "skewX(calc(90deg))",
+            "skewX(min(0deg,90deg))",
+            "skewX(max(0deg,90deg))",
+            "skewX(clamp(0deg,45deg,90deg))",
+        ],
+    );
+}
+
+// 375. A Function followed by additional direct material in the same slot
+// is directly visible structural failure and stays decisively `Invalid`,
+// never softened into opaque `Unsupported` merely because a Function is
+// present (#677).
+
+#[test]
+fn skewx_function_plus_junk_is_invalid() {
+    assert_all_invalid(
+        677220,
+        &[
+            "skewX(calc(0) 0)",
+            "skewX(calc(90deg) foo)",
+            "skewX(calc(90deg) 1deg)",
+        ],
+    );
+}
+
+// 376. A comma nested inside a Function argument is at a deeper relative
+// depth and never splits the outer `skewX()` slot: `skewX(calc(1,2))` has
+// exactly one outer slot, occupied entirely by the opaque `calc(...)`
+// Function, so it is `Unsupported` rather than a two-slot cardinality
+// failure. An authored top-level second slot after a Function argument
+// still produces the real two-slot cardinality failure (#677).
+
+#[test]
+fn nested_comma_isolated_within_skewx_opaque_argument() {
+    assert_unsupported(
+        &qualify(677240, "a{transform:skewX(calc(1,2));}"),
+        0,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
+    );
+
+    assert_all_invalid(677241, &["skewX(calc(1,2),0)"]);
+}
+
+// 377. Deferred substitution can alter the enclosing token sequence,
+// separators, and cardinality, so it is resolved before any surrounding
+// skewX shape conclusion -- including an arity that looks decisive (#677).
+
+#[test]
+fn skewx_deferred_substitution_outranks_surrounding_shape_conclusions() {
+    assert_all_unsupported(
+        677260,
+        CssTransformUnsupportedReason::DeferredSubstitutionFunction,
+        &[
+            "skewX(var(--x))",
+            "skewX(var(--x),90deg)",
+            "matrix(1,0,0,1,0,0) skewX(var(--x))",
+            "skewX(var(--x)) matrix(1,0,0,1,0,0)",
+        ],
+    );
+}
+
+// 378. Every `<transform-function>` other than the selected leaves stays
+// outside selected-profile coverage, in either authored order and
+// regardless of a sibling qualified `skewX()`, and the coarser outer
+// unselected-function coverage outranks an inner opaque `skewX()`
+// argument. `matrix3d()` and `perspective()` are used as the still-
+// unselected outer sentinels here. Decisive direct Invalid still wins over
+// any outer sibling (#677).
+
+#[test]
+fn unselected_outer_function_precedence_covers_skewx() {
+    assert_all_unsupported(
+        677280,
+        CssTransformUnsupportedReason::UnselectedTransformFunction,
+        &[
+            "skewX(90deg) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
+            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1) skewX(90deg)",
+            "skewX(90deg) perspective(1px)",
+            "perspective(1px) skewX(90deg)",
+        ],
+    );
+
+    // Coarser outer unselected-function coverage outranks an inner opaque
+    // skewX argument, identically in both authored orders.
+    assert_all_unsupported(
+        677290,
+        CssTransformUnsupportedReason::UnselectedTransformFunction,
+        &[
+            "skewX(calc(90deg)) perspective(1px)",
+            "perspective(1px) skewX(calc(90deg))",
+        ],
+    );
+
+    // Decisive direct Invalid still wins over the outer unselected sibling.
+    assert_all_invalid(
+        677300,
+        &["skewX(1) perspective(1px)", "perspective(1px) skewX(1)"],
+    );
+}
+
+// 379. `<transform-list>` is whitespace-separated repetition: a top-level
+// comma is never a permitted separator, including between two `skewX()`
+// components or a `skewX()` and a sibling selected function (#677).
+
+#[test]
+fn top_level_comma_is_invalid_around_skewx() {
+    assert_all_invalid(
+        677320,
+        &[
+            "skewX(90deg), matrix(1,0,0,1,0,0)",
+            "skewX(90deg), scale(2)",
+            "skewX(90deg), rotateZ(90deg)",
+            "skewX(90deg), skewX(45deg)",
+        ],
+    );
+}
+
+// 380. CSS Syntax function consumption may end at a true stylesheet EOF, so
+// a parser-committed EOF-ended `skewX()` extent is qualified from retained
+// interior evidence alone once its sole authored slot is complete. EOF
+// never fills or repairs a missing argument, a wrong direct category, an
+// authored-empty slot, or a second slot `skewX()` has no room for (#677).
+
+#[test]
+fn true_stylesheet_eof_ended_skewx_extent_follows_parser_authority() {
+    let angle_eof = qualify(677340, "a{transform:skewX(10deg");
+    assert_eq!(
+        angle_eof.execution_completion(),
+        CssParserExecutionCompletion::Complete
+    );
+    assert_eq!(angle_eof.transform_observations().len(), 1);
+    assert_eq!(
+        skewx_argument_spelling(&angle_eof, 0, 0),
+        (true, "10deg".to_string())
+    );
+
+    let zero_eof = qualify(677341, "a{transform:skewX(0");
+    assert_eq!(
+        zero_eof.execution_completion(),
+        CssParserExecutionCompletion::Complete
+    );
+    assert_eq!(zero_eof.transform_observations().len(), 1);
+    assert_eq!(
+        skewx_argument_spelling(&zero_eof, 0, 0),
+        (false, "0".to_string())
+    );
+
+    // Zero-slot EOF stays decisively Invalid.
+    let empty = qualify(677342, "a{transform:skewX(");
+    assert_invalid(&empty, 0);
+
+    // EOF never repairs a decisive direct category.
+    let wrong_category_eof = qualify(677343, "a{transform:skewX(1");
+    assert_invalid(&wrong_category_eof, 0);
+
+    // A trailing comma at true EOF stays decisively Invalid: an
+    // authored-empty second slot is never treated as omitted, and `skewX()`
+    // never widens to a second slot at all.
+    let trailing_comma = qualify(677344, "a{transform:skewX(10deg,");
+    assert_invalid(&trailing_comma, 0);
+
+    // A second slot never widens skewX() cardinality, even at true EOF.
+    let two_slots_eof = qualify(677345, "a{transform:skewX(10deg,20deg");
+    assert_invalid(&two_slots_eof, 0);
+
+    // A closed component followed by stray material is invalid, proving
+    // the accepted EOF case is not "accept whatever trails a skewX".
+    let trailing = qualify(677346, "a{transform:skewX(10deg) 7;}");
+    assert_invalid(&trailing, 0);
+}
+
+// 381. Lower-layer lifecycle evidence stays owned by the tokenizer and
+// parser: comments/trivia never change slot interpretation, a comment
+// never fills the sole authored slot, and `!important` remains outside the
+// semantic value window (#677).
+
+#[test]
+fn trivia_and_important_never_change_skewx_interpretation() {
+    let result = qualify(
+        677360,
+        concat!(
+            "a{transform:skewX(90deg/**/);}",
+            "b{transform:skewX(/**/90deg);}",
+            "c{transform:skewX( 90deg );}",
+            "d{transform:skewX(90deg) !important;}",
+            "e{transform:skewX(90deg)!important;}",
+            "f{transform:skewX(/**/0);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 6);
+    for index in 0..5 {
+        assert_eq!(
+            skewx_argument_spelling(&result, index, 0),
+            (true, "90deg".to_string()),
+            "trivia changed slot interpretation at {index}"
+        );
+    }
+    for index in 3..5 {
+        assert!(
+            result.upstream_parser_result().occurrences()[index]
+                .priority()
+                .is_some(),
+            "expected retained priority evidence at {index}"
+        );
+    }
+    assert_eq!(
+        skewx_argument_spelling(&result, 5, 0),
+        (false, "0".to_string())
+    );
+
+    // A comment is trivia, never an argument: it can neither fill the sole
+    // authored slot nor a second slot `skewX()` has no room for.
+    assert_all_invalid(677370, &["skewX(/**/)", "skewX(90deg,/**/)"]);
+}
+
+// 382. Repeated and cross-source runs remain deterministic, and evidence
+// lookup resolves to the exact retained Number/Dimension token identically
+// across runs (#677).
+
+#[test]
+fn skewx_repeated_and_cross_source_runs_are_deterministic() {
+    let css = concat!(
+        "a{transform:skewX(1);}",
+        "b{transform:skewX(calc(0));}",
+        "c{transform:skewX(1px);}",
+        "d{transform:matrix(1,0,0,1,0,0) skewX(90deg);}",
+        "e{transform:skewX(0);}",
+    );
+
+    let first = qualify(677380, css);
+    let repeated = qualify(677380, css);
+    let another_source = qualify(677381, css);
+
+    assert_eq!(
+        first.transform_observations(),
+        repeated.transform_observations()
+    );
+    assert_eq!(
+        first.transform_observations(),
+        another_source.transform_observations()
+    );
+
+    assert_invalid(&first, 0);
+    assert_unsupported(
+        &first,
+        1,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
+    );
+    assert_invalid(&first, 2);
+    assert_eq!(qualified_functions(&first, 3).len(), 2);
+
+    assert_eq!(
+        skewx_argument_spelling(&first, 3, 1),
+        skewx_argument_spelling(&repeated, 3, 1)
+    );
+    assert_eq!(
+        skewx_argument_spelling(&first, 3, 1),
+        skewx_argument_spelling(&another_source, 3, 1)
+    );
+    assert_eq!(
+        skewx_argument_spelling(&first, 4, 0),
+        skewx_argument_spelling(&repeated, 4, 0)
+    );
+}
+
+// 383. `skewX` function-name recognition is ASCII-case-insensitive,
+// matching the accepted profile-wide case-insensitivity boundary, and
+// structurally malformed `skewX` components -- a bare Function name, an
+// unbalanced/duplicated closer, or stray leading material -- stay
+// decisively `Invalid` (#677).
+
+#[test]
+fn skewx_function_name_recognition_and_malformed_components() {
+    let result = qualify(
+        677400,
+        concat!(
+            "a{transform:SKEWX(90deg);}",
+            "b{transform:SkEwX(90deg);}",
+            "c{transform:s\\6b ewX(90deg);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 3);
+    for index in 0..3 {
+        assert_eq!(
+            skewx_argument_spelling(&result, index, 0),
+            (true, "90deg".to_string()),
+            "skewX name recognition failed at {index}"
+        );
+    }
+
+    assert_all_invalid(
+        677410,
+        &[
+            "skewX",
+            "skewX(90deg))",
+            "skewX((90deg)",
+            "1 skewX(90deg)",
+            "[skewX(90deg)]",
+        ],
+    );
+}
+
+// 384. Selected `matrix()`, `scale()`, `translate3d()`, `rotate3d()`,
+// `translate()`, `translateX()`, `translateY()`, `translateZ()`,
+// `scaleX()`, `scaleY()`, `scaleZ()`, `scale3d()`, `rotate()`, `rotateX()`,
+// `rotateY()`, `rotateZ()`, `skew()`, and `skewX()` components mix and
+// repeat freely, preserving exact authored order and repetition through the
+// heterogeneous `CssTransformFunction` alternation, and no selected leaf's
+// evidence drifts across another's index in a mixed sequence. This
+// exercises the complete eighteen-kind selected profile for the first
+// time, including repeated `skewX()`, proving that no sibling's evidence
+// index drifts in a mixed list (#418 / #645 / #647 / #649 / #651 / #653 /
+// #655 / #657 / #659 / #661 / #663 / #665 / #667 / #669 / #671 / #673 /
+// #675 / #677).
+
+#[test]
+fn mixed_selected_function_order_including_skewx_is_preserved() {
+    let result = qualify(
+        677420,
+        concat!(
+            "a{transform:matrix(1,0,0,1,0,0) skewX(90deg);}",
+            "b{transform:skewX(90deg) matrix(1,0,0,1,0,0);}",
+            "c{transform:skewX(1deg) skewX(2deg);}",
+            "d{transform:matrix(1,0,0,1,0,0) scale(2) translate3d(1px,2px,3px) rotate3d(1,0,0,90deg) translate(10px) translateX(20px) translateY(30px) translateZ(40px) scaleX(50) scaleY(60) scaleZ(70) scale3d(80,90,100) rotate(45deg) rotateX(45deg) rotateY(45deg) rotateZ(45deg) skew(55deg,65deg) skewX(75deg);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 4);
+
+    assert!(matches!(
+        qualified_functions(&result, 0)[0],
+        CssTransformFunction::Matrix(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 0)[1],
+        CssTransformFunction::SkewX(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 1)[0],
+        CssTransformFunction::SkewX(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 1)[1],
+        CssTransformFunction::Matrix(_)
+    ));
+
+    // Repeated `skewX()` preserves authored order and each component's own
+    // evidence, and neither leaks into the other's index.
+    let repeated = qualified_functions(&result, 2);
+    assert_eq!(repeated.len(), 2);
+    assert!(matches!(repeated[0], CssTransformFunction::SkewX(_)));
+    assert!(matches!(repeated[1], CssTransformFunction::SkewX(_)));
+    assert_eq!(
+        skewx_argument_spelling(&result, 2, 0),
+        (true, "1deg".to_string())
+    );
+    assert_eq!(
+        skewx_argument_spelling(&result, 2, 1),
+        (true, "2deg".to_string())
+    );
+
+    let eighteen_kind_sequence = qualified_functions(&result, 3);
+    assert_eq!(eighteen_kind_sequence.len(), 18);
+    assert!(matches!(
+        eighteen_kind_sequence[0],
+        CssTransformFunction::Matrix(_)
+    ));
+    assert!(matches!(
+        eighteen_kind_sequence[1],
+        CssTransformFunction::Scale(_)
+    ));
+    assert!(matches!(
+        eighteen_kind_sequence[2],
+        CssTransformFunction::Translate3d(_)
+    ));
+    assert!(matches!(
+        eighteen_kind_sequence[3],
+        CssTransformFunction::Rotate3d(_)
+    ));
+    assert!(matches!(
+        eighteen_kind_sequence[4],
+        CssTransformFunction::Translate(_)
+    ));
+    assert!(matches!(
+        eighteen_kind_sequence[5],
+        CssTransformFunction::TranslateX(_)
+    ));
+    assert!(matches!(
+        eighteen_kind_sequence[6],
+        CssTransformFunction::TranslateY(_)
+    ));
+    assert!(matches!(
+        eighteen_kind_sequence[7],
+        CssTransformFunction::TranslateZ(_)
+    ));
+    assert!(matches!(
+        eighteen_kind_sequence[8],
+        CssTransformFunction::ScaleX(_)
+    ));
+    assert!(matches!(
+        eighteen_kind_sequence[9],
+        CssTransformFunction::ScaleY(_)
+    ));
+    assert!(matches!(
+        eighteen_kind_sequence[10],
+        CssTransformFunction::ScaleZ(_)
+    ));
+    assert!(matches!(
+        eighteen_kind_sequence[11],
+        CssTransformFunction::Scale3d(_)
+    ));
+    assert!(matches!(
+        eighteen_kind_sequence[12],
+        CssTransformFunction::Rotate(_)
+    ));
+    assert!(matches!(
+        eighteen_kind_sequence[13],
+        CssTransformFunction::RotateX(_)
+    ));
+    assert!(matches!(
+        eighteen_kind_sequence[14],
+        CssTransformFunction::RotateY(_)
+    ));
+    assert!(matches!(
+        eighteen_kind_sequence[15],
+        CssTransformFunction::RotateZ(_)
+    ));
+    assert!(matches!(
+        eighteen_kind_sequence[16],
+        CssTransformFunction::Skew(_)
+    ));
+    assert!(matches!(
+        eighteen_kind_sequence[17],
+        CssTransformFunction::SkewX(_)
+    ));
+
+    assert_eq!(
+        rotate_argument_spelling(&result, 3, 12),
+        (true, "45deg".to_string())
+    );
+    assert_eq!(
+        rotatex_argument_spelling(&result, 3, 13),
+        (true, "45deg".to_string())
+    );
+    assert_eq!(
+        rotatey_argument_spelling(&result, 3, 14),
+        (true, "45deg".to_string())
+    );
+    assert_eq!(
+        rotatez_argument_spelling(&result, 3, 15),
+        (true, "45deg".to_string())
+    );
+    assert_eq!(
+        skew_x_argument_spelling(&result, 3, 16),
+        (true, "55deg".to_string())
+    );
+    assert_eq!(
+        skew_y_argument_spelling(&result, 3, 16),
+        Some((true, "65deg".to_string()))
+    );
+    assert_eq!(
+        skewx_argument_spelling(&result, 3, 17),
+        (true, "75deg".to_string())
+    );
+}
+
+// 385. `matrix3d()` and `perspective()` remain outside selected-profile
+// coverage even alongside a sibling qualified `skewX()`, in either
+// authored order: this leaf selects `skewX()` alone and widens nothing
+// else (#677).
+
+#[test]
+fn matrix3d_and_perspective_remain_unselected_alongside_skewx() {
+    assert_all_unsupported(
+        677440,
+        CssTransformUnsupportedReason::UnselectedTransformFunction,
+        &[
+            "skewX(90deg) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
+            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1) skewX(90deg)",
+            "skewX(90deg) perspective(1px)",
+            "perspective(1px) skewX(90deg)",
+        ],
+    );
+}
+
+// 386. Cross-leaf isolation: `skewX()` recognition never leaks into the
+// accepted longhand `translate`/`scale`/`rotate` leaves, the other
+// `transform-*` single-value leaves, or the other selected `transform`
+// function branches, and `none` remains an exclusive whole-value branch
+// even when combined with `skewX()` (#418 / #677).
+
+#[test]
+fn skewx_cross_leaf_isolation_is_preserved() {
+    let result = qualify(
+        677460,
+        concat!(
+            "a{transform:skewX(90deg);transform:none;}",
+            "b{translate:10px;}",
+            "c{scale:2;}",
+            "d{rotate:45deg;}",
+            "e{transform-origin:left top;}",
+            "f{transform-box:border-box;}",
+            "g{transform-style:flat;}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 2);
+    assert_eq!(
+        skewx_argument_spelling(&result, 0, 0),
+        (true, "90deg".to_string())
+    );
+    assert_whole_none(&result, 1);
+
+    assert_eq!(result.translate_observations().len(), 1);
+    assert_eq!(result.scale_observations().len(), 1);
+    assert_eq!(result.rotate_observations().len(), 1);
+    assert_eq!(result.transform_origin_observations().len(), 1);
+    assert_eq!(result.transform_box_observations().len(), 1);
+    assert_eq!(result.transform_style_observations().len(), 1);
+
+    assert_all_invalid(677470, &["none skewX(90deg)", "skewX(90deg) none"]);
+}
+
+// 387. `skew()` and `skewX()` remain distinct selected components under
+// their own dedicated `CssTransformFunction` variants: `skewX()` is never
+// routed through `CssTransformFunction::Skew`, `skew()` is never routed
+// through `CssTransformFunction::SkewX`, and neither is normalized into
+// the other. The accepted `skew()` authored-omission theorem -- a
+// genuinely omitted `y` argument stays `None`, distinct from an explicit
+// second `0`/`0deg` -- remains completely unchanged by this leaf: this is
+// the highest-value regression for #677 (#675 / #677).
+
+#[test]
+fn skew_and_skewx_semantic_separation_is_preserved() {
+    let result = qualify(
+        677480,
+        concat!(
+            "a{transform:skew(10deg);}",
+            "b{transform:skewX(10deg);}",
+            "c{transform:skew(10deg,0);}",
+            "d{transform:skew(10deg,0deg);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 4);
+
+    assert!(matches!(
+        qualified_functions(&result, 0)[0],
+        CssTransformFunction::Skew(_)
+    ));
+    assert_eq!(
+        skew_x_argument_spelling(&result, 0, 0),
+        (true, "10deg".to_string())
+    );
+    assert_eq!(
+        skew_y_argument_spelling(&result, 0, 0),
+        None,
+        "skew(10deg) must keep y genuinely omitted -- adding skewX() must not \
+         synthesize a second skew() argument"
+    );
+
+    assert!(matches!(
+        qualified_functions(&result, 1)[0],
+        CssTransformFunction::SkewX(_)
+    ));
+    assert_eq!(
+        skewx_argument_spelling(&result, 1, 0),
+        (true, "10deg".to_string())
+    );
+
+    assert_eq!(
+        skew_y_argument_spelling(&result, 2, 0),
+        Some((false, "0".to_string())),
+        "skew(10deg,0) explicit Y=0 must remain unchanged"
+    );
+    assert_eq!(
+        skew_y_argument_spelling(&result, 3, 0),
+        Some((true, "0deg".to_string())),
+        "skew(10deg,0deg) explicit Y=0deg must remain unchanged"
+    );
+
+    // No decomposition of a two-argument `skew()` into `skewX()`/`skewY()`
+    // siblings: `skew(10deg,20deg)` remains exactly one qualified `Skew`
+    // component carrying both arguments, never two separate components.
+    let undecomposed = qualify(677490, "a{transform:skew(10deg,20deg);}");
+    let undecomposed_functions = qualified_functions(&undecomposed, 0);
+    assert_eq!(
+        undecomposed_functions.len(),
+        1,
+        "skew(a,b) must remain one component, never decomposed into skewX(a) skewY(b)"
+    );
+    assert!(matches!(
+        undecomposed_functions[0],
+        CssTransformFunction::Skew(_)
+    ));
+}
+
+// 388. `skewY()` remains unselected after this leaf selects `skewX()`:
+// `skewX()`/`skewY()` are distinct authored identities, `skewX()` never
+// decomposes into or from `skewY()`, and the two coexist as one qualified,
+// one unselected sibling in either authored order (#677).
+
+#[test]
+fn skewy_remains_unselected_after_skewx_selection() {
+    assert_all_unsupported(
+        677500,
+        CssTransformUnsupportedReason::UnselectedTransformFunction,
+        &[
+            "skewY(10deg)",
+            "skewX(10deg) skewY(10deg)",
+            "skewY(10deg) skewX(10deg)",
+        ],
+    );
+
+    // Outer unselected `skewY()` coverage outranks an inner opaque
+    // `skewX()` argument, in either authored order.
+    assert_all_unsupported(
+        677510,
+        CssTransformUnsupportedReason::UnselectedTransformFunction,
+        &[
+            "skewX(calc(10deg)) skewY(10deg)",
+            "skewY(10deg) skewX(calc(10deg))",
+        ],
+    );
+
+    // Decisive direct Invalid still wins over the outer unselected
+    // `skewY()` sibling.
+    assert_all_invalid(677520, &["skewX(1) skewY(10deg)"]);
 }
