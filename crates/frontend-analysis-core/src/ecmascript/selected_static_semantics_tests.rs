@@ -225,6 +225,9 @@ fn accepted_precedence_matrix_is_declaration_source_order_then_local_rule_order(
             SelectedStaticSemanticsRejection::LexicalVarNameCollision { .. } => {
                 panic!("flat fixture must not acquire var collision evidence")
             }
+            SelectedStaticSemanticsRejection::BlockLexicalVarNameCollision { .. } => {
+                panic!("flat fixture must not acquire Block var collision evidence")
+            }
             SelectedStaticSemanticsRejection::InvalidEscapedIdentifierStart { escape } => {
                 ("EE01-R01", (escape.range().start(), escape.range().end()))
             }
@@ -485,6 +488,9 @@ fn escaped_binding_precedence_matches_all_twelve_candidate_independent_witnesses
             SelectedStaticSemanticsRejection::LexicalVarNameCollision { .. } => {
                 panic!("flat fixture must not acquire var collision evidence")
             }
+            SelectedStaticSemanticsRejection::BlockLexicalVarNameCollision { .. } => {
+                panic!("flat fixture must not acquire Block var collision evidence")
+            }
         };
         assert_eq!(rule, expected_rule, "{text:?}");
         assert_eq!(range, expected_range, "{text:?}");
@@ -674,11 +680,12 @@ fn production_static_semantics_preserves_architecture_boundaries_in_source() {
     }
 
     assert_eq!(production.matches("first_by_name: HashMap<").count(), 2);
-    assert_eq!(production.matches("try_reserve(1)").count(), 4);
+    assert_eq!(production.matches("try_reserve(1)").count(), 9);
     assert!(production.contains("DuplicateDeclarationBinding"));
     assert!(production.contains("DuplicateBlockLexicalName"));
     assert!(production.contains("DuplicateLexicalName"));
     assert!(production.contains("LexicalVarNameCollision"));
+    assert!(production.contains("BlockLexicalVarNameCollision"));
     assert!(production.contains("SelectedOneLevelBlockStaticSemanticsAccepted"));
     assert!(production.contains("EscapedReservedWordInitializer"));
 }

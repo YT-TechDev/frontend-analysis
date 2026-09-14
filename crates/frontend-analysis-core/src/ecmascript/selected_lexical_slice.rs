@@ -84,7 +84,7 @@ pub(super) enum SelectedVariableTopLevelItem {
 #[derive(Debug)]
 pub(super) struct SelectedBlock {
     block: SourceAnchor,
-    declarations: Vec<SelectedLexicalDeclaration>,
+    items: Vec<SelectedBlockItem>,
 }
 
 impl SelectedBlock {
@@ -92,8 +92,69 @@ impl SelectedBlock {
         &self.block
     }
 
-    pub(super) fn declarations(&self) -> &[SelectedLexicalDeclaration] {
-        &self.declarations
+    pub(super) fn items(&self) -> &[SelectedBlockItem] {
+        &self.items
+    }
+
+    /// Every Block-local lexical declaration, in authored item order, with
+    /// bare-var items filtered out. Existing lexical-only consumers (Block
+    /// duplicate-lexical checks, Binding/Scope, var-name correspondence) keep
+    /// this exact accessor rather than widening to raw items.
+    pub(super) fn declarations(&self) -> impl Iterator<Item = &SelectedLexicalDeclaration> {
+        self.items.iter().filter_map(|item| match item {
+            SelectedBlockItem::LexicalDeclaration(declaration) => Some(declaration),
+            SelectedBlockItem::BareVar(_) => None,
+        })
+    }
+
+    /// Every Block-local bare `var` contributor, in authored item order, with
+    /// lexical declarations filtered out. Consumed only by the Block
+    /// `VarDeclaredNames` / EE-14-R02 / Script-propagation static semantics
+    /// introduced for Issue #691.
+    pub(super) fn bare_vars(&self) -> impl Iterator<Item = &SelectedBareBlockVar> {
+        self.items.iter().filter_map(|item| match item {
+            SelectedBlockItem::BareVar(bare_var) => Some(bare_var),
+            SelectedBlockItem::LexicalDeclaration(_) => None,
+        })
+    }
+}
+
+/// One authored item of the one-level selected Block body, widened by
+/// Issue #691 from lexical-declaration-only to admit exactly one additional
+/// bare `var` production leaf. Item order is retained because Tier-2b
+/// (`EE-14-R02`) evidence selection and same-tier sibling-Block ordering are
+/// authored-source-order sensitive.
+#[derive(Debug)]
+pub(super) enum SelectedBlockItem {
+    LexicalDeclaration(SelectedLexicalDeclaration),
+    BareVar(SelectedBareBlockVar),
+}
+
+/// `SelectedBareBlockVar ::= var SelectedBindingIdentifier ;` accepted by
+/// Issue #688/#691: exactly one selected `BindingIdentifier`, no initializer,
+/// and an authored semicolon. No initializer, comma, or whole-statement span
+/// is retained because no proven consumer needs it.
+#[derive(Debug)]
+pub(super) struct SelectedBareBlockVar {
+    binding: SourceAnchor,
+    name_state: SelectedBindingNameState,
+}
+
+impl SelectedBareBlockVar {
+    pub(super) fn binding(&self) -> &SourceAnchor {
+        &self.binding
+    }
+
+    pub(super) fn name_state(&self) -> &SelectedBindingNameState {
+        &self.name_state
+    }
+
+    pub(super) fn semantic_name(&self) -> Option<&str> {
+        match &self.name_state {
+            SelectedBindingNameState::Unescaped => Some(self.binding.fragment()),
+            SelectedBindingNameState::EscapedValid { decoded } => Some(decoded.as_str()),
+            SelectedBindingNameState::InvalidEscapedPosition { .. } => None,
+        }
     }
 }
 
@@ -511,13 +572,17 @@ impl<'source> Cursor<'source> {
             return Err(ParseFailure::UnsupportedCoverage);
         }
 
-        let mut declarations = Vec::new();
+        let mut items = Vec::new();
         loop {
-            let declaration = self.parse_declaration()?;
-            declarations
+            let item = if self.remaining().starts_with("var") {
+                SelectedBlockItem::BareVar(self.parse_selected_bare_block_var()?)
+            } else {
+                SelectedBlockItem::LexicalDeclaration(self.parse_declaration()?)
+            };
+            items
                 .try_reserve(1)
                 .map_err(|_| ParseFailure::ResourceLimited)?;
-            declarations.push(declaration);
+            items.push(item);
 
             self.skip_selected_trivia();
             if self.consume_ascii('}') {
@@ -529,9 +594,46 @@ impl<'source> Cursor<'source> {
         }
 
         let block = self.anchor(block_start, self.offset)?;
-        Ok(SelectedBlock {
-            block,
-            declarations,
+        Ok(SelectedBlock { block, items })
+    }
+
+    /// Recognizes exactly `SelectedBareBlockVar ::= var SelectedBindingIdentifier ;`
+    /// (Issue #688/#691): one selected `BindingIdentifier`, no initializer, no
+    /// declarator list continuation, and a mandatory authored semicolon.
+    ///
+    /// This intentionally does not reuse `parse_variable_statement`: that
+    /// owner's `1..N` declarator list, optional initializer, and EOF-only ASI
+    /// all belong to the distinct top-level `VariableStatement` capability and
+    /// must not leak into this narrower Block-item placement. Only the keyword
+    /// and `BindingIdentifier` recognition mechanics are shared. Any
+    /// initializer (`=`), comma continuation, or missing authored semicolon
+    /// (including EOF, i.e. non-EOF ASI before the enclosing `}`) is left
+    /// entirely unrecognized here and reported as `UnsupportedCoverage`.
+    fn parse_selected_bare_block_var(&mut self) -> Result<SelectedBareBlockVar, ParseFailure> {
+        if !self.consume_keyword("var") {
+            return Err(ParseFailure::UnsupportedCoverage);
+        }
+
+        let after_keyword = self.offset;
+        self.skip_selected_trivia();
+        let grammar_context = if self.offset == after_keyword {
+            SelectedGrammarEvidenceContext::UnsupportedKeywordAdjacent
+        } else {
+            SelectedGrammarEvidenceContext::General
+        };
+
+        let (binding_start, binding_end, name_state) =
+            self.parse_selected_binding_identifier(grammar_context)?;
+
+        self.skip_selected_trivia();
+        if !self.consume_ascii(';') {
+            return Err(ParseFailure::UnsupportedCoverage);
+        }
+
+        let binding = self.anchor(binding_start, binding_end)?;
+        Ok(SelectedBareBlockVar {
+            binding,
+            name_state,
         })
     }
 
