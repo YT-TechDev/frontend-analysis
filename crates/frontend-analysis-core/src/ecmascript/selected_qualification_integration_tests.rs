@@ -1280,3 +1280,156 @@ fn multi_declarator_grammar_rejection_stays_distinct_from_deferred_coverage() {
         );
     }
 }
+
+// --- Issue #691: one-level Block-contained bare `var` production leaf -----
+//
+// These focused production tests seal the candidate against the #688/#689
+// theorem independently validated (without calling production) by PR #690's
+// `qualification_selected_one_level_block_bare_var_validation_tests.rs`. They
+// exercise the real production entry point (`attempt_selected_qualification`)
+// rather than duplicating that oracle's fixture set.
+
+fn assert_static_semantics_rejected(
+    text: &str,
+    expected_fragment: &str,
+    expected_range: (usize, usize),
+) {
+    let outcome = qualification_outcome(text);
+    assert_eq!(
+        outcome.verdict(),
+        Some(QualificationVerdictKind::StaticSemanticsRejected),
+        "{text:?}"
+    );
+    let evidence = outcome.rejection_evidence().expect("static evidence");
+    assert_eq!(
+        evidence.family(),
+        RejectionFamily::StaticSemantics,
+        "{text:?}"
+    );
+    let anchor = evidence
+        .subject()
+        .authored_anchor()
+        .expect("authored static subject");
+    assert_eq!(anchor.fragment(), expected_fragment, "{text:?}");
+    assert_eq!(
+        (anchor.range().start(), anchor.range().end()),
+        expected_range,
+        "{text:?}"
+    );
+}
+
+#[test]
+fn bare_block_var_positive_leaf_is_selected_accepted_incomplete() {
+    assert!(matches!(
+        attempt("{ var x; }"),
+        SelectedQualificationAttempt::SelectedAcceptedIncomplete
+    ));
+}
+
+#[test]
+fn bare_block_var_lexical_collision_reaches_ee14_r02_in_both_source_orders() {
+    assert_static_semantics_rejected("{ let x; var x; }", "x", (13, 14));
+    assert_static_semantics_rejected("{ var x; let x; }", "x", (13, 14));
+}
+
+#[test]
+fn bare_block_var_lexical_distinct_names_remain_accepted_in_both_source_orders() {
+    for text in ["{ let x; var y; }", "{ var x; let y; }"] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn bare_block_var_propagates_into_existing_script_ee36_r02_in_both_placements() {
+    assert_static_semantics_rejected("let x; { var x; }", "x", (13, 14));
+    assert_static_semantics_rejected("{ var x; } let x;", "x", (15, 16));
+}
+
+#[test]
+fn bare_block_var_script_propagation_accepts_distinct_names() {
+    assert!(matches!(
+        attempt("let x; { var y; }"),
+        SelectedQualificationAttempt::SelectedAcceptedIncomplete
+    ));
+}
+
+#[test]
+fn outer_var_inner_lexical_asymmetry_is_not_falsely_symmetric() {
+    // `var x; { let x; }` must remain accepted: a top-level var contributor
+    // never enters an inner Block's own VarDeclaredNames, unlike the
+    // symmetric-looking `let x; { var x; }`, which does reach EE-36-R02 (see
+    // `bare_block_var_propagates_into_existing_script_ee36_r02_in_both_placements`).
+    assert!(matches!(
+        attempt("var x; { let x; }"),
+        SelectedQualificationAttempt::SelectedAcceptedIncomplete
+    ));
+}
+
+#[test]
+fn semantic_name_equality_not_authored_spelling_drives_block_collision() {
+    // Authored spellings differ ("a" vs a six-character Unicode escape); only
+    // semantic-name equality must drive the EE-14-R02 collision.
+    let escape = escaped_first_ascii_code_point("a");
+    let text = format!("{{ let a; var {escape}; }}");
+    assert_static_semantics_rejected(&text, &escape, (13, 13 + escape.len()));
+}
+
+#[test]
+fn repeated_bare_block_var_names_alone_remain_accepted() {
+    assert!(matches!(
+        attempt("{ var x; var x; }"),
+        SelectedQualificationAttempt::SelectedAcceptedIncomplete
+    ));
+}
+
+#[test]
+fn block_ee14_r02_outranks_script_ee36_r02_when_both_are_true() {
+    assert_static_semantics_rejected("let x; { let x; var x; }", "x", (20, 21));
+}
+
+#[test]
+fn block_ee14_r01_outranks_block_ee14_r02_in_the_same_block() {
+    assert_static_semantics_rejected("{ let x; let x; var x; }", "x", (13, 14));
+}
+
+#[test]
+fn multi_block_first_qualifying_block_supplies_ee14_r02_primary_evidence() {
+    assert_static_semantics_rejected("{ let x; var x; } { let y; var y; }", "x", (13, 14));
+}
+
+#[test]
+fn ee14_r01_tier_outranks_earlier_block_ee14_r02_by_cross_block_source_position() {
+    // The earlier Block only reaches Tier 2b (EE-14-R02); the later Block
+    // reaches Tier 2a (EE-14-R01). Tier priority must still decide, so the
+    // later Block's EE-14-R01 wins even though the earlier Block's EE-14-R02
+    // would otherwise be the first-in-source collision.
+    assert_static_semantics_rejected("{ let x; var x; } { let y; let y; }", "y", (31, 32));
+}
+
+#[test]
+fn bare_block_var_unsupported_boundaries_remain_unsupported_coverage() {
+    for text in [
+        "{var x}",               // non-EOF ASI remains unsupported, never SyntaxRejected
+        "{var x=x;}",            // initializer
+        "{var x,y;}",            // multi-declarator
+        "{var x; /*c*/}",        // comment trivia
+        "{ { var x; } }",        // deeper Block nesting
+        "for (var x;;) {}",      // for(var...)
+        "{var [x]=y;}",          // BindingPattern
+        "{ var x; } export {};", // Module-only widening
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::UnsupportedCoverage
+            ),
+            "{text:?}"
+        );
+    }
+}

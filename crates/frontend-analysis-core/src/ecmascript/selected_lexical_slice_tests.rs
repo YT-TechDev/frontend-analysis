@@ -1861,22 +1861,23 @@ fn one_level_block_retains_ordered_items_and_exact_source_provenance() {
         (block.block().range().start(), block.block().range().end()),
         (9, 30)
     );
-    assert_eq!(block.declarations().len(), 2);
+    let block_declarations: Vec<_> = block.declarations().collect();
+    assert_eq!(block_declarations.len(), 2);
     assert_eq!(
         (
-            block.declarations()[0].declaration().range().start(),
-            block.declarations()[0].declaration().range().end()
+            block_declarations[0].declaration().range().start(),
+            block_declarations[0].declaration().range().end()
         ),
         (11, 19)
     );
     assert_eq!(
         (
-            block.declarations()[1].declaration().range().start(),
-            block.declarations()[1].declaration().range().end()
+            block_declarations[1].declaration().range().start(),
+            block_declarations[1].declaration().range().end()
         ),
         (20, 28)
     );
-    let rhs = block.declarations()[1].bindings()[0]
+    let rhs = block_declarations[1].bindings()[0]
         .identifier_reference_initializer()
         .expect("selected RHS IdentifierReference fact");
     assert_eq!(
@@ -1924,7 +1925,8 @@ fn one_level_block_preserves_sibling_and_identifier_reference_provenance() {
     let SelectedTopLevelItem::Block(block) = &escaped.items()[1] else {
         panic!("escaped fixture must retain Block item");
     };
-    let reference = block.declarations()[0].bindings()[0]
+    let block_declarations: Vec<_> = block.declarations().collect();
+    let reference = block_declarations[0].bindings()[0]
         .identifier_reference_initializer()
         .expect("escaped RHS reference fact");
     assert_eq!(reference.reference().fragment(), r"\u0061");
@@ -1945,7 +1947,8 @@ fn one_level_block_preserves_sibling_and_identifier_reference_provenance() {
     let SelectedTopLevelItem::Block(block) = &canonical.items()[1] else {
         panic!("canonical fixture must retain Block");
     };
-    let reference = block.declarations()[0].bindings()[0]
+    let block_declarations: Vec<_> = block.declarations().collect();
+    let reference = block_declarations[0].bindings()[0]
         .identifier_reference_initializer()
         .expect("canonical-distinct RHS reference");
     assert_eq!(reference.semantic_name(), "e\u{301}");
@@ -2158,11 +2161,14 @@ fn variable_statement_promotes_only_var_bearing_sources_to_distinct_representati
 
 #[test]
 fn variable_statement_frontier_keeps_non_eof_and_broader_var_grammar_unsupported() {
+    // "{ var x; }" is deliberately not listed here: Issue #691 makes this
+    // exact bare Block-var placement a selected accepted form (see
+    // `selected_lexical_slice.rs`'s `SelectedBareBlockVar` recognition and
+    // the Block-item coverage tests below).
     for text in [
         "var x\nvar y;",
         "var {x} = y;",
         "for (var x;;) {}",
-        "{ var x; }",
         "var x/*comment*/",
         r"var\u{};",
         r"var\u0061;",

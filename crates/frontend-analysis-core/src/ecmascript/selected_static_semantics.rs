@@ -11,10 +11,11 @@ use crate::{SourceAnchor, SourceText};
 use super::qualification::{EvidenceSubject, QualificationOutcome};
 use super::selected_binding_identifier::is_unconditionally_reserved_word;
 use super::selected_lexical_slice::{
-    SelectedBindingNameState, SelectedInitializerState, SelectedInvalidEscapePosition,
-    SelectedLexicalDeclaration, SelectedLexicalDeclarationKind, SelectedLexicalScript,
-    SelectedOneLevelBlockScript, SelectedTopLevelItem, SelectedVariableBinding,
-    SelectedVariableStatementScript, SelectedVariableTopLevelItem,
+    SelectedBareBlockVar, SelectedBindingNameState, SelectedBlock, SelectedBlockItem,
+    SelectedInitializerState, SelectedInvalidEscapePosition, SelectedLexicalDeclaration,
+    SelectedLexicalDeclarationKind, SelectedLexicalScript, SelectedOneLevelBlockScript,
+    SelectedTopLevelItem, SelectedVariableBinding, SelectedVariableStatementScript,
+    SelectedVariableTopLevelItem,
 };
 
 #[derive(Debug)]
@@ -111,6 +112,11 @@ pub(super) enum SelectedStaticSemanticsRejection {
         var_binding: SourceAnchor,
         primary_binding: SourceAnchor,
     },
+    BlockLexicalVarNameCollision {
+        lexical_binding: SourceAnchor,
+        var_binding: SourceAnchor,
+        primary_binding: SourceAnchor,
+    },
 }
 
 impl SelectedStaticSemanticsRejection {
@@ -131,6 +137,9 @@ impl SelectedStaticSemanticsRejection {
             } => duplicate_binding,
             Self::ConstBindingMissingInitializer { binding } => binding,
             Self::LexicalVarNameCollision {
+                primary_binding, ..
+            }
+            | Self::BlockLexicalVarNameCollision {
                 primary_binding, ..
             } => primary_binding,
         }
@@ -269,6 +278,86 @@ fn evaluate_selected_variable_binding_local_static_semantics(
     Ok(())
 }
 
+/// Tier-1 binding-local obligations for a Block-contained bare `var`
+/// (Issue #691). A bare Block var carries no initializer, so only the shared
+/// escaped-identifier / reserved-word checks apply; the lexical-only
+/// `BindingNamedLet` restriction does not extend to `VariableStatement`
+/// bindings, matching the existing top-level var treatment.
+fn evaluate_selected_bare_block_var_local_static_semantics(
+    bare_var: &SelectedBareBlockVar,
+) -> Result<(), SelectedDeclarationCheckFailure> {
+    let _ =
+        evaluate_selected_binding_name_static_semantics(bare_var.binding(), bare_var.name_state())?;
+    Ok(())
+}
+
+/// Tier-2b (`EE-14-R02`): one Block's own `LexicallyDeclaredNames` intersects
+/// its own `VarDeclaredNames`. Streams the Block's items in authored order,
+/// so the primary evidence anchor is always whichever binding (lexical or
+/// bare-var) completes the collision, matching the existing Script-level
+/// `EE-36-R02` primary-selection policy in `first_lexical_var_name_collision`.
+fn first_block_lexical_var_collision(
+    block: &SelectedBlock,
+) -> Result<Option<SelectedStaticSemanticsRejection>, SelectedDuplicateCheckFailure> {
+    let mut lexical_by_name: HashMap<&str, &SourceAnchor> = HashMap::new();
+    let mut var_by_name: HashMap<&str, &SourceAnchor> = HashMap::new();
+
+    for item in block.items() {
+        match item {
+            SelectedBlockItem::LexicalDeclaration(declaration) => {
+                for binding in declaration.bindings() {
+                    let Some(name) = binding.semantic_name() else {
+                        return Err(SelectedDuplicateCheckFailure::InternalFailure);
+                    };
+
+                    if let Some(var_binding) = var_by_name.get(name) {
+                        return Ok(Some(
+                            SelectedStaticSemanticsRejection::BlockLexicalVarNameCollision {
+                                lexical_binding: binding.binding().clone(),
+                                var_binding: (*var_binding).clone(),
+                                primary_binding: binding.binding().clone(),
+                            },
+                        ));
+                    }
+
+                    if !lexical_by_name.contains_key(name) {
+                        if lexical_by_name.try_reserve(1).is_err() {
+                            return Err(SelectedDuplicateCheckFailure::ResourceLimited);
+                        }
+                        let previous = lexical_by_name.insert(name, binding.binding());
+                        debug_assert!(previous.is_none());
+                    }
+                }
+            }
+            SelectedBlockItem::BareVar(bare_var) => {
+                let Some(name) = bare_var.semantic_name() else {
+                    return Err(SelectedDuplicateCheckFailure::InternalFailure);
+                };
+
+                if let Some(lexical_binding) = lexical_by_name.get(name) {
+                    return Ok(Some(
+                        SelectedStaticSemanticsRejection::BlockLexicalVarNameCollision {
+                            lexical_binding: (*lexical_binding).clone(),
+                            var_binding: bare_var.binding().clone(),
+                            primary_binding: bare_var.binding().clone(),
+                        },
+                    ));
+                }
+
+                if !var_by_name.contains_key(name) {
+                    if var_by_name.try_reserve(1).is_err() {
+                        return Err(SelectedDuplicateCheckFailure::ResourceLimited);
+                    }
+                    let previous = var_by_name.insert(name, bare_var.binding());
+                    debug_assert!(previous.is_none());
+                }
+            }
+        }
+    }
+
+    Ok(None)
+}
+
 fn first_duplicate_lexical_name<'declaration, I>(
     declarations: I,
 ) -> Result<Option<(SourceAnchor, SourceAnchor)>, SelectedDuplicateCheckFailure>
@@ -332,7 +421,36 @@ fn first_lexical_var_name_collision(
                     }
                 }
             }
-            SelectedVariableTopLevelItem::Block(_) => {}
+            SelectedVariableTopLevelItem::Block(block) => {
+                // Only the Block's own bare-var contributors propagate into
+                // Script `VarDeclaredNames` (Issue #691). The Block's lexical
+                // names never enter this Script-level lexical domain: that
+                // asymmetry is load-bearing (`var x; { let x; }` must not
+                // become falsely symmetric with `let x; { var x; }`).
+                for bare_var in block.bare_vars() {
+                    let Some(name) = bare_var.semantic_name() else {
+                        return Err(SelectedDuplicateCheckFailure::InternalFailure);
+                    };
+
+                    if let Some(lexical_binding) = first_lexical_by_name.get(name) {
+                        return Ok(Some(
+                            SelectedStaticSemanticsRejection::LexicalVarNameCollision {
+                                lexical_binding: (*lexical_binding).clone(),
+                                var_binding: bare_var.binding().clone(),
+                                primary_binding: bare_var.binding().clone(),
+                            },
+                        ));
+                    }
+
+                    if !first_var_by_name.contains_key(name) {
+                        if first_var_by_name.try_reserve(1).is_err() {
+                            return Err(SelectedDuplicateCheckFailure::ResourceLimited);
+                        }
+                        let previous = first_var_by_name.insert(name, bare_var.binding());
+                        debug_assert!(previous.is_none());
+                    }
+                }
+            }
             SelectedVariableTopLevelItem::VariableStatement(statement) => {
                 // Every selected declarator participates, in authored
                 // VariableDeclarationList order. Var provenance stays the
@@ -358,6 +476,76 @@ fn first_lexical_var_name_collision(
                             return Err(SelectedDuplicateCheckFailure::ResourceLimited);
                         }
                         let previous = first_var_by_name.insert(name, binding.binding());
+                        debug_assert!(previous.is_none());
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+/// The `SelectedOneLevelBlockScript` counterpart of
+/// `first_lexical_var_name_collision` for sources with no top-level
+/// `VariableStatement` (Issue #691). Script `VarDeclaredNames` here can only
+/// be populated by Block-contained bare-var contributors; Block lexical
+/// names never enter the Script lexical domain, preserving the same
+/// asymmetry as the var-enabled variant.
+fn first_one_level_block_script_lexical_var_collision(
+    script: &SelectedOneLevelBlockScript,
+) -> Result<Option<SelectedStaticSemanticsRejection>, SelectedDuplicateCheckFailure> {
+    let mut first_lexical_by_name: HashMap<&str, &SourceAnchor> = HashMap::new();
+    let mut first_var_by_name: HashMap<&str, &SourceAnchor> = HashMap::new();
+
+    for item in script.items() {
+        match item {
+            SelectedTopLevelItem::LexicalDeclaration(declaration) => {
+                for binding in declaration.bindings() {
+                    let Some(name) = binding.semantic_name() else {
+                        return Err(SelectedDuplicateCheckFailure::InternalFailure);
+                    };
+
+                    if let Some(var_binding) = first_var_by_name.get(name) {
+                        return Ok(Some(
+                            SelectedStaticSemanticsRejection::LexicalVarNameCollision {
+                                lexical_binding: binding.binding().clone(),
+                                var_binding: (*var_binding).clone(),
+                                primary_binding: binding.binding().clone(),
+                            },
+                        ));
+                    }
+
+                    if !first_lexical_by_name.contains_key(name) {
+                        if first_lexical_by_name.try_reserve(1).is_err() {
+                            return Err(SelectedDuplicateCheckFailure::ResourceLimited);
+                        }
+                        let previous = first_lexical_by_name.insert(name, binding.binding());
+                        debug_assert!(previous.is_none());
+                    }
+                }
+            }
+            SelectedTopLevelItem::Block(block) => {
+                for bare_var in block.bare_vars() {
+                    let Some(name) = bare_var.semantic_name() else {
+                        return Err(SelectedDuplicateCheckFailure::InternalFailure);
+                    };
+
+                    if let Some(lexical_binding) = first_lexical_by_name.get(name) {
+                        return Ok(Some(
+                            SelectedStaticSemanticsRejection::LexicalVarNameCollision {
+                                lexical_binding: (*lexical_binding).clone(),
+                                var_binding: bare_var.binding().clone(),
+                                primary_binding: bare_var.binding().clone(),
+                            },
+                        ));
+                    }
+
+                    if !first_var_by_name.contains_key(name) {
+                        if first_var_by_name.try_reserve(1).is_err() {
+                            return Err(SelectedDuplicateCheckFailure::ResourceLimited);
+                        }
+                        let previous = first_var_by_name.insert(name, bare_var.binding());
                         debug_assert!(previous.is_none());
                     }
                 }
@@ -440,8 +628,16 @@ pub(super) fn evaluate_selected_one_level_block_static_semantics<'script>(
                 }
             }
             SelectedTopLevelItem::Block(block) => {
-                for declaration in block.declarations() {
-                    match evaluate_selected_declaration_local_static_semantics(declaration) {
+                for item in block.items() {
+                    let result = match item {
+                        SelectedBlockItem::LexicalDeclaration(declaration) => {
+                            evaluate_selected_declaration_local_static_semantics(declaration)
+                        }
+                        SelectedBlockItem::BareVar(bare_var) => {
+                            evaluate_selected_bare_block_var_local_static_semantics(bare_var)
+                        }
+                    };
+                    match result {
                         Ok(()) => {}
                         Err(SelectedDeclarationCheckFailure::Rejected(rejection)) => {
                             return SelectedOneLevelBlockStaticSemanticsOutcome::Rejected(
@@ -460,7 +656,10 @@ pub(super) fn evaluate_selected_one_level_block_static_semantics<'script>(
         }
     }
 
-    // Tier 2 / EE-14-R01: each selected Block is an independent lexical region.
+    // Tier 2a / EE-14-R01: each selected Block is an independent lexical
+    // region. This full pass across every Block completes before Tier 2b
+    // begins, so a later Block's EE-14-R01 always outranks an earlier
+    // Block's EE-14-R02.
     for item in script.items() {
         let SelectedTopLevelItem::Block(block) = item else {
             continue;
@@ -485,6 +684,27 @@ pub(super) fn evaluate_selected_one_level_block_static_semantics<'script>(
         }
     }
 
+    // Tier 2b / EE-14-R02: each selected Block's own LexicallyDeclaredNames
+    // vs. its own VarDeclaredNames, in Block source order.
+    for item in script.items() {
+        let SelectedTopLevelItem::Block(block) = item else {
+            continue;
+        };
+
+        match first_block_lexical_var_collision(block) {
+            Ok(Some(rejection)) => {
+                return SelectedOneLevelBlockStaticSemanticsOutcome::Rejected(rejection);
+            }
+            Ok(None) => {}
+            Err(SelectedDuplicateCheckFailure::ResourceLimited) => {
+                return SelectedOneLevelBlockStaticSemanticsOutcome::ResourceLimited;
+            }
+            Err(SelectedDuplicateCheckFailure::InternalFailure) => {
+                return SelectedOneLevelBlockStaticSemanticsOutcome::InternalFailure;
+            }
+        }
+    }
+
     // Tier 3 / EE-36-R01: only top-level LexicalDeclaration items participate.
     let top_level_declarations = script.items().iter().filter_map(|item| match item {
         SelectedTopLevelItem::LexicalDeclaration(declaration) => Some(declaration),
@@ -493,13 +713,27 @@ pub(super) fn evaluate_selected_one_level_block_static_semantics<'script>(
 
     match first_duplicate_lexical_name(top_level_declarations) {
         Ok(Some((first_binding, duplicate_binding))) => {
-            SelectedOneLevelBlockStaticSemanticsOutcome::Rejected(
+            return SelectedOneLevelBlockStaticSemanticsOutcome::Rejected(
                 SelectedStaticSemanticsRejection::DuplicateLexicalName {
                     first_binding,
                     duplicate_binding,
                 },
-            )
+            );
         }
+        Ok(None) => {}
+        Err(SelectedDuplicateCheckFailure::ResourceLimited) => {
+            return SelectedOneLevelBlockStaticSemanticsOutcome::ResourceLimited;
+        }
+        Err(SelectedDuplicateCheckFailure::InternalFailure) => {
+            return SelectedOneLevelBlockStaticSemanticsOutcome::InternalFailure;
+        }
+    }
+
+    // Tier 4 / EE-36-R02: Script TopLevelLexicallyDeclaredNames vs. Script
+    // VarDeclaredNames, where the var side may include a Block-var
+    // contributor propagated by Issue #691.
+    match first_one_level_block_script_lexical_var_collision(script) {
+        Ok(Some(rejection)) => SelectedOneLevelBlockStaticSemanticsOutcome::Rejected(rejection),
         Ok(None) => SelectedOneLevelBlockStaticSemanticsOutcome::Accepted(
             SelectedOneLevelBlockStaticSemanticsAccepted { script },
         ),
@@ -540,8 +774,16 @@ pub(super) fn evaluate_selected_variable_statement_static_semantics<'script>(
                 }
             }
             SelectedVariableTopLevelItem::Block(block) => {
-                for declaration in block.declarations() {
-                    match evaluate_selected_declaration_local_static_semantics(declaration) {
+                for item in block.items() {
+                    let result = match item {
+                        SelectedBlockItem::LexicalDeclaration(declaration) => {
+                            evaluate_selected_declaration_local_static_semantics(declaration)
+                        }
+                        SelectedBlockItem::BareVar(bare_var) => {
+                            evaluate_selected_bare_block_var_local_static_semantics(bare_var)
+                        }
+                    };
+                    match result {
                         Ok(()) => {}
                         Err(SelectedDeclarationCheckFailure::Rejected(rejection)) => {
                             return SelectedVariableStatementStaticSemanticsOutcome::Rejected(
@@ -578,7 +820,10 @@ pub(super) fn evaluate_selected_variable_statement_static_semantics<'script>(
         }
     }
 
-    // Tier 2 / EE-14-R01: selected Blocks remain independent lexical regions.
+    // Tier 2a / EE-14-R01: selected Blocks remain independent lexical
+    // regions. This full pass across every Block completes before Tier 2b
+    // begins, so a later Block's EE-14-R01 always outranks an earlier
+    // Block's EE-14-R02.
     for item in script.items() {
         let SelectedVariableTopLevelItem::Block(block) = item else {
             continue;
@@ -592,6 +837,27 @@ pub(super) fn evaluate_selected_variable_statement_static_semantics<'script>(
                         duplicate_binding,
                     },
                 );
+            }
+            Ok(None) => {}
+            Err(SelectedDuplicateCheckFailure::ResourceLimited) => {
+                return SelectedVariableStatementStaticSemanticsOutcome::ResourceLimited;
+            }
+            Err(SelectedDuplicateCheckFailure::InternalFailure) => {
+                return SelectedVariableStatementStaticSemanticsOutcome::InternalFailure;
+            }
+        }
+    }
+
+    // Tier 2b / EE-14-R02: each selected Block's own LexicallyDeclaredNames
+    // vs. its own VarDeclaredNames, in Block source order.
+    for item in script.items() {
+        let SelectedVariableTopLevelItem::Block(block) = item else {
+            continue;
+        };
+
+        match first_block_lexical_var_collision(block) {
+            Ok(Some(rejection)) => {
+                return SelectedVariableStatementStaticSemanticsOutcome::Rejected(rejection);
             }
             Ok(None) => {}
             Err(SelectedDuplicateCheckFailure::ResourceLimited) => {
