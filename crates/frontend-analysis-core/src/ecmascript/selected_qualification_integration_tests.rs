@@ -1404,7 +1404,7 @@ fn multi_block_first_qualifying_block_supplies_ee14_r02_primary_evidence() {
 }
 
 #[test]
-fn ee14_r02_tier_outranks_a_later_block_ee14_r01_by_cross_block_source_position() {
+fn ee14_r01_tier_outranks_earlier_block_ee14_r02_by_cross_block_source_position() {
     // The earlier Block only reaches Tier 2b (EE-14-R02); the later Block
     // reaches Tier 2a (EE-14-R01). Tier priority must still decide, so the
     // later Block's EE-14-R01 wins even though the earlier Block's EE-14-R02
