@@ -18586,18 +18586,42 @@ fn mixed_selected_function_order_including_perspective_is_preserved() {
 
     let twenty_one_kind_sequence = qualified_functions(&result, 2);
     assert_eq!(twenty_one_kind_sequence.len(), 21);
-    assert!(matches!(
-        twenty_one_kind_sequence[0],
-        CssTransformFunction::Matrix(_)
-    ));
-    assert!(matches!(
-        twenty_one_kind_sequence[19],
-        CssTransformFunction::Matrix3d(_)
-    ));
-    assert!(matches!(
-        twenty_one_kind_sequence[20],
-        CssTransformFunction::Perspective(_)
-    ));
+
+    // Handwritten authored order for the complete 21-kind sequence, per
+    // #684: every position is asserted directly against declaration "c"'s
+    // authored component order, never derived from the production
+    // enum/vector itself.
+    let expected_authored_order: [fn(&CssTransformFunction) -> bool; 21] = [
+        |f| matches!(f, CssTransformFunction::Matrix(_)),
+        |f| matches!(f, CssTransformFunction::Scale(_)),
+        |f| matches!(f, CssTransformFunction::Translate3d(_)),
+        |f| matches!(f, CssTransformFunction::Rotate3d(_)),
+        |f| matches!(f, CssTransformFunction::Translate(_)),
+        |f| matches!(f, CssTransformFunction::TranslateX(_)),
+        |f| matches!(f, CssTransformFunction::TranslateY(_)),
+        |f| matches!(f, CssTransformFunction::TranslateZ(_)),
+        |f| matches!(f, CssTransformFunction::ScaleX(_)),
+        |f| matches!(f, CssTransformFunction::ScaleY(_)),
+        |f| matches!(f, CssTransformFunction::ScaleZ(_)),
+        |f| matches!(f, CssTransformFunction::Scale3d(_)),
+        |f| matches!(f, CssTransformFunction::Rotate(_)),
+        |f| matches!(f, CssTransformFunction::RotateX(_)),
+        |f| matches!(f, CssTransformFunction::RotateY(_)),
+        |f| matches!(f, CssTransformFunction::RotateZ(_)),
+        |f| matches!(f, CssTransformFunction::Skew(_)),
+        |f| matches!(f, CssTransformFunction::SkewX(_)),
+        |f| matches!(f, CssTransformFunction::SkewY(_)),
+        |f| matches!(f, CssTransformFunction::Matrix3d(_)),
+        |f| matches!(f, CssTransformFunction::Perspective(_)),
+    ];
+    for (index, is_expected_variant) in expected_authored_order.iter().enumerate() {
+        assert!(
+            is_expected_variant(&twenty_one_kind_sequence[index]),
+            "expected handwritten authored variant at position {index}, got {:?}",
+            twenty_one_kind_sequence[index]
+        );
+    }
+
     assert_eq!(
         matrix3d_argument_spellings(&result, 2, 19),
         [
@@ -19264,9 +19288,11 @@ fn perspective_repeated_and_cross_source_runs_are_deterministic() {
 }
 
 // 440. Nonordinary declaration contexts never enter `perspective()`
-// dispatch, and unsupported-region material is propagated unchanged,
-// exactly like every other selected leaf's lower-layer lifecycle
-// preservation.
+// dispatch, unsupported-region material is propagated unchanged, and a
+// parser-resource-terminated run retains only the committed `perspective()`
+// prefix -- exactly like every other selected leaf's lower-layer lifecycle
+// preservation. Final coverage completion does not upgrade or reconstruct
+// lower-layer `Incomplete` evidence.
 
 #[test]
 fn perspective_nonordinary_contexts_and_resource_lifecycle_are_preserved() {
@@ -19302,6 +19328,27 @@ fn perspective_nonordinary_contexts_and_resource_lifecycle_are_preserved() {
         (
             CssTransformPerspectiveArgumentKind::Length,
             "1px".to_string()
+        )
+    );
+
+    let incomplete = qualify_with_limits(
+        684554,
+        concat!(
+            "a{transform:perspective(none);}",
+            "b{transform:perspective(1px);}",
+        ),
+        parser_limits_with_occurrences(1),
+    );
+    assert_eq!(
+        incomplete.execution_completion(),
+        CssParserExecutionCompletion::Incomplete
+    );
+    assert_eq!(incomplete.transform_observations().len(), 1);
+    assert_eq!(
+        perspective_argument_spelling(&incomplete, 0, 0),
+        (
+            CssTransformPerspectiveArgumentKind::None,
+            "none".to_string()
         )
     );
 }
