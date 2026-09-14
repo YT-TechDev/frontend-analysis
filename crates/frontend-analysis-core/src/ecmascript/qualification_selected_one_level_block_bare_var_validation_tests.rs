@@ -64,7 +64,8 @@ impl ExpectedAnchor {
 /// `semantic_code_points` are independently stated (never decoded from the
 /// authored spelling by this oracle) so that authored-spelling identity and
 /// semantic-name identity remain distinguishable, as required for the
-/// escaped-vs-direct-spelling sentinel (authored `a`, semantic `a`).
+/// escaped-vs-direct-spelling sentinel (authored six-character Unicode
+/// escape spelling for lowercase "a", semantic one-character name "a").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct BindingFact {
     authored: ExpectedAnchor,
@@ -121,6 +122,9 @@ enum ExpectedDisposition {
     Ee14R01 { primary: ExpectedAnchor },
     /// Block `LexicallyDeclaredNames` intersects Block `VarDeclaredNames`.
     Ee14R02 { primary: ExpectedAnchor },
+    /// Script `LexicallyDeclaredNames` (top-level only) contains a duplicate
+    /// BoundName.
+    Ee36R01 { primary: ExpectedAnchor },
     /// Script `LexicallyDeclaredNames` intersects Script `VarDeclaredNames`,
     /// including a propagated Block-var contributor.
     Ee36R02 { primary: ExpectedAnchor },
@@ -270,6 +274,52 @@ const REPEATED_VAR_TOP: &[TopLevelItem] = &[TopLevelItem::Block(BlockFixture {
     items: REPEATED_VAR_ITEMS,
 })];
 
+// --- Fixture: `{ let x; var x; var 0; }` (Tier 1 outranks Block R02) -
+// The third Block item (an escaped BindingIdentifier that decodes to an
+// invalid IdentifierStart) is a binding-local Tier-1 fact stated literally
+// via `ExpectedDisposition::StaticSemanticsRejected`; it is intentionally
+// not modeled as a `BlockItem` because a Tier-1-invalid identifier can never
+// also be a valid BoundName that could collide with anything. The two valid
+// items below (`let x` / `var x`) still independently derive a true
+// `EE-14-R02` collision, proving the fixture's frozen Tier-1 disposition
+// outranks that derivable Tier-2b result rather than merely coexisting with
+// an absent one.
+const TIER1_OUTRANKS_BLOCK_R02_ITEMS: &[BlockItem] = &[
+    BlockItem::Lexical(simple_binding(6, 7, "x")),
+    BlockItem::BareVar(simple_binding(13, 14, "x")),
+];
+const TIER1_OUTRANKS_BLOCK_R02_TOP: &[TopLevelItem] = &[TopLevelItem::Block(BlockFixture {
+    items: TIER1_OUTRANKS_BLOCK_R02_ITEMS,
+})];
+
+// --- Fixture: `let x; let x; { var x; }` (Tier 3 outranks Tier 4) ---------
+const TIER3_OUTRANKS_TIER4_ITEMS: &[BlockItem] = &[BlockItem::BareVar(simple_binding(20, 21, "x"))];
+const TIER3_OUTRANKS_TIER4_TOP: &[TopLevelItem] = &[
+    TopLevelItem::Lexical(simple_binding(4, 5, "x")),
+    TopLevelItem::Lexical(simple_binding(11, 12, "x")),
+    TopLevelItem::Block(BlockFixture {
+        items: TIER3_OUTRANKS_TIER4_ITEMS,
+    }),
+];
+
+// --- Fixture: `{ let x; var x; } { let y; var y; }` (first Block wins) ----
+const TWO_BLOCKS_FIRST_ITEMS: &[BlockItem] = &[
+    BlockItem::Lexical(simple_binding(6, 7, "x")),
+    BlockItem::BareVar(simple_binding(13, 14, "x")),
+];
+const TWO_BLOCKS_SECOND_ITEMS: &[BlockItem] = &[
+    BlockItem::Lexical(simple_binding(24, 25, "y")),
+    BlockItem::BareVar(simple_binding(31, 32, "y")),
+];
+const TWO_BLOCKS_TOP: &[TopLevelItem] = &[
+    TopLevelItem::Block(BlockFixture {
+        items: TWO_BLOCKS_FIRST_ITEMS,
+    }),
+    TopLevelItem::Block(BlockFixture {
+        items: TWO_BLOCKS_SECOND_ITEMS,
+    }),
+];
+
 const FIXTURES: &[Fixture] = &[
     Fixture {
         id: "block-lexical-then-var-collision",
@@ -356,6 +406,31 @@ const FIXTURES: &[Fixture] = &[
         source: "{ var x; var x; }",
         top_level_items: REPEATED_VAR_TOP,
         expected: ExpectedDisposition::AcceptedIncomplete,
+    },
+    Fixture {
+        id: "tier1-outranks-block-r02",
+        source: "{ let x; var x; var \\u0030; }",
+        top_level_items: TIER1_OUTRANKS_BLOCK_R02_TOP,
+        expected: ExpectedDisposition::StaticSemanticsRejected {
+            rule_id: "EE-01-R01",
+            subject: ExpectedAnchor::new(20, 26, "\\u0030"),
+        },
+    },
+    Fixture {
+        id: "tier3-outranks-tier4",
+        source: "let x; let x; { var x; }",
+        top_level_items: TIER3_OUTRANKS_TIER4_TOP,
+        expected: ExpectedDisposition::Ee36R01 {
+            primary: ExpectedAnchor::new(11, 12, "x"),
+        },
+    },
+    Fixture {
+        id: "two-blocks-first-block-owns-r02-primary",
+        source: "{ let x; var x; } { let y; var y; }",
+        top_level_items: TWO_BLOCKS_TOP,
+        expected: ExpectedDisposition::Ee14R02 {
+            primary: ExpectedAnchor::new(13, 14, "x"),
+        },
     },
     Fixture {
         id: "binding-local-escaped-start-digit-rejected",
@@ -558,16 +633,43 @@ fn script_has_lexical_var_collision(items: &[TopLevelItem]) -> bool {
     )
 }
 
+/// Tier 3: Script `TopLevelLexicallyDeclaredNames` contains a duplicate
+/// BoundName (existing `EE-36-R01`).
+fn script_has_duplicate_lexical(items: &[TopLevelItem]) -> bool {
+    has_duplicate(&script_top_level_lexically_declared_names(items))
+}
+
+/// The index, within `items`, of the first top-level Block (in authored
+/// source order) whose own `LexicallyDeclaredNames` intersects its own
+/// `VarDeclaredNames`. Project evidence-order policy requires the earliest
+/// such Block to supply the primary `EE-14-R02` evidence when more than one
+/// Block independently qualifies.
+fn first_block_index_with_lexical_var_collision(items: &[TopLevelItem]) -> Option<usize> {
+    items.iter().position(|item| match item {
+        TopLevelItem::Block(block) => intersects(
+            &block_lexically_declared_names(block),
+            &block_var_declared_names(block),
+        ),
+        TopLevelItem::Lexical(_) | TopLevelItem::Var(_) => false,
+    })
+}
+
 /// Project evidence-order decision across the tiers this oracle models.
-/// Tier 1 (binding-local) and Tier 3 (`EE-36-R01`, Script duplicate lexical)
-/// are not exercised by any fixture below and are intentionally not derived
-/// here; those dispositions are stated literally per fixture instead.
+/// Tier 1 (binding-local) is not derived here: a Tier-1-invalid identifier
+/// can never also be a valid BoundName that could collide with anything, so
+/// no fixture can construct a genuine Tier-1/Tier-2/Tier-4 name collision;
+/// Tier-1 primacy is instead frozen as a literal per-fixture fact (see
+/// `tier1-outranks-block-r02`). Tiers 2a, 2b, 3, and 4 are all independently
+/// derived below, in project evidence-tier order.
 fn expected_primary_rule_id(items: &[TopLevelItem]) -> Option<&'static str> {
     if any_block_has_duplicate_lexical(items) {
         return Some("EE-14-R01");
     }
     if any_block_has_lexical_var_collision(items) {
         return Some("EE-14-R02");
+    }
+    if script_has_duplicate_lexical(items) {
+        return Some("EE-36-R01");
     }
     if script_has_lexical_var_collision(items) {
         return Some("EE-36-R02");
@@ -611,7 +713,7 @@ fn fixture_ids_and_sources_are_stable_and_unique() {
     }
     assert_eq!(ids.len(), FIXTURES.len());
     assert_eq!(sources.len(), FIXTURES.len());
-    assert_eq!(FIXTURES.len(), 22);
+    assert_eq!(FIXTURES.len(), 25);
 }
 
 #[test]
@@ -635,6 +737,7 @@ fn all_expected_anchors_are_valid_utf8_source_anchors_and_slice_to_their_fragmen
         match fixture.expected {
             ExpectedDisposition::Ee14R01 { primary }
             | ExpectedDisposition::Ee14R02 { primary }
+            | ExpectedDisposition::Ee36R01 { primary }
             | ExpectedDisposition::Ee36R02 { primary } => validate_anchor(&source, primary),
             ExpectedDisposition::StaticSemanticsRejected { subject, .. }
             | ExpectedDisposition::SyntaxRejected { subject } => validate_anchor(&source, subject),
@@ -647,11 +750,18 @@ fn all_expected_anchors_are_valid_utf8_source_anchors_and_slice_to_their_fragmen
 #[test]
 fn independent_block_and_script_declared_name_derivation_matches_every_modeled_fixture() {
     for fixture in FIXTURES {
-        if fixture.top_level_items.is_empty() {
+        if matches!(
+            fixture.expected,
+            ExpectedDisposition::StaticSemanticsRejected { .. }
+                | ExpectedDisposition::SyntaxRejected { .. }
+                | ExpectedDisposition::UnsupportedCoverage(_)
+        ) {
             // Binding-local, grammar, and unsupported-coverage fixtures are
-            // frozen literal facts; this oracle does not model their source
-            // structurally, so they are exercised by the literal-fact tests
-            // below instead of the independent declared-name derivation.
+            // frozen literal facts. Some (like `tier1-outranks-block-r02`)
+            // still carry modeled top-level items to prove their literal
+            // disposition outranks an independently derivable tier; that
+            // precedence is exercised by a dedicated test instead of this
+            // generic declared-name-derivation loop.
             continue;
         }
 
@@ -676,6 +786,14 @@ fn independent_block_and_script_declared_name_derivation_matches_every_modeled_f
                     fixture.id
                 );
             }
+            ExpectedDisposition::Ee36R01 { .. } => {
+                assert_eq!(
+                    derived,
+                    Some("EE-36-R01"),
+                    "{} must independently derive EE-36-R01",
+                    fixture.id
+                );
+            }
             ExpectedDisposition::Ee36R02 { .. } => {
                 assert_eq!(
                     derived,
@@ -686,12 +804,7 @@ fn independent_block_and_script_declared_name_derivation_matches_every_modeled_f
             }
             ExpectedDisposition::StaticSemanticsRejected { .. }
             | ExpectedDisposition::SyntaxRejected { .. }
-            | ExpectedDisposition::UnsupportedCoverage(_) => {
-                panic!(
-                    "{} has top-level items but a non-declared-name disposition",
-                    fixture.id
-                );
-            }
+            | ExpectedDisposition::UnsupportedCoverage(_) => unreachable!(),
         }
     }
 }
@@ -825,6 +938,88 @@ fn evidence_order_precedence_sentinels_hold() {
         expected_primary_rule_id(r01_before_r02.top_level_items),
         Some("EE-14-R01"),
         "existing EE-14-R01 must remain primary over newly reachable EE-14-R02"
+    );
+}
+
+#[test]
+fn tier1_binding_local_fact_outranks_an_independently_derivable_block_r02() {
+    let combined = fixture("tier1-outranks-block-r02");
+
+    // The two modeled items alone independently derive a true EE-14-R02,
+    // proving this is a real precedence override and not a vacuous one.
+    assert!(any_block_has_lexical_var_collision(
+        combined.top_level_items
+    ));
+    assert_eq!(
+        expected_primary_rule_id(combined.top_level_items),
+        Some("EE-14-R02"),
+        "the modeled portion alone must independently derive EE-14-R02"
+    );
+
+    // The fixture's frozen disposition is nonetheless the literal Tier-1
+    // binding-local fact, never the derivable Tier-2b result.
+    assert_eq!(
+        combined.expected,
+        ExpectedDisposition::StaticSemanticsRejected {
+            rule_id: "EE-01-R01",
+            subject: ExpectedAnchor::new(20, 26, "\\u0030"),
+        }
+    );
+}
+
+#[test]
+fn tier3_script_duplicate_lexical_outranks_tier4_script_lexical_var_collision() {
+    let combined = fixture("tier3-outranks-tier4");
+
+    assert!(script_has_duplicate_lexical(combined.top_level_items));
+    assert!(script_has_lexical_var_collision(combined.top_level_items));
+    assert_eq!(
+        expected_primary_rule_id(combined.top_level_items),
+        Some("EE-36-R01"),
+        "existing EE-36-R01 must remain primary over EE-36-R02 even though both are true"
+    );
+    assert_eq!(
+        combined.expected,
+        ExpectedDisposition::Ee36R01 {
+            primary: ExpectedAnchor::new(11, 12, "x"),
+        },
+        "the primary anchor is the duplicate (second) top-level lexical binding, \
+         unaffected by the co-occurring Block-var propagation"
+    );
+}
+
+#[test]
+fn multi_block_source_order_selects_the_first_qualifying_block_for_r02_primary() {
+    let two_blocks = fixture("two-blocks-first-block-owns-r02-primary");
+    let TopLevelItem::Block(first_block) = two_blocks.top_level_items[0] else {
+        panic!("fixture's first item must be a Block");
+    };
+    let TopLevelItem::Block(second_block) = two_blocks.top_level_items[1] else {
+        panic!("fixture's second item must be a Block");
+    };
+
+    // Both Blocks independently qualify: this is not a vacuous ordering
+    // proof where only one Block could ever have been chosen.
+    assert!(intersects(
+        &block_lexically_declared_names(&first_block),
+        &block_var_declared_names(&first_block)
+    ));
+    assert!(intersects(
+        &block_lexically_declared_names(&second_block),
+        &block_var_declared_names(&second_block)
+    ));
+
+    assert_eq!(
+        first_block_index_with_lexical_var_collision(two_blocks.top_level_items),
+        Some(0),
+        "project evidence-order policy selects the first qualifying Block in source order"
+    );
+    assert_eq!(
+        two_blocks.expected,
+        ExpectedDisposition::Ee14R02 {
+            primary: ExpectedAnchor::new(13, 14, "x"),
+        },
+        "primary evidence must belong to the first Block's own var binding, not the second Block's"
     );
 }
 
