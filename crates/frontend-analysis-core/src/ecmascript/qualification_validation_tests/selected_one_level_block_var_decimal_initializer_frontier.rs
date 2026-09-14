@@ -441,7 +441,7 @@ const C7_TOP: &[TopLevelItem] = &[TopLevelItem::Block(BlockFixture { items: C7_I
 
 // `let b; { var a=1,b=2; }` (Script propagation, non-first declarator)
 const S1_VAR: &[BindingFact] = &[
-    simple_binding_initialized(10, 11, "a", 15, 16, "1"),
+    simple_binding_initialized(13, 14, "a", 15, 16, "1"),
     simple_binding_initialized(17, 18, "b", 19, 20, "2"),
 ];
 const S1_TOP: &[TopLevelItem] = &[
@@ -1414,6 +1414,41 @@ fn script_ee36_r02_propagation_covers_non_first_initialized_declarator_and_lexic
         ExpectedDisposition::Ee36R02 {
             primary: ExpectedAnchor::new(21, 22, "b")
         }
+    );
+}
+
+#[test]
+fn script_non_first_initialized_propagation_owns_exact_binding_occurrences() {
+    // Regression seal for a real independent-review finding: the first
+    // declarator's authored anchor once pointed at byte range [10,11),
+    // which is the `a` *inside the keyword* `var` in
+    // `"let b; { var a=1,b=2; }"`, not the authored `BindingIdentifier`.
+    // That defect passed the fragment-slice verifier because both ranges
+    // happen to slice to the same one-character spelling "a". This test
+    // pins the exact authored occurrence directly, rather than deriving it,
+    // so the same keyword-internal-substring defect cannot silently
+    // regress.
+    assert_eq!(S1_VAR[0].authored, ExpectedAnchor::new(13, 14, "a"));
+    assert_eq!(
+        S1_VAR[0].decimal_rhs,
+        Some(ExpectedAnchor::new(15, 16, "1"))
+    );
+    assert_eq!(S1_VAR[1].authored, ExpectedAnchor::new(17, 18, "b"));
+    assert_eq!(
+        S1_VAR[1].decimal_rhs,
+        Some(ExpectedAnchor::new(19, 20, "2"))
+    );
+
+    // The corrected first-declarator anchor must lie strictly after the
+    // keyword `var` in the fixture's exact source, not merely slice to the
+    // right one-character spelling.
+    let source = "let b; { var a=1,b=2; }";
+    assert_eq!(&source[9..12], "var");
+    assert_eq!(&source[13..14], "a");
+    assert_ne!(
+        (S1_VAR[0].authored.start, S1_VAR[0].authored.end),
+        (10, 11),
+        "the first declarator anchor must not regress to the keyword-internal `a` in `var`"
     );
 }
 
