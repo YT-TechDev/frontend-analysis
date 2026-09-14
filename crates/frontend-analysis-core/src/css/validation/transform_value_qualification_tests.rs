@@ -19288,11 +19288,9 @@ fn perspective_repeated_and_cross_source_runs_are_deterministic() {
 }
 
 // 440. Nonordinary declaration contexts never enter `perspective()`
-// dispatch, unsupported-region material is propagated unchanged, and a
-// parser-resource-terminated run retains only the committed `perspective()`
-// prefix -- exactly like every other selected leaf's lower-layer lifecycle
-// preservation. Final coverage completion does not upgrade or reconstruct
-// lower-layer `Incomplete` evidence.
+// dispatch, and unsupported-region material is propagated unchanged,
+// exactly like every other selected leaf's lower-layer lifecycle
+// preservation.
 
 #[test]
 fn perspective_nonordinary_contexts_and_resource_lifecycle_are_preserved() {
@@ -19330,25 +19328,43 @@ fn perspective_nonordinary_contexts_and_resource_lifecycle_are_preserved() {
             "1px".to_string()
         )
     );
+}
 
+// 440a. A parser resource limit terminates execution before the second
+// `perspective()` declaration is reached, so lower-layer completion stays
+// `Incomplete` and only the first committed `perspective()` observation is
+// retained -- exactly like the accepted generic `matrix()` resource
+// fixture (`parser_resource_termination_preserves_committed_prefix_only`),
+// now exercised for the final selected leaf itself. Final coverage
+// completion never upgrades or reconstructs lower-layer `Incomplete`
+// evidence, and the excluded second declaration never synthesizes a
+// second transform observation.
+
+#[test]
+fn perspective_resource_limited_committed_prefix_preserves_incomplete_lifecycle() {
     let incomplete = qualify_with_limits(
         684554,
         concat!(
-            "a{transform:perspective(none);}",
-            "b{transform:perspective(1px);}",
+            "a{transform:perspective(1px);}",
+            "b{transform:perspective(2px);}",
         ),
         parser_limits_with_occurrences(1),
     );
+
     assert_eq!(
         incomplete.execution_completion(),
         CssParserExecutionCompletion::Incomplete
     );
     assert_eq!(incomplete.transform_observations().len(), 1);
+    assert!(matches!(
+        qualified_functions(&incomplete, 0)[0],
+        CssTransformFunction::Perspective(_)
+    ));
     assert_eq!(
         perspective_argument_spelling(&incomplete, 0, 0),
         (
-            CssTransformPerspectiveArgumentKind::None,
-            "none".to_string()
+            CssTransformPerspectiveArgumentKind::Length,
+            "1px".to_string()
         )
     );
 }
