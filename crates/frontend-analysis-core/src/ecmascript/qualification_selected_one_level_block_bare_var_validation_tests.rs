@@ -320,6 +320,26 @@ const TWO_BLOCKS_TOP: &[TopLevelItem] = &[
     }),
 ];
 
+// --- Fixture: `{ let x; var x; } { let y; let y; }` (tier outranks --------
+// cross-Block source position: the earlier Block only reaches Tier 2b, the
+// later Block reaches Tier 2a, and Tier 2a must still win overall).
+const TIER_OUTRANKS_ORDER_FIRST_ITEMS: &[BlockItem] = &[
+    BlockItem::Lexical(simple_binding(6, 7, "x")),
+    BlockItem::BareVar(simple_binding(13, 14, "x")),
+];
+const TIER_OUTRANKS_ORDER_SECOND_ITEMS: &[BlockItem] = &[
+    BlockItem::Lexical(simple_binding(24, 25, "y")),
+    BlockItem::Lexical(simple_binding(31, 32, "y")),
+];
+const TIER_OUTRANKS_ORDER_TOP: &[TopLevelItem] = &[
+    TopLevelItem::Block(BlockFixture {
+        items: TIER_OUTRANKS_ORDER_FIRST_ITEMS,
+    }),
+    TopLevelItem::Block(BlockFixture {
+        items: TIER_OUTRANKS_ORDER_SECOND_ITEMS,
+    }),
+];
+
 const FIXTURES: &[Fixture] = &[
     Fixture {
         id: "block-lexical-then-var-collision",
@@ -430,6 +450,14 @@ const FIXTURES: &[Fixture] = &[
         top_level_items: TWO_BLOCKS_TOP,
         expected: ExpectedDisposition::Ee14R02 {
             primary: ExpectedAnchor::new(13, 14, "x"),
+        },
+    },
+    Fixture {
+        id: "tier-outranks-cross-block-source-position",
+        source: "{ let x; var x; } { let y; let y; }",
+        top_level_items: TIER_OUTRANKS_ORDER_TOP,
+        expected: ExpectedDisposition::Ee14R01 {
+            primary: ExpectedAnchor::new(31, 32, "y"),
         },
     },
     Fixture {
@@ -713,7 +741,7 @@ fn fixture_ids_and_sources_are_stable_and_unique() {
     }
     assert_eq!(ids.len(), FIXTURES.len());
     assert_eq!(sources.len(), FIXTURES.len());
-    assert_eq!(FIXTURES.len(), 25);
+    assert_eq!(FIXTURES.len(), 26);
 }
 
 #[test]
@@ -1020,6 +1048,50 @@ fn multi_block_source_order_selects_the_first_qualifying_block_for_r02_primary()
             primary: ExpectedAnchor::new(13, 14, "x"),
         },
         "primary evidence must belong to the first Block's own var binding, not the second Block's"
+    );
+}
+
+#[test]
+fn evidence_tier_outranks_cross_block_source_position() {
+    let fixture = fixture("tier-outranks-cross-block-source-position");
+    let TopLevelItem::Block(first_block) = fixture.top_level_items[0] else {
+        panic!("fixture's first item must be a Block");
+    };
+    let TopLevelItem::Block(second_block) = fixture.top_level_items[1] else {
+        panic!("fixture's second item must be a Block");
+    };
+
+    // The earlier Block independently reaches only Tier 2b (EE-14-R02); the
+    // later Block independently reaches Tier 2a (EE-14-R01). Neither
+    // condition is vacuous.
+    assert!(intersects(
+        &block_lexically_declared_names(&first_block),
+        &block_var_declared_names(&first_block)
+    ));
+    assert!(!has_duplicate(&block_lexically_declared_names(
+        &first_block
+    )));
+    assert!(has_duplicate(&block_lexically_declared_names(
+        &second_block
+    )));
+
+    assert!(any_block_has_lexical_var_collision(fixture.top_level_items));
+    assert!(any_block_has_duplicate_lexical(fixture.top_level_items));
+
+    // Tier priority is evaluated before Block source position: Tier 2a
+    // (from the later Block) must win over Tier 2b (from the earlier
+    // Block), never "whichever error's Block comes first in the file".
+    assert_eq!(
+        expected_primary_rule_id(fixture.top_level_items),
+        Some("EE-14-R01"),
+        "a later Tier-2a error must outrank an earlier Tier-2b error"
+    );
+    assert_eq!(
+        fixture.expected,
+        ExpectedDisposition::Ee14R01 {
+            primary: ExpectedAnchor::new(31, 32, "y"),
+        },
+        "primary evidence must belong to the second Block's duplicate lexical binding"
     );
 }
 
