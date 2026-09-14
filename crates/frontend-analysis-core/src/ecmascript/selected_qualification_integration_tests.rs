@@ -1213,6 +1213,8 @@ fn multi_declarator_static_rejections_preserve_the_authored_primary_subject() {
 
 #[test]
 fn multi_declarator_grammar_rejection_stays_distinct_from_deferred_coverage() {
+    // "{ var a,b; }" is deliberately not listed below: Issue #695 makes
+    // multi-declarator Block `var` statements a selected accepted form.
     for (text, expected_range) in [
         (r"var a,\u{};", (6, 10)),
         (r"var a,b,\u{};", (8, 12)),
@@ -1265,7 +1267,6 @@ fn multi_declarator_grammar_rejection_stays_distinct_from_deferred_coverage() {
         "var a,{b}=c;",
         "var a, if;",
         "var a=1, /*comment*/ b;",
-        "{ var a,b; }",
         "for (var a,b;;) {}",
         "var a=1\nvar c;",
         "var x=foo,y=bar,z=",
@@ -1414,15 +1415,171 @@ fn ee14_r01_tier_outranks_earlier_block_ee14_r02_by_cross_block_source_position(
 
 #[test]
 fn bare_block_var_unsupported_boundaries_remain_unsupported_coverage() {
+    // "{var x,y;}" is deliberately not listed here: Issue #695 makes
+    // multi-declarator Block `var` statements a selected accepted form (see
+    // the "Issue #695" test section below).
     for text in [
         "{var x}",               // non-EOF ASI remains unsupported, never SyntaxRejected
         "{var x=x;}",            // initializer
-        "{var x,y;}",            // multi-declarator
         "{var x; /*c*/}",        // comment trivia
         "{ { var x; } }",        // deeper Block nesting
         "for (var x;;) {}",      // for(var...)
         "{var [x]=y;}",          // BindingPattern
         "{ var x; } export {};", // Module-only widening
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::UnsupportedCoverage
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+// --- Issue #695: one-level Block `var` widened to 1..N declarators --------
+//
+// These focused production tests seal the candidate against the #693/#694
+// theorem independently validated (without calling production) by
+// `qualification_validation_tests/selected_one_level_block_var_multi_declarator_frontier.rs`
+// and `selected_post_693_block_var_multi_declarator_slice_completion.rs`.
+// They exercise the real production entry point
+// (`attempt_selected_qualification`) with independently authored expected
+// values rather than importing or deriving from that oracle.
+
+fn assert_grammar_rejected(text: &str, expected_fragment: &str, expected_range: (usize, usize)) {
+    let outcome = qualification_outcome(text);
+    assert_eq!(
+        outcome.verdict(),
+        Some(QualificationVerdictKind::SyntaxRejected),
+        "{text:?}"
+    );
+    let evidence = outcome.rejection_evidence().expect("grammar evidence");
+    assert_eq!(evidence.family(), RejectionFamily::Grammar, "{text:?}");
+    let anchor = evidence
+        .subject()
+        .authored_anchor()
+        .expect("authored grammar subject");
+    assert_eq!(anchor.fragment(), expected_fragment, "{text:?}");
+    assert_eq!(
+        (anchor.range().start(), anchor.range().end()),
+        expected_range,
+        "{text:?}"
+    );
+}
+
+#[test]
+fn block_var_multi_declarator_positive_cardinality_is_selected_accepted_incomplete() {
+    // Defeats an accidental 2-item cardinality cap.
+    for text in ["{ var x, y; }", "{ var x, y, z; }"] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn block_var_multi_declarator_repeated_contributors_remain_accepted() {
+    // Defeats a wrong "deduplicated contributor set" mental model.
+    for text in ["{ var x, x; }", "{ var a, \\u0061; }"] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn block_var_multi_declarator_ee14_r02_reaches_first_interior_and_final_positions() {
+    // Defeats both a "first declarator only" and a "last declarator only"
+    // wrong oracle: each fixture collides at a *different* declarator
+    // position within the same-shaped VariableDeclarationList.
+    assert_static_semantics_rejected("{ let x; var x, y; }", "x", (13, 14));
+    assert_static_semantics_rejected("{ let y; var x, y; }", "y", (16, 17));
+    assert_static_semantics_rejected("{ let y; var x, y, z; }", "y", (16, 17));
+    assert_static_semantics_rejected("{ let z; var x, y, z; }", "z", (19, 20));
+}
+
+#[test]
+fn block_var_multi_declarator_ee14_r02_lexical_after_list_is_offset_discriminating() {
+    // The primary evidence is the later-in-source occurrence that completes
+    // the collision, not a hard-coded numeric offset: these two fixtures use
+    // different offsets for the completing lexical binding (17 vs 20).
+    assert_static_semantics_rejected("{ var x, y; let y; }", "y", (16, 17));
+    assert_static_semantics_rejected("{ var x, y, z; let y; }", "y", (19, 20));
+}
+
+#[test]
+fn block_var_multi_declarator_ee36_r02_propagates_every_declarator_position() {
+    // The colliding contributor is the *second* declarator of the Block's
+    // own VariableDeclarationList, defeating a "first declarator only"
+    // Script-propagation model.
+    assert_static_semantics_rejected("let y; { var x, y; }", "y", (16, 17));
+    assert_static_semantics_rejected("{ var x, y; } let y;", "y", (18, 19));
+}
+
+#[test]
+fn block_var_multi_declarator_top_level_var_block_lexical_asymmetry_remains_accepted() {
+    assert!(matches!(
+        attempt("var y; { let y; }"),
+        SelectedQualificationAttempt::SelectedAcceptedIncomplete
+    ));
+}
+
+#[test]
+fn block_var_multi_declarator_escaped_collisions_use_semantic_equality_at_any_position() {
+    assert_static_semantics_rejected("{ let a; var \\u0061, x; }", "\\u0061", (13, 19));
+    assert_static_semantics_rejected("{ let a; var x, \\u0061; }", "\\u0061", (16, 22));
+}
+
+#[test]
+fn block_var_multi_declarator_no_unicode_normalization_remains_accepted() {
+    assert!(matches!(
+        attempt("{ var é, e\u{0301}; }"),
+        SelectedQualificationAttempt::SelectedAcceptedIncomplete
+    ));
+}
+
+#[test]
+fn block_var_multi_declarator_same_tier_sibling_blocks_select_first_qualifying_block() {
+    // Both Blocks independently qualify for Tier 2b at their own second
+    // declarator; project evidence-order policy selects the first Block in
+    // authored source order.
+    assert_static_semantics_rejected("{ let a; var x, a; }\n{ let b; var y, b; }", "a", (16, 17));
+}
+
+#[test]
+fn block_var_multi_declarator_tier_outranks_cross_block_source_position() {
+    // The earlier Block only reaches Tier 2b (EE-14-R02); the later Block
+    // reaches Tier 2a (EE-14-R01). Tier priority must still decide, so the
+    // later Block's EE-14-R01 wins.
+    assert_static_semantics_rejected("{ let a; var x, a; } { let b; let b; }", "b", (34, 35));
+}
+
+#[test]
+fn block_var_multi_declarator_malformed_later_binding_is_definitively_syntax_rejected() {
+    // The earlier valid "x" declarator must not commit; the later malformed
+    // escape must remain a definitive grammar rejection, never downgraded to
+    // UnsupportedCoverage merely for appearing late in the declarator list.
+    assert_grammar_rejected(r"{ var x, \u{}; }", r"\u{}", (9, 13));
+}
+
+#[test]
+fn block_var_multi_declarator_incomplete_and_firewalled_lists_remain_unsupported_coverage() {
+    for text in [
+        "{ var x, ; }",          // incomplete list: missing later declarator
+        "{ var x, y, ; }",       // incomplete list: missing later declarator
+        "{ var x, y = 1; }",     // initializer firewall
+        "{ var x, y }",          // non-EOF ASI firewall
+        "{ var x, /* c */ y; }", // comment-trivia firewall, before declarator
+        "{ var x, y /* c */; }", // comment-trivia firewall, after declarator
     ] {
         assert!(
             matches!(

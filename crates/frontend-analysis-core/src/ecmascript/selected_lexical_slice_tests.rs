@@ -1986,6 +1986,68 @@ fn one_level_block_frontier_does_not_widen_nested_empty_comment_statement_or_asi
 }
 
 #[test]
+fn one_level_block_var_statement_retains_ordered_1_to_n_declarators() {
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+
+    for (text, expected_ranges, expected_names) in [
+        ("{ var x; }", &[(6, 7)][..], &["x"][..]),
+        ("{ var x, y; }", &[(6, 7), (9, 10)][..], &["x", "y"][..]),
+        (
+            "{ var x, y, z; }",
+            &[(6, 7), (9, 10), (12, 13)][..],
+            &["x", "y", "z"][..],
+        ),
+        ("{ var x, x; }", &[(6, 7), (9, 10)][..], &["x", "x"][..]),
+    ] {
+        let script = recognized_block(text);
+        let [SelectedTopLevelItem::Block(block)] = script.items() else {
+            panic!("expected exactly one Block item for {text:?}");
+        };
+        let [SelectedBlockItem::Var(statement)] = block.items() else {
+            panic!("expected exactly one Block var statement for {text:?}");
+        };
+        let ranges: Vec<_> = statement
+            .bindings()
+            .iter()
+            .map(|binding| {
+                (
+                    binding.binding().range().start(),
+                    binding.binding().range().end(),
+                )
+            })
+            .collect();
+        assert_eq!(ranges, expected_ranges, "{text:?}");
+        let names: Vec<_> = statement
+            .bindings()
+            .iter()
+            .map(|binding| binding.binding().fragment())
+            .collect();
+        assert_eq!(names, expected_names, "{text:?}");
+    }
+}
+
+#[test]
+fn one_level_block_var_statement_commits_no_partial_declarator_prefix_on_later_failure() {
+    // A valid declarator prefix (e.g. "x") must never escape as a committed
+    // Block var contributor when a later declarator or the terminator fails:
+    // the whole statement is transactional.
+    for text in [
+        "{ var x, ; }",
+        "{ var x, y, ; }",
+        "{ var x, y = 1; }",
+        "{ var x, y }",
+        "{ var x, /* c */ y; }",
+        "{ var x, y /* c */; }",
+    ] {
+        assert_unsupported(text);
+    }
+
+    let subject = grammar_rejection(r"{ var x, \u{}; }");
+    assert_eq!(subject.fragment(), r"\u{}");
+    assert_eq!((subject.range().start(), subject.range().end()), (9, 13));
+}
+
+#[test]
 fn top_level_variable_statement_retains_minimal_source_backed_binding_fact() {
     for (text, fragment, semantic_name, range) in [
         ("var x;", "x", "x", (4, 5)),
@@ -2161,10 +2223,12 @@ fn variable_statement_promotes_only_var_bearing_sources_to_distinct_representati
 
 #[test]
 fn variable_statement_frontier_keeps_non_eof_and_broader_var_grammar_unsupported() {
-    // "{ var x; }" is deliberately not listed here: Issue #691 makes this
-    // exact bare Block-var placement a selected accepted form (see
-    // `selected_lexical_slice.rs`'s `SelectedBareBlockVar` recognition and
-    // the Block-item coverage tests below).
+    // "{ var x; }" and "{ var x, y; }" are deliberately not listed here:
+    // Issue #691/#695 make one-level Block `var` statements with 1..N
+    // declarators a selected accepted form (see
+    // `selected_lexical_slice.rs`'s `SelectedBlockVarStatement` recognition
+    // and the Block-item coverage tests in
+    // `selected_qualification_integration_tests.rs`).
     for text in [
         "var x\nvar y;",
         "var {x} = y;",
@@ -2592,6 +2656,8 @@ fn var_multi_reference_initializers_preserve_per_binding_association_order_and_s
 
 #[test]
 fn incomplete_or_widened_declarator_lists_commit_no_selected_statement() {
+    // "{ var a,b; }" is deliberately not listed here: Issue #695 makes
+    // multi-declarator Block `var` statements a selected accepted form.
     for text in [
         "var a,",
         "var a,b,",
@@ -2608,7 +2674,6 @@ fn incomplete_or_widened_declarator_lists_commit_no_selected_statement() {
         "var a=1\nvar c;",
         "var x=foo,y=bar,z=",
         r"var x=\u0066oo,y=\u0062ar,z=",
-        "{ var a,b; }",
         "for (var a,b;;) {}",
     ] {
         assert_unsupported(text);
