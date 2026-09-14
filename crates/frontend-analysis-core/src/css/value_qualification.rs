@@ -7889,14 +7889,87 @@ impl CssTransformMatrix3dFunction {
     }
 }
 
+/// Run-local locator for the exact tokenizer item selected during
+/// authoritative `transform` `perspective()` direct argument recognition
+/// (#684). The index points at the exact tokenizer-owned direct `Ident`,
+/// `Number`, or `Dimension` token retained inside `perspective()`'s single
+/// argument slot, never at the Function opener, a parenthesis, or trivia.
+/// This is a dedicated evidence type distinct from the standalone
+/// `perspective` property's own evidence identity and from every other
+/// transform-function evidence type: mechanical lookup similarity is never
+/// semantic identity authority.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTransformPerspectiveArgumentEvidenceRef {
+    lexical_item_index: usize,
+}
+
+impl CssTransformPerspectiveArgumentEvidenceRef {
+    pub(crate) const fn lexical_item_index(&self) -> usize {
+        self.lexical_item_index
+    }
+}
+
+/// One direct authored `perspective()` argument's tokenizer-owned kind
+/// (#684): `PerspectiveArgument := None | Length`, reusing the accepted
+/// standalone `perspective: none | <length [0,∞]>` scalar theorem (#440)
+/// at this dedicated transform-function argument placement. A direct
+/// `none` Ident and a direct `<length [0,∞]>` (unitless zero `Number` or a
+/// non-negative recognized-length `Dimension`) remain distinct authored
+/// branches: `perspective(none)` never collapses into the `Length` branch,
+/// and this leaf never infers a computed identity transform from `none`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CssTransformPerspectiveArgumentKind {
+    None,
+    Length,
+}
+
+/// One qualified authored `perspective()` argument, preserving authored
+/// kind and exact tokenizer-owned evidence without any unit conversion,
+/// machine-number conversion, or render-time below-`1px` clamp (#684).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTransformPerspectiveArgument {
+    kind: CssTransformPerspectiveArgumentKind,
+    evidence_ref: CssTransformPerspectiveArgumentEvidenceRef,
+}
+
+impl CssTransformPerspectiveArgument {
+    pub(crate) const fn kind(&self) -> CssTransformPerspectiveArgumentKind {
+        self.kind
+    }
+
+    pub(crate) const fn evidence_ref(&self) -> CssTransformPerspectiveArgumentEvidenceRef {
+        self.evidence_ref
+    }
+}
+
+/// One qualified authored `perspective()` transform component: exactly one
+/// direct authored `[<length [0,∞]> | none]` argument (#684), carrying the
+/// exact tokenizer-owned evidence retained at its own dedicated semantic
+/// argument slot. This is the final current normative transform Function
+/// selected under this coverage plan: `perspective()` never shares
+/// representation or evidence identity with the standalone `perspective`
+/// property, is never normalized into whole-value `transform: none`, and
+/// this leaf constructs no perspective matrix and resolves no computed or
+/// rendered transform.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CssTransformPerspectiveFunction {
+    argument: CssTransformPerspectiveArgument,
+}
+
+impl CssTransformPerspectiveFunction {
+    pub(crate) const fn argument(&self) -> CssTransformPerspectiveArgument {
+        self.argument
+    }
+}
+
 /// One qualified selected `transform` component under the profile
 /// `SelectedTransformFunction := Matrix | Scale | Translate3d | Rotate3d |
 /// Translate | TranslateX | TranslateY | TranslateZ | ScaleX | ScaleY |
 /// ScaleZ | Scale3d | Rotate | RotateX | RotateY | RotateZ | Skew | SkewX |
-/// SkewY | Matrix3d` (#418 / #645 / #647 / #649 / #651 / #653 / #655 /
-/// #657 / #659 / #661 / #663 / #665 / #667 / #669 / #671 / #673 / #675 /
-/// #677 / #679 / #682), preserving exact authored order between the twenty
-/// selected function kinds. This is a closed
+/// SkewY | Matrix3d | Perspective` (#418 / #645 / #647 / #649 / #651 /
+/// #653 / #655 / #657 / #659 / #661 / #663 / #665 / #667 / #669 / #671 /
+/// #673 / #675 / #677 / #679 / #682 / #684), preserving exact authored
+/// order between the twenty-one selected function kinds. This is a closed
 /// property-local alternation, not a generic CSS function AST: it exists
 /// only to retain heterogeneous authored order for the selected `transform`
 /// branches. `TranslateX`, `TranslateY`, `TranslateZ`, `ScaleX`, `ScaleY`,
@@ -7942,9 +8015,18 @@ impl CssTransformMatrix3dFunction {
 /// precedence mechanics without sharing its representation or evidence
 /// identity: `matrix()` and `matrix3d()` remain authored-distinct, and
 /// repeated `<number>` membership alone is never abstraction authority.
-/// This completes the current selected-coverage leaf set at twenty kinds;
-/// `perspective()` remains the sole current normative unselected transform
-/// Function in this coverage plan.
+/// `Perspective` (#684) reuses the accepted standalone
+/// `perspective: none | <length [0,∞]>` scalar theorem (#440) for
+/// `perspective()`'s own single authored slot -- direct `none`, direct
+/// unitless zero, or a direct non-negative recognized-length `Dimension`
+/// -- while remaining its own dedicated transform-local semantic
+/// placement, distinct from both the standalone property observation and
+/// whole-value `transform: none`. This completes current normative
+/// transform-function coverage at twenty-one selected kinds: no current
+/// normative transform Function remains unselected. Unrecognized/future
+/// Function names remain outside this closed set and are reported through
+/// the unchanged generic `UnselectedTransformFunction` open-world
+/// containment path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CssTransformFunction {
     Matrix(CssTransformMatrixFunction),
@@ -7967,6 +8049,7 @@ pub(crate) enum CssTransformFunction {
     SkewX(CssTransformSkewXFunction),
     SkewY(CssTransformSkewYFunction),
     Matrix3d(CssTransformMatrix3dFunction),
+    Perspective(CssTransformPerspectiveFunction),
 }
 
 /// One authored `transform` value under the direct-authored profile
@@ -9618,6 +9701,31 @@ impl CssValueQualificationRunResult {
     pub(crate) fn transform_matrix3d_argument_token(
         &self,
         evidence: CssTransformMatrix3dArgumentEvidenceRef,
+    ) -> Option<&CssTokenKind> {
+        let item = self
+            .upstream_parser_result
+            .upstream_tokenizer_result()
+            .lexical_items()
+            .get(evidence.lexical_item_index())?;
+        let CssLexicalItem::SemanticToken(token) = item else {
+            return None;
+        };
+        Some(token.kind())
+    }
+
+    /// Resolves one qualified `transform` `perspective()` argument's
+    /// run-local evidence reference to its exact retained tokenizer token
+    /// kind, preserving authored Ident spelling, sign spelling,
+    /// integer/fraction digits, exponent spelling, and unit identity
+    /// without any machine-number conversion or unit conversion. The
+    /// retained token at the evidence position is a direct `Ident` `none`
+    /// when the argument's `CssTransformPerspectiveArgumentKind` is
+    /// `None`, or a direct `Number`/`Dimension` when it is `Length` (#684).
+    /// This is a dedicated accessor for a dedicated evidence type, distinct
+    /// from the standalone `perspective` property's own resolver.
+    pub(crate) fn transform_perspective_argument_token(
+        &self,
+        evidence: CssTransformPerspectiveArgumentEvidenceRef,
     ) -> Option<&CssTokenKind> {
         let item = self
             .upstream_parser_result
@@ -23466,6 +23574,106 @@ fn classify_transform_skewy_argument(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CssTransformPerspectiveArgumentClass {
+    None(CssTransformPerspectiveArgumentEvidenceRef),
+    Length(CssTransformPerspectiveArgumentEvidenceRef),
+    OpaqueFunction,
+    Invalid,
+}
+
+/// Classifies one already-partitioned `perspective()` function-local slot
+/// against the direct-authored profile `PerspectiveArgument := None |
+/// Length`, reusing the accepted standalone `perspective: none |
+/// <length [0,∞]>` scalar theorem (#440) at this dedicated transform
+/// argument placement (#684).
+///
+/// An authored-empty slot has no retained semantic token and is
+/// decisively `Invalid`. A slot headed by a `Function` token is
+/// `OpaqueFunction` -- a structurally feasible position whose validity
+/// depends on calculated-value semantics this leaf does not own, so
+/// `calc(1px)`/`calc(-1px)` are never evaluated -- only when the slot is
+/// exactly one complete Function extent; a recognized generic
+/// whole-value-only Function name occupying this non-whole-value position
+/// is decisively `Invalid` instead, and a Function followed by further
+/// retained material in the same slot (`entire_function_name` returning
+/// `None`) is directly visible structural failure and stays decisively
+/// `Invalid`.
+///
+/// A direct `none` Ident, ASCII-case-insensitively, is decisively `None`.
+/// A direct `Number` whose exact authored numeric value is zero -- signed
+/// or unsigned, any exponent spelling -- is decisively `Length`. A direct
+/// `Dimension` whose decoded unit is a current recognized CSS length unit
+/// and whose exact authored numeric value is non-negative is decisively
+/// `Length`; the same exact-zero/non-negative test used by the standalone
+/// `perspective` property qualifier applies unchanged, so no exponent-to-
+/// float evaluation, unit conversion, or render-time below-`1px` clamp
+/// ever participates in this classification. Any other direct Ident,
+/// Number, Dimension, Percentage, String, or Hash -- including a CSS-wide
+/// keyword, which has no whole-property meaning at this non-whole-value
+/// Function-argument placement -- is a direct token-category failure and
+/// is decisively `Invalid`, as is any slot carrying more than one retained
+/// semantic token.
+fn classify_transform_perspective_argument(
+    slot: &[CssLexicalItem],
+    absolute_slot_start: usize,
+) -> CssTransformPerspectiveArgumentClass {
+    let mut tokens = slot
+        .iter()
+        .enumerate()
+        .filter_map(|(relative_index, entry)| match entry {
+            CssLexicalItem::SemanticToken(token)
+                if !matches!(token.kind(), CssTokenKind::Whitespace) =>
+            {
+                Some((relative_index, token))
+            }
+            _ => None,
+        });
+
+    let Some((relative_index, first)) = tokens.next() else {
+        return CssTransformPerspectiveArgumentClass::Invalid;
+    };
+
+    if matches!(first.kind(), CssTokenKind::Function(_)) {
+        return match entire_function_name(slot) {
+            Some(name) if is_whole_value_function(name) => {
+                CssTransformPerspectiveArgumentClass::Invalid
+            }
+            Some(_) => CssTransformPerspectiveArgumentClass::OpaqueFunction,
+            None => CssTransformPerspectiveArgumentClass::Invalid,
+        };
+    }
+
+    if tokens.next().is_some() {
+        return CssTransformPerspectiveArgumentClass::Invalid;
+    }
+
+    match first.kind() {
+        CssTokenKind::Ident(identifier) if identifier.eq_ignore_ascii_case("none") => {
+            CssTransformPerspectiveArgumentClass::None(CssTransformPerspectiveArgumentEvidenceRef {
+                lexical_item_index: absolute_slot_start + relative_index,
+            })
+        }
+        CssTokenKind::Number { value, .. } if is_direct_zero_numeric_value(value) => {
+            CssTransformPerspectiveArgumentClass::Length(
+                CssTransformPerspectiveArgumentEvidenceRef {
+                    lexical_item_index: absolute_slot_start + relative_index,
+                },
+            )
+        }
+        CssTokenKind::Dimension { value, unit, .. }
+            if is_css_length_unit(unit) && is_non_negative_direct_number(value) =>
+        {
+            CssTransformPerspectiveArgumentClass::Length(
+                CssTransformPerspectiveArgumentEvidenceRef {
+                    lexical_item_index: absolute_slot_start + relative_index,
+                },
+            )
+        }
+        _ => CssTransformPerspectiveArgumentClass::Invalid,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CssTransformComponentClass {
     Matrix([CssTransformMatrixArgumentEvidenceRef; 6]),
     Scale(CssTransformScaleArguments),
@@ -23487,6 +23695,7 @@ enum CssTransformComponentClass {
     SkewX(CssTransformSkewXArgument),
     SkewY(CssTransformSkewYArgument),
     Matrix3d([CssTransformMatrix3dArgumentEvidenceRef; 16]),
+    Perspective(CssTransformPerspectiveArgument),
     OpaqueTransformArgument,
     UnselectedTransformFunction,
     Invalid,
@@ -23735,16 +23944,17 @@ enum CssTransformComponentClass {
 /// `rotateY()`/`rotateZ()` leaf, even though it composes the fourth-slot
 /// scalar mechanism already accepted for `rotate3d()`.
 ///
-/// Any other Function name is `UnselectedTransformFunction`: `rotateX(1deg)`,
-/// `perspective(...)`, and an unrecognized name alike stay outside
+/// Any other Function name is `UnselectedTransformFunction`: an
+/// unrecognized name such as `unknownfunction(...)` stays outside
 /// selected-profile coverage instead of being decided here, because
-/// deciding them would require the full `<transform-function>` dispatch and
-/// the length/angle/axis semantics this leaf does not own -- their
-/// remaining unselected is load-bearing scope containment for #657 / #659 /
-/// #661 / #663 / #665 / #667, not an oversight. `perspective()` is the sole
-/// current normative unselected transform Function remaining after
-/// `matrix3d()` selection (#682). A misplaced whole-value Function is the
-/// one exception: it has no independent meaning inside a `<transform-list>`
+/// deciding an unrecognized name would require the full
+/// `<transform-function>` dispatch and semantics this leaf does not own.
+/// After #684 every current normative transform Function name is selected
+/// -- including `perspective()` -- so this generic containment path now
+/// serves only unrecognized/future Function names, never a current
+/// normative one; that remains load-bearing open-world scope containment,
+/// not an oversight. A misplaced whole-value Function is the one
+/// exception: it has no independent meaning inside a `<transform-list>`
 /// and is decisively `Invalid`, mirroring the accepted `scale` boundary.
 ///
 /// A Function named `matrix3d` ASCII-case-insensitively enters
@@ -24549,6 +24759,40 @@ fn classify_transform_component(
         };
     }
 
+    if name.eq_ignore_ascii_case("perspective") {
+        let slots = transform_function_body_slot_ranges(component);
+        if slots.len() != 1 {
+            return CssTransformComponentClass::Invalid;
+        }
+
+        let slot_start = absolute_component_start + slots[0].start;
+        let argument_class =
+            classify_transform_perspective_argument(&component[slots[0].clone()], slot_start);
+
+        let argument = match argument_class {
+            CssTransformPerspectiveArgumentClass::None(evidence_ref) => {
+                CssTransformPerspectiveArgument {
+                    kind: CssTransformPerspectiveArgumentKind::None,
+                    evidence_ref,
+                }
+            }
+            CssTransformPerspectiveArgumentClass::Length(evidence_ref) => {
+                CssTransformPerspectiveArgument {
+                    kind: CssTransformPerspectiveArgumentKind::Length,
+                    evidence_ref,
+                }
+            }
+            CssTransformPerspectiveArgumentClass::OpaqueFunction => {
+                return CssTransformComponentClass::OpaqueTransformArgument;
+            }
+            CssTransformPerspectiveArgumentClass::Invalid => {
+                return CssTransformComponentClass::Invalid;
+            }
+        };
+
+        return CssTransformComponentClass::Perspective(argument);
+    }
+
     if is_whole_value_function(name) {
         CssTransformComponentClass::Invalid
     } else {
@@ -24837,6 +25081,11 @@ fn qualify_transform_value(
             CssTransformComponentClass::Matrix3d(arguments) => {
                 functions.push(CssTransformFunction::Matrix3d(
                     CssTransformMatrix3dFunction { arguments },
+                ));
+            }
+            CssTransformComponentClass::Perspective(argument) => {
+                functions.push(CssTransformFunction::Perspective(
+                    CssTransformPerspectiveFunction { argument },
                 ));
             }
             CssTransformComponentClass::OpaqueTransformArgument => has_opaque_argument = true,

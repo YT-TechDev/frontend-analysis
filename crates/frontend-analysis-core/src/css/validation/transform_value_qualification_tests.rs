@@ -4,17 +4,18 @@ use crate::css::parser::result::CssParserExecutionCompletion;
 use crate::css::token::{CssExponentSign, CssNumberSign, CssTokenKind};
 use crate::css::tokenizer::resource::CssTokenizerLimits;
 use crate::css::value_qualification::{
-    CssTransformFunction, CssTransformQualificationOutcome, CssTransformRotate3dAngleArgument,
-    CssTransformRotate3dFunction, CssTransformRotateArgumentKind, CssTransformRotateFunction,
-    CssTransformRotateXArgumentKind, CssTransformRotateXFunction, CssTransformRotateYArgumentKind,
-    CssTransformRotateYFunction, CssTransformRotateZArgumentKind, CssTransformRotateZFunction,
-    CssTransformScale3dArgumentKind, CssTransformScaleArgumentKind, CssTransformScaleXArgumentKind,
-    CssTransformScaleYArgumentKind, CssTransformScaleZArgumentKind, CssTransformSkewArgumentKind,
-    CssTransformSkewFunction, CssTransformSkewXArgumentKind, CssTransformSkewXFunction,
-    CssTransformSkewYArgumentKind, CssTransformSkewYFunction,
-    CssTransformTranslate3dXyArgumentKind, CssTransformTranslateArgumentKind,
-    CssTransformTranslateXArgumentKind, CssTransformTranslateYArgumentKind,
-    CssTransformUnsupportedReason, CssTransformValue, CssValueQualificationRunResult, run,
+    CssTransformFunction, CssTransformPerspectiveArgumentKind, CssTransformQualificationOutcome,
+    CssTransformRotate3dAngleArgument, CssTransformRotate3dFunction,
+    CssTransformRotateArgumentKind, CssTransformRotateFunction, CssTransformRotateXArgumentKind,
+    CssTransformRotateXFunction, CssTransformRotateYArgumentKind, CssTransformRotateYFunction,
+    CssTransformRotateZArgumentKind, CssTransformRotateZFunction, CssTransformScale3dArgumentKind,
+    CssTransformScaleArgumentKind, CssTransformScaleXArgumentKind, CssTransformScaleYArgumentKind,
+    CssTransformScaleZArgumentKind, CssTransformSkewArgumentKind, CssTransformSkewFunction,
+    CssTransformSkewXArgumentKind, CssTransformSkewXFunction, CssTransformSkewYArgumentKind,
+    CssTransformSkewYFunction, CssTransformTranslate3dXyArgumentKind,
+    CssTransformTranslateArgumentKind, CssTransformTranslateXArgumentKind,
+    CssTransformTranslateYArgumentKind, CssTransformUnsupportedReason, CssTransformValue,
+    CssValueQualificationRunResult, run,
 };
 use crate::{SourceId, SourceText};
 
@@ -192,6 +193,80 @@ fn matrix3d_argument_spellings(
             authored_number_spelling(token)
         })
         .collect()
+}
+
+/// Reconstructs one retained `Ident`, `Number`, or `Dimension` token's
+/// authored spelling from tokenizer-owned evidence alone: a direct `none`
+/// Ident resolves to its own spelling verbatim, while a `Number`/
+/// `Dimension` reconstructs sign spelling, integer/fraction digits,
+/// exponent spelling, and unit identity exactly like
+/// `authored_translatez_argument_spelling`, so `0`, `-0`, `0px`, and `.5px`
+/// stay pairwise distinguishable in assertions. No machine float or unit
+/// conversion is ever produced.
+fn authored_perspective_argument_spelling(token: &CssTokenKind) -> String {
+    if let CssTokenKind::Ident(identifier) = token {
+        return identifier.clone();
+    }
+
+    let (value, suffix) = match token {
+        CssTokenKind::Number { value, .. } => (value, String::new()),
+        CssTokenKind::Dimension { value, unit, .. } => (value, unit.clone()),
+        other => panic!(
+            "perspective argument evidence did not resolve to an Ident/Number/Dimension token, got {other:?}"
+        ),
+    };
+
+    let mut spelling = String::new();
+    match value.sign() {
+        Some(CssNumberSign::Plus) => spelling.push('+'),
+        Some(CssNumberSign::Minus) => spelling.push('-'),
+        None => {}
+    }
+    spelling.push_str(value.decimal().integer_digits());
+    let fraction_digits = value.decimal().fraction_digits();
+    if !fraction_digits.is_empty() {
+        spelling.push('.');
+        spelling.push_str(fraction_digits);
+    }
+    if let Some(exponent) = value.decimal().exponent() {
+        spelling.push('e');
+        match exponent.sign() {
+            Some(CssExponentSign::Plus) => spelling.push('+'),
+            Some(CssExponentSign::Minus) => spelling.push('-'),
+            None => {}
+        }
+        spelling.push_str(exponent.digits());
+    }
+    spelling.push_str(&suffix);
+    spelling
+}
+
+/// Resolves one qualified `perspective()` transform component's single
+/// authored argument at `function_index` within observation `index` as a
+/// `(kind, spelling)` pair, exactly like `translatex_argument_spelling`,
+/// so the `None`-vs-`Length` authored role and exact evidence never
+/// collapse into a single generic scalar.
+fn perspective_argument_spelling(
+    result: &CssValueQualificationRunResult,
+    index: usize,
+    function_index: usize,
+) -> (CssTransformPerspectiveArgumentKind, String) {
+    let functions = qualified_functions(result, index);
+    let function = functions
+        .get(function_index)
+        .unwrap_or_else(|| panic!("missing transform component {function_index} at {index}"));
+    let CssTransformFunction::Perspective(perspective) = function else {
+        panic!("expected perspective component {function_index} at {index}, got {function:?}");
+    };
+
+    let argument = perspective.argument();
+    let token = result
+        .transform_perspective_argument_token(argument.evidence_ref())
+        .expect("perspective argument evidence did not resolve");
+    (
+        argument.kind(),
+        authored_perspective_argument_spelling(token),
+    )
 }
 
 /// Reconstructs one retained `Number` or `Percentage` token's authored
@@ -2036,12 +2111,12 @@ fn unselected_transform_functions_remain_outside_selected_profile() {
         418220,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "perspective(1px)",
-            "perspective(1px)",
+            "unknownfunction(1px)",
+            "unknownfunction(1px)",
             "unknownfunction(1,0,0,1,0,0)",
-            "unknownfunction(1,0,0,1,0,0) perspective(1px)",
-            "scale(2) perspective(1px)",
-            "perspective(1px) scale(2)",
+            "unknownfunction(1,0,0,1,0,0) unknownfunction(1px)",
+            "scale(2) unknownfunction(1px)",
+            "unknownfunction(1px) scale(2)",
         ],
     );
 }
@@ -2336,13 +2411,13 @@ fn repeated_and_cross_source_runs_are_deterministic() {
         "a{transform:none;}",
         "b{transform:matrix(1,0,0,1,0,0) matrix(2,0,0,2,0,0);}",
         "c{transform:matrix(calc(1,2),0,0,1,0,0);}",
-        "d{transform:perspective(1px);}",
+        "d{transform:unknownfunction(1px);}",
         "e{transform:matrix(var(--x),0);}",
         "f{transform:matrix(1,2);}",
         "g{transform:matrix(1,0,0,1,0,0) none;}",
         "h{transform:scale(2) matrix(1,0,0,1,0,0);}",
         "i{transform:scale(calc(1),2);}",
-        "j{transform:perspective(1px);}",
+        "j{transform:unknownfunction(1px);}",
         "k{transform:scale(1,2,3);}",
     );
 
@@ -2413,8 +2488,8 @@ fn invalid_unsupported_precedence_is_scan_order_independent() {
     assert_all_invalid(
         418310,
         &[
-            "perspective(1px) matrix(1,2)",
-            "matrix(1,2) perspective(1px)",
+            "unknownfunction(1px) matrix(1,2)",
+            "matrix(1,2) unknownfunction(1px)",
             "calc(1) matrix(1,2)",
             "matrix(1,2) calc(1)",
             "matrix(calc(1),0,0,1,0,0) matrix(1,2)",
@@ -2428,8 +2503,8 @@ fn invalid_unsupported_precedence_is_scan_order_independent() {
         418320,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "matrix(calc(1),0,0,1,0,0) perspective(1px)",
-            "perspective(1px) matrix(calc(1),0,0,1,0,0)",
+            "matrix(calc(1),0,0,1,0,0) unknownfunction(1px)",
+            "unknownfunction(1px) matrix(calc(1),0,0,1,0,0)",
         ],
     );
 
@@ -2438,9 +2513,9 @@ fn invalid_unsupported_precedence_is_scan_order_independent() {
         418330,
         CssTransformUnsupportedReason::DeferredSubstitutionFunction,
         &[
-            "var(--x) perspective(1px) matrix(1,2)",
-            "matrix(1,2) perspective(1px) var(--x)",
-            "perspective(1px) matrix(var(--x),0) matrix(1,2)",
+            "var(--x) unknownfunction(1px) matrix(1,2)",
+            "matrix(1,2) unknownfunction(1px) var(--x)",
+            "unknownfunction(1px) matrix(var(--x),0) matrix(1,2)",
         ],
     );
 }
@@ -2860,8 +2935,8 @@ fn scale_invalid_unsupported_precedence_is_scan_order_independent() {
         645420,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "scale(calc(1)) perspective(1px)",
-            "perspective(1px) scale(calc(1))",
+            "scale(calc(1)) unknownfunction(1px)",
+            "unknownfunction(1px) scale(calc(1))",
         ],
     );
 }
@@ -3475,9 +3550,9 @@ fn unselected_outer_function_precedence_covers_translate3d() {
         647250,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "perspective(1px)",
-            "translate3d(1px,2px,3px) perspective(1px)",
-            "perspective(1px) translate3d(1px,2px,3px)",
+            "unknownfunction(1px)",
+            "translate3d(1px,2px,3px) unknownfunction(1px)",
+            "unknownfunction(1px) translate3d(1px,2px,3px)",
             "translate3dx(1px,2px,3px)",
         ],
     );
@@ -3488,8 +3563,8 @@ fn unselected_outer_function_precedence_covers_translate3d() {
         647260,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "translate3d(calc(1px),2px,3px) perspective(1px)",
-            "perspective(1px) translate3d(calc(1px),2px,3px)",
+            "translate3d(calc(1px),2px,3px) unknownfunction(1px)",
+            "unknownfunction(1px) translate3d(calc(1px),2px,3px)",
         ],
     );
 }
@@ -4183,25 +4258,27 @@ fn unselected_outer_function_precedence_covers_rotate3d() {
         649260,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "perspective(1px)",
-            "rotate3d(1,0,0,90deg) perspective(1px)",
-            "perspective(1px) rotate3d(1,0,0,90deg)",
+            "unknownfunction(1px)",
+            "rotate3d(1,0,0,90deg) unknownfunction(1px)",
+            "unknownfunction(1px) rotate3d(1,0,0,90deg)",
             "rotate3dx(1,0,0,90deg)",
         ],
     );
 
     // Coarser outer unselected-function coverage outranks an inner opaque
-    // rotate3d argument, identically in both authored orders. `perspective()`
-    // is used as the outer sentinel rather than `rotate()`, which #667
-    // selects as its own distinct semantic placement, to avoid conflating
-    // this rotate3d-only invariant with the newly qualified `rotate()` leaf;
-    // `skewX()` served this role before #677 selected it too.
+    // rotate3d argument, identically in both authored orders. A generic
+    // non-normative `unknownfunction()` is used as the outer sentinel: after
+    // #684 completes current normative transform-function coverage, no
+    // current normative Function remains available to serve this role, so
+    // every remaining sentinel in this file is a genuinely unrecognized
+    // open-world Function name rather than a normative sibling awaiting its
+    // own leaf.
     assert_all_unsupported(
         649270,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "rotate3d(calc(1),0,0,90deg) perspective(1px)",
-            "perspective(1px) rotate3d(calc(1),0,0,90deg)",
+            "rotate3d(calc(1),0,0,90deg) unknownfunction(1px)",
+            "unknownfunction(1px) rotate3d(calc(1),0,0,90deg)",
         ],
     );
 }
@@ -5109,8 +5186,8 @@ fn unselected_outer_function_precedence_covers_translate() {
         651280,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "translate(10px) perspective(1px)",
-            "perspective(1px) translate(10px)",
+            "translate(10px) unknownfunction(1px)",
+            "unknownfunction(1px) translate(10px)",
         ],
     );
 
@@ -5120,13 +5197,13 @@ fn unselected_outer_function_precedence_covers_translate() {
         651290,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "translate(calc(10px)) perspective(1px)",
-            "perspective(1px) translate(calc(10px))",
+            "translate(calc(10px)) unknownfunction(1px)",
+            "unknownfunction(1px) translate(calc(10px))",
         ],
     );
 
     // Decisive direct Invalid still wins over the outer unselected sibling.
-    assert_all_invalid(651300, &["translate(1) perspective(1px)"]);
+    assert_all_invalid(651300, &["translate(1) unknownfunction(1px)"]);
 }
 
 // 89. `<transform-list>` is whitespace-separated repetition: a top-level
@@ -5926,8 +6003,8 @@ fn unselected_outer_function_precedence_covers_translatex() {
         653420,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "translateX(10px) perspective(1px)",
-            "perspective(1px) translateX(10px)",
+            "translateX(10px) unknownfunction(1px)",
+            "unknownfunction(1px) translateX(10px)",
         ],
     );
 
@@ -5937,13 +6014,13 @@ fn unselected_outer_function_precedence_covers_translatex() {
         653430,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "translateX(calc(10px)) perspective(1px)",
-            "perspective(1px) translateX(calc(10px))",
+            "translateX(calc(10px)) unknownfunction(1px)",
+            "unknownfunction(1px) translateX(calc(10px))",
         ],
     );
 
     // Decisive direct Invalid still wins over the outer unselected sibling.
-    assert_all_invalid(653440, &["translateX(1) perspective(1px)"]);
+    assert_all_invalid(653440, &["translateX(1) unknownfunction(1px)"]);
 }
 
 // 112. `scale3d()` was formerly the remaining scale-family sibling this test
@@ -6761,8 +6838,8 @@ fn unselected_outer_function_precedence_covers_translatey() {
         655420,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "translateY(10px) perspective(1px)",
-            "perspective(1px) translateY(10px)",
+            "translateY(10px) unknownfunction(1px)",
+            "unknownfunction(1px) translateY(10px)",
         ],
     );
 
@@ -6772,13 +6849,13 @@ fn unselected_outer_function_precedence_covers_translatey() {
         655430,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "translateY(calc(10px)) perspective(1px)",
-            "perspective(1px) translateY(calc(10px))",
+            "translateY(calc(10px)) unknownfunction(1px)",
+            "unknownfunction(1px) translateY(calc(10px))",
         ],
     );
 
     // Decisive direct Invalid still wins over the outer unselected sibling.
-    assert_all_invalid(655440, &["translateY(1) perspective(1px)"]);
+    assert_all_invalid(655440, &["translateY(1) unknownfunction(1px)"]);
 }
 
 // 136. `translateX()` and `translateY()` evidence never drifts across each
@@ -6839,28 +6916,27 @@ fn translatex_translatey_evidence_separation_never_drifts() {
 
 // 137. `translateZ()` remains outside selected-profile coverage after
 // #655: extending coverage with `translateY()` never widens the selected
-// profile to a sibling `<transform-function>` still outside it -- unlike
-// `translateZ()`, which #657 goes on to select, `perspective()` remains
-// outside selected-profile coverage in isolation, with any argument shape,
-// or alongside a qualified `translateY()` in either order (#655 / #657).
-// `scale3d()` was formerly listed here too; #665 selects it separately, so
-// this generic sentinel was retargeted to `rotate()`. #667 selects
-// `rotate()` too, superseding that retarget in turn, and the sentinel
-// became `skewX()`; #677 selects `skewX()` as well, superseding it once
-// more, and the sentinel became `matrix3d()`; #682 selects `matrix3d()`
-// too, superseding it in turn, so this generic sentinel is now
-// `perspective()` alone, the sole current normative unselected transform
-// Function remaining after #682.
+// profile to a sibling `<transform-function>` still outside it. This test's
+// generic outer-unselected sentinel was historically retargeted at every
+// subsequent leaf as each candidate sibling was itself selected in turn:
+// `translateZ()` (#657) -> `scale3d()` (#665) -> `rotate()` (#667) ->
+// `skewX()` (#677) -> `matrix3d()` (#682) -> `perspective()` (#684). #684
+// completes current normative transform-function coverage, so there is no
+// current normative Function left to retarget to; the sentinel is
+// therefore retargeted a final time to the generic non-normative
+// `unknownfunction()` open-world name, which remains
+// `UnselectedTransformFunction` regardless of how many current normative
+// leaves are ever selected.
 
 #[test]
-fn remaining_transform_siblings_stay_unselected_alongside_qualified_translatey() {
+fn unrecognized_transform_functions_stay_unselected_alongside_qualified_translatey() {
     assert_all_unsupported(
         655460,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "perspective(10px)",
-            "translateY(10px) perspective(1px)",
-            "perspective(1px) translateY(10px)",
+            "unknownfunction(10px)",
+            "translateY(10px) unknownfunction(1px)",
+            "unknownfunction(1px) translateY(10px)",
         ],
     );
 }
@@ -7468,8 +7544,8 @@ fn translatez_decisive_invalid_outranks_opaque_argument() {
     assert_all_invalid(
         657441,
         &[
-            "translateZ(0%) perspective(1px)",
-            "perspective(1px) translateZ(0%)",
+            "translateZ(0%) unknownfunction(1px)",
+            "unknownfunction(1px) translateZ(0%)",
         ],
     );
 }
@@ -7666,8 +7742,8 @@ fn unselected_outer_function_precedence_covers_translatez() {
         657500,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "translateZ(10px) perspective(1px)",
-            "perspective(1px) translateZ(10px)",
+            "translateZ(10px) unknownfunction(1px)",
+            "unknownfunction(1px) translateZ(10px)",
         ],
     );
 
@@ -7677,13 +7753,13 @@ fn unselected_outer_function_precedence_covers_translatez() {
         657510,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "translateZ(calc(10px)) perspective(1px)",
-            "perspective(1px) translateZ(calc(10px))",
+            "translateZ(calc(10px)) unknownfunction(1px)",
+            "unknownfunction(1px) translateZ(calc(10px))",
         ],
     );
 
     // Decisive direct Invalid still wins over the outer unselected sibling.
-    assert_all_invalid(657520, &["translateZ(1) perspective(1px)"]);
+    assert_all_invalid(657520, &["translateZ(1) unknownfunction(1px)"]);
 }
 
 // 164. `<transform-list>` is whitespace-separated repetition: a top-level
@@ -8157,8 +8233,8 @@ fn scalex_decisive_invalid_outranks_opaque_argument() {
     assert_all_invalid(
         659301,
         &[
-            "scaleX(1px) perspective(1px)",
-            "perspective(1px) scaleX(1px)",
+            "scaleX(1px) unknownfunction(1px)",
+            "unknownfunction(1px) scaleX(1px)",
         ],
     );
 }
@@ -8365,7 +8441,10 @@ fn unselected_outer_function_precedence_covers_scalex() {
     assert_all_unsupported(
         659360,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
-        &["scaleX(2) perspective(1px)", "perspective(1px) scaleX(2)"],
+        &[
+            "scaleX(2) unknownfunction(1px)",
+            "unknownfunction(1px) scaleX(2)",
+        ],
     );
 
     // Coarser outer unselected-function coverage outranks an inner opaque
@@ -8374,13 +8453,13 @@ fn unselected_outer_function_precedence_covers_scalex() {
         659380,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "scaleX(calc(1)) perspective(1px)",
-            "perspective(1px) scaleX(calc(1))",
+            "scaleX(calc(1)) unknownfunction(1px)",
+            "unknownfunction(1px) scaleX(calc(1))",
         ],
     );
 
     // Decisive direct Invalid still wins over the outer unselected sibling.
-    assert_all_invalid(659400, &["scaleX(1px) perspective(1px)"]);
+    assert_all_invalid(659400, &["scaleX(1px) unknownfunction(1px)"]);
 }
 
 // 184. `scale3d()` was formerly the remaining scale-family sibling this
@@ -8922,8 +9001,8 @@ fn scaley_decisive_invalid_outranks_opaque_argument() {
     assert_all_invalid(
         661301,
         &[
-            "scaleY(1px) perspective(1px)",
-            "perspective(1px) scaleY(1px)",
+            "scaleY(1px) unknownfunction(1px)",
+            "unknownfunction(1px) scaleY(1px)",
         ],
     );
 }
@@ -9238,7 +9317,10 @@ fn unselected_outer_function_precedence_covers_scaley() {
     assert_all_unsupported(
         661360,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
-        &["scaleY(2) perspective(1px)", "perspective(1px) scaleY(2)"],
+        &[
+            "scaleY(2) unknownfunction(1px)",
+            "unknownfunction(1px) scaleY(2)",
+        ],
     );
 
     // Coarser outer unselected-function coverage outranks an inner opaque
@@ -9247,13 +9329,13 @@ fn unselected_outer_function_precedence_covers_scaley() {
         661380,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "scaleY(calc(1)) perspective(1px)",
-            "perspective(1px) scaleY(calc(1))",
+            "scaleY(calc(1)) unknownfunction(1px)",
+            "unknownfunction(1px) scaleY(calc(1))",
         ],
     );
 
     // Decisive direct Invalid still wins over the outer unselected sibling.
-    assert_all_invalid(661400, &["scaleY(1px) perspective(1px)"]);
+    assert_all_invalid(661400, &["scaleY(1px) unknownfunction(1px)"]);
 }
 
 // 205. `scale3d()` was formerly the remaining scale-family sibling this
@@ -9801,8 +9883,8 @@ fn scalez_decisive_invalid_outranks_opaque_argument() {
     assert_all_invalid(
         663301,
         &[
-            "scaleZ(1px) perspective(1px)",
-            "perspective(1px) scaleZ(1px)",
+            "scaleZ(1px) unknownfunction(1px)",
+            "unknownfunction(1px) scaleZ(1px)",
         ],
     );
 }
@@ -10155,7 +10237,10 @@ fn unselected_outer_function_precedence_covers_scalez() {
     assert_all_unsupported(
         663360,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
-        &["scaleZ(2) perspective(1px)", "perspective(1px) scaleZ(2)"],
+        &[
+            "scaleZ(2) unknownfunction(1px)",
+            "unknownfunction(1px) scaleZ(2)",
+        ],
     );
 
     // Coarser outer unselected-function coverage outranks an inner opaque
@@ -10164,13 +10249,13 @@ fn unselected_outer_function_precedence_covers_scalez() {
         663380,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "scaleZ(calc(1)) perspective(1px)",
-            "perspective(1px) scaleZ(calc(1))",
+            "scaleZ(calc(1)) unknownfunction(1px)",
+            "unknownfunction(1px) scaleZ(calc(1))",
         ],
     );
 
     // Decisive direct Invalid still wins over the outer unselected sibling.
-    assert_all_invalid(663400, &["scaleZ(1px) perspective(1px)"]);
+    assert_all_invalid(663400, &["scaleZ(1px) unknownfunction(1px)"]);
 }
 
 // 226. `scale3d()` was formerly the sole remaining scale-family sibling
@@ -10937,8 +11022,8 @@ fn scale3d_decisive_invalid_outranks_opaque_argument() {
     assert_all_invalid(
         665301,
         &[
-            "scale3d(1px,2,3) perspective(1px)",
-            "perspective(1px) scale3d(1px,2,3)",
+            "scale3d(1px,2,3) unknownfunction(1px)",
+            "unknownfunction(1px) scale3d(1px,2,3)",
         ],
     );
 }
@@ -11359,8 +11444,8 @@ fn unselected_outer_function_precedence_covers_scale3d() {
         665400,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "scale3d(2,3,4) perspective(1px)",
-            "perspective(1px) scale3d(2,3,4)",
+            "scale3d(2,3,4) unknownfunction(1px)",
+            "unknownfunction(1px) scale3d(2,3,4)",
         ],
     );
 
@@ -11371,10 +11456,10 @@ fn unselected_outer_function_precedence_covers_scale3d() {
         665410,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "scale3d(calc(1),2,3) perspective(1px)",
-            "perspective(1px) scale3d(calc(1),2,3)",
-            "scale3d(1,calc(1),3) perspective(1px)",
-            "perspective(1px) scale3d(1,2,calc(1))",
+            "scale3d(calc(1),2,3) unknownfunction(1px)",
+            "unknownfunction(1px) scale3d(calc(1),2,3)",
+            "scale3d(1,calc(1),3) unknownfunction(1px)",
+            "unknownfunction(1px) scale3d(1,2,calc(1))",
         ],
     );
 }
@@ -11930,11 +12015,10 @@ fn rotate_deferred_substitution_outranks_surrounding_shape_conclusions() {
 // 266. Directly visible decisive invalidity outranks an opaque Function
 // found in a sibling slot; a direct wrong-category failure remains
 // decisive even alongside an outer unselected sibling, in either authored
-// order (#667). `perspective()` is used as the still-unselected outer
-// sentinel here -- `skewX()` served this role instead, rather than
-// `rotateX()`, because #669 selects `rotateX()` and this sentinel choice
-// avoided repeated churn as the rotate family was completed, but #677
-// selects `skewX()` too, so the sentinel is retargeted to `perspective()`.
+// order (#667). A generic non-normative `unknownfunction()` is used as the
+// outer sentinel: #684 completes current normative transform-function
+// coverage, so no current normative Function remains available to serve
+// this role.
 
 #[test]
 fn rotate_decisive_invalid_outranks_opaque_argument() {
@@ -11942,7 +12026,10 @@ fn rotate_decisive_invalid_outranks_opaque_argument() {
 
     assert_all_invalid(
         667301,
-        &["rotate(1) perspective(1px)", "perspective(1px) rotate(1)"],
+        &[
+            "rotate(1) unknownfunction(1px)",
+            "unknownfunction(1px) rotate(1)",
+        ],
     );
 }
 
@@ -11950,12 +12037,10 @@ fn rotate_decisive_invalid_outranks_opaque_argument() {
 // outside selected-profile coverage, in either authored order and
 // regardless of a sibling qualified `rotate()`, and the coarser outer
 // unselected-function coverage outranks an inner opaque `rotate()`
-// argument. `perspective()` is used as the still-unselected outer sentinel
-// here -- `skewX()` served this role before #677 selected it too, and
-// `matrix3d()` served it too until #682 selected it -- rather than
-// `rotateX()`, because #669 selects `rotateX()` and this sentinel choice
-// avoids repeated churn as the rotate family is completed
-// (#667 / #669 / #677 / #682).
+// argument. A generic non-normative `unknownfunction()` is used as the
+// outer sentinel: #684 completes current normative transform-function
+// coverage, so no current normative Function remains available to serve
+// this role (#667 / #669 / #677 / #682 / #684).
 
 #[test]
 fn unselected_outer_function_precedence_covers_rotate() {
@@ -11963,8 +12048,8 @@ fn unselected_outer_function_precedence_covers_rotate() {
         667310,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "rotate(90deg) perspective(1px)",
-            "perspective(1px) rotate(90deg)",
+            "rotate(90deg) unknownfunction(1px)",
+            "unknownfunction(1px) rotate(90deg)",
         ],
     );
 
@@ -11974,13 +12059,13 @@ fn unselected_outer_function_precedence_covers_rotate() {
         667320,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "rotate(calc(90deg)) perspective(1px)",
-            "perspective(1px) rotate(calc(90deg))",
+            "rotate(calc(90deg)) unknownfunction(1px)",
+            "unknownfunction(1px) rotate(calc(90deg))",
         ],
     );
 
     // Decisive direct Invalid still wins over the outer unselected sibling.
-    assert_all_invalid(667330, &["rotate(1) perspective(1px)"]);
+    assert_all_invalid(667330, &["rotate(1) unknownfunction(1px)"]);
 }
 
 // 268. Selected `matrix()`, `scale()`, `translate3d()`, `rotate3d()`,
@@ -12715,11 +12800,10 @@ fn rotatex_deferred_substitution_outranks_surrounding_shape_conclusions() {
 // 287. Directly visible decisive invalidity outranks an opaque Function
 // found in a sibling slot; a direct wrong-category failure remains
 // decisive even alongside an outer unselected sibling, in either authored
-// order. `perspective()` is used as the still-unselected outer sentinel
-// here -- `skewX()` served this role after being retargeted by #671 from
-// `rotateY()`, which this leaf now selects, but #677 selects `skewX()`
-// too, so the sentinel is retargeted again to `perspective()` (#669 /
-// #671 / #677).
+// order. A generic non-normative `unknownfunction()` is used as the outer
+// sentinel: #684 completes current normative transform-function coverage,
+// so no current normative Function remains available to serve this role
+// (#669 / #671 / #677 / #684).
 
 #[test]
 fn rotatex_decisive_invalid_outranks_opaque_argument() {
@@ -12727,7 +12811,10 @@ fn rotatex_decisive_invalid_outranks_opaque_argument() {
 
     assert_all_invalid(
         669301,
-        &["rotateX(1) perspective(1px)", "perspective(1px) rotateX(1)"],
+        &[
+            "rotateX(1) unknownfunction(1px)",
+            "unknownfunction(1px) rotateX(1)",
+        ],
     );
 }
 
@@ -12735,12 +12822,10 @@ fn rotatex_decisive_invalid_outranks_opaque_argument() {
 // outside selected-profile coverage, in either authored order and
 // regardless of a sibling qualified `rotateX()`, and the coarser outer
 // unselected-function coverage outranks an inner opaque `rotateX()`
-// argument. `perspective()` is used as the still-unselected outer sentinel
-// here (`skewX()` served this role after being retargeted by #671 from
-// `rotateY()`, which this leaf now selects, until #677 selected `skewX()`
-// too; `matrix3d()` served it too until #682 selected it), since it
-// remains outside selected-profile coverage after this leaf
-// (#669 / #671 / #677 / #682).
+// argument. A generic non-normative `unknownfunction()` is used as the
+// outer sentinel: #684 completes current normative transform-function
+// coverage, so no current normative Function remains available to serve
+// this role (#669 / #671 / #677 / #682 / #684).
 
 #[test]
 fn unselected_outer_function_precedence_covers_rotatex() {
@@ -12748,8 +12833,8 @@ fn unselected_outer_function_precedence_covers_rotatex() {
         669310,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "rotateX(90deg) perspective(1px)",
-            "perspective(1px) rotateX(90deg)",
+            "rotateX(90deg) unknownfunction(1px)",
+            "unknownfunction(1px) rotateX(90deg)",
         ],
     );
 
@@ -12759,13 +12844,13 @@ fn unselected_outer_function_precedence_covers_rotatex() {
         669320,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "rotateX(calc(90deg)) perspective(1px)",
-            "perspective(1px) rotateX(calc(90deg))",
+            "rotateX(calc(90deg)) unknownfunction(1px)",
+            "unknownfunction(1px) rotateX(calc(90deg))",
         ],
     );
 
     // Decisive direct Invalid still wins over the outer unselected sibling.
-    assert_all_invalid(669330, &["rotateX(1) perspective(1px)"]);
+    assert_all_invalid(669330, &["rotateX(1) unknownfunction(1px)"]);
 }
 
 // 289. Selected `matrix()`, `scale()`, `translate3d()`, `rotate3d()`,
@@ -13517,11 +13602,10 @@ fn rotatey_deferred_substitution_outranks_surrounding_shape_conclusions() {
 // 309. Directly visible decisive invalidity outranks an opaque Function
 // found in a sibling slot; a direct wrong-category failure remains
 // decisive even alongside an outer unselected sibling, in either authored
-// order. `perspective()` is used as the still-unselected outer sentinel
-// here -- `skewX()` served this role until #677 selected it too -- since
-// `perspective()` remains outside selected-profile coverage after this
-// leaf, and `rotateY()` itself is no longer available as an unselected
-// sentinel now that this leaf selects it (#671 / #677).
+// order. A generic non-normative `unknownfunction()` is used as the outer
+// sentinel: #684 completes current normative transform-function coverage,
+// so no current normative Function remains available to serve this role
+// (#671 / #677 / #684).
 
 #[test]
 fn rotatey_decisive_invalid_outranks_opaque_argument() {
@@ -13529,7 +13613,10 @@ fn rotatey_decisive_invalid_outranks_opaque_argument() {
 
     assert_all_invalid(
         671301,
-        &["rotateY(1) perspective(1px)", "perspective(1px) rotateY(1)"],
+        &[
+            "rotateY(1) unknownfunction(1px)",
+            "unknownfunction(1px) rotateY(1)",
+        ],
     );
 }
 
@@ -13537,10 +13624,10 @@ fn rotatey_decisive_invalid_outranks_opaque_argument() {
 // outside selected-profile coverage, in either authored order and
 // regardless of a sibling qualified `rotateY()`, and the coarser outer
 // unselected-function coverage outranks an inner opaque `rotateY()`
-// argument. `perspective()` is used as the still-unselected outer sentinel
-// here (`skewX()` served this role until #677 selected it too, and
-// `matrix3d()` served it too until #682 selected it), since it remains
-// outside selected-profile coverage after this leaf (#671 / #677 / #682).
+// argument. A generic non-normative `unknownfunction()` is used as the
+// outer sentinel: #684 completes current normative transform-function
+// coverage, so no current normative Function remains available to serve
+// this role (#671 / #677 / #682 / #684).
 
 #[test]
 fn unselected_outer_function_precedence_covers_rotatey() {
@@ -13548,8 +13635,8 @@ fn unselected_outer_function_precedence_covers_rotatey() {
         671310,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "rotateY(90deg) perspective(1px)",
-            "perspective(1px) rotateY(90deg)",
+            "rotateY(90deg) unknownfunction(1px)",
+            "unknownfunction(1px) rotateY(90deg)",
         ],
     );
 
@@ -13559,13 +13646,13 @@ fn unselected_outer_function_precedence_covers_rotatey() {
         671320,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "rotateY(calc(90deg)) perspective(1px)",
-            "perspective(1px) rotateY(calc(90deg))",
+            "rotateY(calc(90deg)) unknownfunction(1px)",
+            "unknownfunction(1px) rotateY(calc(90deg))",
         ],
     );
 
     // Decisive direct Invalid still wins over the outer unselected sibling.
-    assert_all_invalid(671330, &["rotateY(1) perspective(1px)"]);
+    assert_all_invalid(671330, &["rotateY(1) unknownfunction(1px)"]);
 }
 
 // 311. Selected `matrix()`, `scale()`, `translate3d()`, `rotate3d()`,
@@ -14375,13 +14462,11 @@ fn rotatez_deferred_substitution_outranks_surrounding_shape_conclusions() {
 // 332. Directly visible decisive invalidity outranks an opaque Function
 // found in a sibling slot; a direct wrong-category failure remains
 // decisive even alongside an outer unselected sibling, in either authored
-// order. `perspective()` is used as the still-unselected outer sentinel
-// here -- `skewX()` served this role until #677 selected it too -- since
-// `perspective()` remains outside selected-profile coverage after this
-// leaf, and `rotateZ()` itself is no longer available as an unselected
-// sentinel now that this leaf selects it -- this leaf completes the
-// axis-specific rotate family, so no rotate-family sibling remains as an
-// unselected sentinel anywhere in this module (#673 / #677).
+// order. A generic non-normative `unknownfunction()` is used as the outer
+// sentinel: this leaf completes the axis-specific rotate family, and #684
+// completes current normative transform-function coverage entirely, so no
+// current normative Function remains available to serve this role
+// anywhere in this module (#673 / #677 / #684).
 
 #[test]
 fn rotatez_decisive_invalid_outranks_opaque_argument() {
@@ -14389,7 +14474,10 @@ fn rotatez_decisive_invalid_outranks_opaque_argument() {
 
     assert_all_invalid(
         673301,
-        &["rotateZ(1) perspective(1px)", "perspective(1px) rotateZ(1)"],
+        &[
+            "rotateZ(1) unknownfunction(1px)",
+            "unknownfunction(1px) rotateZ(1)",
+        ],
     );
 }
 
@@ -14397,10 +14485,10 @@ fn rotatez_decisive_invalid_outranks_opaque_argument() {
 // outside selected-profile coverage, in either authored order and
 // regardless of a sibling qualified `rotateZ()`, and the coarser outer
 // unselected-function coverage outranks an inner opaque `rotateZ()`
-// argument. `perspective()` is used as the still-unselected outer sentinel
-// here (`skewX()` served this role until #677 selected it too, and
-// `matrix3d()` served it too until #682 selected it), since it remains
-// outside selected-profile coverage after this leaf (#673 / #677 / #682).
+// argument. A generic non-normative `unknownfunction()` is used as the
+// outer sentinel: #684 completes current normative transform-function
+// coverage, so no current normative Function remains available to serve
+// this role (#673 / #677 / #682 / #684).
 
 #[test]
 fn unselected_outer_function_precedence_covers_rotatez() {
@@ -14408,8 +14496,8 @@ fn unselected_outer_function_precedence_covers_rotatez() {
         673310,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "rotateZ(90deg) perspective(1px)",
-            "perspective(1px) rotateZ(90deg)",
+            "rotateZ(90deg) unknownfunction(1px)",
+            "unknownfunction(1px) rotateZ(90deg)",
         ],
     );
 
@@ -14419,13 +14507,13 @@ fn unselected_outer_function_precedence_covers_rotatez() {
         673320,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "rotateZ(calc(90deg)) perspective(1px)",
-            "perspective(1px) rotateZ(calc(90deg))",
+            "rotateZ(calc(90deg)) unknownfunction(1px)",
+            "unknownfunction(1px) rotateZ(calc(90deg))",
         ],
     );
 
     // Decisive direct Invalid still wins over the outer unselected sibling.
-    assert_all_invalid(673330, &["rotateZ(1) perspective(1px)"]);
+    assert_all_invalid(673330, &["rotateZ(1) unknownfunction(1px)"]);
 }
 
 // 334. Selected `matrix()`, `scale()`, `translate3d()`, `rotate3d()`,
@@ -15579,14 +15667,14 @@ fn skew_deferred_substitution_outranks_surrounding_shape_conclusions() {
 // outside selected-profile coverage, in either authored order and
 // regardless of a sibling qualified `skew()`, and the coarser outer
 // unselected-function coverage outranks an inner opaque `skew()` argument
-// in either slot. `perspective()` is used as the still-unselected outer
-// sentinel here, outside the skew family: `skewX()` served this role too
-// until #677 selected it, `skewY()` served it too until #679 selected it,
-// and `matrix3d()` served it too until #682 selected it -- the remaining
-// "skew(1) skewX(10deg)" and "skew(10deg,1) skewY(10deg)" cases below stay
-// valid because decisive direct Invalid wins regardless of whether the
-// sibling is unselected or qualified. Decisive direct Invalid still wins
-// over any outer sibling (#675 / #677 / #679 / #682).
+// in either slot. A generic non-normative `unknownfunction()` is used as
+// the outer sentinel: #684 completes current normative transform-function
+// coverage, so no current normative Function remains available to serve
+// this role -- the remaining "skew(1) skewX(10deg)" and
+// "skew(10deg,1) skewY(10deg)" cases below stay valid because decisive
+// direct Invalid wins regardless of whether the sibling is unselected or
+// qualified. Decisive direct Invalid still wins over any outer sibling
+// (#675 / #677 / #679 / #682 / #684).
 
 #[test]
 fn unselected_outer_function_precedence_covers_skew() {
@@ -15594,25 +15682,25 @@ fn unselected_outer_function_precedence_covers_skew() {
         675380,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "skew(90deg) perspective(1px)",
-            "perspective(1px) skew(90deg)",
-            "skew(90deg,45deg) perspective(1px)",
-            "perspective(1px) skew(90deg,45deg)",
+            "skew(90deg) unknownfunction(1px)",
+            "unknownfunction(1px) skew(90deg)",
+            "skew(90deg,45deg) unknownfunction(1px)",
+            "unknownfunction(1px) skew(90deg,45deg)",
         ],
     );
 
     // Coarser outer unselected-function coverage outranks an inner opaque
     // skew argument, identically in both authored orders and
-    // independently for the X and Y slot. `perspective()` covers both the
-    // X and Y slot.
+    // independently for the X and Y slot. The generic `unknownfunction()`
+    // sentinel covers both the X and Y slot.
     assert_all_unsupported(
         675390,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "skew(calc(90deg)) perspective(1px)",
-            "perspective(1px) skew(calc(90deg))",
-            "skew(10deg,calc(90deg)) perspective(1px)",
-            "perspective(1px) skew(10deg,calc(90deg))",
+            "skew(calc(90deg)) unknownfunction(1px)",
+            "unknownfunction(1px) skew(calc(90deg))",
+            "skew(10deg,calc(90deg)) unknownfunction(1px)",
+            "unknownfunction(1px) skew(10deg,calc(90deg))",
         ],
     );
 
@@ -16062,9 +16150,9 @@ fn mixed_selected_function_order_including_skew_is_preserved() {
 // remain authored-distinct even alongside a sibling qualified `skew()`, in
 // either authored order: this superseded the original theorem that
 // `matrix3d()` remains outside selected-profile coverage here, which #682
-// falsifies by selecting `matrix3d()` in its own right; `perspective()`
-// takes over as the still-unselected outer sentinel for `skew()`,
-// unchanged from `unselected_outer_function_precedence_covers_skew`.
+// falsifies by selecting `matrix3d()` in its own right; the generic
+// `unknownfunction()` sentinel takes over as the outer sentinel for
+// `skew()`, unchanged from `unselected_outer_function_precedence_covers_skew`.
 
 #[test]
 fn matrix_and_matrix3d_remain_authored_distinct_alongside_skew() {
@@ -16361,9 +16449,11 @@ fn skewx_deferred_substitution_outranks_surrounding_shape_conclusions() {
 // outside selected-profile coverage, in either authored order and
 // regardless of a sibling qualified `skewX()`, and the coarser outer
 // unselected-function coverage outranks an inner opaque `skewX()`
-// argument. `perspective()` is used as the still-unselected outer sentinel
-// here (`matrix3d()` served this role too until #682 selected it).
-// Decisive direct Invalid still wins over any outer sibling (#677 / #682).
+// argument. A generic non-normative `unknownfunction()` is used as the
+// outer sentinel: #684 completes current normative transform-function
+// coverage, so no current normative Function remains available to serve
+// this role. Decisive direct Invalid still wins over any outer sibling
+// (#677 / #682 / #684).
 
 #[test]
 fn unselected_outer_function_precedence_covers_skewx() {
@@ -16371,8 +16461,8 @@ fn unselected_outer_function_precedence_covers_skewx() {
         677280,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "skewX(90deg) perspective(1px)",
-            "perspective(1px) skewX(90deg)",
+            "skewX(90deg) unknownfunction(1px)",
+            "unknownfunction(1px) skewX(90deg)",
         ],
     );
 
@@ -16382,15 +16472,18 @@ fn unselected_outer_function_precedence_covers_skewx() {
         677290,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "skewX(calc(90deg)) perspective(1px)",
-            "perspective(1px) skewX(calc(90deg))",
+            "skewX(calc(90deg)) unknownfunction(1px)",
+            "unknownfunction(1px) skewX(calc(90deg))",
         ],
     );
 
     // Decisive direct Invalid still wins over the outer unselected sibling.
     assert_all_invalid(
         677300,
-        &["skewX(1) perspective(1px)", "perspective(1px) skewX(1)"],
+        &[
+            "skewX(1) unknownfunction(1px)",
+            "unknownfunction(1px) skewX(1)",
+        ],
     );
 }
 
@@ -16766,9 +16859,9 @@ fn mixed_selected_function_order_including_skewx_is_preserved() {
 // remain authored-distinct even alongside a sibling qualified `skewX()`,
 // in either authored order: this superseded the original theorem that
 // `matrix3d()` remains outside selected-profile coverage here, which #682
-// falsifies by selecting `matrix3d()` in its own right; `perspective()`
-// takes over as the still-unselected outer sentinel for `skewX()`,
-// unchanged from `unselected_outer_function_precedence_covers_skewx`.
+// falsifies by selecting `matrix3d()` in its own right; the generic
+// `unknownfunction()` sentinel takes over as the outer sentinel for
+// `skewX()`, unchanged from `unselected_outer_function_precedence_covers_skewx`.
 
 #[test]
 fn matrix_and_matrix3d_remain_authored_distinct_alongside_skewx() {
@@ -17187,9 +17280,11 @@ fn skewy_deferred_substitution_outranks_surrounding_shape_conclusions() {
 // outside selected-profile coverage, in either authored order and
 // regardless of a sibling qualified `skewY()`, and the coarser outer
 // unselected-function coverage outranks an inner opaque `skewY()`
-// argument. `perspective()` is used as the still-unselected outer sentinel
-// here (`matrix3d()` served this role too until #682 selected it).
-// Decisive direct Invalid still wins over any outer sibling (#679 / #682).
+// argument. A generic non-normative `unknownfunction()` is used as the
+// outer sentinel: #684 completes current normative transform-function
+// coverage, so no current normative Function remains available to serve
+// this role. Decisive direct Invalid still wins over any outer sibling
+// (#679 / #682 / #684).
 
 #[test]
 fn unselected_outer_function_precedence_covers_skewy() {
@@ -17197,8 +17292,8 @@ fn unselected_outer_function_precedence_covers_skewy() {
         679280,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "skewY(90deg) perspective(1px)",
-            "perspective(1px) skewY(90deg)",
+            "skewY(90deg) unknownfunction(1px)",
+            "unknownfunction(1px) skewY(90deg)",
         ],
     );
 
@@ -17208,15 +17303,18 @@ fn unselected_outer_function_precedence_covers_skewy() {
         679290,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "skewY(calc(90deg)) perspective(1px)",
-            "perspective(1px) skewY(calc(90deg))",
+            "skewY(calc(90deg)) unknownfunction(1px)",
+            "unknownfunction(1px) skewY(calc(90deg))",
         ],
     );
 
     // Decisive direct Invalid still wins over the outer unselected sibling.
     assert_all_invalid(
         679300,
-        &["skewY(1) perspective(1px)", "perspective(1px) skewY(1)"],
+        &[
+            "skewY(1) unknownfunction(1px)",
+            "unknownfunction(1px) skewY(1)",
+        ],
     );
 }
 
@@ -17428,9 +17526,9 @@ fn skewy_function_name_recognition_and_malformed_components() {
 // remain authored-distinct even alongside a sibling qualified `skewY()`,
 // in either authored order: this superseded the original theorem that
 // `matrix3d()` remains outside selected-profile coverage here, which #682
-// falsifies by selecting `matrix3d()` in its own right; `perspective()`
-// takes over as the still-unselected outer sentinel for `skewY()`,
-// unchanged from `unselected_outer_function_precedence_covers_skewy`.
+// falsifies by selecting `matrix3d()` in its own right; the generic
+// `unknownfunction()` sentinel takes over as the outer sentinel for
+// `skewY()`, unchanged from `unselected_outer_function_precedence_covers_skewy`.
 
 #[test]
 fn matrix_and_matrix3d_remain_authored_distinct_alongside_skewy() {
@@ -18294,49 +18392,53 @@ fn top_level_comma_is_invalid_around_matrix3d() {
 }
 
 // 421. Outer coverage precedence around `matrix3d()` (#682): absent a
-// direct Invalid, `perspective()` -- the sole remaining current normative
-// unselected transform Function -- outranks a selected-inner opaque
-// `matrix3d()` slot in either authored order; a directly visible wrong
-// `matrix3d()` arity or category is decisive Invalid regardless of an
-// outer `perspective()` sibling, in either authored order; and a fully
-// qualified `matrix3d()` beside `perspective()` yields the coarser outer
-// `UnselectedTransformFunction` outcome, in either authored order,
-// identically to every other selected leaf.
+// direct Invalid, a generic non-normative `unknownfunction()` outranks a
+// selected-inner opaque `matrix3d()` slot in either authored order; a
+// directly visible wrong `matrix3d()` arity or category is decisive
+// Invalid regardless of an outer `unknownfunction()` sibling, in either
+// authored order; and a fully qualified `matrix3d()` beside
+// `unknownfunction()` yields the coarser outer `UnselectedTransformFunction`
+// outcome, in either authored order, identically to every other selected
+// leaf. This test originally used `perspective()` -- then the sole
+// remaining current normative unselected transform Function -- as its
+// outer sentinel; #684 selects `perspective()` too, completing current
+// normative transform-function coverage, so the sentinel is retargeted a
+// final time to the generic open-world `unknownfunction()` name.
 
 #[test]
 fn unselected_outer_function_precedence_covers_matrix3d() {
-    // Fully qualified `matrix3d()` beside `perspective()`: the outer
+    // Fully qualified `matrix3d()` beside `unknownfunction()`: the outer
     // unselected function still decides the outcome for the whole value.
     assert_all_unsupported(
         682300,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1) perspective(1px)",
-            "perspective(1px) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
+            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1) unknownfunction(1px)",
+            "unknownfunction(1px) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
         ],
     );
 
-    // Outer `perspective()` outranks a selected-inner opaque `matrix3d()`
-    // slot, in either authored order.
+    // Outer `unknownfunction()` outranks a selected-inner opaque
+    // `matrix3d()` slot, in either authored order.
     assert_all_unsupported(
         682310,
         CssTransformUnsupportedReason::UnselectedTransformFunction,
         &[
-            "matrix3d(calc(1),0,0,0,0,1,0,0,0,0,1,0,0,0,0,1) perspective(1px)",
-            "perspective(1px) matrix3d(calc(1),0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
+            "matrix3d(calc(1),0,0,0,0,1,0,0,0,0,1,0,0,0,0,1) unknownfunction(1px)",
+            "unknownfunction(1px) matrix3d(calc(1),0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
         ],
     );
 
     // A directly visible wrong `matrix3d()` arity or category is decisive
-    // Invalid regardless of an outer `perspective()` sibling, in either
+    // Invalid regardless of an outer `unknownfunction()` sibling, in either
     // authored order.
     assert_all_invalid(
         682320,
         &[
-            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0) perspective(1px)",
-            "perspective(1px) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0)",
-            "matrix3d(1px,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1) perspective(1px)",
-            "perspective(1px) matrix3d(1px,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
+            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0) unknownfunction(1px)",
+            "unknownfunction(1px) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0)",
+            "matrix3d(1px,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1) unknownfunction(1px)",
+            "unknownfunction(1px) matrix3d(1px,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1)",
         ],
     );
 }
@@ -18437,4 +18539,797 @@ fn mixed_selected_function_order_including_matrix3d_is_preserved() {
             "1", "0", "0", "0", "0", "1", "0", "0", "0", "0", "1", "0", "0", "0", "0", "1"
         ]
     );
+}
+
+// 424. Selected `matrix()`, `scale()`, `translate3d()`, `rotate3d()`,
+// `translate()`, `translateX()`, `translateY()`, `translateZ()`,
+// `scaleX()`, `scaleY()`, `scaleZ()`, `scale3d()`, `rotate()`, `rotateX()`,
+// `rotateY()`, `rotateZ()`, `skew()`, `skewX()`, `skewY()`, `matrix3d()`,
+// and now `perspective()` components mix and repeat freely, preserving
+// exact authored order and repetition through the heterogeneous
+// `CssTransformFunction` alternation, extending the accepted twenty-kind
+// regression to the complete twenty-one-kind selected profile: after #684
+// every current normative transform Function has canonical selected
+// coverage, and none remains `UnselectedTransformFunction` (#418 / #645 /
+// #647 / #649 / #651 / #653 / #655 / #657 / #659 / #661 / #663 / #665 /
+// #667 / #669 / #671 / #673 / #675 / #677 / #679 / #682 / #684).
+
+#[test]
+fn mixed_selected_function_order_including_perspective_is_preserved() {
+    let result = qualify(
+        684340,
+        concat!(
+            "a{transform:matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1) perspective(1px);}",
+            "b{transform:perspective(1px) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1);}",
+            "c{transform:matrix(1,0,0,1,0,0) scale(2) translate3d(1px,2px,3px) rotate3d(1,0,0,90deg) translate(10px) translateX(20px) translateY(30px) translateZ(40px) scaleX(50) scaleY(60) scaleZ(70) scale3d(80,90,100) rotate(45deg) rotateX(45deg) rotateY(45deg) rotateZ(45deg) skew(55deg,65deg) skewX(75deg) skewY(85deg) matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1) perspective(1px);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 3);
+
+    assert!(matches!(
+        qualified_functions(&result, 0)[0],
+        CssTransformFunction::Matrix3d(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 0)[1],
+        CssTransformFunction::Perspective(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 1)[0],
+        CssTransformFunction::Perspective(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 1)[1],
+        CssTransformFunction::Matrix3d(_)
+    ));
+
+    let twenty_one_kind_sequence = qualified_functions(&result, 2);
+    assert_eq!(twenty_one_kind_sequence.len(), 21);
+    assert!(matches!(
+        twenty_one_kind_sequence[0],
+        CssTransformFunction::Matrix(_)
+    ));
+    assert!(matches!(
+        twenty_one_kind_sequence[19],
+        CssTransformFunction::Matrix3d(_)
+    ));
+    assert!(matches!(
+        twenty_one_kind_sequence[20],
+        CssTransformFunction::Perspective(_)
+    ));
+    assert_eq!(
+        matrix3d_argument_spellings(&result, 2, 19),
+        [
+            "1", "0", "0", "0", "0", "1", "0", "0", "0", "0", "1", "0", "0", "0", "0", "1"
+        ]
+    );
+    assert_eq!(
+        perspective_argument_spelling(&result, 2, 20),
+        (
+            CssTransformPerspectiveArgumentKind::Length,
+            "1px".to_string()
+        )
+    );
+}
+
+// 425. Explicit canonical current-normative transform-function coverage-
+// completion enumeration (#684): every current normative transform
+// Function kind has one canonical direct-authored qualifying form that
+// produces a selected `CssTransformFunction` variant, never
+// `UnselectedTransformFunction`. This is a coverage statement about the
+// twenty-one current normative Function names handwritten from #684/#418
+// authority, never inferred by iterating production enum variants or
+// accepting whatever the implementation happens to produce -- it is not a
+// claim of full computed transform semantics, rendering, CSSOM, or matrix
+// execution, and it is independent of the generic open-world
+// `unknownfunction()` containment sealed by
+// `unrecognized_transform_functions_stay_unselected_alongside_qualified_translatey`
+// and `unselected_transform_functions_remain_outside_selected_profile`.
+#[test]
+fn canonical_current_normative_transform_function_coverage_is_complete() {
+    let result = qualify(
+        684350,
+        concat!(
+            "a{transform:matrix(1,0,0,1,0,0);}",
+            "b{transform:scale(1);}",
+            "c{transform:translate3d(1px,1px,1px);}",
+            "d{transform:rotate3d(1,0,0,0deg);}",
+            "e{transform:translate(1px);}",
+            "f{transform:translateX(1px);}",
+            "g{transform:translateY(1px);}",
+            "h{transform:translateZ(1px);}",
+            "i{transform:scaleX(1);}",
+            "j{transform:scaleY(1);}",
+            "k{transform:scaleZ(1);}",
+            "l{transform:scale3d(1,1,1);}",
+            "m{transform:rotate(0deg);}",
+            "n{transform:rotateX(0deg);}",
+            "o{transform:rotateY(0deg);}",
+            "p{transform:rotateZ(0deg);}",
+            "q{transform:skew(0deg);}",
+            "r{transform:skewX(0deg);}",
+            "s{transform:skewY(0deg);}",
+            "t{transform:matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1);}",
+            "u{transform:perspective(1px);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 21);
+
+    let expected_variant_is_selected: [fn(&CssTransformFunction) -> bool; 21] = [
+        |f| matches!(f, CssTransformFunction::Matrix(_)),
+        |f| matches!(f, CssTransformFunction::Scale(_)),
+        |f| matches!(f, CssTransformFunction::Translate3d(_)),
+        |f| matches!(f, CssTransformFunction::Rotate3d(_)),
+        |f| matches!(f, CssTransformFunction::Translate(_)),
+        |f| matches!(f, CssTransformFunction::TranslateX(_)),
+        |f| matches!(f, CssTransformFunction::TranslateY(_)),
+        |f| matches!(f, CssTransformFunction::TranslateZ(_)),
+        |f| matches!(f, CssTransformFunction::ScaleX(_)),
+        |f| matches!(f, CssTransformFunction::ScaleY(_)),
+        |f| matches!(f, CssTransformFunction::ScaleZ(_)),
+        |f| matches!(f, CssTransformFunction::Scale3d(_)),
+        |f| matches!(f, CssTransformFunction::Rotate(_)),
+        |f| matches!(f, CssTransformFunction::RotateX(_)),
+        |f| matches!(f, CssTransformFunction::RotateY(_)),
+        |f| matches!(f, CssTransformFunction::RotateZ(_)),
+        |f| matches!(f, CssTransformFunction::Skew(_)),
+        |f| matches!(f, CssTransformFunction::SkewX(_)),
+        |f| matches!(f, CssTransformFunction::SkewY(_)),
+        |f| matches!(f, CssTransformFunction::Matrix3d(_)),
+        |f| matches!(f, CssTransformFunction::Perspective(_)),
+    ];
+
+    for (index, is_expected_variant) in expected_variant_is_selected.iter().enumerate() {
+        let functions = qualified_functions(&result, index);
+        assert_eq!(
+            functions.len(),
+            1,
+            "expected exactly one selected component at {index}"
+        );
+        assert!(
+            is_expected_variant(&functions[0]),
+            "expected canonical selected variant at {index}, got {:?}",
+            functions[0]
+        );
+    }
+
+    // Zero current normative transform Functions remain
+    // `UnselectedTransformFunction`: none of the twenty-one canonical forms
+    // above ever reaches that outcome.
+    for index in 0..21 {
+        assert!(!matches!(
+            outcome_at(&result, index),
+            CssTransformQualificationOutcome::UnsupportedBySelectedValueProfile(
+                CssTransformUnsupportedReason::UnselectedTransformFunction
+            )
+        ));
+    }
+}
+
+// 426. Generic open-world containment survives current normative
+// transform-function coverage completion (#684): an unrecognized Function
+// name remains `UnselectedTransformFunction` regardless of how many
+// current normative Function kinds are selected, and this outcome is never
+// collapsed into `InvalidForSelectedValueGrammar` merely because coverage
+// is now complete.
+#[test]
+fn unknown_function_remains_unselected_after_coverage_completion() {
+    assert_all_unsupported(
+        684360,
+        CssTransformUnsupportedReason::UnselectedTransformFunction,
+        &[
+            "unknownfunction(1px)",
+            "unknownfunction(1,0,0,1,0,0)",
+            "perspective(1px) unknownfunction(1px)",
+            "unknownfunction(1px) perspective(1px)",
+            "matrix3d(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1) unknownfunction(1px) perspective(1px)",
+        ],
+    );
+}
+
+// ---------------------------------------------------------------------
+// Dedicated `perspective()` selected-coverage theorem (#684): the final
+// current normative transform Function.
+//
+// `perspective([<length [0,∞]> | none])`: exactly one authored
+// function-local slot, qualifying a direct `none` Ident, a direct
+// unitless-zero `Number`, or a direct non-negative recognized-length
+// `Dimension`, reusing the accepted standalone `perspective: none |
+// <length [0,∞]>` scalar theorem (#440) at this dedicated
+// transform-function argument placement. No unit conversion, machine-
+// number conversion, CSS math evaluation, or render-time below-`1px`
+// clamp ever participates in this qualification.
+// ---------------------------------------------------------------------
+
+// 427. Direct `none` and direct unitless-zero spellings all qualify,
+// preserving exact signed-zero evidence: a negative sign combined with an
+// exactly-zero significand is never rejected.
+
+#[test]
+fn perspective_none_and_unitless_zero_spellings_qualify() {
+    let result = qualify(
+        684400,
+        concat!(
+            "a{transform:perspective(none);}",
+            "b{transform:perspective(0);}",
+            "c{transform:perspective(+0);}",
+            "d{transform:perspective(-0);}",
+            "e{transform:perspective(.0);}",
+            "f{transform:perspective(-.0);}",
+            "g{transform:perspective(0e100);}",
+            "h{transform:perspective(-0e100);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 8);
+    for index in 0..8 {
+        assert_eq!(qualified_functions(&result, index).len(), 1);
+    }
+
+    assert_eq!(
+        perspective_argument_spelling(&result, 0, 0),
+        (
+            CssTransformPerspectiveArgumentKind::None,
+            "none".to_string()
+        )
+    );
+    assert_eq!(
+        perspective_argument_spelling(&result, 1, 0),
+        (CssTransformPerspectiveArgumentKind::Length, "0".to_string())
+    );
+    assert_eq!(
+        perspective_argument_spelling(&result, 2, 0),
+        (
+            CssTransformPerspectiveArgumentKind::Length,
+            "+0".to_string()
+        )
+    );
+    assert_eq!(
+        perspective_argument_spelling(&result, 3, 0),
+        (
+            CssTransformPerspectiveArgumentKind::Length,
+            "-0".to_string()
+        )
+    );
+    assert_eq!(
+        perspective_argument_spelling(&result, 4, 0),
+        (
+            CssTransformPerspectiveArgumentKind::Length,
+            "0.0".to_string()
+        )
+    );
+    assert_eq!(
+        perspective_argument_spelling(&result, 5, 0),
+        (
+            CssTransformPerspectiveArgumentKind::Length,
+            "-0.0".to_string()
+        )
+    );
+    assert_eq!(
+        perspective_argument_spelling(&result, 6, 0),
+        (
+            CssTransformPerspectiveArgumentKind::Length,
+            "0e100".to_string()
+        )
+    );
+    assert_eq!(
+        perspective_argument_spelling(&result, 7, 0),
+        (
+            CssTransformPerspectiveArgumentKind::Length,
+            "-0e100".to_string()
+        )
+    );
+}
+
+// 428. Direct Dimension zero and positive-length spellings qualify across
+// representative absolute, font-relative, viewport, and container units,
+// and a direct sub-`1px` positive length stays authored Qualified: CSS
+// Transforms' below-`1px` render/resolved-value clamp is downstream and
+// never participates in this source-authored qualification.
+
+#[test]
+fn perspective_dimension_zero_and_positive_length_qualify() {
+    let result = qualify(
+        684410,
+        concat!(
+            "a{transform:perspective(0px);}",
+            "b{transform:perspective(-0px);}",
+            "c{transform:perspective(-0e100px);}",
+            "d{transform:perspective(.5px);}",
+            "e{transform:perspective(1px);}",
+            "f{transform:perspective(10px);}",
+            "g{transform:perspective(1cm);}",
+            "h{transform:perspective(1Q);}",
+            "i{transform:perspective(1em);}",
+            "j{transform:perspective(1rem);}",
+            "k{transform:perspective(1svw);}",
+            "l{transform:perspective(1vmax);}",
+            "m{transform:perspective(1cqi);}",
+            "n{transform:perspective(1cqmax);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 14);
+    for index in 0..14 {
+        let (kind, _) = perspective_argument_spelling(&result, index, 0);
+        assert_eq!(
+            kind,
+            CssTransformPerspectiveArgumentKind::Length,
+            "expected Length kind at {index}"
+        );
+    }
+
+    assert_eq!(
+        perspective_argument_spelling(&result, 3, 0).1,
+        "0.5px".to_string()
+    );
+    assert_eq!(
+        perspective_argument_spelling(&result, 6, 0).1,
+        "1cm".to_string()
+    );
+    assert_eq!(
+        perspective_argument_spelling(&result, 7, 0).1,
+        "1Q".to_string()
+    );
+    assert_eq!(
+        perspective_argument_spelling(&result, 10, 0).1,
+        "1svw".to_string()
+    );
+    assert_eq!(
+        perspective_argument_spelling(&result, 12, 0).1,
+        "1cqi".to_string()
+    );
+}
+
+// 429. `perspective` name recognition, `none` recognition, and length-unit
+// recognition are all ASCII-case-insensitive, reusing decoded token
+// identity rather than manual raw-spelling inspection.
+
+#[test]
+fn perspective_name_none_and_unit_are_case_insensitive() {
+    let result = qualify(
+        684420,
+        concat!(
+            "a{transform:PeRsPeCtIvE(none);}",
+            "b{transform:perspective(NoNe);}",
+            "c{transform:perspective(1PX);}",
+            "d{transform:perspective(1Q);}",
+            "e{transform:PERSPECTIVE(1EM);}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 5);
+    for index in 0..5 {
+        assert!(matches!(
+            qualified_functions(&result, index)[0],
+            CssTransformFunction::Perspective(_)
+        ));
+    }
+    assert_eq!(
+        perspective_argument_spelling(&result, 0, 0).0,
+        CssTransformPerspectiveArgumentKind::None
+    );
+}
+
+// 430. Direct wrong-category, wrong-range, and wrong-cardinality argument
+// shapes are all decisively `InvalidForSelectedValueGrammar`: negative
+// non-zero recognized length, unitless non-zero Number, Percentage,
+// non-length/unknown Dimension, arbitrary Ident, CSS-wide keyword (which
+// has no whole-property meaning at this non-whole-value Function-argument
+// placement), String, Hash, zero arguments, comma-separated second slot,
+// and a multi-token single slot.
+
+#[test]
+fn perspective_direct_invalid_categories_are_source_provable() {
+    assert_all_invalid(
+        684430,
+        &[
+            "perspective()",
+            "perspective(1)",
+            "perspective(-1)",
+            "perspective(-1px)",
+            "perspective(-.5px)",
+            "perspective(10%)",
+            "perspective(0%)",
+            "perspective(1deg)",
+            "perspective(1s)",
+            "perspective(1fr)",
+            "perspective(1unknown)",
+            "perspective(foo)",
+            "perspective(inherit)",
+            "perspective(initial)",
+            "perspective(unset)",
+            "perspective(revert)",
+            "perspective(revert-layer)",
+            "perspective(\"1px\")",
+            "perspective(#foo)",
+            "perspective(1px, 2px)",
+            "perspective(1px,2px)",
+            "perspective(none 1px)",
+            "perspective(1px 2px)",
+            "perspective(1px,)",
+            "perspective(,1px)",
+        ],
+    );
+}
+
+// 431. A complete ordinary non-deferred Function is `perspective()`'s
+// otherwise-feasible opaque argument boundary: `calc(1px)`, `calc(-1px)`,
+// `min(...)`, and `max(...)` are never evaluated, so a negative apparent
+// mathematical result never becomes decisive Invalid here, and a nested
+// comma inside the opaque Function is never mistaken for perspective's own
+// argument separator. A Function followed by further retained material in
+// the same slot is instead directly visible structural failure and stays
+// decisively Invalid.
+
+#[test]
+fn perspective_opaque_function_argument_and_function_plus_junk() {
+    assert_all_unsupported(
+        684440,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
+        &[
+            "perspective(calc(1px))",
+            "perspective(calc(-1px))",
+            "perspective(min(1px,2px))",
+            "perspective(max(1px,2px))",
+            "perspective(min(1px, 2px))",
+        ],
+    );
+
+    assert_all_invalid(
+        684450,
+        &[
+            "perspective(calc(1px) 0)",
+            "perspective(calc(1px) none)",
+            "perspective(calc(1px)calc(2px))",
+            "perspective(first-valid(1px,none))",
+        ],
+    );
+}
+
+// 432. Deferred substitution can still change the surrounding token
+// sequence, separators, and cardinality, so it is resolved before any
+// argument-shape conclusion, exactly like every other selected transform
+// leaf.
+
+#[test]
+fn perspective_deferred_substitution_outranks_argument_shape() {
+    assert_all_unsupported(
+        684460,
+        CssTransformUnsupportedReason::DeferredSubstitutionFunction,
+        &[
+            "perspective(var(--p))",
+            "perspective(-1px var(--p))",
+            "perspective(calc(var(--p)))",
+            "var(--p) perspective(1px)",
+            "perspective(1px) var(--p)",
+        ],
+    );
+}
+
+// 433. `perspectivex()` is not `perspective()` under any decoded-identifier
+// theorem: a near-name Function stays generic unselected coverage, never
+// dispatched to the `Perspective` variant.
+
+#[test]
+fn perspective_near_name_stays_unselected() {
+    assert_all_unsupported(
+        684470,
+        CssTransformUnsupportedReason::UnselectedTransformFunction,
+        &["perspectivex(1px)", "perspectivex(1px) perspective(1px)"],
+    );
+}
+
+// 434. `perspective(none)` and whole-value `transform: none` remain
+// authored-distinct: `perspective(none)` is never collapsed into the
+// dedicated whole-value `None` sentinel merely because downstream CSS
+// Transforms describes `perspective(none)` as an identity transform.
+
+#[test]
+fn perspective_none_remains_distinct_from_whole_value_none() {
+    let result = qualify(
+        684480,
+        concat!(
+            "a{transform:none;}",
+            "b{transform:perspective(none);}",
+            "c{transform:none;}",
+            "d{transform:perspective(none);}",
+        ),
+    );
+
+    assert_whole_none(&result, 0);
+    assert!(matches!(
+        qualified_functions(&result, 1)[0],
+        CssTransformFunction::Perspective(_)
+    ));
+    assert_eq!(
+        perspective_argument_spelling(&result, 1, 0),
+        (
+            CssTransformPerspectiveArgumentKind::None,
+            "none".to_string()
+        )
+    );
+    assert_whole_none(&result, 2);
+    assert!(matches!(
+        qualified_functions(&result, 3)[0],
+        CssTransformFunction::Perspective(_)
+    ));
+}
+
+// 435. Repeated `perspective()` components, and `perspective()`
+// interleaved with an earlier selected leaf, preserve exact authored
+// lexical order and independent per-component evidence.
+
+#[test]
+fn perspective_repeated_components_preserve_order_and_evidence() {
+    let result = qualify(
+        684490,
+        "a{transform:perspective(none) perspective(+0) perspective(.5px) perspective(1em);}",
+    );
+
+    assert_eq!(qualified_functions(&result, 0).len(), 4);
+    assert_eq!(
+        perspective_argument_spelling(&result, 0, 0),
+        (
+            CssTransformPerspectiveArgumentKind::None,
+            "none".to_string()
+        )
+    );
+    assert_eq!(
+        perspective_argument_spelling(&result, 0, 1),
+        (
+            CssTransformPerspectiveArgumentKind::Length,
+            "+0".to_string()
+        )
+    );
+    assert_eq!(
+        perspective_argument_spelling(&result, 0, 2),
+        (
+            CssTransformPerspectiveArgumentKind::Length,
+            "0.5px".to_string()
+        )
+    );
+    assert_eq!(
+        perspective_argument_spelling(&result, 0, 3),
+        (
+            CssTransformPerspectiveArgumentKind::Length,
+            "1em".to_string()
+        )
+    );
+
+    let interleaved = qualify(
+        684491,
+        "a{transform:matrix(1,0,0,1,0,0) perspective(1px) scale(2) perspective(none);}",
+    );
+    let functions = qualified_functions(&interleaved, 0);
+    assert_eq!(functions.len(), 4);
+    assert!(matches!(functions[0], CssTransformFunction::Matrix(_)));
+    assert!(matches!(functions[1], CssTransformFunction::Perspective(_)));
+    assert!(matches!(functions[2], CssTransformFunction::Scale(_)));
+    assert!(matches!(functions[3], CssTransformFunction::Perspective(_)));
+}
+
+// 436. Precedence remains scan-order independent after perspective's
+// selection: a directly visible selected-function structural/direct
+// invalidity outranks outer unselected transform-function coverage in
+// either authored order, while absent direct Invalid, outer unselected
+// coverage outranks a selected-inner opaque argument, in either authored
+// order.
+
+#[test]
+fn perspective_precedence_is_scan_order_independent() {
+    assert_all_invalid(
+        684500,
+        &[
+            "perspective(-1px) unknownfunction(1)",
+            "unknownfunction(1) perspective(-1px)",
+        ],
+    );
+
+    assert_all_unsupported(
+        684510,
+        CssTransformUnsupportedReason::UnselectedTransformFunction,
+        &[
+            "perspective(calc(1px)) unknownfunction(1)",
+            "unknownfunction(1) perspective(calc(1px))",
+        ],
+    );
+}
+
+// 437. Comments, trivia, and `!important` priority stay outside the
+// semantic value window and never change `perspective()` slot
+// interpretation.
+
+#[test]
+fn perspective_trivia_and_important_boundary() {
+    let result = qualify(
+        684520,
+        concat!(
+            "a{transform:perspective(/**/1px/**/);}",
+            "b{transform:perspective( 1px );}",
+            "c{transform:perspective(1px) !important;}",
+            "d{transform:perspective(1px)!important;}",
+        ),
+    );
+
+    assert_eq!(result.transform_observations().len(), 4);
+    for index in 0..4 {
+        assert_eq!(
+            perspective_argument_spelling(&result, index, 0),
+            (
+                CssTransformPerspectiveArgumentKind::Length,
+                "1px".to_string()
+            ),
+            "trivia/priority changed slot interpretation at {index}"
+        );
+    }
+    for index in 2..4 {
+        assert!(
+            result.upstream_parser_result().occurrences()[index]
+                .priority()
+                .is_some(),
+            "expected retained priority evidence at {index}"
+        );
+    }
+}
+
+// 438. Parser-authoritative true stylesheet EOF: a committed EOF-ended
+// `perspective()` extent is qualified from retained interior evidence
+// alone for valid `none`, a valid length, a direct-Invalid shape, and an
+// opaque Function shape, with no closer, missing slot, comma, or value
+// ever synthesized.
+
+#[test]
+fn true_stylesheet_eof_ended_perspective_extent_follows_parser_authority() {
+    let none_result = qualify(684530, "a{transform:perspective(none");
+    assert_eq!(
+        none_result.execution_completion(),
+        CssParserExecutionCompletion::Complete
+    );
+    assert_eq!(
+        perspective_argument_spelling(&none_result, 0, 0),
+        (
+            CssTransformPerspectiveArgumentKind::None,
+            "none".to_string()
+        )
+    );
+
+    let length_result = qualify(684531, "a{transform:perspective(1px");
+    assert_eq!(
+        length_result.execution_completion(),
+        CssParserExecutionCompletion::Complete
+    );
+    assert_eq!(
+        perspective_argument_spelling(&length_result, 0, 0),
+        (
+            CssTransformPerspectiveArgumentKind::Length,
+            "1px".to_string()
+        )
+    );
+
+    let invalid_result = qualify(684532, "a{transform:perspective(-1px");
+    assert_eq!(
+        invalid_result.execution_completion(),
+        CssParserExecutionCompletion::Complete
+    );
+    assert_invalid(&invalid_result, 0);
+
+    let opaque_result = qualify(684533, "a{transform:perspective(calc(1px)");
+    assert_eq!(
+        opaque_result.execution_completion(),
+        CssParserExecutionCompletion::Complete
+    );
+    assert_unsupported(
+        &opaque_result,
+        0,
+        CssTransformUnsupportedReason::FunctionValuedTransformArgument,
+    );
+}
+
+// 439. Repeated and cross-source runs resolve `perspective()` evidence
+// deterministically, exactly like every other selected leaf.
+
+#[test]
+fn perspective_repeated_and_cross_source_runs_are_deterministic() {
+    let css = concat!(
+        "a{transform:perspective(none);}",
+        "b{transform:perspective(-0px);}",
+        "c{transform:perspective(-1px);}",
+        "d{transform:perspective(calc(2px));}",
+        "e{transform:perspective(var(--p));}",
+        "f{transform:matrix(1,0,0,1,0,0) perspective(1em);}",
+    );
+    let first = qualify(684540, css);
+    let repeated = qualify(684540, css);
+    let another_source = qualify(684541, css);
+
+    assert_eq!(
+        first.transform_observations(),
+        repeated.transform_observations()
+    );
+    assert_eq!(
+        first.transform_observations(),
+        another_source.transform_observations()
+    );
+    assert_eq!(
+        perspective_argument_spelling(&first, 0, 0),
+        perspective_argument_spelling(&repeated, 0, 0)
+    );
+    assert_eq!(
+        perspective_argument_spelling(&first, 5, 1),
+        perspective_argument_spelling(&another_source, 5, 1)
+    );
+}
+
+// 440. Nonordinary declaration contexts never enter `perspective()`
+// dispatch, and unsupported-region material is propagated unchanged,
+// exactly like every other selected leaf's lower-layer lifecycle
+// preservation.
+
+#[test]
+fn perspective_nonordinary_contexts_and_resource_lifecycle_are_preserved() {
+    for (source_id, css) in [
+        (684550, "@font-face{transform:perspective(1px);}"),
+        (684551, "@page{transform:perspective(1px);}"),
+        (684552, "@keyframes k{from{transform:perspective(1px);}}"),
+    ] {
+        let result = qualify(source_id, css);
+        assert!(
+            result.transform_observations().is_empty(),
+            "nonordinary declaration context produced a transform observation for {css:?}"
+        );
+    }
+
+    let result = qualify(
+        684553,
+        concat!(
+            "@media screen{a{transform:perspective(-9px);}}",
+            "b{transform:perspective(1px);}",
+        ),
+    );
+    assert!(
+        !result
+            .upstream_parser_result()
+            .unsupported_regions()
+            .is_empty(),
+        "expected retained unsupported-region evidence"
+    );
+    assert_eq!(result.transform_observations().len(), 1);
+    assert_eq!(
+        perspective_argument_spelling(&result, 0, 0),
+        (
+            CssTransformPerspectiveArgumentKind::Length,
+            "1px".to_string()
+        )
+    );
+}
+
+// 441. The standalone `perspective` property and the `perspective()`
+// transform Function coexist in the same run without sharing semantic
+// placement or evidence identity: qualifying one never qualifies,
+// invalidates, or observes the other.
+
+#[test]
+fn perspective_property_and_transform_function_coexist_independently() {
+    let result = qualify(
+        684560,
+        concat!(
+            "a{perspective:10px;}",
+            "b{transform:perspective(10px);}",
+            "c{perspective:10px;transform:perspective(10px);}",
+        ),
+    );
+
+    assert_eq!(result.perspective_observations().len(), 2);
+    assert_eq!(result.transform_observations().len(), 2);
+    assert!(matches!(
+        qualified_functions(&result, 0)[0],
+        CssTransformFunction::Perspective(_)
+    ));
+    assert!(matches!(
+        qualified_functions(&result, 1)[0],
+        CssTransformFunction::Perspective(_)
+    ));
 }
