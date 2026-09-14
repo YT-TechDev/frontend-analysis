@@ -8,12 +8,14 @@
 //! IdentifierReference initializers by #334, widened to selected escaped
 //! non-ReservedWord IdentifierReference initializers by #338, widened to
 //! retain escaped ReservedWord initializer evidence for EE-04-R08 by #342,
-//! and widened the one-level Block `var` production leaf from exactly one
+//! widened the one-level Block `var` production leaf from exactly one
 //! declarator (#688/#691) to ordered `1..N` simple selected
-//! `BindingIdentifier` declarators by #695. Recognition is transactional for
-//! the whole authoritative `SourceText`: tentative declaration/binding/Block/
-//! var facts are returned only when the entire source is consumed by selected
-//! items plus selected trivia.
+//! `BindingIdentifier` declarators by #695, and widened each Block `var`
+//! declarator to admit an optional selected decimal-integer initializer by
+//! #699. Recognition is transactional for the whole authoritative
+//! `SourceText`: tentative declaration/binding/Block/var facts are returned
+//! only when the entire source is consumed by selected items plus selected
+//! trivia.
 //!
 //! This is not aggregate ECMAScript qualification and cannot construct
 //! `QualificationOutcome::Qualified`.
@@ -140,11 +142,14 @@ pub(super) enum SelectedBlockItem {
     Var(SelectedBlockVarStatement),
 }
 
-/// `SelectedBlockVarStatement ::= var SelectedBindingIdentifier
-/// ( , SelectedBindingIdentifier )* ;` accepted by Issue #688/#691/#695: one
+/// `SelectedBlockVarStatement ::= var SelectedBlockVarDeclaration
+/// ( , SelectedBlockVarDeclaration )* ;` where `SelectedBlockVarDeclaration
+/// ::= SelectedBindingIdentifier | SelectedBindingIdentifier =
+/// SelectedDecimalInteger`, accepted by Issue #688/#691/#695/#699: one
 /// selected `VariableStatement` owning ordered `1..N` selected
-/// `BindingIdentifier` declarators, no initializer on any declarator, and one
-/// statement-owned authored semicolon terminator. No comma, initializer, or
+/// `BindingIdentifier` declarators, each independently optionally carrying a
+/// selected decimal-integer initializer, and one statement-owned authored
+/// semicolon terminator. No comma, initializer presence/anchor/value, or
 /// whole-statement span is retained because no proven consumer needs it.
 #[derive(Debug)]
 pub(super) struct SelectedBlockVarStatement {
@@ -158,9 +163,11 @@ impl SelectedBlockVarStatement {
 }
 
 /// One authored declarator within a `SelectedBlockVarStatement`'s
-/// `VariableDeclarationList`: exactly one selected `BindingIdentifier` and no
-/// initializer. Distinct declarator occurrences remain distinct even when
-/// their semantic names coincide (Issue #695 repeated-name requirement).
+/// `VariableDeclarationList`: exactly one selected `BindingIdentifier` and an
+/// independently optional selected decimal-integer initializer (Issue #699),
+/// which is consumed and discarded without retaining any initializer-specific
+/// fact. Distinct declarator occurrences remain distinct even when their
+/// semantic names coincide (Issue #695 repeated-name requirement).
 #[derive(Debug)]
 pub(super) struct SelectedBlockVarBinding {
     binding: SourceAnchor,
@@ -624,27 +631,48 @@ impl<'source> Cursor<'source> {
         Ok(SelectedBlock { block, items })
     }
 
-    /// Recognizes exactly `SelectedBlockVarStatement ::= var
-    /// SelectedBindingIdentifier ( , SelectedBindingIdentifier )* ;`
-    /// (Issue #688/#691, widened to ordered `1..N` declarators by #695): one
-    /// or more selected `BindingIdentifier` declarators separated by commas,
-    /// no initializer on any declarator, and a mandatory authored semicolon
-    /// terminating the whole statement.
+    /// Recognizes exactly:
+    ///
+    /// ```text
+    /// SelectedBlockVarStatement ::=
+    ///     var SelectedBlockVarDeclaration
+    ///         ( , SelectedBlockVarDeclaration )*
+    ///     ;
+    ///
+    /// SelectedBlockVarDeclaration ::=
+    ///     SelectedBindingIdentifier
+    ///   | SelectedBindingIdentifier = SelectedDecimalInteger
+    /// ```
+    ///
+    /// (Issue #688/#691, widened to ordered `1..N` declarators by #695,
+    /// widened to an optional selected decimal-integer initializer per
+    /// declarator by #699): one or more selected `BindingIdentifier`
+    /// declarators separated by commas, each independently optionally
+    /// followed by `= SelectedDecimalInteger`, and a mandatory authored
+    /// semicolon terminating the whole statement.
     ///
     /// This intentionally does not reuse `parse_variable_statement`: that
-    /// owner's optional initializer and EOF-only ASI belong to the distinct
-    /// top-level `VariableStatement` capability and must not leak into this
-    /// narrower Block-item placement. Only the keyword, `BindingIdentifier`,
-    /// and comma-continuation recognition mechanics are shared. Any
-    /// initializer (`=`), comment trivia, or missing authored semicolon
-    /// (including EOF, i.e. non-EOF ASI before the enclosing `}`) is left
-    /// entirely unrecognized here and reported as `UnsupportedCoverage`.
+    /// owner's broader IdentifierReference/escaped-ReservedWord initializer
+    /// families and EOF-only ASI belong to the distinct top-level
+    /// `VariableStatement` capability and must not leak into this narrower
+    /// Block-item placement. Only the keyword, `BindingIdentifier`,
+    /// initializer-equals/decimal-integer, and comma-continuation
+    /// recognition mechanics are shared. Any non-decimal initializer,
+    /// comment trivia, or missing authored semicolon (including EOF, i.e.
+    /// non-EOF ASI before the enclosing `}`) is left entirely unrecognized
+    /// here and reported as `UnsupportedCoverage`.
+    ///
+    /// The decimal initializer is consumed inside this owning cursor
+    /// lifecycle and discarded: no initializer-specific fact (presence,
+    /// anchor, or value) is retained on `SelectedBlockVarBinding`, matching
+    /// the absence of any proven consumer for it.
     ///
     /// The declarator list is accumulated in a purely local `Vec` and this
     /// function returns `Err` before constructing `SelectedBlockVarStatement`
-    /// on any later declarator or terminator failure, so a valid declarator
-    /// prefix (e.g. `x` in `{ var x, ; }`) never escapes as a committed
-    /// contributor when a later list element prevents statement completion.
+    /// on any later declarator, initializer, or terminator failure, so a
+    /// valid declarator prefix (e.g. `x` in `{ var x, ; }`, or `a=1` in
+    /// `{ var a=1, ; }`) never escapes as a committed contributor when a
+    /// later list element prevents statement completion.
     fn parse_selected_block_var_statement(
         &mut self,
     ) -> Result<SelectedBlockVarStatement, ParseFailure> {
@@ -665,6 +693,14 @@ impl<'source> Cursor<'source> {
             let (binding_start, binding_end, name_state) =
                 self.parse_selected_binding_identifier(grammar_context)?;
             self.skip_selected_trivia();
+
+            if self.consume_initializer_equals() {
+                self.skip_selected_trivia();
+                if !self.consume_selected_decimal_integer() {
+                    return Err(ParseFailure::UnsupportedCoverage);
+                }
+                self.skip_selected_trivia();
+            }
 
             let binding = self.anchor(binding_start, binding_end)?;
             bindings

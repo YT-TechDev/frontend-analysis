@@ -945,7 +945,6 @@ fn one_level_block_unsupported_neighbors_remain_unsupported_coverage() {
         "{ let a=1 }",
         "{ { let a=1; } }",
         "{ let a=1; /*c*/ let x=a; }",
-        "{ var a=1; }",
         "{ function f(){} }",
         "{ 1; }",
     ] {
@@ -1576,7 +1575,7 @@ fn block_var_multi_declarator_incomplete_and_firewalled_lists_remain_unsupported
     for text in [
         "{ var x, ; }",          // incomplete list: missing later declarator
         "{ var x, y, ; }",       // incomplete list: missing later declarator
-        "{ var x, y = 1; }",     // initializer firewall
+        "{ var x, y=true; }",    // non-decimal initializer firewall
         "{ var x, y }",          // non-EOF ASI firewall
         "{ var x, /* c */ y; }", // comment-trivia firewall, before declarator
         "{ var x, y /* c */; }", // comment-trivia firewall, after declarator
@@ -1589,4 +1588,215 @@ fn block_var_multi_declarator_incomplete_and_firewalled_lists_remain_unsupported
             "{text:?}"
         );
     }
+}
+
+// --- Issue #699: one-level Block `var` widened to optional selected -------
+// decimal-integer initializers per declarator
+//
+// These focused production tests seal the candidate against the #697/#698
+// theorem independently validated (without calling production) by
+// `qualification_validation_tests/selected_one_level_block_var_decimal_initializer_frontier.rs`
+// and `selected_post_block_var_decimal_initializer_slice_completion.rs`. They
+// exercise the real production entry point (`attempt_selected_qualification`)
+// with independently authored expected values rather than importing or
+// deriving from that oracle.
+
+#[test]
+fn block_var_decimal_initializer_positive_cardinality_and_shapes_are_selected_accepted_incomplete()
+{
+    for text in [
+        "{ var a=0; }",
+        "{ var a=12345; }",
+        "{ var a=1,b; }",
+        "{ var a,b=2; }",
+        "{ var a=1,b=2; }",
+        "{ var a=1,b,c=2; }",
+        "{ var a,b=2,c; }",
+        "{ var a=1,b=2,c=3; }",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn block_var_decimal_initializer_repeated_and_escaped_contributors_remain_accepted() {
+    // Defeats a wrong "deduplicated contributor set" mental model even when
+    // one occurrence carries a decimal initializer.
+    for text in ["{ var a=1,a; }", r"{ var a=1,\u0061=2; }"] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn block_var_decimal_initializer_ee14_r02_reaches_first_interior_and_final_positions() {
+    // Defeats both a "first declarator only" and a "last declarator only"
+    // wrong oracle, and confirms the decimal initializer never becomes
+    // collision evidence: the primary anchor is always the colliding
+    // BindingIdentifier, never the RHS digits.
+    assert_static_semantics_rejected("{ let a; var a=1,b; }", "a", (13, 14));
+    assert_static_semantics_rejected("{ let b; var a=1,b=2; }", "b", (17, 18));
+    assert_static_semantics_rejected("{ let b; var a,b=2,c; }", "b", (15, 16));
+    assert_static_semantics_rejected("{ let c; var a=1,b=2,c=3; }", "c", (21, 22));
+}
+
+#[test]
+fn block_var_decimal_initializer_ee14_r02_lexical_after_list_is_offset_discriminating() {
+    assert_static_semantics_rejected("{ var a=1,b=2; let b; }", "b", (19, 20));
+}
+
+#[test]
+fn block_var_decimal_initializer_ee36_r02_propagates_non_first_declarator() {
+    // The colliding contributor is the *second* declarator of the Block's
+    // own VariableDeclarationList, defeating a "first declarator only"
+    // Script-propagation model, in both source-order placements.
+    assert_static_semantics_rejected("let b; { var a=1,b=2; }", "b", (17, 18));
+    assert_static_semantics_rejected("{ var a=1,b=2; } let b;", "b", (21, 22));
+}
+
+#[test]
+fn block_var_decimal_initializer_script_block_asymmetry_remains_accepted() {
+    assert!(matches!(
+        attempt("var b; { let b; }"),
+        SelectedQualificationAttempt::SelectedAcceptedIncomplete
+    ));
+}
+
+#[test]
+fn block_var_decimal_initializer_same_tier_sibling_blocks_select_first_qualifying_block() {
+    // Both Blocks independently qualify for Tier 2b at their own second,
+    // initialized declarator; project evidence-order policy selects the
+    // first Block in authored source order.
+    assert_static_semantics_rejected(
+        "{ let a; var x=1,a=2; } { let b; var y=3,b=4; }",
+        "a",
+        (17, 18),
+    );
+}
+
+#[test]
+fn block_var_decimal_initializer_tier_outranks_cross_block_source_position() {
+    // The earlier Block only reaches Tier 2b (EE-14-R02) via an initialized
+    // declarator; the later Block reaches Tier 2a (EE-14-R01). Tier priority
+    // must still decide, so the later Block's EE-14-R01 wins.
+    assert_static_semantics_rejected("{ let a; var x=1,a=2; } { let b; let b; }", "b", (37, 38));
+}
+
+#[test]
+fn block_var_decimal_initializer_tier1_escaped_reserved_word_outranks_tier2b_block_collision() {
+    // Mandatory race: the same statement carries both a Tier-2b Block
+    // lexical/var collision on "a" and a later Tier-1 binding-local
+    // EE-04-R08 (escaped ReservedWord BindingIdentifier). Tier 1 must win
+    // even though the Tier-2b collision completes earlier in source order.
+    assert_static_semantics_rejected(r"{ let a; var a=1, \u0069f=2; }", r"\u0069f", (18, 25));
+}
+
+#[test]
+fn block_var_decimal_initializer_no_unicode_normalization_remains_accepted() {
+    assert!(matches!(
+        attempt("{ var é=1, e\u{0301}=2; }"),
+        SelectedQualificationAttempt::SelectedAcceptedIncomplete
+    ));
+}
+
+#[test]
+fn block_var_decimal_initializer_numeric_neighbors_remain_unsupported_coverage() {
+    for text in [
+        "{ var a=01; }",
+        "{ var a=1_0; }",
+        "{ var a=1.0; }",
+        "{ var a=1e2; }",
+        "{ var a=1n; }",
+        "{ var a=+1; }",
+        "{ var a=-1; }",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::UnsupportedCoverage
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn block_var_decimal_initializer_non_decimal_initializers_remain_unsupported_coverage() {
+    for text in [
+        "{ var a=true; }",
+        "{ var a=null; }",
+        "{ var a=this; }",
+        r#"{ var a="x"; }"#,
+        "{ var a=foo; }",
+        r"{ var a=\u0066oo; }",
+        r"{ var a=\u0069f; }",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::UnsupportedCoverage
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn block_var_decimal_initializer_asi_and_comment_neighbors_remain_unsupported_coverage() {
+    for text in [
+        "{ var a=1 }",
+        "{ var a=1,b=2 }",
+        "{ var a=1, /* c */ b; }",
+        "{ var a=/* c */1; }",
+        "{ var a=1 /* c */; }",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::UnsupportedCoverage
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn block_var_decimal_initializer_transactional_failure_commits_no_prefix() {
+    // A valid initialized declarator prefix (e.g. "a=1") must never escape as
+    // a committed Block var contributor when a later declarator fails: the
+    // whole statement is transactional.
+    for text in [
+        "{ var a=1, ; }",
+        "{ var a=1,b= ; }",
+        "{ var a=1,b=true; }",
+        "{ var a=1,b=1.0; }",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::UnsupportedCoverage
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn block_var_decimal_initializer_malformed_later_binding_is_definitively_syntax_rejected() {
+    // The earlier valid "a=1,b" declarator prefix must not commit; the later
+    // malformed escape must remain a definitive grammar rejection, never
+    // downgraded to UnsupportedCoverage merely because an earlier declarator
+    // carried a selected decimal initializer.
+    assert_grammar_rejected(r"{ var a=1,b,\u{}=2; }", r"\u{}", (12, 16));
 }
