@@ -1416,10 +1416,12 @@ fn ee14_r01_tier_outranks_earlier_block_ee14_r02_by_cross_block_source_position(
 fn bare_block_var_unsupported_boundaries_remain_unsupported_coverage() {
     // "{var x,y;}" is deliberately not listed here: Issue #695 makes
     // multi-declarator Block `var` statements a selected accepted form (see
-    // the "Issue #695" test section below).
+    // the "Issue #695" test section below). "{var x=x;}" is likewise not
+    // listed here: Issue #710 makes a direct-authored, escape-free
+    // `IdentifierReference` initializer a selected accepted form (see the
+    // "Issue #710" test section below).
     for text in [
         "{var x}",               // non-EOF ASI remains unsupported, never SyntaxRejected
-        "{var x=x;}",            // initializer
         "{var x; /*c*/}",        // comment trivia
         "{ { var x; } }",        // deeper Block nesting
         "for (var x;;) {}",      // for(var...)
@@ -1733,12 +1735,14 @@ fn block_var_decimal_initializer_numeric_neighbors_remain_unsupported_coverage()
 
 #[test]
 fn block_var_decimal_initializer_non_decimal_initializers_remain_unsupported_coverage() {
+    // "{ var a=foo; }" is deliberately not listed here: Issue #710 makes a
+    // direct-authored, escape-free `IdentifierReference` initializer a
+    // selected accepted form (see the "Issue #710" test section below).
     for text in [
         "{ var a=true; }",
         "{ var a=null; }",
         "{ var a=this; }",
         r#"{ var a="x"; }"#,
-        "{ var a=foo; }",
         r"{ var a=\u0066oo; }",
         r"{ var a=\u0069f; }",
     ] {
@@ -1799,4 +1803,43 @@ fn block_var_decimal_initializer_malformed_later_binding_is_definitively_syntax_
     // downgraded to UnsupportedCoverage merely because an earlier declarator
     // carried a selected decimal initializer.
     assert_grammar_rejected(r"{ var a=1,b,\u{}=2; }", r"\u{}", (12, 16));
+}
+
+// --- Issue #710: one-level Block `var` widened to a direct-authored, ------
+// escape-free `IdentifierReference` initializer
+//
+// These focused production tests exercise the real production entry point
+// (`attempt_selected_qualification`) with independently authored expected
+// values, sealing the candidate against the accepted #688/#710 theorem.
+
+#[test]
+fn block_var_direct_identifier_reference_initializer_is_selected_accepted_incomplete() {
+    for text in [
+        "{ var x=a; }",
+        "{ var x=x; }",
+        "{ var x=a,y=b; }",
+        "{ var x=1,y=a,z; }",
+        "{ var x=a,y=2,z=b; }",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn block_var_direct_identifier_reference_initializer_does_not_become_bound_name_evidence() {
+    // W7 (kills "the RHS semantic name accidentally becomes a
+    // VarDeclaredName/static-error contributor"): the Block-var RHS
+    // reference name must never participate in BoundNames/EE-14/EE-36
+    // collision detection; only the LHS `BindingIdentifier` does.
+    assert!(matches!(
+        attempt("{ let a; var x=a; }"),
+        SelectedQualificationAttempt::SelectedAcceptedIncomplete
+    ));
+    assert_static_semantics_rejected("{ let x; var x=a; }", "x", (13, 14));
 }
