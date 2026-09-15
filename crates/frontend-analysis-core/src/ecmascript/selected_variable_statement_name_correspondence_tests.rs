@@ -1,16 +1,20 @@
 use crate::{SourceAnchor, SourceId, SourceText};
 
 use super::selected_lexical_slice::{
-    SelectedLexicalSliceOutcome, SelectedVariableStatementScript, recognize_selected_lexical_slice,
+    SelectedLexicalSliceOutcome, SelectedOneLevelBlockScript, SelectedVariableStatementScript,
+    recognize_selected_lexical_slice,
 };
 use super::selected_static_semantics::{
-    SelectedStaticSemanticsRejection, SelectedVariableStatementStaticSemanticsOutcome,
+    SelectedOneLevelBlockStaticSemanticsOutcome, SelectedStaticSemanticsRejection,
+    SelectedVariableStatementStaticSemanticsOutcome,
+    evaluate_selected_one_level_block_static_semantics,
     evaluate_selected_variable_statement_static_semantics,
 };
 use super::selected_variable_statement_name_correspondence::{
     SelectedVariableStatementNameCorrespondenceAnalysis,
     SelectedVariableStatementNameCorrespondenceOutcome,
     SelectedVariableStatementNameCorrespondenceRegion,
+    analyze_selected_one_level_block_name_correspondence,
     analyze_selected_variable_statement_name_correspondence,
 };
 
@@ -53,6 +57,29 @@ fn one_relation<'analysis, 'script>(
         panic!("expected exactly one correspondence relation");
     };
     relation
+}
+
+fn recognized_one_level_block(text: &str) -> (SourceText, SelectedOneLevelBlockScript) {
+    let source = source(text);
+    let script = match recognize_selected_lexical_slice(&source) {
+        SelectedLexicalSliceOutcome::RecognizedOneLevelBlockSlice(script) => script,
+        other => panic!("expected one-level Block recognition for {text:?}, got {other:?}"),
+    };
+    (source, script)
+}
+
+fn accepted_one_level_block_analysis<'script>(
+    script: &'script SelectedOneLevelBlockScript,
+) -> SelectedVariableStatementNameCorrespondenceAnalysis<'script> {
+    let accepted = match evaluate_selected_one_level_block_static_semantics(script) {
+        SelectedOneLevelBlockStaticSemanticsOutcome::Accepted(accepted) => accepted,
+        other => panic!("expected one-level Block selected static acceptance, got {other:?}"),
+    };
+
+    match analyze_selected_one_level_block_name_correspondence(&accepted) {
+        SelectedVariableStatementNameCorrespondenceOutcome::Complete(analysis) => analysis,
+        other => panic!("expected complete one-level Block var-name correspondence, got {other:?}"),
+    }
 }
 
 #[test]
@@ -1075,5 +1102,268 @@ fn static_rejection_still_gates_correspondence_when_a_block_var_contributor_is_p
         SelectedVariableStatementStaticSemanticsOutcome::Rejected(
             SelectedStaticSemanticsRejection::DuplicateLexicalName { .. }
         )
+    ));
+}
+
+// --- One-level Block accepted-witness entrypoint (Issue #705/#706) --------
+//
+// These regressions directly exercise
+// `analyze_selected_one_level_block_name_correspondence` against
+// representative cases drawn from the candidate-independent #706 oracle
+// (`qualification_validation_tests::selected_one_level_block_name_correspondence_lifecycle_frontier`,
+// left unmodified). The `SelectedOneLevelBlockStaticSemanticsAccepted`
+// witness has no top-level `VariableStatement` item; every reference below
+// is a top-level or Block-scoped `LexicalDeclaration`.
+
+#[test]
+fn one_level_block_same_block_var_contributor_is_seen_by_block_lexical_reference() {
+    // P1 / oracle F1 (kills W1, W3, W4): a same-Block Block-var contributor
+    // is visible to an existing Block lexical reference under the
+    // `OneLevelBlock` accepted witness, without requiring any top-level
+    // `VariableStatement` to exist.
+    let (_, script) = recognized_one_level_block("{ var a; let x=a; }");
+    let analysis = accepted_one_level_block_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(relation.semantic_name(), "a");
+    assert!(matches!(
+        relation.current_region(),
+        SelectedVariableStatementNameCorrespondenceRegion::Block(_)
+    ));
+    let contributors = relation
+        .correspondence()
+        .var_contributors()
+        .expect("same-Block var contributor must be visible to the Block lexical reference");
+    assert_eq!(contributors.len(), 1);
+    assert_eq!(range(contributors[0]), (6, 7));
+}
+
+#[test]
+fn one_level_block_zero_reference_source_is_a_completed_empty_correspondence() {
+    // P2 / oracle F2 (kills W13): an accepted `OneLevelBlock` witness with no
+    // reference inputs still produces `Complete([])`, never absence.
+    let (_, script) = recognized_one_level_block("{ var a; }");
+    let analysis = accepted_one_level_block_analysis(&script);
+    assert!(analysis.relations().is_empty());
+}
+
+#[test]
+fn one_level_block_unrelated_undeclared_reference_is_no_contributor() {
+    // P3 / oracle F3: an unrelated, undeclared reference inside the Block is
+    // `NoSelectedSameSourceContributor`, not a static failure.
+    let (_, script) = recognized_one_level_block("{ let x=a; }");
+    let analysis = accepted_one_level_block_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert!(
+        relation
+            .correspondence()
+            .is_no_selected_same_source_contributor()
+    );
+}
+
+#[test]
+fn one_level_block_var_contributor_is_visible_to_top_level_lexical_reference() {
+    // P4 / oracle F4 (kills W4, W5): a Block-var contributor is seen by an
+    // existing top-level lexical reference, and the whole source still
+    // reaches the `OneLevelBlock` witness because no top-level
+    // `VariableStatement` is present.
+    let (_, script) = recognized_one_level_block("{ var a; }\nlet x=a;");
+    let analysis = accepted_one_level_block_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert!(matches!(
+        relation.current_region(),
+        SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+    ));
+    let contributors = relation
+        .correspondence()
+        .var_contributors()
+        .expect("Block var contributor must be visible to a top-level lexical reference");
+    assert_eq!(contributors.len(), 1);
+    assert_eq!(range(contributors[0]), (6, 7));
+}
+
+#[test]
+fn one_level_block_current_region_lexical_precedence_outranks_sibling_block_var_contributor() {
+    // P5 / oracle F8 (kills W8, W10): a same-name selected var contributor
+    // genuinely exists in a sibling Block; current-region (Block) lexical
+    // precedence must still win before the all-selected-var contributor
+    // stage.
+    let (_, script) = recognized_one_level_block("{ var a; } { let a=1; let x=a; }");
+    let analysis = accepted_one_level_block_analysis(&script);
+    let relation = one_relation(&analysis);
+    let (binding, region) = relation
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("current-region Block lexical binding must win over a sibling var contributor");
+    assert_eq!(range(binding), (17, 18));
+    assert!(matches!(
+        region,
+        SelectedVariableStatementNameCorrespondenceRegion::Block(_)
+    ));
+    assert!(relation.correspondence().var_contributors().is_none());
+}
+
+#[test]
+fn one_level_block_top_level_lexical_fallback_is_reachable_from_block_reference() {
+    // P6 / oracle F7 (kills W9, W11): the existing Block-origin top-level
+    // lexical fallback remains reachable from the `OneLevelBlock` witness; no
+    // var contributor may override it.
+    let (_, script) = recognized_one_level_block("let a=1;\n{ let x=a; }");
+    let analysis = accepted_one_level_block_analysis(&script);
+    let relation = one_relation(&analysis);
+    let (binding, region) = relation
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("top-level lexical fallback must remain reachable");
+    assert_eq!(range(binding), (4, 5));
+    assert!(matches!(
+        region,
+        SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+    ));
+}
+
+#[test]
+fn one_level_block_repeated_var_contributors_preserve_multiplicity_and_order() {
+    // P7 / oracle F9 (kills W5): two declarators of one Block `var` statement
+    // remain two distinct authored occurrences, in exact authored order,
+    // never deduplicated.
+    let (_, script) = recognized_one_level_block("{ var a,a; let x=a; }");
+    let analysis = accepted_one_level_block_analysis(&script);
+    let relation = one_relation(&analysis);
+    let contributors = relation
+        .correspondence()
+        .var_contributors()
+        .expect("repeated Block var contributors");
+    assert_eq!(contributors.len(), 2);
+    assert_eq!(range(contributors[0]), (6, 7));
+    assert_eq!(range(contributors[1]), (8, 9));
+}
+
+#[test]
+fn one_level_block_escaped_var_lhs_uses_semantic_equality_with_exact_authored_anchor() {
+    // P8 / oracle F10 (kills W6): the Block-var contributor anchor keeps its
+    // exact authored escaped spelling; the reference's semantic name is the
+    // decoded "a".
+    let (_, script) = recognized_one_level_block(r"{ var \u{61}; let x=a; }");
+    let analysis = accepted_one_level_block_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(relation.semantic_name(), "a");
+    let contributors = relation
+        .correspondence()
+        .var_contributors()
+        .expect("escaped Block-var LHS must match by decoded semantic name");
+    assert_eq!(contributors.len(), 1);
+    assert_eq!(contributors[0].fragment(), r"\u{61}");
+    assert_ne!(contributors[0].fragment(), "a");
+    assert_eq!(range(contributors[0]), (6, 12));
+}
+
+#[test]
+fn one_level_block_var_contributor_domain_has_no_unicode_normalization() {
+    // P9 / oracle F11 (kills W7): a composed Block-var contributor matches
+    // only a composed reference; a code-point-distinct decomposed reference
+    // of the same visual name matches nothing.
+    let (_, script) = recognized_one_level_block("{ var \u{e9}; let x=\u{e9}; let y=e\u{301}; }");
+    let analysis = accepted_one_level_block_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(relations.len(), 2);
+
+    let contributors = relations[0]
+        .correspondence()
+        .var_contributors()
+        .expect("composed reference must match composed Block-var contributor");
+    assert_eq!(contributors.len(), 1);
+    assert_eq!(contributors[0].fragment(), "\u{e9}");
+
+    assert_eq!(relations[1].semantic_name().chars().count(), 2);
+    assert!(
+        relations[1]
+            .correspondence()
+            .is_no_selected_same_source_contributor()
+    );
+}
+
+#[test]
+fn one_level_block_decimal_initialized_var_contributes_via_lhs_only() {
+    // P10 / oracle F12 (kills W10-decimal): a decimal-initialized Block var
+    // contributes through its LHS `BindingIdentifier`; the decimal RHS is
+    // never contributor or reference evidence.
+    let (_, script) = recognized_one_level_block("{ var a=1; let x=a; }");
+    let analysis = accepted_one_level_block_analysis(&script);
+    let relation = one_relation(&analysis);
+    let contributors = relation
+        .correspondence()
+        .var_contributors()
+        .expect("decimal-initialized Block var contributes via LHS");
+    assert_eq!(contributors.len(), 1);
+    assert_eq!(range(contributors[0]), (6, 7));
+    assert_ne!(range(contributors[0]), (8, 9));
+}
+
+#[test]
+fn one_level_block_q_prefix_correspondence_projection_matches_variable_statement_witness() {
+    // P11 (kills W12): comparing a representative `OneLevelBlock` fixture
+    // against the same shape prefixed with an unrelated top-level `var q;`
+    // (which moves recognition to the distinct `VariableStatement` witness)
+    // must agree on the correspondence projection for the unrelated queried
+    // name `a`, after accounting for the exact prefix byte-length shift.
+    // This proves the two accepted-witness entrypoints share one semantic
+    // theorem without collapsing witness identity.
+    const PREFIX_LEN: usize = "var q;\n".len();
+
+    let (_, one_level_block_script) = recognized_one_level_block("{ var a; let x=a; }");
+    let one_level_block_analysis = accepted_one_level_block_analysis(&one_level_block_script);
+    let one_level_block_relation = one_relation(&one_level_block_analysis);
+
+    let (_, variable_statement_script) = recognized_variable("var q;\n{ var a; let x=a; }");
+    let variable_statement_analysis = accepted_analysis(&variable_statement_script);
+    let variable_statement_relation = one_relation(&variable_statement_analysis);
+
+    assert_eq!(
+        one_level_block_relation.semantic_name(),
+        variable_statement_relation.semantic_name()
+    );
+    assert!(matches!(
+        one_level_block_relation.current_region(),
+        SelectedVariableStatementNameCorrespondenceRegion::Block(_)
+    ));
+    assert!(matches!(
+        variable_statement_relation.current_region(),
+        SelectedVariableStatementNameCorrespondenceRegion::Block(_)
+    ));
+
+    let one_level_block_contributors = one_level_block_relation
+        .correspondence()
+        .var_contributors()
+        .expect("OneLevelBlock witness must produce a var contributor relation");
+    let variable_statement_contributors = variable_statement_relation
+        .correspondence()
+        .var_contributors()
+        .expect("VariableStatement witness must produce a var contributor relation");
+
+    assert_eq!(
+        one_level_block_contributors.len(),
+        variable_statement_contributors.len()
+    );
+    for (base, prefixed) in one_level_block_contributors
+        .iter()
+        .zip(variable_statement_contributors.iter())
+    {
+        assert_eq!(base.fragment(), prefixed.fragment());
+        assert_eq!(base.range().start() + PREFIX_LEN, prefixed.range().start());
+        assert_eq!(base.range().end() + PREFIX_LEN, prefixed.range().end());
+    }
+
+    // The accepted-witness identity is explicitly NOT invariant across the
+    // prefix: the unrelated `var q;` moves recognition from
+    // `RecognizedOneLevelBlockSlice` to `RecognizedVariableStatementSlice`.
+    // Only the correspondence projection for the unrelated queried name `a`
+    // is invariant.
+    assert!(matches!(
+        recognize_selected_lexical_slice(&source("{ var a; let x=a; }")),
+        SelectedLexicalSliceOutcome::RecognizedOneLevelBlockSlice(_)
+    ));
+    assert!(matches!(
+        recognize_selected_lexical_slice(&source("var q;\n{ var a; let x=a; }")),
+        SelectedLexicalSliceOutcome::RecognizedVariableStatementSlice(_)
     ));
 }
