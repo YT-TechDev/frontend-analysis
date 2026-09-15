@@ -152,14 +152,17 @@ pub(super) enum SelectedBlockItem {
 /// ::= SelectedBindingIdentifier | SelectedBindingIdentifier =
 /// SelectedDecimalInteger | SelectedBindingIdentifier =
 /// SelectedDirectIdentifierReference | SelectedBindingIdentifier =
-/// SelectedEscapedNonReservedIdentifierReference`, accepted by
-/// Issue #688/#691/#695/#699/#710/#713: one selected `VariableStatement`
+/// SelectedEscapedNonReservedIdentifierReference | SelectedBindingIdentifier =
+/// SelectedEscapedReservedWordIdentifierName`, accepted by
+/// Issue #688/#691/#695/#699/#710/#713/#715: one selected `VariableStatement`
 /// owning ordered `1..N` selected `BindingIdentifier` declarators, each
-/// independently optionally carrying a selected decimal-integer initializer
-/// or a selected direct-authored or escaped non-ReservedWord
-/// `IdentifierReference` initializer, and one statement-owned authored
-/// semicolon terminator. No comma or whole-statement span is retained
-/// because no proven consumer needs it.
+/// independently optionally carrying a selected decimal-integer initializer,
+/// a selected direct-authored or escaped non-ReservedWord
+/// `IdentifierReference` initializer, or a classification-only escaped
+/// ReservedWord `IdentifierName` initializer anchor for the later
+/// `EE-04-R08` Tier-1 consumer, and one statement-owned authored semicolon
+/// terminator. No comma or whole-statement span is retained because no
+/// proven consumer needs it.
 #[derive(Debug)]
 pub(super) struct SelectedBlockVarStatement {
     bindings: Vec<SelectedBlockVarBinding>,
@@ -179,17 +182,18 @@ impl SelectedBlockVarStatement {
 /// `IdentifierReference` initializer (Issue #710) or a selected escaped
 /// non-ReservedWord `IdentifierReference` initializer (Issue #713) retains
 /// the existing exact source-backed reference fact for the source-name
-/// correspondence consumer; an escaped spelling that decodes to a
-/// ReservedWord in this RHS position remains outside this leaf and is
-/// reported as `UnsupportedCoverage` rather than silently admitted through
-/// the shared recognizer. Distinct declarator occurrences remain distinct
-/// even when their semantic names coincide (Issue #695 repeated-name
-/// requirement).
+/// correspondence consumer. A selected escaped spelling that the shared
+/// recognizer classifies as a ReservedWord (Issue #715) retains only its
+/// exact authored initializer anchor, not a `SelectedIdentifierReferenceFact`
+/// and not the decoded semantic name, for the later Tier-1 `EE-04-R08`
+/// consumer. Distinct declarator occurrences remain distinct even when their
+/// semantic names coincide (Issue #695 repeated-name requirement).
 #[derive(Debug)]
 pub(super) struct SelectedBlockVarBinding {
     binding: SourceAnchor,
     name_state: SelectedBindingNameState,
     identifier_reference_initializer: Option<SelectedIdentifierReferenceFact>,
+    escaped_reserved_initializer_identifier: Option<SourceAnchor>,
 }
 
 impl SelectedBlockVarBinding {
@@ -213,6 +217,10 @@ impl SelectedBlockVarBinding {
         &self,
     ) -> Option<&SelectedIdentifierReferenceFact> {
         self.identifier_reference_initializer.as_ref()
+    }
+
+    pub(super) fn escaped_reserved_initializer_identifier(&self) -> Option<&SourceAnchor> {
+        self.escaped_reserved_initializer_identifier.as_ref()
     }
 }
 
@@ -668,6 +676,7 @@ impl<'source> Cursor<'source> {
     ///   | SelectedBindingIdentifier = SelectedDecimalInteger
     ///   | SelectedBindingIdentifier = SelectedDirectIdentifierReference
     ///   | SelectedBindingIdentifier = SelectedEscapedNonReservedIdentifierReference
+    ///   | SelectedBindingIdentifier = SelectedEscapedReservedWordIdentifierName
     /// ```
     ///
     /// (Issue #688/#691, widened to ordered `1..N` declarators by #695,
@@ -675,26 +684,31 @@ impl<'source> Cursor<'source> {
     /// declarator by #699, widened to an optional selected direct-authored,
     /// escape-free `IdentifierReference` initializer per declarator by
     /// #710, widened to an optional selected escaped non-ReservedWord
-    /// `IdentifierReference` initializer per declarator by #713): one or
-    /// more selected `BindingIdentifier` declarators separated by commas,
-    /// each independently optionally followed by `= SelectedDecimalInteger`
-    /// or `= SelectedIdentifierReference` (direct or escaped
-    /// non-ReservedWord), and a mandatory authored semicolon terminating the
-    /// whole statement.
+    /// `IdentifierReference` initializer per declarator by #713, widened to
+    /// an optional selected escaped ReservedWord `IdentifierName`
+    /// initializer per declarator by #715): one or more selected
+    /// `BindingIdentifier` declarators separated by commas, each
+    /// independently optionally followed by `= SelectedDecimalInteger`,
+    /// `= SelectedIdentifierReference` (direct or escaped non-ReservedWord),
+    /// or `= SelectedEscapedReservedWordIdentifierName` (classification-only
+    /// source position for the later Tier-1 `EE-04-R08` consumer, not an
+    /// accepted `SelectedIdentifierReference`), and a mandatory authored
+    /// semicolon terminating the whole statement.
     ///
     /// This intentionally does not reuse `parse_variable_statement`: that
-    /// owner's escaped-ReservedWord initializer family and EOF-only ASI
-    /// belong to the distinct top-level `VariableStatement` capability and
-    /// must not leak into this narrower Block-item placement. Only the
-    /// keyword, `BindingIdentifier`,
+    /// owner's EOF-only ASI belongs to the distinct top-level
+    /// `VariableStatement` capability and must not leak into this narrower
+    /// Block-item placement. Only the keyword, `BindingIdentifier`,
     /// initializer-equals/decimal-integer/IdentifierReference, and
     /// comma-continuation recognition mechanics are shared. A direct-authored
     /// or escaped non-ReservedWord `IdentifierReference` initializer is
-    /// admitted (Issues #710/#713); an escaped spelling that the shared
-    /// recognizer classifies as a ReservedWord is deliberately routed to
-    /// `UnsupportedCoverage` here rather than silently widened, because that
-    /// escaped-ReservedWord RHS coverage is not part of this leaf's accepted
-    /// profile. Any other non-decimal, non-IdentifierReference initializer,
+    /// admitted (Issues #710/#713) through the existing source-backed
+    /// `SelectedIdentifierReferenceFact`. An escaped spelling that the shared
+    /// recognizer classifies as a ReservedWord (Issue #715) is admitted only
+    /// as a classification-only exact authored initializer anchor for the
+    /// later Tier-1 `EE-04-R08` consumer; it is not represented as an
+    /// accepted `IdentifierReference` and its decoded semantic name is not
+    /// persisted. Any other non-decimal, non-IdentifierReference initializer,
     /// comment trivia, or missing authored semicolon (including EOF, i.e.
     /// non-EOF ASI before the enclosing `}`) is left entirely unrecognized
     /// here and reported as `UnsupportedCoverage`.
@@ -705,7 +719,9 @@ impl<'source> Cursor<'source> {
     /// selected direct or escaped non-ReservedWord `IdentifierReference`
     /// initializer retains the existing exact source-backed
     /// `SelectedIdentifierReferenceFact` for the source-name correspondence
-    /// consumer.
+    /// consumer. A selected escaped ReservedWord `IdentifierName` initializer
+    /// retains only its exact authored `SourceAnchor` for the later Tier-1
+    /// `EE-04-R08` static-semantics consumer.
     ///
     /// The declarator list is accumulated in a purely local `Vec` and this
     /// function returns `Err` before constructing `SelectedBlockVarStatement`
@@ -735,36 +751,35 @@ impl<'source> Cursor<'source> {
                 self.parse_selected_binding_identifier(grammar_context)?;
             self.skip_selected_trivia();
 
-            let identifier_reference_initializer = if self.consume_initializer_equals() {
-                self.skip_selected_trivia();
-                let identifier_reference_initializer = if self.consume_selected_decimal_integer() {
-                    None
+            let (identifier_reference_initializer, escaped_reserved_initializer_identifier) =
+                if self.consume_initializer_equals() {
+                    self.skip_selected_trivia();
+                    let facts = if self.consume_selected_decimal_integer() {
+                        (None, None)
+                    } else {
+                        match self.consume_selected_identifier_reference() {
+                            SelectedIdentifierReferenceRecognition::Matched(reference) => {
+                                (Some(reference), None)
+                            }
+                            SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName {
+                                identifier,
+                            } => (None, Some(identifier)),
+                            SelectedIdentifierReferenceRecognition::NotSelected => {
+                                return Err(ParseFailure::UnsupportedCoverage);
+                            }
+                            SelectedIdentifierReferenceRecognition::ResourceLimited => {
+                                return Err(ParseFailure::ResourceLimited);
+                            }
+                            SelectedIdentifierReferenceRecognition::InternalFailure => {
+                                return Err(ParseFailure::InternalFailure);
+                            }
+                        }
+                    };
+                    self.skip_selected_trivia();
+                    facts
                 } else {
-                    match self.consume_selected_identifier_reference() {
-                        SelectedIdentifierReferenceRecognition::Matched(reference) => {
-                            Some(reference)
-                        }
-                        SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName {
-                            ..
-                        } => {
-                            return Err(ParseFailure::UnsupportedCoverage);
-                        }
-                        SelectedIdentifierReferenceRecognition::NotSelected => {
-                            return Err(ParseFailure::UnsupportedCoverage);
-                        }
-                        SelectedIdentifierReferenceRecognition::ResourceLimited => {
-                            return Err(ParseFailure::ResourceLimited);
-                        }
-                        SelectedIdentifierReferenceRecognition::InternalFailure => {
-                            return Err(ParseFailure::InternalFailure);
-                        }
-                    }
+                    (None, None)
                 };
-                self.skip_selected_trivia();
-                identifier_reference_initializer
-            } else {
-                None
-            };
 
             let binding = self.anchor(binding_start, binding_end)?;
             bindings
@@ -774,6 +789,7 @@ impl<'source> Cursor<'source> {
                 binding,
                 name_state,
                 identifier_reference_initializer,
+                escaped_reserved_initializer_identifier,
             });
 
             if !self.consume_ascii(',') {
