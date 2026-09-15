@@ -1419,9 +1419,10 @@ fn bare_block_var_unsupported_boundaries_remain_unsupported_coverage() {
     // the "Issue #695" test section below). "{var x=x;}" is likewise not
     // listed here: Issue #710 makes a direct-authored, escape-free
     // `IdentifierReference` initializer a selected accepted form (see the
-    // "Issue #710" test section below).
+    // "Issue #710" test section below). "{var x}" is likewise not listed
+    // here: Issue #717 makes bounded close-brace ASI a selected accepted
+    // termination route (see the "Issue #717" test section below).
     for text in [
-        "{var x}",               // non-EOF ASI remains unsupported, never SyntaxRejected
         "{var x; /*c*/}",        // comment trivia
         "{ { var x; } }",        // deeper Block nesting
         "for (var x;;) {}",      // for(var...)
@@ -1578,7 +1579,6 @@ fn block_var_multi_declarator_incomplete_and_firewalled_lists_remain_unsupported
         "{ var x, ; }",          // incomplete list: missing later declarator
         "{ var x, y, ; }",       // incomplete list: missing later declarator
         "{ var x, y=true; }",    // non-decimal initializer firewall
-        "{ var x, y }",          // non-EOF ASI firewall
         "{ var x, /* c */ y; }", // comment-trivia firewall, before declarator
         "{ var x, y /* c */; }", // comment-trivia firewall, after declarator
     ] {
@@ -1762,10 +1762,8 @@ fn block_var_decimal_initializer_non_decimal_initializers_remain_unsupported_cov
 }
 
 #[test]
-fn block_var_decimal_initializer_asi_and_comment_neighbors_remain_unsupported_coverage() {
+fn block_var_decimal_initializer_comment_neighbors_remain_unsupported_coverage() {
     for text in [
-        "{ var a=1 }",
-        "{ var a=1,b=2 }",
         "{ var a=1, /* c */ b; }",
         "{ var a=/* c */1; }",
         "{ var a=1 /* c */; }",
@@ -1967,4 +1965,134 @@ fn block_var_escaped_reserved_identifier_name_initializer_correspondence_suppres
         escaped_first_ascii_code_point("if")
     );
     assert_static_semantics_rejected(&text, r"\u0069f", (14, 21));
+}
+
+// --- Issue #717: one-level Block `var` widened to admit bounded --------
+// close-brace ASI as an additional statement terminator
+//
+// These focused production tests exercise the real production entry point
+// (`attempt_selected_qualification`) with independently authored expected
+// values, sealing the new terminator route against the accepted
+// #688-comment-5685046994 theorem and the existing #318/#320 EOF-only ASI
+// terminator-provenance precedent. No separate candidate-independent oracle
+// predecessor is used for this leaf.
+
+#[test]
+fn block_var_close_brace_asi_positive_sources_remain_selected_accepted_incomplete() {
+    for text in [
+        "{ var x }",
+        "{ var x, y }",
+        "{ var a=1 }",
+        "{ var a=1,b=2 }",
+        "{ var x=a }",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn block_var_close_brace_asi_reaches_same_ee14_r02_as_authored_semicolon() {
+    // `{ let x; var x }` must reach the same Block EE-14-R02 collision, at
+    // the same authored subject position, as the authored-semicolon form.
+    assert_static_semantics_rejected("{ let x; var x; }", "x", (13, 14));
+    assert_static_semantics_rejected("{ let x; var x }", "x", (13, 14));
+}
+
+#[test]
+fn block_var_close_brace_asi_reaches_same_ee36_r02_as_authored_semicolon() {
+    // `let x; { var x }` must reach the same Script EE-36-R02 propagation,
+    // at the same authored subject position, as the authored-semicolon
+    // form.
+    assert_static_semantics_rejected("let x; { var x; }", "x", (13, 14));
+    assert_static_semantics_rejected("let x; { var x }", "x", (13, 14));
+}
+
+#[test]
+fn block_var_close_brace_asi_reaches_same_ee04_r08_as_authored_semicolon() {
+    // Close-brace ASI must not convert the classification-only escaped
+    // ReservedWord C6 route into an accepted IdentifierReference: it must
+    // still reach the same EE-04-R08 rejection at the same authored subject
+    // position as the authored-semicolon form.
+    let semicolon_text = format!("{{ var x={}; }}", escaped_first_ascii_code_point("if"));
+    assert_static_semantics_rejected(&semicolon_text, r"\u0069f", (8, 15));
+
+    let close_brace_text = format!("{{ var x={} }}", escaped_first_ascii_code_point("if"));
+    assert_static_semantics_rejected(&close_brace_text, r"\u0069f", (8, 15));
+}
+
+#[test]
+fn block_var_close_brace_asi_eof_is_not_equivalent_to_close_brace() {
+    // EOF must never be silently treated as this leaf's bounded close-brace
+    // ASI route.
+    assert!(matches!(
+        attempt("{ var x"),
+        SelectedQualificationAttempt::UnsupportedCoverage
+    ));
+}
+
+#[test]
+fn block_var_close_brace_asi_does_not_repair_incomplete_declarator_or_initializer() {
+    for text in ["{ var x, }", "{ var x= }"] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::UnsupportedCoverage
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn block_var_close_brace_asi_does_not_commit_tentative_c6_evidence_on_later_failure() {
+    let text = format!("{{ var x={},y= }}", escaped_first_ascii_code_point("if"));
+    assert!(
+        matches!(
+            attempt(&text),
+            SelectedQualificationAttempt::UnsupportedCoverage
+        ),
+        "{text:?}"
+    );
+}
+
+#[test]
+fn block_var_close_brace_asi_does_not_widen_to_line_terminator_asi() {
+    // General LineTerminator-triggered ASI before another statement remains
+    // outside this leaf; only the bounded "next significant token == }"
+    // route is recognized.
+    for text in ["{\n  var x\n  let y;\n}", "{\n  var x\n  var y;\n}"] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::UnsupportedCoverage
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn block_var_close_brace_asi_does_not_widen_to_comments_or_initializer_family() {
+    for text in [
+        "{ var x /* c */ }",
+        "{ var x=1 /* c */ }",
+        "{ var a=true }",
+        "{ var a=null }",
+        "{ var a=this }",
+        r#"{ var a="x" }"#,
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::UnsupportedCoverage
+            ),
+            "{text:?}"
+        );
+    }
 }

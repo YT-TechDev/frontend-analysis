@@ -1700,3 +1700,61 @@ fn one_level_block_var_escaped_identifier_reference_composition_matches_differen
             .is_no_selected_same_source_contributor()
     );
 }
+
+#[test]
+fn block_var_close_brace_asi_terminator_provenance_does_not_change_correspondence_meaning() {
+    // Issue #717: for otherwise-identical selected Block-var source, an
+    // authored semicolon and bounded close-brace ASI must produce the exact
+    // same correspondence relation; only statement terminator provenance
+    // differs, and that is terminator-blind to correspondence.
+    let (_, semicolon_script) = recognized_one_level_block("let a; { var x=a; }");
+    let semicolon_analysis = accepted_one_level_block_analysis(&semicolon_script);
+    let semicolon_relation = one_relation(&semicolon_analysis);
+
+    let (_, close_brace_script) = recognized_one_level_block("let a; { var x=a }");
+    let close_brace_analysis = accepted_one_level_block_analysis(&close_brace_script);
+    let close_brace_relation = one_relation(&close_brace_analysis);
+
+    assert!(matches!(
+        semicolon_relation.current_region(),
+        SelectedVariableStatementNameCorrespondenceRegion::Block(_)
+    ));
+    assert!(matches!(
+        close_brace_relation.current_region(),
+        SelectedVariableStatementNameCorrespondenceRegion::Block(_)
+    ));
+
+    assert_eq!(
+        range(semicolon_relation.containing_binding()),
+        range(close_brace_relation.containing_binding())
+    );
+    assert_eq!(
+        range(semicolon_relation.reference()),
+        range(close_brace_relation.reference())
+    );
+    assert_eq!(
+        semicolon_relation.semantic_name(),
+        close_brace_relation.semantic_name()
+    );
+
+    // The top-level lexical "a" outranks the Block var contributor "x=a";
+    // both terminator forms must resolve to the exact same
+    // `VisibleSelectedLexicalBinding` fact, never `SameSourceSelectedVarNameContributors`.
+    let (semicolon_binding, semicolon_region) = semicolon_relation
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("authored-semicolon top-level lexical fallback");
+    let (close_brace_binding, close_brace_region) = close_brace_relation
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("close-brace-ASI top-level lexical fallback");
+    assert_eq!(range(semicolon_binding), range(close_brace_binding));
+    assert!(matches!(
+        semicolon_region,
+        SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+    ));
+    assert!(matches!(
+        close_brace_region,
+        SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+    ));
+}
