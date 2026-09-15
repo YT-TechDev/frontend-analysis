@@ -320,25 +320,34 @@ const F7: F = F {
     additional_anchors: &[],
 };
 
-// F8 -- current-region (Block) lexical precedence outranks a same-named
-// widened var contributor authored elsewhere (kills W10). No Block var
-// exists in this fixture at all; it isolates lexical-vs-lexical precedence
-// under the `OneLevelBlock` witness.
-const F8_LEXICAL: A = A(6, 7, "a");
+// F8 -- current-region (Block) lexical precedence outranks an actually
+// present same-name selected var contributor (kills W10). A same-name
+// selected var contributor exists in a sibling Block, while the queried
+// name is also declared lexically in the reference's current Block. The
+// current-region lexical target must win before the all-selected-var
+// contributor stage. The sibling placement (rather than the same Block)
+// is deliberate: it keeps the source statically valid -- `var a` and
+// `let a` never share one Block (which would trigger `EE-14-R02`), and
+// the Block-scoped lexical declarations never reach Script-level
+// `LexicallyDeclaredNames` (so no `EE-36-R02` either) -- while still
+// making the competing var contributor a genuine, independently
+// auditable authored occurrence rather than an implicit absence.
+const F8_COMPETING_VAR: A = A(6, 7, "a");
+const F8_LEXICAL: A = A(17, 18, "a");
 const F8: F = F {
-    id: "current-region-lexical-precedence",
-    source: "{ let a=1; let x=a; }",
+    id: "current-region-lexical-precedence-over-sibling-block-var-contributor",
+    source: "{ var a; } { let a=1; let x=a; }",
     lifecycle: ExpectedLifecycle::Accepted(
         ExpectedAcceptedWitness::OneLevelBlockStaticSemanticsAccepted,
     ),
     relations: &[R {
-        binding: A(15, 16, "x"),
-        reference: A(17, 18, "a"),
+        binding: A(26, 27, "x"),
+        reference: A(28, 29, "a"),
         name: "a",
         region: Region::Block,
         relation: Relation::Lexical(F8_LEXICAL, LexicalOrigin::SameRegion),
     }],
-    additional_anchors: &[],
+    additional_anchors: &[F8_COMPETING_VAR],
 };
 
 // F9 -- repeated Block-var contributors of one authored `var` statement
@@ -590,7 +599,7 @@ fn fixture_anchor_and_semantic_name_audit() {
 
     assert_eq!(audited_fixtures, ALL_FIXTURES.len());
     assert_eq!(audited_fixtures, 15);
-    assert_eq!(audited_anchors, 41);
+    assert_eq!(audited_anchors, 42);
 }
 
 #[test]
@@ -681,15 +690,31 @@ fn block_origin_top_level_lexical_fallback_is_unchanged() {
 }
 
 #[test]
-fn current_region_lexical_precedence_is_unchanged() {
-    // F8: current-region (Block) lexical precedence outranks anything else
-    // of the same name (kills W10).
+fn current_region_lexical_precedence_outranks_a_present_var_contributor() {
+    // F8: a same-name selected var contributor genuinely exists (in a
+    // sibling Block, per `F8_COMPETING_VAR`); current-region (Block)
+    // lexical precedence must still win before the all-selected-var
+    // contributor stage (kills W10).
     match F8.relations[0].relation {
         Relation::Lexical(anchor, LexicalOrigin::SameRegion) => {
             assert_eq!(anchor, F8_LEXICAL);
         }
         other => panic!("expected same-region lexical precedence, got {other:?}"),
     }
+
+    // A var-first implementation (one that checks
+    // `SameSourceSelectedVarNameContributors` before current-region
+    // `VisibleSelectedLexicalBinding`) would wrongly return
+    // `Relation::Vars(&[F8_COMPETING_VAR])` here; this fixture fails such
+    // an implementation because the expected relation is `Lexical`, not
+    // `Vars`.
+    assert_ne!(
+        F8.relations[0].relation,
+        Relation::Vars(&[F8_COMPETING_VAR]),
+        "a var-first implementation must not be able to satisfy this fixture"
+    );
+    assert_eq!(F8.additional_anchors, &[F8_COMPETING_VAR]);
+    assert_ne!(F8_COMPETING_VAR, F8_LEXICAL);
 }
 
 #[test]
