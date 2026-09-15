@@ -36,9 +36,9 @@ use std::collections::HashMap;
 use crate::SourceAnchor;
 
 use super::selected_lexical_slice::{
-    SelectedBlock, SelectedLexicalBinding, SelectedLexicalDeclaration, SelectedOneLevelBlockScript,
-    SelectedTopLevelItem, SelectedVariableBinding, SelectedVariableStatementScript,
-    SelectedVariableTopLevelItem,
+    SelectedBlock, SelectedBlockItem, SelectedBlockVarBinding, SelectedLexicalBinding,
+    SelectedLexicalDeclaration, SelectedOneLevelBlockScript, SelectedTopLevelItem,
+    SelectedVariableBinding, SelectedVariableStatementScript, SelectedVariableTopLevelItem,
 };
 use super::selected_static_semantics::{
     SelectedOneLevelBlockStaticSemanticsAccepted, SelectedVariableStatementStaticSemanticsAccepted,
@@ -390,6 +390,48 @@ fn append_binding_relation<'script>(
     Ok(())
 }
 
+// Block-var analog of `append_binding_relation` for the exact containing
+// `SelectedBlockVarBinding` (Issue #710). A direct RHS relation is owned by
+// its exact containing Block-var declarator, using the same current-region,
+// current-Block-lexical-precedence, top-level-lexical-fallback, and
+// all-selected-var-contributor semantics as every other correspondence
+// input; no fourth correspondence meaning is introduced. Decimal and absent
+// initializers carry no `identifier_reference_initializer` fact and
+// contribute no relation.
+fn append_block_var_binding_relation<'script>(
+    binding: &'script SelectedBlockVarBinding,
+    current_region: SelectedVariableStatementNameCorrespondenceRegion<'script>,
+    current_bindings: &LexicalBindingsByName<'script>,
+    top_level_bindings: &LexicalBindingsByName<'script>,
+    var_contributors: &VarContributorsByName<'script>,
+    relations: &mut Vec<SelectedVariableStatementNameCorrespondenceRelation<'script>>,
+) -> Result<(), AnalysisFailure> {
+    let Some(reference) = binding.identifier_reference_initializer() else {
+        return Ok(());
+    };
+
+    let correspondence = correspondence_for_name(
+        reference.semantic_name(),
+        current_region,
+        current_bindings,
+        top_level_bindings,
+        var_contributors,
+    )?;
+
+    relations
+        .try_reserve(1)
+        .map_err(|_| AnalysisFailure::ResourceLimited)?;
+    relations.push(SelectedVariableStatementNameCorrespondenceRelation {
+        containing_binding: binding.binding(),
+        current_region,
+        reference: reference.reference(),
+        semantic_name: reference.semantic_name(),
+        correspondence,
+    });
+
+    Ok(())
+}
+
 fn append_variable_binding_relation<'script>(
     binding: &'script SelectedVariableBinding,
     top_level_bindings: &LexicalBindingsByName<'script>,
@@ -443,6 +485,52 @@ fn append_declaration_relations<'script>(
     Ok(())
 }
 
+// Shared mixed Block-item relation traversal for both accepted-witness
+// routes (Issue #710). Once Block `var` bindings can own RHS
+// `IdentifierReference` queries, `block.declarations()` (lexical-only) is
+// no longer sufficient to preserve authored relation order across a Block
+// that mixes lexical declarations and `var` statements: relations must
+// follow exact authored `block.items()` order, not a grouping by
+// declaration kind. `block.declarations()` and `block_var_bindings()`
+// remain the distinct lexical-visibility and var-contributor accessors used
+// elsewhere; this traversal is the correspondence-query consumer only.
+fn append_block_item_relations<'script>(
+    block: &'script SelectedBlock,
+    current_region: SelectedVariableStatementNameCorrespondenceRegion<'script>,
+    current_bindings: &LexicalBindingsByName<'script>,
+    top_level_bindings: &LexicalBindingsByName<'script>,
+    var_contributors: &VarContributorsByName<'script>,
+    relations: &mut Vec<SelectedVariableStatementNameCorrespondenceRelation<'script>>,
+) -> Result<(), AnalysisFailure> {
+    for item in block.items() {
+        match item {
+            SelectedBlockItem::LexicalDeclaration(declaration) => {
+                append_declaration_relations(
+                    declaration,
+                    current_region,
+                    current_bindings,
+                    top_level_bindings,
+                    var_contributors,
+                    relations,
+                )?;
+            }
+            SelectedBlockItem::Var(statement) => {
+                for binding in statement.bindings() {
+                    append_block_var_binding_relation(
+                        binding,
+                        current_region,
+                        current_bindings,
+                        top_level_bindings,
+                        var_contributors,
+                        relations,
+                    )?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn analyze<'script>(
     script: &'script SelectedVariableStatementScript,
 ) -> Result<SelectedVariableStatementNameCorrespondenceAnalysis<'script>, AnalysisFailure> {
@@ -466,16 +554,14 @@ fn analyze<'script>(
                 let current_bindings = block_bindings(block)?;
                 let current_region =
                     SelectedVariableStatementNameCorrespondenceRegion::Block(block.block());
-                for declaration in block.declarations() {
-                    append_declaration_relations(
-                        declaration,
-                        current_region,
-                        &current_bindings,
-                        &top_level_bindings,
-                        &var_contributors,
-                        &mut relations,
-                    )?;
-                }
+                append_block_item_relations(
+                    block,
+                    current_region,
+                    &current_bindings,
+                    &top_level_bindings,
+                    &var_contributors,
+                    &mut relations,
+                )?;
             }
             SelectedVariableTopLevelItem::VariableStatement(statement) => {
                 for binding in statement.bindings() {
@@ -530,16 +616,14 @@ fn analyze_one_level_block<'script>(
                 let current_bindings = block_bindings(block)?;
                 let current_region =
                     SelectedVariableStatementNameCorrespondenceRegion::Block(block.block());
-                for declaration in block.declarations() {
-                    append_declaration_relations(
-                        declaration,
-                        current_region,
-                        &current_bindings,
-                        &top_level_bindings,
-                        &var_contributors,
-                        &mut relations,
-                    )?;
-                }
+                append_block_item_relations(
+                    block,
+                    current_region,
+                    &current_bindings,
+                    &top_level_bindings,
+                    &var_contributors,
+                    &mut relations,
+                )?;
             }
         }
     }

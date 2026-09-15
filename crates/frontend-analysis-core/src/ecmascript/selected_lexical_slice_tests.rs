@@ -2125,6 +2125,156 @@ fn one_level_block_var_statement_duplicate_and_escaped_contributors_stay_distinc
     }
 }
 
+// --- Issue #710: one-level Block `var` widened to a direct-authored, ------
+// escape-free `IdentifierReference` initializer
+//
+// These focused production tests seal the candidate against the accepted
+// #688/#710 theorem with independently authored expected values rather than
+// values derived from production output.
+
+#[test]
+fn one_level_block_var_direct_identifier_reference_initializer_retains_exact_source_and_semantic_identity()
+ {
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+
+    for (text, expected_binding, expected_reference, expected_fragment, expected_semantic) in [
+        ("{ var x=a; }", (6, 7), (8, 9), "a", "a"),
+        ("{ var x = y; }", (6, 7), (10, 11), "y", "y"),
+        ("{ var x=x; }", (6, 7), (8, 9), "x", "x"),
+        ("{ var π=𝒜; }", (6, 8), (9, 13), "𝒜", "𝒜"),
+    ] {
+        let script = recognized_block(text);
+        let [SelectedTopLevelItem::Block(block)] = script.items() else {
+            panic!("expected exactly one Block item for {text:?}");
+        };
+        let [SelectedBlockItem::Var(statement)] = block.items() else {
+            panic!("expected exactly one Block var statement for {text:?}");
+        };
+        let [binding] = statement.bindings() else {
+            panic!("expected exactly one Block var declarator for {text:?}");
+        };
+        assert_eq!(
+            (
+                binding.binding().range().start(),
+                binding.binding().range().end()
+            ),
+            expected_binding,
+            "{text:?}"
+        );
+        let reference = binding
+            .identifier_reference_initializer()
+            .expect("selected Block var RHS reference fact");
+        assert_eq!(
+            (
+                reference.reference().range().start(),
+                reference.reference().range().end()
+            ),
+            expected_reference,
+            "{text:?}"
+        );
+        assert_eq!(
+            reference.reference().fragment(),
+            expected_fragment,
+            "{text:?}"
+        );
+        assert_eq!(reference.semantic_name(), expected_semantic, "{text:?}");
+    }
+}
+
+#[test]
+fn one_level_block_var_multiple_identifier_reference_initializers_preserve_declarator_order() {
+    // V2 (kills "first-reference-only" and "last-reference-only" wrong
+    // models): two declarators of one Block `var` statement each retain
+    // their own independent RHS reference fact, in exact authored order.
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+
+    let text = "{ var x=a,y=b; }";
+    let script = recognized_block(text);
+    let [SelectedTopLevelItem::Block(block)] = script.items() else {
+        panic!("expected exactly one Block item");
+    };
+    let [SelectedBlockItem::Var(statement)] = block.items() else {
+        panic!("expected exactly one Block var statement");
+    };
+    assert_eq!(statement.bindings().len(), 2);
+
+    let first_reference = statement.bindings()[0]
+        .identifier_reference_initializer()
+        .expect("first declarator RHS reference fact");
+    assert_eq!(
+        (
+            first_reference.reference().range().start(),
+            first_reference.reference().range().end()
+        ),
+        (8, 9)
+    );
+    assert_eq!(first_reference.semantic_name(), "a");
+
+    let second_reference = statement.bindings()[1]
+        .identifier_reference_initializer()
+        .expect("second declarator RHS reference fact");
+    assert_eq!(
+        (
+            second_reference.reference().range().start(),
+            second_reference.reference().range().end()
+        ),
+        (12, 13)
+    );
+    assert_eq!(second_reference.semantic_name(), "b");
+}
+
+#[test]
+fn one_level_block_var_decimal_and_absent_initializers_retain_no_identifier_reference_fact() {
+    // W10: a decimal or absent initializer must never fabricate an
+    // `identifier_reference_initializer` fact.
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+
+    for text in ["{ var x; }", "{ var x=1; }", "{ var x,y=2; }"] {
+        let script = recognized_block(text);
+        let [SelectedTopLevelItem::Block(block)] = script.items() else {
+            panic!("expected exactly one Block item for {text:?}");
+        };
+        let [SelectedBlockItem::Var(statement)] = block.items() else {
+            panic!("expected exactly one Block var statement for {text:?}");
+        };
+        for binding in statement.bindings() {
+            assert!(
+                binding.identifier_reference_initializer().is_none(),
+                "{text:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn one_level_block_var_identifier_reference_initializer_transactional_failure_commits_no_prefix() {
+    // V5 / W6 (kills "a valid earlier direct RHS fact leaks when a later
+    // declarator fails"): a valid declarator prefix carrying a committed RHS
+    // fact (e.g. "x=a" in "{ var x=a,y=; }") must never escape as part of a
+    // committed statement when a later list element prevents statement
+    // completion.
+    for text in [
+        "{ var x=a,y=; }",
+        "{ var x=a,y=true; }",
+        r"{ var x=a,y=\u0061; }",
+        r"{ var x=a,y=\u0069f; }",
+        "{ var x=a }",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn one_level_block_var_escaped_identifier_reference_initializer_remains_unsupported() {
+    // V4 direct-only firewall representative: an escaped spelling matched by
+    // the shared recognizer (whether or not it decodes to a ReservedWord)
+    // must not silently widen this leaf's direct-only Block-var RHS
+    // coverage.
+    for text in [r"{ var x=\u0061; }", r"{ var x=\u0069f; }"] {
+        assert_unsupported(text);
+    }
+}
+
 #[test]
 fn one_level_block_var_decimal_initializer_numeric_neighbors_remain_unsupported() {
     for text in [
@@ -2142,12 +2292,17 @@ fn one_level_block_var_decimal_initializer_numeric_neighbors_remain_unsupported(
 
 #[test]
 fn one_level_block_var_non_decimal_initializers_remain_unsupported() {
+    // "{ var a=foo; }" is deliberately not listed here: Issue #710 makes a
+    // direct-authored, escape-free `IdentifierReference` initializer a
+    // selected accepted form (see the "Issue #710" test section below). The
+    // escaped spellings below (including one that decodes to a ReservedWord)
+    // remain outside this leaf's direct-only profile even though the shared
+    // recognizer can match them.
     for text in [
         "{ var a=true; }",
         "{ var a=null; }",
         "{ var a=this; }",
         r#"{ var a="x"; }"#,
-        "{ var a=foo; }",
         r"{ var a=\u0066oo; }",
         r"{ var a=\u0069f; }",
     ] {

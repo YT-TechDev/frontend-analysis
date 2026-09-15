@@ -1367,3 +1367,149 @@ fn one_level_block_q_prefix_correspondence_projection_matches_variable_statement
         SelectedLexicalSliceOutcome::RecognizedVariableStatementSlice(_)
     ));
 }
+
+// --- Issue #710: one-level Block `var` widened to a direct-authored, ------
+// escape-free `IdentifierReference` initializer, with a source-name
+// correspondence relation owned by the exact containing Block-var
+// declarator.
+//
+// These focused production tests seal the candidate against the accepted
+// #688/#710 theorem with independently authored expected values rather than
+// values derived from production output. They reuse this module's existing
+// helpers and every existing correspondence meaning; no fourth
+// correspondence meaning or parallel type hierarchy is introduced.
+
+#[test]
+fn one_level_block_var_direct_identifier_reference_relation_retains_exact_binding_reference_and_region()
+ {
+    // V1: direct RHS selected, exact containing binding = x, exact
+    // reference = a, semantic name = "a", current region = Block, exactly
+    // one correspondence relation.
+    let (_, script) = recognized_one_level_block("{ var x=a; }");
+    let analysis = accepted_one_level_block_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(range(relation.containing_binding()), (6, 7));
+    assert_eq!(range(relation.reference()), (8, 9));
+    assert_eq!(relation.semantic_name(), "a");
+    assert!(matches!(
+        relation.current_region(),
+        SelectedVariableStatementNameCorrespondenceRegion::Block(_)
+    ));
+}
+
+#[test]
+fn one_level_block_var_and_lexical_relations_follow_mixed_authored_item_order() {
+    // V3 (load-bearing): once lexical declarations and Block `var`
+    // declarators can both own RHS `IdentifierReference` queries, relation
+    // emission must follow exact authored Block-item order, never a
+    // grouping by declaration kind. Kills both "lexical relations first,
+    // then var relations" and "var relations first, then lexical relations"
+    // wrong models.
+    let (_, script) = recognized_one_level_block("{ let p=q; var x=a; let r=s; var y=b; }");
+    let analysis = accepted_one_level_block_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(relations.len(), 4);
+
+    let semantic_names: Vec<_> = relations.iter().map(|r| r.semantic_name()).collect();
+    assert_eq!(semantic_names, ["q", "a", "s", "b"]);
+
+    let containing_bindings: Vec<_> = relations
+        .iter()
+        .map(|r| range(r.containing_binding()))
+        .collect();
+    assert_eq!(containing_bindings, [(6, 7), (15, 16), (24, 25), (33, 34)]);
+
+    let reference_ranges: Vec<_> = relations.iter().map(|r| range(r.reference())).collect();
+    assert_eq!(reference_ranges, [(8, 9), (17, 18), (26, 27), (35, 36)]);
+}
+
+#[test]
+fn one_level_block_var_direct_identifier_reference_reuses_existing_correspondence_precedence() {
+    // V6: a Block-var RHS relation reuses this module's single existing
+    // correspondence semantic owner and precedence rather than a new
+    // meaning. Current-Block lexical precedence still wins first...
+    let (_, script) = recognized_one_level_block("{ let a; var x=a; }");
+    let analysis = accepted_one_level_block_analysis(&script);
+    let relation = one_relation(&analysis);
+    let (binding, region) = relation
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("current-Block lexical binding must win over the widened var domain");
+    assert_eq!(range(binding), (6, 7));
+    assert!(matches!(
+        region,
+        SelectedVariableStatementNameCorrespondenceRegion::Block(_)
+    ));
+    assert!(relation.correspondence().var_contributors().is_none());
+
+    // ...and, absent a current-Block or top-level lexical binding, the
+    // existing all-selected-var contributor domain (#701/#703) still
+    // applies, even when the sole contributor is the Block-var statement's
+    // own sibling declarator.
+    let (_, script) = recognized_one_level_block("{ var a; var x=a; }");
+    let analysis = accepted_one_level_block_analysis(&script);
+    let relation = one_relation(&analysis);
+    let contributors = relation
+        .correspondence()
+        .var_contributors()
+        .expect("existing all-selected-var contributor domain must still apply");
+    assert_eq!(contributors.len(), 1);
+    assert_eq!(range(contributors[0]), (6, 7));
+}
+
+#[test]
+fn one_level_block_var_direct_identifier_reference_q_prefix_correspondence_projection_matches_variable_statement_witness()
+ {
+    // W9 (kills a witness-route asymmetry model): the same Block-var direct
+    // RHS relation must be produced by both accepted-witness routes.
+    // Comparing a representative `OneLevelBlock` fixture against the same
+    // shape prefixed with an unrelated top-level `var q;` (which moves
+    // recognition to the distinct `VariableStatement` witness) must agree on
+    // the correspondence projection after accounting for the exact prefix
+    // byte-length shift.
+    const PREFIX_LEN: usize = "var q;\n".len();
+
+    let (_, one_level_block_script) = recognized_one_level_block("{ var x=a; }");
+    let one_level_block_analysis = accepted_one_level_block_analysis(&one_level_block_script);
+    let one_level_block_relation = one_relation(&one_level_block_analysis);
+
+    let (_, variable_statement_script) = recognized_variable("var q;\n{ var x=a; }");
+    let variable_statement_analysis = accepted_analysis(&variable_statement_script);
+    let variable_statement_relation = one_relation(&variable_statement_analysis);
+
+    assert_eq!(one_level_block_relation.semantic_name(), "a");
+    assert_eq!(
+        one_level_block_relation.semantic_name(),
+        variable_statement_relation.semantic_name()
+    );
+    assert!(matches!(
+        one_level_block_relation.current_region(),
+        SelectedVariableStatementNameCorrespondenceRegion::Block(_)
+    ));
+    assert!(matches!(
+        variable_statement_relation.current_region(),
+        SelectedVariableStatementNameCorrespondenceRegion::Block(_)
+    ));
+
+    let base_binding = range(one_level_block_relation.containing_binding());
+    let prefixed_binding = range(variable_statement_relation.containing_binding());
+    assert_eq!(base_binding.0 + PREFIX_LEN, prefixed_binding.0);
+    assert_eq!(base_binding.1 + PREFIX_LEN, prefixed_binding.1);
+
+    let base_reference = range(one_level_block_relation.reference());
+    let prefixed_reference = range(variable_statement_relation.reference());
+    assert_eq!(base_reference.0 + PREFIX_LEN, prefixed_reference.0);
+    assert_eq!(base_reference.1 + PREFIX_LEN, prefixed_reference.1);
+
+    // The accepted-witness identity is explicitly NOT invariant across the
+    // prefix: the unrelated `var q;` moves recognition from
+    // `RecognizedOneLevelBlockSlice` to `RecognizedVariableStatementSlice`.
+    assert!(matches!(
+        recognize_selected_lexical_slice(&source("{ var x=a; }")),
+        SelectedLexicalSliceOutcome::RecognizedOneLevelBlockSlice(_)
+    ));
+    assert!(matches!(
+        recognize_selected_lexical_slice(&source("var q;\n{ var x=a; }")),
+        SelectedLexicalSliceOutcome::RecognizedVariableStatementSlice(_)
+    ));
+}
