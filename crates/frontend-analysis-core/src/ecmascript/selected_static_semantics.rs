@@ -279,11 +279,13 @@ fn evaluate_selected_variable_binding_local_static_semantics(
 }
 
 /// Tier-1 binding-local obligations for one declarator of a Block-contained
-/// `var` statement (Issue #688/#691, widened to `1..N` declarators by #695).
-/// A Block `var` declarator carries no initializer, so only the shared
-/// escaped-identifier / reserved-word checks apply; the lexical-only
-/// `BindingNamedLet` restriction does not extend to `VariableStatement`
-/// bindings, matching the existing top-level var treatment.
+/// `var` statement (Issue #688/#691, widened to `1..N` declarators by #695,
+/// widened to an optional selected decimal-integer initializer per
+/// declarator by #699). `SelectedBlockVarBinding` retains no
+/// initializer-specific fact, so only the shared escaped-identifier /
+/// reserved-word checks apply; the lexical-only `BindingNamedLet`
+/// restriction does not extend to `VariableStatement` bindings, matching the
+/// existing top-level var treatment.
 fn evaluate_selected_block_var_binding_local_static_semantics(
     binding: &SelectedBlockVarBinding,
 ) -> Result<(), SelectedDeclarationCheckFailure> {

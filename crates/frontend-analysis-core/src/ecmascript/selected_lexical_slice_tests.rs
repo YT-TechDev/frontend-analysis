@@ -1972,7 +1972,6 @@ fn one_level_block_frontier_does_not_widen_nested_empty_comment_statement_or_asi
         "{ let a=1 }",
         "{ { let a=1; } }",
         "{ let a=1; /*c*/ let x=a; }",
-        "{ var a=1; }",
         "{ function f(){} }",
         "{ 1; }",
     ] {
@@ -2034,7 +2033,7 @@ fn one_level_block_var_statement_commits_no_partial_declarator_prefix_on_later_f
     for text in [
         "{ var x, ; }",
         "{ var x, y, ; }",
-        "{ var x, y = 1; }",
+        "{ var x, y = ; }",
         "{ var x, y }",
         "{ var x, /* c */ y; }",
         "{ var x, y /* c */; }",
@@ -2045,6 +2044,149 @@ fn one_level_block_var_statement_commits_no_partial_declarator_prefix_on_later_f
     let subject = grammar_rejection(r"{ var x, \u{}; }");
     assert_eq!(subject.fragment(), r"\u{}");
     assert_eq!((subject.range().start(), subject.range().end()), (9, 13));
+}
+
+#[test]
+fn one_level_block_var_statement_admits_optional_selected_decimal_initializer_per_declarator() {
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+
+    for (text, expected_ranges, expected_names) in [
+        ("{ var a=0; }", &[(6, 7)][..], &["a"][..]),
+        ("{ var a=12345; }", &[(6, 7)][..], &["a"][..]),
+        ("{ var a=1,b; }", &[(6, 7), (10, 11)][..], &["a", "b"][..]),
+        ("{ var a,b=2; }", &[(6, 7), (8, 9)][..], &["a", "b"][..]),
+        ("{ var a=1,b=2; }", &[(6, 7), (10, 11)][..], &["a", "b"][..]),
+        (
+            "{ var a=1,b,c=2; }",
+            &[(6, 7), (10, 11), (12, 13)][..],
+            &["a", "b", "c"][..],
+        ),
+        (
+            "{ var a,b=2,c; }",
+            &[(6, 7), (8, 9), (12, 13)][..],
+            &["a", "b", "c"][..],
+        ),
+        (
+            "{ var a=1,b=2,c=3; }",
+            &[(6, 7), (10, 11), (14, 15)][..],
+            &["a", "b", "c"][..],
+        ),
+    ] {
+        let script = recognized_block(text);
+        let [SelectedTopLevelItem::Block(block)] = script.items() else {
+            panic!("expected exactly one Block item for {text:?}");
+        };
+        let [SelectedBlockItem::Var(statement)] = block.items() else {
+            panic!("expected exactly one Block var statement for {text:?}");
+        };
+        let ranges: Vec<_> = statement
+            .bindings()
+            .iter()
+            .map(|binding| {
+                (
+                    binding.binding().range().start(),
+                    binding.binding().range().end(),
+                )
+            })
+            .collect();
+        assert_eq!(ranges, expected_ranges, "{text:?}");
+        let names: Vec<_> = statement
+            .bindings()
+            .iter()
+            .map(|binding| binding.binding().fragment())
+            .collect();
+        assert_eq!(names, expected_names, "{text:?}");
+    }
+}
+
+#[test]
+fn one_level_block_var_statement_duplicate_and_escaped_contributors_stay_distinct() {
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+
+    for text in ["{ var a=1,a; }", r"{ var a=1,\u0061=2; }"] {
+        let script = recognized_block(text);
+        let [SelectedTopLevelItem::Block(block)] = script.items() else {
+            panic!("expected exactly one Block item for {text:?}");
+        };
+        let [SelectedBlockItem::Var(statement)] = block.items() else {
+            panic!("expected exactly one Block var statement for {text:?}");
+        };
+        assert_eq!(statement.bindings().len(), 2, "{text:?}");
+        assert_eq!(
+            statement.bindings()[0].semantic_name(),
+            Some("a"),
+            "{text:?}"
+        );
+        assert_eq!(
+            statement.bindings()[1].semantic_name(),
+            Some("a"),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn one_level_block_var_decimal_initializer_numeric_neighbors_remain_unsupported() {
+    for text in [
+        "{ var a=01; }",
+        "{ var a=1_0; }",
+        "{ var a=1.0; }",
+        "{ var a=1e2; }",
+        "{ var a=1n; }",
+        "{ var a=+1; }",
+        "{ var a=-1; }",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn one_level_block_var_non_decimal_initializers_remain_unsupported() {
+    for text in [
+        "{ var a=true; }",
+        "{ var a=null; }",
+        "{ var a=this; }",
+        r#"{ var a="x"; }"#,
+        "{ var a=foo; }",
+        r"{ var a=\u0066oo; }",
+        r"{ var a=\u0069f; }",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn one_level_block_var_decimal_initializer_requires_authored_semicolon() {
+    for text in ["{ var a=1 }", "{ var a=1,b=2 }"] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn one_level_block_var_decimal_initializer_rejects_comment_trivia() {
+    for text in [
+        "{ var a=1, /* c */ b; }",
+        "{ var a=/* c */1; }",
+        "{ var a=1 /* c */; }",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn one_level_block_var_decimal_initializer_transactional_failure_commits_no_prefix() {
+    for text in [
+        "{ var a=1, ; }",
+        "{ var a=1,b= ; }",
+        "{ var a=1,b=true; }",
+        "{ var a=1,b=1.0; }",
+    ] {
+        assert_unsupported(text);
+    }
+
+    let subject = grammar_rejection(r"{ var a=1,b,\u{}=2; }");
+    assert_eq!(subject.fragment(), r"\u{}");
+    assert_eq!((subject.range().start(), subject.range().end()), (12, 16));
 }
 
 #[test]
