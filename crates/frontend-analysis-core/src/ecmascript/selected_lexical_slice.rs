@@ -688,10 +688,12 @@ impl<'source> Cursor<'source> {
     /// an optional selected escaped ReservedWord `IdentifierName`
     /// initializer per declarator by #715): one or more selected
     /// `BindingIdentifier` declarators separated by commas, each
-    /// independently optionally followed by `= SelectedDecimalInteger` or
-    /// `= SelectedIdentifierReference` (direct, escaped non-ReservedWord, or
-    /// escaped ReservedWord), and a mandatory authored semicolon terminating
-    /// the whole statement.
+    /// independently optionally followed by `= SelectedDecimalInteger`,
+    /// `= SelectedIdentifierReference` (direct or escaped non-ReservedWord),
+    /// or `= SelectedEscapedReservedWordIdentifierName` (classification-only
+    /// source position for the later Tier-1 `EE-04-R08` consumer, not an
+    /// accepted `SelectedIdentifierReference`), and a mandatory authored
+    /// semicolon terminating the whole statement.
     ///
     /// This intentionally does not reuse `parse_variable_statement`: that
     /// owner's EOF-only ASI belongs to the distinct top-level
