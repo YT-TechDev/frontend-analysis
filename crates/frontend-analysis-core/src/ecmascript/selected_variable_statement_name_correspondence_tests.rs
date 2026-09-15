@@ -1105,11 +1105,11 @@ fn static_rejection_still_gates_correspondence_when_a_block_var_contributor_is_p
     ));
 }
 
-// --- One-level Block accepted-witness entrypoint (Issue #705/#706) --------
+// --- One-level Block accepted-witness production regressions -------------
 //
 // These regressions directly exercise
 // `analyze_selected_one_level_block_name_correspondence` against
-// representative cases drawn from the candidate-independent #706 oracle
+// representative cases drawn from the candidate-independent #705/#706 oracle
 // (`qualification_validation_tests::selected_one_level_block_name_correspondence_lifecycle_frontier`,
 // left unmodified). The `SelectedOneLevelBlockStaticSemanticsAccepted`
 // witness has no top-level `VariableStatement` item; every reference below
@@ -1117,7 +1117,7 @@ fn static_rejection_still_gates_correspondence_when_a_block_var_contributor_is_p
 
 #[test]
 fn one_level_block_same_block_var_contributor_is_seen_by_block_lexical_reference() {
-    // P1 / oracle F1 (kills W1, W3, W4): a same-Block Block-var contributor
+    // P1 / oracle F1 (kills W1, W2, W3): a same-Block Block-var contributor
     // is visible to an existing Block lexical reference under the
     // `OneLevelBlock` accepted witness, without requiring any top-level
     // `VariableStatement` to exist.
@@ -1183,7 +1183,7 @@ fn one_level_block_var_contributor_is_visible_to_top_level_lexical_reference() {
 
 #[test]
 fn one_level_block_current_region_lexical_precedence_outranks_sibling_block_var_contributor() {
-    // P5 / oracle F8 (kills W8, W10): a same-name selected var contributor
+    // P5 / oracle F8 (kills W10): a same-name selected var contributor
     // genuinely exists in a sibling Block; current-region (Block) lexical
     // precedence must still win before the all-selected-var contributor
     // stage.
@@ -1204,7 +1204,7 @@ fn one_level_block_current_region_lexical_precedence_outranks_sibling_block_var_
 
 #[test]
 fn one_level_block_top_level_lexical_fallback_is_reachable_from_block_reference() {
-    // P6 / oracle F7 (kills W9, W11): the existing Block-origin top-level
+    // P6 / oracle F7 (kills W11): the existing Block-origin top-level
     // lexical fallback remains reachable from the `OneLevelBlock` witness; no
     // var contributor may override it.
     let (_, script) = recognized_one_level_block("let a=1;\n{ let x=a; }");
@@ -1223,7 +1223,7 @@ fn one_level_block_top_level_lexical_fallback_is_reachable_from_block_reference(
 
 #[test]
 fn one_level_block_repeated_var_contributors_preserve_multiplicity_and_order() {
-    // P7 / oracle F9 (kills W5): two declarators of one Block `var` statement
+    // P7 / oracle F9 (kills W6): two declarators of one Block `var` statement
     // remain two distinct authored occurrences, in exact authored order,
     // never deduplicated.
     let (_, script) = recognized_one_level_block("{ var a,a; let x=a; }");
@@ -1240,7 +1240,7 @@ fn one_level_block_repeated_var_contributors_preserve_multiplicity_and_order() {
 
 #[test]
 fn one_level_block_escaped_var_lhs_uses_semantic_equality_with_exact_authored_anchor() {
-    // P8 / oracle F10 (kills W6): the Block-var contributor anchor keeps its
+    // P8 / oracle F10 (kills W7): the Block-var contributor anchor keeps its
     // exact authored escaped spelling; the reference's semantic name is the
     // decoded "a".
     let (_, script) = recognized_one_level_block(r"{ var \u{61}; let x=a; }");
@@ -1259,7 +1259,7 @@ fn one_level_block_escaped_var_lhs_uses_semantic_equality_with_exact_authored_an
 
 #[test]
 fn one_level_block_var_contributor_domain_has_no_unicode_normalization() {
-    // P9 / oracle F11 (kills W7): a composed Block-var contributor matches
+    // P9 / oracle F11 (kills W8): a composed Block-var contributor matches
     // only a composed reference; a code-point-distinct decomposed reference
     // of the same visual name matches nothing.
     let (_, script) = recognized_one_level_block("{ var \u{e9}; let x=\u{e9}; let y=e\u{301}; }");
@@ -1284,7 +1284,7 @@ fn one_level_block_var_contributor_domain_has_no_unicode_normalization() {
 
 #[test]
 fn one_level_block_decimal_initialized_var_contributes_via_lhs_only() {
-    // P10 / oracle F12 (kills W10-decimal): a decimal-initialized Block var
+    // P10 / oracle F12 (kills W9): a decimal-initialized Block var
     // contributes through its LHS `BindingIdentifier`; the decimal RHS is
     // never contributor or reference evidence.
     let (_, script) = recognized_one_level_block("{ var a=1; let x=a; }");
@@ -1301,13 +1301,13 @@ fn one_level_block_decimal_initialized_var_contributes_via_lhs_only() {
 
 #[test]
 fn one_level_block_q_prefix_correspondence_projection_matches_variable_statement_witness() {
-    // P11 (kills W12): comparing a representative `OneLevelBlock` fixture
-    // against the same shape prefixed with an unrelated top-level `var q;`
-    // (which moves recognition to the distinct `VariableStatement` witness)
-    // must agree on the correspondence projection for the unrelated queried
-    // name `a`, after accounting for the exact prefix byte-length shift.
-    // This proves the two accepted-witness entrypoints share one semantic
-    // theorem without collapsing witness identity.
+    // P11 / oracle F1/F1Q (kills W14): comparing a representative
+    // `OneLevelBlock` fixture against the same shape prefixed with an unrelated
+    // top-level `var q;` (which moves recognition to the distinct
+    // `VariableStatement` witness) must agree on the correspondence projection
+    // for the unrelated queried name `a`, after accounting for the exact prefix
+    // byte-length shift. This proves the two accepted-witness entrypoints share
+    // one semantic theorem without collapsing witness identity.
     const PREFIX_LEN: usize = "var q;\n".len();
 
     let (_, one_level_block_script) = recognized_one_level_block("{ var a; let x=a; }");
