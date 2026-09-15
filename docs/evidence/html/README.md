@@ -1,30 +1,49 @@
 # HTML Research Evidence
 
-Status date: 2026-08-27
+Status date: 2026-09-15
 
 Classification: task and evidence record; non-normative.
 
 ## Current Status
 
-The current HTML evidence checkpoint is:
+The current durable HTML evidence checkpoint is:
 
-- [2026-08-27 RAWTEXT Feedback and Post-TC-S8 Evidence Checkpoint](2026-08-27-rawtext-feedback-checkpoint.md).
+- [2026-09 Post-TC-S10 Accepted Baseline Checkpoint](2026-09-post-tc-s10-accepted-baseline-checkpoint.md).
 
-As of 2026-08-27, production tree construction is merged through TC-S8 at
-production semantic baseline `5ffb2eacf0b6cd77b7531a68408cb8e2ceba28b8`.
-The repository `main` is `e5c299e3980f6d3de41c6291b86890f19715890d`
-after merging the accepted candidate-independent `<style>` RAWTEXT feedback
-validation from PR #385. TC-S9 is now the assigned sequence designation and its
-production placement is accepted, while the production Issue remains blocked
-until the current evidence Leaf is reviewed/merged and production implementation
-remains unauthorized.
+The HTML workstream is currently **pauseable and accepted through TC-S10**.
+The last accepted HTML semantic production expansion is PR #400, and the durable
+post-TC-S10 provenance/resume baseline is:
 
-The older [2026-08 Tree-Construction Frontier Checkpoint](2026-08-tree-construction-frontier-checkpoint.md)
-remains a historical TC-S7-validation-era evidence record and is intentionally
-not rewritten to reflect later production work.
+```text
+commit: 77790be7a3e8979985fb6a045b8aff2928a8ea40
+tree:   732052dc1e6993baf80f333edc49e549f581714f
+subject: docs(html): record TC-S10 research provenance (#401)
+```
+
+TC-S9 established selected InHead `<style>` RAWTEXT tree↔tokenizer feedback.
+TC-S10 then established selected InHead `<title>` RCDATA plus Named Character
+Reference semantics, complete canonical WHATWG Named data, non-committing
+maximum-match observation, resource-atomic source consumption, and separate
+Style/Title lifecycle ownership.
+
+The later #557 compiler-identity regression-harness hardening did not expand HTML
+production semantics or reopen TC-S10.
+
+No TC-S11 or other next HTML successor is preselected by this evidence record.
+General RCDATA, `<textarea>`, Numeric Character References, script/reentrant
+parsing, fragments, templates, tables/foster parenting, active formatting /
+adoption agency, foreign content, runtime DOM correlation, public APIs, and
+serialization remain open or deferred until a focused theorem requires them.
+
+The older checkpoints remain historical evidence and are intentionally not
+rewritten to pretend later work was known at the time:
+
+- [2026-08-27 RAWTEXT Feedback and Post-TC-S8 Evidence Checkpoint](2026-08-27-rawtext-feedback-checkpoint.md)
+- [2026-08 Tree-Construction Frontier Checkpoint](2026-08-tree-construction-frontier-checkpoint.md)
 
 The sections below preserve the historical first-slice and research/architecture
-evidence that led to the current frontier.
+evidence that led to the accepted TC-S10 frontier. The dated 2026-09 checkpoint
+above is authoritative for current HTML resume status.
 
 ## Historical Baseline and Architecture Transition
 
@@ -76,33 +95,38 @@ foundation that later production tree-construction frontiers consumed:
   owns the active specialized normative invariants for the accepted tree-construction
   architecture.
 
-Architecture approval and production implementation remain separate states. At
-this historical checkpoint TC-S1 still required its own production-placement
-gate; later focused gates and Pull Requests advanced production through TC-S6.
-The dated current checkpoint above is authoritative for present production status.
+Architecture approval and production implementation remain separate states. The
+accepted production lineage later advanced incrementally through TC-S10 rather
+than turning the broad architecture research into an all-HTML implementation.
 
 ## Authoritative Evidence Sources
 
 Repository evidence:
 
 - [#104 — project-owned lossless parser architecture](https://github.com/YT-TechDev/frontend-analysis/issues/104)
-- [#106 — HTML parser workstream](https://github.com/YT-TechDev/frontend-analysis/issues/106)
+- [#106 — HTML parser program / workstream index](https://github.com/YT-TechDev/frontend-analysis/issues/106)
+- [#106 post-TC-S10 catch-up checkpoint](https://github.com/YT-TechDev/frontend-analysis/issues/106#issuecomment-5677924039)
 - [#109–#116 — first HTML tokenizer/parser/Core slice](https://github.com/YT-TechDev/frontend-analysis/issues/116)
 - [#112 — candidate-independent validation foundation](https://github.com/YT-TechDev/frontend-analysis/issues/112)
 - [#114 — first source-backed HTML analysis-parser model](https://github.com/YT-TechDev/frontend-analysis/issues/114)
-- [#117 — tree-construction architecture](https://github.com/YT-TechDev/frontend-analysis/issues/117)
+- [#117 — tree-construction architecture and rolling frontier authority](https://github.com/YT-TechDev/frontend-analysis/issues/117)
 - [#348 — post-vertical-slice HTML research foundation](https://github.com/YT-TechDev/frontend-analysis/issues/348)
 - [#349 — ADR 0010 / normative-contract documentation Leaf](https://github.com/YT-TechDev/frontend-analysis/issues/349)
 - [PR #131 — completed first Core integration](https://github.com/YT-TechDev/frontend-analysis/pull/131)
+- [PR #389 — accepted TC-S9 Style/RAWTEXT production](https://github.com/YT-TechDev/frontend-analysis/pull/389)
+- [#390 / PR #391 — TC-S10 candidate-independent semantic validation](https://github.com/YT-TechDev/frontend-analysis/issues/390)
+- [#392 / PR #393 — complete deterministic WHATWG Named-data foundation](https://github.com/YT-TechDev/frontend-analysis/issues/392)
+- [#396 / PR #397 — compiler-sealed ownership validation](https://github.com/YT-TechDev/frontend-analysis/issues/396)
+- [#398 / PR #399 — production canonical Named-data owner](https://github.com/YT-TechDev/frontend-analysis/issues/398)
+- [#394 / PR #400 — accepted TC-S10 production](https://github.com/YT-TechDev/frontend-analysis/issues/394)
+- [PR #401 — TC-S10 research provenance completion](https://github.com/YT-TechDev/frontend-analysis/pull/401)
+- [#557 — post-TC-S10 compiler-identity validation-harness hardening](https://github.com/YT-TechDev/frontend-analysis/issues/557)
 
-Normative external authority for the #348 tree-construction research is pinned in
-[HTML research provenance](../../provenance/html.md), including WHATWG HTML commit
-`508a037333d8a1806504303aeb489d931fabbef6` and source blob
-`68dbcb98bbe1001c6ae2531be2368c608fbafddd`.
-
-Browser or third-party parser behavior is comparison/challenge evidence only.
-Current WPT and html5lib tree-construction corpora must not be counted as two
-independent confirmations without accounting for their shared lineage.
+Normative external authority and the exact TC-S10 source/data pins are recorded in
+[HTML research provenance](../../provenance/html.md). Browser or third-party
+parser behavior remains comparison/challenge evidence only. WPT and html5lib
+must not be counted as independent semantic votes without accounting for shared
+lineage.
 
 ## Proven Architecture Evidence
 
@@ -144,10 +168,9 @@ that HTML will never need a richer tree or syntax representation.
 
 ### H4 — Authored syntax and synthesized structure are different domains
 
-The first production slice intentionally stops before HTML tree construction.
+The first production slice intentionally stopped before HTML tree construction.
 The #348/#117 research and architecture work subsequently established the
-specialized future tree-construction boundary without changing the existing
-operation.
+specialized tree-construction boundary without changing the existing operation.
 
 Authored source origin, constructed-node identity, final placement, synthesis
 cause, recovery/action evidence, token disposition, and runtime correlation are
@@ -170,10 +193,61 @@ The same independent evidence foundation was exercised through tokenizer,
 analysis parser, and Core integration. Production output did not generate its
 own expected oracle.
 
-The TC-S1 architecture-validation gate applied the same discipline to expected
-document-shell tree/provenance meaning before production placement. This supports
-reusing specification/project-owned gold across layers while keeping each
-layer's responsibility independently testable.
+Later TC-S1–TC-S10 validation retained that discipline at materially load-bearing
+frontiers, including tree provenance, recovery, tokenizer↔tree feedback, and
+Title/RCDATA/Named semantics.
+
+### H7 — Tokenizer, tree construction, and coordinator own different causal roles
+
+TC-S9 and TC-S10 established that tree construction may need to direct future
+tokenizer semantics without taking ownership of tokenizer lexical state.
+
+The accepted split is:
+
+```text
+tokenizer
+  owns cursor progression, preprocessing, lexical state, appropriate-end-tag
+  recognition, Character Reference processing, lexical diagnostics/resources
+
+Tree construction
+  owns insertion modes, open elements, constructed nodes, tree recovery/actions,
+  final placement, element-specific semantic requests
+
+Core coordinator
+  owns causal sequencing of tree feedback before later source production
+```
+
+A generic mode-carrying parser-control API is not implied by the selected
+feedback seams.
+
+### H8 — Authored source and interpreted text contributions remain distinct
+
+TC-S10 makes this distinction load-bearing. A Named Character Reference may have
+one exact authored source contribution while producing one or two interpreted
+Unicode scalars. Decoded output is never reintroduced as tokenizer input, and
+interpreted `</title>` text is not an authored Title end-tag token.
+
+### H9 — Non-committing observation is not source consumption
+
+Named maximum-match discovery may inspect bounded future source but must not
+advance the authoritative cursor, commit preprocessing diagnostics, advance
+coverage, or mutate retained evidence. Only selected source units pass through
+the authoritative consumption lifecycle.
+
+### H10 — Fallible semantic work must precede authoritative source commitment
+
+TC-S10 reinforced the project-wide commit order:
+
+```text
+discover
+→ preflight / prepare evidence
+→ construct fallible semantic values
+→ authoritative source consumption
+→ non-refusing commit
+```
+
+Resource refusal before consumption preserves prior valid evidence and cannot
+leave a partially committed Named reference.
 
 ## #348 / #117 Tree-Construction Evidence Closure
 
@@ -203,7 +277,7 @@ freeze, immutable query-oriented tree analysis, and selective provenance/recover
 relations. The architecture does not require a browser-compatible DOM or full
 construction-event sourcing.
 
-## Validation Evidence
+## Historical Validation Evidence
 
 The #116 completion audit recorded:
 
@@ -223,21 +297,17 @@ The #116 completion audit recorded:
 - `wasm32-unknown-unknown`: **Not run** because the target was unavailable in the
   execution environment. No WASM runtime claim was made.
 
-These numbers describe the completed bounded slice and are not permanent
+These numbers describe that completed bounded slice and are not permanent
 repository-wide compatibility promises.
 
-The later TC-S1 candidate-independent architecture-validation gate recorded:
+The later TC-S1 candidate-independent architecture-validation gate established
+that Candidate C survived the scoped falsification program without selecting a
+concrete constructed-node identity encoding or pretending the validation gate
+itself authorized production.
 
-- Candidate C survived all scoped TC-S1 falsification tests;
-- constructed-node identity requirements were validated without selecting a
-  concrete encoding;
-- independently derived document-shell/provenance GOLD was corroborated rather
-  than defined by WPT; and
-- concrete tree resource constants remained intentionally OPEN.
-
-That validation was architecture evidence rather than a production test result and
-did not, by itself, authorize TC-S1 implementation. Later focused placement and
-production gates supplied the separate implementation authority.
+For current TC-S1–TC-S10 chronology and exact accepted heads, consult the
+[2026-09 checkpoint](2026-09-post-tc-s10-accepted-baseline-checkpoint.md), #117,
+and the focused Issues/PRs.
 
 ## Rejected or Unsupported Strong Claims
 
@@ -253,8 +323,13 @@ The current evidence rejects or does not justify the following shortcuts:
 - `browser agreement establishes Core source/tree provenance`;
 - `WPT + current html5lib tree data == two independent semantic votes`;
 - `a generic AST/event model must be fixed before a useful analysis capability`;
-- `a full DOM-compatible result is required for tree analysis`; and
-- `the first start-tag slice or TC-S1 implies complete HTML Standard support`.
+- `a full DOM-compatible result is required for tree analysis`;
+- `a completed Data-state token vector is always sufficient before tree construction`;
+- `one generic tokenizer mode switch is implied by selected Style/Title feedback`;
+- `decoded character-reference output may be fed back as authored tokenizer input`;
+- `Named Character Reference support implies Numeric Character Reference support`;
+- `selected Title RCDATA implies general RCDATA or textarea support`; and
+- `TC-S10 implies complete HTML Standard support`.
 
 ## Reusable Lessons for Other Languages
 
@@ -268,9 +343,11 @@ internals:
 5. candidate-independent fixtures before or alongside implementation;
 6. deterministic bounded generated validation;
 7. crate-private architecture validation before public API commitment;
-8. separate ownership for authored and synthesized meaning; and
+8. separate ownership for authored, interpreted, constructed, and runtime meaning;
 9. architecture alternatives should be falsified before private implementation
-   details become durable contracts.
+   details become durable contracts; and
+10. fallible preparation should precede authoritative consumption when partial
+    semantic commit would be dishonest.
 
 CSS and ECMAScript must independently prove where these principles apply. HTML
 tokenizer states, token types, parser events, and tree semantics must not be
@@ -281,15 +358,22 @@ copied across languages by analogy.
 Broad pre-architecture HTML research under #348 is complete. The following
 remain intentionally open, deferred, or separately owned:
 
+- Numeric Character References;
+- RCDATA NUL recovery;
+- general RCDATA / `<textarea>` coordination;
+- Data-state / AttributeValue character references;
+- Script Data and script/reentrant parsing;
 - concrete constructed-node identity encoding;
 - exact immutable tree storage layout;
 - detailed recovery-trace and text-coalescing provenance representation;
 - durable token identity for future provenance edges;
 - tree-specific resource dimensions and numeric project limits;
-- partial-result rollback/checkpoint implementation mechanism;
-- cancellation/abort API;
 - fragment-context production contract;
-- script execution and reentrant parsing implementation;
+- templates;
+- tables and foster parenting;
+- active formatting elements / adoption agency;
+- foreign content / namespace integration;
+- broader scope and implied-end algorithms;
 - runtime DOM correlation contract;
 - public HTML API and compatibility commitments;
 - serialization/wire formats;
@@ -298,36 +382,37 @@ remain intentionally open, deferred, or separately owned:
 - product-facing HTML analysis surfaces; and
 - future WASM delivery/runtime contracts.
 
-These OPEN items do not invalidate the approved Candidate C architecture. They
-remain subject to focused work when a production capability or named consumer
-requires them.
+These OPEN items do not invalidate the approved Candidate C architecture or the
+accepted TC-S1–TC-S10 production lineage. They remain subject to focused work
+when a concrete capability or named consumer requires them.
 
 ## Production State
 
-At the 2026-08-27 evidence checkpoint:
+At the 2026-09-15 evidence checkpoint:
 
 ```text
 Architecture direction / Candidate C: APPROVED / UNCHANGED
 ADR 0010 / specialized normative contract: ACCEPTED / UNCHANGED
-TC-S1 through TC-S8 production: MERGED
-current production semantic baseline: 5ffb2eacf0b6cd77b7531a68408cb8e2ceba28b8
-current repository main: e5c299e3980f6d3de41c6291b86890f19715890d
-RAWTEXT candidate-independent validation: ACCEPTED / MERGED via PR #385
-TC-S9 sequence designation: ASSIGNED
-TC-S9 production placement: ACCEPTED
-TC-S9 production Issue: BLOCKED PENDING CURRENT EVIDENCE LEAF
-TC-S9 production implementation: NOT AUTHORIZED
+TC-S1 through TC-S10 production: ACCEPTED / MERGED
+TC-S9 Style/RAWTEXT feedback: ACCEPTED / MERGED via PR #389
+TC-S10 Title/RCDATA/Named: ACCEPTED / MERGED via PR #400
+TC-S10 research provenance: RECORDED / MERGED via PR #401
+post-TC-S10 validation-harness hardening: ACCEPTED / NO SEMANTIC EXPANSION
+post-TC-S10 durable resume baseline: 77790be7a3e8979985fb6a045b8aff2928a8ea40
+post-TC-S10 durable resume tree: 732052dc1e6993baf80f333edc49e549f581714f
+HTML second bounded production wave: PAUSEABLE / CLOSED AT TC-S10
+next HTML successor: NOT PRESELECTED
 full HTML parser claim: NO
 ```
 
-See [2026-08-27 RAWTEXT Feedback and Post-TC-S8 Evidence Checkpoint](2026-08-27-rawtext-feedback-checkpoint.md)
-for the exact current evidence, falsification results, production-placement
-knowledge, and explicit unproved boundaries.
+See [2026-09 Post-TC-S10 Accepted Baseline Checkpoint](2026-09-post-tc-s10-accepted-baseline-checkpoint.md)
+for the concise current capability envelope, accepted lineage, ownership results,
+falsified assumptions, and explicit deferred boundaries.
 
 ## Evidence-to-Architecture Boundary
 
-This document records what the HTML evidence supports. Normative requirements
-are owned by [HTML Tree-Construction Architecture](../../architecture/HTML_TREE_CONSTRUCTION.md)
+This document records what the HTML evidence supports. Normative project
+requirements are owned by [HTML Tree-Construction Architecture](../../architecture/HTML_TREE_CONSTRUCTION.md)
 and the broader architecture contracts it specializes. ADR 0010 preserves the
 rationale for that decision.
 
