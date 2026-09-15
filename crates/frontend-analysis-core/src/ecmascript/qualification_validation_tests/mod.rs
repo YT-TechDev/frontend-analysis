@@ -5,6 +5,7 @@ mod focused;
 mod gold;
 mod inventory;
 mod model;
+mod selected_all_var_contributor_correspondence_frontier;
 mod selected_one_level_block_slice_completion;
 mod selected_one_level_block_var_decimal_initializer_frontier;
 mod selected_one_level_block_var_multi_declarator_frontier;
