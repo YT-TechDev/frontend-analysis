@@ -751,3 +751,329 @@ fn escaped_var_static_rejection_still_stops_before_correspondence() {
         )
     ));
 }
+
+// Issue #703: `SameSourceSelectedVarNameContributors` widens its eligible
+// contributor domain from selected top-level `VariableStatement` declarators
+// only to every selected authored `var` declarator in the Script, including
+// selected one-level Block-contained `var` declarators. The fixtures below
+// exercise that widened domain through the real production entry point
+// (`analyze_selected_variable_statement_name_correspondence`), matching the
+// candidate-independent oracle frozen by #701/PR #702
+// (`selected_all_var_contributor_correspondence_frontier.rs`, F1-F12/G/K1/K2/
+// SR1). A few oracle sources have no top-level `var` statement and are
+// therefore not `RecognizedVariableStatementSlice` on their own (this
+// capability consumes only the var-enabled witness); those are extended with
+// one harmless, distinctly-named top-level `var` declaration so the same
+// Block/lexical shape reaches this production module, exactly as the
+// existing `block_region_falls_back_to_var_but_current_or_top_lexical_binding_wins`
+// test already does for its own top-level-lexical-fallback fixture.
+
+#[test]
+fn same_block_var_contributor_is_visible_to_block_lexical_top_level_lexical_and_top_level_var_references()
+ {
+    // F1 (kills W1, W3): a Block-only `var` contributor is seen by a Block
+    // lexical reference in the very same Block. `var q;` is appended only to
+    // reach `RecognizedVariableStatementSlice`.
+    let (_, script) = recognized_variable("var q; { var a; let x=a; }");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(relation.semantic_name(), "a");
+    assert!(matches!(
+        relation.current_region(),
+        SelectedVariableStatementNameCorrespondenceRegion::Block(_)
+    ));
+    let contributors = relation
+        .correspondence()
+        .var_contributors()
+        .expect("same-Block var contributor must be visible to the Block lexical reference");
+    assert_eq!(contributors.len(), 1);
+    assert_eq!(range(contributors[0]), (13, 14));
+
+    // F3 (kills W2): the same Block-only contributor is seen by an existing
+    // top-level lexical reference.
+    let (_, script) = recognized_variable("var q; { var a; } let x=a;");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert!(matches!(
+        relation.current_region(),
+        SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+    ));
+    let contributors = relation
+        .correspondence()
+        .var_contributors()
+        .expect("Block var contributor must be visible to a top-level lexical reference");
+    assert_eq!(contributors.len(), 1);
+    assert_eq!(range(contributors[0]), (13, 14));
+
+    // F4 (kills W2): the same Block-only contributor is seen by an existing
+    // top-level var reference; no new query-input type is introduced.
+    let (_, script) = recognized_variable("{ var a; } var x=a;");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    let contributors = relation
+        .correspondence()
+        .var_contributors()
+        .expect("Block var contributor must be visible to a top-level var reference");
+    assert_eq!(contributors.len(), 1);
+    assert_eq!(range(contributors[0]), (6, 7));
+}
+
+#[test]
+fn sibling_block_var_contributor_is_script_wide_provenance_not_block_local_lookup() {
+    // F2 (kills W4, W5): the contributor and the reference live in
+    // different, sibling Blocks.
+    let (_, script) = recognized_variable("var q; { var a; } { let x=a; }");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert!(matches!(
+        relation.current_region(),
+        SelectedVariableStatementNameCorrespondenceRegion::Block(_)
+    ));
+    let contributors = relation
+        .correspondence()
+        .var_contributors()
+        .expect("sibling-Block var contributor must remain Script-wide provenance");
+    assert_eq!(contributors.len(), 1);
+    assert_eq!(range(contributors[0]), (13, 14));
+}
+
+#[test]
+fn later_block_var_contributor_is_whole_source_provenance_not_temporally_filtered() {
+    // F5 (kills W6): the reference is authored strictly before its only
+    // contributor, which is authored later inside a Block.
+    let (_, script) = recognized_variable("var x=a; { var a; }");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    let contributors = relation
+        .correspondence()
+        .var_contributors()
+        .expect("a later-authored Block var contributor must still be eligible");
+    assert_eq!(contributors.len(), 1);
+    assert_eq!(range(contributors[0]), (15, 16));
+    assert!(relation.reference().range().start() < contributors[0].range().start());
+}
+
+#[test]
+fn mixed_top_level_and_block_contributor_order_follows_exact_authored_occurrence() {
+    // F6 (kills W7, W8): top-level contributor authored first.
+    let (_, script) = recognized_variable("var a; { var a; } var x=a;");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    let contributors = relation
+        .correspondence()
+        .var_contributors()
+        .expect("mixed top-level/Block contributors");
+    assert_eq!(contributors.len(), 2);
+    assert_eq!(range(contributors[0]), (4, 5));
+    assert_eq!(range(contributors[1]), (13, 14));
+
+    // F6I: the inverse authored arrangement swaps which anchor leads,
+    // defeating any region-grouped collection strategy.
+    let (_, script) = recognized_variable("{ var a; } var a; var x=a;");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    let contributors = relation
+        .correspondence()
+        .var_contributors()
+        .expect("inverse mixed top-level/Block contributors");
+    assert_eq!(contributors.len(), 2);
+    assert_eq!(range(contributors[0]), (6, 7));
+    assert_eq!(range(contributors[1]), (15, 16));
+}
+
+#[test]
+fn repeated_block_var_contributors_and_cross_placement_multiplicity_are_never_deduplicated() {
+    // F7 (kills W9): two declarators of one Block `var` statement remain two
+    // distinct authored occurrences of the same semantic name.
+    let (_, script) = recognized_variable("{ var a,a; } var x=a;");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    let contributors = relation
+        .correspondence()
+        .var_contributors()
+        .expect("repeated same-statement Block var contributors");
+    assert_eq!(contributors.len(), 2);
+    assert_eq!(range(contributors[0]), (6, 7));
+    assert_eq!(range(contributors[1]), (8, 9));
+
+    // F8: four occurrences across top-level and Block placements remain four
+    // occurrences, in exact authored order, with no set semantics.
+    let (_, script) = recognized_variable("var a; { var a,a; } var a; var x=a;");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    let contributors = relation
+        .correspondence()
+        .var_contributors()
+        .expect("cross-placement repeated contributors");
+    assert_eq!(contributors.len(), 4);
+    assert_eq!(range(contributors[0]), (4, 5));
+    assert_eq!(range(contributors[1]), (13, 14));
+    assert_eq!(range(contributors[2]), (15, 16));
+    assert_eq!(range(contributors[3]), (24, 25));
+}
+
+#[test]
+fn block_var_cardinality_first_interior_final_declarators_all_independently_contribute() {
+    // G (kills W10 first-only, W11 final-only): three declarators of one
+    // Block `var` statement each independently resolve as the sole
+    // contributor for their own top-level var reference.
+    let (_, script) = recognized_variable("{ var a,b,c; } var p=a; var q=b; var r=c;");
+    let analysis = accepted_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(relations.len(), 3);
+
+    let a_contributors = relations[0]
+        .correspondence()
+        .var_contributors()
+        .expect("first Block var declarator contributes");
+    assert_eq!(a_contributors.len(), 1);
+    assert_eq!(range(a_contributors[0]), (6, 7));
+
+    let b_contributors = relations[1]
+        .correspondence()
+        .var_contributors()
+        .expect("interior Block var declarator contributes");
+    assert_eq!(b_contributors.len(), 1);
+    assert_eq!(range(b_contributors[0]), (8, 9));
+
+    let c_contributors = relations[2]
+        .correspondence()
+        .var_contributors()
+        .expect("final Block var declarator contributes");
+    assert_eq!(c_contributors.len(), 1);
+    assert_eq!(range(c_contributors[0]), (10, 11));
+}
+
+#[test]
+fn decimal_initialized_block_var_contributes_via_lhs_only() {
+    // K1 (kills W12, W13): a decimal-initialized Block var contributes
+    // through its LHS `BindingIdentifier`; the decimal RHS anchor `(8, 9)`
+    // never appears as a contributor or reference anchor.
+    let (_, script) = recognized_variable("{ var a=1; } var x=a;");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    let contributors = relation
+        .correspondence()
+        .var_contributors()
+        .expect("decimal-initialized Block var contributes via LHS");
+    assert_eq!(contributors.len(), 1);
+    assert_eq!(range(contributors[0]), (6, 7));
+    assert_ne!(range(contributors[0]), (8, 9));
+
+    // K2: a bare declarator sharing a Block `var` statement with a
+    // decimal-initialized sibling contributes identically through its own
+    // LHS.
+    let (_, script) = recognized_variable("{ var a=1,b; } var x=b;");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    let contributors = relation
+        .correspondence()
+        .var_contributors()
+        .expect("bare declarator sharing a statement with a decimal-initialized sibling");
+    assert_eq!(contributors.len(), 1);
+    assert_eq!(range(contributors[0]), (10, 11));
+}
+
+#[test]
+fn escaped_block_var_lhs_uses_semantic_equality_with_exact_authored_anchor() {
+    // F9 (kills W14): the Block-var contributor anchor keeps its exact
+    // authored escaped spelling; the top-level var reference's semantic name
+    // is the decoded "a".
+    let (_, script) = recognized_variable(r"{ var \u{61}; } var x=a;");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(relation.semantic_name(), "a");
+    let contributors = relation
+        .correspondence()
+        .var_contributors()
+        .expect("escaped Block-var LHS must match by decoded semantic name");
+    assert_eq!(contributors.len(), 1);
+    assert_eq!(contributors[0].fragment(), r"\u{61}");
+    assert_ne!(contributors[0].fragment(), "a");
+    assert_eq!(range(contributors[0]), (6, 12));
+}
+
+#[test]
+fn block_var_contributor_domain_has_no_unicode_normalization() {
+    // F10 (kills W15): a composed Block-var contributor matches only a
+    // composed reference of the identical code point sequence; a
+    // code-point-distinct decomposed reference of the same visual name
+    // matches nothing.
+    let (_, script) = recognized_variable("{ var \u{e9}; } var x=\u{e9}; var y=e\u{301};");
+    let analysis = accepted_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(relations.len(), 2);
+
+    let contributors = relations[0]
+        .correspondence()
+        .var_contributors()
+        .expect("composed reference must match composed Block-var contributor");
+    assert_eq!(contributors.len(), 1);
+    assert_eq!(range(contributors[0]), (6, 8));
+    assert_eq!(contributors[0].fragment(), "\u{e9}");
+
+    assert_eq!(relations[1].semantic_name().chars().count(), 2);
+    assert!(
+        relations[1]
+            .correspondence()
+            .is_no_selected_same_source_contributor()
+    );
+}
+
+#[test]
+fn lexical_precedence_outranks_widened_block_var_contributors() {
+    // F11A (kills W16): a current-region Block lexical binding wins even
+    // though a same-named `var` contributor exists elsewhere in the Script.
+    let (_, script) = recognized_variable("var a; { let a; let y=a; }");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    let (binding, region) = relation
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("current-region Block lexical binding must win over widened var domain");
+    assert_eq!(range(binding), (13, 14));
+    assert!(matches!(
+        region,
+        SelectedVariableStatementNameCorrespondenceRegion::Block(_)
+    ));
+    assert!(relation.correspondence().var_contributors().is_none());
+
+    // The existing Block-origin top-level lexical fallback (F11B) is
+    // unchanged by the widened var domain: it is already covered by
+    // `block_region_falls_back_to_var_but_current_or_top_lexical_binding_wins`
+    // above (`"let a=1; { let x=a; } var b;"` resolves to the top-level
+    // lexical `a`, never a var contributor).
+}
+
+#[test]
+fn widened_block_var_domain_never_fabricates_a_false_positive_no_contributor_match() {
+    // F12: an unrelated reference name absent from both lexical bindings and
+    // every selected var contributor (top-level and Block) must still reach
+    // `NoSelectedSameSourceContributor`. `var z;` is a distinctly-named
+    // top-level var so the source both reaches `RecognizedVariableStatementSlice`
+    // and adds an unrelated contributor the widened domain must not match.
+    let (_, script) = recognized_variable("var z; { var a; } let y=q;");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(relation.semantic_name(), "q");
+    assert!(
+        relation
+            .correspondence()
+            .is_no_selected_same_source_contributor()
+    );
+}
+
+#[test]
+fn static_rejection_still_gates_correspondence_when_a_block_var_contributor_is_present() {
+    // SR1-equivalent (kills W17): the whole source is statically rejected
+    // (Script duplicate top-level lexical `a`) before any correspondence
+    // relation for `var x=a;` could be committed, even though a same-named
+    // Block var contributor is also authored in the source.
+    let (_, script) = recognized_variable("let a=1; let a=2; { var a; } var x=a;");
+    assert!(matches!(
+        evaluate_selected_variable_statement_static_semantics(&script),
+        SelectedVariableStatementStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::DuplicateLexicalName { .. }
+        )
+    ));
+}

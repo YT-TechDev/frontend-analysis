@@ -3,12 +3,17 @@
 //! This capability consumes only the exact var-enabled selected-static
 //! acceptance witness. It derives source-backed correspondence over the current
 //! selected top-level / one-level-Block region path and preserves authored
-//! relation traversal order plus every authored same-name top-level `var`
-//! contributor in authored order. #324 widens only that contributor domain so
-//! several declarators of one `VariableStatement` each contribute an anchor.
-//! #334 makes each selected direct-authored var initializer `IdentifierReference`
+//! relation traversal order plus every authored same-name `var` contributor in
+//! authored order. #324 widens the top-level contributor domain so several
+//! declarators of one `VariableStatement` each contribute an anchor. #334
+//! makes each selected direct-authored var initializer `IdentifierReference`
 //! an independently ordered top-level correspondence input, and #338 composes
-//! the selected escaped non-ReservedWord spelling through the same retained fact.
+//! the selected escaped non-ReservedWord spelling through the same retained
+//! fact. #703 widens the contributor domain itself from selected top-level
+//! `VariableStatement` declarators only to every selected authored `var`
+//! declarator in the Script, adding selected one-level Block-contained `var`
+//! declarators as same-source contributors, uniformly for every existing
+//! correspondence query input and in exact global authored source order.
 //!
 //! This is not runtime binding resolution. An authored `VariableDeclaration`
 //! contributor is not a unique runtime binding identity or a `ResolveBinding`
@@ -181,43 +186,67 @@ fn block_bindings(block: &SelectedBlock) -> Result<LexicalBindingsByName<'_>, An
     Ok(bindings_by_name)
 }
 
+// Appends one authored contributor anchor for `semantic_name`, composing with
+// any contributor already collected for that name in earlier authored order.
+// Repeated names are never deduplicated into a singular logical target; this
+// is the sole insertion mechanics shared by top-level `VariableStatement` and
+// one-level Block `var` contributors (Issue #703).
+fn append_var_contributor<'script>(
+    contributors_by_name: &mut VarContributorsByName<'script>,
+    semantic_name: &'script str,
+    binding: &'script SourceAnchor,
+) -> Result<(), AnalysisFailure> {
+    if let Some(contributors) = contributors_by_name.get_mut(semantic_name) {
+        contributors
+            .try_reserve(1)
+            .map_err(|_| AnalysisFailure::ResourceLimited)?;
+        contributors.push(binding);
+        return Ok(());
+    }
+
+    contributors_by_name
+        .try_reserve(1)
+        .map_err(|_| AnalysisFailure::ResourceLimited)?;
+    let mut contributors = Vec::new();
+    contributors
+        .try_reserve(1)
+        .map_err(|_| AnalysisFailure::ResourceLimited)?;
+    contributors.push(binding);
+    let previous = contributors_by_name.insert(semantic_name, contributors);
+    debug_assert!(previous.is_none());
+    Ok(())
+}
+
 fn var_contributors(
     script: &SelectedVariableStatementScript,
 ) -> Result<VarContributorsByName<'_>, AnalysisFailure> {
     let mut contributors_by_name: VarContributorsByName<'_> = HashMap::new();
 
+    // Every selected authored `var` declarator in the Script contributes, in
+    // exact global authored order: `LexicalDeclaration` items contribute
+    // nothing; each `VariableStatement` declarator contributes in authored
+    // `VariableDeclarationList` order; each one-level Block's `var`
+    // declarators contribute in authored Block-item / declarator order
+    // (Issue #703). Placement never groups contributors by region.
     for item in script.items() {
-        let SelectedVariableTopLevelItem::VariableStatement(statement) = item else {
-            continue;
-        };
-
-        // Each authored declarator of one `VariableStatement` contributes its
-        // own anchor, in authored `VariableDeclarationList` order, and composes
-        // with contributors from earlier statements. Repeated names are never
-        // deduplicated into a singular logical target.
-        for binding in statement.bindings() {
-            let Some(name) = binding.semantic_name() else {
-                return Err(AnalysisFailure::InternalFailure);
-            };
-
-            if let Some(contributors) = contributors_by_name.get_mut(name) {
-                contributors
-                    .try_reserve(1)
-                    .map_err(|_| AnalysisFailure::ResourceLimited)?;
-                contributors.push(binding.binding());
-                continue;
+        match item {
+            SelectedVariableTopLevelItem::LexicalDeclaration(_) => {}
+            SelectedVariableTopLevelItem::VariableStatement(statement) => {
+                for binding in statement.bindings() {
+                    let Some(name) = binding.semantic_name() else {
+                        return Err(AnalysisFailure::InternalFailure);
+                    };
+                    append_var_contributor(&mut contributors_by_name, name, binding.binding())?;
+                }
             }
-
-            contributors_by_name
-                .try_reserve(1)
-                .map_err(|_| AnalysisFailure::ResourceLimited)?;
-            let mut contributors = Vec::new();
-            contributors
-                .try_reserve(1)
-                .map_err(|_| AnalysisFailure::ResourceLimited)?;
-            contributors.push(binding.binding());
-            let previous = contributors_by_name.insert(name, contributors);
-            debug_assert!(previous.is_none());
+            SelectedVariableTopLevelItem::Block(block) => {
+                for binding in block.block_var_bindings() {
+                    let Some(name) = binding.semantic_name() else {
+                        return Err(AnalysisFailure::InternalFailure);
+                    };
+                    append_var_contributor(&mut contributors_by_name, name, binding.binding())?;
+                }
+            }
         }
     }
 
