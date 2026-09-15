@@ -1578,6 +1578,34 @@ fn one_level_block_var_escaped_identifier_reference_reuses_existing_corresponden
 }
 
 #[test]
+fn one_level_block_var_escaped_identifier_reference_reaches_top_level_lexical_fallback() {
+    // Precedence step 2 (kills a "widened escaped RHS domain skips the
+    // top-level lexical fallback and falls straight through to the var
+    // contributor domain, or to NoSelectedSameSourceContributor" model): an
+    // escaped Block-var RHS with no current-Block lexical binding of the
+    // same decoded name must still reach the existing Block-origin
+    // top-level lexical fallback, exactly as the direct RHS case does
+    // (`one_level_block_top_level_lexical_fallback_is_reachable_from_block_reference`
+    // above), before any var-contributor or no-contributor branch is
+    // considered.
+    let (_, script) = recognized_one_level_block("let a;\n{ var x=\\u0061; }");
+    let analysis = accepted_one_level_block_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(relation.semantic_name(), "a");
+
+    let (binding, region) = relation
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("top-level lexical fallback must remain reachable for an escaped RHS");
+    assert_eq!(range(binding), (4, 5));
+    assert!(matches!(
+        region,
+        SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+    ));
+    assert!(relation.correspondence().var_contributors().is_none());
+}
+
+#[test]
 fn one_level_block_var_and_lexical_relations_follow_mixed_authored_item_order_with_escaped_rhs() {
     // V3/W12 (load-bearing): an escaped Block-var RHS of variable authored
     // byte length must not disturb exact authored `block.items()` relation
