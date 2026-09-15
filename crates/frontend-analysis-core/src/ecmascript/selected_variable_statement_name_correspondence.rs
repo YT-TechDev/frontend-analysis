@@ -14,12 +14,12 @@
 //! declarator in the Script, adding selected one-level Block-contained `var`
 //! declarators as same-source contributors, uniformly for every existing
 //! correspondence query input and in exact global authored source order.
-//! #705/#706 add a second, `pub(super)` production entrypoint for the
-//! distinct `SelectedOneLevelBlockStaticSemanticsAccepted` witness, which has
-//! no top-level `VariableStatement` item. It shares this one correspondence
-//! semantic owner and every existing meaning and precedence rule; it does
-//! not introduce a fourth correspondence meaning or a parallel type
-//! hierarchy.
+//! #705/#706 freeze the accepted-witness lifecycle theorem for the distinct
+//! `SelectedOneLevelBlockStaticSemanticsAccepted` witness. The production
+//! successor adds a second `pub(super)` entrypoint that consumes that witness
+//! directly. It shares this one correspondence semantic owner and every
+//! existing meaning and precedence rule; it does not introduce a fourth
+//! correspondence meaning or a parallel type hierarchy.
 //!
 //! This is not runtime binding resolution. An authored `VariableDeclaration`
 //! contributor is not a unique runtime binding identity or a `ResolveBinding`
@@ -262,9 +262,10 @@ fn var_contributors(
     Ok(contributors_by_name)
 }
 
-// One-level Block accepted-witness (Issue #705/#706) traversal. There is no
-// top-level `VariableStatement` item in `SelectedOneLevelBlockScript`, so
-// these functions traverse the distinct two-variant `SelectedTopLevelItem`
+// One-level Block accepted-witness traversal, implementing the lifecycle
+// theorem frozen by Issue #705 / PR #706. There is no top-level
+// `VariableStatement` item in `SelectedOneLevelBlockScript`, so these
+// functions traverse the distinct two-variant `SelectedTopLevelItem`
 // enum, but share every insertion/precedence helper above with the
 // `SelectedVariableStatementScript` traversal rather than introducing a
 // parallel correspondence semantic owner.
@@ -546,10 +547,11 @@ fn analyze_one_level_block<'script>(
     Ok(SelectedVariableStatementNameCorrespondenceAnalysis { relations })
 }
 
-/// Second accepted-witness entrypoint for the distinct
-/// `SelectedOneLevelBlockStaticSemanticsAccepted` witness (Issue #705/#706).
-/// It shares this module's single correspondence semantic owner, every
-/// existing precedence and insertion helper, and the existing
+/// Second accepted-witness production entrypoint for the distinct
+/// `SelectedOneLevelBlockStaticSemanticsAccepted` witness, implementing the
+/// lifecycle theorem frozen by Issue #705 / PR #706. It shares this module's
+/// single correspondence semantic owner, every existing precedence and
+/// insertion helper, and the existing
 /// `SelectedVariableStatementNameCorrespondenceOutcome` result type; it
 /// introduces no fourth correspondence meaning and no parallel type
 /// hierarchy.
