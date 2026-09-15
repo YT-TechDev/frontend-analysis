@@ -12,9 +12,12 @@
 //! declarator (#688/#691) to ordered `1..N` simple selected
 //! `BindingIdentifier` declarators by #695, and widened each Block `var`
 //! declarator to admit an optional selected decimal-integer initializer by
-//! #699, and widened each Block `var` declarator to additionally admit a
+//! #699, widened each Block `var` declarator to additionally admit a
 //! direct-authored, escape-free selected IdentifierReference initializer by
-//! #710. Recognition is transactional for the whole authoritative
+//! #710, and widened each Block `var` declarator to additionally admit a
+//! selected escaped non-ReservedWord IdentifierReference initializer by
+//! #713 (escaped ReservedWord spellings remain outside this leaf). Recognition
+//! is transactional for the whole authoritative
 //! `SourceText`: tentative declaration/binding/Block/var facts are returned
 //! only when the entire source is consumed by selected items plus selected
 //! trivia.
@@ -148,14 +151,15 @@ pub(super) enum SelectedBlockItem {
 /// ( , SelectedBlockVarDeclaration )* ;` where `SelectedBlockVarDeclaration
 /// ::= SelectedBindingIdentifier | SelectedBindingIdentifier =
 /// SelectedDecimalInteger | SelectedBindingIdentifier =
-/// SelectedDirectIdentifierReference`, accepted by
-/// Issue #688/#691/#695/#699/#710: one selected `VariableStatement` owning
-/// ordered `1..N` selected `BindingIdentifier` declarators, each
+/// SelectedDirectIdentifierReference | SelectedBindingIdentifier =
+/// SelectedEscapedNonReservedIdentifierReference`, accepted by
+/// Issue #688/#691/#695/#699/#710/#713: one selected `VariableStatement`
+/// owning ordered `1..N` selected `BindingIdentifier` declarators, each
 /// independently optionally carrying a selected decimal-integer initializer
-/// or a selected direct-authored, escape-free `IdentifierReference`
-/// initializer, and one statement-owned authored semicolon terminator. No
-/// comma or whole-statement span is retained because no proven consumer
-/// needs it.
+/// or a selected direct-authored or escaped non-ReservedWord
+/// `IdentifierReference` initializer, and one statement-owned authored
+/// semicolon terminator. No comma or whole-statement span is retained
+/// because no proven consumer needs it.
 #[derive(Debug)]
 pub(super) struct SelectedBlockVarStatement {
     bindings: Vec<SelectedBlockVarBinding>,
@@ -172,13 +176,15 @@ impl SelectedBlockVarStatement {
 /// independently optional initializer. A selected decimal-integer initializer
 /// (Issue #699) is consumed and discarded without retaining any
 /// initializer-specific fact. A selected direct-authored, escape-free
-/// `IdentifierReference` initializer (Issue #710) retains the existing
-/// exact source-backed reference fact for the source-name correspondence
-/// consumer; an escaped spelling (non-ReservedWord or ReservedWord) in this
-/// RHS position is outside this leaf and reported as `UnsupportedCoverage`
-/// rather than silently admitted through the shared recognizer. Distinct
-/// declarator occurrences remain distinct even when their semantic names
-/// coincide (Issue #695 repeated-name requirement).
+/// `IdentifierReference` initializer (Issue #710) or a selected escaped
+/// non-ReservedWord `IdentifierReference` initializer (Issue #713) retains
+/// the existing exact source-backed reference fact for the source-name
+/// correspondence consumer; an escaped spelling that decodes to a
+/// ReservedWord in this RHS position remains outside this leaf and is
+/// reported as `UnsupportedCoverage` rather than silently admitted through
+/// the shared recognizer. Distinct declarator occurrences remain distinct
+/// even when their semantic names coincide (Issue #695 repeated-name
+/// requirement).
 #[derive(Debug)]
 pub(super) struct SelectedBlockVarBinding {
     binding: SourceAnchor,
@@ -661,40 +667,45 @@ impl<'source> Cursor<'source> {
     ///     SelectedBindingIdentifier
     ///   | SelectedBindingIdentifier = SelectedDecimalInteger
     ///   | SelectedBindingIdentifier = SelectedDirectIdentifierReference
+    ///   | SelectedBindingIdentifier = SelectedEscapedNonReservedIdentifierReference
     /// ```
     ///
     /// (Issue #688/#691, widened to ordered `1..N` declarators by #695,
     /// widened to an optional selected decimal-integer initializer per
     /// declarator by #699, widened to an optional selected direct-authored,
     /// escape-free `IdentifierReference` initializer per declarator by
-    /// #710): one or more selected `BindingIdentifier` declarators separated
-    /// by commas, each independently optionally followed by
-    /// `= SelectedDecimalInteger` or `= SelectedDirectIdentifierReference`,
-    /// and a mandatory authored semicolon terminating the whole statement.
+    /// #710, widened to an optional selected escaped non-ReservedWord
+    /// `IdentifierReference` initializer per declarator by #713): one or
+    /// more selected `BindingIdentifier` declarators separated by commas,
+    /// each independently optionally followed by `= SelectedDecimalInteger`
+    /// or `= SelectedIdentifierReference` (direct or escaped
+    /// non-ReservedWord), and a mandatory authored semicolon terminating the
+    /// whole statement.
     ///
     /// This intentionally does not reuse `parse_variable_statement`: that
-    /// owner's broader escaped-IdentifierReference/escaped-ReservedWord
-    /// initializer families and EOF-only ASI belong to the distinct
-    /// top-level `VariableStatement` capability and must not leak into this
-    /// narrower Block-item placement. Only the keyword, `BindingIdentifier`,
-    /// initializer-equals/decimal-integer/direct-IdentifierReference, and
-    /// comma-continuation recognition mechanics are shared. A direct-authored,
-    /// escape-free `IdentifierReference` initializer is admitted (Issue
-    /// #710); an escaped spelling matched by the shared recognizer (whether
-    /// or not it decodes to a ReservedWord) is deliberately routed to
+    /// owner's escaped-ReservedWord initializer family and EOF-only ASI
+    /// belong to the distinct top-level `VariableStatement` capability and
+    /// must not leak into this narrower Block-item placement. Only the
+    /// keyword, `BindingIdentifier`,
+    /// initializer-equals/decimal-integer/IdentifierReference, and
+    /// comma-continuation recognition mechanics are shared. A direct-authored
+    /// or escaped non-ReservedWord `IdentifierReference` initializer is
+    /// admitted (Issues #710/#713); an escaped spelling that the shared
+    /// recognizer classifies as a ReservedWord is deliberately routed to
     /// `UnsupportedCoverage` here rather than silently widened, because that
-    /// broader escaped-RHS coverage is not part of this leaf's accepted
-    /// profile. Any other non-decimal, non-direct-IdentifierReference
-    /// initializer, comment trivia, or missing authored semicolon (including
-    /// EOF, i.e. non-EOF ASI before the enclosing `}`) is left entirely
-    /// unrecognized here and reported as `UnsupportedCoverage`.
+    /// escaped-ReservedWord RHS coverage is not part of this leaf's accepted
+    /// profile. Any other non-decimal, non-IdentifierReference initializer,
+    /// comment trivia, or missing authored semicolon (including EOF, i.e.
+    /// non-EOF ASI before the enclosing `}`) is left entirely unrecognized
+    /// here and reported as `UnsupportedCoverage`.
     ///
     /// The decimal initializer is consumed inside this owning cursor
     /// lifecycle and discarded: no initializer-specific fact (presence,
     /// anchor, or value) is retained on `SelectedBlockVarBinding` for it. A
-    /// selected direct `IdentifierReference` initializer retains the
-    /// existing exact source-backed `SelectedIdentifierReferenceFact` for
-    /// the source-name correspondence consumer.
+    /// selected direct or escaped non-ReservedWord `IdentifierReference`
+    /// initializer retains the existing exact source-backed
+    /// `SelectedIdentifierReferenceFact` for the source-name correspondence
+    /// consumer.
     ///
     /// The declarator list is accumulated in a purely local `Vec` and this
     /// function returns `Err` before constructing `SelectedBlockVarStatement`
@@ -731,12 +742,7 @@ impl<'source> Cursor<'source> {
                 } else {
                     match self.consume_selected_identifier_reference() {
                         SelectedIdentifierReferenceRecognition::Matched(reference) => {
-                            match reference.name_state() {
-                                SelectedIdentifierReferenceNameState::Direct => Some(reference),
-                                SelectedIdentifierReferenceNameState::Escaped { .. } => {
-                                    return Err(ParseFailure::UnsupportedCoverage);
-                                }
-                            }
+                            Some(reference)
                         }
                         SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName {
                             ..

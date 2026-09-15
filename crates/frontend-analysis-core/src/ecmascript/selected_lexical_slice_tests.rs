@@ -2248,15 +2248,16 @@ fn one_level_block_var_decimal_and_absent_initializers_retain_no_identifier_refe
 
 #[test]
 fn one_level_block_var_identifier_reference_initializer_transactional_failure_commits_no_prefix() {
-    // V5 / W6 (kills "a valid earlier direct RHS fact leaks when a later
-    // declarator fails"): a valid declarator prefix carrying a committed RHS
-    // fact (e.g. "x=a" in "{ var x=a,y=; }") must never escape as part of a
-    // committed statement when a later list element prevents statement
+    // V5 / W6 / W13 (kills "a valid earlier direct or escaped RHS fact
+    // leaks when a later declarator fails"): a valid declarator prefix
+    // carrying a committed RHS fact (e.g. "x=a" in "{ var x=a,y=; }", or
+    // "x=\u0066oo" in "{ var x=\u0066oo,y=; }") must never escape as part
+    // of a committed statement when a later list element prevents statement
     // completion.
     for text in [
         "{ var x=a,y=; }",
         "{ var x=a,y=true; }",
-        r"{ var x=a,y=\u0061; }",
+        r"{ var x=\u0066oo,y=; }",
         r"{ var x=a,y=\u0069f; }",
         "{ var x=a }",
     ] {
@@ -2265,12 +2266,12 @@ fn one_level_block_var_identifier_reference_initializer_transactional_failure_co
 }
 
 #[test]
-fn one_level_block_var_escaped_identifier_reference_initializer_remains_unsupported() {
-    // V4 direct-only firewall representative: an escaped spelling matched by
-    // the shared recognizer (whether or not it decodes to a ReservedWord)
-    // must not silently widen this leaf's direct-only Block-var RHS
-    // coverage.
-    for text in [r"{ var x=\u0061; }", r"{ var x=\u0069f; }"] {
+fn one_level_block_var_escaped_reserved_identifier_reference_initializer_remains_unsupported() {
+    // W5 (escaped-ReservedWord firewall): an escaped spelling that the
+    // shared recognizer classifies as a ReservedWord must remain outside
+    // this leaf's accepted Block-var RHS profile even though the escaped
+    // non-ReservedWord sibling is now accepted by #713.
+    for text in [r"{ var x=\u0069f; }", r"{ var x=\u{69}f; }"] {
         assert_unsupported(text);
     }
 }
@@ -2292,19 +2293,193 @@ fn one_level_block_var_decimal_initializer_numeric_neighbors_remain_unsupported(
 
 #[test]
 fn one_level_block_var_non_decimal_initializers_remain_unsupported() {
-    // "{ var a=foo; }" is deliberately not listed here: Issue #710 makes a
-    // direct-authored, escape-free `IdentifierReference` initializer a
-    // selected accepted form (see the "Issue #710" test section below). The
-    // escaped spellings below (including one that decodes to a ReservedWord)
-    // remain outside this leaf's direct-only profile even though the shared
-    // recognizer can match them.
+    // "{ var a=foo; }" and "{ var a=\u0066oo; }" are deliberately not
+    // listed here: Issue #710 makes a direct-authored, escape-free
+    // `IdentifierReference` initializer a selected accepted form, and Issue
+    // #713 additionally admits a selected escaped non-ReservedWord
+    // `IdentifierReference` initializer (see the "Issue #710" / "Issue
+    // #713" test sections below). An escaped spelling that decodes to a
+    // ReservedWord remains outside this leaf's profile even though the
+    // shared recognizer can match it.
     for text in [
         "{ var a=true; }",
         "{ var a=null; }",
         "{ var a=this; }",
         r#"{ var a="x"; }"#,
-        r"{ var a=\u0066oo; }",
         r"{ var a=\u0069f; }",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+// --- Issue #713: one-level Block `var` widened to a selected escaped ------
+// non-ReservedWord `IdentifierReference` initializer.
+//
+// These focused production tests seal the candidate against the accepted
+// #712/#713 theorem with independently authored expected values rather
+// than values derived from production output. They reuse the existing
+// #336/#338 escaped-IdentifierReference name-policy authority and the
+// #710 Block-var composition authority rather than cloning the full
+// top-level oracle.
+
+#[test]
+fn one_level_block_var_escaped_identifier_reference_initializer_retains_exact_source_and_semantic_identity()
+ {
+    // V1/W1/W2/W3 (kills "authored spelling used as semantic identity",
+    // "first-position escape only", and "fixed-form \uXXXX only, rejecting
+    // braced/supplementary-plane forms"): a formed, position-valid escaped
+    // `IdentifierReference` RHS retains its exact authored anchor and its
+    // independently decoded semantic name, in every escape position and
+    // form the shared recognizer accepts.
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+
+    for (text, expected_binding, expected_reference, expected_fragment, expected_semantic) in [
+        (r"{ var x=\u0061; }", (6, 7), (8, 14), r"\u0061", "a"),
+        (r"{ var x=\u0066oo; }", (6, 7), (8, 16), r"\u0066oo", "foo"),
+        (r"{ var x=f\u006Fo; }", (6, 7), (8, 16), r"f\u006Fo", "foo"),
+        (r"{ var x=\u{1D49C}; }", (6, 7), (8, 17), r"\u{1D49C}", "𝒜"),
+        (r"{ var x=a\u0030; }", (6, 7), (8, 15), r"a\u0030", "a0"),
+    ] {
+        let script = recognized_block(text);
+        let [SelectedTopLevelItem::Block(block)] = script.items() else {
+            panic!("expected exactly one Block item for {text:?}");
+        };
+        let [SelectedBlockItem::Var(statement)] = block.items() else {
+            panic!("expected exactly one Block var statement for {text:?}");
+        };
+        let [binding] = statement.bindings() else {
+            panic!("expected exactly one Block var declarator for {text:?}");
+        };
+        assert_eq!(
+            (
+                binding.binding().range().start(),
+                binding.binding().range().end()
+            ),
+            expected_binding,
+            "{text:?}"
+        );
+        let reference = binding
+            .identifier_reference_initializer()
+            .expect("selected Block var RHS reference fact");
+        assert_eq!(
+            (
+                reference.reference().range().start(),
+                reference.reference().range().end()
+            ),
+            expected_reference,
+            "{text:?}"
+        );
+        assert_eq!(
+            reference.reference().fragment(),
+            expected_fragment,
+            "{text:?}"
+        );
+        assert_eq!(reference.semantic_name(), expected_semantic, "{text:?}");
+    }
+}
+
+#[test]
+fn one_level_block_var_multiple_escaped_and_direct_identifier_reference_initializers_preserve_declarator_order()
+ {
+    // W11 (kills "only first or last escaped RHS survives in a
+    // multi-declarator statement"): an escaped and a direct RHS reference in
+    // the same Block `var` statement each retain their own independent
+    // fact, in exact authored order.
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+
+    let text = r"{ var x=\u0066oo,y=bar; }";
+    let script = recognized_block(text);
+    let [SelectedTopLevelItem::Block(block)] = script.items() else {
+        panic!("expected exactly one Block item");
+    };
+    let [SelectedBlockItem::Var(statement)] = block.items() else {
+        panic!("expected exactly one Block var statement");
+    };
+    assert_eq!(statement.bindings().len(), 2);
+
+    let first_reference = statement.bindings()[0]
+        .identifier_reference_initializer()
+        .expect("first declarator RHS reference fact");
+    assert_eq!(
+        (
+            first_reference.reference().range().start(),
+            first_reference.reference().range().end()
+        ),
+        (8, 16)
+    );
+    assert_eq!(first_reference.semantic_name(), "foo");
+
+    let second_reference = statement.bindings()[1]
+        .identifier_reference_initializer()
+        .expect("second declarator RHS reference fact");
+    assert_eq!(
+        (
+            second_reference.reference().range().start(),
+            second_reference.reference().range().end()
+        ),
+        (19, 22)
+    );
+    assert_eq!(second_reference.semantic_name(), "bar");
+}
+
+#[test]
+fn one_level_block_var_escaped_identifier_reference_name_policy_preserves_c1_c6_firewall() {
+    // W4/W5 (kills "a broad keyword filter incorrectly rejects yield/
+    // await/let/strict-only names/eval/arguments" and "escaped ReservedWord
+    // accidentally accepted"): reuses the existing #336/#338 name-policy
+    // authority for the fixed non-strict `Yield=false, Await=false`
+    // envelope, composed with the #710 Block-var placement.
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+
+    for (rhs, expected_semantic) in [
+        (r"\u006Cet", "let"),
+        (r"\u0073tatic", "static"),
+        (r"\u0069mplements", "implements"),
+        (r"\u0069nterface", "interface"),
+        (r"\u0070ackage", "package"),
+        (r"\u0070rivate", "private"),
+        (r"\u0070rotected", "protected"),
+        (r"\u0070ublic", "public"),
+        (r"\u0079ield", "yield"),
+        (r"a\u0077ait", "await"),
+        (r"\u0065val", "eval"),
+        (r"\u0061rguments", "arguments"),
+    ] {
+        let text = format!("{{ var x={rhs}; }}");
+        let script = recognized_block(&text);
+        let [SelectedTopLevelItem::Block(block)] = script.items() else {
+            panic!("expected exactly one Block item for {text:?}");
+        };
+        let [SelectedBlockItem::Var(statement)] = block.items() else {
+            panic!("expected exactly one Block var statement for {text:?}");
+        };
+        let reference = statement.bindings()[0]
+            .identifier_reference_initializer()
+            .expect("C1 escaped name-policy positive");
+        assert_eq!(reference.reference().fragment(), rhs, "{text}");
+        assert_eq!(reference.semantic_name(), expected_semantic, "{text}");
+    }
+
+    // W5 negative control: the escaped-ReservedWord sibling stays outside
+    // this leaf even under the same name-policy machinery.
+    assert_unsupported(r"{ var x=\u0069f; }");
+}
+
+#[test]
+fn one_level_block_var_escaped_identifier_reference_initializer_ee01_and_malformed_firewall() {
+    // W6/W7 (kills "RHS position-invalid escapes routed to EE-01" and
+    // "invalid escaped IdentifierPart truncated to a positive direct
+    // prefix"): position-invalid, surrogate, and malformed escapes in the
+    // Block-var RHS position remain `UnsupportedCoverage`, and a partially
+    // valid prefix (e.g. "a" in "a\u002Db") never commits as a positive
+    // direct reference.
+    for text in [
+        r"{ var x=\u0030; }",
+        r"{ var x=a\u002Db; }",
+        r"{ var x=\u{}; }",
+        r"{ var x=\u{110000}; }",
+        r"{ var x=\uD800; }",
+        r"{ var x=\u{D800}; }",
     ] {
         assert_unsupported(text);
     }
