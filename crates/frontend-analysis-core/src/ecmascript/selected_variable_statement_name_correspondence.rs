@@ -14,6 +14,12 @@
 //! declarator in the Script, adding selected one-level Block-contained `var`
 //! declarators as same-source contributors, uniformly for every existing
 //! correspondence query input and in exact global authored source order.
+//! #705/#706 freeze the accepted-witness lifecycle theorem for the distinct
+//! `SelectedOneLevelBlockStaticSemanticsAccepted` witness. The production
+//! successor adds a second `pub(super)` entrypoint that consumes that witness
+//! directly. It shares this one correspondence semantic owner and every
+//! existing meaning and precedence rule; it does not introduce a fourth
+//! correspondence meaning or a parallel type hierarchy.
 //!
 //! This is not runtime binding resolution. An authored `VariableDeclaration`
 //! contributor is not a unique runtime binding identity or a `ResolveBinding`
@@ -30,10 +36,13 @@ use std::collections::HashMap;
 use crate::SourceAnchor;
 
 use super::selected_lexical_slice::{
-    SelectedBlock, SelectedLexicalBinding, SelectedLexicalDeclaration, SelectedVariableBinding,
-    SelectedVariableStatementScript, SelectedVariableTopLevelItem,
+    SelectedBlock, SelectedLexicalBinding, SelectedLexicalDeclaration, SelectedOneLevelBlockScript,
+    SelectedTopLevelItem, SelectedVariableBinding, SelectedVariableStatementScript,
+    SelectedVariableTopLevelItem,
 };
-use super::selected_static_semantics::SelectedVariableStatementStaticSemanticsAccepted;
+use super::selected_static_semantics::{
+    SelectedOneLevelBlockStaticSemanticsAccepted, SelectedVariableStatementStaticSemanticsAccepted,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub(super) enum SelectedVariableStatementNameCorrespondenceRegion<'script> {
@@ -253,6 +262,51 @@ fn var_contributors(
     Ok(contributors_by_name)
 }
 
+// One-level Block accepted-witness traversal, implementing the lifecycle
+// theorem frozen by Issue #705 / PR #706. There is no top-level
+// `VariableStatement` item in `SelectedOneLevelBlockScript`, so these
+// functions traverse the distinct two-variant `SelectedTopLevelItem`
+// enum, but share every insertion/precedence helper above with the
+// `SelectedVariableStatementScript` traversal rather than introducing a
+// parallel correspondence semantic owner.
+
+fn one_level_block_top_level_bindings(
+    script: &SelectedOneLevelBlockScript,
+) -> Result<LexicalBindingsByName<'_>, AnalysisFailure> {
+    let mut bindings_by_name = HashMap::new();
+
+    for item in script.items() {
+        let SelectedTopLevelItem::LexicalDeclaration(declaration) = item else {
+            continue;
+        };
+        insert_declaration_bindings(declaration, &mut bindings_by_name)?;
+    }
+
+    Ok(bindings_by_name)
+}
+
+fn one_level_block_var_contributors(
+    script: &SelectedOneLevelBlockScript,
+) -> Result<VarContributorsByName<'_>, AnalysisFailure> {
+    let mut contributors_by_name: VarContributorsByName<'_> = HashMap::new();
+
+    // Every selected authored Block `var` declarator contributes, in exact
+    // global authored order across every selected Block.
+    for item in script.items() {
+        let SelectedTopLevelItem::Block(block) = item else {
+            continue;
+        };
+        for binding in block.block_var_bindings() {
+            let Some(name) = binding.semantic_name() else {
+                return Err(AnalysisFailure::InternalFailure);
+            };
+            append_var_contributor(&mut contributors_by_name, name, binding.binding())?;
+        }
+    }
+
+    Ok(contributors_by_name)
+}
+
 fn copy_var_contributors<'script>(
     contributors: &[&'script SourceAnchor],
 ) -> Result<Vec<&'script SourceAnchor>, AnalysisFailure> {
@@ -443,6 +497,68 @@ pub(super) fn analyze_selected_variable_statement_name_correspondence<'script>(
     accepted: &SelectedVariableStatementStaticSemanticsAccepted<'script>,
 ) -> SelectedVariableStatementNameCorrespondenceOutcome<'script> {
     match analyze(accepted.script()) {
+        Ok(analysis) => SelectedVariableStatementNameCorrespondenceOutcome::Complete(analysis),
+        Err(AnalysisFailure::ResourceLimited) => {
+            SelectedVariableStatementNameCorrespondenceOutcome::ResourceLimited
+        }
+        Err(AnalysisFailure::InternalFailure) => {
+            SelectedVariableStatementNameCorrespondenceOutcome::InternalFailure
+        }
+    }
+}
+
+fn analyze_one_level_block<'script>(
+    script: &'script SelectedOneLevelBlockScript,
+) -> Result<SelectedVariableStatementNameCorrespondenceAnalysis<'script>, AnalysisFailure> {
+    let top_level_bindings = one_level_block_top_level_bindings(script)?;
+    let var_contributors = one_level_block_var_contributors(script)?;
+    let mut relations = Vec::new();
+
+    for item in script.items() {
+        match item {
+            SelectedTopLevelItem::LexicalDeclaration(declaration) => {
+                append_declaration_relations(
+                    declaration,
+                    SelectedVariableStatementNameCorrespondenceRegion::TopLevel,
+                    &top_level_bindings,
+                    &top_level_bindings,
+                    &var_contributors,
+                    &mut relations,
+                )?;
+            }
+            SelectedTopLevelItem::Block(block) => {
+                let current_bindings = block_bindings(block)?;
+                let current_region =
+                    SelectedVariableStatementNameCorrespondenceRegion::Block(block.block());
+                for declaration in block.declarations() {
+                    append_declaration_relations(
+                        declaration,
+                        current_region,
+                        &current_bindings,
+                        &top_level_bindings,
+                        &var_contributors,
+                        &mut relations,
+                    )?;
+                }
+            }
+        }
+    }
+
+    Ok(SelectedVariableStatementNameCorrespondenceAnalysis { relations })
+}
+
+/// Second accepted-witness production entrypoint for the distinct
+/// `SelectedOneLevelBlockStaticSemanticsAccepted` witness, implementing the
+/// lifecycle theorem frozen by Issue #705 / PR #706. It shares this module's
+/// single correspondence semantic owner, every existing precedence and
+/// insertion helper, and the existing
+/// `SelectedVariableStatementNameCorrespondenceOutcome` result type; it
+/// introduces no fourth correspondence meaning and no parallel type
+/// hierarchy.
+pub(super) fn analyze_selected_one_level_block_name_correspondence<'script>(
+    accepted: &SelectedOneLevelBlockStaticSemanticsAccepted<'script>,
+) -> SelectedVariableStatementNameCorrespondenceOutcome<'script> {
+    match analyze_one_level_block(accepted.script()) {
         Ok(analysis) => SelectedVariableStatementNameCorrespondenceOutcome::Complete(analysis),
         Err(AnalysisFailure::ResourceLimited) => {
             SelectedVariableStatementNameCorrespondenceOutcome::ResourceLimited
