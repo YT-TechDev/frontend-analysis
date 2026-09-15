@@ -1740,13 +1740,16 @@ fn block_var_decimal_initializer_non_decimal_initializers_remain_unsupported_cov
     // `IdentifierReference` initializer a selected accepted form, and
     // Issue #713 additionally admits a selected escaped non-ReservedWord
     // `IdentifierReference` initializer (see the "Issue #710" / "Issue
-    // #713" test sections below).
+    // #713" test sections below). "{ var a=\u0069f; }" is deliberately
+    // not listed here either: Issue #715 makes that escaped-ReservedWord
+    // RHS reach complete selected recognition, so it is no longer
+    // `UnsupportedCoverage` (see the "Issue #715" test section below; it
+    // instead reaches `StaticSemanticsRejected` via `EE-04-R08`).
     for text in [
         "{ var a=true; }",
         "{ var a=null; }",
         "{ var a=this; }",
         r#"{ var a="x"; }"#,
-        r"{ var a=\u0069f; }",
     ] {
         assert!(
             matches!(
@@ -1902,12 +1905,33 @@ fn block_var_escaped_identifier_reference_initializer_does_not_become_bound_name
     assert_static_semantics_rejected(&text, "x", (13, 14));
 }
 
+// --- Issue #715: one-level Block `var` widened to a selected escaped -----
+// ReservedWord `IdentifierName` initializer source position (existing
+// `EE-04-R08`)
+//
+// These focused production tests exercise the real production entry point
+// (`attempt_selected_qualification`) with independently authored expected
+// values, sealing the candidate against the accepted #688-comment-5683929558
+// theorem. They reuse the existing #340/#341/#342/#343 top-level C6 oracle
+// authority and the accepted Block-var Tier-1/transactionality lineage
+// rather than cloning a new oracle.
+
 #[test]
-fn block_var_escaped_reserved_identifier_reference_initializer_remains_unsupported_coverage() {
-    // W5 (escaped-ReservedWord firewall) at the production entry point: an
-    // escaped spelling that decodes to a ReservedWord remains outside this
-    // leaf's accepted Block-var RHS profile.
+fn block_var_escaped_reserved_identifier_name_initializer_reaches_ee04_r08() {
+    // W5 successor: an escaped spelling that the shared recognizer
+    // classifies as a ReservedWord now reaches complete selected
+    // recognition and the existing EE-04-R08 static rejection, at the
+    // production entry point, rather than remaining `UnsupportedCoverage`.
     let text = format!("{{ var x={}; }}", escaped_first_ascii_code_point("if"));
+    assert_static_semantics_rejected(&text, r"\u0069f", (8, 15));
+}
+
+#[test]
+fn block_var_escaped_reserved_identifier_name_initializer_no_prefix_commit() {
+    // Richer-expression / no-prefix-commit firewall: a member-expression
+    // suffix after the escaped ReservedWord `IdentifierName` keeps the
+    // whole statement outside this leaf's accepted profile.
+    let text = format!("{{ var x={}.foo; }}", escaped_first_ascii_code_point("if"));
     assert!(
         matches!(
             attempt(&text),
@@ -1915,4 +1939,32 @@ fn block_var_escaped_reserved_identifier_reference_initializer_remains_unsupport
         ),
         "{text:?}"
     );
+}
+
+#[test]
+fn block_var_escaped_reserved_identifier_name_initializer_transactional_rollback() {
+    // Whole-source transactionality: a later declarator that prevents
+    // complete selected recognition must not let the tentative C6 fact
+    // from an earlier declarator escape as a committed candidate.
+    let text = format!("{{ var x={},y=; }}", escaped_first_ascii_code_point("if"));
+    assert!(
+        matches!(
+            attempt(&text),
+            SelectedQualificationAttempt::UnsupportedCoverage
+        ),
+        "{text:?}"
+    );
+}
+
+#[test]
+fn block_var_escaped_reserved_identifier_name_initializer_correspondence_suppression() {
+    // Correspondence suppression: a completely recognized source that
+    // reaches the escaped-ReservedWord initializer rejects during static
+    // semantics before any static-acceptance witness exists, so
+    // correspondence never produces a committed relation from it.
+    let text = format!(
+        "{{ var a=foo,x={}; }}",
+        escaped_first_ascii_code_point("if")
+    );
+    assert_static_semantics_rejected(&text, r"\u0069f", (14, 21));
 }

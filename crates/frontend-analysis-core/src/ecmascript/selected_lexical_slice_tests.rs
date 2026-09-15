@@ -2253,12 +2253,15 @@ fn one_level_block_var_identifier_reference_initializer_transactional_failure_co
     // carrying a committed RHS fact (e.g. "x=a" in "{ var x=a,y=; }", or
     // "x=\u0066oo" in "{ var x=\u0066oo,y=; }") must never escape as part
     // of a committed statement when a later list element prevents statement
-    // completion.
+    // completion. "x=\u0069f" (Issue #715 classification-only C6 evidence)
+    // must be held to the same rollback discipline: it must not escape as a
+    // committed tentative fact when a later declarator (e.g. "y=" in
+    // "{ var x=\u0069f,y=; }") prevents statement completion.
     for text in [
         "{ var x=a,y=; }",
         "{ var x=a,y=true; }",
         r"{ var x=\u0066oo,y=; }",
-        r"{ var x=a,y=\u0069f; }",
+        r"{ var x=\u0069f,y=; }",
         "{ var x=a }",
     ] {
         assert_unsupported(text);
@@ -2266,14 +2269,119 @@ fn one_level_block_var_identifier_reference_initializer_transactional_failure_co
 }
 
 #[test]
-fn one_level_block_var_escaped_reserved_identifier_reference_initializer_remains_unsupported() {
-    // W5 (escaped-ReservedWord firewall): an escaped spelling that the
-    // shared recognizer classifies as a ReservedWord must remain outside
-    // this leaf's accepted Block-var RHS profile even though the escaped
-    // non-ReservedWord sibling is now accepted by #713.
-    for text in [r"{ var x=\u0069f; }", r"{ var x=\u{69}f; }"] {
+fn one_level_block_var_escaped_reserved_identifier_name_initializer_no_prefix_commit() {
+    // Richer-expression / no-prefix-commit firewall (Issue #715): a
+    // member-expression suffix after the escaped ReservedWord
+    // `IdentifierName` keeps the whole statement outside this leaf's
+    // accepted profile; the recognizer must not commit a C6 candidate from
+    // "\u0069f" and silently ignore the ".foo" suffix.
+    for text in [r"{ var x=\u0069f.foo; }", r"{ var x=\u{69}f.foo; }"] {
         assert_unsupported(text);
     }
+}
+
+#[test]
+fn one_level_block_var_escaped_reserved_initializer_retains_classification_only_exact_anchor() {
+    // Issue #715: an escaped spelling that the shared recognizer classifies
+    // as a ReservedWord now reaches complete selected recognition through
+    // the Block-var RHS position, retaining only a classification-only
+    // exact authored initializer anchor (not a `SelectedIdentifierReferenceFact`
+    // and not the decoded semantic name) for the later Tier-1 `EE-04-R08`
+    // static-semantics consumer, mirroring the accepted top-level var C6
+    // theorem (#340/#341/#342/#343).
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+
+    for (text, expected_fragment, expected_range) in [
+        (r"{ var x=\u0069f; }", r"\u0069f", (8, 15)),
+        (r"{ var x=n\u0075ll; }", r"n\u0075ll", (8, 17)),
+        (r"{ var x=\u{69}f; }", r"\u{69}f", (8, 15)),
+    ] {
+        let script = recognized_block(text);
+        let [SelectedTopLevelItem::Block(block)] = script.items() else {
+            panic!("expected exactly one Block item for {text:?}");
+        };
+        let [SelectedBlockItem::Var(statement)] = block.items() else {
+            panic!("expected exactly one Block var statement for {text:?}");
+        };
+        let [binding] = statement.bindings() else {
+            panic!("expected exactly one Block var declarator for {text:?}");
+        };
+        assert!(
+            binding.identifier_reference_initializer().is_none(),
+            "{text}"
+        );
+        let identifier = binding
+            .escaped_reserved_initializer_identifier()
+            .expect("C6 initializer must retain classification-only authored evidence");
+        assert_eq!(identifier.fragment(), expected_fragment, "{text}");
+        assert_eq!(
+            (identifier.range().start(), identifier.range().end()),
+            expected_range,
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn one_level_block_var_escaped_reserved_initializer_preserves_per_binding_cardinality_and_order() {
+    // Multi-declarator authored Tier-1 ordering (Issue #715): distinct
+    // declarators retain independent C6/C1/absent states in exact authored
+    // order, matching the accepted top-level var cardinality theorem.
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+
+    let text = r"{ var a=1,b=\u0069f,c; }";
+    let script = recognized_block(text);
+    let [SelectedTopLevelItem::Block(block)] = script.items() else {
+        panic!("expected exactly one Block item");
+    };
+    let [SelectedBlockItem::Var(statement)] = block.items() else {
+        panic!("expected exactly one Block var statement");
+    };
+    assert_eq!(statement.bindings().len(), 3);
+    assert!(
+        statement.bindings()[0]
+            .escaped_reserved_initializer_identifier()
+            .is_none()
+    );
+    let second = statement.bindings()[1]
+        .escaped_reserved_initializer_identifier()
+        .expect("second declarator C6 evidence");
+    assert_eq!((second.range().start(), second.range().end()), (12, 19));
+    assert!(
+        statement.bindings()[2]
+            .escaped_reserved_initializer_identifier()
+            .is_none()
+    );
+
+    let text = r"{ var a=\u0066oo,b=\u0069f; }";
+    let script = recognized_block(text);
+    let [SelectedTopLevelItem::Block(block)] = script.items() else {
+        panic!("expected exactly one Block item");
+    };
+    let [SelectedBlockItem::Var(statement)] = block.items() else {
+        panic!("expected exactly one Block var statement");
+    };
+    let c1 = statement.bindings()[0]
+        .identifier_reference_initializer()
+        .expect("first declarator must remain C1");
+    assert_eq!(
+        (c1.reference().range().start(), c1.reference().range().end()),
+        (8, 16)
+    );
+    assert!(
+        statement.bindings()[0]
+            .escaped_reserved_initializer_identifier()
+            .is_none()
+    );
+    let c6 = statement.bindings()[1]
+        .escaped_reserved_initializer_identifier()
+        .expect("second declarator must retain C6 evidence");
+    assert_eq!((c6.range().start(), c6.range().end()), (19, 26));
+    assert!(
+        statement.bindings()[1]
+            .identifier_reference_initializer()
+            .is_none()
+    );
 }
 
 #[test]
@@ -2298,15 +2406,16 @@ fn one_level_block_var_non_decimal_initializers_remain_unsupported() {
     // `IdentifierReference` initializer a selected accepted form, and Issue
     // #713 additionally admits a selected escaped non-ReservedWord
     // `IdentifierReference` initializer (see the "Issue #710" / "Issue
-    // #713" test sections below). An escaped spelling that decodes to a
-    // ReservedWord remains outside this leaf's profile even though the
-    // shared recognizer can match it.
+    // #713" test sections below). "{ var a=\u0069f; }" is also deliberately
+    // not listed here: Issue #715 makes that escaped-ReservedWord RHS reach
+    // complete selected recognition (see the classification-only C6 tests
+    // above), so it is no longer `UnsupportedCoverage` at this recognizer
+    // layer even though it later rejects in static semantics.
     for text in [
         "{ var a=true; }",
         "{ var a=null; }",
         "{ var a=this; }",
         r#"{ var a="x"; }"#,
-        r"{ var a=\u0069f; }",
     ] {
         assert_unsupported(text);
     }
@@ -2459,10 +2568,6 @@ fn one_level_block_var_escaped_identifier_reference_name_policy_preserves_c1_c6_
         assert_eq!(reference.reference().fragment(), rhs, "{text}");
         assert_eq!(reference.semantic_name(), expected_semantic, "{text}");
     }
-
-    // W5 negative control: the escaped-ReservedWord sibling stays outside
-    // this leaf even under the same name-policy machinery.
-    assert_unsupported(r"{ var x=\u0069f; }");
 }
 
 #[test]

@@ -1094,3 +1094,196 @@ fn var_escaped_reserved_initializer_precedes_lower_tiers() {
         }
     }
 }
+
+// --- Issue #715: one-level Block `var` widened to a selected escaped -----
+// ReservedWord `IdentifierName` initializer source position (existing
+// `EE-04-R08`).
+//
+// These focused production tests seal the candidate against the accepted
+// #688-comment-5683929558 theorem with independently authored expected
+// values, reusing the existing #340/#341/#342/#343 top-level C6 rejection
+// identity/ordering authority and the accepted Block-var Tier-1 lineage
+// (mirroring `var_escaped_reserved_initializer_*` above) rather than
+// cloning a new oracle. Both applicable Block static routes
+// (`SelectedOneLevelBlockStaticSemanticsAccepted` and
+// `SelectedVariableStatementStaticSemanticsAccepted`) are exercised.
+
+#[test]
+fn one_level_block_var_escaped_reserved_initializer_reuses_ee04_rhs_rejection_with_exact_evidence()
+{
+    for (text, expected_fragment, expected_range) in [
+        (r"{ var x=\u0069f; }", r"\u0069f", (8, 15)),
+        (r"{ var x=n\u0075ll; }", r"n\u0075ll", (8, 17)),
+    ] {
+        let (_, script) = recognized_block(text);
+        match evaluate_selected_one_level_block_static_semantics(&script) {
+            SelectedOneLevelBlockStaticSemanticsOutcome::Rejected(
+                SelectedStaticSemanticsRejection::EscapedReservedWordInitializer { identifier },
+            ) => {
+                assert_eq!(identifier.fragment(), expected_fragment, "{text}");
+                assert_eq!(
+                    (identifier.range().start(), identifier.range().end()),
+                    expected_range,
+                    "{text}"
+                );
+            }
+            other => {
+                panic!("expected Block var RHS EE-04-R08 rejection for {text:?}, got {other:?}")
+            }
+        }
+    }
+}
+
+#[test]
+fn variable_route_block_var_escaped_reserved_initializer_reuses_ee04_rhs_rejection() {
+    // Both applicable Block static routes reach the same rejection identity
+    // and exact evidence for the same Block-var C6 source.
+    let (_, script) = recognized_variable(r"var a; { var x=\u0069f; }");
+    match evaluate_selected_variable_statement_static_semantics(&script) {
+        SelectedVariableStatementStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::EscapedReservedWordInitializer { identifier },
+        ) => {
+            assert_eq!(identifier.fragment(), r"\u0069f");
+            assert_eq!(
+                (identifier.range().start(), identifier.range().end()),
+                (15, 22)
+            );
+        }
+        other => panic!("expected var-enabled-route Block var RHS EE-04-R08 rejection: {other:?}"),
+    }
+}
+
+#[test]
+fn one_level_block_var_escaped_reserved_initializer_preserves_same_declarator_and_tier_one_order() {
+    // Same-declarator LHS binding-local rejection must precede RHS C6.
+    let (_, script) = recognized_block(r"{ var \u0069f=\u0074his; }");
+    match evaluate_selected_one_level_block_static_semantics(&script) {
+        SelectedOneLevelBlockStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::EscapedReservedWord { binding },
+        ) => assert_eq!((binding.range().start(), binding.range().end()), (6, 13)),
+        other => panic!("LHS EE-04 must precede same-declarator RHS C6: {other:?}"),
+    }
+
+    // Earlier authored Block item's local rejection precedes a later item's
+    // C6 (authored Tier-1 order).
+    let (_, script) = recognized_block(r"{ let let; var x=\u0069f; }");
+    match evaluate_selected_one_level_block_static_semantics(&script) {
+        SelectedOneLevelBlockStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::BindingNamedLet { binding },
+        ) => assert_eq!((binding.range().start(), binding.range().end()), (6, 9)),
+        other => panic!("earlier Tier-1 local rejection must precede later C6: {other:?}"),
+    }
+
+    // A reached earlier C6 precedes a later authored item's local
+    // rejection.
+    let (_, script) = recognized_block(r"{ var x=\u0069f; let let; }");
+    match evaluate_selected_one_level_block_static_semantics(&script) {
+        SelectedOneLevelBlockStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::EscapedReservedWordInitializer { identifier },
+        ) => assert_eq!(
+            (identifier.range().start(), identifier.range().end()),
+            (8, 15)
+        ),
+        other => panic!("earlier C6 must precede later Tier-1 local rejection: {other:?}"),
+    }
+
+    // Multiple declarators in the same statement: authored order selects
+    // the first reached C6.
+    let (_, script) = recognized_block(r"{ var a=\u0069f,b=\u0074his; }");
+    match evaluate_selected_one_level_block_static_semantics(&script) {
+        SelectedOneLevelBlockStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::EscapedReservedWordInitializer { identifier },
+        ) => assert_eq!(
+            (identifier.range().start(), identifier.range().end()),
+            (8, 15)
+        ),
+        other => panic!("authored declarator order must select first reached RHS C6: {other:?}"),
+    }
+}
+
+#[test]
+fn one_level_block_var_escaped_reserved_initializer_precedes_lower_tiers() {
+    // C6 outranks Block EE-14-R01 (own-Block lexical duplicate).
+    let (_, script) = recognized_block(r"{ let a; let a; var x=\u0069f; }");
+    match evaluate_selected_one_level_block_static_semantics(&script) {
+        SelectedOneLevelBlockStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::EscapedReservedWordInitializer { identifier },
+        ) => assert_eq!(
+            (identifier.range().start(), identifier.range().end()),
+            (22, 29)
+        ),
+        other => panic!("C6 must precede Block EE-14-R01: {other:?}"),
+    }
+
+    // C6 outranks Block EE-14-R02 (own-Block lexical/var collision).
+    let (_, script) = recognized_block(r"{ let a; var x=\u0069f,a; }");
+    match evaluate_selected_one_level_block_static_semantics(&script) {
+        SelectedOneLevelBlockStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::EscapedReservedWordInitializer { identifier },
+        ) => assert_eq!(
+            (identifier.range().start(), identifier.range().end()),
+            (15, 22)
+        ),
+        other => panic!("C6 must precede Block EE-14-R02: {other:?}"),
+    }
+
+    // C6 outranks Script EE-36-R01 (top-level lexical duplicate), one-level
+    // Block route.
+    let (_, script) = recognized_block(r"let z; let z; { var x=\u0069f; }");
+    match evaluate_selected_one_level_block_static_semantics(&script) {
+        SelectedOneLevelBlockStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::EscapedReservedWordInitializer { identifier },
+        ) => assert_eq!(
+            (identifier.range().start(), identifier.range().end()),
+            (22, 29)
+        ),
+        other => panic!("C6 must precede Script EE-36-R01: {other:?}"),
+    }
+
+    // C6 outranks Script EE-36-R02 (top-level lexical vs. Block-var
+    // collision), one-level Block route.
+    let (_, script) = recognized_block(r"let a; { var x=\u0069f,a; }");
+    match evaluate_selected_one_level_block_static_semantics(&script) {
+        SelectedOneLevelBlockStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::EscapedReservedWordInitializer { identifier },
+        ) => assert_eq!(
+            (identifier.range().start(), identifier.range().end()),
+            (15, 22)
+        ),
+        other => panic!("C6 must precede Script EE-36-R02 (Block route): {other:?}"),
+    }
+
+    // C6 outranks Script EE-36-R02, variable-enabled route.
+    let (_, script) = recognized_variable(r"let a; var b; { var x=\u0069f,a; }");
+    match evaluate_selected_variable_statement_static_semantics(&script) {
+        SelectedVariableStatementStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::EscapedReservedWordInitializer { identifier },
+        ) => assert_eq!(
+            (identifier.range().start(), identifier.range().end()),
+            (22, 29)
+        ),
+        other => panic!("C6 must precede Script EE-36-R02 (var-enabled route): {other:?}"),
+    }
+}
+
+#[test]
+fn one_level_block_var_escaped_reserved_initializer_regressions_remain_accepted() {
+    // Existing accepted Block-var RHS forms remain accepted: absent,
+    // decimal, direct IdentifierReference, and escaped non-ReservedWord
+    // IdentifierReference initializers are unaffected by the new C6 route.
+    for text in [
+        "{ var x; }",
+        "{ var x=1; }",
+        "{ var x=a; }",
+        r"{ var x=\u0061; }",
+    ] {
+        let (_, script) = recognized_block(text);
+        assert!(
+            matches!(
+                evaluate_selected_one_level_block_static_semantics(&script),
+                SelectedOneLevelBlockStaticSemanticsOutcome::Accepted(_)
+            ),
+            "{text}"
+        );
+    }
+}

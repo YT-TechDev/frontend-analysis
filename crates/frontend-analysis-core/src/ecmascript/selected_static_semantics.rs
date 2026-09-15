@@ -281,16 +281,27 @@ fn evaluate_selected_variable_binding_local_static_semantics(
 /// Tier-1 binding-local obligations for one declarator of a Block-contained
 /// `var` statement (Issue #688/#691, widened to `1..N` declarators by #695,
 /// widened to an optional selected decimal-integer initializer per
-/// declarator by #699). `SelectedBlockVarBinding` retains no
-/// initializer-specific fact, so only the shared escaped-identifier /
-/// reserved-word checks apply; the lexical-only `BindingNamedLet`
-/// restriction does not extend to `VariableStatement` bindings, matching the
-/// existing top-level var treatment.
+/// declarator by #699, widened to the same-declarator escaped-ReservedWord
+/// initializer `EE-04-R08` check by #715, reusing the existing top-level var
+/// `SelectedStaticSemanticsRejection::EscapedReservedWordInitializer`
+/// rejection identity and same-declarator LHS-before-RHS ordering). The
+/// lexical-only `BindingNamedLet` restriction does not extend to
+/// `VariableStatement` bindings, matching the existing top-level var
+/// treatment.
 fn evaluate_selected_block_var_binding_local_static_semantics(
     binding: &SelectedBlockVarBinding,
 ) -> Result<(), SelectedDeclarationCheckFailure> {
     let _ =
         evaluate_selected_binding_name_static_semantics(binding.binding(), binding.name_state())?;
+
+    if let Some(identifier) = binding.escaped_reserved_initializer_identifier() {
+        return Err(SelectedDeclarationCheckFailure::Rejected(
+            SelectedStaticSemanticsRejection::EscapedReservedWordInitializer {
+                identifier: identifier.clone(),
+            },
+        ));
+    }
+
     Ok(())
 }
 
