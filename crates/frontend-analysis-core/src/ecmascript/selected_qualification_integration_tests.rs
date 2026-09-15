@@ -1735,15 +1735,17 @@ fn block_var_decimal_initializer_numeric_neighbors_remain_unsupported_coverage()
 
 #[test]
 fn block_var_decimal_initializer_non_decimal_initializers_remain_unsupported_coverage() {
-    // "{ var a=foo; }" is deliberately not listed here: Issue #710 makes a
-    // direct-authored, escape-free `IdentifierReference` initializer a
-    // selected accepted form (see the "Issue #710" test section below).
+    // "{ var a=foo; }" and "{ var a=\u0066oo; }" are deliberately not
+    // listed here: Issue #710 makes a direct-authored, escape-free
+    // `IdentifierReference` initializer a selected accepted form, and
+    // Issue #713 additionally admits a selected escaped non-ReservedWord
+    // `IdentifierReference` initializer (see the "Issue #710" / "Issue
+    // #713" test sections below).
     for text in [
         "{ var a=true; }",
         "{ var a=null; }",
         "{ var a=this; }",
         r#"{ var a="x"; }"#,
-        r"{ var a=\u0066oo; }",
         r"{ var a=\u0069f; }",
     ] {
         assert!(
@@ -1842,4 +1844,75 @@ fn block_var_direct_identifier_reference_initializer_does_not_become_bound_name_
         SelectedQualificationAttempt::SelectedAcceptedIncomplete
     ));
     assert_static_semantics_rejected("{ let x; var x=a; }", "x", (13, 14));
+}
+
+// --- Issue #713: one-level Block `var` widened to a selected escaped ------
+// non-ReservedWord `IdentifierReference` initializer
+//
+// These focused production tests exercise the real production entry point
+// (`attempt_selected_qualification`) with independently authored expected
+// values, sealing the candidate against the accepted #712/#713 theorem.
+// `escaped_first_ascii_code_point` (defined above) builds the escaped RHS
+// spelling programmatically so this section never hand-types a literal
+// ECMAScript `\uXXXX` escape.
+
+#[test]
+fn block_var_escaped_identifier_reference_initializer_is_selected_accepted_incomplete() {
+    for text in [
+        format!("{{ var x={}; }}", escaped_first_ascii_code_point("a")),
+        format!("{{ var x={},y=b; }}", escaped_first_ascii_code_point("foo")),
+        format!(
+            "{{ var x=1,y={},z; }}",
+            escaped_first_ascii_code_point("bar")
+        ),
+        format!(
+            "{{ var x={},y=2,z={}; }}",
+            escaped_first_ascii_code_point("a"),
+            escaped_first_ascii_code_point("b"),
+        ),
+    ] {
+        assert!(
+            matches!(
+                attempt(&text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn block_var_escaped_identifier_reference_initializer_does_not_become_bound_name_evidence() {
+    // Escaped counterpart of the #710 W7 seal: an escaped Block-var RHS
+    // reference must never participate in BoundNames/EE-14/EE-36 collision
+    // detection; only the LHS `BindingIdentifier` does.
+    let text = format!(
+        "{{ let a; var x={}; }}",
+        escaped_first_ascii_code_point("a")
+    );
+    assert!(matches!(
+        attempt(&text),
+        SelectedQualificationAttempt::SelectedAcceptedIncomplete
+    ));
+
+    let text = format!(
+        "{{ let x; var x={}; }}",
+        escaped_first_ascii_code_point("a")
+    );
+    assert_static_semantics_rejected(&text, "x", (13, 14));
+}
+
+#[test]
+fn block_var_escaped_reserved_identifier_reference_initializer_remains_unsupported_coverage() {
+    // W5 (escaped-ReservedWord firewall) at the production entry point: an
+    // escaped spelling that decodes to a ReservedWord remains outside this
+    // leaf's accepted Block-var RHS profile.
+    let text = format!("{{ var x={}; }}", escaped_first_ascii_code_point("if"));
+    assert!(
+        matches!(
+            attempt(&text),
+            SelectedQualificationAttempt::UnsupportedCoverage
+        ),
+        "{text:?}"
+    );
 }

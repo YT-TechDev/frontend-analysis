@@ -391,13 +391,14 @@ fn append_binding_relation<'script>(
 }
 
 // Block-var analog of `append_binding_relation` for the exact containing
-// `SelectedBlockVarBinding` (Issue #710). A direct RHS relation is owned by
-// its exact containing Block-var declarator, using the same current-region,
-// current-Block-lexical-precedence, top-level-lexical-fallback, and
-// all-selected-var-contributor semantics as every other correspondence
-// input; no fourth correspondence meaning is introduced. Decimal and absent
-// initializers carry no `identifier_reference_initializer` fact and
-// contribute no relation.
+// `SelectedBlockVarBinding` (Issue #710, widened to an escaped
+// non-ReservedWord RHS by Issue #713). A direct or escaped RHS relation is
+// owned by its exact containing Block-var declarator, using the same
+// current-region, current-Block-lexical-precedence,
+// top-level-lexical-fallback, and all-selected-var-contributor semantics as
+// every other correspondence input; no fourth correspondence meaning is
+// introduced. Decimal and absent initializers carry no
+// `identifier_reference_initializer` fact and contribute no relation.
 fn append_block_var_binding_relation<'script>(
     binding: &'script SelectedBlockVarBinding,
     current_region: SelectedVariableStatementNameCorrespondenceRegion<'script>,

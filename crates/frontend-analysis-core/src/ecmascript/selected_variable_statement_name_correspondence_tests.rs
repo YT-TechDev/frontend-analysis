@@ -1513,3 +1513,190 @@ fn one_level_block_var_direct_identifier_reference_q_prefix_correspondence_proje
         SelectedLexicalSliceOutcome::RecognizedVariableStatementSlice(_)
     ));
 }
+
+// --- Issue #713: one-level Block `var` widened to a selected escaped ------
+// non-ReservedWord `IdentifierReference` initializer, with a source-name
+// correspondence relation reusing the exact same #710 relation owner and
+// every existing correspondence meaning/precedence.
+//
+// These focused production tests seal the candidate against the accepted
+// #712/#713 theorem with independently authored expected values rather
+// than values derived from production output. No fourth correspondence
+// meaning or parallel type hierarchy is introduced.
+
+#[test]
+fn one_level_block_var_escaped_identifier_reference_relation_retains_exact_binding_reference_and_region()
+ {
+    // Escaped counterpart of the #710 direct-RHS identity seal: exact
+    // containing binding = x, exact reference = \u0061, decoded semantic
+    // name = "a", current region = Block, exactly one correspondence
+    // relation.
+    let (_, script) = recognized_one_level_block(r"{ var x=\u0061; }");
+    let analysis = accepted_one_level_block_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(range(relation.containing_binding()), (6, 7));
+    assert_eq!(range(relation.reference()), (8, 14));
+    assert_eq!(relation.semantic_name(), "a");
+    assert!(matches!(
+        relation.current_region(),
+        SelectedVariableStatementNameCorrespondenceRegion::Block(_)
+    ));
+}
+
+#[test]
+fn one_level_block_var_escaped_identifier_reference_reuses_existing_correspondence_precedence() {
+    // W9 (kills a widened-domain-bypasses-lexical-precedence model): an
+    // escaped Block-var RHS relation reuses this module's single existing
+    // correspondence semantic owner and precedence rather than a new
+    // meaning. Current-Block lexical precedence still wins first...
+    let (_, script) = recognized_one_level_block(r"{ let a; var x=\u0061; }");
+    let analysis = accepted_one_level_block_analysis(&script);
+    let relation = one_relation(&analysis);
+    let (binding, region) = relation
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("current-Block lexical binding must win over the widened var domain");
+    assert_eq!(range(binding), (6, 7));
+    assert!(matches!(
+        region,
+        SelectedVariableStatementNameCorrespondenceRegion::Block(_)
+    ));
+    assert!(relation.correspondence().var_contributors().is_none());
+
+    // ...and, absent a current-Block or top-level lexical binding, the
+    // existing all-selected-var contributor domain (#701/#703) still
+    // applies to an escaped RHS exactly as it does for a direct one.
+    let (_, script) = recognized_one_level_block(r"{ var a; var x=\u0061; }");
+    let analysis = accepted_one_level_block_analysis(&script);
+    let relation = one_relation(&analysis);
+    let contributors = relation
+        .correspondence()
+        .var_contributors()
+        .expect("existing all-selected-var contributor domain must still apply");
+    assert_eq!(contributors.len(), 1);
+    assert_eq!(range(contributors[0]), (6, 7));
+}
+
+#[test]
+fn one_level_block_var_escaped_identifier_reference_reaches_top_level_lexical_fallback() {
+    // Precedence step 2 (kills a "widened escaped RHS domain skips the
+    // top-level lexical fallback and falls straight through to the var
+    // contributor domain, or to NoSelectedSameSourceContributor" model): an
+    // escaped Block-var RHS with no current-Block lexical binding of the
+    // same decoded name must still reach the existing Block-origin
+    // top-level lexical fallback, exactly as the direct RHS case does
+    // (`one_level_block_top_level_lexical_fallback_is_reachable_from_block_reference`
+    // above), before any var-contributor or no-contributor branch is
+    // considered.
+    let (_, script) = recognized_one_level_block("let a;\n{ var x=\\u0061; }");
+    let analysis = accepted_one_level_block_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(relation.semantic_name(), "a");
+
+    let (binding, region) = relation
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("top-level lexical fallback must remain reachable for an escaped RHS");
+    assert_eq!(range(binding), (4, 5));
+    assert!(matches!(
+        region,
+        SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+    ));
+    assert!(relation.correspondence().var_contributors().is_none());
+}
+
+#[test]
+fn one_level_block_var_and_lexical_relations_follow_mixed_authored_item_order_with_escaped_rhs() {
+    // V3/W12 (load-bearing): an escaped Block-var RHS of variable authored
+    // byte length must not disturb exact authored `block.items()` relation
+    // order. Kills both "lexical relations first, then var relations" and
+    // "var relations first, then lexical relations" wrong models even when
+    // one var declarator's authored RHS is longer than its decoded name.
+    let (_, script) = recognized_one_level_block(r"{ let p=q; var x=\u0061; let r=s; var y=b; }");
+    let analysis = accepted_one_level_block_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(relations.len(), 4);
+
+    let semantic_names: Vec<_> = relations.iter().map(|r| r.semantic_name()).collect();
+    assert_eq!(semantic_names, ["q", "a", "s", "b"]);
+
+    let containing_bindings: Vec<_> = relations
+        .iter()
+        .map(|r| range(r.containing_binding()))
+        .collect();
+    assert_eq!(containing_bindings, [(6, 7), (15, 16), (29, 30), (38, 39)]);
+
+    let reference_ranges: Vec<_> = relations.iter().map(|r| range(r.reference())).collect();
+    assert_eq!(reference_ranges, [(8, 9), (17, 23), (31, 32), (40, 41)]);
+}
+
+#[test]
+fn one_level_block_var_escaped_identifier_reference_q_prefix_correspondence_projection_matches_variable_statement_witness()
+ {
+    // W14 (kills a witness-route asymmetry model): the same Block-var
+    // escaped RHS relation must be produced by both accepted-witness
+    // routes, exactly as already proven for the direct RHS case.
+    const PREFIX_LEN: usize = "var q;\n".len();
+
+    let (_, one_level_block_script) = recognized_one_level_block(r"{ var x=\u0061; }");
+    let one_level_block_analysis = accepted_one_level_block_analysis(&one_level_block_script);
+    let one_level_block_relation = one_relation(&one_level_block_analysis);
+
+    let (_, variable_statement_script) = recognized_variable("var q;\n{ var x=\\u0061; }");
+    let variable_statement_analysis = accepted_analysis(&variable_statement_script);
+    let variable_statement_relation = one_relation(&variable_statement_analysis);
+
+    assert_eq!(one_level_block_relation.semantic_name(), "a");
+    assert_eq!(
+        one_level_block_relation.semantic_name(),
+        variable_statement_relation.semantic_name()
+    );
+
+    let base_binding = range(one_level_block_relation.containing_binding());
+    let prefixed_binding = range(variable_statement_relation.containing_binding());
+    assert_eq!(base_binding.0 + PREFIX_LEN, prefixed_binding.0);
+    assert_eq!(base_binding.1 + PREFIX_LEN, prefixed_binding.1);
+
+    let base_reference = range(one_level_block_relation.reference());
+    let prefixed_reference = range(variable_statement_relation.reference());
+    assert_eq!(base_reference.0 + PREFIX_LEN, prefixed_reference.0);
+    assert_eq!(base_reference.1 + PREFIX_LEN, prefixed_reference.1);
+}
+
+#[test]
+fn one_level_block_var_escaped_identifier_reference_composition_matches_differently_spelled_contributor_without_unicode_normalization()
+ {
+    // W10/W8: a Block-var escaped RHS matches a same-source contributor by
+    // decoded semantic name even when the contributor's authored spelling
+    // differs (a direct composed "\u{e9}" contributor matched by an escaped
+    // "\u00E9" RHS reference), and Unicode normalization never creates a
+    // false match: a decoded decomposed sequence ("e" + combining acute)
+    // remains code-point-distinct from the composed contributor and finds
+    // no same-source contributor.
+    let (_, script) =
+        recognized_variable("var \u{e9}; { var x=\\u00E9; } { var y=\\u0065\\u0301; }");
+    let analysis = accepted_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(relations.len(), 2);
+
+    assert_eq!(range(relations[0].containing_binding()), (14, 15));
+    assert_eq!(range(relations[0].reference()), (16, 22));
+    assert_eq!(relations[0].semantic_name(), "\u{e9}");
+    let contributors = relations[0]
+        .correspondence()
+        .var_contributors()
+        .expect("escaped composed RHS must match the differently-spelled direct contributor");
+    assert_eq!(contributors.len(), 1);
+    assert_eq!(range(contributors[0]), (4, 6));
+    assert_eq!(contributors[0].fragment(), "\u{e9}");
+
+    assert_eq!(range(relations[1].containing_binding()), (32, 33));
+    assert_eq!(range(relations[1].reference()), (34, 46));
+    assert_eq!(relations[1].semantic_name().chars().count(), 2);
+    assert_ne!(relations[1].semantic_name(), "\u{e9}");
+    assert!(
+        relations[1]
+            .correspondence()
+            .is_no_selected_same_source_contributor()
+    );
+}
