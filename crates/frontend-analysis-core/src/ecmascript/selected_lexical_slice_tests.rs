@@ -2034,7 +2034,6 @@ fn one_level_block_var_statement_commits_no_partial_declarator_prefix_on_later_f
         "{ var x, ; }",
         "{ var x, y, ; }",
         "{ var x, y = ; }",
-        "{ var x, y }",
         "{ var x, /* c */ y; }",
         "{ var x, y /* c */; }",
     ] {
@@ -2262,7 +2261,6 @@ fn one_level_block_var_identifier_reference_initializer_transactional_failure_co
         "{ var x=a,y=true; }",
         r"{ var x=\u0066oo,y=; }",
         r"{ var x=\u0069f,y=; }",
-        "{ var x=a }",
     ] {
         assert_unsupported(text);
     }
@@ -2591,9 +2589,35 @@ fn one_level_block_var_escaped_identifier_reference_initializer_ee01_and_malform
 }
 
 #[test]
-fn one_level_block_var_decimal_initializer_requires_authored_semicolon() {
-    for text in ["{ var a=1 }", "{ var a=1,b=2 }"] {
-        assert_unsupported(text);
+fn one_level_block_var_decimal_initializer_composes_with_close_brace_asi() {
+    // Issue #717: a decimal initializer composes unchanged with the new
+    // bounded close-brace ASI terminator route.
+    use super::selected_lexical_slice::{
+        SelectedBlockItem, SelectedBlockVarStatementTerminator, SelectedTopLevelItem,
+    };
+
+    for (text, expected_names) in [
+        ("{ var a=1 }", &["a"][..]),
+        ("{ var a=1,b=2 }", &["a", "b"][..]),
+    ] {
+        let script = recognized_block(text);
+        let [SelectedTopLevelItem::Block(block)] = script.items() else {
+            panic!("expected exactly one Block item for {text:?}");
+        };
+        let [SelectedBlockItem::Var(statement)] = block.items() else {
+            panic!("expected exactly one Block var statement for {text:?}");
+        };
+        assert_eq!(
+            statement.terminator(),
+            SelectedBlockVarStatementTerminator::AutomaticBeforeBlockClose,
+            "{text:?}"
+        );
+        let names: Vec<_> = statement
+            .bindings()
+            .iter()
+            .map(|binding| binding.binding().fragment())
+            .collect();
+        assert_eq!(names, expected_names, "{text:?}");
     }
 }
 
@@ -2622,6 +2646,210 @@ fn one_level_block_var_decimal_initializer_transactional_failure_commits_no_pref
     let subject = grammar_rejection(r"{ var a=1,b,\u{}=2; }");
     assert_eq!(subject.fragment(), r"\u{}");
     assert_eq!((subject.range().start(), subject.range().end()), (12, 16));
+}
+
+// --- Issue #717: one-level Block `var` widened to admit bounded --------
+// close-brace ASI as an additional statement terminator
+//
+// These focused production tests exercise `recognize_selected_lexical_slice`
+// directly, sealing the new terminator route (statement-owned provenance,
+// close-brace ownership, and composition with every already-accepted
+// declarator shape) against the accepted #688-comment-5685046994 theorem
+// and the existing #318/#320 EOF-only ASI terminator-provenance precedent.
+
+#[test]
+fn one_level_block_var_close_brace_asi_retains_statement_owned_terminator_provenance() {
+    use super::selected_lexical_slice::{
+        SelectedBlockItem, SelectedBlockVarStatementTerminator, SelectedTopLevelItem,
+    };
+
+    for (text, expected_terminator) in [
+        (
+            "{ var x; }",
+            SelectedBlockVarStatementTerminator::AuthoredSemicolon,
+        ),
+        (
+            "{ var x }",
+            SelectedBlockVarStatementTerminator::AutomaticBeforeBlockClose,
+        ),
+        (
+            "{ var x   }",
+            SelectedBlockVarStatementTerminator::AutomaticBeforeBlockClose,
+        ),
+    ] {
+        let script = recognized_block(text);
+        let [SelectedTopLevelItem::Block(block)] = script.items() else {
+            panic!("expected exactly one Block item for {text:?}");
+        };
+        let [SelectedBlockItem::Var(statement)] = block.items() else {
+            panic!("expected exactly one Block var statement for {text:?}");
+        };
+        assert_eq!(statement.terminator(), expected_terminator, "{text:?}");
+        let [binding] = statement.bindings() else {
+            panic!("expected exactly one declarator for {text:?}");
+        };
+        assert_eq!(binding.binding().fragment(), "x", "{text:?}");
+        assert_eq!(
+            (
+                binding.binding().range().start(),
+                binding.binding().range().end()
+            ),
+            (6, 7),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn one_level_block_var_close_brace_asi_terminator_is_statement_owned_not_block_global() {
+    // One Block item terminated by authored `;` and a later one terminated
+    // by close-brace ASI must retain independent per-statement provenance,
+    // proving the terminator is not a Block-global flag.
+    use super::selected_lexical_slice::{
+        SelectedBlockItem, SelectedBlockVarStatementTerminator, SelectedTopLevelItem,
+    };
+
+    let script = recognized_block("{ var x; let y; var z }");
+    let [SelectedTopLevelItem::Block(block)] = script.items() else {
+        panic!("expected exactly one Block item");
+    };
+    let [
+        SelectedBlockItem::Var(first),
+        SelectedBlockItem::LexicalDeclaration(_),
+        SelectedBlockItem::Var(second),
+    ] = block.items()
+    else {
+        panic!("expected var, lexical, var Block items");
+    };
+    assert_eq!(
+        first.terminator(),
+        SelectedBlockVarStatementTerminator::AuthoredSemicolon
+    );
+    assert_eq!(
+        second.terminator(),
+        SelectedBlockVarStatementTerminator::AutomaticBeforeBlockClose
+    );
+}
+
+#[test]
+fn one_level_block_var_close_brace_asi_composes_with_existing_declarator_shapes() {
+    use super::selected_lexical_slice::{
+        SelectedBlockItem, SelectedBlockVarStatementTerminator, SelectedTopLevelItem,
+    };
+
+    for (text, expected_names) in [
+        ("{ var x }", &["x"][..]),
+        ("{ var x, y }", &["x", "y"][..]),
+        ("{ var x=a }", &["x"][..]),
+    ] {
+        let script = recognized_block(text);
+        let [SelectedTopLevelItem::Block(block)] = script.items() else {
+            panic!("expected exactly one Block item for {text:?}");
+        };
+        let [SelectedBlockItem::Var(statement)] = block.items() else {
+            panic!("expected exactly one Block var statement for {text:?}");
+        };
+        assert_eq!(
+            statement.terminator(),
+            SelectedBlockVarStatementTerminator::AutomaticBeforeBlockClose,
+            "{text:?}"
+        );
+        let names: Vec<_> = statement
+            .bindings()
+            .iter()
+            .map(|binding| binding.binding().fragment())
+            .collect();
+        assert_eq!(names, expected_names, "{text:?}");
+    }
+}
+
+#[test]
+fn one_level_block_var_close_brace_asi_composes_with_escaped_initializers() {
+    use super::selected_lexical_slice::{
+        SelectedBlockItem, SelectedBlockVarStatementTerminator, SelectedTopLevelItem,
+    };
+
+    let script = recognized_block(r"{ var x=\u0061 }");
+    let [SelectedTopLevelItem::Block(block)] = script.items() else {
+        panic!("expected exactly one Block item");
+    };
+    let [SelectedBlockItem::Var(statement)] = block.items() else {
+        panic!("expected exactly one Block var statement");
+    };
+    assert_eq!(
+        statement.terminator(),
+        SelectedBlockVarStatementTerminator::AutomaticBeforeBlockClose
+    );
+    let [binding] = statement.bindings() else {
+        panic!("expected exactly one declarator");
+    };
+    let reference = binding
+        .identifier_reference_initializer()
+        .expect("expected escaped non-ReservedWord IdentifierReference initializer");
+    assert_eq!(reference.semantic_name(), "a");
+
+    let script = recognized_block(r"{ var x=\u0069f }");
+    let [SelectedTopLevelItem::Block(block)] = script.items() else {
+        panic!("expected exactly one Block item");
+    };
+    let [SelectedBlockItem::Var(statement)] = block.items() else {
+        panic!("expected exactly one Block var statement");
+    };
+    assert_eq!(
+        statement.terminator(),
+        SelectedBlockVarStatementTerminator::AutomaticBeforeBlockClose
+    );
+    let [binding] = statement.bindings() else {
+        panic!("expected exactly one declarator");
+    };
+    let anchor = binding
+        .escaped_reserved_initializer_identifier()
+        .expect("expected classification-only escaped ReservedWord anchor");
+    assert_eq!(anchor.fragment(), r"\u0069f");
+}
+
+#[test]
+fn one_level_block_var_close_brace_asi_eof_is_not_equivalent_to_close_brace() {
+    // EOF must never be silently treated as this leaf's bounded close-brace
+    // ASI route: EOF-ASI is a distinct, materially different capability
+    // outside this leaf's scope for Block-contained `var`.
+    assert_unsupported("{ var x");
+}
+
+#[test]
+fn one_level_block_var_close_brace_asi_does_not_repair_incomplete_declarator_or_initializer() {
+    for text in ["{ var x, }", "{ var x= }"] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn one_level_block_var_close_brace_asi_does_not_commit_tentative_c6_evidence_on_later_failure() {
+    assert_unsupported(r"{ var x=\u0069f, y= }");
+}
+
+#[test]
+fn one_level_block_var_close_brace_asi_does_not_widen_to_line_terminator_asi() {
+    // General LineTerminator-triggered ASI before another statement remains
+    // outside this leaf; only the bounded "next significant token == }"
+    // route is recognized.
+    for text in ["{\n  var x\n  let y;\n}", "{\n  var x\n  var y;\n}"] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn one_level_block_var_close_brace_asi_does_not_widen_to_comments_or_initializer_family() {
+    for text in [
+        "{ var x /* c */ }",
+        "{ var x=1 /* c */ }",
+        "{ var a=true }",
+        "{ var a=null }",
+        "{ var a=this }",
+        r#"{ var a="x" }"#,
+    ] {
+        assert_unsupported(text);
+    }
 }
 
 #[test]
