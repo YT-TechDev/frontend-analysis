@@ -160,18 +160,45 @@ pub(super) enum SelectedBlockItem {
 /// a selected direct-authored or escaped non-ReservedWord
 /// `IdentifierReference` initializer, or a classification-only escaped
 /// ReservedWord `IdentifierName` initializer anchor for the later
-/// `EE-04-R08` Tier-1 consumer, and one statement-owned authored semicolon
-/// terminator. No comma or whole-statement span is retained because no
-/// proven consumer needs it.
+/// `EE-04-R08` Tier-1 consumer, and one statement-owned terminator (Issue
+/// #717 widens this from authored-semicolon-only to additionally admit
+/// bounded close-brace ASI; see `SelectedBlockVarStatementTerminator`). No
+/// comma or whole-statement span is retained because no proven consumer
+/// needs it.
 #[derive(Debug)]
 pub(super) struct SelectedBlockVarStatement {
     bindings: Vec<SelectedBlockVarBinding>,
+    terminator: SelectedBlockVarStatementTerminator,
 }
 
 impl SelectedBlockVarStatement {
     pub(super) fn bindings(&self) -> &[SelectedBlockVarBinding] {
         &self.bindings
     }
+
+    pub(super) fn terminator(&self) -> SelectedBlockVarStatementTerminator {
+        self.terminator
+    }
+}
+
+/// Payload-free statement-owned termination provenance for
+/// `SelectedBlockVarStatement` (Issue #717). `AuthoredSemicolon` proves only
+/// that the statement was terminated by an authored `;`.
+/// `AutomaticBeforeBlockClose` proves only that the statement's declarator
+/// list completed and the next significant source position, after currently
+/// selected trivia, is the containing Block's closing `}`; it carries no
+/// authored or synthetic `SourceAnchor` for the inserted semicolon and no
+/// anchor for `}` itself, which remains the enclosing Block's own authored
+/// syntax and is left unconsumed by this statement's parser. This is
+/// intentionally not shared with `SelectedVariableStatementTerminator`
+/// (`AutomaticAtEof` is a distinct termination fact from
+/// `AutomaticBeforeBlockClose`) or `SelectedDeclarationTerminator` (which
+/// retains an authored-semicolon `SourceAnchor` this leaf has no consumer
+/// for).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SelectedBlockVarStatementTerminator {
+    AuthoredSemicolon,
+    AutomaticBeforeBlockClose,
 }
 
 /// One authored declarator within a `SelectedBlockVarStatement`'s
@@ -669,7 +696,7 @@ impl<'source> Cursor<'source> {
     /// SelectedBlockVarStatement ::=
     ///     var SelectedBlockVarDeclaration
     ///         ( , SelectedBlockVarDeclaration )*
-    ///     ;
+    ///     SelectedBlockVarTerminator
     ///
     /// SelectedBlockVarDeclaration ::=
     ///     SelectedBindingIdentifier
@@ -677,6 +704,10 @@ impl<'source> Cursor<'source> {
     ///   | SelectedBindingIdentifier = SelectedDirectIdentifierReference
     ///   | SelectedBindingIdentifier = SelectedEscapedNonReservedIdentifierReference
     ///   | SelectedBindingIdentifier = SelectedEscapedReservedWordIdentifierName
+    ///
+    /// SelectedBlockVarTerminator ::=
+    ///     ;
+    ///   | [lookahead == `}`]
     /// ```
     ///
     /// (Issue #688/#691, widened to ordered `1..N` declarators by #695,
@@ -686,31 +717,39 @@ impl<'source> Cursor<'source> {
     /// #710, widened to an optional selected escaped non-ReservedWord
     /// `IdentifierReference` initializer per declarator by #713, widened to
     /// an optional selected escaped ReservedWord `IdentifierName`
-    /// initializer per declarator by #715): one or more selected
-    /// `BindingIdentifier` declarators separated by commas, each
-    /// independently optionally followed by `= SelectedDecimalInteger`,
+    /// initializer per declarator by #715, widened to admit bounded
+    /// close-brace ASI as an additional terminator route by #717): one or
+    /// more selected `BindingIdentifier` declarators separated by commas,
+    /// each independently optionally followed by `= SelectedDecimalInteger`,
     /// `= SelectedIdentifierReference` (direct or escaped non-ReservedWord),
     /// or `= SelectedEscapedReservedWordIdentifierName` (classification-only
     /// source position for the later Tier-1 `EE-04-R08` consumer, not an
-    /// accepted `SelectedIdentifierReference`), and a mandatory authored
-    /// semicolon terminating the whole statement.
+    /// accepted `SelectedIdentifierReference`), and one statement-owned
+    /// terminator: an authored semicolon, or, when no semicolon is authored
+    /// and the next significant source position (after currently selected
+    /// trivia) is the containing Block's closing `}`, selected close-brace
+    /// ASI (Issue #717). The `}` itself is never consumed here; it remains
+    /// owned and consumed by `parse_selected_block`.
     ///
     /// This intentionally does not reuse `parse_variable_statement`: that
     /// owner's EOF-only ASI belongs to the distinct top-level
-    /// `VariableStatement` capability and must not leak into this narrower
-    /// Block-item placement. Only the keyword, `BindingIdentifier`,
-    /// initializer-equals/decimal-integer/IdentifierReference, and
-    /// comma-continuation recognition mechanics are shared. A direct-authored
-    /// or escaped non-ReservedWord `IdentifierReference` initializer is
-    /// admitted (Issues #710/#713) through the existing source-backed
-    /// `SelectedIdentifierReferenceFact`. An escaped spelling that the shared
-    /// recognizer classifies as a ReservedWord (Issue #715) is admitted only
-    /// as a classification-only exact authored initializer anchor for the
-    /// later Tier-1 `EE-04-R08` consumer; it is not represented as an
-    /// accepted `IdentifierReference` and its decoded semantic name is not
-    /// persisted. Any other non-decimal, non-IdentifierReference initializer,
-    /// comment trivia, or missing authored semicolon (including EOF, i.e.
-    /// non-EOF ASI before the enclosing `}`) is left entirely unrecognized
+    /// `VariableStatement` capability and is a materially different
+    /// termination fact from this Block-item's close-brace ASI, so it must
+    /// not leak into this narrower Block-item placement. Only the keyword,
+    /// `BindingIdentifier`, initializer-equals/decimal-integer/
+    /// IdentifierReference, and comma-continuation recognition mechanics are
+    /// shared. A direct-authored or escaped non-ReservedWord
+    /// `IdentifierReference` initializer is admitted (Issues #710/#713)
+    /// through the existing source-backed `SelectedIdentifierReferenceFact`.
+    /// An escaped spelling that the shared recognizer classifies as a
+    /// ReservedWord (Issue #715) is admitted only as a classification-only
+    /// exact authored initializer anchor for the later Tier-1 `EE-04-R08`
+    /// consumer; it is not represented as an accepted `IdentifierReference`
+    /// and its decoded semantic name is not persisted. Any other
+    /// non-decimal, non-IdentifierReference initializer, comment trivia, EOF
+    /// (i.e. non-EOF ASI before the enclosing `}`), or terminator whose next
+    /// significant token is neither `;` nor `}` (including LineTerminator-
+    /// triggered ASI before another statement) is left entirely unrecognized
     /// here and reported as `UnsupportedCoverage`.
     ///
     /// The decimal initializer is consumed inside this owning cursor
@@ -799,11 +838,18 @@ impl<'source> Cursor<'source> {
             grammar_context = SelectedGrammarEvidenceContext::General;
         }
 
-        if !self.consume_ascii(';') {
+        let terminator = if self.consume_ascii(';') {
+            SelectedBlockVarStatementTerminator::AuthoredSemicolon
+        } else if self.peek_char() == Some('}') {
+            SelectedBlockVarStatementTerminator::AutomaticBeforeBlockClose
+        } else {
             return Err(ParseFailure::UnsupportedCoverage);
-        }
+        };
 
-        Ok(SelectedBlockVarStatement { bindings })
+        Ok(SelectedBlockVarStatement {
+            bindings,
+            terminator,
+        })
     }
 
     /// Recognizes one selected top-level `VariableStatement` covering the
