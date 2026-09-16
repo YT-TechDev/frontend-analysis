@@ -302,7 +302,7 @@ fn static_rejection_prevents_correspondence_witness_construction_and_partial_rel
 #[test]
 fn unsupported_and_incomplete_sources_never_reach_var_correspondence() {
     for text in [
-        "var a=null; let x=a;",
+        "var a=null.foo; let x=a;",
         "var a; let x=(a);",
         "var a; { let x=a;",
     ] {
@@ -1787,4 +1787,53 @@ fn boolean_backed_var_declarator_contributes_no_correspondence_relation_while_si
             .correspondence()
             .is_no_selected_same_source_contributor()
     );
+}
+
+#[test]
+fn null_backed_var_declarator_contributes_no_correspondence_relation_while_siblings_are_preserved()
+{
+    // Issue #721: a direct NullLiteral initializer retains no
+    // `identifier_reference_initializer` fact, so it must never fabricate a
+    // correspondence relation. A sibling IdentifierReference-backed
+    // declarator in the same list must keep its existing relation meaning.
+    let (_, script) = recognized_variable("var a=null,b=x;");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(relation.semantic_name(), "x");
+    assert_eq!(relation.reference().fragment(), "x");
+    assert!(
+        relation
+            .correspondence()
+            .is_no_selected_same_source_contributor()
+    );
+
+    let (_, script) = recognized_one_level_block("{ var a=null,b=x; }");
+    let analysis = accepted_one_level_block_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(relation.semantic_name(), "x");
+    assert_eq!(relation.reference().fragment(), "x");
+    assert!(
+        relation
+            .correspondence()
+            .is_no_selected_same_source_contributor()
+    );
+}
+
+#[test]
+fn null_only_var_declarator_list_produces_zero_correspondence_relations() {
+    // Issue #721: a direct NullLiteral-only declarator list contains no
+    // IdentifierReference contributor at all, so the correspondence
+    // analysis must yield zero relations, not merely a
+    // `NoSelectedSameSourceContributor` relation.
+    for text in ["var a=null;", "var a=null,b=null;"] {
+        let (_, script) = recognized_variable(text);
+        let analysis = accepted_analysis(&script);
+        assert!(analysis.relations().is_empty(), "{text}");
+    }
+
+    for text in ["{ var a=null; }", "{ var a=null,b=null; }"] {
+        let (_, script) = recognized_one_level_block(text);
+        let analysis = accepted_one_level_block_analysis(&script);
+        assert!(analysis.relations().is_empty(), "{text}");
+    }
 }

@@ -530,7 +530,6 @@ fn unsupported_rhs_and_broader_grammar_remain_unsupported_without_source_verdict
         "const x=foo/*comment*/;",
         "const x=foo unexpected;",
         "const x=/a/;",
-        "var x=null;",
         "let [x]=y;",
         "'use strict'; let x=1;",
     ] {
@@ -1247,7 +1246,6 @@ fn multi_declarator_grammar_rejection_stays_distinct_from_deferred_coverage() {
         "var a,b,",
         "var a=1,",
         "var a=1,b=",
-        "var a=1,b=null;",
         "var a=1,b=1.0;",
         "var a=01;",
         "var a=1_0;",
@@ -1256,7 +1254,6 @@ fn multi_declarator_grammar_rejection_stays_distinct_from_deferred_coverage() {
         "var a=1n;",
         "var a=+1;",
         "var a=-1;",
-        "var a=null;",
         "var a=this;",
         "var a=\"x\";",
         r"var a=\u0030;",
@@ -1577,7 +1574,6 @@ fn block_var_multi_declarator_incomplete_and_firewalled_lists_remain_unsupported
     for text in [
         "{ var x, ; }",          // incomplete list: missing later declarator
         "{ var x, y, ; }",       // incomplete list: missing later declarator
-        "{ var x, y=null; }",    // unsupported initializer-family firewall
         "{ var x, /* c */ y; }", // comment-trivia firewall, before declarator
         "{ var x, y /* c */; }", // comment-trivia firewall, after declarator
     ] {
@@ -1746,8 +1742,11 @@ fn block_var_other_initializer_families_remain_unsupported_coverage() {
     // instead reaches `StaticSemanticsRejected` via `EE-04-R08`). "{ var
     // a=true; }" is also deliberately not listed here: Issue #719 makes a
     // direct-authored `BooleanLiteral` initializer a selected accepted form
-    // (see the "Issue #719" test section below).
-    for text in ["{ var a=null; }", "{ var a=this; }", r#"{ var a="x"; }"#] {
+    // (see the "Issue #719" test section below). "{ var a=null; }" is also
+    // deliberately not listed here: Issue #721 makes a direct-authored
+    // `NullLiteral` initializer a selected accepted form (see the "Issue
+    // #721" test section below).
+    for text in ["{ var a=this; }", r#"{ var a="x"; }"#] {
         assert!(
             matches!(
                 attempt(text),
@@ -1780,12 +1779,7 @@ fn block_var_decimal_initializer_transactional_failure_commits_no_prefix() {
     // A valid initialized declarator prefix (e.g. "a=1") must never escape as
     // a committed Block var contributor when a later declarator fails: the
     // whole statement is transactional.
-    for text in [
-        "{ var a=1, ; }",
-        "{ var a=1,b= ; }",
-        "{ var a=1,b=null; }",
-        "{ var a=1,b=1.0; }",
-    ] {
+    for text in ["{ var a=1, ; }", "{ var a=1,b= ; }", "{ var a=1,b=1.0; }"] {
         assert!(
             matches!(
                 attempt(text),
@@ -2079,11 +2073,13 @@ fn block_var_close_brace_asi_does_not_widen_to_comments_or_initializer_family() 
     // "{ var a=true }" is deliberately not listed here: Issue #719 makes a
     // direct-authored `BooleanLiteral` initializer compose with close-brace
     // ASI as a selected accepted form (see the "Issue #719" test section
-    // below).
+    // below). "{ var a=null }" is also deliberately not listed here: Issue
+    // #721 makes a direct-authored `NullLiteral` initializer compose with
+    // close-brace ASI as a selected accepted form (see the "Issue #721" test
+    // section below).
     for text in [
         "{ var x /* c */ }",
         "{ var x=1 /* c */ }",
-        "{ var a=null }",
         "{ var a=this }",
         r#"{ var a="x" }"#,
     ] {
@@ -2166,4 +2162,57 @@ fn top_level_var_escaped_boolean_like_reserved_spelling_preserves_c6_semantics()
 #[test]
 fn block_var_escaped_boolean_like_reserved_spelling_preserves_c6_semantics() {
     assert_static_semantics_rejected(r"{ var x=\u0074rue; }", r"\u0074rue", (8, 17));
+}
+
+// --- Issue #721: direct NullLiteral initializers in both selected --------
+// `var` placements
+//
+// These focused production tests seal the candidate against the accepted
+// #688-comment-5690791939 / #721 theorem: existing top-level and Block
+// `var` terminator, transactionality, static-tier, and lifecycle authority
+// must compose unchanged with the newly admitted direct `NullLiteral`
+// initializer reused from #249/#250/#251/#252. The escaped-semantic-`null`
+// C6 theorem is already sealed above (see
+// `top_level_variable_statement_static_rejections_preserve_authored_primary_subject`,
+// r"var x=n\u0075ll;") and is intentionally not duplicated here.
+
+#[test]
+fn top_level_var_direct_null_literal_positive_lifecycle_is_selected_accepted_incomplete() {
+    for text in ["var x=null;", "var x=null", "var a=null,b=null;"] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn block_var_direct_null_literal_positive_lifecycle_is_selected_accepted_incomplete() {
+    for text in [
+        "{ var x=null; }",
+        "{ var x=null }",
+        "{ var a=null,b=null; }",
+        "{ var a=null,b=null }",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn block_var_null_backed_declarator_reaches_existing_ee14_r02() {
+    assert_static_semantics_rejected("{ let x; var x=null; }", "x", (13, 14));
+}
+
+#[test]
+fn block_var_null_backed_declarator_reaches_existing_ee36_r02() {
+    assert_static_semantics_rejected("let x; { var x=null; }", "x", (13, 14));
 }
