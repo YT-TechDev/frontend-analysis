@@ -1990,7 +1990,7 @@ fn plain_fractional_decimal_literal_only_var_declarator_list_produces_zero_corre
 #[test]
 fn plain_fractional_decimal_literal_backed_var_lhs_still_contributes_as_existing_same_source_contributor()
  {
-    // Issue #732 / #735 same-source-contributor invariant: the RHS being a
+    // Issue #732 same-source-contributor invariant: the RHS being a
     // fractional `DecimalLiteral` must not suppress or duplicate the
     // declarator's own LHS contribution when that same name is later
     // referenced (`var a=1.0; let x=a;`).

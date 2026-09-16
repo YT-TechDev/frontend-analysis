@@ -2400,3 +2400,18 @@ fn block_var_plain_fractional_decimal_literal_backed_declarator_reaches_existing
 fn block_var_plain_fractional_decimal_literal_backed_declarator_reaches_existing_ee36_r02() {
     assert_static_semantics_rejected("let x; { var x=.5; }", "x", (13, 14));
 }
+
+#[test]
+fn top_level_var_plain_fractional_decimal_literal_backed_declarator_reaches_existing_ee36_r02() {
+    assert_static_semantics_rejected("let x; var x=1.0;", "x", (11, 12));
+}
+
+#[test]
+fn fractional_var_prefix_preserves_later_existing_grammar_evidence_in_both_owners() {
+    // Issue #732: a valid newly accepted fractional initializer prefix must
+    // not downgrade or suppress an already-owned later malformed
+    // `BindingIdentifier` Grammar rejection, in either selected `var` owner.
+    assert_grammar_rejected(r"var a=1.0,b,\u{}=2;", r"\u{}", (12, 16));
+
+    assert_grammar_rejected(r"{ var a=1.0,b,\u{}=2; }", r"\u{}", (14, 18));
+}
