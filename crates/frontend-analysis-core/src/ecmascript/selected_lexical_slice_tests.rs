@@ -2395,30 +2395,15 @@ fn one_level_block_var_decimal_initializer_numeric_neighbors_remain_unsupported(
     }
 }
 
-#[test]
-fn one_level_block_var_other_initializer_families_remain_unsupported() {
-    // "{ var a=foo; }" and "{ var a=\u0066oo; }" are deliberately not
-    // listed here: Issue #710 makes a direct-authored, escape-free
-    // `IdentifierReference` initializer a selected accepted form, and Issue
-    // #713 additionally admits a selected escaped non-ReservedWord
-    // `IdentifierReference` initializer (see the "Issue #710" / "Issue
-    // #713" test sections below). "{ var a=\u0069f; }" is also deliberately
-    // not listed here: Issue #715 makes that escaped-ReservedWord RHS reach
-    // complete selected recognition (see the classification-only C6 tests
-    // above), so it is no longer `UnsupportedCoverage` at this recognizer
-    // layer even though it later rejects in static semantics. "{ var a=true; }"
-    // is also deliberately not listed here: Issue #719 makes a
-    // direct-authored `BooleanLiteral` initializer a selected accepted form
-    // (see the "Issue #719" test section below). "{ var a=null; }" is also
-    // deliberately not listed here: Issue #721 makes a direct-authored
-    // `NullLiteral` initializer a selected accepted form (see the "Issue
-    // #721" test section below). "{ var a=this; }" is also deliberately
-    // not listed here: Issue #723 makes a direct-authored
-    // `PrimaryExpression : this` initializer a selected accepted form
-    // (see the "Issue #723" test section below).
-    let text = r#"{ var a="x"; }"#;
-    assert_unsupported(text);
-}
+// The former `one_level_block_var_other_initializer_families_remain_unsupported`
+// sentinel is removed here: its only remaining case, `{ var a="x"; }`, is no
+// longer `UnsupportedCoverage`. Issue #725 makes a direct-authored,
+// escape-free `StringLiteral` initializer a selected accepted form (see the
+// "Issue #725" test section below). Every other family this sentinel used
+// to guard (IdentifierReference, escaped IdentifierReference,
+// escaped-ReservedWord C6, BooleanLiteral, NullLiteral, and `this`) was
+// already migrated to its own accepted test section by the corresponding
+// earlier Issue.
 
 // --- Issue #713: one-level Block `var` widened to a selected escaped ------
 // non-ReservedWord `IdentifierReference` initializer.
@@ -2845,12 +2830,11 @@ fn one_level_block_var_close_brace_asi_does_not_widen_to_comments_or_initializer
     // section below). "{ var a=this }" is also deliberately not listed
     // here: Issue #723 makes a direct-authored `PrimaryExpression : this`
     // initializer compose with close-brace ASI as a selected accepted form
-    // (see the "Issue #723" test section below).
-    for text in [
-        "{ var x /* c */ }",
-        "{ var x=1 /* c */ }",
-        r#"{ var a="x" }"#,
-    ] {
+    // (see the "Issue #723" test section below). `{ var a="x" }` is also
+    // deliberately not listed here: Issue #725 makes a direct-authored,
+    // escape-free `StringLiteral` initializer compose with close-brace ASI
+    // as a selected accepted form (see the "Issue #725" test section below).
+    for text in ["{ var x /* c */ }", "{ var x=1 /* c */ }"] {
         assert_unsupported(text);
     }
 }
@@ -3697,7 +3681,10 @@ fn later_declarators_reuse_the_general_binding_identifier_grammar_route() {
 fn selected_var_decimal_initializer_boundary_is_exact() {
     // "var a=this;" is deliberately not listed here: Issue #723 makes a
     // direct-authored `PrimaryExpression : this` initializer a selected
-    // accepted form (see the "Issue #723" test section below).
+    // accepted form (see the "Issue #723" test section below). "var
+    // a=\"x\";" is also deliberately not listed here: Issue #725 makes a
+    // direct-authored, escape-free `StringLiteral` initializer a selected
+    // accepted form (see the "Issue #725" test section below).
     for text in [
         "var a=01;",
         "var a=1_0;",
@@ -3706,7 +3693,6 @@ fn selected_var_decimal_initializer_boundary_is_exact() {
         "var a=1n;",
         "var a=+1;",
         "var a=-1;",
-        "var a=\"x\";",
     ] {
         assert_unsupported(text);
     }
@@ -3812,7 +3798,10 @@ fn escaped_var_identifier_reference_name_policy_preserves_c1_c6_firewall() {
 fn var_identifier_reference_boundary_keeps_richer_expression_and_literal_neighbors_unsupported() {
     // "var x=this;" is deliberately not listed here: Issue #723 makes a
     // direct-authored `PrimaryExpression : this` initializer a selected
-    // accepted form (see the "Issue #723" test section below).
+    // accepted form (see the "Issue #723" test section below). "var
+    // x="foo";" is also deliberately not listed here: Issue #725 makes a
+    // direct-authored, escape-free `StringLiteral` initializer a selected
+    // accepted form (see the "Issue #725" test section below).
     for text in [
         "var x=foo.bar;",
         "var x=foo();",
@@ -3825,7 +3814,6 @@ fn var_identifier_reference_boundary_keeps_richer_expression_and_literal_neighbo
         r"var x=\u0066oo();",
         r"var x=\u0066oo+1;",
         r"var x=\u0066oo/*comment*/;",
-        "var x=\"foo\";",
     ] {
         assert_unsupported(text);
     }
@@ -4533,6 +4521,220 @@ fn direct_this_non_codepoint_continuation_remains_unsupported() {
     // placement. The existing owning layer remains authoritative for the
     // whole-source classification.
     for text in [r"var x=this\u{110000};", r"{ var x=this\u{110000}; }"] {
+        assert_unsupported(text);
+    }
+}
+
+// --- Issue #725: direct-authored, escape-free `StringLiteral` ------------
+// initializers in both selected `var` placements
+//
+// These focused production tests seal the candidate against the accepted
+// #688-comment-5691565519 / #725 theorem: existing top-level and Block
+// `var` terminator, transactionality, static-tier, and lifecycle authority
+// must compose unchanged with the newly admitted direct, escape-free
+// `StringLiteral` initializer reused unchanged from #257/#258/#259/#260.
+// A quoted `StringLiteral` has no maximal-IdentifierName continuation
+// boundary, so, unlike the preceding BooleanLiteral/NullLiteral/`this`
+// keyword leaves, no dedicated boundary or escaped-reserved-spelling test
+// is required here.
+
+#[test]
+fn top_level_var_direct_string_literal_initializer_composes_as_presence_only() {
+    for (text, expected_names) in [
+        ("var x=\"\";", &["x"][..]),
+        ("var x='';", &["x"][..]),
+        ("var x=\"𝒜\";", &["x"][..]),
+        ("var x=\"a'b\";", &["x"][..]),
+        ("var x='a\"b';", &["x"][..]),
+        ("var x=\"a b\";", &["x"][..]),
+        ("var x=\"a\tb\";", &["x"][..]),
+        ("var x=\"abc\"", &["x"][..]),
+        ("var a=\"x\",b='y';", &["a", "b"][..]),
+    ] {
+        let script = recognized_variable(text);
+        let statement = only_variable_statement(&script);
+        assert_eq!(binding_fragments(statement), expected_names, "{text:?}");
+        for binding in statement.bindings() {
+            assert!(
+                binding.identifier_reference_initializer().is_none(),
+                "{text:?}"
+            );
+            assert!(
+                binding.escaped_reserved_initializer_identifier().is_none(),
+                "{text:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn one_level_block_var_direct_string_literal_initializer_composes_as_presence_only() {
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+
+    for (text, expected_names) in [
+        ("{ var x=\"\"; }", &["x"][..]),
+        ("{ var x=''; }", &["x"][..]),
+        ("{ var x=\"abc\"; }", &["x"][..]),
+        ("{ var x='abc' }", &["x"][..]),
+        ("{ var a=\"x\",b='y'; }", &["a", "b"][..]),
+        ("{ var a=\"x\",b='y' }", &["a", "b"][..]),
+    ] {
+        let script = recognized_block(text);
+        let [SelectedTopLevelItem::Block(block)] = script.items() else {
+            panic!("expected exactly one Block item for {text:?}");
+        };
+        let [SelectedBlockItem::Var(statement)] = block.items() else {
+            panic!("expected exactly one Block var statement for {text:?}");
+        };
+        let names: Vec<_> = statement
+            .bindings()
+            .iter()
+            .map(|binding| binding.binding().fragment())
+            .collect();
+        assert_eq!(names, expected_names, "{text:?}");
+        for binding in statement.bindings() {
+            assert!(
+                binding.identifier_reference_initializer().is_none(),
+                "{text:?}"
+            );
+            assert!(
+                binding.escaped_reserved_initializer_identifier().is_none(),
+                "{text:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn var_direct_string_literal_line_separator_paragraph_separator_are_direct_content() {
+    for text in [
+        "var x=\"a\u{2028}b\";",
+        "var x=\"a\u{2029}b\";",
+        "var x='a\u{2028}b';",
+        "var x='a\u{2029}b';",
+    ] {
+        let _ = recognized_variable(text);
+    }
+
+    for text in ["{ var x=\"a\u{2028}b\"; }", "{ var x='a\u{2029}b'; }"] {
+        let _ = recognized_block(text);
+    }
+}
+
+#[test]
+fn var_direct_string_literal_raw_line_terminator_boundary_is_exact() {
+    for text in [
+        "var x=\"a\nb\";",
+        "var x=\"a\rb\";",
+        "var x=\"a\r\nb\";",
+        "var x='a\nb';",
+        "var x='a\rb';",
+        "{ var x=\"a\nb\"; }",
+        "{ var x='a\nb'; }",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn top_level_var_direct_string_literal_does_not_claim_richer_or_malformed_neighbors() {
+    for text in [
+        r#"var x="\n";"#,
+        r#"var x="\u0061";"#,
+        r#"var x="\x61";"#,
+        r#"var x="\\";"#,
+        r#"var x="\"";"#,
+        "var x='\\'';",
+        "var x=\"\\\n\";",
+        "var x='\\\r\n';",
+        "var x=\"abc;",
+        "var x='abc;",
+        "var x=\"abc';",
+        "var x='abc\";",
+        "var x=\"abc\".length;",
+        "var x=\"abc\"();",
+        "var x=\"abc\" + x;",
+        "var x=\"abc\" = x;",
+        "var x=\"abc\" ? x : y;",
+        "var x=\"abc\"/*comment*/;",
+        "var x=\"abc\" unexpected;",
+        "var x=\"abc\";;",
+        "var x=\"abc\"\nvar y=foo;",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn one_level_block_var_direct_string_literal_does_not_claim_richer_or_malformed_neighbors() {
+    for text in [
+        r#"{ var x="\n"; }"#,
+        r#"{ var x="\u0061"; }"#,
+        r#"{ var x="\\"; }"#,
+        "{ var x=\"abc; }",
+        "{ var x=\"abc'; }",
+        "{ var x=\"abc\".length; }",
+        "{ var x=\"abc\"/*comment*/; }",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn top_level_var_mixed_decimal_boolean_null_this_string_identifier_reference_preserves_correspondence_ownership()
+ {
+    let script = recognized_variable("var a=1,b=true,c=null,d=this,e=\"s\",f=x;");
+    let statement = only_variable_statement(&script);
+    for index in 0..5 {
+        assert!(
+            statement.bindings()[index]
+                .identifier_reference_initializer()
+                .is_none()
+        );
+    }
+    let reference = statement.bindings()[5]
+        .identifier_reference_initializer()
+        .expect("sixth declarator must retain existing IdentifierReference fact");
+    assert_eq!(reference.reference().fragment(), "x");
+    assert_eq!(reference.semantic_name(), "x");
+}
+
+#[test]
+fn one_level_block_var_mixed_decimal_boolean_null_this_string_identifier_reference_preserves_correspondence_ownership()
+ {
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+
+    let script = recognized_block("{ var a=false,b=1,c=null,d=this,e=\"s\",f=x }");
+    let [SelectedTopLevelItem::Block(block)] = script.items() else {
+        panic!("expected exactly one Block item");
+    };
+    let [SelectedBlockItem::Var(statement)] = block.items() else {
+        panic!("expected exactly one Block var statement");
+    };
+    for index in 0..5 {
+        assert!(
+            statement.bindings()[index]
+                .identifier_reference_initializer()
+                .is_none()
+        );
+    }
+    let reference = statement.bindings()[5]
+        .identifier_reference_initializer()
+        .expect("sixth declarator must retain existing IdentifierReference fact");
+    assert_eq!(reference.reference().fragment(), "x");
+    assert_eq!(reference.semantic_name(), "x");
+}
+
+#[test]
+fn top_level_var_direct_string_literal_transactional_failure_commits_no_prefix() {
+    for text in ["var a=\"x\",b=;", "var a=\"x\",b="] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn one_level_block_var_direct_string_literal_transactional_failure_commits_no_prefix() {
+    for text in ["{ var a=\"x\",b=; }", "{ var a=\"x\",b= }"] {
         assert_unsupported(text);
     }
 }
