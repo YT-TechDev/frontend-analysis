@@ -704,6 +704,7 @@ impl<'source> Cursor<'source> {
     ///     SelectedBindingIdentifier
     ///   | SelectedBindingIdentifier = SelectedDecimalInteger
     ///   | SelectedBindingIdentifier = SelectedDirectThisExpression
+    ///   | SelectedBindingIdentifier = SelectedDirectEscapeFreeStringLiteral
     ///   | SelectedBindingIdentifier = SelectedDirectIdentifierReference
     ///   | SelectedBindingIdentifier = SelectedEscapedNonReservedIdentifierReference
     ///   | SelectedBindingIdentifier = SelectedEscapedReservedWordIdentifierName
@@ -762,16 +763,22 @@ impl<'source> Cursor<'source> {
     /// `consume_selected_this_expression` helper; an escaped spelling whose
     /// decoded semantic name is the reserved word `this` is not this route
     /// and continues through the classification-only escaped-ReservedWord
-    /// C6 route above. Any other
-    /// non-decimal, non-Boolean, non-Null, non-`this`, non-IdentifierReference
+    /// C6 route above. A direct-authored, escape-free `StringLiteral`
+    /// initializer (Issue #725) is admitted through the existing accepted
+    /// `consume_selected_escape_free_string_literal` helper; an authored
+    /// reverse solidus, raw LF, raw CR, or unclosed quote before the
+    /// matching authored quote remains outside this route and continues to
+    /// be reported as `UnsupportedCoverage`. Any other
+    /// non-decimal, non-Boolean, non-Null, non-`this`,
+    /// non-escape-free-StringLiteral, non-IdentifierReference
     /// initializer, comment trivia, EOF (i.e. non-EOF ASI before the
     /// enclosing `}`), or terminator
     /// whose next significant token is neither `;` nor `}` (including
     /// LineTerminator-triggered ASI before another statement) is left
     /// entirely unrecognized here and reported as `UnsupportedCoverage`.
     ///
-    /// The decimal, direct `BooleanLiteral`, direct `NullLiteral`, and direct
-    /// `this` initializers are consumed
+    /// The decimal, direct `BooleanLiteral`, direct `NullLiteral`, direct
+    /// `this`, and direct escape-free `StringLiteral` initializers are consumed
     /// inside this owning cursor lifecycle and discarded: no
     /// initializer-specific fact (presence, anchor, or value) is retained on
     /// `SelectedBlockVarBinding` for any of them. A
@@ -817,6 +824,7 @@ impl<'source> Cursor<'source> {
                         || self.consume_selected_boolean_literal()
                         || self.consume_selected_null_literal()
                         || self.consume_selected_this_expression()
+                        || self.consume_selected_escape_free_string_literal()
                     {
                         (None, None)
                     } else {
@@ -880,15 +888,20 @@ impl<'source> Cursor<'source> {
     /// inductive `VariableDeclarationList` base and successor productions with
     /// `1..N` simple bindings and optional selected decimal-integer, direct
     /// `BooleanLiteral`, direct `NullLiteral`, direct `PrimaryExpression :
-    /// this`, selected direct/escaped
+    /// this`, direct-authored escape-free `StringLiteral`, selected direct/escaped
     /// non-ReservedWord IdentifierReference, or selected escaped ReservedWord
     /// initializer source positions.
     ///
-    /// Decimal, direct `BooleanLiteral`, direct `NullLiteral`, and direct
-    /// `this` initializer
+    /// Decimal, direct `BooleanLiteral`, direct `NullLiteral`, direct
+    /// `this`, and direct escape-free `StringLiteral` initializer
     /// syntax are consumed inside this owning cursor lifecycle and discarded
     /// through the existing accepted `consume_selected_this_expression`
-    /// helper (Issue #723) for the `this` case; an escaped spelling whose
+    /// helper (Issue #723) for the `this` case and the existing accepted
+    /// `consume_selected_escape_free_string_literal` helper (Issue #725) for
+    /// the `StringLiteral` case; an authored reverse solidus, raw LF, raw CR,
+    /// or unclosed quote before the matching authored quote remains outside
+    /// this route and continues to be reported as `UnsupportedCoverage`. An
+    /// escaped spelling whose
     /// decoded semantic name is the reserved word `this` is not this route
     /// and continues through the existing escaped-ReservedWord C6 route. A
     /// selected IdentifierReference retains the
@@ -930,6 +943,7 @@ impl<'source> Cursor<'source> {
                         || self.consume_selected_boolean_literal()
                         || self.consume_selected_null_literal()
                         || self.consume_selected_this_expression()
+                        || self.consume_selected_escape_free_string_literal()
                     {
                         (None, None)
                     } else {
