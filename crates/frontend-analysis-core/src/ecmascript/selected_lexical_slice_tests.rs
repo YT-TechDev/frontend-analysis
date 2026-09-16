@@ -329,13 +329,16 @@ fn selected_decimal_subset_is_exact_for_each_initializer() {
         "let x=1, y=123;",
         "const x=0;",
         "const x=1, y=123;",
+        // Issue #730 makes the selected `LexicalDeclaration` initializer
+        // position additionally admit a plain fractional `DecimalLiteral`;
+        // see the "Issue #730" test section below for full coverage.
+        "let x=1.0;",
+        "let x=.1;",
     ] {
         let _ = recognized(text);
     }
 
     for text in [
-        "let x=1.0;",
-        "let x=.1;",
         "let x=1e3;",
         "let x=1_000;",
         "let x=1n;",
@@ -4736,5 +4739,336 @@ fn top_level_var_direct_string_literal_transactional_failure_commits_no_prefix()
 fn one_level_block_var_direct_string_literal_transactional_failure_commits_no_prefix() {
     for text in ["{ var a=\"x\",b=; }", "{ var a=\"x\",b= }"] {
         assert_unsupported(text);
+    }
+}
+
+// --- Issue #730: selected `LexicalDeclaration` widened to a direct- --------
+// authored plain fractional `DecimalLiteral` initializer
+//
+// These focused production tests seal the candidate against the accepted
+// #727/#728 candidate-independent atom theorem and the
+// #729-comment-5697432768 / #688-comment-5697440908 production-placement
+// authority: a new bounded `SelectedPlainFractionalDecimalLiteral`
+// recognizer is tried before the unchanged `consume_selected_decimal_integer`
+// predecessor in `parse_declaration` only. Top-level `var` and one-level
+// Block `var` initializer dispatch remain untouched hard-zero surfaces for
+// this leaf (see the dedicated asymmetry test below). No numeric value,
+// digit, or source-anchor fact is retained beyond the existing
+// `SelectedInitializerState::SelectedPresent`.
+
+#[test]
+fn plain_fractional_decimal_literal_initializers_compose_as_presence_only() {
+    for text in [
+        "const x = 0.;",
+        "const x = 1.;",
+        "const x = 1.0;",
+        "const x = 12.34;",
+        "const x = .0;",
+        "const x = .5;",
+        "const x = 123456789.987654321;",
+        "const x = 0.0;",
+        "const x = 999.;",
+        "const x = .0001;",
+        "const x = 1.0",
+        "const x = .5   \t\n",
+        "let x = 1.0, y;",
+        "let x, y = .5;",
+        "let x = 1, y = 2.5;",
+        "let x = true, y = 3.0;",
+        "let x = null, y = .25;",
+        "let x = this, y = 4.0;",
+        "let x = \"a\", y = .25;",
+        "let x = foo, y = 2.0;",
+    ] {
+        let script = recognized(text);
+        assert!(
+            script
+                .declarations()
+                .iter()
+                .flat_map(|declaration| declaration.bindings())
+                .any(|binding| binding.initializer() == SelectedInitializerState::SelectedPresent),
+            "{text:?}"
+        );
+    }
+
+    // Authored binding order and per-binding initializer presence are
+    // preserved exactly, in both fractional-first and fractional-second
+    // shape.
+    let script = recognized("let x = 1.0, y;");
+    let bindings = script.declarations()[0].bindings();
+    assert_eq!(bindings[0].binding().fragment(), "x");
+    assert_eq!(
+        bindings[0].initializer(),
+        SelectedInitializerState::SelectedPresent
+    );
+    assert_eq!(bindings[1].binding().fragment(), "y");
+    assert_eq!(bindings[1].initializer(), SelectedInitializerState::Absent);
+
+    let script = recognized("let x, y = .5;");
+    let bindings = script.declarations()[0].bindings();
+    assert_eq!(bindings[0].binding().fragment(), "x");
+    assert_eq!(bindings[0].initializer(), SelectedInitializerState::Absent);
+    assert_eq!(bindings[1].binding().fragment(), "y");
+    assert_eq!(
+        bindings[1].initializer(),
+        SelectedInitializerState::SelectedPresent
+    );
+}
+
+#[test]
+fn plain_fractional_decimal_literal_preserves_integer_predecessor_and_overlapping_prefix() {
+    // Existing selected decimal-integer initializers remain unchanged: the
+    // new fractional recognizer must decline without commit so the
+    // unmodified `consume_selected_decimal_integer` predecessor still owns
+    // these atoms (falsifies W1/W2).
+    for text in [
+        "let x = 0;",
+        "let x = 1;",
+        "let x = 9;",
+        "let x = 10;",
+        "let x = 42;",
+        "let x = 123;",
+    ] {
+        let _ = recognized(text);
+    }
+
+    // Overlapping-prefix theorem: `1` still routes through the unchanged
+    // integer predecessor, `1.` / `1.0` / `.5` route through the new
+    // fractional recognizer, and a bare `.` remains unsupported (falsifies
+    // W3/W4/W5).
+    let _ = recognized("let x = 1;");
+    let _ = recognized("let x = 1.;");
+    let _ = recognized("let x = 1.0;");
+    let _ = recognized("let x = .5;");
+    assert_unsupported("let x = .;");
+}
+
+#[test]
+fn plain_fractional_decimal_literal_does_not_claim_numeric_or_richer_neighbors() {
+    for text in [
+        // numeric-neighbor firewall: remains whole-source `UnsupportedCoverage`
+        "let x = 1e2;",
+        "let x = 1.0e2;",
+        "let x = .5e2;",
+        "let x = 1_0;",
+        "let x = 1.0_0;",
+        "let x = .5_0;",
+        "let x = 1n;",
+        "let x = 0x10;",
+        "let x = 0X10;",
+        "let x = 0b10;",
+        "let x = 0B10;",
+        "let x = 0o10;",
+        "let x = 0O10;",
+        "let x = 01;",
+        "let x = 01.0;",
+        "let x = +1.0;",
+        "let x = -1.0;",
+        // dot / richer-expression firewall: a locally complete fractional
+        // prefix never authorizes the enclosing whole-declaration source
+        "let x = .;",
+        "let x = ..;",
+        "let x = 1..foo;",
+        "let x = 1.0.foo;",
+        "let x = .5.foo;",
+        "let x = 1.0();",
+        "let x = .5();",
+        "let x = 1.0 + x;",
+        "let x = .5 + x;",
+        "let x = 1.0 = x;",
+        "let x = 1.0 ? x : y;",
+        "let x = 1.0/*comment*/;",
+        "let x = 1.0 unexpected;",
+        "let x = 1.0;;",
+        "let x = 1.0\nlet y = foo;",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn plain_fractional_decimal_literal_eof_asi_preserves_significant_end_before_selected_trivia() {
+    let text = "const x = 1.0   \t\n";
+    let script = recognized(text);
+    let declaration = &script.declarations()[0];
+    assert_eq!(declaration.declaration().fragment(), "const x = 1.0");
+    assert_eq!(
+        (
+            declaration.declaration().range().start(),
+            declaration.declaration().range().end()
+        ),
+        (0, 13)
+    );
+    assert!(matches!(
+        declaration.terminator(),
+        SelectedDeclarationTerminator::AutomaticAtEof
+    ));
+}
+
+#[test]
+fn plain_fractional_decimal_literal_transactionality_commits_no_earlier_prefix() {
+    // No valid earlier fractional binding escapes as committed selected
+    // success when a later binding/initializer/terminator fails (falsifies
+    // W14).
+    for text in [
+        "let a = 1.0, b = ;",
+        "let a = .5, b = 1e2;",
+        "let a = 1.0, b =",
+    ] {
+        assert_unsupported(text);
+    }
+
+    // A later already-owned malformed `BindingIdentifier` Grammar-evidence
+    // case remains authoritative when preceded by a fractional initializer.
+    let subject = grammar_rejection(r"let a = 1.0, \u{} = 1;");
+    assert_eq!(subject.fragment(), r"\u{}");
+}
+
+#[test]
+fn plain_fractional_decimal_literal_coverage_makes_later_existing_grammar_evidence_reachable() {
+    for (text, expected_fragment, expected_range) in [
+        (r"const x = 1.0; let \u{};", r"\u{}", (19, 23)),
+        (r"const x = 1.0; let a\u{};", r"\u{}", (20, 24)),
+        (r"const x = 1.0; let \u{61", r"\u{61", (19, 24)),
+    ] {
+        let subject = grammar_rejection(text);
+        assert_eq!(subject.fragment(), expected_fragment, "{text}");
+        assert_eq!(
+            (subject.range().start(), subject.range().end()),
+            expected_range,
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn plain_fractional_decimal_literal_aggregate_lifecycle_remains_incomplete_or_existing_rejection() {
+    use super::qualification::{QualificationVerdictKind, RejectionFamily};
+    use super::selected_qualification_integration::{
+        SelectedQualificationAttempt, attempt_selected_qualification,
+    };
+
+    for text in [
+        "const x = 1.0;",
+        "const x = .5;",
+        "const x = 12.34;",
+        "let x = 1.0, y = foo;",
+    ] {
+        assert!(
+            matches!(
+                attempt_selected_qualification(&source(text)),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text}"
+        );
+    }
+
+    for (text, expected_fragment, expected_range) in [
+        (r"let \u0030 = 1.0;", r"\u0030", (4, 10)),
+        (r"let \u0069f = 1.0;", r"\u0069f", (4, 11)),
+        ("let let = 1.0;", "let", (4, 7)),
+        ("let x = 1.0, x = foo;", "x", (13, 14)),
+        ("const x = 1.0, y;", "y", (15, 16)),
+        ("let x = 1.0; let x = foo;", "x", (17, 18)),
+    ] {
+        let SelectedQualificationAttempt::Outcome(outcome) =
+            attempt_selected_qualification(&source(text))
+        else {
+            panic!("expected static rejection for {text}");
+        };
+        assert_eq!(
+            outcome.verdict(),
+            Some(QualificationVerdictKind::StaticSemanticsRejected),
+            "{text}"
+        );
+        let evidence = outcome
+            .rejection_evidence()
+            .expect("static rejection evidence");
+        assert_eq!(
+            evidence.family(),
+            RejectionFamily::StaticSemantics,
+            "{text}"
+        );
+        let subject = evidence
+            .subject()
+            .authored_anchor()
+            .expect("static subject must remain authored");
+        assert_eq!(subject.fragment(), expected_fragment, "{text}");
+        assert_eq!(
+            (subject.range().start(), subject.range().end()),
+            expected_range,
+            "{text}"
+        );
+    }
+
+    let SelectedQualificationAttempt::Outcome(outcome) =
+        attempt_selected_qualification(&source(r"const x = 1.0; let \u{};"))
+    else {
+        panic!("expected existing Grammar rejection to become reachable");
+    };
+    assert_eq!(
+        outcome.verdict(),
+        Some(QualificationVerdictKind::SyntaxRejected)
+    );
+    let evidence = outcome
+        .rejection_evidence()
+        .expect("Grammar rejection evidence");
+    assert_eq!(evidence.family(), RejectionFamily::Grammar);
+    let subject = evidence
+        .subject()
+        .authored_anchor()
+        .expect("Grammar subject must remain authored");
+    assert_eq!(subject.fragment(), r"\u{}");
+    assert_eq!((subject.range().start(), subject.range().end()), (19, 23));
+}
+
+#[test]
+fn top_level_var_and_block_var_plain_fractional_decimal_literal_remains_unsupported() {
+    // Issue #730 authorizes the new fractional recognizer only in
+    // `parse_declaration`; top-level and Block `var` initializer dispatch
+    // are unchanged hard-zero surfaces for this leaf (falsifies W10/W11).
+    for text in [
+        "var x = 1.0;",
+        "var x = .5;",
+        "{ var x = 1.0; }",
+        "{ var x = .5; }",
+    ] {
+        assert_unsupported(text);
+    }
+
+    // Existing selected integer `var` recognition remains unaffected.
+    let _ = recognized_variable("var x = 1;");
+    let _ = recognized_block("{ var x = 1; }");
+}
+
+#[test]
+fn plain_fractional_decimal_literal_recognition_is_deterministic_across_repeats() {
+    let text = "let x = 1.0, y = .25; const z = 12.34;";
+    let first = recognized(text);
+    let second = recognized(text);
+    assert_eq!(first.declarations().len(), second.declarations().len());
+    for (a, b) in first
+        .declarations()
+        .iter()
+        .zip(second.declarations().iter())
+    {
+        assert_eq!(
+            (
+                a.declaration().range().start(),
+                a.declaration().range().end()
+            ),
+            (
+                b.declaration().range().start(),
+                b.declaration().range().end()
+            )
+        );
+        assert_eq!(a.bindings().len(), b.bindings().len());
+        for (ba, bb) in a.bindings().iter().zip(b.bindings().iter()) {
+            assert_eq!(
+                (ba.binding().range().start(), ba.binding().range().end()),
+                (bb.binding().range().start(), bb.binding().range().end())
+            );
+            assert_eq!(ba.initializer(), bb.initializer());
+        }
     }
 }

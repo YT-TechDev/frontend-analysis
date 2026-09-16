@@ -19,7 +19,11 @@
 //! #713 (escaped ReservedWord spellings remain outside this leaf), and
 //! widened both the top-level and one-level Block `var` initializer position
 //! to additionally admit a direct-authored selected `BooleanLiteral` by
-//! #719. Recognition is transactional for the whole authoritative
+//! #719, and widened the selected `LexicalDeclaration` initializer position
+//! (only; top-level and Block `var` remain outside this leaf) to
+//! additionally admit a direct-authored plain fractional `DecimalLiteral`
+//! (`SelectedDecimalInteger "." DecimalDigits?` or `"." DecimalDigits`) by
+//! #730. Recognition is transactional for the whole authoritative
 //! `SourceText`: tentative declaration/binding/Block/var facts are returned
 //! only when the entire source is consumed by selected items plus selected
 //! trivia.
@@ -1042,7 +1046,8 @@ impl<'source> Cursor<'source> {
                 self.skip_selected_trivia();
                 let mut identifier_reference_initializer = None;
                 let mut escaped_reserved_initializer_identifier = None;
-                if !self.consume_selected_decimal_integer()
+                if !self.consume_selected_plain_fractional_decimal_literal()
+                    && !self.consume_selected_decimal_integer()
                     && !self.consume_selected_boolean_literal()
                     && !self.consume_selected_null_literal()
                     && !self.consume_selected_this_expression()
@@ -1490,6 +1495,62 @@ impl<'source> Cursor<'source> {
         }
 
         self.offset += 1;
+        true
+    }
+
+    /// Recognizes exactly one direct-authored, plain fractional
+    /// `DecimalLiteral` (`SelectedDecimalInteger "." DecimalDigits?` or
+    /// `"." DecimalDigits`) in the selected `LexicalDeclaration` initializer
+    /// position, per the candidate-independent theorem accepted by #727/#728,
+    /// without retaining any numeric value, digit, or source-anchor fact
+    /// beyond the existing `SelectedInitializerState::SelectedPresent`.
+    ///
+    /// This bounded local scan commits `self.offset` only after the complete
+    /// selected fractional atom is recognized; on decline the cursor is left
+    /// unchanged, so the unmodified `consume_selected_decimal_integer`
+    /// predecessor still owns plain integers such as `1`. The scan reuses the
+    /// same leading-zero boundary as that predecessor: a `0` integer part
+    /// must be immediately followed by `.`, or this helper declines without
+    /// commit, so a leading-zero spelling such as `01.0` is never selected
+    /// here. A locally complete fractional prefix (e.g. the `1.` inside
+    /// `1..foo`, or the `1.0` inside `1.0e2`) does not itself authorize any
+    /// broader source; the enclosing declaration/source transaction remains
+    /// authoritative for any unowned trailing source.
+    fn consume_selected_plain_fractional_decimal_literal(&mut self) -> bool {
+        let bytes = self.text.as_bytes();
+        let mut offset = self.offset;
+
+        let has_integer_part = match bytes.get(offset).copied() {
+            Some(b'0') => {
+                offset += 1;
+                true
+            }
+            Some(b'1'..=b'9') => {
+                offset += 1;
+                while matches!(bytes.get(offset), Some(next) if next.is_ascii_digit()) {
+                    offset += 1;
+                }
+                true
+            }
+            _ => false,
+        };
+
+        if bytes.get(offset) != Some(&b'.') {
+            return false;
+        }
+        offset += 1;
+
+        let fraction_digits_start = offset;
+        while matches!(bytes.get(offset), Some(next) if next.is_ascii_digit()) {
+            offset += 1;
+        }
+        let has_fraction_digits = offset > fraction_digits_start;
+
+        if !has_integer_part && !has_fraction_digits {
+            return false;
+        }
+
+        self.offset = offset;
         true
     }
 
