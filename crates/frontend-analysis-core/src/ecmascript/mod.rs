@@ -38,6 +38,8 @@ mod qualification_selected_one_level_block_terminal_composition_validation_tests
 #[cfg(test)]
 mod qualification_selected_one_level_block_validation_tests;
 #[cfg(test)]
+mod qualification_selected_plain_exponent_decimal_literal_initializer_validation_tests;
+#[cfg(test)]
 mod qualification_selected_plain_fractional_decimal_literal_initializer_validation_tests;
 #[cfg(test)]
 mod qualification_selected_this_expression_initializer_validation_tests;
