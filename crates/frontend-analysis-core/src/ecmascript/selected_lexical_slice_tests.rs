@@ -813,7 +813,7 @@ fn broader_script_grammar_remains_unsupported() {
         "#!node\nlet x=1;",
         "let [x]=y;",
         "let {x}=y;",
-        "var x=true;",
+        "var x=null;",
         "'use strict'; let x=1;",
         "super.x;",
         "obj.#x;",
@@ -2258,7 +2258,7 @@ fn one_level_block_var_identifier_reference_initializer_transactional_failure_co
     // "{ var x=\u0069f,y=; }") prevents statement completion.
     for text in [
         "{ var x=a,y=; }",
-        "{ var x=a,y=true; }",
+        "{ var x=a,y=null; }",
         r"{ var x=\u0066oo,y=; }",
         r"{ var x=\u0069f,y=; }",
     ] {
@@ -2408,13 +2408,11 @@ fn one_level_block_var_non_decimal_initializers_remain_unsupported() {
     // not listed here: Issue #715 makes that escaped-ReservedWord RHS reach
     // complete selected recognition (see the classification-only C6 tests
     // above), so it is no longer `UnsupportedCoverage` at this recognizer
-    // layer even though it later rejects in static semantics.
-    for text in [
-        "{ var a=true; }",
-        "{ var a=null; }",
-        "{ var a=this; }",
-        r#"{ var a="x"; }"#,
-    ] {
+    // layer even though it later rejects in static semantics. "{ var a=true; }"
+    // is also deliberately not listed here: Issue #719 makes a
+    // direct-authored `BooleanLiteral` initializer a selected accepted form
+    // (see the "Issue #719" test section below).
+    for text in ["{ var a=null; }", "{ var a=this; }", r#"{ var a="x"; }"#] {
         assert_unsupported(text);
     }
 }
@@ -2637,7 +2635,7 @@ fn one_level_block_var_decimal_initializer_transactional_failure_commits_no_pref
     for text in [
         "{ var a=1, ; }",
         "{ var a=1,b= ; }",
-        "{ var a=1,b=true; }",
+        "{ var a=1,b=null; }",
         "{ var a=1,b=1.0; }",
     ] {
         assert_unsupported(text);
@@ -2840,14 +2838,178 @@ fn one_level_block_var_close_brace_asi_does_not_widen_to_line_terminator_asi() {
 
 #[test]
 fn one_level_block_var_close_brace_asi_does_not_widen_to_comments_or_initializer_family() {
+    // "{ var a=true }" is deliberately not listed here: Issue #719 makes a
+    // direct-authored `BooleanLiteral` initializer compose with close-brace
+    // ASI as a selected accepted form (see the "Issue #719" test section
+    // below).
     for text in [
         "{ var x /* c */ }",
         "{ var x=1 /* c */ }",
-        "{ var a=true }",
         "{ var a=null }",
         "{ var a=this }",
         r#"{ var a="x" }"#,
     ] {
+        assert_unsupported(text);
+    }
+}
+
+// --- Issue #719: one-level Block `var` widened to a direct-authored ------
+// `BooleanLiteral` initializer
+//
+// These focused production tests seal the candidate against the accepted
+// #688-comment-5690396598 / #719 theorem, reusing the existing accepted
+// #245/#247/#248 direct-Boolean recognizer (`consume_selected_boolean_literal`)
+// and its maximal-IdentifierName boundary rather than cloning that
+// independent oracle.
+
+#[test]
+fn one_level_block_var_direct_boolean_literal_initializer_composes_as_presence_only() {
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+
+    for (text, expected_names) in [
+        ("{ var x=true; }", &["x"][..]),
+        ("{ var x=false; }", &["x"][..]),
+        ("{ var x=true }", &["x"][..]),
+        ("{ var x=false }", &["x"][..]),
+        ("{ var a=true,b=false; }", &["a", "b"][..]),
+        ("{ var a=true,b=false }", &["a", "b"][..]),
+    ] {
+        let script = recognized_block(text);
+        let [SelectedTopLevelItem::Block(block)] = script.items() else {
+            panic!("expected exactly one Block item for {text:?}");
+        };
+        let [SelectedBlockItem::Var(statement)] = block.items() else {
+            panic!("expected exactly one Block var statement for {text:?}");
+        };
+        let names: Vec<_> = statement
+            .bindings()
+            .iter()
+            .map(|binding| binding.binding().fragment())
+            .collect();
+        assert_eq!(names, expected_names, "{text:?}");
+        for binding in statement.bindings() {
+            assert!(
+                binding.identifier_reference_initializer().is_none(),
+                "{text:?}"
+            );
+            assert!(
+                binding.escaped_reserved_initializer_identifier().is_none(),
+                "{text:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn one_level_block_var_mixed_decimal_boolean_identifier_reference_preserves_correspondence_ownership()
+ {
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+
+    let script = recognized_block("{ var a=false,b=1,c=x }");
+    let [SelectedTopLevelItem::Block(block)] = script.items() else {
+        panic!("expected exactly one Block item");
+    };
+    let [SelectedBlockItem::Var(statement)] = block.items() else {
+        panic!("expected exactly one Block var statement");
+    };
+    assert!(
+        statement.bindings()[0]
+            .identifier_reference_initializer()
+            .is_none()
+    );
+    assert!(
+        statement.bindings()[1]
+            .identifier_reference_initializer()
+            .is_none()
+    );
+    let reference = statement.bindings()[2]
+        .identifier_reference_initializer()
+        .expect("third declarator must retain existing IdentifierReference fact");
+    assert_eq!(reference.reference().fragment(), "x");
+    assert_eq!(reference.semantic_name(), "x");
+}
+
+#[test]
+fn one_level_block_var_direct_boolean_literal_boundary_preserves_maximal_identifier_reference_routing()
+ {
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+
+    for (text, expected_fragment, expected_semantic) in [
+        ("{ var x=truex; }", "truex", "truex"),
+        ("{ var x=falseValue; }", "falseValue", "falseValue"),
+        (r"{ var x=true\u0061; }", r"true\u0061", "truea"),
+        (r"{ var x=false\u0061; }", r"false\u0061", "falsea"),
+    ] {
+        let script = recognized_block(text);
+        let [SelectedTopLevelItem::Block(block)] = script.items() else {
+            panic!("expected exactly one Block item for {text:?}");
+        };
+        let [SelectedBlockItem::Var(statement)] = block.items() else {
+            panic!("expected exactly one Block var statement for {text:?}");
+        };
+        let reference = statement.bindings()[0]
+            .identifier_reference_initializer()
+            .unwrap_or_else(|| panic!("expected IdentifierReference routing for {text:?}"));
+        assert_eq!(
+            reference.reference().fragment(),
+            expected_fragment,
+            "{text:?}"
+        );
+        assert_eq!(reference.semantic_name(), expected_semantic, "{text:?}");
+    }
+}
+
+#[test]
+fn one_level_block_var_direct_boolean_literal_does_not_claim_richer_or_malformed_neighbors() {
+    for text in [
+        "{ var x=true.foo; }",
+        "{ var x=false(); }",
+        "{ var x=true + y; }",
+        "{ var x=false = y; }",
+        "{ var x=true ? a : b; }",
+        "{ var x=true.foo }",
+        "{ var x=false() }",
+        "{ var x=true + y }",
+        "{ var x=true/*c*/; }",
+        "{ var x=true /*c*/ }",
+        r"{ var x=true\u{}; }",
+        r"{ var x=false\u0; }",
+        r"{ var x=true\u{61; }",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn one_level_block_var_direct_boolean_literal_escaped_reserved_spelling_is_not_boolean_literal() {
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+
+    for text in [r"{ var x=\u0074rue; }", r"{ var x=\u0066alse; }"] {
+        let script = recognized_block(text);
+        let [SelectedTopLevelItem::Block(block)] = script.items() else {
+            panic!("expected exactly one Block item for {text:?}");
+        };
+        let [SelectedBlockItem::Var(statement)] = block.items() else {
+            panic!("expected exactly one Block var statement for {text:?}");
+        };
+        assert!(
+            statement.bindings()[0]
+                .escaped_reserved_initializer_identifier()
+                .is_some(),
+            "{text:?}"
+        );
+        assert!(
+            statement.bindings()[0]
+                .identifier_reference_initializer()
+                .is_none(),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn one_level_block_var_direct_boolean_literal_transactional_failure_commits_no_prefix() {
+    for text in ["{ var a=true,b=; }", "{ var a=false,b= }"] {
         assert_unsupported(text);
     }
 }
@@ -3245,7 +3407,6 @@ fn selected_var_decimal_initializer_boundary_is_exact() {
         "var a=1n;",
         "var a=+1;",
         "var a=-1;",
-        "var a=true;",
         "var a=null;",
         "var a=this;",
         "var a=\"x\";",
@@ -3364,8 +3525,6 @@ fn var_identifier_reference_boundary_keeps_richer_expression_and_literal_neighbo
         r"var x=\u0066oo();",
         r"var x=\u0066oo+1;",
         r"var x=\u0066oo/*comment*/;",
-        "var x=true;",
-        "var x=false;",
         "var x=null;",
         "var x=this;",
         "var x=\"foo\";",
@@ -3470,7 +3629,7 @@ fn incomplete_or_widened_declarator_lists_commit_no_selected_statement() {
         "var a,,b;",
         "var a=1,",
         "var a=1,b=",
-        "var a=1,b=true;",
+        "var a=1,b=null;",
         "var a=1,b=1.0;",
         "var a,{b}=c;",
         "var a, /*comment*/ b;",
@@ -3515,7 +3674,7 @@ fn failed_declaration_lists_commit_no_selected_binding_or_statement_state() {
         "var a,b,",
         "var a=1,",
         "var a=1,b=",
-        "var a=1,b=true;",
+        "var a=1,b=null;",
         "var a=1,b=1.0;",
         r"var a=1,b,\u{}=2;",
         "var x=foo,y=bar,z=",
@@ -3660,4 +3819,125 @@ fn var_escaped_reserved_initializer_preserves_transaction_and_neighbor_firewalls
     let subject = grammar_rejection(r"var x=\u0069f,\u{};");
     assert_eq!(subject.fragment(), r"\u{}");
     assert_eq!((subject.range().start(), subject.range().end()), (14, 18));
+}
+
+// --- Issue #719: top-level `VariableStatement` widened to a direct- ------
+// authored `BooleanLiteral` initializer
+//
+// These focused production tests seal the candidate against the accepted
+// #688-comment-5690396598 / #719 theorem, reusing the existing accepted
+// #245/#247/#248 direct-Boolean recognizer (`consume_selected_boolean_literal`)
+// and its maximal-IdentifierName boundary rather than cloning that
+// independent oracle.
+
+#[test]
+fn top_level_var_direct_boolean_literal_initializer_composes_as_presence_only() {
+    for (text, expected_names) in [
+        ("var x=true;", &["x"][..]),
+        ("var x=false;", &["x"][..]),
+        ("var x=true", &["x"][..]),
+        ("var x=false", &["x"][..]),
+        ("var a=true,b=false;", &["a", "b"][..]),
+    ] {
+        let script = recognized_variable(text);
+        let statement = only_variable_statement(&script);
+        assert_eq!(binding_fragments(statement), expected_names, "{text:?}");
+        for binding in statement.bindings() {
+            assert!(
+                binding.identifier_reference_initializer().is_none(),
+                "{text:?}"
+            );
+            assert!(
+                binding.escaped_reserved_initializer_identifier().is_none(),
+                "{text:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn top_level_var_mixed_decimal_boolean_identifier_reference_preserves_correspondence_ownership() {
+    let script = recognized_variable("var a=1,b=true,c=x;");
+    let statement = only_variable_statement(&script);
+    assert!(
+        statement.bindings()[0]
+            .identifier_reference_initializer()
+            .is_none()
+    );
+    assert!(
+        statement.bindings()[1]
+            .identifier_reference_initializer()
+            .is_none()
+    );
+    let reference = statement.bindings()[2]
+        .identifier_reference_initializer()
+        .expect("third declarator must retain existing IdentifierReference fact");
+    assert_eq!(reference.reference().fragment(), "x");
+    assert_eq!(reference.semantic_name(), "x");
+}
+
+#[test]
+fn top_level_var_direct_boolean_literal_boundary_preserves_maximal_identifier_reference_routing() {
+    for (text, expected_fragment, expected_semantic) in [
+        ("var x=truex;", "truex", "truex"),
+        ("var x=falseValue;", "falseValue", "falseValue"),
+        (r"var x=true\u0061;", r"true\u0061", "truea"),
+        (r"var x=false\u0061;", r"false\u0061", "falsea"),
+    ] {
+        let script = recognized_variable(text);
+        let statement = only_variable_statement(&script);
+        let reference = statement.bindings()[0]
+            .identifier_reference_initializer()
+            .unwrap_or_else(|| panic!("expected IdentifierReference routing for {text:?}"));
+        assert_eq!(
+            reference.reference().fragment(),
+            expected_fragment,
+            "{text:?}"
+        );
+        assert_eq!(reference.semantic_name(), expected_semantic, "{text:?}");
+    }
+}
+
+#[test]
+fn top_level_var_direct_boolean_literal_does_not_claim_richer_or_malformed_neighbors() {
+    for text in [
+        "var x=true.foo;",
+        "var x=false();",
+        "var x=true + y;",
+        "var x=false = y;",
+        "var x=true ? a : b;",
+        "var x=true/*c*/;",
+        r"var x=true\u{};",
+        r"var x=false\u0;",
+        r"var x=true\u{61",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn top_level_var_direct_boolean_literal_escaped_reserved_spelling_is_not_boolean_literal() {
+    for text in [r"var x=\u0074rue;", r"var x=\u0066alse;"] {
+        let script = recognized_variable(text);
+        let statement = only_variable_statement(&script);
+        assert!(
+            statement.bindings()[0]
+                .escaped_reserved_initializer_identifier()
+                .is_some(),
+            "{text:?}"
+        );
+        assert!(
+            statement.bindings()[0]
+                .identifier_reference_initializer()
+                .is_none(),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn top_level_var_direct_boolean_literal_transactional_failure_commits_no_prefix() {
+    for text in ["var a=true,b=;", "var a=false,b="] {
+        assert_unsupported(text);
+    }
 }

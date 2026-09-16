@@ -302,7 +302,7 @@ fn static_rejection_prevents_correspondence_witness_construction_and_partial_rel
 #[test]
 fn unsupported_and_incomplete_sources_never_reach_var_correspondence() {
     for text in [
-        "var a=true; let x=a;",
+        "var a=null; let x=a;",
         "var a; let x=(a);",
         "var a; { let x=a;",
     ] {
@@ -1757,4 +1757,34 @@ fn block_var_close_brace_asi_terminator_provenance_does_not_change_correspondenc
         close_brace_region,
         SelectedVariableStatementNameCorrespondenceRegion::TopLevel
     ));
+}
+
+#[test]
+fn boolean_backed_var_declarator_contributes_no_correspondence_relation_while_siblings_are_preserved()
+ {
+    // Issue #719: a direct BooleanLiteral initializer retains no
+    // `identifier_reference_initializer` fact, so it must never fabricate a
+    // correspondence relation. A sibling IdentifierReference-backed
+    // declarator in the same list must keep its existing relation meaning.
+    let (_, script) = recognized_variable("var a=true,b=x;");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(relation.semantic_name(), "x");
+    assert_eq!(relation.reference().fragment(), "x");
+    assert!(
+        relation
+            .correspondence()
+            .is_no_selected_same_source_contributor()
+    );
+
+    let (_, script) = recognized_one_level_block("{ var a=false,b=x; }");
+    let analysis = accepted_one_level_block_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(relation.semantic_name(), "x");
+    assert_eq!(relation.reference().fragment(), "x");
+    assert!(
+        relation
+            .correspondence()
+            .is_no_selected_same_source_contributor()
+    );
 }
