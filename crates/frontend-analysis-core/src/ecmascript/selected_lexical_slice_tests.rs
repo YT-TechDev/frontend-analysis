@@ -2385,10 +2385,12 @@ fn one_level_block_var_escaped_reserved_initializer_preserves_per_binding_cardin
 
 #[test]
 fn one_level_block_var_decimal_initializer_numeric_neighbors_remain_unsupported() {
+    // "{ var a=1.0; }" is deliberately not listed here: Issue #732 makes a
+    // direct-authored plain fractional `DecimalLiteral` initializer a
+    // selected accepted form (see the "Issue #732" test section below).
     for text in [
         "{ var a=01; }",
         "{ var a=1_0; }",
-        "{ var a=1.0; }",
         "{ var a=1e2; }",
         "{ var a=1n; }",
         "{ var a=+1; }",
@@ -2623,7 +2625,10 @@ fn one_level_block_var_decimal_initializer_rejects_comment_trivia() {
 
 #[test]
 fn one_level_block_var_decimal_initializer_transactional_failure_commits_no_prefix() {
-    for text in ["{ var a=1, ; }", "{ var a=1,b= ; }", "{ var a=1,b=1.0; }"] {
+    // "{ var a=1,b=1.0; }" is deliberately not listed here: Issue #732 makes
+    // a direct-authored plain fractional `DecimalLiteral` initializer a
+    // selected accepted form, so this source is no longer a failure case.
+    for text in ["{ var a=1, ; }", "{ var a=1,b= ; }"] {
         assert_unsupported(text);
     }
 
@@ -3687,11 +3692,13 @@ fn selected_var_decimal_initializer_boundary_is_exact() {
     // accepted form (see the "Issue #723" test section below). "var
     // a=\"x\";" is also deliberately not listed here: Issue #725 makes a
     // direct-authored, escape-free `StringLiteral` initializer a selected
-    // accepted form (see the "Issue #725" test section below).
+    // accepted form (see the "Issue #725" test section below). "var
+    // a=1.0;" is also deliberately not listed here: Issue #732 makes a
+    // direct-authored plain fractional `DecimalLiteral` initializer a
+    // selected accepted form (see the "Issue #732" test section below).
     for text in [
         "var a=01;",
         "var a=1_0;",
-        "var a=1.0;",
         "var a=1e2;",
         "var a=1n;",
         "var a=+1;",
@@ -3911,6 +3918,9 @@ fn var_multi_reference_initializers_preserve_per_binding_association_order_and_s
 fn incomplete_or_widened_declarator_lists_commit_no_selected_statement() {
     // "{ var a,b; }" is deliberately not listed here: Issue #695 makes
     // multi-declarator Block `var` statements a selected accepted form.
+    // "var a=1,b=1.0;" is also deliberately not listed here: Issue #732
+    // makes a direct-authored plain fractional `DecimalLiteral` initializer
+    // a selected accepted form.
     for text in [
         "var a,",
         "var a,b,",
@@ -3918,7 +3928,6 @@ fn incomplete_or_widened_declarator_lists_commit_no_selected_statement() {
         "var a,,b;",
         "var a=1,",
         "var a=1,b=",
-        "var a=1,b=1.0;",
         "var a,{b}=c;",
         "var a, /*comment*/ b;",
         "var a=1, /*comment*/ b;",
@@ -3956,13 +3965,15 @@ fn multi_declarator_statements_compose_with_existing_selected_top_level_items() 
 
 #[test]
 fn failed_declaration_lists_commit_no_selected_binding_or_statement_state() {
+    // "var a=1,b=1.0;" is deliberately not listed here: Issue #732 makes a
+    // direct-authored plain fractional `DecimalLiteral` initializer a
+    // selected accepted form.
     for text in [
         r"var a,\u{};",
         r"var a,b,\u{};",
         "var a,b,",
         "var a=1,",
         "var a=1,b=",
-        "var a=1,b=1.0;",
         r"var a=1,b,\u{}=2;",
         "var x=foo,y=bar,z=",
         r"var x=foo,y=bar,\u{}=baz;",
@@ -5023,18 +5034,17 @@ fn plain_fractional_decimal_literal_aggregate_lifecycle_remains_incomplete_or_ex
 }
 
 #[test]
-fn top_level_var_and_block_var_plain_fractional_decimal_literal_remains_unsupported() {
-    // Issue #730 authorizes the new fractional recognizer only in
-    // `parse_declaration`; top-level and Block `var` initializer dispatch
-    // are unchanged hard-zero surfaces for this leaf (falsifies W10/W11).
-    for text in [
-        "var x = 1.0;",
-        "var x = .5;",
-        "{ var x = 1.0; }",
-        "{ var x = .5; }",
-    ] {
-        assert_unsupported(text);
-    }
+fn top_level_var_and_block_var_plain_fractional_decimal_literal_composes_via_shared_recognizer() {
+    // Issue #732 widens both selected `var` owners to additionally accept
+    // the unchanged fractional recognizer already accepted by #730/#731 for
+    // `parse_declaration`, superseding the #730-era hard-zero boundary that
+    // kept top-level and Block `var` initializer dispatch on
+    // `UnsupportedCoverage` for these sources. See the dedicated Issue #732
+    // section below for the full positive/boundary/transactionality matrix.
+    let _ = recognized_variable("var x = 1.0;");
+    let _ = recognized_variable("var x = .5;");
+    let _ = recognized_block("{ var x = 1.0; }");
+    let _ = recognized_block("{ var x = .5; }");
 
     // Existing selected integer `var` recognition remains unaffected.
     let _ = recognized_variable("var x = 1;");
@@ -5071,4 +5081,372 @@ fn plain_fractional_decimal_literal_recognition_is_deterministic_across_repeats(
             assert_eq!(ba.initializer(), bb.initializer());
         }
     }
+}
+
+// --- Issue #732: both selected `var` placements widened to a direct- ------
+// authored plain fractional `DecimalLiteral` initializer
+//
+// These focused production tests seal the candidate against the accepted
+// #688-comment-5698108598 joint-composition theorem: the existing
+// `SelectedPlainFractionalDecimalLiteral` recognizer (#727/#728, reused
+// unchanged from #730/#731) is tried before the unchanged
+// `consume_selected_decimal_integer` predecessor in both
+// `parse_variable_statement` and `parse_selected_block_var_statement`. Both
+// existing terminator owners (top-level EOF-only ASI, Block close-brace
+// ASI), transactionality, and existing sibling-initializer/correspondence
+// ownership remain unchanged and compose exactly as for the preceding
+// Boolean/Null/`this`/StringLiteral leaves.
+
+#[test]
+fn top_level_var_plain_fractional_decimal_literal_initializers_compose_as_presence_only() {
+    for text in [
+        "var x = 0.;",
+        "var x = 1.;",
+        "var x = 1.0;",
+        "var x = 12.34;",
+        "var x = .0;",
+        "var x = .5;",
+        "var x = 123456789.987654321;",
+        "var x = 0.0;",
+        "var x = 999.;",
+        "var x = .0001;",
+        "var x = 1.0",
+    ] {
+        let script = recognized_variable(text);
+        let statement = only_variable_statement(&script);
+        assert_eq!(binding_fragments(statement), ["x"], "{text:?}");
+        for binding in statement.bindings() {
+            assert!(
+                binding.identifier_reference_initializer().is_none(),
+                "{text:?}"
+            );
+            assert!(
+                binding.escaped_reserved_initializer_identifier().is_none(),
+                "{text:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn one_level_block_var_plain_fractional_decimal_literal_initializers_compose_as_presence_only() {
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+
+    for text in [
+        "{ var x = 0.; }",
+        "{ var x = 1.; }",
+        "{ var x = 1.0; }",
+        "{ var x = 12.34; }",
+        "{ var x = .0; }",
+        "{ var x = .5; }",
+        "{ var x = 1.0 }",
+    ] {
+        let script = recognized_block(text);
+        let [SelectedTopLevelItem::Block(block)] = script.items() else {
+            panic!("expected exactly one Block item for {text:?}");
+        };
+        let [SelectedBlockItem::Var(statement)] = block.items() else {
+            panic!("expected exactly one Block var statement for {text:?}");
+        };
+        let names: Vec<_> = statement
+            .bindings()
+            .iter()
+            .map(|binding| binding.binding().fragment())
+            .collect();
+        assert_eq!(names, ["x"], "{text:?}");
+        for binding in statement.bindings() {
+            assert!(
+                binding.identifier_reference_initializer().is_none(),
+                "{text:?}"
+            );
+            assert!(
+                binding.escaped_reserved_initializer_identifier().is_none(),
+                "{text:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn top_level_var_plain_fractional_decimal_literal_preserves_integer_predecessor_and_overlapping_prefix()
+ {
+    // Existing selected integer `var` initializers remain unchanged: the
+    // fractional recognizer must decline without commit so the unmodified
+    // `consume_selected_decimal_integer` predecessor still owns these atoms
+    // (falsifies W1/W2).
+    for text in [
+        "var x = 0;",
+        "var x = 1;",
+        "var x = 9;",
+        "var x = 10;",
+        "var x = 42;",
+        "var x = 123;",
+    ] {
+        let _ = recognized_variable(text);
+    }
+
+    // Overlapping-prefix theorem: `1` still routes through the unchanged
+    // integer predecessor, `1.` / `1.0` / `.5` route through the fractional
+    // recognizer, and a bare `.` remains unsupported (falsifies W3/W4/W5).
+    let _ = recognized_variable("var x = 1;");
+    let _ = recognized_variable("var x = 1.;");
+    let _ = recognized_variable("var x = 1.0;");
+    let _ = recognized_variable("var x = .5;");
+    assert_unsupported("var x = .;");
+}
+
+#[test]
+fn one_level_block_var_plain_fractional_decimal_literal_preserves_integer_predecessor_and_overlapping_prefix()
+ {
+    for text in [
+        "{ var x = 0; }",
+        "{ var x = 1; }",
+        "{ var x = 9; }",
+        "{ var x = 10; }",
+        "{ var x = 42; }",
+        "{ var x = 123; }",
+    ] {
+        let _ = recognized_block(text);
+    }
+
+    let _ = recognized_block("{ var x = 1; }");
+    let _ = recognized_block("{ var x = 1.; }");
+    let _ = recognized_block("{ var x = 1.0; }");
+    let _ = recognized_block("{ var x = .5; }");
+    assert_unsupported("{ var x = .; }");
+}
+
+#[test]
+fn top_level_var_plain_fractional_decimal_literal_does_not_claim_numeric_or_richer_neighbors() {
+    for text in [
+        // numeric-neighbor firewall: remains whole-source `UnsupportedCoverage`
+        "var x = 1e2;",
+        "var x = 1.0e2;",
+        "var x = .5e2;",
+        "var x = 1_0;",
+        "var x = 1.0_0;",
+        "var x = .5_0;",
+        "var x = 1n;",
+        "var x = 0x10;",
+        "var x = 0X10;",
+        "var x = 0b10;",
+        "var x = 0B10;",
+        "var x = 0o10;",
+        "var x = 0O10;",
+        "var x = 01;",
+        "var x = 01.0;",
+        "var x = +1.0;",
+        "var x = -1.0;",
+        // dot / richer-expression firewall: a locally complete fractional
+        // prefix never authorizes the enclosing whole-statement source
+        "var x = .;",
+        "var x = ..;",
+        "var x = 1..foo;",
+        "var x = 1.0.foo;",
+        "var x = .5.foo;",
+        "var x = 1.0();",
+        "var x = .5();",
+        "var x = 1.0 + x;",
+        "var x = .5 + x;",
+        "var x = 1.0 = x;",
+        "var x = 1.0 ? x : y;",
+        "var x = 1.0/*comment*/;",
+        "var x = 1.0 unexpected;",
+        "var x = 1.0;;",
+        "var x = 1.0\nvar y = foo;",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn one_level_block_var_plain_fractional_decimal_literal_does_not_claim_numeric_or_richer_neighbors()
+{
+    for text in [
+        "{ var x = 1e2; }",
+        "{ var x = 1.0e2; }",
+        "{ var x = .5e2; }",
+        "{ var x = 1_0; }",
+        "{ var x = 1.0_0; }",
+        "{ var x = .5_0; }",
+        "{ var x = 1n; }",
+        "{ var x = 0x10; }",
+        "{ var x = 0X10; }",
+        "{ var x = 0b10; }",
+        "{ var x = 0B10; }",
+        "{ var x = 0o10; }",
+        "{ var x = 0O10; }",
+        "{ var x = 01; }",
+        "{ var x = 01.0; }",
+        "{ var x = +1.0; }",
+        "{ var x = -1.0; }",
+        "{ var x = .; }",
+        "{ var x = ..; }",
+        "{ var x = 1..foo; }",
+        "{ var x = 1.0.foo; }",
+        "{ var x = .5.foo; }",
+        "{ var x = 1.0(); }",
+        "{ var x = .5(); }",
+        "{ var x = 1.0 + x; }",
+        "{ var x = .5 + x; }",
+        "{ var x = 1.0 = x; }",
+        "{ var x = 1.0 ? x : y; }",
+        "{ var x = 1.0/*comment*/; }",
+        "{ var x = 1.0 unexpected; }",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn top_level_var_plain_fractional_decimal_literal_eof_asi_preserves_ownership() {
+    for text in ["var x=1.0", "var x=.5", "var a=1.0,b=.5"] {
+        let script = recognized_variable(text);
+        let statement = only_variable_statement(&script);
+        assert_eq!(
+            statement.terminator(),
+            SelectedVariableStatementTerminator::AutomaticAtEof,
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn one_level_block_var_plain_fractional_decimal_literal_close_brace_asi_preserves_ownership() {
+    use super::selected_lexical_slice::{
+        SelectedBlockItem, SelectedBlockVarStatementTerminator, SelectedTopLevelItem,
+    };
+
+    for text in ["{ var x=1.0 }", "{ var x=.5 }", "{ var a=1.0,b=.5 }"] {
+        let script = recognized_block(text);
+        let [SelectedTopLevelItem::Block(block)] = script.items() else {
+            panic!("expected exactly one Block item for {text:?}");
+        };
+        let [SelectedBlockItem::Var(statement)] = block.items() else {
+            panic!("expected exactly one Block var statement for {text:?}");
+        };
+        assert_eq!(
+            statement.terminator(),
+            SelectedBlockVarStatementTerminator::AutomaticBeforeBlockClose,
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn top_level_var_plain_fractional_decimal_literal_transactionality_commits_no_earlier_prefix() {
+    // No valid earlier fractional declarator escapes as committed selected
+    // success when a later declarator/initializer/terminator fails
+    // (falsifies W15/earlier-prefix-escapes).
+    for text in [
+        "var a = 1.0, b = ;",
+        "var a = .5, b = 1e2;",
+        "var a = 1.0, b =",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn one_level_block_var_plain_fractional_decimal_literal_transactionality_commits_no_earlier_prefix()
+{
+    for text in [
+        "{ var a = 1.0, b = ; }",
+        "{ var a = .5, b = 1e2; }",
+        "{ var a = 1.0, b = }",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn top_level_var_fractional_mixed_with_sibling_atoms_and_identifier_reference_preserves_correspondence_ownership()
+ {
+    for text in [
+        "var a=1.0,b=2.0;",
+        "var a=1,b=2.5;",
+        "var a=true,b=3.0;",
+        "var a=null,b=.25;",
+        "var a=this,b=4.0;",
+        "var a=\"s\",b=.25;",
+    ] {
+        let script = recognized_variable(text);
+        let statement = only_variable_statement(&script);
+        for binding in statement.bindings() {
+            assert!(
+                binding.identifier_reference_initializer().is_none(),
+                "{text:?}"
+            );
+            assert!(
+                binding.escaped_reserved_initializer_identifier().is_none(),
+                "{text:?}"
+            );
+        }
+    }
+
+    let script = recognized_variable("var a=1.0,b=foo;");
+    let statement = only_variable_statement(&script);
+    assert!(
+        statement.bindings()[0]
+            .identifier_reference_initializer()
+            .is_none()
+    );
+    let reference = statement.bindings()[1]
+        .identifier_reference_initializer()
+        .expect("second declarator must retain existing IdentifierReference fact");
+    assert_eq!(reference.reference().fragment(), "foo");
+    assert_eq!(reference.semantic_name(), "foo");
+}
+
+#[test]
+fn one_level_block_var_fractional_mixed_with_sibling_atoms_and_identifier_reference_preserves_correspondence_ownership()
+ {
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+
+    fn only_block_var_statement(
+        script: &super::selected_lexical_slice::SelectedOneLevelBlockScript,
+    ) -> &super::selected_lexical_slice::SelectedBlockVarStatement {
+        let [SelectedTopLevelItem::Block(block)] = script.items() else {
+            panic!("expected exactly one Block item");
+        };
+        let [SelectedBlockItem::Var(statement)] = block.items() else {
+            panic!("expected exactly one Block var statement");
+        };
+        statement
+    }
+
+    for text in [
+        "{ var a=1.0,b=2.0; }",
+        "{ var a=1,b=2.5; }",
+        "{ var a=true,b=3.0; }",
+        "{ var a=null,b=.25; }",
+        "{ var a=this,b=4.0; }",
+        "{ var a=\"s\",b=.25; }",
+    ] {
+        let script = recognized_block(text);
+        let statement = only_block_var_statement(&script);
+        for binding in statement.bindings() {
+            assert!(
+                binding.identifier_reference_initializer().is_none(),
+                "{text:?}"
+            );
+            assert!(
+                binding.escaped_reserved_initializer_identifier().is_none(),
+                "{text:?}"
+            );
+        }
+    }
+
+    let script = recognized_block("{ var a=1.0,b=foo; }");
+    let statement = only_block_var_statement(&script);
+    assert!(
+        statement.bindings()[0]
+            .identifier_reference_initializer()
+            .is_none()
+    );
+    let reference = statement.bindings()[1]
+        .identifier_reference_initializer()
+        .expect("second declarator must retain existing IdentifierReference fact");
+    assert_eq!(reference.reference().fragment(), "foo");
+    assert_eq!(reference.semantic_name(), "foo");
 }
