@@ -14,10 +14,12 @@
 //! declarator to admit an optional selected decimal-integer initializer by
 //! #699, widened each Block `var` declarator to additionally admit a
 //! direct-authored, escape-free selected IdentifierReference initializer by
-//! #710, and widened each Block `var` declarator to additionally admit a
+//! #710, widened each Block `var` declarator to additionally admit a
 //! selected escaped non-ReservedWord IdentifierReference initializer by
-//! #713 (escaped ReservedWord spellings remain outside this leaf). Recognition
-//! is transactional for the whole authoritative
+//! #713 (escaped ReservedWord spellings remain outside this leaf), and
+//! widened both the top-level and one-level Block `var` initializer position
+//! to additionally admit a direct-authored selected `BooleanLiteral` by
+//! #719. Recognition is transactional for the whole authoritative
 //! `SourceText`: tentative declaration/binding/Block/var facts are returned
 //! only when the entire source is consumed by selected items plus selected
 //! trivia.
@@ -736,25 +738,29 @@ impl<'source> Cursor<'source> {
     /// `VariableStatement` capability and is a materially different
     /// termination fact from this Block-item's close-brace ASI, so it must
     /// not leak into this narrower Block-item placement. Only the keyword,
-    /// `BindingIdentifier`, initializer-equals/decimal-integer/
-    /// IdentifierReference, and comma-continuation recognition mechanics are
-    /// shared. A direct-authored or escaped non-ReservedWord
-    /// `IdentifierReference` initializer is admitted (Issues #710/#713)
-    /// through the existing source-backed `SelectedIdentifierReferenceFact`.
-    /// An escaped spelling that the shared recognizer classifies as a
-    /// ReservedWord (Issue #715) is admitted only as a classification-only
-    /// exact authored initializer anchor for the later Tier-1 `EE-04-R08`
-    /// consumer; it is not represented as an accepted `IdentifierReference`
-    /// and its decoded semantic name is not persisted. Any other
-    /// non-decimal, non-IdentifierReference initializer, comment trivia, EOF
-    /// (i.e. non-EOF ASI before the enclosing `}`), or terminator whose next
-    /// significant token is neither `;` nor `}` (including LineTerminator-
-    /// triggered ASI before another statement) is left entirely unrecognized
-    /// here and reported as `UnsupportedCoverage`.
+    /// `BindingIdentifier`, initializer-equals/decimal-integer/direct
+    /// `BooleanLiteral`/IdentifierReference, and comma-continuation
+    /// recognition mechanics are shared. A direct-authored or escaped
+    /// non-ReservedWord `IdentifierReference` initializer is admitted
+    /// (Issues #710/#713) through the existing source-backed
+    /// `SelectedIdentifierReferenceFact`. An escaped spelling that the shared
+    /// recognizer classifies as a ReservedWord (Issue #715) is admitted only
+    /// as a classification-only exact authored initializer anchor for the
+    /// later Tier-1 `EE-04-R08` consumer; it is not represented as an
+    /// accepted `IdentifierReference` and its decoded semantic name is not
+    /// persisted. A direct-authored `BooleanLiteral` initializer (Issue
+    /// #719) is admitted through the existing accepted
+    /// `consume_selected_boolean_literal` helper. Any other
+    /// non-decimal, non-Boolean, non-IdentifierReference initializer, comment
+    /// trivia, EOF (i.e. non-EOF ASI before the enclosing `}`), or terminator
+    /// whose next significant token is neither `;` nor `}` (including
+    /// LineTerminator-triggered ASI before another statement) is left
+    /// entirely unrecognized here and reported as `UnsupportedCoverage`.
     ///
-    /// The decimal initializer is consumed inside this owning cursor
-    /// lifecycle and discarded: no initializer-specific fact (presence,
-    /// anchor, or value) is retained on `SelectedBlockVarBinding` for it. A
+    /// The decimal and direct `BooleanLiteral` initializers are consumed
+    /// inside this owning cursor lifecycle and discarded: no
+    /// initializer-specific fact (presence, anchor, or value) is retained on
+    /// `SelectedBlockVarBinding` for either. A
     /// selected direct or escaped non-ReservedWord `IdentifierReference`
     /// initializer retains the existing exact source-backed
     /// `SelectedIdentifierReferenceFact` for the source-name correspondence
@@ -793,7 +799,9 @@ impl<'source> Cursor<'source> {
             let (identifier_reference_initializer, escaped_reserved_initializer_identifier) =
                 if self.consume_initializer_equals() {
                     self.skip_selected_trivia();
-                    let facts = if self.consume_selected_decimal_integer() {
+                    let facts = if self.consume_selected_decimal_integer()
+                        || self.consume_selected_boolean_literal()
+                    {
                         (None, None)
                     } else {
                         match self.consume_selected_identifier_reference() {
@@ -854,12 +862,13 @@ impl<'source> Cursor<'source> {
 
     /// Recognizes one selected top-level `VariableStatement` covering the
     /// inductive `VariableDeclarationList` base and successor productions with
-    /// `1..N` simple bindings and optional selected decimal-integer, selected
-    /// direct/escaped non-ReservedWord IdentifierReference, or selected escaped
-    /// ReservedWord initializer source positions.
+    /// `1..N` simple bindings and optional selected decimal-integer, direct
+    /// `BooleanLiteral`, selected direct/escaped non-ReservedWord
+    /// IdentifierReference, or selected escaped ReservedWord initializer
+    /// source positions.
     ///
-    /// Decimal initializer syntax is consumed inside this owning cursor
-    /// lifecycle and discarded. A selected IdentifierReference retains the
+    /// Decimal and direct `BooleanLiteral` initializer syntax are consumed
+    /// inside this owning cursor lifecycle and discarded. A selected IdentifierReference retains the
     /// complete existing source-backed fact on the containing binding for the
     /// source-name correspondence consumer. An escaped spelling already
     /// classified by the shared IdentifierName recognizer as a ReservedWord
@@ -894,7 +903,9 @@ impl<'source> Cursor<'source> {
             let (identifier_reference_initializer, escaped_reserved_initializer_identifier) =
                 if self.consume_initializer_equals() {
                     self.skip_selected_trivia();
-                    let facts = if self.consume_selected_decimal_integer() {
+                    let facts = if self.consume_selected_decimal_integer()
+                        || self.consume_selected_boolean_literal()
+                    {
                         (None, None)
                     } else {
                         match self.consume_selected_identifier_reference() {
