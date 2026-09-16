@@ -2412,10 +2412,12 @@ fn one_level_block_var_other_initializer_families_remain_unsupported() {
     // (see the "Issue #719" test section below). "{ var a=null; }" is also
     // deliberately not listed here: Issue #721 makes a direct-authored
     // `NullLiteral` initializer a selected accepted form (see the "Issue
-    // #721" test section below).
-    for text in ["{ var a=this; }", r#"{ var a="x"; }"#] {
-        assert_unsupported(text);
-    }
+    // #721" test section below). "{ var a=this; }" is also deliberately
+    // not listed here: Issue #723 makes a direct-authored
+    // `PrimaryExpression : this` initializer a selected accepted form
+    // (see the "Issue #723" test section below).
+    let text = r#"{ var a="x"; }"#;
+    assert_unsupported(text);
 }
 
 // --- Issue #713: one-level Block `var` widened to a selected escaped ------
@@ -2840,11 +2842,13 @@ fn one_level_block_var_close_brace_asi_does_not_widen_to_comments_or_initializer
     // below). "{ var a=null }" is also deliberately not listed here: Issue
     // #721 makes a direct-authored `NullLiteral` initializer compose with
     // close-brace ASI as a selected accepted form (see the "Issue #721" test
-    // section below).
+    // section below). "{ var a=this }" is also deliberately not listed
+    // here: Issue #723 makes a direct-authored `PrimaryExpression : this`
+    // initializer compose with close-brace ASI as a selected accepted form
+    // (see the "Issue #723" test section below).
     for text in [
         "{ var x /* c */ }",
         "{ var x=1 /* c */ }",
-        "{ var a=this }",
         r#"{ var a="x" }"#,
     ] {
         assert_unsupported(text);
@@ -3139,6 +3143,169 @@ fn one_level_block_var_direct_null_literal_does_not_claim_richer_or_malformed_ne
 #[test]
 fn one_level_block_var_direct_null_literal_transactional_failure_commits_no_prefix() {
     for text in ["{ var a=null,b=; }", "{ var a=null,b= }"] {
+        assert_unsupported(text);
+    }
+}
+
+// --- Issue #723: one-level Block `var` widened to a direct-authored ------
+// `PrimaryExpression : this` initializer
+//
+// These focused production tests seal the candidate against the accepted
+// #688-comment-5691238988 / #723 theorem, reusing the existing accepted
+// #253/#254/#255/#256 direct-`this` recognizer
+// (`consume_selected_this_expression`) and its maximal-IdentifierName
+// boundary rather than cloning that independent oracle. The escaped-
+// semantic-`this` C6 theorem is already sealed by
+// `one_level_block_var_escaped_reserved_initializer_retains_classification_only_exact_anchor`
+// above and further sealed below with dedicated `this`-specific spellings;
+// it is intentionally not fully duplicated here.
+
+#[test]
+fn one_level_block_var_direct_this_initializer_composes_as_presence_only() {
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+
+    for (text, expected_names) in [
+        ("{ var x=this; }", &["x"][..]),
+        ("{ var x=this }", &["x"][..]),
+        ("{ var a=this,b=this; }", &["a", "b"][..]),
+        ("{ var a=this,b=this }", &["a", "b"][..]),
+    ] {
+        let script = recognized_block(text);
+        let [SelectedTopLevelItem::Block(block)] = script.items() else {
+            panic!("expected exactly one Block item for {text:?}");
+        };
+        let [SelectedBlockItem::Var(statement)] = block.items() else {
+            panic!("expected exactly one Block var statement for {text:?}");
+        };
+        let names: Vec<_> = statement
+            .bindings()
+            .iter()
+            .map(|binding| binding.binding().fragment())
+            .collect();
+        assert_eq!(names, expected_names, "{text:?}");
+        for binding in statement.bindings() {
+            assert!(
+                binding.identifier_reference_initializer().is_none(),
+                "{text:?}"
+            );
+            assert!(
+                binding.escaped_reserved_initializer_identifier().is_none(),
+                "{text:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn one_level_block_var_mixed_decimal_boolean_null_this_identifier_reference_preserves_correspondence_ownership()
+ {
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+
+    let script = recognized_block("{ var a=false,b=1,c=null,d=this,e=x }");
+    let [SelectedTopLevelItem::Block(block)] = script.items() else {
+        panic!("expected exactly one Block item");
+    };
+    let [SelectedBlockItem::Var(statement)] = block.items() else {
+        panic!("expected exactly one Block var statement");
+    };
+    for index in 0..4 {
+        assert!(
+            statement.bindings()[index]
+                .identifier_reference_initializer()
+                .is_none()
+        );
+    }
+    let reference = statement.bindings()[4]
+        .identifier_reference_initializer()
+        .expect("fifth declarator must retain existing IdentifierReference fact");
+    assert_eq!(reference.reference().fragment(), "x");
+    assert_eq!(reference.semantic_name(), "x");
+}
+
+#[test]
+fn one_level_block_var_direct_this_boundary_preserves_maximal_identifier_reference_routing() {
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+
+    for (text, expected_fragment, expected_semantic) in [
+        ("{ var x=thisx; }", "thisx", "thisx"),
+        ("{ var x=thisValue; }", "thisValue", "thisValue"),
+        ("{ var x=this0; }", "this0", "this0"),
+        ("{ var x=this$; }", "this$", "this$"),
+        ("{ var x=this_; }", "this_", "this_"),
+        (r"{ var x=this\u0061; }", r"this\u0061", "thisa"),
+        (r"{ var x=this\u{61}; }", r"this\u{61}", "thisa"),
+        (r"{ var x=this\u0030; }", r"this\u0030", "this0"),
+    ] {
+        let script = recognized_block(text);
+        let [SelectedTopLevelItem::Block(block)] = script.items() else {
+            panic!("expected exactly one Block item for {text:?}");
+        };
+        let [SelectedBlockItem::Var(statement)] = block.items() else {
+            panic!("expected exactly one Block var statement for {text:?}");
+        };
+        let reference = statement.bindings()[0]
+            .identifier_reference_initializer()
+            .unwrap_or_else(|| panic!("expected IdentifierReference routing for {text:?}"));
+        assert_eq!(
+            reference.reference().fragment(),
+            expected_fragment,
+            "{text:?}"
+        );
+        assert_eq!(reference.semantic_name(), expected_semantic, "{text:?}");
+    }
+}
+
+#[test]
+fn one_level_block_var_direct_this_does_not_claim_richer_or_malformed_neighbors() {
+    for text in [
+        "{ var x=this.foo; }",
+        "{ var x=this(); }",
+        "{ var x=this + y; }",
+        "{ var x=this = y; }",
+        "{ var x=this ? a : b; }",
+        "{ var x=this.foo }",
+        "{ var x=this() }",
+        "{ var x=this + y }",
+        "{ var x=this/*c*/; }",
+        "{ var x=this /*c*/ }",
+        r"{ var x=this\u{}; }",
+        r"{ var x=this\u0; }",
+        r"{ var x=this\u{61; }",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn one_level_block_var_direct_this_escaped_reserved_spelling_is_not_this_expression() {
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+
+    for text in [r"{ var x=\u0074his; }", r"{ var x=t\u0068is; }"] {
+        let script = recognized_block(text);
+        let [SelectedTopLevelItem::Block(block)] = script.items() else {
+            panic!("expected exactly one Block item for {text:?}");
+        };
+        let [SelectedBlockItem::Var(statement)] = block.items() else {
+            panic!("expected exactly one Block var statement for {text:?}");
+        };
+        assert!(
+            statement.bindings()[0]
+                .escaped_reserved_initializer_identifier()
+                .is_some(),
+            "{text:?}"
+        );
+        assert!(
+            statement.bindings()[0]
+                .identifier_reference_initializer()
+                .is_none(),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn one_level_block_var_direct_this_transactional_failure_commits_no_prefix() {
+    for text in ["{ var a=this,b=; }", "{ var a=this,b= }"] {
         assert_unsupported(text);
     }
 }
@@ -3528,6 +3695,9 @@ fn later_declarators_reuse_the_general_binding_identifier_grammar_route() {
 
 #[test]
 fn selected_var_decimal_initializer_boundary_is_exact() {
+    // "var a=this;" is deliberately not listed here: Issue #723 makes a
+    // direct-authored `PrimaryExpression : this` initializer a selected
+    // accepted form (see the "Issue #723" test section below).
     for text in [
         "var a=01;",
         "var a=1_0;",
@@ -3536,7 +3706,6 @@ fn selected_var_decimal_initializer_boundary_is_exact() {
         "var a=1n;",
         "var a=+1;",
         "var a=-1;",
-        "var a=this;",
         "var a=\"x\";",
     ] {
         assert_unsupported(text);
@@ -3641,6 +3810,9 @@ fn escaped_var_identifier_reference_name_policy_preserves_c1_c6_firewall() {
 
 #[test]
 fn var_identifier_reference_boundary_keeps_richer_expression_and_literal_neighbors_unsupported() {
+    // "var x=this;" is deliberately not listed here: Issue #723 makes a
+    // direct-authored `PrimaryExpression : this` initializer a selected
+    // accepted form (see the "Issue #723" test section below).
     for text in [
         "var x=foo.bar;",
         "var x=foo();",
@@ -3653,7 +3825,6 @@ fn var_identifier_reference_boundary_keeps_richer_expression_and_literal_neighbo
         r"var x=\u0066oo();",
         r"var x=\u0066oo+1;",
         r"var x=\u0066oo/*comment*/;",
-        "var x=this;",
         "var x=\"foo\";",
     ] {
         assert_unsupported(text);
@@ -4191,6 +4362,177 @@ fn direct_null_literal_non_codepoint_continuation_remains_unsupported() {
     // placement. The existing owning layer remains authoritative for the
     // whole-source classification.
     for text in [r"var x=null\u{110000};", r"{ var x=null\u{110000}; }"] {
+        assert_unsupported(text);
+    }
+}
+
+// --- Issue #723: top-level `VariableStatement` widened to a direct- ------
+// authored `PrimaryExpression : this` initializer
+//
+// These focused production tests seal the candidate against the accepted
+// #688-comment-5691238988 / #723 theorem, reusing the existing accepted
+// #253/#254/#255/#256 direct-`this` recognizer
+// (`consume_selected_this_expression`) and its maximal-IdentifierName
+// boundary rather than cloning that independent oracle. The escaped-
+// semantic-`this` C6 theorem is already sealed by
+// `var_escaped_reserved_initializer_retains_classification_only_exact_anchor`
+// above and further sealed below with dedicated `this`-specific spellings;
+// it is intentionally not fully duplicated here.
+
+#[test]
+fn top_level_var_direct_this_initializer_composes_as_presence_only() {
+    for (text, expected_names) in [
+        ("var x=this;", &["x"][..]),
+        ("var x=this", &["x"][..]),
+        ("var a=this,b=this;", &["a", "b"][..]),
+    ] {
+        let script = recognized_variable(text);
+        let statement = only_variable_statement(&script);
+        assert_eq!(binding_fragments(statement), expected_names, "{text:?}");
+        for binding in statement.bindings() {
+            assert!(
+                binding.identifier_reference_initializer().is_none(),
+                "{text:?}"
+            );
+            assert!(
+                binding.escaped_reserved_initializer_identifier().is_none(),
+                "{text:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn top_level_var_mixed_decimal_boolean_null_this_identifier_reference_preserves_correspondence_ownership()
+ {
+    let script = recognized_variable("var a=1,b=true,c=null,d=this,e=x;");
+    let statement = only_variable_statement(&script);
+    for index in 0..4 {
+        assert!(
+            statement.bindings()[index]
+                .identifier_reference_initializer()
+                .is_none()
+        );
+    }
+    let reference = statement.bindings()[4]
+        .identifier_reference_initializer()
+        .expect("fifth declarator must retain existing IdentifierReference fact");
+    assert_eq!(reference.reference().fragment(), "x");
+    assert_eq!(reference.semantic_name(), "x");
+}
+
+#[test]
+fn top_level_var_direct_this_boundary_preserves_maximal_identifier_reference_routing() {
+    for (text, expected_fragment, expected_semantic) in [
+        ("var x=thisx;", "thisx", "thisx"),
+        ("var x=thisValue;", "thisValue", "thisValue"),
+        ("var x=this0;", "this0", "this0"),
+        ("var x=this$;", "this$", "this$"),
+        ("var x=this_;", "this_", "this_"),
+        (r"var x=this\u0061;", r"this\u0061", "thisa"),
+        (r"var x=this\u{61};", r"this\u{61}", "thisa"),
+        (r"var x=this\u0030;", r"this\u0030", "this0"),
+    ] {
+        let script = recognized_variable(text);
+        let statement = only_variable_statement(&script);
+        let reference = statement.bindings()[0]
+            .identifier_reference_initializer()
+            .unwrap_or_else(|| panic!("expected IdentifierReference routing for {text:?}"));
+        assert_eq!(
+            reference.reference().fragment(),
+            expected_fragment,
+            "{text:?}"
+        );
+        assert_eq!(reference.semantic_name(), expected_semantic, "{text:?}");
+    }
+}
+
+#[test]
+fn top_level_var_direct_this_does_not_claim_richer_or_malformed_neighbors() {
+    for text in [
+        "var x=this.foo;",
+        "var x=this();",
+        "var x=this + y;",
+        "var x=this = y;",
+        "var x=this ? a : b;",
+        "var x=this/*c*/;",
+        r"var x=this\u{};",
+        r"var x=this\u0;",
+        r"var x=this\u{61",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn top_level_var_direct_this_escaped_reserved_spelling_is_not_this_expression() {
+    for text in [r"var x=\u0074his;", r"var x=t\u0068is;"] {
+        let script = recognized_variable(text);
+        let statement = only_variable_statement(&script);
+        assert!(
+            statement.bindings()[0]
+                .escaped_reserved_initializer_identifier()
+                .is_some(),
+            "{text:?}"
+        );
+        assert!(
+            statement.bindings()[0]
+                .identifier_reference_initializer()
+                .is_none(),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn top_level_var_direct_this_transactional_failure_commits_no_prefix() {
+    for text in ["var a=this,b=;", "var a=this,b="] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn direct_this_formed_invalid_continuation_does_not_steal_identifier_reference_boundary() {
+    // Issue #723 adversarial audit: a formed authored UES continuation that
+    // cannot extend the maximal IdentifierName (`-` decodes to `-`, not
+    // an IdentifierPart) must not let `consume_selected_this_expression`
+    // commit a `this` prefix in either selected `var` placement. The
+    // existing IdentifierReference/UES owner remains authoritative for the
+    // whole-source outcome, distinct from the malformed-UES controls above
+    // (`this\u{}`, `this\u0`, `this\u{61`) and from the surrogate/non-
+    // CodePoint controls below (`this\uD800`, `this\u{D800}`,
+    // `this\u{110000}`).
+    for text in [r"var x=this\u002D;", r"{ var x=this\u002D; }"] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn direct_this_surrogate_continuation_remains_unsupported() {
+    // Issue #723 adversarial audit: a formed authored UES continuation that
+    // decodes to a lone surrogate code point must not let
+    // `consume_selected_this_expression` commit a partial `this` prefix, or
+    // fabricate any RHS Grammar/static evidence, in either selected `var`
+    // placement.
+    for text in [
+        r"var x=this\uD800;",
+        r"var x=this\u{D800};",
+        r"{ var x=this\uD800; }",
+        r"{ var x=this\u{D800}; }",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn direct_this_non_codepoint_continuation_remains_unsupported() {
+    // Issue #723 adversarial audit: a UES continuation encoding a value
+    // outside the Unicode code point range must not let
+    // `consume_selected_this_expression` commit a partial `this` prefix, or
+    // fabricate any RHS Grammar/static evidence, in either selected `var`
+    // placement. The existing owning layer remains authoritative for the
+    // whole-source classification.
+    for text in [r"var x=this\u{110000};", r"{ var x=this\u{110000}; }"] {
         assert_unsupported(text);
     }
 }
