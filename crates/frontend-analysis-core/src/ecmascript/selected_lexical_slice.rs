@@ -750,9 +750,12 @@ impl<'source> Cursor<'source> {
     /// accepted `IdentifierReference` and its decoded semantic name is not
     /// persisted. A direct-authored `BooleanLiteral` initializer (Issue
     /// #719) is admitted through the existing accepted
-    /// `consume_selected_boolean_literal` helper. Any other
-    /// non-decimal, non-Boolean, non-IdentifierReference initializer, comment
-    /// trivia, EOF (i.e. non-EOF ASI before the enclosing `}`), or terminator
+    /// `consume_selected_boolean_literal` helper. A direct-authored
+    /// `NullLiteral` initializer (Issue #721) is admitted through the
+    /// existing accepted `consume_selected_null_literal` helper. Any other
+    /// non-decimal, non-Boolean, non-Null, non-IdentifierReference
+    /// initializer, comment trivia, EOF (i.e. non-EOF ASI before the
+    /// enclosing `}`), or terminator
     /// whose next significant token is neither `;` nor `}` (including
     /// LineTerminator-triggered ASI before another statement) is left
     /// entirely unrecognized here and reported as `UnsupportedCoverage`.
@@ -801,6 +804,7 @@ impl<'source> Cursor<'source> {
                     self.skip_selected_trivia();
                     let facts = if self.consume_selected_decimal_integer()
                         || self.consume_selected_boolean_literal()
+                        || self.consume_selected_null_literal()
                     {
                         (None, None)
                     } else {
@@ -863,12 +867,13 @@ impl<'source> Cursor<'source> {
     /// Recognizes one selected top-level `VariableStatement` covering the
     /// inductive `VariableDeclarationList` base and successor productions with
     /// `1..N` simple bindings and optional selected decimal-integer, direct
-    /// `BooleanLiteral`, selected direct/escaped non-ReservedWord
-    /// IdentifierReference, or selected escaped ReservedWord initializer
-    /// source positions.
+    /// `BooleanLiteral`, direct `NullLiteral`, selected direct/escaped
+    /// non-ReservedWord IdentifierReference, or selected escaped ReservedWord
+    /// initializer source positions.
     ///
-    /// Decimal and direct `BooleanLiteral` initializer syntax are consumed
-    /// inside this owning cursor lifecycle and discarded. A selected IdentifierReference retains the
+    /// Decimal, direct `BooleanLiteral`, and direct `NullLiteral` initializer
+    /// syntax are consumed inside this owning cursor lifecycle and discarded.
+    /// A selected IdentifierReference retains the
     /// complete existing source-backed fact on the containing binding for the
     /// source-name correspondence consumer. An escaped spelling already
     /// classified by the shared IdentifierName recognizer as a ReservedWord
@@ -905,6 +910,7 @@ impl<'source> Cursor<'source> {
                     self.skip_selected_trivia();
                     let facts = if self.consume_selected_decimal_integer()
                         || self.consume_selected_boolean_literal()
+                        || self.consume_selected_null_literal()
                     {
                         (None, None)
                     } else {

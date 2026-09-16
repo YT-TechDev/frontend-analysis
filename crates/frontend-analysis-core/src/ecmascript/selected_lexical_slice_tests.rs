@@ -813,7 +813,6 @@ fn broader_script_grammar_remains_unsupported() {
         "#!node\nlet x=1;",
         "let [x]=y;",
         "let {x}=y;",
-        "var x=null;",
         "'use strict'; let x=1;",
         "super.x;",
         "obj.#x;",
@@ -2258,7 +2257,6 @@ fn one_level_block_var_identifier_reference_initializer_transactional_failure_co
     // "{ var x=\u0069f,y=; }") prevents statement completion.
     for text in [
         "{ var x=a,y=; }",
-        "{ var x=a,y=null; }",
         r"{ var x=\u0066oo,y=; }",
         r"{ var x=\u0069f,y=; }",
     ] {
@@ -2411,8 +2409,11 @@ fn one_level_block_var_other_initializer_families_remain_unsupported() {
     // layer even though it later rejects in static semantics. "{ var a=true; }"
     // is also deliberately not listed here: Issue #719 makes a
     // direct-authored `BooleanLiteral` initializer a selected accepted form
-    // (see the "Issue #719" test section below).
-    for text in ["{ var a=null; }", "{ var a=this; }", r#"{ var a="x"; }"#] {
+    // (see the "Issue #719" test section below). "{ var a=null; }" is also
+    // deliberately not listed here: Issue #721 makes a direct-authored
+    // `NullLiteral` initializer a selected accepted form (see the "Issue
+    // #721" test section below).
+    for text in ["{ var a=this; }", r#"{ var a="x"; }"#] {
         assert_unsupported(text);
     }
 }
@@ -2632,12 +2633,7 @@ fn one_level_block_var_decimal_initializer_rejects_comment_trivia() {
 
 #[test]
 fn one_level_block_var_decimal_initializer_transactional_failure_commits_no_prefix() {
-    for text in [
-        "{ var a=1, ; }",
-        "{ var a=1,b= ; }",
-        "{ var a=1,b=null; }",
-        "{ var a=1,b=1.0; }",
-    ] {
+    for text in ["{ var a=1, ; }", "{ var a=1,b= ; }", "{ var a=1,b=1.0; }"] {
         assert_unsupported(text);
     }
 
@@ -2841,11 +2837,13 @@ fn one_level_block_var_close_brace_asi_does_not_widen_to_comments_or_initializer
     // "{ var a=true }" is deliberately not listed here: Issue #719 makes a
     // direct-authored `BooleanLiteral` initializer compose with close-brace
     // ASI as a selected accepted form (see the "Issue #719" test section
-    // below).
+    // below). "{ var a=null }" is also deliberately not listed here: Issue
+    // #721 makes a direct-authored `NullLiteral` initializer compose with
+    // close-brace ASI as a selected accepted form (see the "Issue #721" test
+    // section below).
     for text in [
         "{ var x /* c */ }",
         "{ var x=1 /* c */ }",
-        "{ var a=null }",
         "{ var a=this }",
         r#"{ var a="x" }"#,
     ] {
@@ -3010,6 +3008,137 @@ fn one_level_block_var_direct_boolean_literal_escaped_reserved_spelling_is_not_b
 #[test]
 fn one_level_block_var_direct_boolean_literal_transactional_failure_commits_no_prefix() {
     for text in ["{ var a=true,b=; }", "{ var a=false,b= }"] {
+        assert_unsupported(text);
+    }
+}
+
+// --- Issue #721: one-level Block `var` widened to a direct-authored ------
+// `NullLiteral` initializer
+//
+// These focused production tests seal the candidate against the accepted
+// #688-comment-5690791939 / #721 theorem, reusing the existing accepted
+// #249/#250/#251/#252 direct-NullLiteral recognizer
+// (`consume_selected_null_literal`) and its maximal-IdentifierName boundary
+// rather than cloning that independent oracle. The escaped-semantic-`null`
+// C6 theorem is already sealed by
+// `one_level_block_var_escaped_reserved_initializer_retains_classification_only_exact_anchor`
+// above and is intentionally not duplicated here.
+
+#[test]
+fn one_level_block_var_direct_null_literal_initializer_composes_as_presence_only() {
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+
+    for (text, expected_names) in [
+        ("{ var x=null; }", &["x"][..]),
+        ("{ var x=null }", &["x"][..]),
+        ("{ var a=null,b=null; }", &["a", "b"][..]),
+        ("{ var a=null,b=null }", &["a", "b"][..]),
+    ] {
+        let script = recognized_block(text);
+        let [SelectedTopLevelItem::Block(block)] = script.items() else {
+            panic!("expected exactly one Block item for {text:?}");
+        };
+        let [SelectedBlockItem::Var(statement)] = block.items() else {
+            panic!("expected exactly one Block var statement for {text:?}");
+        };
+        let names: Vec<_> = statement
+            .bindings()
+            .iter()
+            .map(|binding| binding.binding().fragment())
+            .collect();
+        assert_eq!(names, expected_names, "{text:?}");
+        for binding in statement.bindings() {
+            assert!(
+                binding.identifier_reference_initializer().is_none(),
+                "{text:?}"
+            );
+            assert!(
+                binding.escaped_reserved_initializer_identifier().is_none(),
+                "{text:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn one_level_block_var_mixed_decimal_boolean_null_identifier_reference_preserves_correspondence_ownership()
+ {
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+
+    let script = recognized_block("{ var a=null,b=1,c=true,d=x }");
+    let [SelectedTopLevelItem::Block(block)] = script.items() else {
+        panic!("expected exactly one Block item");
+    };
+    let [SelectedBlockItem::Var(statement)] = block.items() else {
+        panic!("expected exactly one Block var statement");
+    };
+    for index in 0..3 {
+        assert!(
+            statement.bindings()[index]
+                .identifier_reference_initializer()
+                .is_none()
+        );
+    }
+    let reference = statement.bindings()[3]
+        .identifier_reference_initializer()
+        .expect("fourth declarator must retain existing IdentifierReference fact");
+    assert_eq!(reference.reference().fragment(), "x");
+    assert_eq!(reference.semantic_name(), "x");
+}
+
+#[test]
+fn one_level_block_var_direct_null_literal_boundary_preserves_maximal_identifier_reference_routing()
+{
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+
+    for (text, expected_fragment, expected_semantic) in [
+        ("{ var x=nullx; }", "nullx", "nullx"),
+        ("{ var x=nullValue; }", "nullValue", "nullValue"),
+        (r"{ var x=nulla; }", r"nulla", "nulla"),
+    ] {
+        let script = recognized_block(text);
+        let [SelectedTopLevelItem::Block(block)] = script.items() else {
+            panic!("expected exactly one Block item for {text:?}");
+        };
+        let [SelectedBlockItem::Var(statement)] = block.items() else {
+            panic!("expected exactly one Block var statement for {text:?}");
+        };
+        let reference = statement.bindings()[0]
+            .identifier_reference_initializer()
+            .unwrap_or_else(|| panic!("expected IdentifierReference routing for {text:?}"));
+        assert_eq!(
+            reference.reference().fragment(),
+            expected_fragment,
+            "{text:?}"
+        );
+        assert_eq!(reference.semantic_name(), expected_semantic, "{text:?}");
+    }
+}
+
+#[test]
+fn one_level_block_var_direct_null_literal_does_not_claim_richer_or_malformed_neighbors() {
+    for text in [
+        "{ var x=null.foo; }",
+        "{ var x=null(); }",
+        "{ var x=null + y; }",
+        "{ var x=null = y; }",
+        "{ var x=null ? a : b; }",
+        "{ var x=null.foo }",
+        "{ var x=null() }",
+        "{ var x=null + y }",
+        "{ var x=null/*c*/; }",
+        "{ var x=null /*c*/ }",
+        r"{ var x=null\u{}; }",
+        r"{ var x=null\u0; }",
+        r"{ var x=null\u{61; }",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn one_level_block_var_direct_null_literal_transactional_failure_commits_no_prefix() {
+    for text in ["{ var a=null,b=; }", "{ var a=null,b= }"] {
         assert_unsupported(text);
     }
 }
@@ -3407,7 +3536,6 @@ fn selected_var_decimal_initializer_boundary_is_exact() {
         "var a=1n;",
         "var a=+1;",
         "var a=-1;",
-        "var a=null;",
         "var a=this;",
         "var a=\"x\";",
     ] {
@@ -3525,7 +3653,6 @@ fn var_identifier_reference_boundary_keeps_richer_expression_and_literal_neighbo
         r"var x=\u0066oo();",
         r"var x=\u0066oo+1;",
         r"var x=\u0066oo/*comment*/;",
-        "var x=null;",
         "var x=this;",
         "var x=\"foo\";",
     ] {
@@ -3629,7 +3756,6 @@ fn incomplete_or_widened_declarator_lists_commit_no_selected_statement() {
         "var a,,b;",
         "var a=1,",
         "var a=1,b=",
-        "var a=1,b=null;",
         "var a=1,b=1.0;",
         "var a,{b}=c;",
         "var a, /*comment*/ b;",
@@ -3674,7 +3800,6 @@ fn failed_declaration_lists_commit_no_selected_binding_or_statement_state() {
         "var a,b,",
         "var a=1,",
         "var a=1,b=",
-        "var a=1,b=null;",
         "var a=1,b=1.0;",
         r"var a=1,b,\u{}=2;",
         "var x=foo,y=bar,z=",
@@ -3938,6 +4063,106 @@ fn top_level_var_direct_boolean_literal_escaped_reserved_spelling_is_not_boolean
 #[test]
 fn top_level_var_direct_boolean_literal_transactional_failure_commits_no_prefix() {
     for text in ["var a=true,b=;", "var a=false,b="] {
+        assert_unsupported(text);
+    }
+}
+
+// --- Issue #721: top-level `VariableStatement` widened to a direct- ------
+// authored `NullLiteral` initializer
+//
+// These focused production tests seal the candidate against the accepted
+// #688-comment-5690791939 / #721 theorem, reusing the existing accepted
+// #249/#250/#251/#252 direct-NullLiteral recognizer
+// (`consume_selected_null_literal`) and its maximal-IdentifierName boundary
+// rather than cloning that independent oracle. The escaped-semantic-`null`
+// C6 theorem is already sealed by
+// `var_escaped_reserved_initializer_retains_classification_only_exact_anchor`
+// above and is intentionally not duplicated here.
+
+#[test]
+fn top_level_var_direct_null_literal_initializer_composes_as_presence_only() {
+    for (text, expected_names) in [
+        ("var x=null;", &["x"][..]),
+        ("var x=null", &["x"][..]),
+        ("var a=null,b=null;", &["a", "b"][..]),
+        ("var a=null,b=null", &["a", "b"][..]),
+    ] {
+        let script = recognized_variable(text);
+        let statement = only_variable_statement(&script);
+        assert_eq!(binding_fragments(statement), expected_names, "{text:?}");
+        for binding in statement.bindings() {
+            assert!(
+                binding.identifier_reference_initializer().is_none(),
+                "{text:?}"
+            );
+            assert!(
+                binding.escaped_reserved_initializer_identifier().is_none(),
+                "{text:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn top_level_var_mixed_decimal_boolean_null_identifier_reference_preserves_correspondence_ownership()
+ {
+    let script = recognized_variable("var a=null,b=1,c=true,d=x;");
+    let statement = only_variable_statement(&script);
+    for index in 0..3 {
+        assert!(
+            statement.bindings()[index]
+                .identifier_reference_initializer()
+                .is_none()
+        );
+    }
+    let reference = statement.bindings()[3]
+        .identifier_reference_initializer()
+        .expect("fourth declarator must retain existing IdentifierReference fact");
+    assert_eq!(reference.reference().fragment(), "x");
+    assert_eq!(reference.semantic_name(), "x");
+}
+
+#[test]
+fn top_level_var_direct_null_literal_boundary_preserves_maximal_identifier_reference_routing() {
+    for (text, expected_fragment, expected_semantic) in [
+        ("var x=nullx;", "nullx", "nullx"),
+        ("var x=nullValue;", "nullValue", "nullValue"),
+        (r"var x=nulla;", r"nulla", "nulla"),
+    ] {
+        let script = recognized_variable(text);
+        let statement = only_variable_statement(&script);
+        let reference = statement.bindings()[0]
+            .identifier_reference_initializer()
+            .unwrap_or_else(|| panic!("expected IdentifierReference routing for {text:?}"));
+        assert_eq!(
+            reference.reference().fragment(),
+            expected_fragment,
+            "{text:?}"
+        );
+        assert_eq!(reference.semantic_name(), expected_semantic, "{text:?}");
+    }
+}
+
+#[test]
+fn top_level_var_direct_null_literal_does_not_claim_richer_or_malformed_neighbors() {
+    for text in [
+        "var x=null.foo;",
+        "var x=null();",
+        "var x=null + y;",
+        "var x=null = y;",
+        "var x=null ? a : b;",
+        "var x=null/*c*/;",
+        r"var x=null\u{};",
+        r"var x=null\u0;",
+        r"var x=null\u{61",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn top_level_var_direct_null_literal_transactional_failure_commits_no_prefix() {
+    for text in ["var a=null,b=;", "var a=null,b="] {
         assert_unsupported(text);
     }
 }
