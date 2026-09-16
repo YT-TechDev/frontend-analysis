@@ -2398,7 +2398,7 @@ fn one_level_block_var_decimal_initializer_numeric_neighbors_remain_unsupported(
 }
 
 #[test]
-fn one_level_block_var_non_decimal_initializers_remain_unsupported() {
+fn one_level_block_var_other_initializer_families_remain_unsupported() {
     // "{ var a=foo; }" and "{ var a=\u0066oo; }" are deliberately not
     // listed here: Issue #710 makes a direct-authored, escape-free
     // `IdentifierReference` initializer a selected accepted form, and Issue

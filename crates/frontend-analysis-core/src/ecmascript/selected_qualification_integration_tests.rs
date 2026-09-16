@@ -1577,7 +1577,7 @@ fn block_var_multi_declarator_incomplete_and_firewalled_lists_remain_unsupported
     for text in [
         "{ var x, ; }",          // incomplete list: missing later declarator
         "{ var x, y, ; }",       // incomplete list: missing later declarator
-        "{ var x, y=null; }",    // non-decimal initializer firewall
+        "{ var x, y=null; }",    // unsupported initializer-family firewall
         "{ var x, /* c */ y; }", // comment-trivia firewall, before declarator
         "{ var x, y /* c */; }", // comment-trivia firewall, after declarator
     ] {
@@ -1733,7 +1733,7 @@ fn block_var_decimal_initializer_numeric_neighbors_remain_unsupported_coverage()
 }
 
 #[test]
-fn block_var_decimal_initializer_non_decimal_initializers_remain_unsupported_coverage() {
+fn block_var_other_initializer_families_remain_unsupported_coverage() {
     // "{ var a=foo; }" and "{ var a=\u0066oo; }" are deliberately not
     // listed here: Issue #710 makes a direct-authored, escape-free
     // `IdentifierReference` initializer a selected accepted form, and
