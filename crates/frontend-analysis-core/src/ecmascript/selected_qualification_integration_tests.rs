@@ -1246,16 +1246,18 @@ fn multi_declarator_grammar_rejection_stays_distinct_from_deferred_coverage() {
     // accepted form (see the "Issue #723" test section below). "var
     // a="x";" is also deliberately not listed below: Issue #725 makes a
     // direct-authored, escape-free `StringLiteral` initializer a selected
-    // accepted form (see the "Issue #725" test section below).
+    // accepted form (see the "Issue #725" test section below). "var
+    // a=1,b=1.0;" and "var a=1.0;" are also deliberately not listed below:
+    // Issue #732 makes a direct-authored plain fractional `DecimalLiteral`
+    // initializer a selected accepted form (see the "Issue #732" test
+    // section below).
     for text in [
         "var a,",
         "var a,b,",
         "var a=1,",
         "var a=1,b=",
-        "var a=1,b=1.0;",
         "var a=01;",
         "var a=1_0;",
-        "var a=1.0;",
         "var a=1e2;",
         "var a=1n;",
         "var a=+1;",
@@ -1713,10 +1715,12 @@ fn block_var_decimal_initializer_no_unicode_normalization_remains_accepted() {
 
 #[test]
 fn block_var_decimal_initializer_numeric_neighbors_remain_unsupported_coverage() {
+    // "{ var a=1.0; }" is deliberately not listed here: Issue #732 makes a
+    // direct-authored plain fractional `DecimalLiteral` initializer a
+    // selected accepted form (see the "Issue #732" test section below).
     for text in [
         "{ var a=01; }",
         "{ var a=1_0; }",
-        "{ var a=1.0; }",
         "{ var a=1e2; }",
         "{ var a=1n; }",
         "{ var a=+1; }",
@@ -1763,8 +1767,10 @@ fn block_var_decimal_initializer_comment_neighbors_remain_unsupported_coverage()
 fn block_var_decimal_initializer_transactional_failure_commits_no_prefix() {
     // A valid initialized declarator prefix (e.g. "a=1") must never escape as
     // a committed Block var contributor when a later declarator fails: the
-    // whole statement is transactional.
-    for text in ["{ var a=1, ; }", "{ var a=1,b= ; }", "{ var a=1,b=1.0; }"] {
+    // whole statement is transactional. "{ var a=1,b=1.0; }" is deliberately
+    // not listed here: Issue #732 makes a direct-authored plain fractional
+    // `DecimalLiteral` initializer a selected accepted form.
+    for text in ["{ var a=1, ; }", "{ var a=1,b= ; }"] {
         assert!(
             matches!(
                 attempt(text),
@@ -2328,4 +2334,84 @@ fn block_var_string_literal_backed_declarator_reaches_existing_ee14_r02() {
 #[test]
 fn block_var_string_literal_backed_declarator_reaches_existing_ee36_r02() {
     assert_static_semantics_rejected("let x; { var x=\"s\"; }", "x", (13, 14));
+}
+
+// --- Issue #732: both selected `var` placements widened to a direct- ------
+// authored plain fractional `DecimalLiteral` initializer
+//
+// These focused production tests seal the candidate against the accepted
+// #688-comment-5698108598 joint-composition theorem: existing top-level and
+// Block `var` static-tier and lifecycle authority must compose unchanged
+// with the newly admitted direct-authored plain fractional `DecimalLiteral`
+// initializer reused unchanged from #727/#728/#730/#731.
+
+#[test]
+fn top_level_var_direct_plain_fractional_decimal_literal_positive_lifecycle_is_selected_accepted_incomplete()
+ {
+    for text in [
+        "var x=0.;",
+        "var x=1.;",
+        "var x=1.0;",
+        "var x=12.34;",
+        "var x=.0;",
+        "var x=.5;",
+        "var x=1.0",
+        "var a=1.0,b=.5;",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn block_var_direct_plain_fractional_decimal_literal_positive_lifecycle_is_selected_accepted_incomplete()
+ {
+    for text in [
+        "{ var x=0.; }",
+        "{ var x=1.; }",
+        "{ var x=1.0; }",
+        "{ var x=12.34; }",
+        "{ var x=.0; }",
+        "{ var x=.5; }",
+        "{ var x=1.0 }",
+        "{ var a=1.0,b=.5; }",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn block_var_plain_fractional_decimal_literal_backed_declarator_reaches_existing_ee14_r02() {
+    assert_static_semantics_rejected("{ let x; var x=1.0; }", "x", (13, 14));
+}
+
+#[test]
+fn block_var_plain_fractional_decimal_literal_backed_declarator_reaches_existing_ee36_r02() {
+    assert_static_semantics_rejected("let x; { var x=.5; }", "x", (13, 14));
+}
+
+#[test]
+fn top_level_var_plain_fractional_decimal_literal_backed_declarator_reaches_existing_ee36_r02() {
+    assert_static_semantics_rejected("let x; var x=1.0;", "x", (11, 12));
+}
+
+#[test]
+fn fractional_var_prefix_preserves_later_existing_grammar_evidence_in_both_owners() {
+    // Issue #732: a valid newly accepted fractional initializer prefix must
+    // not downgrade or suppress an already-owned later malformed
+    // `BindingIdentifier` Grammar rejection, in either selected `var` owner.
+    assert_grammar_rejected(r"var a=1.0,b,\u{}=2;", r"\u{}", (12, 16));
+
+    assert_grammar_rejected(r"{ var a=1.0,b,\u{}=2; }", r"\u{}", (14, 18));
 }

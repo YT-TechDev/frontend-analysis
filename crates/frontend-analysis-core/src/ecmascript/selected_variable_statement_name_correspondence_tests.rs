@@ -1935,3 +1935,74 @@ fn null_only_var_declarator_list_produces_zero_correspondence_relations() {
         assert!(analysis.relations().is_empty(), "{text}");
     }
 }
+
+#[test]
+fn plain_fractional_decimal_literal_backed_var_declarator_contributes_no_correspondence_relation_while_siblings_are_preserved()
+ {
+    // Issue #732: a direct-authored plain fractional `DecimalLiteral`
+    // initializer retains no `identifier_reference_initializer` fact, so it
+    // must never fabricate a correspondence relation. A sibling
+    // IdentifierReference-backed declarator in the same list must keep its
+    // existing relation meaning.
+    let (_, script) = recognized_variable("var a=1.0,b=x;");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(relation.semantic_name(), "x");
+    assert_eq!(relation.reference().fragment(), "x");
+    assert!(
+        relation
+            .correspondence()
+            .is_no_selected_same_source_contributor()
+    );
+
+    let (_, script) = recognized_one_level_block("{ var a=.5,b=x; }");
+    let analysis = accepted_one_level_block_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(relation.semantic_name(), "x");
+    assert_eq!(relation.reference().fragment(), "x");
+    assert!(
+        relation
+            .correspondence()
+            .is_no_selected_same_source_contributor()
+    );
+}
+
+#[test]
+fn plain_fractional_decimal_literal_only_var_declarator_list_produces_zero_correspondence_relations()
+ {
+    // Issue #732: a direct-authored plain fractional `DecimalLiteral`-only
+    // declarator list contains no IdentifierReference contributor at all, so
+    // the correspondence analysis must yield zero relations, not merely a
+    // `NoSelectedSameSourceContributor` relation.
+    for text in ["var a=1.0;", "var a=1.0,b=.5;"] {
+        let (_, script) = recognized_variable(text);
+        let analysis = accepted_analysis(&script);
+        assert!(analysis.relations().is_empty(), "{text}");
+    }
+
+    for text in ["{ var a=1.0; }", "{ var a=1.0,b=.5; }"] {
+        let (_, script) = recognized_one_level_block(text);
+        let analysis = accepted_one_level_block_analysis(&script);
+        assert!(analysis.relations().is_empty(), "{text}");
+    }
+}
+
+#[test]
+fn plain_fractional_decimal_literal_backed_var_lhs_still_contributes_as_existing_same_source_contributor()
+ {
+    // Issue #732 same-source-contributor invariant: the RHS being a
+    // fractional `DecimalLiteral` must not suppress or duplicate the
+    // declarator's own LHS contribution when that same name is later
+    // referenced (`var a=1.0; let x=a;`).
+    let (_, script) = recognized_variable("var a=1.0; let x=a;");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(relation.semantic_name(), "a");
+    assert_eq!(relation.reference().fragment(), "a");
+    let contributors = relation
+        .correspondence()
+        .var_contributors()
+        .expect("top-level var contributor relation");
+    assert_eq!(contributors.len(), 1);
+    assert_eq!(range(contributors[0]), (4, 5));
+}

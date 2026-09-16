@@ -20,10 +20,15 @@
 //! widened both the top-level and one-level Block `var` initializer position
 //! to additionally admit a direct-authored selected `BooleanLiteral` by
 //! #719, and widened the selected `LexicalDeclaration` initializer position
-//! (only; top-level and Block `var` remain outside this leaf) to
+//! (only; top-level and Block `var` remained outside that leaf) to
 //! additionally admit a direct-authored plain fractional `DecimalLiteral`
 //! (`SelectedDecimalInteger "." DecimalDigits?` or `"." DecimalDigits`) by
-//! #730. Recognition is transactional for the whole authoritative
+//! #730, and widened both the top-level and one-level Block `var`
+//! initializer position to additionally admit the same direct-authored plain
+//! fractional `DecimalLiteral`, reusing the unmodified
+//! `consume_selected_plain_fractional_decimal_literal` helper tried before
+//! the unmodified `consume_selected_decimal_integer` predecessor at both
+//! call sites, by #732. Recognition is transactional for the whole authoritative
 //! `SourceText`: tentative declaration/binding/Block/var facts are returned
 //! only when the entire source is consumed by selected items plus selected
 //! trivia.
@@ -706,6 +711,7 @@ impl<'source> Cursor<'source> {
     ///
     /// SelectedBlockVarDeclaration ::=
     ///     SelectedBindingIdentifier
+    ///   | SelectedBindingIdentifier = SelectedPlainFractionalDecimalLiteral
     ///   | SelectedBindingIdentifier = SelectedDecimalInteger
     ///   | SelectedBindingIdentifier = SelectedDirectThisExpression
     ///   | SelectedBindingIdentifier = SelectedDirectEscapeFreeStringLiteral
@@ -728,9 +734,14 @@ impl<'source> Cursor<'source> {
     /// initializer per declarator by #715, widened to admit bounded
     /// close-brace ASI as an additional terminator route by #717, widened to
     /// an optional direct-authored `PrimaryExpression : this` initializer
-    /// per declarator by #723): one or
+    /// per declarator by #723, widened to an optional direct-authored plain
+    /// fractional `DecimalLiteral` initializer per declarator, reusing the
+    /// unmodified `consume_selected_plain_fractional_decimal_literal`
+    /// helper tried before the unmodified decimal-integer predecessor, by
+    /// #732): one or
     /// more selected `BindingIdentifier` declarators separated by commas,
-    /// each independently optionally followed by `= SelectedDecimalInteger`,
+    /// each independently optionally followed by
+    /// `= SelectedPlainFractionalDecimalLiteral`, `= SelectedDecimalInteger`,
     /// `= SelectedDirectThisExpression`,
     /// `= SelectedIdentifierReference` (direct or escaped non-ReservedWord),
     /// or `= SelectedEscapedReservedWordIdentifierName` (classification-only
@@ -773,7 +784,7 @@ impl<'source> Cursor<'source> {
     /// reverse solidus, raw LF, raw CR, or unclosed quote before the
     /// matching authored quote remains outside this route and continues to
     /// be reported as `UnsupportedCoverage`. Any other
-    /// non-decimal, non-Boolean, non-Null, non-`this`,
+    /// non-fractional, non-decimal, non-Boolean, non-Null, non-`this`,
     /// non-escape-free-StringLiteral, non-IdentifierReference
     /// initializer, comment trivia, EOF (i.e. non-EOF ASI before the
     /// enclosing `}`), or terminator
@@ -781,7 +792,10 @@ impl<'source> Cursor<'source> {
     /// LineTerminator-triggered ASI before another statement) is left
     /// entirely unrecognized here and reported as `UnsupportedCoverage`.
     ///
-    /// The decimal, direct `BooleanLiteral`, direct `NullLiteral`, direct
+    /// The direct-authored plain fractional `DecimalLiteral` (Issue #732,
+    /// reusing the existing accepted
+    /// `consume_selected_plain_fractional_decimal_literal` helper), decimal,
+    /// direct `BooleanLiteral`, direct `NullLiteral`, direct
     /// `this`, and direct escape-free `StringLiteral` initializers are consumed
     /// inside this owning cursor lifecycle and discarded: no
     /// initializer-specific fact (presence, anchor, or value) is retained on
@@ -824,7 +838,8 @@ impl<'source> Cursor<'source> {
             let (identifier_reference_initializer, escaped_reserved_initializer_identifier) =
                 if self.consume_initializer_equals() {
                     self.skip_selected_trivia();
-                    let facts = if self.consume_selected_decimal_integer()
+                    let facts = if self.consume_selected_plain_fractional_decimal_literal()
+                        || self.consume_selected_decimal_integer()
                         || self.consume_selected_boolean_literal()
                         || self.consume_selected_null_literal()
                         || self.consume_selected_this_expression()
@@ -890,13 +905,18 @@ impl<'source> Cursor<'source> {
 
     /// Recognizes one selected top-level `VariableStatement` covering the
     /// inductive `VariableDeclarationList` base and successor productions with
-    /// `1..N` simple bindings and optional selected decimal-integer, direct
+    /// `1..N` simple bindings and optional selected direct-authored plain
+    /// fractional `DecimalLiteral`, decimal-integer, direct
     /// `BooleanLiteral`, direct `NullLiteral`, direct `PrimaryExpression :
     /// this`, direct-authored escape-free `StringLiteral`, selected direct/escaped
     /// non-ReservedWord IdentifierReference, or selected escaped ReservedWord
     /// initializer source positions.
     ///
-    /// Decimal, direct `BooleanLiteral`, direct `NullLiteral`, direct
+    /// The direct-authored plain fractional `DecimalLiteral` (Issue #732) is
+    /// tried before the decimal-integer predecessor, reusing the existing
+    /// accepted `consume_selected_plain_fractional_decimal_literal` helper
+    /// unchanged. Fractional, decimal, direct `BooleanLiteral`, direct
+    /// `NullLiteral`, direct
     /// `this`, and direct escape-free `StringLiteral` initializer
     /// syntax are consumed inside this owning cursor lifecycle and discarded
     /// through the existing accepted `consume_selected_this_expression`
@@ -943,7 +963,8 @@ impl<'source> Cursor<'source> {
             let (identifier_reference_initializer, escaped_reserved_initializer_identifier) =
                 if self.consume_initializer_equals() {
                     self.skip_selected_trivia();
-                    let facts = if self.consume_selected_decimal_integer()
+                    let facts = if self.consume_selected_plain_fractional_decimal_literal()
+                        || self.consume_selected_decimal_integer()
                         || self.consume_selected_boolean_literal()
                         || self.consume_selected_null_literal()
                         || self.consume_selected_this_expression()
