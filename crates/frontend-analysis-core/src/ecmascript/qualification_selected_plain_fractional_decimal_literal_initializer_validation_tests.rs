@@ -226,8 +226,8 @@ fn overlapping_lexical_prefix_theorem_preserves_predecessor_integer_and_adds_lon
 #[test]
 fn numeric_neighbor_and_dot_prefix_boundary_matrix_remain_unowned_here() {
     const NUMERIC_NEIGHBORS: &[&str] = &[
-        "1e2", "1.0e2", ".5e2", "1_0", "1.0_0", "1n", "0x10", "0X10", "0b10", "0B10", "0o10",
-        "0O10", "01", "+1.0", "-1.0",
+        "1e2", "1.0e2", ".5e2", "1_0", "1.0_0", ".5_0", "1n", "0x10", "0X10", "0b10", "0B10",
+        "0o10", "0O10", "01", "+1.0", "-1.0",
     ];
     for neighbor in NUMERIC_NEIGHBORS {
         assert!(
