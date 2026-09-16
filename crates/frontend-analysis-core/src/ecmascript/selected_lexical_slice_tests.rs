@@ -3094,7 +3094,7 @@ fn one_level_block_var_direct_null_literal_boundary_preserves_maximal_identifier
     for (text, expected_fragment, expected_semantic) in [
         ("{ var x=nullx; }", "nullx", "nullx"),
         ("{ var x=nullValue; }", "nullValue", "nullValue"),
-        (r"{ var x=nulla; }", r"nulla", "nulla"),
+        (r"{ var x=null\u0061; }", r"null\u0061", "nulla"),
     ] {
         let script = recognized_block(text);
         let [SelectedTopLevelItem::Block(block)] = script.items() else {
@@ -4127,7 +4127,7 @@ fn top_level_var_direct_null_literal_boundary_preserves_maximal_identifier_refer
     for (text, expected_fragment, expected_semantic) in [
         ("var x=nullx;", "nullx", "nullx"),
         ("var x=nullValue;", "nullValue", "nullValue"),
-        (r"var x=nulla;", r"nulla", "nulla"),
+        (r"var x=null\u0061;", r"null\u0061", "nulla"),
     ] {
         let script = recognized_variable(text);
         let statement = only_variable_statement(&script);
@@ -4163,6 +4163,34 @@ fn top_level_var_direct_null_literal_does_not_claim_richer_or_malformed_neighbor
 #[test]
 fn top_level_var_direct_null_literal_transactional_failure_commits_no_prefix() {
     for text in ["var a=null,b=;", "var a=null,b="] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn direct_null_literal_formed_invalid_continuation_does_not_steal_identifier_reference_boundary() {
+    // Issue #721 adversarial audit: a formed authored UES continuation that
+    // cannot extend the maximal IdentifierName (`\u002D` decodes to `-`, not
+    // an IdentifierPart) must not let `consume_selected_null_literal` commit
+    // a `null` prefix in either selected `var` placement. The existing
+    // IdentifierReference/UES owner remains authoritative for the whole-
+    // source outcome, distinct from the malformed-UES controls above
+    // (`null\u{}`, `null\u0`, `null\u{61`) and from the non-CodePoint
+    // control below (`null\u{110000}`).
+    for text in [r"var x=null\u002D;", r"{ var x=null\u002D; }"] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn direct_null_literal_non_codepoint_continuation_remains_unsupported() {
+    // Issue #721 adversarial audit: a UES continuation encoding a value
+    // outside the Unicode code point range must not let
+    // `consume_selected_null_literal` commit a partial `null` prefix, or
+    // fabricate any RHS Grammar/static evidence, in either selected `var`
+    // placement. The existing owning layer remains authoritative for the
+    // whole-source classification.
+    for text in [r"var x=null\u{110000};", r"{ var x=null\u{110000}; }"] {
         assert_unsupported(text);
     }
 }
