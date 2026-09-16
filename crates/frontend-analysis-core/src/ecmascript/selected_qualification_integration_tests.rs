@@ -1241,6 +1241,9 @@ fn multi_declarator_grammar_rejection_stays_distinct_from_deferred_coverage() {
         );
     }
 
+    // "var a=this;" is deliberately not listed below: Issue #723 makes a
+    // direct-authored `PrimaryExpression : this` initializer a selected
+    // accepted form (see the "Issue #723" test section below).
     for text in [
         "var a,",
         "var a,b,",
@@ -1254,7 +1257,6 @@ fn multi_declarator_grammar_rejection_stays_distinct_from_deferred_coverage() {
         "var a=1n;",
         "var a=+1;",
         "var a=-1;",
-        "var a=this;",
         "var a=\"x\";",
         r"var a=\u0030;",
         r"var a=a\u002Db;",
@@ -1745,16 +1747,18 @@ fn block_var_other_initializer_families_remain_unsupported_coverage() {
     // (see the "Issue #719" test section below). "{ var a=null; }" is also
     // deliberately not listed here: Issue #721 makes a direct-authored
     // `NullLiteral` initializer a selected accepted form (see the "Issue
-    // #721" test section below).
-    for text in ["{ var a=this; }", r#"{ var a="x"; }"#] {
-        assert!(
-            matches!(
-                attempt(text),
-                SelectedQualificationAttempt::UnsupportedCoverage
-            ),
-            "{text:?}"
-        );
-    }
+    // #721" test section below). "{ var a=this; }" is also deliberately
+    // not listed here: Issue #723 makes a direct-authored
+    // `PrimaryExpression : this` initializer a selected accepted form (see
+    // the "Issue #723" test section below).
+    let text = r#"{ var a="x"; }"#;
+    assert!(
+        matches!(
+            attempt(text),
+            SelectedQualificationAttempt::UnsupportedCoverage
+        ),
+        "{text:?}"
+    );
 }
 
 #[test]
@@ -2076,11 +2080,13 @@ fn block_var_close_brace_asi_does_not_widen_to_comments_or_initializer_family() 
     // below). "{ var a=null }" is also deliberately not listed here: Issue
     // #721 makes a direct-authored `NullLiteral` initializer compose with
     // close-brace ASI as a selected accepted form (see the "Issue #721" test
-    // section below).
+    // section below). "{ var a=this }" is also deliberately not listed
+    // here: Issue #723 makes a direct-authored `PrimaryExpression : this`
+    // initializer compose with close-brace ASI as a selected accepted form
+    // (see the "Issue #723" test section below).
     for text in [
         "{ var x /* c */ }",
         "{ var x=1 /* c */ }",
-        "{ var a=this }",
         r#"{ var a="x" }"#,
     ] {
         assert!(
@@ -2215,4 +2221,69 @@ fn block_var_null_backed_declarator_reaches_existing_ee14_r02() {
 #[test]
 fn block_var_null_backed_declarator_reaches_existing_ee36_r02() {
     assert_static_semantics_rejected("let x; { var x=null; }", "x", (13, 14));
+}
+
+// --- Issue #723: direct `PrimaryExpression : this` initializers in --------
+// both selected `var` placements
+//
+// These focused production tests seal the candidate against the accepted
+// #688-comment-5691238988 / #723 theorem: existing top-level and Block
+// `var` terminator, transactionality, static-tier, and lifecycle authority
+// must compose unchanged with the newly admitted direct `PrimaryExpression
+// : this` initializer reused from #253/#254/#255/#256. Escaped semantic
+// `this` remains the existing escaped-ReservedWord `EE-04-R08` C6 route,
+// never this new direct route.
+
+#[test]
+fn top_level_var_direct_this_positive_lifecycle_is_selected_accepted_incomplete() {
+    for text in ["var x=this;", "var x=this", "var a=this,b=this;"] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn block_var_direct_this_positive_lifecycle_is_selected_accepted_incomplete() {
+    for text in [
+        "{ var x=this; }",
+        "{ var x=this }",
+        "{ var a=this,b=this; }",
+        "{ var a=this,b=this }",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn block_var_this_backed_declarator_reaches_existing_ee14_r02() {
+    assert_static_semantics_rejected("{ let x; var x=this; }", "x", (13, 14));
+}
+
+#[test]
+fn block_var_this_backed_declarator_reaches_existing_ee36_r02() {
+    assert_static_semantics_rejected("let x; { var x=this; }", "x", (13, 14));
+}
+
+#[test]
+fn top_level_var_escaped_this_like_reserved_spelling_preserves_c6_semantics() {
+    // `\u0074his` decodes to the ReservedWord `this`, so it must remain the
+    // existing escaped-ReservedWord C6 route (EE-04-R08), never the new
+    // direct `this` route added by this leaf.
+    assert_static_semantics_rejected(r"var x=\u0074his;", r"\u0074his", (6, 15));
+}
+
+#[test]
+fn block_var_escaped_this_like_reserved_spelling_preserves_c6_semantics() {
+    assert_static_semantics_rejected(r"{ var x=\u0074his; }", r"\u0074his", (8, 17));
 }

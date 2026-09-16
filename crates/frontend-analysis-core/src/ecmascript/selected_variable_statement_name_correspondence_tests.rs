@@ -1820,6 +1820,55 @@ fn null_backed_var_declarator_contributes_no_correspondence_relation_while_sibli
 }
 
 #[test]
+fn this_backed_var_declarator_contributes_no_correspondence_relation_while_siblings_are_preserved()
+{
+    // Issue #723: a direct `PrimaryExpression : this` initializer retains no
+    // `identifier_reference_initializer` fact, so it must never fabricate a
+    // correspondence relation. A sibling IdentifierReference-backed
+    // declarator in the same list must keep its existing relation meaning.
+    let (_, script) = recognized_variable("var a=this,b=x;");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(relation.semantic_name(), "x");
+    assert_eq!(relation.reference().fragment(), "x");
+    assert!(
+        relation
+            .correspondence()
+            .is_no_selected_same_source_contributor()
+    );
+
+    let (_, script) = recognized_one_level_block("{ var a=this,b=x; }");
+    let analysis = accepted_one_level_block_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(relation.semantic_name(), "x");
+    assert_eq!(relation.reference().fragment(), "x");
+    assert!(
+        relation
+            .correspondence()
+            .is_no_selected_same_source_contributor()
+    );
+}
+
+#[test]
+fn this_only_var_declarator_list_produces_zero_correspondence_relations() {
+    // Issue #723: a direct `PrimaryExpression : this`-only declarator list
+    // contains no IdentifierReference contributor at all, so the
+    // correspondence analysis must yield zero relations, not merely a
+    // `NoSelectedSameSourceContributor` relation.
+    for text in ["var a=this;", "var a=this,b=this;"] {
+        let (_, script) = recognized_variable(text);
+        let analysis = accepted_analysis(&script);
+        assert!(analysis.relations().is_empty(), "{text}");
+    }
+
+    for text in ["{ var a=this; }", "{ var a=this,b=this; }"] {
+        let (_, script) = recognized_one_level_block(text);
+        let analysis = accepted_one_level_block_analysis(&script);
+        assert!(analysis.relations().is_empty(), "{text}");
+    }
+}
+
+#[test]
 fn null_only_var_declarator_list_produces_zero_correspondence_relations() {
     // Issue #721: a direct NullLiteral-only declarator list contains no
     // IdentifierReference contributor at all, so the correspondence

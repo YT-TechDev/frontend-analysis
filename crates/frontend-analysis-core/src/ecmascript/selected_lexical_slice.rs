@@ -703,6 +703,7 @@ impl<'source> Cursor<'source> {
     /// SelectedBlockVarDeclaration ::=
     ///     SelectedBindingIdentifier
     ///   | SelectedBindingIdentifier = SelectedDecimalInteger
+    ///   | SelectedBindingIdentifier = SelectedDirectThisExpression
     ///   | SelectedBindingIdentifier = SelectedDirectIdentifierReference
     ///   | SelectedBindingIdentifier = SelectedEscapedNonReservedIdentifierReference
     ///   | SelectedBindingIdentifier = SelectedEscapedReservedWordIdentifierName
@@ -720,9 +721,12 @@ impl<'source> Cursor<'source> {
     /// `IdentifierReference` initializer per declarator by #713, widened to
     /// an optional selected escaped ReservedWord `IdentifierName`
     /// initializer per declarator by #715, widened to admit bounded
-    /// close-brace ASI as an additional terminator route by #717): one or
+    /// close-brace ASI as an additional terminator route by #717, widened to
+    /// an optional direct-authored `PrimaryExpression : this` initializer
+    /// per declarator by #723): one or
     /// more selected `BindingIdentifier` declarators separated by commas,
     /// each independently optionally followed by `= SelectedDecimalInteger`,
+    /// `= SelectedDirectThisExpression`,
     /// `= SelectedIdentifierReference` (direct or escaped non-ReservedWord),
     /// or `= SelectedEscapedReservedWordIdentifierName` (classification-only
     /// source position for the later Tier-1 `EE-04-R08` consumer, not an
@@ -739,7 +743,7 @@ impl<'source> Cursor<'source> {
     /// termination fact from this Block-item's close-brace ASI, so it must
     /// not leak into this narrower Block-item placement. Only the keyword,
     /// `BindingIdentifier`, initializer-equals/decimal-integer/direct
-    /// `BooleanLiteral`/IdentifierReference, and comma-continuation
+    /// `BooleanLiteral`/`this`/IdentifierReference, and comma-continuation
     /// recognition mechanics are shared. A direct-authored or escaped
     /// non-ReservedWord `IdentifierReference` initializer is admitted
     /// (Issues #710/#713) through the existing source-backed
@@ -752,18 +756,25 @@ impl<'source> Cursor<'source> {
     /// #719) is admitted through the existing accepted
     /// `consume_selected_boolean_literal` helper. A direct-authored
     /// `NullLiteral` initializer (Issue #721) is admitted through the
-    /// existing accepted `consume_selected_null_literal` helper. Any other
-    /// non-decimal, non-Boolean, non-Null, non-IdentifierReference
+    /// existing accepted `consume_selected_null_literal` helper. A
+    /// direct-authored `PrimaryExpression : this` initializer (Issue #723)
+    /// is admitted through the existing accepted
+    /// `consume_selected_this_expression` helper; an escaped spelling whose
+    /// decoded semantic name is the reserved word `this` is not this route
+    /// and continues through the classification-only escaped-ReservedWord
+    /// C6 route above. Any other
+    /// non-decimal, non-Boolean, non-Null, non-`this`, non-IdentifierReference
     /// initializer, comment trivia, EOF (i.e. non-EOF ASI before the
     /// enclosing `}`), or terminator
     /// whose next significant token is neither `;` nor `}` (including
     /// LineTerminator-triggered ASI before another statement) is left
     /// entirely unrecognized here and reported as `UnsupportedCoverage`.
     ///
-    /// The decimal and direct `BooleanLiteral` initializers are consumed
+    /// The decimal, direct `BooleanLiteral`, direct `NullLiteral`, and direct
+    /// `this` initializers are consumed
     /// inside this owning cursor lifecycle and discarded: no
     /// initializer-specific fact (presence, anchor, or value) is retained on
-    /// `SelectedBlockVarBinding` for either. A
+    /// `SelectedBlockVarBinding` for any of them. A
     /// selected direct or escaped non-ReservedWord `IdentifierReference`
     /// initializer retains the existing exact source-backed
     /// `SelectedIdentifierReferenceFact` for the source-name correspondence
@@ -805,6 +816,7 @@ impl<'source> Cursor<'source> {
                     let facts = if self.consume_selected_decimal_integer()
                         || self.consume_selected_boolean_literal()
                         || self.consume_selected_null_literal()
+                        || self.consume_selected_this_expression()
                     {
                         (None, None)
                     } else {
@@ -867,13 +879,19 @@ impl<'source> Cursor<'source> {
     /// Recognizes one selected top-level `VariableStatement` covering the
     /// inductive `VariableDeclarationList` base and successor productions with
     /// `1..N` simple bindings and optional selected decimal-integer, direct
-    /// `BooleanLiteral`, direct `NullLiteral`, selected direct/escaped
+    /// `BooleanLiteral`, direct `NullLiteral`, direct `PrimaryExpression :
+    /// this`, selected direct/escaped
     /// non-ReservedWord IdentifierReference, or selected escaped ReservedWord
     /// initializer source positions.
     ///
-    /// Decimal, direct `BooleanLiteral`, and direct `NullLiteral` initializer
-    /// syntax are consumed inside this owning cursor lifecycle and discarded.
-    /// A selected IdentifierReference retains the
+    /// Decimal, direct `BooleanLiteral`, direct `NullLiteral`, and direct
+    /// `this` initializer
+    /// syntax are consumed inside this owning cursor lifecycle and discarded
+    /// through the existing accepted `consume_selected_this_expression`
+    /// helper (Issue #723) for the `this` case; an escaped spelling whose
+    /// decoded semantic name is the reserved word `this` is not this route
+    /// and continues through the existing escaped-ReservedWord C6 route. A
+    /// selected IdentifierReference retains the
     /// complete existing source-backed fact on the containing binding for the
     /// source-name correspondence consumer. An escaped spelling already
     /// classified by the shared IdentifierName recognizer as a ReservedWord
@@ -911,6 +929,7 @@ impl<'source> Cursor<'source> {
                     let facts = if self.consume_selected_decimal_integer()
                         || self.consume_selected_boolean_literal()
                         || self.consume_selected_null_literal()
+                        || self.consume_selected_this_expression()
                     {
                         (None, None)
                     } else {
