@@ -1253,7 +1253,10 @@ fn multi_declarator_grammar_rejection_stays_distinct_from_deferred_coverage() {
     // section below). "var a=1e2;" is also deliberately not listed below:
     // Issue #740 makes a direct-authored, separator-free exponent
     // `DecimalLiteral` initializer a selected accepted form (see the
-    // "Issue #740" test section below).
+    // "Issue #740" test section below). "var a=+1;" and "var a=-1;" are
+    // also deliberately not listed below: Issue #744 makes a
+    // direct-authored leading `+`/`-` decimal `UnaryExpression` initializer
+    // a selected accepted form (see the "Issue #744" test section below).
     for text in [
         "var a,",
         "var a,b,",
@@ -1262,8 +1265,6 @@ fn multi_declarator_grammar_rejection_stays_distinct_from_deferred_coverage() {
         "var a=01;",
         "var a=1_0;",
         "var a=1n;",
-        "var a=+1;",
-        "var a=-1;",
         r"var a=\u0030;",
         r"var a=a\u002Db;",
         "var a=foo.bar;",
@@ -1723,14 +1724,11 @@ fn block_var_decimal_initializer_numeric_neighbors_remain_unsupported_coverage()
     // "{ var a=1e2; }" is also deliberately not listed here: Issue #740
     // makes a direct-authored, separator-free exponent `DecimalLiteral`
     // initializer a selected accepted form (see the "Issue #740" test
-    // section below).
-    for text in [
-        "{ var a=01; }",
-        "{ var a=1_0; }",
-        "{ var a=1n; }",
-        "{ var a=+1; }",
-        "{ var a=-1; }",
-    ] {
+    // section below). "{ var a=+1; }" and "{ var a=-1; }" are also
+    // deliberately not listed here: Issue #744 makes a direct-authored
+    // leading `+`/`-` decimal `UnaryExpression` initializer a selected
+    // accepted form (see the "Issue #744" test section below).
+    for text in ["{ var a=01; }", "{ var a=1_0; }", "{ var a=1n; }"] {
         assert!(
             matches!(
                 attempt(text),
@@ -2503,4 +2501,84 @@ fn exponent_var_prefix_preserves_later_existing_grammar_evidence_in_both_owners(
     assert_grammar_rejected(r"var a=1e2,b,\u{}=2;", r"\u{}", (12, 16));
 
     assert_grammar_rejected(r"{ var a=1e2,b,\u{}=2; }", r"\u{}", (14, 18));
+}
+
+// --- Issue #744: all three selected initializer owners widened to a ------
+// bounded, placement-neutral leading `+`/`-` decimal `UnaryExpression`
+//
+// These focused production tests seal the candidate against the accepted
+// joint-composition theorem: existing static-tier, collision, and lifecycle
+// authority must compose unchanged with the newly admitted leading `+`/`-`
+// decimal `UnaryExpression` initializer, reused unchanged from #742/#743.
+
+#[test]
+fn top_level_var_direct_leading_plus_minus_decimal_unary_expression_positive_lifecycle_is_selected_accepted_incomplete()
+ {
+    for text in [
+        "var x=-1;",
+        "var x=+1;",
+        "var x=-1e-2;",
+        "var x=+1e+2;",
+        "var x=-1",
+        "var a=-1,b=+.5e2;",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn block_var_direct_leading_plus_minus_decimal_unary_expression_positive_lifecycle_is_selected_accepted_incomplete()
+ {
+    for text in [
+        "{ var x=-1; }",
+        "{ var x=+1; }",
+        "{ var x=-1e-2; }",
+        "{ var x=+1e+2; }",
+        "{ var x=-1 }",
+        "{ var a=-1,b=+.5e2; }",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn block_var_leading_plus_minus_decimal_unary_expression_backed_declarator_reaches_existing_ee14_r02()
+ {
+    assert_static_semantics_rejected("{ let x; var x=-1; }", "x", (13, 14));
+}
+
+#[test]
+fn block_var_leading_plus_minus_decimal_unary_expression_backed_declarator_reaches_existing_ee36_r02()
+ {
+    assert_static_semantics_rejected("let x; { var x=-1; }", "x", (13, 14));
+}
+
+#[test]
+fn top_level_var_leading_plus_minus_decimal_unary_expression_backed_declarator_reaches_existing_ee36_r02()
+ {
+    assert_static_semantics_rejected("let x; var x=-1;", "x", (11, 12));
+}
+
+#[test]
+fn leading_plus_minus_decimal_unary_expression_var_prefix_preserves_later_existing_grammar_evidence_in_both_owners()
+ {
+    // Issue #744: a valid newly accepted leading `+`/`-` decimal unary
+    // initializer prefix must not downgrade or suppress an already-owned
+    // later malformed `BindingIdentifier` Grammar rejection, in either
+    // selected `var` owner.
+    assert_grammar_rejected(r"var a=-1,b,\u{}=2;", r"\u{}", (11, 15));
+
+    assert_grammar_rejected(r"{ var a=-1,b,\u{}=2; }", r"\u{}", (13, 17));
 }

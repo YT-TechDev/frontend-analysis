@@ -342,12 +342,15 @@ fn selected_decimal_subset_is_exact_for_each_initializer() {
         let _ = recognized(text);
     }
 
+    // "let x=-1;" is deliberately not listed below: Issue #744 makes a
+    // direct-authored leading `+`/`-` decimal `UnaryExpression` initializer
+    // a selected accepted form (see the "Issue #744" test section below for
+    // full coverage).
     for text in [
         "let x=1_000;",
         "let x=1n;",
         "let x=0x10;",
         "let x=01;",
-        "let x=-1;",
         "const x=1/2;",
         "const x=/a/;",
         "const x=[1];",
@@ -2394,14 +2397,11 @@ fn one_level_block_var_decimal_initializer_numeric_neighbors_remain_unsupported(
     // "{ var a=1e2; }" is also deliberately not listed here: Issue #740
     // makes a direct-authored, separator-free exponent `DecimalLiteral`
     // initializer a selected accepted form (see the "Issue #740" test
-    // section below).
-    for text in [
-        "{ var a=01; }",
-        "{ var a=1_0; }",
-        "{ var a=1n; }",
-        "{ var a=+1; }",
-        "{ var a=-1; }",
-    ] {
+    // section below). "{ var a=+1; }" and "{ var a=-1; }" are also
+    // deliberately not listed here: Issue #744 makes a direct-authored
+    // leading `+`/`-` decimal `UnaryExpression` initializer a selected
+    // accepted form (see the "Issue #744" test section below).
+    for text in ["{ var a=01; }", "{ var a=1_0; }", "{ var a=1n; }"] {
         assert_unsupported(text);
     }
 }
@@ -3705,13 +3705,11 @@ fn selected_var_decimal_initializer_boundary_is_exact() {
     // "var a=1e2;" is also deliberately not listed here: Issue #740 makes a
     // direct-authored, separator-free exponent `DecimalLiteral` initializer
     // a selected accepted form (see the "Issue #740" test section below).
-    for text in [
-        "var a=01;",
-        "var a=1_0;",
-        "var a=1n;",
-        "var a=+1;",
-        "var a=-1;",
-    ] {
+    // "var a=+1;" and "var a=-1;" are also deliberately not listed here:
+    // Issue #744 makes a direct-authored leading `+`/`-` decimal
+    // `UnaryExpression` initializer a selected accepted form (see the
+    // "Issue #744" test section below).
+    for text in ["var a=01;", "var a=1_0;", "var a=1n;"] {
         assert_unsupported(text);
     }
 }
@@ -4883,8 +4881,11 @@ fn plain_fractional_decimal_literal_does_not_claim_numeric_or_richer_neighbors()
         "let x = 0O10;",
         "let x = 01;",
         "let x = 01.0;",
-        "let x = +1.0;",
-        "let x = -1.0;",
+        // "let x = +1.0;" / "let x = -1.0;" are no longer negative controls
+        // here: Issue #744 makes the selected `LexicalDeclaration`
+        // initializer position additionally admit these as the new leading
+        // `+`/`-` decimal `UnaryExpression`; see the "Issue #744" test
+        // section below for full coverage.
         // dot / richer-expression firewall: a locally complete fractional
         // prefix never authorizes the enclosing whole-declaration source
         "let x = .;",
@@ -5247,8 +5248,11 @@ fn top_level_var_plain_fractional_decimal_literal_does_not_claim_numeric_or_rich
         "var x = 0O10;",
         "var x = 01;",
         "var x = 01.0;",
-        "var x = +1.0;",
-        "var x = -1.0;",
+        // "var x = +1.0;" / "var x = -1.0;" are no longer negative controls
+        // here: Issue #744 makes both selected `var` initializer positions
+        // additionally admit these as the new leading `+`/`-` decimal
+        // `UnaryExpression`; see the "Issue #744" test section below for
+        // full coverage.
         // dot / richer-expression firewall: a locally complete fractional
         // prefix never authorizes the enclosing whole-statement source
         "var x = .;",
@@ -5291,8 +5295,11 @@ fn one_level_block_var_plain_fractional_decimal_literal_does_not_claim_numeric_o
         "{ var x = 0O10; }",
         "{ var x = 01; }",
         "{ var x = 01.0; }",
-        "{ var x = +1.0; }",
-        "{ var x = -1.0; }",
+        // "{ var x = +1.0; }" / "{ var x = -1.0; }" are no longer negative
+        // controls here: Issue #744 makes both selected `var` initializer
+        // positions additionally admit these as the new leading `+`/`-`
+        // decimal `UnaryExpression`; see the "Issue #744" test section
+        // below for full coverage.
         "{ var x = .; }",
         "{ var x = ..; }",
         "{ var x = 1..foo; }",
@@ -5606,10 +5613,11 @@ fn plain_exponent_decimal_literal_does_not_claim_numeric_or_richer_neighbors() {
         "let x = 0b10;",
         "let x = 0o10;",
         "let x = 01;",
-        // leading-unary firewall: `+`/`-` remain UnaryExpression territory,
-        // outside this selected numeric atom
-        "let x = +1e2;",
-        "let x = -1e2;",
+        // "let x = +1e2;" / "let x = -1e2;" are no longer negative controls
+        // here: Issue #744 makes the selected `LexicalDeclaration`
+        // initializer position additionally admit these as the new leading
+        // `+`/`-` decimal `UnaryExpression`; see the "Issue #744" test
+        // section below for full coverage.
         // richer-expression / comment firewall: a valid exponent literal
         // prefix never authorizes a broader expression
         "let x = 1e2.foo;",
@@ -5868,9 +5876,11 @@ fn top_level_var_and_block_var_plain_exponent_decimal_literal_does_not_claim_num
         "var x = 0b10;",
         "var x = 0o10;",
         "var x = 01;",
-        // leading-unary firewall: `+`/`-` remain UnaryExpression territory
-        "var x = +1e2;",
-        "var x = -1e2;",
+        // "var x = +1e2;" / "var x = -1e2;" are no longer negative controls
+        // here: Issue #744 makes both selected `var` initializer positions
+        // additionally admit these as the new leading `+`/`-` decimal
+        // `UnaryExpression`; see the "Issue #744" test section below for
+        // full coverage.
         // richer-expression / comment firewall: a valid exponent literal
         // prefix never authorizes a broader expression
         "var x = 1e2.foo;",
@@ -5896,8 +5906,11 @@ fn top_level_var_and_block_var_plain_exponent_decimal_literal_does_not_claim_num
         "{ var x = 0b10; }",
         "{ var x = 0o10; }",
         "{ var x = 01; }",
-        "{ var x = +1e2; }",
-        "{ var x = -1e2; }",
+        // "{ var x = +1e2; }" / "{ var x = -1e2; }" are no longer negative
+        // controls here: Issue #744 makes both selected `var` initializer
+        // positions additionally admit these as the new leading `+`/`-`
+        // decimal `UnaryExpression`; see the "Issue #744" test section
+        // below for full coverage.
         "{ var x = 1e2.foo; }",
         "{ var x = 1e2(); }",
         "{ var x = 1e2 + x; }",
@@ -6075,4 +6088,420 @@ fn one_level_block_var_plain_exponent_decimal_literal_close_brace_asi_preserves_
             "{text:?}"
         );
     }
+}
+
+// --- Issue #744: all three selected initializer owners (`LexicalDeclaration`,
+// top-level `var`, one-level Block `var`) widened to a bounded,
+// placement-neutral leading `+`/`-` decimal `UnaryExpression`, reusing the
+// unmodified exponent/fractional/decimal-integer helpers and the unmodified
+// `skip_selected_trivia`, per the candidate-independent theorem accepted by
+// #742/#743 -------------------------------------------------------------
+
+#[test]
+fn leading_plus_minus_decimal_unary_expression_positive_matrix_is_recognized() {
+    for text in [
+        "let x = +1;",
+        "let x = -1;",
+        "let x = +1.;",
+        "let x = -1.0;",
+        "let x = +.5;",
+        "let x = -.5;",
+        "let x = +1e2;",
+        "let x = -1e2;",
+        "let x = +1e+2;",
+        "let x = -1e-2;",
+        "let x = +1.0e2;",
+        "let x = -.5E+2;",
+    ] {
+        let _ = recognized(text);
+    }
+}
+
+#[test]
+fn leading_plus_minus_decimal_unary_expression_preserves_two_layer_sign_ownership() {
+    // Outer unary `-` composed with the complete exponent atom `1e-2`,
+    // whose own internal `-` remains owned entirely by the exponent helper
+    // (Issue #742/#743 critical witness).
+    let script = recognized("const x = -1e-2;");
+    assert_eq!(
+        script.declarations()[0].declaration().fragment(),
+        "const x = -1e-2;"
+    );
+
+    // Plus analogue.
+    let script = recognized("const x = +1e+2;");
+    assert_eq!(
+        script.declarations()[0].declaration().fragment(),
+        "const x = +1e+2;"
+    );
+
+    // Unsigned predecessor `1e-2` on its own remains an atom, not a unary
+    // occurrence; it was already accepted by #740 and remains unaffected.
+    let _ = recognized("const x = 1e-2;");
+
+    // W4 falsification: the exponent-internal sign is never mistaken for
+    // (or merged with) the outer unary sign.
+    assert_unsupported("const x = --2;");
+}
+
+#[test]
+fn leading_plus_minus_decimal_unary_expression_trivia_matrix_is_recognized() {
+    for text in [
+        "let x = + 1;",
+        "let x = -\t1.0;",
+        "let x = +\n1e2;",
+        "let x = -\u{2028}.5;",
+        "let x = +\u{00A0}1;",
+        "let x = -\u{3000}1.0;",
+        "let x = +\u{FEFF}1e2;",
+        "let x = +\u{2029}1e-2;",
+    ] {
+        let _ = recognized(text);
+    }
+
+    // A nearby non-selected space-like code point remains unsupported: this
+    // is exactly the accepted trivia theorem, not "any Unicode
+    // whitespace-like code point".
+    assert_unsupported("let x = +\u{200B}1;");
+}
+
+#[test]
+fn leading_plus_minus_decimal_unary_expression_binding_list_composes_in_authored_order() {
+    for text in ["let a=-1,b;", "let a,b=+1e2;", "const a=-1,b=+.5;"] {
+        let script = recognized(text);
+        assert_eq!(script.declarations()[0].bindings().len(), 2, "{text:?}");
+    }
+}
+
+#[test]
+fn leading_plus_minus_decimal_unary_expression_does_not_claim_nested_unary_or_other_operators() {
+    for text in [
+        "let x = ++1;",
+        "let x = --1;",
+        "let x = +-1;",
+        "let x = -+1;",
+        "let x = + +1;",
+        "let x = - -1;",
+        "let x = + -1;",
+        "let x = - +1;",
+        "let x = !1;",
+        "let x = ~1;",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn leading_plus_minus_decimal_unary_expression_does_not_claim_non_numeric_or_future_numeric_operands()
+ {
+    for text in [
+        // operand firewall: only the accepted separator-free decimal atom
+        // family is admitted
+        "let x = -foo;",
+        "let x = +foo;",
+        "let x = -(1);",
+        "let x = +(1);",
+        "let x = -\"x\";",
+        "let x = +true;",
+        "let x = -false;",
+        "let x = +null;",
+        "let x = -null;",
+        "let x = +this;",
+        "let x = -this;",
+        // numeric-frontier firewall: future numeric neighbors remain
+        // outside this leaf
+        "let x = -1_0;",
+        "let x = +1.0_0;",
+        "let x = -1e1_0;",
+        "let x = -0x10;",
+        "let x = +0b10;",
+        "let x = -0o10;",
+        "let x = +1n;",
+        "let x = -01;",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn leading_plus_minus_decimal_unary_expression_does_not_claim_richer_expression_or_comment_neighbors()
+ {
+    for text in [
+        // incomplete exponent tail: a locally recognized shorter atom never
+        // authorizes unowned trailing source
+        "let x = -1e;",
+        "let x = -1e+;",
+        "let x = -1e-;",
+        // richer-expression / comment firewall
+        "let x = -1 + x;",
+        "let x = +1 * x;",
+        "let x = -1 = x;",
+        "let x = -1 ? x : y;",
+        "let x = -1();",
+        "let x = -1.foo;",
+        "let x = -1 ** 2;",
+        "let x = -1/*comment*/;",
+        "let x = -1 unexpected;",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn leading_plus_minus_decimal_unary_expression_transactionality_commits_no_earlier_prefix() {
+    for text in ["let a=-1,b=;", "let a=+1.0,b=1e;", "let a=-1e-2,b="] {
+        assert_unsupported(text);
+    }
+
+    let subject = grammar_rejection(r"let a = -1, \u{} = 1;");
+    assert_eq!(subject.fragment(), r"\u{}");
+}
+
+#[test]
+fn leading_plus_minus_decimal_unary_expression_eof_asi_and_authored_semicolon_termination_preserves_ownership()
+ {
+    let text = "const x = -1   \t\n";
+    let script = recognized(text);
+    let declaration = &script.declarations()[0];
+    assert_eq!(declaration.declaration().fragment(), "const x = -1");
+    assert!(matches!(
+        declaration.terminator(),
+        SelectedDeclarationTerminator::AutomaticAtEof
+    ));
+
+    let text = "const x = -1;";
+    let script = recognized(text);
+    let declaration = &script.declarations()[0];
+    assert!(matches!(
+        declaration.terminator(),
+        SelectedDeclarationTerminator::AuthoredSemicolon(_)
+    ));
+}
+
+#[test]
+fn leading_plus_minus_decimal_unary_expression_aggregate_lifecycle_remains_incomplete_or_existing_rejection()
+ {
+    use super::qualification::{QualificationVerdictKind, RejectionFamily};
+    use super::selected_qualification_integration::{
+        SelectedQualificationAttempt, attempt_selected_qualification,
+    };
+
+    for text in [
+        "const x = -1;",
+        "const x = +1e2;",
+        "let x = -1e-2;",
+        "const x = + .5;",
+    ] {
+        assert!(
+            matches!(
+                attempt_selected_qualification(&source(text)),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text}"
+        );
+    }
+
+    let SelectedQualificationAttempt::Outcome(outcome) =
+        attempt_selected_qualification(&source("let x = -1, x = foo;"))
+    else {
+        panic!("expected static rejection for duplicate-name declaration");
+    };
+    assert_eq!(
+        outcome.verdict(),
+        Some(QualificationVerdictKind::StaticSemanticsRejected)
+    );
+    let evidence = outcome
+        .rejection_evidence()
+        .expect("static rejection evidence");
+    assert_eq!(evidence.family(), RejectionFamily::StaticSemantics);
+
+    let SelectedQualificationAttempt::Outcome(outcome) =
+        attempt_selected_qualification(&source(r"const x = -1; let \u{};"))
+    else {
+        panic!("expected existing Grammar rejection to remain reachable");
+    };
+    assert_eq!(
+        outcome.verdict(),
+        Some(QualificationVerdictKind::SyntaxRejected)
+    );
+    let evidence = outcome
+        .rejection_evidence()
+        .expect("Grammar rejection evidence");
+    assert_eq!(evidence.family(), RejectionFamily::Grammar);
+}
+
+#[test]
+fn top_level_var_leading_plus_minus_decimal_unary_expression_positive_matrix_is_recognized() {
+    for text in [
+        "var x = -1;",
+        "var x = +1e2;",
+        "var x = -1e-2;",
+        "var x = + .5;",
+        "var x = -1",
+    ] {
+        let _ = recognized_variable(text);
+    }
+}
+
+#[test]
+fn top_level_var_leading_plus_minus_decimal_unary_expression_does_not_claim_numeric_or_richer_neighbors()
+ {
+    for text in [
+        "var x = -foo;",
+        "var x = -this;",
+        "var x = -1_0;",
+        "var x = +1n;",
+        "var x = ++1;",
+        "var x = !1;",
+        "var x = -1e;",
+        "var x = -1 + x;",
+        "var x = -1 ** 2;",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn top_level_var_leading_plus_minus_decimal_unary_expression_transactionality_commits_no_earlier_prefix()
+ {
+    for text in ["var a=-1,b=;", "var a=+1.0,b=1e;", "var a=-1e-2,b="] {
+        assert_unsupported(text);
+    }
+
+    let subject = grammar_rejection(r"var a = -1, \u{} = 1;");
+    assert_eq!(subject.fragment(), r"\u{}");
+}
+
+#[test]
+fn top_level_var_leading_plus_minus_decimal_unary_expression_eof_asi_preserves_ownership() {
+    for text in ["var x=-1", "var a=-1,b=+1e2"] {
+        let script = recognized_variable(text);
+        let statement = only_variable_statement(&script);
+        assert_eq!(
+            statement.terminator(),
+            SelectedVariableStatementTerminator::AutomaticAtEof,
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn top_level_var_leading_plus_minus_decimal_unary_expression_mixed_with_sibling_atoms_and_identifier_reference_preserves_correspondence_ownership()
+ {
+    let text = "var a=-1,b=1,c=1.0,d=1e2,e=true,f=null,g=this,h=\"s\",i=x;";
+    let script = recognized_variable(text);
+    let statement = only_variable_statement(&script);
+    for binding in &statement.bindings()[..8] {
+        assert!(
+            binding.identifier_reference_initializer().is_none(),
+            "{text:?}"
+        );
+    }
+    let reference = statement.bindings()[8]
+        .identifier_reference_initializer()
+        .expect("final declarator must retain existing IdentifierReference fact");
+    assert_eq!(reference.reference().fragment(), "x");
+    assert_eq!(reference.semantic_name(), "x");
+}
+
+#[test]
+fn one_level_block_var_leading_plus_minus_decimal_unary_expression_positive_matrix_is_recognized() {
+    for text in [
+        "{ var x = -1; }",
+        "{ var x = +1e2; }",
+        "{ var x = -1e-2; }",
+        "{ var x = + .5; }",
+        "{ var x = -1 }",
+    ] {
+        let _ = recognized_block(text);
+    }
+}
+
+#[test]
+fn one_level_block_var_leading_plus_minus_decimal_unary_expression_does_not_claim_numeric_or_richer_neighbors()
+ {
+    for text in [
+        "{ var x = -foo; }",
+        "{ var x = -this; }",
+        "{ var x = -1_0; }",
+        "{ var x = +1n; }",
+        "{ var x = ++1; }",
+        "{ var x = !1; }",
+        "{ var x = -1e; }",
+        "{ var x = -1 + x; }",
+        "{ var x = -1 ** 2; }",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn one_level_block_var_leading_plus_minus_decimal_unary_expression_transactionality_commits_no_earlier_prefix()
+ {
+    for text in [
+        "{ var a=-1,b=; }",
+        "{ var a=+1.0,b=1e; }",
+        "{ var a=-1e-2,b= }",
+    ] {
+        assert_unsupported(text);
+    }
+
+    let subject = grammar_rejection(r"{ var a = -1, \u{} = 1; }");
+    assert_eq!(subject.fragment(), r"\u{}");
+}
+
+#[test]
+fn one_level_block_var_leading_plus_minus_decimal_unary_expression_close_brace_asi_preserves_ownership()
+ {
+    use super::selected_lexical_slice::{
+        SelectedBlockItem, SelectedBlockVarStatementTerminator, SelectedTopLevelItem,
+    };
+
+    for text in ["{ var x=-1 }", "{ var a=-1,b=+1e2 }"] {
+        let script = recognized_block(text);
+        let [SelectedTopLevelItem::Block(block)] = script.items() else {
+            panic!("expected exactly one Block item for {text:?}");
+        };
+        let [SelectedBlockItem::Var(statement)] = block.items() else {
+            panic!("expected exactly one Block var statement for {text:?}");
+        };
+        assert_eq!(
+            statement.terminator(),
+            SelectedBlockVarStatementTerminator::AutomaticBeforeBlockClose,
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn one_level_block_var_leading_plus_minus_decimal_unary_expression_mixed_with_sibling_atoms_and_identifier_reference_preserves_correspondence_ownership()
+ {
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+
+    fn only_block_var_statement(
+        script: &super::selected_lexical_slice::SelectedOneLevelBlockScript,
+    ) -> &super::selected_lexical_slice::SelectedBlockVarStatement {
+        let [SelectedTopLevelItem::Block(block)] = script.items() else {
+            panic!("expected exactly one Block item");
+        };
+        let [SelectedBlockItem::Var(statement)] = block.items() else {
+            panic!("expected exactly one Block var statement");
+        };
+        statement
+    }
+
+    let text = "{ var a=-1,b=1,c=1.0,d=1e2,e=true,f=null,g=this,h=\"s\",i=x; }";
+    let script = recognized_block(text);
+    let statement = only_block_var_statement(&script);
+    for binding in &statement.bindings()[..8] {
+        assert!(
+            binding.identifier_reference_initializer().is_none(),
+            "{text:?}"
+        );
+    }
+    let reference = statement.bindings()[8]
+        .identifier_reference_initializer()
+        .expect("final declarator must retain existing IdentifierReference fact");
+    assert_eq!(reference.reference().fragment(), "x");
+    assert_eq!(reference.semantic_name(), "x");
 }
