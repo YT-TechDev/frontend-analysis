@@ -32,17 +32,18 @@
 //! already-accepted trivia before the operand, composed with exactly one
 //! complete accepted atom, with no richer expression tail.
 //!
-//! `SelectedNumericOperandTrivia` is restated here only as the
-//! ASCII-representable members of the existing selected-slice trivia
-//! contract (`is_selected_trivia` in `selected_lexical_slice.rs`): space,
-//! tab, line feed, carriage return, vertical tab, and form feed. It
-//! deliberately does not restate the full Unicode `White_Space`
-//! space-separator superset or the non-ASCII line terminators (BOM,
-//! U+2028, U+2029) as a table, matching the same representative-only
-//! scope predecessor oracles have always used for trivia composition
-//! (e.g. the exponent/fractional oracles' boundary tests use only
-//! `' ' | '\t' | '\n' | ','`). It is not a new trivia architecture; it is
-//! a representative restatement of the already-accepted contract.
+//! `SelectedNumericOperandTrivia` independently restates the *complete*
+//! already-accepted selected-slice trivia contract (the same code-point
+//! set `is_selected_trivia` in `selected_lexical_slice.rs` recognizes,
+//! restated here rather than imported): `TAB`, `VT`, `FF`, `BOM`, `LF`,
+//! `CR`, `LINE SEPARATOR`, `PARAGRAPH SEPARATOR`, and the frozen Unicode 17
+//! `Space_Separator` property. The last of those is exposed through the
+//! stable, normative `is_space_separator` primitive already used elsewhere
+//! in this crate's Unicode layer -- reusing that frozen property table is
+//! not the same as consulting production's selected-trivia *recognizer*
+//! (`is_selected_trivia` / `skip_selected_trivia` are independently
+//! restated, never imported or called). Comments remain outside this
+//! contract and are never accepted as trivia.
 //!
 //! No completion successor file accompanies this leaf: unlike the
 //! fractional/exponent atom oracles (which each widened a production-
@@ -66,6 +67,7 @@
 use crate::{SourceId, SourceText};
 
 use super::qualification_validation_tests::gold_source;
+use super::unicode::is_space_separator;
 use super::unicode_generated::{
     ECMA262_SNAPSHOT as FROZEN_ECMA262_SNAPSHOT, UNICODE_VERSION as FROZEN_UNICODE_VERSION,
 };
@@ -194,33 +196,46 @@ fn is_selected_accepted_plain_decimal_atom(candidate: &str) -> bool {
         || is_selected_decimal_integer(candidate)
 }
 
-/// Restates only the ASCII-representable members of the existing selected
-/// trivia contract (`is_selected_trivia`): space, tab, LF, CR, VT, FF. See
-/// the module doc comment for why this stops short of the full Unicode
-/// contract.
-fn is_selected_numeric_operand_trivia_byte(byte: u8) -> bool {
-    matches!(byte, b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C)
+/// Independently restates the complete already-accepted
+/// `SelectedNumericOperandTrivia` theorem: the frozen `is_selected_trivia`
+/// code-point set (`TAB`, `VT`, `FF`, `BOM`, `LF`, `CR`, `LINE SEPARATOR`,
+/// `PARAGRAPH SEPARATOR`) plus the frozen Unicode 17 `Space_Separator`
+/// property. This is not a call into the production selected-trivia
+/// recognizer: `is_space_separator` is a stable, normative Unicode
+/// property primitive this oracle is independently entitled to consult,
+/// not `is_selected_trivia` or `skip_selected_trivia` themselves.
+fn is_selected_numeric_operand_trivia(code_point: char) -> bool {
+    matches!(
+        code_point,
+        '\u{0009}' | '\u{000B}' | '\u{000C}' | '\u{FEFF}' | '\n' | '\r' | '\u{2028}' | '\u{2029}'
+    ) || is_space_separator(code_point as u32)
 }
 
 /// Central Issue #742 theorem: exactly one leading authored `+`/`-`,
-/// followed by zero or more already-accepted trivia bytes, followed by
-/// exactly one complete accepted plain decimal atom occupying the rest of
-/// the candidate. Whole-string: no richer tail, no nested operator, no
+/// followed by zero or more already-accepted trivia code points, followed
+/// by exactly one complete accepted plain decimal atom occupying the rest
+/// of the candidate. Whole-string: no richer tail, no nested operator, no
 /// non-numeric or unowned-numeric operand survives.
+///
+/// The trivia scan advances a UTF-8 byte offset by each accepted code
+/// point's own `len_utf8()` as it is examined -- a single forward pass
+/// that is this oracle's owned recognition, never a later search, rescan,
+/// or reparse over already-classified source.
 fn is_selected_leading_plus_minus_decimal_unary_expression(candidate: &str) -> bool {
-    let mut bytes = candidate.bytes();
-    let Some(operator) = bytes.next() else {
-        return false;
-    };
-    if !matches!(operator, b'+' | b'-') {
-        return false;
+    let mut chars = candidate.chars();
+    match chars.next() {
+        Some('+') | Some('-') => {}
+        _ => return false,
     }
     let after_operator = &candidate[1..];
-    let trivia_len = after_operator
-        .bytes()
-        .take_while(|byte| is_selected_numeric_operand_trivia_byte(*byte))
-        .count();
-    let operand = &after_operator[trivia_len..];
+    let mut operand_start = 0usize;
+    for code_point in after_operator.chars() {
+        if !is_selected_numeric_operand_trivia(code_point) {
+            break;
+        }
+        operand_start += code_point.len_utf8();
+    }
+    let operand = &after_operator[operand_start..];
     is_selected_accepted_plain_decimal_atom(operand)
 }
 
@@ -264,9 +279,23 @@ fn authority_independence_and_frontier_scope_are_exact() {
         concat!("parse_unary_", "expression"),
         concat!("f64::", "from_str"),
         concat!("parse::", "<f64>"),
+        // Candidate independence for trivia recognition specifically: the
+        // production selected-trivia *recognizer* is never imported or
+        // called, only the stable normative Unicode `Space_Separator`
+        // property primitive (`is_space_separator`) is reused.
+        concat!("is_selected_", "trivia("),
+        concat!("skip_selected_", "trivia("),
+        concat!("use super::", "selected_lexical_slice::is_selected_trivia"),
     ] {
         assert!(!THIS_ORACLE_SOURCE.contains(forbidden), "{forbidden}");
     }
+
+    // `is_space_separator` is a stable, frozen normative Unicode 17
+    // primitive this oracle is independently entitled to consult (also
+    // already used by predecessor accepted oracles' underlying production
+    // code and exposed at the same `super::unicode` path); it is not the
+    // production selected-trivia recognizer itself.
+    assert!(THIS_ORACLE_SOURCE.contains("use super::unicode::is_space_separator"));
 }
 
 /// Required positive matrix: both operators over every accepted decimal
@@ -455,9 +484,17 @@ fn two_layer_sign_witness_distinguishes_outer_unary_from_exponent_internal_sign(
     ));
 }
 
-/// Freezes the already-accepted selected trivia policy between operator
-/// and operand: representative space/tab/LF forms compose, and comments
-/// never do (W9).
+/// Freezes the complete already-accepted selected trivia policy between
+/// operator and operand: ASCII space/tab/LF/CR forms, the frozen Unicode 17
+/// `Space_Separator` property beyond ASCII space (NBSP, IDEOGRAPHIC SPACE),
+/// BOM, LINE SEPARATOR, and PARAGRAPH SEPARATOR all compose; comments never
+/// do (W9); and a visually-space-like code point that the frozen contract
+/// excludes (ZERO WIDTH SPACE, immediately outside the accepted
+/// `Space_Separator` range) is proven still rejected, so the predicate is
+/// not "any Unicode whitespace-like code point" but exactly the frozen
+/// theorem. Ranges are UTF-8 byte offsets; non-ASCII trivia code points are
+/// multi-byte, so `SelectedNumericOperandTrivia` is scanned by Unicode
+/// scalar value, not by byte, ahead of computing them.
 #[test]
 fn selected_trivia_matrix_between_operator_and_operand() {
     let fixtures: &[(&str, Range, Range, Range, &str)] = &[
@@ -489,6 +526,47 @@ fn selected_trivia_matrix_between_operator_and_operand() {
             Range(10, 14),
             "-\n.5",
         ),
+        // Frozen Unicode 17 `Space_Separator` beyond ASCII SPACE: NO-BREAK
+        // SPACE (U+00A0, 2 UTF-8 bytes) and IDEOGRAPHIC SPACE (U+3000, 3
+        // UTF-8 bytes).
+        (
+            "const x = +\u{00A0}1;",
+            Range(10, 11),
+            Range(13, 14),
+            Range(10, 14),
+            "+\u{00A0}1",
+        ),
+        (
+            "const x = -\u{3000}1.0;",
+            Range(10, 11),
+            Range(14, 17),
+            Range(10, 17),
+            "-\u{3000}1.0",
+        ),
+        // BOM (U+FEFF, 3 UTF-8 bytes).
+        (
+            "const x = +\u{FEFF}1e2;",
+            Range(10, 11),
+            Range(14, 17),
+            Range(10, 17),
+            "+\u{FEFF}1e2",
+        ),
+        // LINE SEPARATOR (U+2028, 3 UTF-8 bytes).
+        (
+            "const x = -\u{2028}.5;",
+            Range(10, 11),
+            Range(14, 16),
+            Range(10, 16),
+            "-\u{2028}.5",
+        ),
+        // PARAGRAPH SEPARATOR (U+2029, 3 UTF-8 bytes).
+        (
+            "const x = +\u{2029}1e-2;",
+            Range(10, 11),
+            Range(14, 18),
+            Range(10, 18),
+            "+\u{2029}1e-2",
+        ),
     ];
 
     for (index, (text, operator, operand, whole, expected_whole)) in fixtures.iter().enumerate() {
@@ -516,6 +594,17 @@ fn selected_trivia_matrix_between_operator_and_operand() {
             "{comment_control:?}"
         );
     }
+
+    // Adversarial boundary: ZERO WIDTH SPACE (U+200B) sits immediately
+    // outside the frozen `Space_Separator` range (U+2000..=U+200A) and is
+    // never accepted merely because it visually resembles spacing. This
+    // falsifies "the predicate accepts any Unicode whitespace-like code
+    // point" without building a general Unicode whitespace architecture.
+    assert!(!is_selected_numeric_operand_trivia('\u{200B}'));
+    assert!(is_selected_numeric_operand_trivia('\u{00A0}'));
+    assert!(!is_selected_leading_plus_minus_decimal_unary_expression(
+        "+\u{200B}1"
+    ));
 }
 
 /// Operator / nested-unary firewall (W5): keeps `++`, `--`, mixed
