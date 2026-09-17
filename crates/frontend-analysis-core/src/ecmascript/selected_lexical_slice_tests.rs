@@ -334,12 +334,15 @@ fn selected_decimal_subset_is_exact_for_each_initializer() {
         // see the "Issue #730" test section below for full coverage.
         "let x=1.0;",
         "let x=.1;",
+        // Issue #738 makes the selected `LexicalDeclaration` initializer
+        // position additionally admit a plain exponent `DecimalLiteral`;
+        // see the "Issue #738" test section below for full coverage.
+        "let x=1e3;",
     ] {
         let _ = recognized(text);
     }
 
     for text in [
-        "let x=1e3;",
         "let x=1_000;",
         "let x=1n;",
         "let x=0x10;",
@@ -4858,9 +4861,11 @@ fn plain_fractional_decimal_literal_preserves_integer_predecessor_and_overlappin
 fn plain_fractional_decimal_literal_does_not_claim_numeric_or_richer_neighbors() {
     for text in [
         // numeric-neighbor firewall: remains whole-source `UnsupportedCoverage`
-        "let x = 1e2;",
-        "let x = 1.0e2;",
-        "let x = .5e2;",
+        //
+        // `1e2` / `1.0e2` / `.5e2` are no longer negative controls here:
+        // Issue #738 makes the selected `LexicalDeclaration` initializer
+        // position additionally admit these as the new exponent atom; see
+        // the "Issue #738" test section below for full coverage.
         "let x = 1_0;",
         "let x = 1.0_0;",
         "let x = .5_0;",
@@ -4923,7 +4928,7 @@ fn plain_fractional_decimal_literal_transactionality_commits_no_earlier_prefix()
     // W14).
     for text in [
         "let a = 1.0, b = ;",
-        "let a = .5, b = 1e2;",
+        "let a = .5, b = 1e;",
         "let a = 1.0, b =",
     ] {
         assert_unsupported(text);
@@ -5449,4 +5454,306 @@ fn one_level_block_var_fractional_mixed_with_sibling_atoms_and_identifier_refere
         .expect("second declarator must retain existing IdentifierReference fact");
     assert_eq!(reference.reference().fragment(), "foo");
     assert_eq!(reference.semantic_name(), "foo");
+}
+
+// --- Issue #738: selected `LexicalDeclaration` widened to a direct- --------
+// authored plain exponent `DecimalLiteral` initializer
+//
+// These focused production tests seal the candidate against the accepted
+// #735/#736 candidate-independent atom theorem and the
+// #737-comment-5706111443 / #688-comment-5706113577 production-placement
+// authority: a new bounded `SelectedPlainExponentDecimalLiteral` recognizer
+// is tried before the unmodified `consume_selected_plain_fractional_decimal_literal`
+// and `consume_selected_decimal_integer` predecessors in `parse_declaration`
+// only. Top-level `var` and one-level Block `var` initializer dispatch
+// remain untouched hard-zero surfaces for this leaf (see the dedicated
+// asymmetry test below). No numeric value, digit, or source-anchor fact is
+// retained beyond the existing `SelectedInitializerState::SelectedPresent`.
+
+#[test]
+fn plain_exponent_decimal_literal_initializers_compose_as_presence_only() {
+    for text in [
+        "const x = 1e2;",
+        "const x = 1E2;",
+        "const x = 1e+2;",
+        "const x = 1e-2;",
+        "const x = 1.e2;",
+        "const x = 1.E+2;",
+        "const x = 1.0e2;",
+        "const x = 1.0E-2;",
+        "const x = .5e2;",
+        "const x = .5E+2;",
+        "const x = 12.34E-56;",
+        "let x = 1e2, y;",
+        "let x, y = .5e2;",
+        "let x = 1, y = 2e3;",
+        "let x = 1.0, y = 2.5e-3;",
+        "let x = true, y = 3E2;",
+        "let x = \"a\", y = .25e+2;",
+    ] {
+        let script = recognized(text);
+        assert!(
+            script
+                .declarations()
+                .iter()
+                .flat_map(|declaration| declaration.bindings())
+                .any(|binding| binding.initializer() == SelectedInitializerState::SelectedPresent),
+            "{text:?}"
+        );
+    }
+
+    // Authored binding order and per-binding initializer presence are
+    // preserved exactly, in both exponent-first and exponent-second shape.
+    let script = recognized("let x = 1e2, y;");
+    let bindings = script.declarations()[0].bindings();
+    assert_eq!(bindings[0].binding().fragment(), "x");
+    assert_eq!(
+        bindings[0].initializer(),
+        SelectedInitializerState::SelectedPresent
+    );
+    assert_eq!(bindings[1].binding().fragment(), "y");
+    assert_eq!(bindings[1].initializer(), SelectedInitializerState::Absent);
+
+    let script = recognized("let x, y = .5e2;");
+    let bindings = script.declarations()[0].bindings();
+    assert_eq!(bindings[0].binding().fragment(), "x");
+    assert_eq!(bindings[0].initializer(), SelectedInitializerState::Absent);
+    assert_eq!(bindings[1].binding().fragment(), "y");
+    assert_eq!(
+        bindings[1].initializer(),
+        SelectedInitializerState::SelectedPresent
+    );
+}
+
+#[test]
+fn plain_exponent_decimal_literal_preserves_integer_and_fractional_predecessors() {
+    // Existing selected integer and fractional initializers remain
+    // unchanged: the new exponent recognizer must decline without commit so
+    // the unmodified `consume_selected_plain_fractional_decimal_literal` and
+    // `consume_selected_decimal_integer` predecessors still own these atoms.
+    for text in [
+        "let x = 0;",
+        "let x = 1;",
+        "let x = 123;",
+        "let x = 1.;",
+        "let x = 1.0;",
+        "let x = .5;",
+        "let x = 12.34;",
+    ] {
+        let _ = recognized(text);
+    }
+
+    // Complete-atom ownership: production must select the complete
+    // authored exponent atom, not commit only the predecessor-owned
+    // mantissa prefix (`1`, `1.0`, `.5` respectively).
+    for text in ["let x = 1e2;", "let x = 1.0e2;", "let x = .5e2;"] {
+        let script = recognized(text);
+        assert_eq!(
+            script.declarations()[0].declaration().fragment(),
+            text,
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn plain_exponent_decimal_literal_incomplete_tails_do_not_claim_whole_source() {
+    for text in [
+        "let x = 1e;",
+        "let x = 1E;",
+        "let x = 1e+;",
+        "let x = 1e-;",
+        "let x = 1.e;",
+        "let x = 1.E+;",
+        "let x = 1.0e-;",
+        "let x = .5E+;",
+        "let x = 1e",
+        "let x = .5e",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn plain_exponent_decimal_literal_does_not_claim_numeric_or_richer_neighbors() {
+    for text in [
+        // numeric-separator / BigInt / non-decimal / legacy firewall
+        "let x = 1e1_0;",
+        "let x = 1_0e2;",
+        "let x = 1.0_0e2;",
+        "let x = .5e1_0;",
+        "let x = 1n;",
+        "let x = 0x10;",
+        "let x = 0b10;",
+        "let x = 0o10;",
+        "let x = 01;",
+        // leading-unary firewall: `+`/`-` remain UnaryExpression territory,
+        // outside this selected numeric atom
+        "let x = +1e2;",
+        "let x = -1e2;",
+        // richer-expression / comment firewall: a valid exponent literal
+        // prefix never authorizes a broader expression
+        "let x = 1e2.foo;",
+        "let x = 1e2();",
+        "let x = 1e2 + x;",
+        "let x = 1e2 = x;",
+        "let x = 1e2 ? x : y;",
+        "let x = 1e2/*comment*/;",
+        "let x = 1e2 unexpected;",
+        "let x = 1.0e2.foo;",
+        "let x = .5e2 + x;",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn plain_exponent_decimal_literal_binding_list_composes_in_authored_order() {
+    for text in [
+        "let x = 1e2, y;",
+        "let x, y = .5e2;",
+        "let x = 1, y = 2e3;",
+        "let x = 1.0, y = 2.5e-3;",
+        "let x = true, y = 3E2;",
+        "let x = \"a\", y = .25e+2;",
+    ] {
+        let script = recognized(text);
+        assert_eq!(script.declarations()[0].bindings().len(), 2, "{text:?}");
+    }
+}
+
+#[test]
+fn plain_exponent_decimal_literal_transactionality_commits_no_earlier_prefix() {
+    // No valid earlier exponent binding escapes as committed selected
+    // success when a later binding/initializer/terminator fails.
+    for text in [
+        "let a = 1e2, b = ;",
+        "let a = 1.0e-2, b = 1e;",
+        "let a = .5e2, b =",
+    ] {
+        assert_unsupported(text);
+    }
+
+    // A later already-owned malformed `BindingIdentifier` Grammar-evidence
+    // case remains authoritative when preceded by a valid exponent
+    // initializer: the earlier exponent atom is locally valid but the whole
+    // declaration/source must not escape as accepted when later source
+    // fails.
+    let subject = grammar_rejection(r"let a = 1e2, \u{} = 1;");
+    assert_eq!(subject.fragment(), r"\u{}");
+}
+
+#[test]
+fn plain_exponent_decimal_literal_eof_asi_and_authored_semicolon_termination_preserves_ownership() {
+    let text = "const x = 1e2   \t\n";
+    let script = recognized(text);
+    let declaration = &script.declarations()[0];
+    assert_eq!(declaration.declaration().fragment(), "const x = 1e2");
+    assert!(matches!(
+        declaration.terminator(),
+        SelectedDeclarationTerminator::AutomaticAtEof
+    ));
+
+    let text = "const x = 1e2;";
+    let script = recognized(text);
+    let declaration = &script.declarations()[0];
+    assert!(matches!(
+        declaration.terminator(),
+        SelectedDeclarationTerminator::AuthoredSemicolon(_)
+    ));
+}
+
+#[test]
+fn plain_exponent_decimal_literal_aggregate_lifecycle_remains_incomplete_or_existing_rejection() {
+    use super::qualification::{QualificationVerdictKind, RejectionFamily};
+    use super::selected_qualification_integration::{
+        SelectedQualificationAttempt, attempt_selected_qualification,
+    };
+
+    for text in [
+        "const x = 1e2;",
+        "const x = .5e2;",
+        "const x = 1.0e2;",
+        "const x = 12.34E-56;",
+        "let x = 1e2, y = foo;",
+    ] {
+        assert!(
+            matches!(
+                attempt_selected_qualification(&source(text)),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text}"
+        );
+    }
+
+    let SelectedQualificationAttempt::Outcome(outcome) =
+        attempt_selected_qualification(&source("let x = 1e2, x = foo;"))
+    else {
+        panic!("expected static rejection for duplicate-name declaration");
+    };
+    assert_eq!(
+        outcome.verdict(),
+        Some(QualificationVerdictKind::StaticSemanticsRejected)
+    );
+    let evidence = outcome
+        .rejection_evidence()
+        .expect("static rejection evidence");
+    assert_eq!(evidence.family(), RejectionFamily::StaticSemantics);
+    let subject = evidence
+        .subject()
+        .authored_anchor()
+        .expect("static subject must remain authored");
+    assert_eq!(subject.fragment(), "x");
+    assert_eq!((subject.range().start(), subject.range().end()), (13, 14));
+
+    let SelectedQualificationAttempt::Outcome(outcome) =
+        attempt_selected_qualification(&source(r"const x = 1e2; let \u{};"))
+    else {
+        panic!("expected existing Grammar rejection to remain reachable");
+    };
+    assert_eq!(
+        outcome.verdict(),
+        Some(QualificationVerdictKind::SyntaxRejected)
+    );
+    let evidence = outcome
+        .rejection_evidence()
+        .expect("Grammar rejection evidence");
+    assert_eq!(evidence.family(), RejectionFamily::Grammar);
+    let subject = evidence
+        .subject()
+        .authored_anchor()
+        .expect("Grammar subject must remain authored");
+    assert_eq!(subject.fragment(), r"\u{}");
+    assert_eq!((subject.range().start(), subject.range().end()), (19, 23));
+}
+
+#[test]
+fn top_level_var_and_block_var_plain_exponent_decimal_literal_remains_unsupported() {
+    // Issue #738 widens only the selected `LexicalDeclaration` initializer
+    // position (via `parse_declaration`). Top-level `var` and one-level
+    // Block `var` initializer dispatch (`parse_variable_statement` and
+    // `parse_selected_block_var_statement`) are untouched hard-zero
+    // surfaces for this leaf: they continue to fall back to the unchanged
+    // integer/fractional predecessors and report `UnsupportedCoverage` for
+    // the remaining unowned trailing exponent-part source, exactly as
+    // before this leaf.
+    for text in [
+        "var x = 1e2;",
+        "var x = 1E2;",
+        "var x = 1e+2;",
+        "var x = .5e2;",
+        "var x = 1.0e2;",
+    ] {
+        assert_unsupported(text);
+    }
+
+    for text in [
+        "{ var x = 1e2; }",
+        "{ var x = 1E2; }",
+        "{ var x = 1e+2; }",
+        "{ var x = .5e2; }",
+        "{ var x = 1.0e2; }",
+    ] {
+        assert_unsupported(text);
+    }
 }
