@@ -43,7 +43,18 @@
 //! unmodified `consume_selected_plain_exponent_decimal_literal` helper
 //! tried before the unmodified `consume_selected_plain_fractional_decimal_literal`
 //! and `consume_selected_decimal_integer` predecessors at both call sites,
-//! by #740. Recognition is transactional for the whole authoritative
+//! by #740, and composed a bounded, placement-neutral leading `+`/`-`
+//! decimal `UnaryExpression` (`SelectedUnaryPlusMinus
+//! SelectedNumericOperandTrivia SelectedAcceptedPlainDecimalAtom`) into all
+//! three mature initializer owners (`parse_declaration`,
+//! `parse_variable_statement`, `parse_selected_block_var_statement`) in one
+//! leaf, via a new bounded
+//! `consume_selected_leading_plus_minus_decimal_unary_expression` helper
+//! tried before the unmodified exponent/fractional/decimal-integer
+//! predecessors at all three call sites, reusing those helpers and the
+//! unmodified `skip_selected_trivia` unchanged, per the
+//! candidate-independent theorem accepted by #742/#743, by #744.
+//! Recognition is transactional for the whole authoritative
 //! `SourceText`: tentative declaration/binding/Block/var facts are returned
 //! only when the entire source is consumed by selected items plus selected
 //! trivia.
@@ -726,6 +737,7 @@ impl<'source> Cursor<'source> {
     ///
     /// SelectedBlockVarDeclaration ::=
     ///     SelectedBindingIdentifier
+    ///   | SelectedBindingIdentifier = SelectedLeadingPlusMinusDecimalUnaryExpression
     ///   | SelectedBindingIdentifier = SelectedPlainExponentDecimalLiteral
     ///   | SelectedBindingIdentifier = SelectedPlainFractionalDecimalLiteral
     ///   | SelectedBindingIdentifier = SelectedDecimalInteger
@@ -758,9 +770,15 @@ impl<'source> Cursor<'source> {
     /// exponent `DecimalLiteral` initializer per declarator, reusing the
     /// unmodified `consume_selected_plain_exponent_decimal_literal` helper
     /// tried before the unmodified fractional and decimal-integer
-    /// predecessors, by #740): one or
+    /// predecessors, by #740, and widened to an optional direct-authored
+    /// leading `+`/`-` decimal `UnaryExpression` initializer per declarator,
+    /// via the new bounded
+    /// `consume_selected_leading_plus_minus_decimal_unary_expression` helper
+    /// tried before the unmodified exponent/fractional/decimal-integer
+    /// predecessors, by #744): one or
     /// more selected `BindingIdentifier` declarators separated by commas,
     /// each independently optionally followed by
+    /// `= SelectedLeadingPlusMinusDecimalUnaryExpression`,
     /// `= SelectedPlainExponentDecimalLiteral`,
     /// `= SelectedPlainFractionalDecimalLiteral`, `= SelectedDecimalInteger`,
     /// `= SelectedDirectThisExpression`,
@@ -863,7 +881,9 @@ impl<'source> Cursor<'source> {
             let (identifier_reference_initializer, escaped_reserved_initializer_identifier) =
                 if self.consume_initializer_equals() {
                     self.skip_selected_trivia();
-                    let facts = if self.consume_selected_plain_exponent_decimal_literal()
+                    let facts = if self
+                        .consume_selected_leading_plus_minus_decimal_unary_expression()
+                        || self.consume_selected_plain_exponent_decimal_literal()
                         || self.consume_selected_plain_fractional_decimal_literal()
                         || self.consume_selected_decimal_integer()
                         || self.consume_selected_boolean_literal()
@@ -931,14 +951,20 @@ impl<'source> Cursor<'source> {
 
     /// Recognizes one selected top-level `VariableStatement` covering the
     /// inductive `VariableDeclarationList` base and successor productions with
-    /// `1..N` simple bindings and optional selected direct-authored,
-    /// separator-free exponent `DecimalLiteral`, plain
+    /// `1..N` simple bindings and optional selected direct-authored leading
+    /// `+`/`-` decimal `UnaryExpression`, separator-free exponent
+    /// `DecimalLiteral`, plain
     /// fractional `DecimalLiteral`, decimal-integer, direct
     /// `BooleanLiteral`, direct `NullLiteral`, direct `PrimaryExpression :
     /// this`, direct-authored escape-free `StringLiteral`, selected direct/escaped
     /// non-ReservedWord IdentifierReference, or selected escaped ReservedWord
     /// initializer source positions.
     ///
+    /// The direct-authored leading `+`/`-` decimal `UnaryExpression` (Issue
+    /// #744) is tried before the exponent, fractional, and decimal-integer
+    /// predecessors, via the new bounded
+    /// `consume_selected_leading_plus_minus_decimal_unary_expression` helper,
+    /// which itself reuses those unmodified predecessor helpers unchanged.
     /// The direct-authored, separator-free exponent `DecimalLiteral` (Issue
     /// #740) is tried before the fractional and decimal-integer
     /// predecessors, reusing the existing accepted
@@ -994,7 +1020,9 @@ impl<'source> Cursor<'source> {
             let (identifier_reference_initializer, escaped_reserved_initializer_identifier) =
                 if self.consume_initializer_equals() {
                     self.skip_selected_trivia();
-                    let facts = if self.consume_selected_plain_exponent_decimal_literal()
+                    let facts = if self
+                        .consume_selected_leading_plus_minus_decimal_unary_expression()
+                        || self.consume_selected_plain_exponent_decimal_literal()
                         || self.consume_selected_plain_fractional_decimal_literal()
                         || self.consume_selected_decimal_integer()
                         || self.consume_selected_boolean_literal()
@@ -1099,7 +1127,8 @@ impl<'source> Cursor<'source> {
                 self.skip_selected_trivia();
                 let mut identifier_reference_initializer = None;
                 let mut escaped_reserved_initializer_identifier = None;
-                if !self.consume_selected_plain_exponent_decimal_literal()
+                if !self.consume_selected_leading_plus_minus_decimal_unary_expression()
+                    && !self.consume_selected_plain_exponent_decimal_literal()
                     && !self.consume_selected_plain_fractional_decimal_literal()
                     && !self.consume_selected_decimal_integer()
                     && !self.consume_selected_boolean_literal()
@@ -1550,6 +1579,52 @@ impl<'source> Cursor<'source> {
 
         self.offset += 1;
         true
+    }
+
+    /// Recognizes exactly one direct-authored leading `+` or `-` decimal
+    /// `UnaryExpression` (`SelectedUnaryPlusMinus SelectedNumericOperandTrivia
+    /// SelectedAcceptedPlainDecimalAtom`) in the selected initializer
+    /// position, per the candidate-independent theorem accepted by
+    /// #742/#743, without retaining any operator, trivia, or operand fact
+    /// beyond the existing `SelectedInitializerState::SelectedPresent`.
+    ///
+    /// This bounded local scan commits `self.offset` only after a complete
+    /// accepted decimal operand atom is recognized following the operator
+    /// and any intervening existing selected trivia (`skip_selected_trivia`,
+    /// unchanged); on decline (no leading `+`/`-`, or no accepted
+    /// exponent/fractional/integer operand match after the operator), the
+    /// cursor is restored to its starting offset and this helper returns
+    /// `false`, leaving the unmodified unsigned predecessors free to
+    /// recognize their own atoms. The operand chain reuses the existing
+    /// accepted `consume_selected_plain_exponent_decimal_literal`,
+    /// `consume_selected_plain_fractional_decimal_literal`, and
+    /// `consume_selected_decimal_integer` helpers unchanged, in that exact
+    /// order; no decimal grammar is duplicated here. Consequently `-1e-2` is
+    /// recognized as this outer unary `-` composed with the complete
+    /// exponent atom `1e-2`, whose own internal `-` remains owned entirely
+    /// by the exponent helper, never as a signed `NumericLiteral`. A locally
+    /// complete unary atom does not itself authorize any broader source;
+    /// the enclosing declaration/statement/source transaction remains
+    /// authoritative for any unowned trailing source (e.g. `-1 + x`,
+    /// `-1 ** 2`, `-1e`).
+    fn consume_selected_leading_plus_minus_decimal_unary_expression(&mut self) -> bool {
+        let start = self.offset;
+
+        if !self.consume_ascii('+') && !self.consume_ascii('-') {
+            return false;
+        }
+
+        self.skip_selected_trivia();
+
+        if self.consume_selected_plain_exponent_decimal_literal()
+            || self.consume_selected_plain_fractional_decimal_literal()
+            || self.consume_selected_decimal_integer()
+        {
+            true
+        } else {
+            self.offset = start;
+            false
+        }
     }
 
     /// Recognizes exactly one direct-authored, separator-free exponent
