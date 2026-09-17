@@ -28,7 +28,16 @@
 //! fractional `DecimalLiteral`, reusing the unmodified
 //! `consume_selected_plain_fractional_decimal_literal` helper tried before
 //! the unmodified `consume_selected_decimal_integer` predecessor at both
-//! call sites, by #732. Recognition is transactional for the whole authoritative
+//! call sites, by #732, and widened the selected `LexicalDeclaration`
+//! initializer position (only; top-level and Block `var` remain outside
+//! this leaf) to additionally admit a direct-authored, separator-free
+//! exponent `DecimalLiteral` (`SelectedDecimalInteger SelectedPlainExponentPart`
+//! or `SelectedPlainFractionalDecimalLiteral SelectedPlainExponentPart`,
+//! where `SelectedPlainExponentPart ::= ("e" | "E") ("+" | "-")?
+//! DecimalDigits`), via a new bounded `consume_selected_plain_exponent_decimal_literal`
+//! helper tried before the unmodified `consume_selected_plain_fractional_decimal_literal`
+//! and `consume_selected_decimal_integer` predecessors at that one call
+//! site only, by #738. Recognition is transactional for the whole authoritative
 //! `SourceText`: tentative declaration/binding/Block/var facts are returned
 //! only when the entire source is consumed by selected items plus selected
 //! trivia.
@@ -1067,7 +1076,8 @@ impl<'source> Cursor<'source> {
                 self.skip_selected_trivia();
                 let mut identifier_reference_initializer = None;
                 let mut escaped_reserved_initializer_identifier = None;
-                if !self.consume_selected_plain_fractional_decimal_literal()
+                if !self.consume_selected_plain_exponent_decimal_literal()
+                    && !self.consume_selected_plain_fractional_decimal_literal()
                     && !self.consume_selected_decimal_integer()
                     && !self.consume_selected_boolean_literal()
                     && !self.consume_selected_null_literal()
@@ -1516,6 +1526,85 @@ impl<'source> Cursor<'source> {
         }
 
         self.offset += 1;
+        true
+    }
+
+    /// Recognizes exactly one direct-authored, separator-free exponent
+    /// `DecimalLiteral` (`SelectedDecimalInteger SelectedPlainExponentPart`
+    /// or `SelectedPlainFractionalDecimalLiteral SelectedPlainExponentPart`,
+    /// where `SelectedPlainExponentPart ::= ("e" | "E") ("+" | "-")?
+    /// DecimalDigits`) in the selected `LexicalDeclaration` initializer
+    /// position, per the candidate-independent theorem accepted by
+    /// #735/#736, without retaining any numeric value, digit, or
+    /// source-anchor fact beyond the existing
+    /// `SelectedInitializerState::SelectedPresent`.
+    ///
+    /// This bounded local scan commits `self.offset` only after the complete
+    /// selected exponent atom (mantissa plus exponent part) is recognized;
+    /// on any decline, including an incomplete exponent tail such as `1e`,
+    /// `1e+`, or `1e-`, the cursor is left entirely unchanged. The mantissa
+    /// is rescanned locally with the same leading-zero and fraction rules as
+    /// the unmodified `consume_selected_decimal_integer` and
+    /// `consume_selected_plain_fractional_decimal_literal` predecessors,
+    /// rather than calling either of them, because either predecessor would
+    /// commit its own partial match (e.g. the `1` inside `1e2`, or the `1.0`
+    /// inside `1.0e2`) before the exponent part is known to be present. A
+    /// miss here leaves those unmodified predecessors free to recognize
+    /// their own mantissa-only atoms (`1`, `1.0`, `.5`) exactly as before. A
+    /// locally complete exponent atom does not itself authorize any broader
+    /// source; the enclosing declaration/source transaction remains
+    /// authoritative for any unowned trailing source (e.g. `1e2.foo`).
+    fn consume_selected_plain_exponent_decimal_literal(&mut self) -> bool {
+        let bytes = self.text.as_bytes();
+        let mut offset = self.offset;
+
+        let has_integer_part = match bytes.get(offset).copied() {
+            Some(b'0') => {
+                offset += 1;
+                true
+            }
+            Some(b'1'..=b'9') => {
+                offset += 1;
+                while matches!(bytes.get(offset), Some(next) if next.is_ascii_digit()) {
+                    offset += 1;
+                }
+                true
+            }
+            _ => false,
+        };
+
+        if bytes.get(offset) == Some(&b'.') {
+            offset += 1;
+            let fraction_digits_start = offset;
+            while matches!(bytes.get(offset), Some(next) if next.is_ascii_digit()) {
+                offset += 1;
+            }
+            let has_fraction_digits = offset > fraction_digits_start;
+            if !has_integer_part && !has_fraction_digits {
+                return false;
+            }
+        } else if !has_integer_part {
+            return false;
+        }
+
+        if !matches!(bytes.get(offset), Some(b'e' | b'E')) {
+            return false;
+        }
+        offset += 1;
+
+        if matches!(bytes.get(offset), Some(b'+' | b'-')) {
+            offset += 1;
+        }
+
+        let exponent_digits_start = offset;
+        while matches!(bytes.get(offset), Some(next) if next.is_ascii_digit()) {
+            offset += 1;
+        }
+        if offset == exponent_digits_start {
+            return false;
+        }
+
+        self.offset = offset;
         true
     }
 
