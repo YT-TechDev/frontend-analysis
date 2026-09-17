@@ -1250,7 +1250,10 @@ fn multi_declarator_grammar_rejection_stays_distinct_from_deferred_coverage() {
     // a=1,b=1.0;" and "var a=1.0;" are also deliberately not listed below:
     // Issue #732 makes a direct-authored plain fractional `DecimalLiteral`
     // initializer a selected accepted form (see the "Issue #732" test
-    // section below).
+    // section below). "var a=1e2;" is also deliberately not listed below:
+    // Issue #740 makes a direct-authored, separator-free exponent
+    // `DecimalLiteral` initializer a selected accepted form (see the
+    // "Issue #740" test section below).
     for text in [
         "var a,",
         "var a,b,",
@@ -1258,7 +1261,6 @@ fn multi_declarator_grammar_rejection_stays_distinct_from_deferred_coverage() {
         "var a=1,b=",
         "var a=01;",
         "var a=1_0;",
-        "var a=1e2;",
         "var a=1n;",
         "var a=+1;",
         "var a=-1;",
@@ -1718,10 +1720,13 @@ fn block_var_decimal_initializer_numeric_neighbors_remain_unsupported_coverage()
     // "{ var a=1.0; }" is deliberately not listed here: Issue #732 makes a
     // direct-authored plain fractional `DecimalLiteral` initializer a
     // selected accepted form (see the "Issue #732" test section below).
+    // "{ var a=1e2; }" is also deliberately not listed here: Issue #740
+    // makes a direct-authored, separator-free exponent `DecimalLiteral`
+    // initializer a selected accepted form (see the "Issue #740" test
+    // section below).
     for text in [
         "{ var a=01; }",
         "{ var a=1_0; }",
-        "{ var a=1e2; }",
         "{ var a=1n; }",
         "{ var a=+1; }",
         "{ var a=-1; }",
@@ -2414,4 +2419,88 @@ fn fractional_var_prefix_preserves_later_existing_grammar_evidence_in_both_owner
     assert_grammar_rejected(r"var a=1.0,b,\u{}=2;", r"\u{}", (12, 16));
 
     assert_grammar_rejected(r"{ var a=1.0,b,\u{}=2; }", r"\u{}", (14, 18));
+}
+
+// --- Issue #740: both selected `var` placements widened to a direct- ------
+// authored, separator-free exponent `DecimalLiteral` initializer
+//
+// These focused production tests seal the candidate against the accepted
+// joint-composition theorem: existing top-level and Block `var` static-tier
+// and lifecycle authority must compose unchanged with the newly admitted
+// direct-authored, separator-free exponent `DecimalLiteral` initializer
+// reused unchanged from #735/#736/#738/#739.
+
+#[test]
+fn top_level_var_direct_plain_exponent_decimal_literal_positive_lifecycle_is_selected_accepted_incomplete()
+ {
+    for text in [
+        "var x=1e2;",
+        "var x=1E2;",
+        "var x=1e+2;",
+        "var x=1e-2;",
+        "var x=1.e2;",
+        "var x=1.0e2;",
+        "var x=.5E+2;",
+        "var x=12.34E-56;",
+        "var x=1e2",
+        "var a=1e2,b=.5e2;",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn block_var_direct_plain_exponent_decimal_literal_positive_lifecycle_is_selected_accepted_incomplete()
+ {
+    for text in [
+        "{ var x=1e2; }",
+        "{ var x=1E2; }",
+        "{ var x=1e+2; }",
+        "{ var x=1e-2; }",
+        "{ var x=1.e2; }",
+        "{ var x=1.0e2; }",
+        "{ var x=.5E+2; }",
+        "{ var x=12.34E-56; }",
+        "{ var x=1e2 }",
+        "{ var a=1e2,b=.5e2; }",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn block_var_plain_exponent_decimal_literal_backed_declarator_reaches_existing_ee14_r02() {
+    assert_static_semantics_rejected("{ let x; var x=1e2; }", "x", (13, 14));
+}
+
+#[test]
+fn block_var_plain_exponent_decimal_literal_backed_declarator_reaches_existing_ee36_r02() {
+    assert_static_semantics_rejected("let x; { var x=.5e2; }", "x", (13, 14));
+}
+
+#[test]
+fn top_level_var_plain_exponent_decimal_literal_backed_declarator_reaches_existing_ee36_r02() {
+    assert_static_semantics_rejected("let x; var x=1e2;", "x", (11, 12));
+}
+
+#[test]
+fn exponent_var_prefix_preserves_later_existing_grammar_evidence_in_both_owners() {
+    // Issue #740: a valid newly accepted exponent initializer prefix must
+    // not downgrade or suppress an already-owned later malformed
+    // `BindingIdentifier` Grammar rejection, in either selected `var` owner.
+    assert_grammar_rejected(r"var a=1e2,b,\u{}=2;", r"\u{}", (12, 16));
+
+    assert_grammar_rejected(r"{ var a=1e2,b,\u{}=2; }", r"\u{}", (14, 18));
 }

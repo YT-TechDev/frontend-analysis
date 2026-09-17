@@ -2391,10 +2391,13 @@ fn one_level_block_var_decimal_initializer_numeric_neighbors_remain_unsupported(
     // "{ var a=1.0; }" is deliberately not listed here: Issue #732 makes a
     // direct-authored plain fractional `DecimalLiteral` initializer a
     // selected accepted form (see the "Issue #732" test section below).
+    // "{ var a=1e2; }" is also deliberately not listed here: Issue #740
+    // makes a direct-authored, separator-free exponent `DecimalLiteral`
+    // initializer a selected accepted form (see the "Issue #740" test
+    // section below).
     for text in [
         "{ var a=01; }",
         "{ var a=1_0; }",
-        "{ var a=1e2; }",
         "{ var a=1n; }",
         "{ var a=+1; }",
         "{ var a=-1; }",
@@ -3699,10 +3702,12 @@ fn selected_var_decimal_initializer_boundary_is_exact() {
     // a=1.0;" is also deliberately not listed here: Issue #732 makes a
     // direct-authored plain fractional `DecimalLiteral` initializer a
     // selected accepted form (see the "Issue #732" test section below).
+    // "var a=1e2;" is also deliberately not listed here: Issue #740 makes a
+    // direct-authored, separator-free exponent `DecimalLiteral` initializer
+    // a selected accepted form (see the "Issue #740" test section below).
     for text in [
         "var a=01;",
         "var a=1_0;",
-        "var a=1e2;",
         "var a=1n;",
         "var a=+1;",
         "var a=-1;",
@@ -5225,9 +5230,11 @@ fn one_level_block_var_plain_fractional_decimal_literal_preserves_integer_predec
 fn top_level_var_plain_fractional_decimal_literal_does_not_claim_numeric_or_richer_neighbors() {
     for text in [
         // numeric-neighbor firewall: remains whole-source `UnsupportedCoverage`
-        "var x = 1e2;",
-        "var x = 1.0e2;",
-        "var x = .5e2;",
+        //
+        // `1e2` / `1.0e2` / `.5e2` are no longer negative controls here:
+        // Issue #740 makes both selected `var` initializer positions
+        // additionally admit these as the new exponent atom; see the
+        // "Issue #740" test section below for full coverage.
         "var x = 1_0;",
         "var x = 1.0_0;",
         "var x = .5_0;",
@@ -5268,9 +5275,10 @@ fn top_level_var_plain_fractional_decimal_literal_does_not_claim_numeric_or_rich
 fn one_level_block_var_plain_fractional_decimal_literal_does_not_claim_numeric_or_richer_neighbors()
 {
     for text in [
-        "{ var x = 1e2; }",
-        "{ var x = 1.0e2; }",
-        "{ var x = .5e2; }",
+        // `1e2` / `1.0e2` / `.5e2` are no longer negative controls here:
+        // Issue #740 makes both selected `var` initializer positions
+        // additionally admit these as the new exponent atom; see the
+        // "Issue #740" test section below for full coverage.
         "{ var x = 1_0; }",
         "{ var x = 1.0_0; }",
         "{ var x = .5_0; }",
@@ -5343,9 +5351,15 @@ fn top_level_var_plain_fractional_decimal_literal_transactionality_commits_no_ea
     // No valid earlier fractional declarator escapes as committed selected
     // success when a later declarator/initializer/terminator fails
     // (falsifies W15/earlier-prefix-escapes).
+    //
+    // "var a = .5, b = 1e2;" no longer witnesses this: Issue #740 makes
+    // `1e2` a complete accepted exponent atom, so that source is now
+    // whole-statement selected success (see the "Issue #740" test section
+    // below). `1e` is a genuinely incomplete exponent tail and preserves
+    // the same later-initializer-failure theorem.
     for text in [
         "var a = 1.0, b = ;",
-        "var a = .5, b = 1e2;",
+        "var a = .5, b = 1e;",
         "var a = 1.0, b =",
     ] {
         assert_unsupported(text);
@@ -5355,9 +5369,13 @@ fn top_level_var_plain_fractional_decimal_literal_transactionality_commits_no_ea
 #[test]
 fn one_level_block_var_plain_fractional_decimal_literal_transactionality_commits_no_earlier_prefix()
 {
+    // "{ var a = .5, b = 1e2; }" no longer witnesses this: Issue #740 makes
+    // `1e2` a complete accepted exponent atom (see the "Issue #740" test
+    // section below). `1e` is a genuinely incomplete exponent tail and
+    // preserves the same later-initializer-failure theorem.
     for text in [
         "{ var a = 1.0, b = ; }",
-        "{ var a = .5, b = 1e2; }",
+        "{ var a = .5, b = 1e; }",
         "{ var a = 1.0, b = }",
     ] {
         assert_unsupported(text);
@@ -5465,10 +5483,11 @@ fn one_level_block_var_fractional_mixed_with_sibling_atoms_and_identifier_refere
 // authority: a new bounded `SelectedPlainExponentDecimalLiteral` recognizer
 // is tried before the unmodified `consume_selected_plain_fractional_decimal_literal`
 // and `consume_selected_decimal_integer` predecessors in `parse_declaration`
-// only. Top-level `var` and one-level Block `var` initializer dispatch
-// remain untouched hard-zero surfaces for this leaf (see the dedicated
-// asymmetry test below). No numeric value, digit, or source-anchor fact is
-// retained beyond the existing `SelectedInitializerState::SelectedPresent`.
+// only. Top-level `var` and one-level Block `var` initializer dispatch were
+// untouched hard-zero surfaces for this leaf; Issue #740 below composes the
+// same accepted atom into both of those owners. No numeric value, digit, or
+// source-anchor fact is retained beyond the existing
+// `SelectedInitializerState::SelectedPresent`.
 
 #[test]
 fn plain_exponent_decimal_literal_initializers_compose_as_presence_only() {
@@ -5727,33 +5746,333 @@ fn plain_exponent_decimal_literal_aggregate_lifecycle_remains_incomplete_or_exis
     assert_eq!((subject.range().start(), subject.range().end()), (19, 23));
 }
 
+// --- Issue #740: both selected `var` placements widened to a direct- ------
+// authored, separator-free exponent `DecimalLiteral` initializer
+//
+// These focused production tests seal the candidate against the accepted
+// #735/#736 candidate-independent atom theorem, the #738/#739 accepted
+// selected `LexicalDeclaration` exponent production, and the joint
+// top-level `var` + Block `var` composition theorem: the unmodified
+// `consume_selected_plain_exponent_decimal_literal` recognizer is reused,
+// tried before the unmodified `consume_selected_plain_fractional_decimal_literal`
+// and `consume_selected_decimal_integer` predecessors, at both
+// `parse_variable_statement` and `parse_selected_block_var_statement` call
+// sites. The former #738 asymmetry seal (top-level/Block `var` exponent
+// `UnsupportedCoverage`) is superseded by the positive composition below.
+
 #[test]
-fn top_level_var_and_block_var_plain_exponent_decimal_literal_remains_unsupported() {
-    // Issue #738 widens only the selected `LexicalDeclaration` initializer
-    // position (via `parse_declaration`). Top-level `var` and one-level
-    // Block `var` initializer dispatch (`parse_variable_statement` and
-    // `parse_selected_block_var_statement`) are untouched hard-zero
-    // surfaces for this leaf: they continue to fall back to the unchanged
-    // integer/fractional predecessors and report `UnsupportedCoverage` for
-    // the remaining unowned trailing exponent-part source, exactly as
-    // before this leaf.
+fn top_level_var_and_block_var_plain_exponent_decimal_literal_initializers_compose() {
     for text in [
         "var x = 1e2;",
         "var x = 1E2;",
         "var x = 1e+2;",
-        "var x = .5e2;",
+        "var x = 1e-2;",
+        "var x = 1.e2;",
         "var x = 1.0e2;",
+        "var x = .5E+2;",
+        "var x = 12.34E-56;",
     ] {
-        assert_unsupported(text);
+        let _ = recognized_variable(text);
     }
 
     for text in [
         "{ var x = 1e2; }",
         "{ var x = 1E2; }",
         "{ var x = 1e+2; }",
-        "{ var x = .5e2; }",
+        "{ var x = 1e-2; }",
+        "{ var x = 1.e2; }",
         "{ var x = 1.0e2; }",
+        "{ var x = .5E+2; }",
+        "{ var x = 12.34E-56; }",
+    ] {
+        let _ = recognized_block(text);
+    }
+}
+
+#[test]
+fn top_level_var_and_block_var_plain_exponent_decimal_literal_preserves_integer_and_fractional_predecessors()
+ {
+    // Existing selected integer and fractional initializers remain
+    // unchanged in both `var` owners: the exponent recognizer must decline
+    // without commit so the unmodified predecessors still own these atoms
+    // (falsifies W2/W9/W10).
+    let _ = recognized_variable("var x = 1;");
+    let _ = recognized_variable("var x = 1.;");
+    let _ = recognized_variable("var x = 1.0;");
+    let _ = recognized_variable("var x = .5;");
+    let _ = recognized_block("{ var x = 1; }");
+    let _ = recognized_block("{ var x = 1.; }");
+    let _ = recognized_block("{ var x = 1.0; }");
+    let _ = recognized_block("{ var x = .5; }");
+
+    // Complete-atom ownership: production must select the complete
+    // authored exponent atom, not commit only the predecessor-owned
+    // mantissa prefix (`1`, `1.0`, `.5` respectively). The whole-source
+    // transactional architecture makes recognition success itself the
+    // proof: a partial mantissa-only commit would leave the remaining
+    // exponent-part source unowned and the whole statement/source
+    // `UnsupportedCoverage` (falsifies W3).
+    for text in ["var x = 1e2;", "var x = 1.0e2;", "var x = .5e2;"] {
+        let _ = recognized_variable(text);
+    }
+    for text in [
+        "{ var x = 1e2; }",
+        "{ var x = 1.0e2; }",
+        "{ var x = .5e2; }",
+    ] {
+        let _ = recognized_block(text);
+    }
+}
+
+#[test]
+fn top_level_var_and_block_var_plain_exponent_decimal_literal_incomplete_tails_do_not_claim_whole_source()
+ {
+    for text in [
+        "var x = 1e;",
+        "var x = 1E;",
+        "var x = 1e+;",
+        "var x = 1e-;",
+        "var x = 1.e;",
+        "var x = 1.E+;",
+        "var x = 1.0e-;",
+        "var x = .5E+;",
     ] {
         assert_unsupported(text);
+    }
+
+    for text in [
+        "{ var x = 1e; }",
+        "{ var x = 1E; }",
+        "{ var x = 1e+; }",
+        "{ var x = 1e-; }",
+        "{ var x = 1.e; }",
+        "{ var x = 1.E+; }",
+        "{ var x = 1.0e-; }",
+        "{ var x = .5E+; }",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn top_level_var_and_block_var_plain_exponent_decimal_literal_does_not_claim_numeric_or_richer_neighbors()
+ {
+    for text in [
+        // numeric-separator / BigInt / non-decimal / legacy firewall
+        "var x = 1e1_0;",
+        "var x = 1_0e2;",
+        "var x = 1.0_0e2;",
+        "var x = .5e1_0;",
+        "var x = 1n;",
+        "var x = 0x10;",
+        "var x = 0b10;",
+        "var x = 0o10;",
+        "var x = 01;",
+        // leading-unary firewall: `+`/`-` remain UnaryExpression territory
+        "var x = +1e2;",
+        "var x = -1e2;",
+        // richer-expression / comment firewall: a valid exponent literal
+        // prefix never authorizes a broader expression
+        "var x = 1e2.foo;",
+        "var x = 1e2();",
+        "var x = 1e2 + x;",
+        "var x = 1e2 = x;",
+        "var x = 1e2 ? x : y;",
+        "var x = 1e2/*comment*/;",
+        "var x = 1e2 unexpected;",
+        "var x = 1.0e2.foo;",
+        "var x = .5e2 + x;",
+    ] {
+        assert_unsupported(text);
+    }
+
+    for text in [
+        "{ var x = 1e1_0; }",
+        "{ var x = 1_0e2; }",
+        "{ var x = 1.0_0e2; }",
+        "{ var x = .5e1_0; }",
+        "{ var x = 1n; }",
+        "{ var x = 0x10; }",
+        "{ var x = 0b10; }",
+        "{ var x = 0o10; }",
+        "{ var x = 01; }",
+        "{ var x = +1e2; }",
+        "{ var x = -1e2; }",
+        "{ var x = 1e2.foo; }",
+        "{ var x = 1e2(); }",
+        "{ var x = 1e2 + x; }",
+        "{ var x = 1e2 = x; }",
+        "{ var x = 1e2 ? x : y; }",
+        "{ var x = 1e2/*comment*/; }",
+        "{ var x = 1e2 unexpected; }",
+        "{ var x = 1.0e2.foo; }",
+        "{ var x = .5e2 + x; }",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn top_level_var_exponent_mixed_with_sibling_atoms_and_identifier_reference_preserves_correspondence_ownership()
+ {
+    for text in [
+        "var a=1e2,b;",
+        "var a,b=.5e2;",
+        "var a=1,b=2e3;",
+        "var a=1.0,b=2.5e-3;",
+        "var a=true,b=3E2;",
+        "var a=null,b=.25e+2;",
+        "var a=this,b=4e1;",
+        "var a=\"s\",b=.25e+2;",
+    ] {
+        let script = recognized_variable(text);
+        let statement = only_variable_statement(&script);
+        for binding in statement.bindings() {
+            assert!(
+                binding.identifier_reference_initializer().is_none(),
+                "{text:?}"
+            );
+            assert!(
+                binding.escaped_reserved_initializer_identifier().is_none(),
+                "{text:?}"
+            );
+        }
+    }
+
+    let script = recognized_variable("var a=foo,b=2e3;");
+    let statement = only_variable_statement(&script);
+    let reference = statement.bindings()[0]
+        .identifier_reference_initializer()
+        .expect("first declarator must retain existing IdentifierReference fact");
+    assert_eq!(reference.reference().fragment(), "foo");
+    assert_eq!(reference.semantic_name(), "foo");
+    assert!(
+        statement.bindings()[1]
+            .identifier_reference_initializer()
+            .is_none()
+    );
+}
+
+#[test]
+fn one_level_block_var_exponent_mixed_with_sibling_atoms_and_identifier_reference_preserves_correspondence_ownership()
+ {
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+
+    fn only_block_var_statement(
+        script: &super::selected_lexical_slice::SelectedOneLevelBlockScript,
+    ) -> &super::selected_lexical_slice::SelectedBlockVarStatement {
+        let [SelectedTopLevelItem::Block(block)] = script.items() else {
+            panic!("expected exactly one Block item");
+        };
+        let [SelectedBlockItem::Var(statement)] = block.items() else {
+            panic!("expected exactly one Block var statement");
+        };
+        statement
+    }
+
+    for text in [
+        "{ var a=1e2,b; }",
+        "{ var a,b=.5e2; }",
+        "{ var a=1,b=2e3; }",
+        "{ var a=1.0,b=2.5e-3; }",
+        "{ var a=true,b=3E2; }",
+        "{ var a=null,b=.25e+2; }",
+        "{ var a=this,b=4e1; }",
+        "{ var a=\"s\",b=.25e+2; }",
+    ] {
+        let script = recognized_block(text);
+        let statement = only_block_var_statement(&script);
+        for binding in statement.bindings() {
+            assert!(
+                binding.identifier_reference_initializer().is_none(),
+                "{text:?}"
+            );
+            assert!(
+                binding.escaped_reserved_initializer_identifier().is_none(),
+                "{text:?}"
+            );
+        }
+    }
+
+    let script = recognized_block("{ var a=foo,b=2e3; }");
+    let statement = only_block_var_statement(&script);
+    let reference = statement.bindings()[0]
+        .identifier_reference_initializer()
+        .expect("first declarator must retain existing IdentifierReference fact");
+    assert_eq!(reference.reference().fragment(), "foo");
+    assert_eq!(reference.semantic_name(), "foo");
+    assert!(
+        statement.bindings()[1]
+            .identifier_reference_initializer()
+            .is_none()
+    );
+}
+
+#[test]
+fn top_level_var_plain_exponent_decimal_literal_transactionality_commits_no_earlier_prefix() {
+    // No valid earlier exponent declarator escapes as committed selected
+    // success when a later declarator/initializer/terminator fails
+    // (falsifies W13).
+    for text in [
+        "var a = 1e2, b = ;",
+        "var a = 1.0e-2, b = 1e;",
+        "var a = .5e2, b =",
+    ] {
+        assert_unsupported(text);
+    }
+
+    // A later already-owned malformed `BindingIdentifier` Grammar-evidence
+    // case remains authoritative when preceded by a valid exponent
+    // initializer (falsifies W14).
+    let subject = grammar_rejection(r"var a = 1e2, \u{} = 1;");
+    assert_eq!(subject.fragment(), r"\u{}");
+}
+
+#[test]
+fn one_level_block_var_plain_exponent_decimal_literal_transactionality_commits_no_earlier_prefix() {
+    for text in [
+        "{ var a = 1e2, b = ; }",
+        "{ var a = 1.0e-2, b = 1e; }",
+        "{ var a = .5e2, b = }",
+    ] {
+        assert_unsupported(text);
+    }
+
+    let subject = grammar_rejection(r"{ var a = 1e2, \u{} = 1; }");
+    assert_eq!(subject.fragment(), r"\u{}");
+}
+
+#[test]
+fn top_level_var_plain_exponent_decimal_literal_eof_asi_preserves_ownership() {
+    for text in ["var x=1e2", "var a=1e2,b=.5e2"] {
+        let script = recognized_variable(text);
+        let statement = only_variable_statement(&script);
+        assert_eq!(
+            statement.terminator(),
+            SelectedVariableStatementTerminator::AutomaticAtEof,
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn one_level_block_var_plain_exponent_decimal_literal_close_brace_asi_preserves_ownership() {
+    use super::selected_lexical_slice::{
+        SelectedBlockItem, SelectedBlockVarStatementTerminator, SelectedTopLevelItem,
+    };
+
+    for text in ["{ var x=1e2 }", "{ var a=1e2,b=.5e2 }"] {
+        let script = recognized_block(text);
+        let [SelectedTopLevelItem::Block(block)] = script.items() else {
+            panic!("expected exactly one Block item for {text:?}");
+        };
+        let [SelectedBlockItem::Var(statement)] = block.items() else {
+            panic!("expected exactly one Block var statement for {text:?}");
+        };
+        assert_eq!(
+            statement.terminator(),
+            SelectedBlockVarStatementTerminator::AutomaticBeforeBlockClose,
+            "{text:?}"
+        );
     }
 }
