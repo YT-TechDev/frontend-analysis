@@ -11,8 +11,10 @@ use super::selected_lexical_slice::{
     SelectedLexicalSliceOutcome, recognize_selected_lexical_slice,
 };
 use super::selected_static_semantics::{
+    SelectedIdentifierReferenceExpressionStatementStaticSemanticsOutcome,
     SelectedOneLevelBlockStaticSemanticsOutcome, SelectedStaticSemanticsOutcome,
     SelectedVariableStatementStaticSemanticsOutcome,
+    evaluate_selected_identifier_reference_expression_statement_static_semantics,
     evaluate_selected_one_level_block_static_semantics, evaluate_selected_static_semantics,
     evaluate_selected_variable_statement_static_semantics, selected_rejection_to_qualification,
 };
@@ -92,6 +94,26 @@ pub(super) fn attempt_selected_qualification(source: &SourceText) -> SelectedQua
                 }
             }
         }
+        SelectedLexicalSliceOutcome::RecognizedIdentifierReferenceExpressionStatementSlice(
+            script,
+        ) => match evaluate_selected_identifier_reference_expression_statement_static_semantics(
+            &script,
+        ) {
+            SelectedIdentifierReferenceExpressionStatementStaticSemanticsOutcome::Accepted(_) => {
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            }
+            SelectedIdentifierReferenceExpressionStatementStaticSemanticsOutcome::Rejected(
+                rejection,
+            ) => SelectedQualificationAttempt::Outcome(selected_rejection_to_qualification(
+                source, &rejection,
+            )),
+            SelectedIdentifierReferenceExpressionStatementStaticSemanticsOutcome::ResourceLimited => {
+                SelectedQualificationAttempt::Outcome(QualificationOutcome::resource_limited())
+            }
+            SelectedIdentifierReferenceExpressionStatementStaticSemanticsOutcome::InternalFailure => {
+                SelectedQualificationAttempt::Outcome(QualificationOutcome::internal_failure())
+            }
+        },
         SelectedLexicalSliceOutcome::UnsupportedCoverage => {
             SelectedQualificationAttempt::UnsupportedCoverage
         }

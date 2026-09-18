@@ -3,12 +3,15 @@ use crate::{SourceId, SourceText};
 use super::qualification::{ProcessingStatus, QualificationVerdictKind, RejectionFamily};
 use super::qualification_validation_tests::{gold_source, gold_subject_range};
 use super::selected_lexical_slice::{
-    SelectedLexicalScript, SelectedLexicalSliceOutcome, SelectedOneLevelBlockScript,
-    SelectedVariableStatementScript, recognize_selected_lexical_slice,
+    SelectedIdentifierReferenceExpressionStatementScript, SelectedLexicalScript,
+    SelectedLexicalSliceOutcome, SelectedOneLevelBlockScript, SelectedVariableStatementScript,
+    recognize_selected_lexical_slice,
 };
 use super::selected_static_semantics::{
+    SelectedIdentifierReferenceExpressionStatementStaticSemanticsOutcome,
     SelectedOneLevelBlockStaticSemanticsOutcome, SelectedStaticSemanticsOutcome,
     SelectedStaticSemanticsRejection, SelectedVariableStatementStaticSemanticsOutcome,
+    evaluate_selected_identifier_reference_expression_statement_static_semantics,
     evaluate_selected_one_level_block_static_semantics, evaluate_selected_static_semantics,
     evaluate_selected_variable_statement_static_semantics, selected_rejection_to_qualification,
 };
@@ -680,7 +683,7 @@ fn production_static_semantics_preserves_architecture_boundaries_in_source() {
     }
 
     assert_eq!(production.matches("first_by_name: HashMap<").count(), 2);
-    assert_eq!(production.matches("try_reserve(1)").count(), 9);
+    assert_eq!(production.matches("try_reserve(1)").count(), 12);
     assert!(production.contains("DuplicateDeclarationBinding"));
     assert!(production.contains("DuplicateBlockLexicalName"));
     assert!(production.contains("DuplicateLexicalName"));
@@ -1286,4 +1289,103 @@ fn one_level_block_var_escaped_reserved_initializer_regressions_remain_accepted(
             "{text}"
         );
     }
+}
+
+// --- Issue #758: static semantics for the new broadest / reference-use-enabled
+// Script carrier. ---
+
+fn recognized_reference_use(
+    text: &str,
+) -> (
+    SourceText,
+    SelectedIdentifierReferenceExpressionStatementScript,
+) {
+    let source = source(text);
+    let script = match recognize_selected_lexical_slice(&source) {
+        SelectedLexicalSliceOutcome::RecognizedIdentifierReferenceExpressionStatementSlice(
+            script,
+        ) => script,
+        other => panic!("expected reference-use-enabled recognition for {text:?}, got {other:?}"),
+    };
+    (source, script)
+}
+
+#[test]
+fn reference_use_enabled_positive_sources_are_accepted_and_use_site_contributes_no_names() {
+    for text in [
+        "a;",
+        "let a;\na;",
+        "var a;\na;",
+        "{ var a; }\na;",
+        "{ let a; }\na;",
+        "let a;\nlet x = a;\na;",
+        "let a;\na;\na;",
+        "let b;\nlet a;\na;\nb;",
+        "var a;\nvar a;\na;",
+    ] {
+        let (_, script) = recognized_reference_use(text);
+        assert!(
+            matches!(
+                evaluate_selected_identifier_reference_expression_statement_static_semantics(
+                    &script
+                ),
+                SelectedIdentifierReferenceExpressionStatementStaticSemanticsOutcome::Accepted(_)
+            ),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn reference_use_enabled_known_static_rejections_remain_rejections_not_unsupported_coverage() {
+    // Acceptance criterion 18 / issue section 19 / 46: the free-standing
+    // use-site contributes no names, so each rejection below comes entirely
+    // from the already-accepted declaration/Block/var collision rules,
+    // never a new use-site rejection category, and is never downgraded to
+    // `UnsupportedCoverage`.
+    let (_, script) = recognized_reference_use("let a;\nlet a;\na;");
+    assert!(matches!(
+        evaluate_selected_identifier_reference_expression_statement_static_semantics(&script),
+        SelectedIdentifierReferenceExpressionStatementStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::DuplicateLexicalName { .. }
+        )
+    ));
+
+    let (_, script) = recognized_reference_use("let a;\nvar a;\na;");
+    assert!(matches!(
+        evaluate_selected_identifier_reference_expression_statement_static_semantics(&script),
+        SelectedIdentifierReferenceExpressionStatementStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::LexicalVarNameCollision { .. }
+        )
+    ));
+
+    let (_, script) = recognized_reference_use("var a;\nlet a;\na;");
+    assert!(matches!(
+        evaluate_selected_identifier_reference_expression_statement_static_semantics(&script),
+        SelectedIdentifierReferenceExpressionStatementStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::LexicalVarNameCollision { .. }
+        )
+    ));
+
+    let (_, script) = recognized_reference_use("let a;\n{ var a; }\na;");
+    assert!(matches!(
+        evaluate_selected_identifier_reference_expression_statement_static_semantics(&script),
+        SelectedIdentifierReferenceExpressionStatementStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::LexicalVarNameCollision { .. }
+        )
+    ));
+}
+
+#[test]
+fn reference_use_enabled_accepted_witness_exposes_the_recognized_script() {
+    let (_, script) = recognized_reference_use("let a;\na;");
+    let accepted =
+        match evaluate_selected_identifier_reference_expression_statement_static_semantics(&script)
+        {
+            SelectedIdentifierReferenceExpressionStatementStaticSemanticsOutcome::Accepted(
+                accepted,
+            ) => accepted,
+            other => panic!("expected acceptance, got {other:?}"),
+        };
+    assert_eq!(accepted.script().items().len(), 2);
 }

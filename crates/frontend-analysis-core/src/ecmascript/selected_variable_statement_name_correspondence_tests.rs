@@ -1,20 +1,26 @@
 use crate::{SourceAnchor, SourceId, SourceText};
 
 use super::selected_lexical_slice::{
-    SelectedLexicalSliceOutcome, SelectedOneLevelBlockScript, SelectedVariableStatementScript,
-    recognize_selected_lexical_slice,
+    SelectedIdentifierReferenceExpressionStatementScript, SelectedLexicalSliceOutcome,
+    SelectedOneLevelBlockScript, SelectedVariableStatementScript, recognize_selected_lexical_slice,
 };
 use super::selected_static_semantics::{
+    SelectedIdentifierReferenceExpressionStatementStaticSemanticsOutcome,
     SelectedOneLevelBlockStaticSemanticsOutcome, SelectedStaticSemanticsRejection,
     SelectedVariableStatementStaticSemanticsOutcome,
+    evaluate_selected_identifier_reference_expression_statement_static_semantics,
     evaluate_selected_one_level_block_static_semantics,
     evaluate_selected_variable_statement_static_semantics,
 };
 use super::selected_variable_statement_name_correspondence::{
+    SelectedTopLevelIdentifierReferenceUseSiteNameCorrespondenceAnalysis,
+    SelectedTopLevelIdentifierReferenceUseSiteNameCorrespondenceOutcome,
     SelectedVariableStatementNameCorrespondenceAnalysis,
     SelectedVariableStatementNameCorrespondenceOutcome,
     SelectedVariableStatementNameCorrespondenceRegion,
     analyze_selected_one_level_block_name_correspondence,
+    analyze_selected_reference_use_enabled_name_correspondence,
+    analyze_selected_top_level_identifier_reference_use_site_name_correspondence,
     analyze_selected_variable_statement_name_correspondence,
 };
 
@@ -2524,5 +2530,228 @@ fn two_identifier_reference_additive_initializer_direct_escaped_combination_for_
             .correspondence()
             .is_no_selected_same_source_contributor(),
         "second operand b has no same-source contributor"
+    );
+}
+
+// --- Issue #758: top-level free-standing `IdentifierReference`
+// `ExpressionStatement` use-site correspondence. ---
+
+fn recognized_reference_use(
+    text: &str,
+) -> (
+    SourceText,
+    SelectedIdentifierReferenceExpressionStatementScript,
+) {
+    let source = source(text);
+    let script = match recognize_selected_lexical_slice(&source) {
+        SelectedLexicalSliceOutcome::RecognizedIdentifierReferenceExpressionStatementSlice(
+            script,
+        ) => script,
+        other => panic!("expected reference-use-enabled recognition for {text:?}, got {other:?}"),
+    };
+    (source, script)
+}
+
+fn accepted_reference_use_initializer_analysis<'script>(
+    script: &'script SelectedIdentifierReferenceExpressionStatementScript,
+) -> SelectedVariableStatementNameCorrespondenceAnalysis<'script> {
+    let accepted =
+        match evaluate_selected_identifier_reference_expression_statement_static_semantics(script) {
+            SelectedIdentifierReferenceExpressionStatementStaticSemanticsOutcome::Accepted(
+                accepted,
+            ) => accepted,
+            other => {
+                panic!("expected reference-use-enabled selected static acceptance, got {other:?}")
+            }
+        };
+
+    match analyze_selected_reference_use_enabled_name_correspondence(&accepted) {
+        SelectedVariableStatementNameCorrespondenceOutcome::Complete(analysis) => analysis,
+        other => panic!("expected complete initializer correspondence, got {other:?}"),
+    }
+}
+
+fn accepted_use_site_analysis<'script>(
+    script: &'script SelectedIdentifierReferenceExpressionStatementScript,
+) -> SelectedTopLevelIdentifierReferenceUseSiteNameCorrespondenceAnalysis<'script> {
+    let accepted =
+        match evaluate_selected_identifier_reference_expression_statement_static_semantics(script) {
+            SelectedIdentifierReferenceExpressionStatementStaticSemanticsOutcome::Accepted(
+                accepted,
+            ) => accepted,
+            other => {
+                panic!("expected reference-use-enabled selected static acceptance, got {other:?}")
+            }
+        };
+
+    match analyze_selected_top_level_identifier_reference_use_site_name_correspondence(&accepted) {
+        SelectedTopLevelIdentifierReferenceUseSiteNameCorrespondenceOutcome::Complete(analysis) => {
+            analysis
+        }
+        other => panic!("expected complete use-site correspondence, got {other:?}"),
+    }
+}
+
+#[test]
+fn use_site_no_selected_same_source_contributor_for_a_lone_reference() {
+    let (_, script) = recognized_reference_use("a;");
+    let analysis = accepted_use_site_analysis(&script);
+    let [relation] = analysis.relations() else {
+        panic!("expected exactly one use-site relation");
+    };
+    assert_eq!(relation.semantic_name(), "a");
+    assert_eq!(relation.reference().fragment(), "a");
+    assert!(
+        relation
+            .correspondence()
+            .is_no_selected_same_source_contributor()
+    );
+}
+
+#[test]
+fn use_site_backward_lexical_correspondence() {
+    let (_, script) = recognized_reference_use("let a;\na;");
+    let analysis = accepted_use_site_analysis(&script);
+    let [relation] = analysis.relations() else {
+        panic!("expected exactly one use-site relation");
+    };
+    let (binding, region) = relation
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("must resolve to the top-level lexical binding a");
+    assert_eq!(binding.fragment(), "a");
+    assert!(matches!(
+        region,
+        SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+    ));
+}
+
+#[test]
+fn use_site_forward_lexical_correspondence() {
+    // Issue #758 section 31: the free-standing use-site may correspond to a
+    // selected same-source top-level lexical declaration authored later.
+    // This is same-source static provenance, not TDZ/execution-order
+    // resolution.
+    let (_, script) = recognized_reference_use("a;\nlet a;");
+    let analysis = accepted_use_site_analysis(&script);
+    let [relation] = analysis.relations() else {
+        panic!("expected exactly one use-site relation");
+    };
+    let (binding, region) = relation
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("must resolve to the later-authored top-level lexical binding a");
+    assert_eq!(binding.fragment(), "a");
+    assert!(matches!(
+        region,
+        SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+    ));
+}
+
+#[test]
+fn use_site_var_contributor_semantics_preserve_authored_order_and_no_deduplication() {
+    let (_, script) = recognized_reference_use("var a;\na;");
+    let analysis = accepted_use_site_analysis(&script);
+    let contributors = analysis.relations()[0]
+        .correspondence()
+        .var_contributors()
+        .expect("one var contributor");
+    assert_eq!(contributors.len(), 1);
+
+    let (_, script) = recognized_reference_use("var a;\nvar a;\na;");
+    let analysis = accepted_use_site_analysis(&script);
+    let contributors = analysis.relations()[0]
+        .correspondence()
+        .var_contributors()
+        .expect("two var contributors");
+    assert_eq!(contributors.len(), 2);
+    assert!(contributors[0].range().start() < contributors[1].range().start());
+
+    let (_, script) = recognized_reference_use("{ var a; }\na;");
+    let analysis = accepted_use_site_analysis(&script);
+    let contributors = analysis.relations()[0]
+        .correspondence()
+        .var_contributors()
+        .expect("Block var contributor composes into Script same-source provenance");
+    assert_eq!(contributors.len(), 1);
+}
+
+#[test]
+fn use_site_top_level_block_composition_reuses_block_lexical_visibility() {
+    let (_, script) = recognized_reference_use("{ let a; }\na;");
+    let analysis = accepted_use_site_analysis(&script);
+    let [relation] = analysis.relations() else {
+        panic!("expected exactly one use-site relation");
+    };
+    // A Block-local lexical binding never enters the top-level lexical
+    // domain (issue section 29): the free-standing top-level `a;` must not
+    // resolve to it.
+    assert!(
+        relation
+            .correspondence()
+            .is_no_selected_same_source_contributor()
+    );
+}
+
+#[test]
+fn use_site_duplicate_occurrences_are_preserved_not_deduplicated() {
+    let (_, script) = recognized_reference_use("let a;\na;\na;");
+    let analysis = accepted_use_site_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(relations.len(), 2);
+    assert_eq!(relations[0].semantic_name(), "a");
+    assert_eq!(relations[1].semantic_name(), "a");
+    assert!(relations[0].reference().range().start() < relations[1].reference().range().start());
+    for relation in relations {
+        assert!(
+            relation
+                .correspondence()
+                .selected_lexical_binding()
+                .is_some()
+        );
+    }
+}
+
+#[test]
+fn use_site_authored_occurrence_order_is_preserved_not_target_declaration_order() {
+    let (_, script) = recognized_reference_use("let b;\nlet a;\na;\nb;");
+    let analysis = accepted_use_site_analysis(&script);
+    let names: Vec<&str> = analysis
+        .relations()
+        .iter()
+        .map(|relation| relation.semantic_name())
+        .collect();
+    assert_eq!(names, ["a", "b"]);
+}
+
+#[test]
+fn initializer_and_use_site_relation_surfaces_remain_separate() {
+    let (_, script) = recognized_reference_use("let a;\nlet x = a;\na;");
+
+    let initializer_analysis = accepted_reference_use_initializer_analysis(&script);
+    let initializer_relations = initializer_analysis.relations();
+    assert_eq!(initializer_relations.len(), 1);
+    assert_eq!(initializer_relations[0].semantic_name(), "a");
+    assert_eq!(
+        initializer_relations[0].containing_binding().fragment(),
+        "x"
+    );
+
+    let use_site_analysis = accepted_use_site_analysis(&script);
+    let use_site_relations = use_site_analysis.relations();
+    assert_eq!(use_site_relations.len(), 1);
+    assert_eq!(use_site_relations[0].semantic_name(), "a");
+
+    // Distinct authored occurrences: the initializer RHS `a` and the
+    // free-standing `a;` never collapse into one relation stream.
+    assert_ne!(
+        (
+            initializer_relations[0].reference().range().start(),
+            initializer_relations[0].reference().range().end(),
+        ),
+        (
+            use_site_relations[0].reference().range().start(),
+            use_site_relations[0].reference().range().end(),
+        ),
     );
 }

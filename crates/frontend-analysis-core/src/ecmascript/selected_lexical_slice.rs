@@ -86,11 +86,32 @@
 //! the previous plain single-reference route, reuses the unmodified shared
 //! `consume_selected_identifier_reference` recognizer exactly once per
 //! operand, and retains no operator or whole-expression fact, per the
-//! candidate-independent theorem accepted by #752/#753, by #754.
-//! Recognition is transactional for the whole authoritative
-//! `SourceText`: tentative declaration/binding/Block/var facts are returned
-//! only when the entire source is consumed by selected items plus selected
-//! trivia.
+//! candidate-independent theorem accepted by #752/#753, by #754, and
+//! composed a bounded, transactional free-standing top-level
+//! `IdentifierReference` `ExpressionStatement` use-site leaf
+//! (`SelectedAcceptedIdentifierReference AuthoredSemicolon`) into a new
+//! fourth / broadest selected Script carrier, whose top-level item domain
+//! is `LexicalDeclaration | Block | VariableStatement |
+//! IdentifierReferenceExpressionStatement`. The bounded use-site probe
+//! (`consume_selected_top_level_identifier_reference_expression_statement`)
+//! runs transactionally before the existing raw top-level `var` / Block /
+//! lexical-declaration dispatch, reusing the unmodified shared
+//! `consume_selected_identifier_reference` recognizer exactly once per
+//! candidate and retaining the existing `SelectedIdentifierReferenceFact`
+//! unmodified as the use-site payload -- no whole Statement, whole
+//! Expression, or semicolon anchor is retained, and no second scanner or
+//! decoder is introduced. Historical carriers
+//! (`SelectedLexicalScript`, `SelectedOneLevelBlockScript`,
+//! `SelectedVariableStatementScript`) remain semantically unchanged; the
+//! builder transitions monotonically into the new broadest
+//! `ReferenceUseEnabled` state exactly once, moving any already-collected
+//! `Flat`/`BlockEnabled`/`VariableEnabled` items into the new item
+//! representation in authored order, per the candidate-independent theorem
+//! accepted by #756/#757, by #758. Recognition is transactional for the
+//! whole authoritative
+//! `SourceText`: tentative declaration/binding/Block/var/use-site facts are
+//! returned only when the entire source is consumed by selected items plus
+//! selected trivia.
 //!
 //! This is not aggregate ECMAScript qualification and cannot construct
 //! `QualificationOutcome::Qualified`.
@@ -109,8 +130,13 @@ pub(super) enum SelectedLexicalSliceOutcome {
     RecognizedSelectedSlice(SelectedLexicalScript),
     RecognizedOneLevelBlockSlice(SelectedOneLevelBlockScript),
     RecognizedVariableStatementSlice(SelectedVariableStatementScript),
+    RecognizedIdentifierReferenceExpressionStatementSlice(
+        SelectedIdentifierReferenceExpressionStatementScript,
+    ),
     UnsupportedCoverage,
-    DefinitiveGrammarRejectionEvidence { subject: SourceAnchor },
+    DefinitiveGrammarRejectionEvidence {
+        subject: SourceAnchor,
+    },
     ResourceLimited,
     InternalFailure,
 }
@@ -159,6 +185,38 @@ pub(super) enum SelectedVariableTopLevelItem {
     LexicalDeclaration(SelectedLexicalDeclaration),
     Block(SelectedBlock),
     VariableStatement(SelectedVariableStatement),
+}
+
+/// The new fourth / broadest selected Script carrier (Issue #758),
+/// retaining authored top-level item order across every already-accepted
+/// item shape plus the new free-standing `IdentifierReference`
+/// `ExpressionStatement` use-site leaf. Historical carriers
+/// (`SelectedLexicalScript`, `SelectedOneLevelBlockScript`,
+/// `SelectedVariableStatementScript`) remain distinct, semantically
+/// unchanged accepted authorities; this is a new, separate carrier, never a
+/// widening of `SelectedVariableStatementScript` itself.
+#[derive(Debug)]
+pub(super) struct SelectedIdentifierReferenceExpressionStatementScript {
+    items: Vec<SelectedReferenceUseEnabledTopLevelItem>,
+}
+
+impl SelectedIdentifierReferenceExpressionStatementScript {
+    pub(super) fn items(&self) -> &[SelectedReferenceUseEnabledTopLevelItem] {
+        &self.items
+    }
+}
+
+/// One top-level item of the broadest selected Script carrier. The
+/// `IdentifierReferenceExpressionStatement` variant retains exactly the
+/// existing source-backed `SelectedIdentifierReferenceFact`: the authored
+/// `;` terminator is a construction invariant of this variant, never a
+/// retained anchor or relation payload.
+#[derive(Debug)]
+pub(super) enum SelectedReferenceUseEnabledTopLevelItem {
+    LexicalDeclaration(SelectedLexicalDeclaration),
+    Block(SelectedBlock),
+    VariableStatement(SelectedVariableStatement),
+    IdentifierReferenceExpressionStatement(SelectedIdentifierReferenceFact),
 }
 
 #[derive(Debug)]
@@ -628,6 +686,7 @@ enum SelectedScriptBuilder {
     Flat(Vec<SelectedLexicalDeclaration>),
     BlockEnabled(Vec<SelectedTopLevelItem>),
     VariableEnabled(Vec<SelectedVariableTopLevelItem>),
+    ReferenceUseEnabled(Vec<SelectedReferenceUseEnabledTopLevelItem>),
 }
 
 impl SelectedScriptBuilder {
@@ -683,6 +742,142 @@ impl SelectedScriptBuilder {
                     .try_reserve(1)
                     .map_err(|_| ParseFailure::ResourceLimited)?;
                 items.push(SelectedVariableTopLevelItem::Block(block));
+                Ok(())
+            }
+            (
+                Self::ReferenceUseEnabled(items),
+                SelectedTopLevelItem::LexicalDeclaration(declaration),
+            ) => {
+                items
+                    .try_reserve(1)
+                    .map_err(|_| ParseFailure::ResourceLimited)?;
+                items.push(SelectedReferenceUseEnabledTopLevelItem::LexicalDeclaration(
+                    declaration,
+                ));
+                Ok(())
+            }
+            (Self::ReferenceUseEnabled(items), SelectedTopLevelItem::Block(block)) => {
+                items
+                    .try_reserve(1)
+                    .map_err(|_| ParseFailure::ResourceLimited)?;
+                items.push(SelectedReferenceUseEnabledTopLevelItem::Block(block));
+                Ok(())
+            }
+        }
+    }
+
+    /// Commits the transactionally-recognized free-standing top-level
+    /// use-site fact (Issue #758). When the builder is still `Flat`,
+    /// `BlockEnabled`, or `VariableEnabled`, this is the first selected
+    /// use-site: existing items move into the new broadest item
+    /// representation in exact authored order before the use-site is
+    /// appended, promoting the builder to `ReferenceUseEnabled` exactly
+    /// once. Once already `ReferenceUseEnabled`, the use-site appends
+    /// directly.
+    fn push_use_site(&mut self, fact: SelectedIdentifierReferenceFact) -> Result<(), ParseFailure> {
+        match self {
+            builder @ Self::Flat(_) => {
+                let Self::Flat(declarations) = builder else {
+                    return Err(ParseFailure::InternalFailure);
+                };
+                let item_count = declarations
+                    .len()
+                    .checked_add(1)
+                    .ok_or(ParseFailure::InternalFailure)?;
+                let mut items = Vec::new();
+                items
+                    .try_reserve(item_count)
+                    .map_err(|_| ParseFailure::ResourceLimited)?;
+                for declaration in std::mem::take(declarations) {
+                    items.push(SelectedReferenceUseEnabledTopLevelItem::LexicalDeclaration(
+                        declaration,
+                    ));
+                }
+                items.push(
+                    SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
+                        fact,
+                    ),
+                );
+                *builder = Self::ReferenceUseEnabled(items);
+                Ok(())
+            }
+            builder @ Self::BlockEnabled(_) => {
+                let Self::BlockEnabled(existing_items) = builder else {
+                    return Err(ParseFailure::InternalFailure);
+                };
+                let item_count = existing_items
+                    .len()
+                    .checked_add(1)
+                    .ok_or(ParseFailure::InternalFailure)?;
+                let mut items = Vec::new();
+                items
+                    .try_reserve(item_count)
+                    .map_err(|_| ParseFailure::ResourceLimited)?;
+                for item in std::mem::take(existing_items) {
+                    match item {
+                        SelectedTopLevelItem::LexicalDeclaration(declaration) => {
+                            items.push(SelectedReferenceUseEnabledTopLevelItem::LexicalDeclaration(
+                                declaration,
+                            ))
+                        }
+                        SelectedTopLevelItem::Block(block) => {
+                            items.push(SelectedReferenceUseEnabledTopLevelItem::Block(block));
+                        }
+                    }
+                }
+                items.push(
+                    SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
+                        fact,
+                    ),
+                );
+                *builder = Self::ReferenceUseEnabled(items);
+                Ok(())
+            }
+            builder @ Self::VariableEnabled(_) => {
+                let Self::VariableEnabled(existing_items) = builder else {
+                    return Err(ParseFailure::InternalFailure);
+                };
+                let item_count = existing_items
+                    .len()
+                    .checked_add(1)
+                    .ok_or(ParseFailure::InternalFailure)?;
+                let mut items = Vec::new();
+                items
+                    .try_reserve(item_count)
+                    .map_err(|_| ParseFailure::ResourceLimited)?;
+                for item in std::mem::take(existing_items) {
+                    match item {
+                        SelectedVariableTopLevelItem::LexicalDeclaration(declaration) => items
+                            .push(SelectedReferenceUseEnabledTopLevelItem::LexicalDeclaration(
+                                declaration,
+                            )),
+                        SelectedVariableTopLevelItem::Block(block) => {
+                            items.push(SelectedReferenceUseEnabledTopLevelItem::Block(block));
+                        }
+                        SelectedVariableTopLevelItem::VariableStatement(statement) => {
+                            items.push(SelectedReferenceUseEnabledTopLevelItem::VariableStatement(
+                                statement,
+                            ));
+                        }
+                    }
+                }
+                items.push(
+                    SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
+                        fact,
+                    ),
+                );
+                *builder = Self::ReferenceUseEnabled(items);
+                Ok(())
+            }
+            Self::ReferenceUseEnabled(items) => {
+                items
+                    .try_reserve(1)
+                    .map_err(|_| ParseFailure::ResourceLimited)?;
+                items.push(
+                    SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
+                        fact,
+                    ),
+                );
                 Ok(())
             }
         }
@@ -747,6 +942,15 @@ impl SelectedScriptBuilder {
                 items.push(SelectedVariableTopLevelItem::VariableStatement(statement));
                 Ok(())
             }
+            Self::ReferenceUseEnabled(items) => {
+                items
+                    .try_reserve(1)
+                    .map_err(|_| ParseFailure::ResourceLimited)?;
+                items.push(SelectedReferenceUseEnabledTopLevelItem::VariableStatement(
+                    statement,
+                ));
+                Ok(())
+            }
         }
     }
 }
@@ -770,6 +974,23 @@ enum ParseFailure {
 enum SelectedIdentifierReferenceRecognition {
     Matched(SelectedIdentifierReferenceFact),
     EscapedReservedIdentifierName { identifier: SourceAnchor },
+    NotSelected,
+    ResourceLimited,
+    InternalFailure,
+}
+
+/// Result of the bounded, transactional top-level free-standing
+/// `IdentifierReference` `ExpressionStatement` use-site probe (Issue #758).
+/// `NotSelected` covers every declining case uniformly (no candidate
+/// reference; an escaped-ReservedWord candidate; a candidate reference not
+/// immediately followed by an authored `;`): in every `NotSelected` case
+/// the cursor is left exactly where it stood before the probe began, so the
+/// existing raw top-level dispatch sees an unperturbed cursor.
+/// `ResourceLimited`/`InternalFailure` are propagated exactly, never
+/// downgraded to `NotSelected`.
+#[derive(Debug)]
+enum SelectedTopLevelUseSiteRecognition {
+    Matched(SelectedIdentifierReferenceFact),
     NotSelected,
     ResourceLimited,
     InternalFailure,
@@ -1813,6 +2034,59 @@ impl<'source> Cursor<'source> {
         })
     }
 
+    /// Bounded, transactional top-level free-standing `IdentifierReference`
+    /// `ExpressionStatement` use-site probe (Issue #758):
+    ///
+    /// ```text
+    /// SelectedTopLevelIdentifierReferenceExpressionStatement ::=
+    ///     SelectedAcceptedIdentifierReference
+    ///     AuthoredSemicolon
+    /// ```
+    ///
+    /// The candidate reference is recognized exactly once by the unmodified
+    /// shared `consume_selected_identifier_reference` recognizer -- no
+    /// second scanner or decoder. A matched candidate not immediately
+    /// followed (after existing selected trivia) by an authored `;`
+    /// restores the cursor to exactly where it stood before this probe
+    /// began and declines (`NotSelected`): a locally recognized
+    /// `IdentifierReference` prefix never authorizes a richer expression
+    /// neighbor (`a+b;`, `a.b;`, `a();`, `a=b;`, etc.) or an ASI-terminated
+    /// form. An escaped-ReservedWord candidate likewise restores the cursor
+    /// and declines; no new Statement-local EE-04-R08 route is introduced.
+    /// `ResourceLimited`/`InternalFailure` from the shared recognizer are
+    /// propagated exactly.
+    fn consume_selected_top_level_identifier_reference_expression_statement(
+        &mut self,
+    ) -> SelectedTopLevelUseSiteRecognition {
+        let snapshot = self.offset;
+
+        match self.consume_selected_identifier_reference() {
+            SelectedIdentifierReferenceRecognition::Matched(fact) => {
+                self.skip_selected_trivia();
+                if self.consume_ascii(';') {
+                    SelectedTopLevelUseSiteRecognition::Matched(fact)
+                } else {
+                    self.offset = snapshot;
+                    SelectedTopLevelUseSiteRecognition::NotSelected
+                }
+            }
+            SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName { .. } => {
+                self.offset = snapshot;
+                SelectedTopLevelUseSiteRecognition::NotSelected
+            }
+            SelectedIdentifierReferenceRecognition::NotSelected => {
+                self.offset = snapshot;
+                SelectedTopLevelUseSiteRecognition::NotSelected
+            }
+            SelectedIdentifierReferenceRecognition::ResourceLimited => {
+                SelectedTopLevelUseSiteRecognition::ResourceLimited
+            }
+            SelectedIdentifierReferenceRecognition::InternalFailure => {
+                SelectedTopLevelUseSiteRecognition::InternalFailure
+            }
+        }
+    }
+
     /// Recognizes the bounded selected `IdentifierReference` initializer
     /// family fixed by Issue #754:
     ///
@@ -2238,29 +2512,54 @@ pub(super) fn recognize_selected_lexical_slice(source: &SourceText) -> SelectedL
     let mut builder = SelectedScriptBuilder::Flat(Vec::new());
 
     loop {
-        if cursor.remaining().starts_with("var") {
-            let statement = match cursor.parse_variable_statement() {
-                Ok(statement) => statement,
-                Err(failure) => return parse_failure_to_outcome(failure),
-            };
-            if let Err(failure) = builder.push_variable_statement(statement) {
-                return parse_failure_to_outcome(failure);
+        // Issue #758: the bounded free-standing top-level use-site probe is
+        // transactional and runs before the existing raw top-level `var` /
+        // Block / lexical-declaration dispatch. This ordering is
+        // load-bearing: accepted `IdentifierReference` spellings include
+        // contextual names such as `let`, and a direct name may begin with
+        // the literal characters `var` without being the `var` keyword
+        // (`varfoo;`). A declining probe leaves the cursor unperturbed, so
+        // every existing dispatch decision below is unaffected.
+        match cursor.consume_selected_top_level_identifier_reference_expression_statement() {
+            SelectedTopLevelUseSiteRecognition::Matched(fact) => {
+                if let Err(failure) = builder.push_use_site(fact) {
+                    return parse_failure_to_outcome(failure);
+                }
             }
-        } else {
-            let item = if cursor.peek_char() == Some('{') {
-                match cursor.parse_selected_block() {
-                    Ok(block) => SelectedTopLevelItem::Block(block),
-                    Err(failure) => return parse_failure_to_outcome(failure),
-                }
-            } else {
-                match cursor.parse_declaration() {
-                    Ok(declaration) => SelectedTopLevelItem::LexicalDeclaration(declaration),
-                    Err(failure) => return parse_failure_to_outcome(failure),
-                }
-            };
+            SelectedTopLevelUseSiteRecognition::ResourceLimited => {
+                return SelectedLexicalSliceOutcome::ResourceLimited;
+            }
+            SelectedTopLevelUseSiteRecognition::InternalFailure => {
+                return SelectedLexicalSliceOutcome::InternalFailure;
+            }
+            SelectedTopLevelUseSiteRecognition::NotSelected => {
+                if cursor.remaining().starts_with("var") {
+                    let statement = match cursor.parse_variable_statement() {
+                        Ok(statement) => statement,
+                        Err(failure) => return parse_failure_to_outcome(failure),
+                    };
+                    if let Err(failure) = builder.push_variable_statement(statement) {
+                        return parse_failure_to_outcome(failure);
+                    }
+                } else {
+                    let item = if cursor.peek_char() == Some('{') {
+                        match cursor.parse_selected_block() {
+                            Ok(block) => SelectedTopLevelItem::Block(block),
+                            Err(failure) => return parse_failure_to_outcome(failure),
+                        }
+                    } else {
+                        match cursor.parse_declaration() {
+                            Ok(declaration) => {
+                                SelectedTopLevelItem::LexicalDeclaration(declaration)
+                            }
+                            Err(failure) => return parse_failure_to_outcome(failure),
+                        }
+                    };
 
-            if let Err(failure) = builder.push_item(item) {
-                return parse_failure_to_outcome(failure);
+                    if let Err(failure) = builder.push_item(item) {
+                        return parse_failure_to_outcome(failure);
+                    }
+                }
             }
         }
 
@@ -2284,6 +2583,11 @@ pub(super) fn recognize_selected_lexical_slice(source: &SourceText) -> SelectedL
         SelectedScriptBuilder::VariableEnabled(items) => {
             SelectedLexicalSliceOutcome::RecognizedVariableStatementSlice(
                 SelectedVariableStatementScript { items },
+            )
+        }
+        SelectedScriptBuilder::ReferenceUseEnabled(items) => {
+            SelectedLexicalSliceOutcome::RecognizedIdentifierReferenceExpressionStatementSlice(
+                SelectedIdentifierReferenceExpressionStatementScript { items },
             )
         }
     }

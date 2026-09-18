@@ -2,9 +2,11 @@ use crate::{SourceAnchor, SourceId, SourceText};
 
 use super::qualification_validation_tests::{gold_source, gold_subject_range};
 use super::selected_lexical_slice::{
-    SelectedBindingNameState, SelectedDeclarationTerminator, SelectedInitializerState,
+    SelectedBindingNameState, SelectedDeclarationTerminator,
+    SelectedIdentifierReferenceExpressionStatementScript, SelectedInitializerState,
     SelectedInvalidEscapePosition, SelectedLexicalDeclarationKind, SelectedLexicalScript,
-    SelectedLexicalSliceOutcome, SelectedVariableStatement, SelectedVariableStatementScript,
+    SelectedLexicalSliceOutcome, SelectedReferenceUseEnabledTopLevelItem,
+    SelectedVariableStatement, SelectedVariableStatementScript,
     SelectedVariableStatementTerminator, SelectedVariableTopLevelItem,
     recognize_selected_lexical_slice,
 };
@@ -21,6 +23,11 @@ fn recognized(text: &str) -> SelectedLexicalScript {
         }
         SelectedLexicalSliceOutcome::RecognizedVariableStatementSlice(_) => {
             panic!("expected flat selected-slice recognition, got var-enabled slice for {text:?}")
+        }
+        SelectedLexicalSliceOutcome::RecognizedIdentifierReferenceExpressionStatementSlice(_) => {
+            panic!(
+                "expected flat selected-slice recognition, got reference-use-enabled slice for {text:?}"
+            )
         }
         SelectedLexicalSliceOutcome::UnsupportedCoverage => {
             panic!("expected selected-slice recognition, got unsupported coverage for {text:?}")
@@ -950,14 +957,17 @@ fn escaped_binding_recognition_separates_formed_invalid_from_bounded_grammar_rej
 
 #[test]
 fn formed_unicode_escape_extends_literal_keyword_candidate_without_backtracking() {
-    for text in [
-        r"let\u0030;",
-        r"let\u002D;",
-        r"let\u00001;",
-        r"const\u0030;",
-        r"let\u{00000061};",
-        r"let\u002D\u{};",
-    ] {
+    // Issue #758: `let\u0030;`, `const\u0030;`, and
+    // `let\u{00000061};` decode to the accepted non-ReservedWord names
+    // `let0`/`const0`/`leta` and are now selected top-level
+    // `IdentifierReference` `ExpressionStatement` use-sites (proved by
+    // `top_level_identifier_reference_expression_statement_use_site_tests`
+    // in this file); `let\u002D;` (decodes to `-`, an invalid
+    // `IdentifierPart`) and `let\u00001;`/`let\u002D\u{};`
+    // (invalid start / malformed continuation) remain outside every leaf
+    // and stay `UnsupportedCoverage` here, unaffected by the new use-site
+    // probe.
+    for text in [r"let\u002D;", r"let\u00001;", r"let\u002D\u{};"] {
         assert_unsupported(text);
     }
 
@@ -3506,7 +3516,6 @@ fn variable_statement_frontier_keeps_non_eof_and_broader_var_grammar_unsupported
         "for (var x;;) {}",
         "var x/*comment*/",
         r"var\u{};",
-        r"var\u0061;",
         "var x=foo.bar;",
         "var x=foo();",
         "var x=foo+1;",
@@ -7005,4 +7014,211 @@ fn two_identifier_reference_additive_initializer_jointly_composes_across_all_thr
     // holds for every owner, not only `LexicalDeclaration`.
     assert_unsupported("var x = a + b + c;");
     assert_unsupported("{ var x = a + b + c; }");
+}
+
+// --- Issue #758: top-level free-standing `IdentifierReference`
+// `ExpressionStatement` use-site leaf. ---
+
+fn recognized_reference_use(text: &str) -> SelectedIdentifierReferenceExpressionStatementScript {
+    match recognize_selected_lexical_slice(&source(text)) {
+        SelectedLexicalSliceOutcome::RecognizedIdentifierReferenceExpressionStatementSlice(
+            script,
+        ) => script,
+        other => panic!("expected reference-use-enabled recognition for {text:?}, got {other:?}"),
+    }
+}
+
+fn only_use_site_fact(
+    script: &SelectedIdentifierReferenceExpressionStatementScript,
+) -> &super::selected_lexical_slice::SelectedIdentifierReferenceFact {
+    let [SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(fact)] =
+        script.items()
+    else {
+        panic!("expected exactly one selected use-site item");
+    };
+    fact
+}
+
+#[test]
+fn direct_and_escaped_use_site_forms_are_selected() {
+    for (text, expected_fragment, expected_name) in [
+        ("a;", "a", "a"),
+        (r"\u0061;", r"\u0061", "a"),
+        (r"\u{61};", r"\u{61}", "a"),
+        (r"f\u006Fo;", r"f\u006Fo", "foo"),
+        // Escaped contextual `let`: composes escaped spelling, decoded
+        // contextual semantic name, non-strict IdentifierReference
+        // policy, and top-level use-site placement.
+        (r"\u006Cet;", r"\u006Cet", "let"),
+    ] {
+        let script = recognized_reference_use(text);
+        let fact = only_use_site_fact(&script);
+        assert_eq!(fact.reference().fragment(), expected_fragment, "{text}");
+        assert_eq!(fact.semantic_name(), expected_name, "{text}");
+    }
+}
+
+#[test]
+fn dispatch_selects_use_site_before_raw_top_level_dispatch() {
+    // `let;` and `varfoo;` must become the new use-site, never a failed
+    // `LexicalDeclaration` / `VariableStatement` recognition (acceptance
+    // criteria 6-9). Inspecting the recognized carrier/item variant proves
+    // this directly rather than inferring it from qualification alone.
+    let script = recognized_reference_use("let;");
+    assert_eq!(only_use_site_fact(&script).semantic_name(), "let");
+
+    let script = recognized_reference_use("varfoo;");
+    assert_eq!(only_use_site_fact(&script).semantic_name(), "varfoo");
+
+    match recognize_selected_lexical_slice(&source("let a;")) {
+        SelectedLexicalSliceOutcome::RecognizedSelectedSlice(_) => {}
+        other => panic!("expected `let a;` to remain a LexicalDeclaration, got {other:?}"),
+    }
+
+    match recognize_selected_lexical_slice(&source("var a;")) {
+        SelectedLexicalSliceOutcome::RecognizedVariableStatementSlice(_) => {}
+        other => panic!("expected `var a;` to remain a VariableStatement, got {other:?}"),
+    }
+
+    // Escaped continuations that decode to an accepted non-ReservedWord name
+    // (`let0`, `const0`, `leta`) are likewise selected use-sites, not failed
+    // `LexicalDeclaration`s -- moved here from
+    // `formed_unicode_escape_extends_literal_keyword_candidate_without_backtracking`
+    // now that this leaf exists.
+    // `var\u0061;` composes the direct textual prefix "var" with a
+    // formed escaped IdentifierPart continuation into one maximal
+    // IdentifierReference (`vara`), proving the use-site probe -- not
+    // the raw `starts_with("var")` dispatch -- owns this source.
+    let script = recognized_reference_use(r"var\u0061;");
+    assert_eq!(only_use_site_fact(&script).semantic_name(), "vara");
+
+    for (text, expected_name) in [
+        (r"let\u0030;", "let0"),
+        (r"const\u0030;", "const0"),
+        (r"let\u{00000061};", "leta"),
+    ] {
+        let script = recognized_reference_use(text);
+        assert_eq!(
+            only_use_site_fact(&script).semantic_name(),
+            expected_name,
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn top_level_block_composes_with_free_standing_use_site() {
+    let script = recognized_reference_use("{ var a; }\na;");
+    let [
+        SelectedReferenceUseEnabledTopLevelItem::Block(_),
+        SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(fact),
+    ] = script.items()
+    else {
+        panic!("expected [Block, use-site] items");
+    };
+    assert_eq!(fact.semantic_name(), "a");
+
+    let script = recognized_reference_use("{ let a; }\na;");
+    let [
+        SelectedReferenceUseEnabledTopLevelItem::Block(_),
+        SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(fact),
+    ] = script.items()
+    else {
+        panic!("expected [Block, use-site] items");
+    };
+    assert_eq!(fact.semantic_name(), "a");
+}
+
+#[test]
+fn nested_block_use_site_remains_unsupported() {
+    assert_unsupported("{ a; }");
+}
+
+#[test]
+fn general_expression_neighbors_remain_unsupported_without_valid_prefix_leakage() {
+    // The bounded probe must not accept a valid `IdentifierReference`
+    // prefix from a richer expression neighbor (acceptance criterion 31 /
+    // wrong model W15): each of these must remain `UnsupportedCoverage`
+    // through the existing whole-source transaction, never a committed
+    // use-site for the leading `a`.
+    for text in [
+        "a+b;",
+        "+a;",
+        "-a;",
+        "(a);",
+        "a.b;",
+        "a[b];",
+        "a();",
+        "a=b;",
+        "a ? b : c;",
+        "a && b;",
+        "a, b;",
+        "new a;",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn asi_forms_remain_unsupported_coverage_not_selected() {
+    assert_unsupported("a");
+    assert_unsupported("a\nlet b;");
+}
+
+#[test]
+fn escaped_reserved_and_malformed_forms_are_not_selected() {
+    for text in [r"\u0069f;", r"\u{};", r"\u0030;", r"a\u002Db;"] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn duplicate_use_sites_are_preserved_distinctly_in_authored_order() {
+    let script = recognized_reference_use("let a;\na;\na;");
+    let [
+        SelectedReferenceUseEnabledTopLevelItem::LexicalDeclaration(_),
+        SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(first),
+        SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(second),
+    ] = script.items()
+    else {
+        panic!("expected [LexicalDeclaration, use-site, use-site] items");
+    };
+    assert_eq!(first.semantic_name(), "a");
+    assert_eq!(second.semantic_name(), "a");
+    assert_ne!(
+        (
+            first.reference().range().start(),
+            first.reference().range().end()
+        ),
+        (
+            second.reference().range().start(),
+            second.reference().range().end()
+        ),
+        "duplicate use-sites must remain two distinct authored occurrences"
+    );
+    assert!(first.reference().range().start() < second.reference().range().start());
+}
+
+#[test]
+fn authored_use_site_order_is_preserved_not_target_declaration_order() {
+    let script = recognized_reference_use("let b;\nlet a;\na;\nb;");
+    let use_site_names: Vec<&str> = script
+        .items()
+        .iter()
+        .filter_map(|item| match item {
+            SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
+                fact,
+            ) => Some(fact.semantic_name()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(use_site_names, ["a", "b"]);
+}
+
+#[test]
+fn whole_source_transactionality_use_site() {
+    // A locally valid earlier use-site must not leak selected success if
+    // later source fails.
+    assert_unsupported("let a;\na;\n???");
+    assert_unsupported("let a;\na;\nlet x = ;");
 }
