@@ -61,16 +61,23 @@
 //!     binding item, a free-standing `IdentifierReference`
 //!     `ExpressionStatement` use-site item, or one already-selected
 //!     one-level Block -- each terminated by an authored `;` (the Block item
-//!     is terminated by its own authored `}`). A Block's own contents are
-//!     recognized as an ordered sequence of exactly the same three
-//!     non-Block item shapes: this oracle's Block is bounded to exactly one
-//!     level, so encountering `{` while recognizing a Block's own contents
-//!     is never attempted and aborts the whole parse, never silently
-//!     skipped or specially rejected. Recognition is whole-source,
-//!     all-or-nothing at every level: any unrecognized item -- top-level or
-//!     Block-contained -- aborts the complete parse (`None`), so a locally
-//!     valid earlier item can never publish evidence when a later item fails
-//!     (the whole-source transactionality theorem).
+//!     is terminated by its own authored `}`). A top-level free-standing
+//!     use-site item is recognized here only as surrounding/source-placement
+//!     context (its own relation remains #756/#757's completely separate
+//!     authority; see Layer 2 below). A Block's own contents are recognized
+//!     as an ordered sequence of one or more of exactly the same three
+//!     non-Block item shapes -- an immediately closed Block (`{}`) never
+//!     recognizes, matching the accepted one-level Block predecessor's own
+//!     `UnsupportedCoverage` treatment of an empty Block rather than
+//!     widening that predecessor grammar to admit a zero-item Block. This
+//!     oracle's Block is bounded to exactly one level, so encountering `{`
+//!     while recognizing a Block's own contents is never attempted and
+//!     aborts the whole parse, never silently skipped or specially
+//!     rejected. Recognition is whole-source, all-or-nothing at every
+//!     level: any unrecognized item -- top-level or Block-contained --
+//!     aborts the complete parse (`None`), so a locally valid earlier item
+//!     can never publish evidence when a later item fails (the
+//!     whole-source transactionality theorem).
 //!
 //!   - Static preflight (`preflight_selected_static_semantics`): a bounded,
 //!     candidate-independent gate over only the existing rules relevant to
@@ -92,19 +99,26 @@
 //!     at all. This is not a general Early Error engine and never imports
 //!     production static semantics.
 //!
-//!   - Layer 2 (`build_selected_source_name_correspondence`): relation.
+//!   - Layer 2 (`build_selected_block_use_site_correspondence`): relation.
 //!     Consumes only the accepted witness (never an arbitrary item list, and
 //!     never a production accepted-witness type) and independently derives
-//!     exactly one correspondence relation per free-standing use-site item
-//!     -- top-level or Block-contained -- in exact authored occurrence
-//!     order, without deduplication. Every relation independently retains
-//!     its own containing region (`TopLevel` or the exact containing
-//!     `Block`'s own authored anchor), so top-level and Block placements
-//!     remain distinguishable without inventing one new global
-//!     initializer/top-level/Block relation ordering contract: this oracle
-//!     never touches the existing, completely separate initializer
-//!     correspondence relation owned by
-//!     `selected_variable_statement_name_correspondence.rs`.
+//!     exactly one correspondence relation per Block-contained free-standing
+//!     use-site item, in exact authored occurrence order within its own
+//!     containing Block, without deduplication. This relation surface
+//!     belongs to #760 alone: a TopLevel free-standing use-site item is
+//!     never given a relation by this builder (it is Layer 1
+//!     surrounding/source-placement context only), and no relation this
+//!     builder produces is ever placed into one combined sequence with a
+//!     TopLevel or initializer-owned relation -- there is no new global
+//!     initializer/top-level/Block relation ordering contract. Placement
+//!     distinction between the TopLevel and Block surfaces, when needed, is
+//!     proven only through Layer 1's own independently retained item facts
+//!     (`RecognizedTopLevelItem::UseSite` vs. `RecognizedTopLevelItem::Block`),
+//!     never through this relation stream. This oracle never touches the
+//!     existing, completely separate initializer correspondence relation
+//!     owned by `selected_variable_statement_name_correspondence.rs`, nor
+//!     the existing, completely separate TopLevel free-standing use-site
+//!     relation owned by #756/#757.
 //!
 //! `classify_selected_script` binds this whole lifecycle to an executable
 //! disposition (`Selected` / `UnsupportedCoverage` / `StaticSemanticsRejected`
@@ -740,14 +754,19 @@ fn parse_non_block_item(source: &str, offset: usize) -> Option<(RecognizedNonBlo
 }
 
 /// Recognizes one already-selected one-level Block starting at `offset`:
-/// an authored `{`, an ordered sequence of zero or more non-Block items,
-/// and an authored `}`. Never attempts to recognize a nested `{` as a
-/// fourth Block-contained item shape -- a Block containing another Block
-/// is never matched, aborting the whole parse (`None`), which is exactly
-/// how this oracle keeps itself bounded to one level without any special
-/// nested-Block rejection code. Returns the recognized fact (its own
-/// anchor spans both braces) and the absolute offset immediately after the
-/// authored `}`.
+/// an authored `{`, an ordered sequence of one or more non-Block items,
+/// and an authored `}`. An immediately closed Block (`{}`) never
+/// recognizes: the accepted one-level Block predecessor keeps an
+/// immediately closed Block as `UnsupportedCoverage`, and this oracle
+/// composes its new use-site into an already-selected Block rather than
+/// widening that predecessor grammar to admit a zero-item Block, so at
+/// least one non-Block item is mandatory. Never attempts to recognize a
+/// nested `{` as a fourth Block-contained item shape -- a Block containing
+/// another Block is never matched, aborting the whole parse (`None`),
+/// which is exactly how this oracle keeps itself bounded to one level
+/// without any special nested-Block rejection code. Returns the
+/// recognized fact (its own anchor spans both braces) and the absolute
+/// offset immediately after the authored `}`.
 fn parse_block(source: &str, offset: usize) -> Option<(RecognizedBlockFact, usize)> {
     if !source[offset..].starts_with('{') {
         return None;
@@ -756,8 +775,12 @@ fn parse_block(source: &str, offset: usize) -> Option<(RecognizedBlockFact, usiz
     let mut cursor = offset + 1;
     cursor += trivia_run_end(&source[cursor..]);
 
+    if source[cursor..].starts_with('}') {
+        return None;
+    }
+
     let mut items = Vec::new();
-    while !source[cursor..].starts_with('}') {
+    loop {
         if cursor >= source.len() {
             return None;
         }
@@ -765,6 +788,9 @@ fn parse_block(source: &str, offset: usize) -> Option<(RecognizedBlockFact, usiz
         items.push(item);
         cursor = next_offset;
         cursor += trivia_run_end(&source[cursor..]);
+        if source[cursor..].starts_with('}') {
+            break;
+        }
     }
 
     let end = cursor + 1;
@@ -1077,42 +1103,45 @@ enum SelectedSourceNameCorrespondence {
     NoSelectedSameSourceContributor,
 }
 
-/// One retained free-standing use-site relation: the reference occurrence,
-/// its exact containing region (`TopLevel` or its exact containing Block's
-/// own anchor -- W7/W8/W9 firewall: no whole Statement/Expression/semicolon
-/// anchor), its semantic name, and its source-name correspondence. There is
-/// no containing declarator/binding field (W5/W6).
+/// One retained Block-contained free-standing use-site relation: the
+/// reference occurrence, its exact containing Block's own anchor (W7/W8/W9
+/// firewall: no whole Statement/Expression/semicolon anchor), its semantic
+/// name, and its source-name correspondence. There is no containing
+/// declarator/binding field (W5/W6). This relation surface is Block-only --
+/// a TopLevel free-standing use-site never receives one of these relations,
+/// so `containing_block` is always a real Block anchor, never a `TopLevel`
+/// placeholder or an `Option<_>` (that distinct, completely separate
+/// TopLevel relation remains #756/#757's own authority).
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct SelectedUseSiteRelation {
-    containing_region: SelectedRegion,
+struct SelectedBlockUseSiteRelation {
+    containing_block: Range,
     reference: Range,
     semantic_name: String,
     correspondence: SelectedSourceNameCorrespondence,
 }
 
-/// Computes one relation for a single recognized use-site fact against the
-/// already-collected TopLevel lexical map, whole-Script `var` contributor
-/// map, and -- when the use-site is Block-contained -- that specific
-/// Block's own lexical map. The lexical precedence theorem is applied
-/// exactly in the required order: current Block selected lexical binding,
-/// then enclosing TopLevel selected lexical binding, then all same-source
-/// selected `var`-name contributors, then `NoSelectedSameSourceContributor`
-/// (W11/W12 firewall: an outer lexical binding never wins over a same-Block
-/// lexical binding of the same name, regardless of authored order between
-/// the use-site and its target).
+/// Computes one relation for a single recognized Block-contained use-site
+/// fact against the already-collected TopLevel lexical map, whole-Script
+/// `var` contributor map, and that specific Block's own lexical map. The
+/// lexical precedence theorem is applied exactly in the required order:
+/// current Block selected lexical binding, then enclosing TopLevel selected
+/// lexical binding, then all same-source selected `var`-name contributors,
+/// then `NoSelectedSameSourceContributor` (W11/W12 firewall: an outer
+/// lexical binding never wins over a same-Block lexical binding of the same
+/// name, regardless of authored order between the use-site and its target).
 fn build_relation(
     use_site: &RecognizedUseSiteFact,
-    containing_region: SelectedRegion,
-    current_block_lexical: Option<&HashMap<&str, Range>>,
+    containing_block: Range,
+    current_block_lexical: &HashMap<&str, Range>,
     top_lexical: &HashMap<&str, Range>,
     script_var_contributors: &HashMap<&str, Vec<Range>>,
-) -> SelectedUseSiteRelation {
+) -> SelectedBlockUseSiteRelation {
     let name = use_site.semantic_name.as_str();
 
-    let correspondence = if let Some(binding) = current_block_lexical.and_then(|m| m.get(name)) {
+    let correspondence = if let Some(binding) = current_block_lexical.get(name) {
         SelectedSourceNameCorrespondence::VisibleSelectedLexicalBinding {
             binding: *binding,
-            region: containing_region,
+            region: SelectedRegion::Block(containing_block),
         }
     } else if let Some(binding) = top_lexical.get(name) {
         SelectedSourceNameCorrespondence::VisibleSelectedLexicalBinding {
@@ -1127,8 +1156,8 @@ fn build_relation(
         SelectedSourceNameCorrespondence::NoSelectedSameSourceContributor
     };
 
-    SelectedUseSiteRelation {
-        containing_region,
+    SelectedBlockUseSiteRelation {
+        containing_block,
         reference: use_site.reference,
         semantic_name: use_site.semantic_name.clone(),
         correspondence,
@@ -1138,11 +1167,22 @@ fn build_relation(
 /// Central Issue #760 Layer 2 theorem. Consumes only the bounded static
 /// preflight's accepted witness -- never an arbitrary item list, and never
 /// a production accepted-witness type -- and derives exactly one relation
-/// per free-standing use-site item, top-level or Block-contained, in exact
-/// authored occurrence order, without reordering or deduplication
-/// (W9/W10/W14). TopLevel lexical bindings and whole-Script `var`
-/// contributors are collected from the *whole* accepted item sequence
-/// before any correspondence is computed, so a lexical declaration or `var`
+/// per Block-contained free-standing use-site item, in exact authored
+/// occurrence order within its own containing Block, without reordering or
+/// deduplication (W9/W10/W14). This is the Block-only relation surface
+/// #760 owns: a TopLevel free-standing use-site item (`RecognizedTopLevelItem::UseSite`)
+/// is walked here only to contribute nothing, exactly like a `let`/`var`
+/// top-level binding item is walked only for its lexical/`var` context --
+/// it never receives a relation of its own from this builder, and no
+/// relation this builder returns is ever placed into one combined sequence
+/// with a TopLevel or initializer-owned relation (no new global
+/// initializer/top-level/Block relation ordering contract; that distinct
+/// TopLevel free-standing use-site relation remains #756/#757's own,
+/// completely separate authority).
+///
+/// TopLevel lexical bindings and whole-Script `var` contributors are
+/// collected from the *whole* accepted item sequence before any
+/// correspondence is computed, so a lexical declaration or `var`
 /// contributor appearing after a use-site still corresponds (the forward
 /// lexical correspondence theorem, W12 adjacent: this is same-source
 /// correspondence, never previous-only or execution-order lookup). Each
@@ -1153,9 +1193,9 @@ fn build_relation(
 /// regardless of which region contributed it -- unlike lexical visibility,
 /// sibling-Block and top-level `var` contributors both remain eligible
 /// (acceptance criterion 11).
-fn build_selected_source_name_correspondence(
+fn build_selected_block_use_site_correspondence(
     accepted: &AcceptedSelectedScript,
-) -> Vec<SelectedUseSiteRelation> {
+) -> Vec<SelectedBlockUseSiteRelation> {
     let items = accepted.items();
 
     let mut top_lexical: HashMap<&str, Range> = HashMap::new();
@@ -1190,38 +1230,32 @@ fn build_selected_source_name_correspondence(
 
     let mut relations = Vec::new();
     for item in items {
-        match item {
-            RecognizedTopLevelItem::UseSite(use_site) => {
+        // A TopLevel free-standing use-site, `let` binding, and `var`
+        // binding each contribute only surrounding lexical/`var` context
+        // above -- none of the three ever receives a relation from this
+        // Block-only builder.
+        let RecognizedTopLevelItem::Block(block) = item else {
+            continue;
+        };
+
+        let mut block_lexical: HashMap<&str, Range> = HashMap::new();
+        for block_item in &block.items {
+            if let RecognizedNonBlockItem::LexicalBinding(fact) = block_item {
+                block_lexical
+                    .entry(fact.semantic_name.as_str())
+                    .or_insert(fact.binding);
+            }
+        }
+        for block_item in &block.items {
+            if let RecognizedNonBlockItem::UseSite(use_site) = block_item {
                 relations.push(build_relation(
                     use_site,
-                    SelectedRegion::TopLevel,
-                    None,
+                    block.anchor,
+                    &block_lexical,
                     &top_lexical,
                     &script_var_contributors,
                 ));
             }
-            RecognizedTopLevelItem::Block(block) => {
-                let mut block_lexical: HashMap<&str, Range> = HashMap::new();
-                for block_item in &block.items {
-                    if let RecognizedNonBlockItem::LexicalBinding(fact) = block_item {
-                        block_lexical
-                            .entry(fact.semantic_name.as_str())
-                            .or_insert(fact.binding);
-                    }
-                }
-                for block_item in &block.items {
-                    if let RecognizedNonBlockItem::UseSite(use_site) = block_item {
-                        relations.push(build_relation(
-                            use_site,
-                            SelectedRegion::Block(block.anchor),
-                            Some(&block_lexical),
-                            &top_lexical,
-                            &script_var_contributors,
-                        ));
-                    }
-                }
-            }
-            RecognizedTopLevelItem::LexicalBinding(_) | RecognizedTopLevelItem::VarBinding(_) => {}
         }
     }
 
@@ -1428,12 +1462,9 @@ fn positive_direct_escaped_family_pins_exact_block_provenance_and_no_match() {
             fixture.expected_authored
         );
 
-        let relations = build_selected_source_name_correspondence(&accepted);
+        let relations = build_selected_block_use_site_correspondence(&accepted);
         assert_eq!(relations.len(), 1);
-        assert_eq!(
-            relations[0].containing_region,
-            SelectedRegion::Block(fixture.block)
-        );
+        assert_eq!(relations[0].containing_block, fixture.block);
         assert_eq!(relations[0].reference, fixture.reference);
         assert_eq!(relations[0].semantic_name, fixture.expected_semantic_name);
         assert_eq!(
@@ -1463,13 +1494,10 @@ fn current_block_lexical_target_is_independently_validated() {
     };
     assert_eq!(binding.binding, Range(6, 7));
 
-    let relations = build_selected_source_name_correspondence(&accepted);
+    let relations = build_selected_block_use_site_correspondence(&accepted);
     assert_eq!(relations.len(), 1);
     assert_eq!(relations[0].reference, Range(9, 10));
-    assert_eq!(
-        relations[0].containing_region,
-        SelectedRegion::Block(block.anchor)
-    );
+    assert_eq!(relations[0].containing_block, block.anchor);
     assert_eq!(
         relations[0].correspondence,
         SelectedSourceNameCorrespondence::VisibleSelectedLexicalBinding {
@@ -1498,13 +1526,10 @@ fn outer_top_level_lexical_fallback_is_independently_validated() {
     };
     assert_eq!(block.anchor, Range(7, 13));
 
-    let relations = build_selected_source_name_correspondence(&accepted);
+    let relations = build_selected_block_use_site_correspondence(&accepted);
     assert_eq!(relations.len(), 1);
     assert_eq!(relations[0].reference, Range(9, 10));
-    assert_eq!(
-        relations[0].containing_region,
-        SelectedRegion::Block(block.anchor)
-    );
+    assert_eq!(relations[0].containing_block, block.anchor);
     assert_eq!(
         relations[0].correspondence,
         SelectedSourceNameCorrespondence::VisibleSelectedLexicalBinding {
@@ -1539,7 +1564,7 @@ fn forward_inner_lexical_shadows_outer_top_level() {
     };
     assert_eq!(inner_binding.binding, Range(16, 17));
 
-    let relations = build_selected_source_name_correspondence(&accepted);
+    let relations = build_selected_block_use_site_correspondence(&accepted);
     assert_eq!(relations.len(), 1);
     assert_eq!(relations[0].reference, Range(9, 10));
     assert_eq!(
@@ -1571,13 +1596,10 @@ fn sibling_block_lexical_binding_never_leaks() {
     };
     assert_eq!(second_block.anchor, Range(11, 17));
 
-    let relations = build_selected_source_name_correspondence(&accepted);
+    let relations = build_selected_block_use_site_correspondence(&accepted);
     assert_eq!(relations.len(), 1);
     assert_eq!(relations[0].reference, Range(13, 14));
-    assert_eq!(
-        relations[0].containing_region,
-        SelectedRegion::Block(second_block.anchor)
-    );
+    assert_eq!(relations[0].containing_block, second_block.anchor);
     assert_eq!(
         relations[0].correspondence,
         SelectedSourceNameCorrespondence::NoSelectedSameSourceContributor,
@@ -1605,7 +1627,7 @@ fn later_top_level_lexical_forward_correspondence_is_independently_validated() {
     };
     assert_eq!(later_binding.binding, Range(11, 12));
 
-    let relations = build_selected_source_name_correspondence(&accepted);
+    let relations = build_selected_block_use_site_correspondence(&accepted);
     assert_eq!(relations.len(), 1);
     assert_eq!(relations[0].reference, Range(2, 3));
     assert_eq!(
@@ -1628,7 +1650,7 @@ fn whole_script_var_contributor_provenance_covers_every_region() {
     let top_level_source = "var a;\n{ a; }";
     let top_level_accepted = recognize_and_accept_selected_script(top_level_source)
         .expect("`var a; { a; }` must recognize");
-    let top_level_relations = build_selected_source_name_correspondence(&top_level_accepted);
+    let top_level_relations = build_selected_block_use_site_correspondence(&top_level_accepted);
     assert_eq!(top_level_relations.len(), 1);
     assert_eq!(
         top_level_relations[0].correspondence,
@@ -1641,7 +1663,7 @@ fn whole_script_var_contributor_provenance_covers_every_region() {
     let same_block_source = "{ var a; a; }";
     let same_block_accepted = recognize_and_accept_selected_script(same_block_source)
         .expect("`{ var a; a; }` must recognize");
-    let same_block_relations = build_selected_source_name_correspondence(&same_block_accepted);
+    let same_block_relations = build_selected_block_use_site_correspondence(&same_block_accepted);
     assert_eq!(same_block_relations.len(), 1);
     assert_eq!(
         same_block_relations[0].correspondence,
@@ -1656,7 +1678,7 @@ fn whole_script_var_contributor_provenance_covers_every_region() {
     let sibling_block_accepted = recognize_and_accept_selected_script(sibling_block_source)
         .expect("`{ a; } { var a; }` must recognize");
     let sibling_block_relations =
-        build_selected_source_name_correspondence(&sibling_block_accepted);
+        build_selected_block_use_site_correspondence(&sibling_block_accepted);
     assert_eq!(sibling_block_relations.len(), 1);
     assert_eq!(sibling_block_relations[0].reference, Range(2, 3));
     assert_eq!(
@@ -1683,7 +1705,7 @@ fn lexical_precedence_over_var_contributor_is_independently_validated() {
     };
     assert_eq!(x_binding.semantic_name, "x");
 
-    let relations = build_selected_source_name_correspondence(&accepted);
+    let relations = build_selected_block_use_site_correspondence(&accepted);
     assert_eq!(relations.len(), 1);
     assert_eq!(relations[0].reference, Range(20, 21));
     assert_eq!(
@@ -1710,7 +1732,7 @@ fn duplicate_block_use_site_occurrences_are_never_deduplicated() {
     };
     assert_eq!(block.items.len(), 2);
 
-    let relations = build_selected_source_name_correspondence(&accepted);
+    let relations = build_selected_block_use_site_correspondence(&accepted);
     assert_eq!(relations.len(), 2);
     assert_ne!(relations[0].reference, relations[1].reference);
     assert_eq!(relations[0].reference, Range(2, 3));
@@ -1737,18 +1759,12 @@ fn distinct_blocks_retain_distinct_region_ownership() {
     };
     assert_ne!(first_block.anchor, second_block.anchor);
 
-    let relations = build_selected_source_name_correspondence(&accepted);
+    let relations = build_selected_block_use_site_correspondence(&accepted);
     assert_eq!(relations.len(), 2);
     assert_eq!(relations[0].reference, Range(2, 3));
-    assert_eq!(
-        relations[0].containing_region,
-        SelectedRegion::Block(first_block.anchor)
-    );
+    assert_eq!(relations[0].containing_block, first_block.anchor);
     assert_eq!(relations[1].reference, Range(9, 10));
-    assert_eq!(
-        relations[1].containing_region,
-        SelectedRegion::Block(second_block.anchor)
-    );
+    assert_eq!(relations[1].containing_block, second_block.anchor);
     for relation in &relations {
         assert_eq!(
             relation.correspondence,
@@ -1758,38 +1774,49 @@ fn distinct_blocks_retain_distinct_region_ownership() {
 }
 
 /// TopLevel and Block surfaces remain semantically distinct (acceptance
-/// criterion 16, W15): all covered occurrences across both surfaces are
-/// validated in exact authored order, without inventing one new global
-/// initializer/top-level/Block relation ordering contract -- each relation
-/// still independently carries only its own containing region.
+/// criterion 16, W15): the Block-only relation builder never combines a
+/// TopLevel free-standing use-site with a Block free-standing use-site into
+/// one relation stream, and asserts no ordering across the TopLevel/Block
+/// surface boundary. Placement distinction between the two surfaces is
+/// proven only through Layer 1's own independently retained item facts
+/// (`RecognizedTopLevelItem::UseSite` vs. `RecognizedTopLevelItem::Block`),
+/// never through a combined relation sequence -- there is no new global
+/// initializer/top-level/Block relation ordering contract.
 #[test]
-fn top_level_and_block_surfaces_remain_distinguishable_in_authored_order() {
+fn top_level_and_block_surfaces_remain_distinguishable_without_a_combined_relation_stream() {
     let source = "a;\n{ a; }\na;";
     let accepted =
         recognize_and_accept_selected_script(source).expect("`a; { a; } a;` must recognize");
     let items = accepted.items();
     assert_eq!(items.len(), 3);
 
-    let relations = build_selected_source_name_correspondence(&accepted);
-    assert_eq!(relations.len(), 3);
-    assert_eq!(relations[0].containing_region, SelectedRegion::TopLevel);
-    assert_eq!(relations[0].reference, Range(0, 1));
+    // TopLevel placement is independently proven from Layer 1's own item
+    // facts -- never from the Block-only relation stream below, which is
+    // never consulted for this purpose.
+    let RecognizedTopLevelItem::UseSite(first_top_level) = &items[0] else {
+        panic!("first item must be a TopLevel free-standing use-site");
+    };
+    assert_eq!(first_top_level.reference, Range(0, 1));
     let RecognizedTopLevelItem::Block(block) = &items[1] else {
         panic!("second item must be the Block");
     };
+    let RecognizedTopLevelItem::UseSite(second_top_level) = &items[2] else {
+        panic!("third item must be a TopLevel free-standing use-site");
+    };
+    assert_eq!(second_top_level.reference, Range(10, 11));
+
+    // The Block-only relation builder emits exactly one relation -- the
+    // Block's own use-site -- and never a relation for either TopLevel
+    // use-site, and never a combined three-item sequence spanning both
+    // surfaces.
+    let relations = build_selected_block_use_site_correspondence(&accepted);
+    assert_eq!(relations.len(), 1);
+    assert_eq!(relations[0].containing_block, block.anchor);
+    assert_eq!(relations[0].reference, Range(5, 6));
     assert_eq!(
-        relations[1].containing_region,
-        SelectedRegion::Block(block.anchor)
+        relations[0].correspondence,
+        SelectedSourceNameCorrespondence::NoSelectedSameSourceContributor
     );
-    assert_eq!(relations[1].reference, Range(5, 6));
-    assert_eq!(relations[2].containing_region, SelectedRegion::TopLevel);
-    assert_eq!(relations[2].reference, Range(10, 11));
-    for relation in &relations {
-        assert_eq!(
-            relation.correspondence,
-            SelectedSourceNameCorrespondence::NoSelectedSameSourceContributor
-        );
-    }
 }
 
 /// Dispatch discriminators (acceptance criterion 17): `{ let; }` and
@@ -1841,7 +1868,7 @@ fn dispatch_discriminators_never_reclassify_existing_declarations() {
         RecognizedNonBlockItem::LexicalBinding(_)
     ));
     assert_eq!(
-        build_selected_source_name_correspondence(&existing_let_accepted).len(),
+        build_selected_block_use_site_correspondence(&existing_let_accepted).len(),
         0,
         "`{{ let a; }}` contributes no use-site relation"
     );
@@ -1858,7 +1885,7 @@ fn dispatch_discriminators_never_reclassify_existing_declarations() {
         RecognizedNonBlockItem::VarBinding(_)
     ));
     assert_eq!(
-        build_selected_source_name_correspondence(&existing_var_accepted).len(),
+        build_selected_block_use_site_correspondence(&existing_var_accepted).len(),
         0,
         "`{{ var a; }}` contributes no use-site relation"
     );
@@ -1898,7 +1925,7 @@ fn authored_semicolon_theorem_and_close_brace_asi_boundary_remain_unsupported_co
         "UnsupportedCoverage and DefinitiveGrammarRejectionEvidence must stay distinct"
     );
 
-    assert!(THIS_ORACLE_SOURCE.contains("struct SelectedUseSiteRelation"));
+    assert!(THIS_ORACLE_SOURCE.contains("struct SelectedBlockUseSiteRelation"));
     for forbidden in [
         concat!("semi", "colon: Range"),
         concat!("semicolon_", "anchor"),
@@ -1907,6 +1934,25 @@ fn authored_semicolon_theorem_and_close_brace_asi_boundary_remain_unsupported_co
     ] {
         assert!(!THIS_ORACLE_SOURCE.contains(forbidden), "{forbidden}");
     }
+}
+
+/// Empty-Block boundary: the accepted one-level Block predecessor keeps an
+/// immediately closed Block (`{}`) as `UnsupportedCoverage` at the exact
+/// #760 baseline; this oracle composes its new use-site into an
+/// already-selected Block and must never widen that predecessor grammar to
+/// admit a zero-item Block.
+#[test]
+fn empty_block_remains_unsupported_coverage() {
+    assert_eq!(
+        classify_selected_script("{}"),
+        SelectedScriptDisposition::UnsupportedCoverage
+    );
+    assert!(parse_selected_script("{}").is_none());
+    assert!(parse_block("{}", 0).is_none());
+
+    // The bounded theorem itself remains independently valid; only the
+    // zero-item Block above is unowned.
+    assert!(parse_selected_script("{ a; }").is_some());
 }
 
 /// Placement firewall (acceptance criteria 1, 19): recursive/deeper Block
@@ -2153,7 +2199,7 @@ fn region_local_duplicate_lexical_and_block_local_var_collision_are_independentl
         ),
     };
     let duplicate_var_relations =
-        build_selected_source_name_correspondence(&duplicate_var_accepted);
+        build_selected_block_use_site_correspondence(&duplicate_var_accepted);
     assert_eq!(duplicate_var_relations.len(), 1);
     assert_eq!(
         duplicate_var_relations[0].correspondence,
