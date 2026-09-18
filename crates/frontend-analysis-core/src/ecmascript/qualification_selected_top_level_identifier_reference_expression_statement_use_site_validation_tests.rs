@@ -59,11 +59,16 @@
 //!     top-level rules relevant to this shell -- a duplicate selected
 //!     lexical name is rejected, and a selected lexical name colliding with
 //!     a selected top-level `var` name is rejected (duplicate `var`
-//!     contributors alone remain allowed) -- producing the oracle's only
-//!     accepted witness, `AcceptedSelectedTopLevelScript`. A syntactically
-//!     recognized but statically rejected candidate never reaches Layer 2.
-//!     This is not a general Early Error engine and never imports
-//!     production static semantics.
+//!     contributors alone remain allowed) -- returning either the oracle's
+//!     only accepted witness, `AcceptedSelectedTopLevelScript`, or a
+//!     `StaticPreflightRejection` carrying the exact rule and anchors that
+//!     independently proved the rejection. A syntactically recognized but
+//!     statically rejected candidate never reaches Layer 2, and its
+//!     rejection is never collapsed into the same outcome as a candidate
+//!     whose source shape never matched this theorem at all: the two are
+//!     materially distinct causes and remain distinct dispositions. This is
+//!     not a general Early Error engine and never imports production
+//!     static semantics.
 //!
 //!   - Layer 2 (`build_selected_source_name_correspondence`): relation.
 //!     Consumes only the accepted witness (never an arbitrary item list,
@@ -73,11 +78,15 @@
 //!     deduplication.
 //!
 //! `classify_selected_top_level_script` binds this whole lifecycle to an
-//! executable four-way disposition (`Selected` / `UnsupportedCoverage` /
-//! `DefinitiveGrammarRejectionEvidence` / `ResourceLimited` /
-//! `InternalFailure`), so a fixture such as a valid-but-unselected ASI
-//! boundary is independently proven to classify as `UnsupportedCoverage`
-//! rather than merely named in a disconnected symbolic list.
+//! executable disposition (`Selected` / `UnsupportedCoverage` /
+//! `StaticSemanticsRejected` / `DefinitiveGrammarRejectionEvidence` /
+//! `ResourceLimited` / `InternalFailure`), so a fixture such as a
+//! valid-but-unselected ASI boundary is independently proven to classify as
+//! `UnsupportedCoverage` while a syntactically well-formed but statically
+//! rejected shell -- a duplicate selected lexical name, or a selected
+//! lexical/`var` name collision -- is independently proven to classify as
+//! `StaticSemanticsRejected` instead, rather than either case being merely
+//! named in a disconnected symbolic list or collapsed into the other.
 //!
 //! `let`/`var` binding items may carry an `= SelectedAcceptedIdentifierReference`
 //! initializer purely so the whole-item grammar can be recognized end to
@@ -116,7 +125,7 @@
 //! state. This oracle proves same-source selected declaration provenance
 //! only.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::{SourceId, SourceText};
 
@@ -677,43 +686,98 @@ impl AcceptedSelectedTopLevelScript {
     }
 }
 
+/// One independently derived static-preflight rejection reason: exactly the
+/// two existing top-level static rules relevant to this bounded shell, each
+/// carrying the exact anchors that independently proved it. This is a
+/// minimal private representation, never a claim about a future production
+/// Early Error type layout.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum StaticPreflightRejection {
+    DuplicateLexical {
+        semantic_name: String,
+        first: Range,
+        duplicate: Range,
+    },
+    LexicalVarCollision {
+        semantic_name: String,
+        lexical: Range,
+        var: Range,
+    },
+}
+
+/// The static preflight gate's own outcome: either the oracle's accepted
+/// witness, or a rejection reason. Kept distinct from the syntax-level
+/// `Option<Vec<RecognizedTopLevelItem>>` outcome of Layer 1, and from
+/// `UnsupportedCoverage`: a statically rejected but syntactically
+/// well-formed candidate is a materially different cause than a candidate
+/// whose source shape never matched this theorem at all.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum StaticPreflightOutcome {
+    Accepted(AcceptedSelectedTopLevelScript),
+    Rejected(StaticPreflightRejection),
+}
+
 /// Independently restates -- never imports -- only the two existing
 /// top-level static rules relevant to this bounded shell: a duplicate
 /// selected lexical name is rejected (mirroring the already-accepted
 /// `LexicallyDeclaredNames` duplicate rule), and a selected lexical name
 /// colliding with a selected top-level `var` name is rejected (mirroring
 /// the already-accepted lexical/var collision rule). Duplicate `var`
-/// contributors alone remain allowed -- a `HashSet` records `var` names by
-/// presence only, never by count, so repeated `var` declarators of the
-/// same name never trigger rejection on their own. This is not a general
-/// Early Error engine: it proves only this bounded shell's own
-/// already-accepted rules, and reproduces no unrelated Early Error
-/// machinery.
+/// contributors alone remain allowed -- the first authored anchor per `var`
+/// name is recorded only for collision detection, never by count, so
+/// repeated `var` declarators of the same name never trigger rejection on
+/// their own. Both passes walk `items` in authored order, so the reported
+/// rejection anchors are deterministic regardless of any internal map
+/// iteration order. This is not a general Early Error engine: it proves
+/// only this bounded shell's own already-accepted rules, and reproduces no
+/// unrelated Early Error machinery.
 fn preflight_selected_top_level_static_semantics(
     items: Vec<RecognizedTopLevelItem>,
-) -> Option<AcceptedSelectedTopLevelScript> {
-    let mut lexical_names: HashSet<&str> = HashSet::new();
-    let mut var_names: HashSet<&str> = HashSet::new();
+) -> StaticPreflightOutcome {
+    let mut lexical_names: HashMap<&str, Range> = HashMap::new();
+    let mut var_names: HashMap<&str, Range> = HashMap::new();
 
     for item in &items {
         match item {
             RecognizedTopLevelItem::LexicalBinding(fact) => {
-                if !lexical_names.insert(fact.semantic_name.as_str()) {
-                    return None;
+                if let Some(&first) = lexical_names.get(fact.semantic_name.as_str()) {
+                    return StaticPreflightOutcome::Rejected(
+                        StaticPreflightRejection::DuplicateLexical {
+                            semantic_name: fact.semantic_name.clone(),
+                            first,
+                            duplicate: fact.binding,
+                        },
+                    );
                 }
+                lexical_names.insert(fact.semantic_name.as_str(), fact.binding);
             }
             RecognizedTopLevelItem::VarBinding(fact) => {
-                var_names.insert(fact.semantic_name.as_str());
+                var_names
+                    .entry(fact.semantic_name.as_str())
+                    .or_insert(fact.binding);
             }
             RecognizedTopLevelItem::UseSite(_) => {}
         }
     }
 
-    if lexical_names.intersection(&var_names).next().is_some() {
-        return None;
+    for item in &items {
+        let name = match item {
+            RecognizedTopLevelItem::LexicalBinding(fact) => fact.semantic_name.as_str(),
+            RecognizedTopLevelItem::VarBinding(fact) => fact.semantic_name.as_str(),
+            RecognizedTopLevelItem::UseSite(_) => continue,
+        };
+        if let (Some(&lexical), Some(&var)) = (lexical_names.get(name), var_names.get(name)) {
+            return StaticPreflightOutcome::Rejected(
+                StaticPreflightRejection::LexicalVarCollision {
+                    semantic_name: name.to_owned(),
+                    lexical,
+                    var,
+                },
+            );
+        }
     }
 
-    Some(AcceptedSelectedTopLevelScript { items })
+    StaticPreflightOutcome::Accepted(AcceptedSelectedTopLevelScript { items })
 }
 
 /// The oracle's full independent lifecycle front door: source/placement
@@ -722,39 +786,60 @@ fn preflight_selected_top_level_static_semantics(
 /// use-site itself contributes no declaration names at either stage --
 /// only `let`/`var` binding items are examined by the preflight gate --
 /// but the surrounding already-selected declaration shell must still
-/// independently pass it before any relation is ever committed.
+/// independently pass it before any relation is ever committed. This
+/// convenience accessor discards the specific rejection reason on failure;
+/// `classify_selected_top_level_script` is the entry point that preserves
+/// it.
 fn recognize_and_accept_selected_top_level_script(
     source: &str,
 ) -> Option<AcceptedSelectedTopLevelScript> {
     let items = parse_selected_top_level_script(source)?;
-    preflight_selected_top_level_static_semantics(items)
+    match preflight_selected_top_level_static_semantics(items) {
+        StaticPreflightOutcome::Accepted(accepted) => Some(accepted),
+        StaticPreflightOutcome::Rejected(_) => None,
+    }
 }
 
-/// The oracle's executable four-way disposition classification, binding a
-/// fixture directly to its outcome rather than only naming these symbols in
-/// a disconnected list. A valid-but-unselected ASI boundary independently
+/// The oracle's executable disposition classification, binding a fixture
+/// directly to its outcome rather than only naming these symbols in a
+/// disconnected list. A valid-but-unselected ASI boundary independently
 /// classifies as `UnsupportedCoverage`, never `DefinitiveGrammarRejectionEvidence`.
-/// This bounded recognizer never independently proves definitive grammar
-/// rejection -- doing so would require duplicating production's
-/// already-owned grammar-evidence machinery, which this oracle must not do
-/// -- so it never constructs that variant in practice; the variant exists
-/// so the type itself preserves the project's four-way failure vocabulary
-/// distinction, matching the already-accepted `ResourceLimited`/
-/// `InternalFailure` symbolic minimum used by every predecessor
-/// candidate-independent `IdentifierReference` oracle.
+/// A syntactically well-formed but statically rejected shell independently
+/// classifies as `StaticSemanticsRejected`, never downgraded to
+/// `UnsupportedCoverage`: these are materially distinct causes -- a source
+/// shape outside the selected theorem entirely, versus a source shape
+/// recognized by the theorem but independently known to violate an
+/// already-accepted static rule. This bounded recognizer never
+/// independently proves definitive grammar rejection -- doing so would
+/// require duplicating production's already-owned grammar-evidence
+/// machinery, which this oracle must not do -- so it never constructs that
+/// variant in practice; the variant exists so the type itself preserves the
+/// project's failure vocabulary distinction, matching the already-accepted
+/// `ResourceLimited`/`InternalFailure` symbolic minimum
+/// used by every predecessor candidate-independent `IdentifierReference`
+/// oracle.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum SelectedTopLevelScriptDisposition {
     Selected(AcceptedSelectedTopLevelScript),
     UnsupportedCoverage,
+    StaticSemanticsRejected(StaticPreflightRejection),
     DefinitiveGrammarRejectionEvidence(Range),
     ResourceLimited,
     InternalFailure,
 }
 
 fn classify_selected_top_level_script(source: &str) -> SelectedTopLevelScriptDisposition {
-    match recognize_and_accept_selected_top_level_script(source) {
-        Some(accepted) => SelectedTopLevelScriptDisposition::Selected(accepted),
-        None => SelectedTopLevelScriptDisposition::UnsupportedCoverage,
+    let Some(items) = parse_selected_top_level_script(source) else {
+        return SelectedTopLevelScriptDisposition::UnsupportedCoverage;
+    };
+
+    match preflight_selected_top_level_static_semantics(items) {
+        StaticPreflightOutcome::Accepted(accepted) => {
+            SelectedTopLevelScriptDisposition::Selected(accepted)
+        }
+        StaticPreflightOutcome::Rejected(rejection) => {
+            SelectedTopLevelScriptDisposition::StaticSemanticsRejected(rejection)
+        }
     }
 }
 
@@ -1219,10 +1304,34 @@ fn static_preflight_gate_rejects_duplicate_lexical_and_lexical_var_collision_she
     // Required counterexamples: no accepted witness, and therefore no
     // relation, is produced for any of these statically rejected shells,
     // even though each is syntactically well-formed under Layer 1 alone.
-    for source in [
-        "let a;\nlet a;\na;",
-        "let a;\nvar a;\na;",
-        "var a;\nlet a;\na;",
+    // Each is directly bound to `StaticSemanticsRejected`, never downgraded
+    // to `UnsupportedCoverage`: this is a source shape the theorem
+    // recognized but independently knows violates an already-accepted
+    // static rule, a materially distinct cause from a source shape outside
+    // the theorem entirely.
+    let duplicate_lexical_source = "let a;\nlet a;\na;";
+    assert!(parse_selected_top_level_script(duplicate_lexical_source).is_some());
+    assert!(recognize_and_accept_selected_top_level_script(duplicate_lexical_source).is_none());
+    match classify_selected_top_level_script(duplicate_lexical_source) {
+        SelectedTopLevelScriptDisposition::StaticSemanticsRejected(
+            StaticPreflightRejection::DuplicateLexical {
+                semantic_name,
+                first,
+                duplicate,
+            },
+        ) => {
+            assert_eq!(semantic_name, "a");
+            assert_eq!(first, Range(4, 5));
+            assert_eq!(duplicate, Range(11, 12));
+        }
+        other => panic!(
+            "{duplicate_lexical_source:?} must classify as StaticSemanticsRejected(DuplicateLexical), got {other:?}"
+        ),
+    }
+
+    for (source, expected_lexical, expected_var) in [
+        ("let a;\nvar a;\na;", Range(4, 5), Range(11, 12)),
+        ("var a;\nlet a;\na;", Range(11, 12), Range(4, 5)),
     ] {
         assert!(
             parse_selected_top_level_script(source).is_some(),
@@ -1232,13 +1341,35 @@ fn static_preflight_gate_rejects_duplicate_lexical_and_lexical_var_collision_she
             recognize_and_accept_selected_top_level_script(source).is_none(),
             "{source:?} must be rejected by the static preflight gate"
         );
+        match classify_selected_top_level_script(source) {
+            SelectedTopLevelScriptDisposition::StaticSemanticsRejected(
+                StaticPreflightRejection::LexicalVarCollision {
+                    semantic_name,
+                    lexical,
+                    var,
+                },
+            ) => {
+                assert_eq!(semantic_name, "a");
+                assert_eq!(lexical, expected_lexical);
+                assert_eq!(var, expected_var);
+            }
+            other => panic!(
+                "{source:?} must classify as StaticSemanticsRejected(LexicalVarCollision), got {other:?}"
+            ),
+        }
     }
 
     // Preserved acceptance: duplicate `var` contributors alone remain
-    // allowed, with both anchors retained in authored contributor order.
+    // allowed, with both anchors retained in authored contributor order,
+    // and the fixture is directly bound to `Selected`, not merely to
+    // `recognize_and_accept_selected_top_level_script(..).is_some()`.
     let preserved_source = "var a;\nvar a;\na;";
-    let preserved_accepted = recognize_and_accept_selected_top_level_script(preserved_source)
-        .expect("`var a; var a; a;` duplicate var contributors alone must remain accepted");
+    let preserved_accepted = match classify_selected_top_level_script(preserved_source) {
+        SelectedTopLevelScriptDisposition::Selected(accepted) => accepted,
+        other => panic!(
+            "`var a; var a; a;` must classify as Selected (duplicate var contributors alone are allowed), got {other:?}"
+        ),
+    };
     let preserved_relations = build_selected_source_name_correspondence(&preserved_accepted);
     assert_eq!(preserved_relations.len(), 1);
     assert_eq!(
@@ -1348,12 +1479,23 @@ fn authored_semicolon_theorem_and_asi_boundaries_remain_unsupported_coverage() {
     }
 }
 
-/// The disposition enum preserves the project's four-way failure vocabulary
-/// as a real, executable distinction, not only as a name in a symbolic
-/// list: `UnsupportedCoverage`, `DefinitiveGrammarRejectionEvidence`,
-/// `ResourceLimited`, and `InternalFailure` remain pairwise distinct values.
+/// The disposition enum preserves the project's failure vocabulary as a
+/// real, executable distinction, not only as a name in a symbolic list:
+/// `UnsupportedCoverage`, `StaticSemanticsRejected`,
+/// `DefinitiveGrammarRejectionEvidence`, `ResourceLimited`, and
+/// `InternalFailure` remain pairwise distinct values. In particular,
+/// `StaticSemanticsRejected` is never collapsed into `UnsupportedCoverage`:
+/// a source shape the theorem recognized but independently knows violates
+/// an already-accepted static rule is a materially different cause than a
+/// source shape outside the theorem entirely.
 #[test]
-fn disposition_enum_preserves_the_four_way_failure_vocabulary_distinction() {
+fn disposition_enum_preserves_the_failure_vocabulary_distinction() {
+    let sample_rejection = StaticPreflightRejection::DuplicateLexical {
+        semantic_name: "a".to_owned(),
+        first: Range(0, 0),
+        duplicate: Range(0, 0),
+    };
+
     assert_ne!(
         SelectedTopLevelScriptDisposition::UnsupportedCoverage,
         SelectedTopLevelScriptDisposition::ResourceLimited
@@ -1370,12 +1512,42 @@ fn disposition_enum_preserves_the_four_way_failure_vocabulary_distinction() {
         SelectedTopLevelScriptDisposition::UnsupportedCoverage,
         SelectedTopLevelScriptDisposition::DefinitiveGrammarRejectionEvidence(Range(0, 0))
     );
+    assert_ne!(
+        SelectedTopLevelScriptDisposition::UnsupportedCoverage,
+        SelectedTopLevelScriptDisposition::StaticSemanticsRejected(sample_rejection.clone())
+    );
+    assert_ne!(
+        SelectedTopLevelScriptDisposition::StaticSemanticsRejected(sample_rejection.clone()),
+        SelectedTopLevelScriptDisposition::DefinitiveGrammarRejectionEvidence(Range(0, 0))
+    );
+    assert_ne!(
+        SelectedTopLevelScriptDisposition::StaticSemanticsRejected(sample_rejection.clone()),
+        SelectedTopLevelScriptDisposition::ResourceLimited
+    );
+    assert_ne!(
+        SelectedTopLevelScriptDisposition::StaticSemanticsRejected(sample_rejection),
+        SelectedTopLevelScriptDisposition::InternalFailure
+    );
+
+    // The two static-preflight rejection reasons are themselves distinct.
+    assert_ne!(
+        StaticPreflightRejection::DuplicateLexical {
+            semantic_name: "a".to_owned(),
+            first: Range(0, 0),
+            duplicate: Range(0, 0),
+        },
+        StaticPreflightRejection::LexicalVarCollision {
+            semantic_name: "a".to_owned(),
+            lexical: Range(0, 0),
+            var: Range(0, 0),
+        }
+    );
 
     // This bounded recognizer never independently constructs
     // `DefinitiveGrammarRejectionEvidence` in practice (doing so would
     // require duplicating production's already-owned grammar-evidence
-    // machinery); every non-`Selected` classification this oracle produces
-    // is `UnsupportedCoverage`.
+    // machinery); a source shape entirely outside the theorem classifies as
+    // `UnsupportedCoverage`.
     assert_eq!(
         classify_selected_top_level_script("a + b;"),
         SelectedTopLevelScriptDisposition::UnsupportedCoverage
