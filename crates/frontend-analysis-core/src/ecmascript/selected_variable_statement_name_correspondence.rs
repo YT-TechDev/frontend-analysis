@@ -36,11 +36,14 @@ use std::collections::HashMap;
 use crate::SourceAnchor;
 
 use super::selected_lexical_slice::{
-    SelectedBlock, SelectedBlockItem, SelectedBlockVarBinding, SelectedLexicalBinding,
-    SelectedLexicalDeclaration, SelectedOneLevelBlockScript, SelectedTopLevelItem,
-    SelectedVariableBinding, SelectedVariableStatementScript, SelectedVariableTopLevelItem,
+    SelectedBlock, SelectedBlockItem, SelectedBlockVarBinding,
+    SelectedIdentifierReferenceExpressionStatementScript, SelectedLexicalBinding,
+    SelectedLexicalDeclaration, SelectedOneLevelBlockScript,
+    SelectedReferenceUseEnabledTopLevelItem, SelectedTopLevelItem, SelectedVariableBinding,
+    SelectedVariableStatementScript, SelectedVariableTopLevelItem,
 };
 use super::selected_static_semantics::{
+    SelectedIdentifierReferenceExpressionStatementStaticSemanticsAccepted,
     SelectedOneLevelBlockStaticSemanticsAccepted, SelectedVariableStatementStaticSemanticsAccepted,
 };
 
@@ -139,6 +142,66 @@ impl<'script> SelectedVariableStatementNameCorrespondenceAnalysis<'script> {
 #[derive(Debug)]
 pub(super) enum SelectedVariableStatementNameCorrespondenceOutcome<'script> {
     Complete(SelectedVariableStatementNameCorrespondenceAnalysis<'script>),
+    ResourceLimited,
+    InternalFailure,
+}
+
+/// One correspondence relation for a free-standing top-level
+/// `IdentifierReference` `ExpressionStatement` use-site (Issue #758). This
+/// is a distinct relation surface from
+/// `SelectedVariableStatementNameCorrespondenceRelation`: an initializer
+/// relation is always owned by its exact containing binding
+/// (`containing_binding`), but a free-standing use-site has no containing
+/// binding, whole-Statement anchor, whole-Expression anchor, semicolon
+/// anchor, or item ordinal to retain -- its semantic owner is the exact
+/// reference occurrence plus its accepted top-level placement alone. It
+/// reuses the existing three correspondence meanings unchanged
+/// (`VisibleSelectedLexicalBinding`, `SameSourceSelectedVarNameContributors`,
+/// `NoSelectedSameSourceContributor`); no fourth meaning is introduced.
+#[derive(Debug)]
+pub(super) struct SelectedTopLevelIdentifierReferenceUseSiteNameCorrespondenceRelation<'script> {
+    reference: &'script SourceAnchor,
+    semantic_name: &'script str,
+    correspondence: SelectedVariableStatementNameCorrespondence<'script>,
+}
+
+impl<'script> SelectedTopLevelIdentifierReferenceUseSiteNameCorrespondenceRelation<'script> {
+    pub(super) fn reference(&self) -> &'script SourceAnchor {
+        self.reference
+    }
+
+    pub(super) fn semantic_name(&self) -> &'script str {
+        self.semantic_name
+    }
+
+    pub(super) fn correspondence(&self) -> &SelectedVariableStatementNameCorrespondence<'script> {
+        &self.correspondence
+    }
+}
+
+/// Dedicated analysis/result surface for free-standing top-level use-site
+/// relations (Issue #758), kept separate from
+/// `SelectedVariableStatementNameCorrespondenceAnalysis` so initializer-owned
+/// relations and free-standing use-site relations are never mixed into one
+/// stream (the #757 Oracle's separation theorem). Relations are in exact
+/// authored use-site occurrence order; duplicate occurrences are preserved
+/// one-for-one, never deduplicated.
+#[derive(Debug)]
+pub(super) struct SelectedTopLevelIdentifierReferenceUseSiteNameCorrespondenceAnalysis<'script> {
+    relations: Vec<SelectedTopLevelIdentifierReferenceUseSiteNameCorrespondenceRelation<'script>>,
+}
+
+impl<'script> SelectedTopLevelIdentifierReferenceUseSiteNameCorrespondenceAnalysis<'script> {
+    pub(super) fn relations(
+        &self,
+    ) -> &[SelectedTopLevelIdentifierReferenceUseSiteNameCorrespondenceRelation<'script>] {
+        &self.relations
+    }
+}
+
+#[derive(Debug)]
+pub(super) enum SelectedTopLevelIdentifierReferenceUseSiteNameCorrespondenceOutcome<'script> {
+    Complete(SelectedTopLevelIdentifierReferenceUseSiteNameCorrespondenceAnalysis<'script>),
     ResourceLimited,
     InternalFailure,
 }
@@ -651,6 +714,199 @@ pub(super) fn analyze_selected_one_level_block_name_correspondence<'script>(
         }
         Err(AnalysisFailure::InternalFailure) => {
             SelectedVariableStatementNameCorrespondenceOutcome::InternalFailure
+        }
+    }
+}
+
+// --- New fourth / broadest carrier accepted-witness routes (Issue #758) ---
+
+fn reference_use_enabled_top_level_bindings(
+    script: &SelectedIdentifierReferenceExpressionStatementScript,
+) -> Result<LexicalBindingsByName<'_>, AnalysisFailure> {
+    let mut bindings_by_name = HashMap::new();
+
+    for item in script.items() {
+        let SelectedReferenceUseEnabledTopLevelItem::LexicalDeclaration(declaration) = item else {
+            continue;
+        };
+        insert_declaration_bindings(declaration, &mut bindings_by_name)?;
+    }
+
+    Ok(bindings_by_name)
+}
+
+fn reference_use_enabled_var_contributors(
+    script: &SelectedIdentifierReferenceExpressionStatementScript,
+) -> Result<VarContributorsByName<'_>, AnalysisFailure> {
+    let mut contributors_by_name: VarContributorsByName<'_> = HashMap::new();
+
+    // Every selected authored `var` declarator contributes, in exact global
+    // authored order; the free-standing use-site item contributes nothing
+    // (Issue #758).
+    for item in script.items() {
+        match item {
+            SelectedReferenceUseEnabledTopLevelItem::LexicalDeclaration(_)
+            | SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(_) => {
+            }
+            SelectedReferenceUseEnabledTopLevelItem::VariableStatement(statement) => {
+                for binding in statement.bindings() {
+                    let Some(name) = binding.semantic_name() else {
+                        return Err(AnalysisFailure::InternalFailure);
+                    };
+                    append_var_contributor(&mut contributors_by_name, name, binding.binding())?;
+                }
+            }
+            SelectedReferenceUseEnabledTopLevelItem::Block(block) => {
+                for binding in block.block_var_bindings() {
+                    let Some(name) = binding.semantic_name() else {
+                        return Err(AnalysisFailure::InternalFailure);
+                    };
+                    append_var_contributor(&mut contributors_by_name, name, binding.binding())?;
+                }
+            }
+        }
+    }
+
+    Ok(contributors_by_name)
+}
+
+fn analyze_reference_use_enabled<'script>(
+    script: &'script SelectedIdentifierReferenceExpressionStatementScript,
+) -> Result<SelectedVariableStatementNameCorrespondenceAnalysis<'script>, AnalysisFailure> {
+    let top_level_bindings = reference_use_enabled_top_level_bindings(script)?;
+    let var_contributors = reference_use_enabled_var_contributors(script)?;
+    let mut relations = Vec::new();
+
+    for item in script.items() {
+        match item {
+            SelectedReferenceUseEnabledTopLevelItem::LexicalDeclaration(declaration) => {
+                append_declaration_relations(
+                    declaration,
+                    SelectedVariableStatementNameCorrespondenceRegion::TopLevel,
+                    &top_level_bindings,
+                    &top_level_bindings,
+                    &var_contributors,
+                    &mut relations,
+                )?;
+            }
+            SelectedReferenceUseEnabledTopLevelItem::Block(block) => {
+                let current_bindings = block_bindings(block)?;
+                let current_region =
+                    SelectedVariableStatementNameCorrespondenceRegion::Block(block.block());
+                append_block_item_relations(
+                    block,
+                    current_region,
+                    &current_bindings,
+                    &top_level_bindings,
+                    &var_contributors,
+                    &mut relations,
+                )?;
+            }
+            SelectedReferenceUseEnabledTopLevelItem::VariableStatement(statement) => {
+                for binding in statement.bindings() {
+                    append_variable_binding_relation(
+                        binding,
+                        &top_level_bindings,
+                        &var_contributors,
+                        &mut relations,
+                    )?;
+                }
+            }
+            SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(_) => {}
+        }
+    }
+
+    Ok(SelectedVariableStatementNameCorrespondenceAnalysis { relations })
+}
+
+/// Third accepted-witness production entrypoint, for the new broadest
+/// `SelectedIdentifierReferenceExpressionStatementStaticSemanticsAccepted`
+/// witness (Issue #758). It shares this module's single correspondence
+/// semantic owner and every existing meaning/precedence helper; it produces
+/// only the existing initializer-owned relation stream for the retained
+/// `LexicalDeclaration`/`Block`/`VariableStatement` items -- the
+/// free-standing use-site item contributes no relation here (see
+/// `analyze_selected_top_level_identifier_reference_use_site_name_correspondence`
+/// for its dedicated relation surface). It introduces no fourth
+/// correspondence meaning and no parallel type hierarchy.
+pub(super) fn analyze_selected_reference_use_enabled_name_correspondence<'script>(
+    accepted: &SelectedIdentifierReferenceExpressionStatementStaticSemanticsAccepted<'script>,
+) -> SelectedVariableStatementNameCorrespondenceOutcome<'script> {
+    match analyze_reference_use_enabled(accepted.script()) {
+        Ok(analysis) => SelectedVariableStatementNameCorrespondenceOutcome::Complete(analysis),
+        Err(AnalysisFailure::ResourceLimited) => {
+            SelectedVariableStatementNameCorrespondenceOutcome::ResourceLimited
+        }
+        Err(AnalysisFailure::InternalFailure) => {
+            SelectedVariableStatementNameCorrespondenceOutcome::InternalFailure
+        }
+    }
+}
+
+fn analyze_top_level_use_sites<'script>(
+    script: &'script SelectedIdentifierReferenceExpressionStatementScript,
+) -> Result<
+    SelectedTopLevelIdentifierReferenceUseSiteNameCorrespondenceAnalysis<'script>,
+    AnalysisFailure,
+> {
+    let top_level_bindings = reference_use_enabled_top_level_bindings(script)?;
+    let var_contributors = reference_use_enabled_var_contributors(script)?;
+    let mut relations = Vec::new();
+
+    // Exact authored use-site occurrence order; duplicate occurrences are
+    // preserved one-for-one, never deduplicated (Issue #758).
+    for item in script.items() {
+        let SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(fact) =
+            item
+        else {
+            continue;
+        };
+
+        let correspondence = correspondence_for_name(
+            fact.semantic_name(),
+            SelectedVariableStatementNameCorrespondenceRegion::TopLevel,
+            &top_level_bindings,
+            &top_level_bindings,
+            &var_contributors,
+        )?;
+
+        relations
+            .try_reserve(1)
+            .map_err(|_| AnalysisFailure::ResourceLimited)?;
+        relations.push(
+            SelectedTopLevelIdentifierReferenceUseSiteNameCorrespondenceRelation {
+                reference: fact.reference(),
+                semantic_name: fact.semantic_name(),
+                correspondence,
+            },
+        );
+    }
+
+    Ok(SelectedTopLevelIdentifierReferenceUseSiteNameCorrespondenceAnalysis { relations })
+}
+
+/// Dedicated top-level free-standing use-site correspondence entrypoint
+/// (Issue #758). Structurally consumes only the new broadest accepted
+/// witness -- never a raw recognized Script -- so relation construction is
+/// unavailable after static rejection, `ResourceLimited`, `InternalFailure`,
+/// or `UnsupportedCoverage`. Kept entirely separate from
+/// `analyze_selected_reference_use_enabled_name_correspondence`'s
+/// initializer-owned relation stream: neither merges into the other, and
+/// no global cross-surface ordering theorem is introduced.
+pub(super) fn analyze_selected_top_level_identifier_reference_use_site_name_correspondence<
+    'script,
+>(
+    accepted: &SelectedIdentifierReferenceExpressionStatementStaticSemanticsAccepted<'script>,
+) -> SelectedTopLevelIdentifierReferenceUseSiteNameCorrespondenceOutcome<'script> {
+    match analyze_top_level_use_sites(accepted.script()) {
+        Ok(analysis) => {
+            SelectedTopLevelIdentifierReferenceUseSiteNameCorrespondenceOutcome::Complete(analysis)
+        }
+        Err(AnalysisFailure::ResourceLimited) => {
+            SelectedTopLevelIdentifierReferenceUseSiteNameCorrespondenceOutcome::ResourceLimited
+        }
+        Err(AnalysisFailure::InternalFailure) => {
+            SelectedTopLevelIdentifierReferenceUseSiteNameCorrespondenceOutcome::InternalFailure
         }
     }
 }
