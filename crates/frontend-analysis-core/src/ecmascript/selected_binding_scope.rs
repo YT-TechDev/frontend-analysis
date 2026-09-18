@@ -105,7 +105,11 @@ pub(super) fn analyze_selected_binding_scope<'script>(
     let mut containing_position = 0usize;
     for declaration in script.declarations() {
         for binding in declaration.bindings() {
-            if let Some(reference) = binding.identifier_reference_initializer() {
+            // Issue #754: 0, 1, or 2 retained facts are visited in exact
+            // authored left-to-right order; the containing binding's
+            // declaration position (`containing_position`) is unaffected by
+            // and shared across however many facts this one binding retains.
+            for reference in binding.identifier_reference_initializer_facts() {
                 if relations.try_reserve(1).is_err() {
                     return SelectedBindingScopeOutcome::ResourceLimited;
                 }

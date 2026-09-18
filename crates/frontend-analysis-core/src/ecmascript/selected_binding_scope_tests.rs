@@ -437,3 +437,126 @@ fn unsupported_parenthesized_initializer_never_enters_binding_scope_analysis() {
         SelectedLexicalSliceOutcome::UnsupportedCoverage
     ));
 }
+
+// Issue #754: the two-`IdentifierReference` additive initializer widens this
+// consumer's input to 0..2 facts per binding, consumed in exact authored
+// reference order. `#752`/PR #753 independently proves the underlying
+// bounded theorem; these tests seal only that this consumer composes it
+// correctly (P16: never reordered by target declaration position).
+
+#[test]
+fn two_identifier_reference_additive_initializer_composes_two_relations_in_authored_order() {
+    assert_eq!(
+        relation_snapshots("let a; let b; const x = a + b;"),
+        vec![
+            RelationSnapshot {
+                containing_binding: (20, 21, "x".to_owned()),
+                reference: (24, 25, "a".to_owned()),
+                semantic_name: "a".to_owned(),
+                target: Some((4, 5, "a".to_owned(), SelectedLexicalBindingOrder::Before,)),
+            },
+            RelationSnapshot {
+                containing_binding: (20, 21, "x".to_owned()),
+                reference: (28, 29, "b".to_owned()),
+                semantic_name: "b".to_owned(),
+                target: Some((11, 12, "b".to_owned(), SelectedLexicalBindingOrder::Before,)),
+            },
+        ]
+    );
+}
+
+#[test]
+fn two_identifier_reference_additive_initializer_order_is_authored_not_target_declaration_order() {
+    // `b` is declared before `a`, but the reference order is `a` then `b`
+    // (authored left-to-right operand order); target declaration order
+    // would emit `b` first. Both targets independently resolve to `Before`,
+    // so only authored order distinguishes the correct output.
+    let relations = relation_snapshots("let b; let a; const x = a + b;");
+    let semantic_names: Vec<_> = relations
+        .iter()
+        .map(|relation| relation.semantic_name.clone())
+        .collect();
+    assert_eq!(semantic_names, vec!["a".to_owned(), "b".to_owned()]);
+    assert!(
+        relations
+            .iter()
+            .all(|relation| relation.target.as_ref().map(|target| target.3)
+                == Some(SelectedLexicalBindingOrder::Before))
+    );
+}
+
+#[test]
+fn two_identifier_reference_additive_initializer_first_and_second_target_combinations() {
+    // first target / second no-target.
+    assert_eq!(
+        relation_snapshots("let a; const x = a + b;")
+            .iter()
+            .map(|relation| (relation.semantic_name.clone(), relation.target.is_some()))
+            .collect::<Vec<_>>(),
+        vec![("a".to_owned(), true), ("b".to_owned(), false)]
+    );
+
+    // first no-target / second target.
+    assert_eq!(
+        relation_snapshots("let b; const x = a + b;")
+            .iter()
+            .map(|relation| (relation.semantic_name.clone(), relation.target.is_some()))
+            .collect::<Vec<_>>(),
+        vec![("a".to_owned(), false), ("b".to_owned(), true)]
+    );
+
+    // both no-target.
+    assert_eq!(
+        relation_snapshots("const x = a + b;")
+            .iter()
+            .map(|relation| (relation.semantic_name.clone(), relation.target.is_some()))
+            .collect::<Vec<_>>(),
+        vec![("a".to_owned(), false), ("b".to_owned(), false)]
+    );
+}
+
+#[test]
+fn two_identifier_reference_additive_initializer_does_not_deduplicate_equal_semantic_names() {
+    // `a + a`: two independently owned relations, not one.
+    let relations = relation_snapshots("let a; const x = a + a;");
+    assert_eq!(relations.len(), 2);
+    assert_eq!(relations[0].semantic_name, "a");
+    assert_eq!(relations[1].semantic_name, "a");
+    // Equal fragment text and semantic name, but two distinct authored
+    // source occurrences (different byte offsets): never collapsed to one.
+    assert_eq!(relations[0].reference.2, relations[1].reference.2);
+    assert_ne!(relations[0].reference.0, relations[1].reference.0);
+    assert_eq!(
+        relations.iter().map(|r| r.reference.0).collect::<Vec<_>>(),
+        vec![17, 21]
+    );
+}
+
+#[test]
+fn two_identifier_reference_additive_initializer_direct_escaped_combinations_compose() {
+    // Fixture text and expected authored spelling are built with `concat!`
+    // over individually escaped fragments (matching PR #753's own
+    // technique) so the literal backslash-u-hex bytes survive intact rather
+    // than being collapsed by an intermediate write/review layer.
+    let escaped_operand = concat!("\\", "u0061");
+    let text = format!("let a; const x = {escaped_operand} + b;");
+    let expected_escaped_fragment = escaped_operand.to_owned();
+
+    assert_eq!(
+        relation_snapshots(&text),
+        vec![
+            RelationSnapshot {
+                containing_binding: (13, 14, "x".to_owned()),
+                reference: (17, 23, expected_escaped_fragment),
+                semantic_name: "a".to_owned(),
+                target: Some((4, 5, "a".to_owned(), SelectedLexicalBindingOrder::Before,)),
+            },
+            RelationSnapshot {
+                containing_binding: (13, 14, "x".to_owned()),
+                reference: (26, 27, "b".to_owned()),
+                semantic_name: "b".to_owned(),
+                target: None,
+            },
+        ]
+    );
+}

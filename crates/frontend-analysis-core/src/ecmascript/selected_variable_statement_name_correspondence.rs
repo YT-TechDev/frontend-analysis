@@ -364,28 +364,28 @@ fn append_binding_relation<'script>(
     var_contributors: &VarContributorsByName<'script>,
     relations: &mut Vec<SelectedVariableStatementNameCorrespondenceRelation<'script>>,
 ) -> Result<(), AnalysisFailure> {
-    let Some(reference) = binding.identifier_reference_initializer() else {
-        return Ok(());
-    };
+    // Issue #754: 0, 1, or 2 retained facts are visited in exact authored
+    // left-to-right order, without reordering or deduplication.
+    for reference in binding.identifier_reference_initializer_facts() {
+        let correspondence = correspondence_for_name(
+            reference.semantic_name(),
+            current_region,
+            current_bindings,
+            top_level_bindings,
+            var_contributors,
+        )?;
 
-    let correspondence = correspondence_for_name(
-        reference.semantic_name(),
-        current_region,
-        current_bindings,
-        top_level_bindings,
-        var_contributors,
-    )?;
-
-    relations
-        .try_reserve(1)
-        .map_err(|_| AnalysisFailure::ResourceLimited)?;
-    relations.push(SelectedVariableStatementNameCorrespondenceRelation {
-        containing_binding: binding.binding(),
-        current_region,
-        reference: reference.reference(),
-        semantic_name: reference.semantic_name(),
-        correspondence,
-    });
+        relations
+            .try_reserve(1)
+            .map_err(|_| AnalysisFailure::ResourceLimited)?;
+        relations.push(SelectedVariableStatementNameCorrespondenceRelation {
+            containing_binding: binding.binding(),
+            current_region,
+            reference: reference.reference(),
+            semantic_name: reference.semantic_name(),
+            correspondence,
+        });
+    }
 
     Ok(())
 }
@@ -407,28 +407,28 @@ fn append_block_var_binding_relation<'script>(
     var_contributors: &VarContributorsByName<'script>,
     relations: &mut Vec<SelectedVariableStatementNameCorrespondenceRelation<'script>>,
 ) -> Result<(), AnalysisFailure> {
-    let Some(reference) = binding.identifier_reference_initializer() else {
-        return Ok(());
-    };
+    // Issue #754: 0, 1, or 2 retained facts are visited in exact authored
+    // left-to-right order, without reordering or deduplication.
+    for reference in binding.identifier_reference_initializer_facts() {
+        let correspondence = correspondence_for_name(
+            reference.semantic_name(),
+            current_region,
+            current_bindings,
+            top_level_bindings,
+            var_contributors,
+        )?;
 
-    let correspondence = correspondence_for_name(
-        reference.semantic_name(),
-        current_region,
-        current_bindings,
-        top_level_bindings,
-        var_contributors,
-    )?;
-
-    relations
-        .try_reserve(1)
-        .map_err(|_| AnalysisFailure::ResourceLimited)?;
-    relations.push(SelectedVariableStatementNameCorrespondenceRelation {
-        containing_binding: binding.binding(),
-        current_region,
-        reference: reference.reference(),
-        semantic_name: reference.semantic_name(),
-        correspondence,
-    });
+        relations
+            .try_reserve(1)
+            .map_err(|_| AnalysisFailure::ResourceLimited)?;
+        relations.push(SelectedVariableStatementNameCorrespondenceRelation {
+            containing_binding: binding.binding(),
+            current_region,
+            reference: reference.reference(),
+            semantic_name: reference.semantic_name(),
+            correspondence,
+        });
+    }
 
     Ok(())
 }
@@ -439,28 +439,29 @@ fn append_variable_binding_relation<'script>(
     var_contributors: &VarContributorsByName<'script>,
     relations: &mut Vec<SelectedVariableStatementNameCorrespondenceRelation<'script>>,
 ) -> Result<(), AnalysisFailure> {
-    let Some(reference) = binding.identifier_reference_initializer() else {
-        return Ok(());
-    };
     let current_region = SelectedVariableStatementNameCorrespondenceRegion::TopLevel;
-    let correspondence = correspondence_for_name(
-        reference.semantic_name(),
-        current_region,
-        top_level_bindings,
-        top_level_bindings,
-        var_contributors,
-    )?;
+    // Issue #754: 0, 1, or 2 retained facts are visited in exact authored
+    // left-to-right order, without reordering or deduplication.
+    for reference in binding.identifier_reference_initializer_facts() {
+        let correspondence = correspondence_for_name(
+            reference.semantic_name(),
+            current_region,
+            top_level_bindings,
+            top_level_bindings,
+            var_contributors,
+        )?;
 
-    relations
-        .try_reserve(1)
-        .map_err(|_| AnalysisFailure::ResourceLimited)?;
-    relations.push(SelectedVariableStatementNameCorrespondenceRelation {
-        containing_binding: binding.binding(),
-        current_region,
-        reference: reference.reference(),
-        semantic_name: reference.semantic_name(),
-        correspondence,
-    });
+        relations
+            .try_reserve(1)
+            .map_err(|_| AnalysisFailure::ResourceLimited)?;
+        relations.push(SelectedVariableStatementNameCorrespondenceRelation {
+            containing_binding: binding.binding(),
+            current_region,
+            reference: reference.reference(),
+            semantic_name: reference.semantic_name(),
+            correspondence,
+        });
+    }
 
     Ok(())
 }

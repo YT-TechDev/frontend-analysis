@@ -2400,3 +2400,129 @@ fn leading_plus_minus_decimal_unary_expression_backed_var_lhs_still_contributes_
     assert_eq!(contributors.len(), 1);
     assert_eq!(range(contributors[0]), (4, 5));
 }
+
+// Issue #754: the two-`IdentifierReference` additive initializer widens
+// this consumer's input to 0..2 facts per binding/declarator, consumed in
+// exact authored reference order without reordering or deduplication.
+// `#752`/PR #753 independently proves the underlying bounded theorem; these
+// tests seal only that this consumer composes it correctly across
+// declarator lists, `var` placement, and Block `var` placement.
+
+#[test]
+fn two_identifier_reference_additive_initializer_preserves_1_to_n_declarator_ordering_for_var() {
+    // Issue #754 1..N declarator composition: `x=a+b, y=c, z=d+e` composes
+    // as `x.first, x.second, y.one, z.first, z.second`, never flattened out
+    // of declarator order.
+    let (_, script) =
+        recognized_variable("let a; let b; let c; let d; let e; var x=a+b, y=c, z=d+e;");
+    let analysis = accepted_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(
+        relations
+            .iter()
+            .map(|relation| relation.semantic_name())
+            .collect::<Vec<_>>(),
+        ["a", "b", "c", "d", "e"]
+    );
+    for relation in relations {
+        let (_, region) = relation
+            .correspondence()
+            .selected_lexical_binding()
+            .unwrap_or_else(|| {
+                panic!(
+                    "expected top-level lexical target for {}",
+                    relation.semantic_name()
+                )
+            });
+        assert!(matches!(
+            region,
+            SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+        ));
+    }
+}
+
+#[test]
+fn two_identifier_reference_additive_initializer_does_not_deduplicate_equal_semantic_names_for_var()
+{
+    let (_, script) = recognized_variable("let a; var x = a + a;");
+    let analysis = accepted_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(relations.len(), 2);
+    assert_eq!(relations[0].semantic_name(), "a");
+    assert_eq!(relations[1].semantic_name(), "a");
+    assert_ne!(
+        range(relations[0].reference()),
+        range(relations[1].reference())
+    );
+}
+
+#[test]
+fn two_identifier_reference_additive_initializer_composes_for_lexical_declaration_in_a_var_enabled_script()
+ {
+    let (_, script) = recognized_variable("let a; let b; const x = a + b; var unused;");
+    let analysis = accepted_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(
+        relations
+            .iter()
+            .map(|relation| relation.semantic_name())
+            .collect::<Vec<_>>(),
+        ["a", "b"]
+    );
+}
+
+#[test]
+fn two_identifier_reference_additive_initializer_composes_for_one_level_block_var() {
+    let (_, script) = recognized_one_level_block("let a; let b; { var x = a + b; }");
+    let analysis = accepted_one_level_block_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(relations.len(), 2);
+    assert_eq!(relations[0].semantic_name(), "a");
+    assert_eq!(relations[1].semantic_name(), "b");
+    assert!(matches!(
+        relations[0].current_region(),
+        SelectedVariableStatementNameCorrespondenceRegion::Block(_)
+    ));
+    assert!(matches!(
+        relations[1].current_region(),
+        SelectedVariableStatementNameCorrespondenceRegion::Block(_)
+    ));
+    let (_, first_target_region) = relations[0]
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("first fact must resolve to the top-level lexical target a");
+    assert!(matches!(
+        first_target_region,
+        SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+    ));
+}
+
+#[test]
+fn two_identifier_reference_additive_initializer_direct_escaped_combination_for_var() {
+    // Fixture text is built with `concat!` over an individually escaped
+    // fragment (matching PR #753's own technique) so the literal
+    // backslash-u-hex bytes survive intact.
+    let escaped_operand = concat!("\\", "u0061");
+    let text = format!("let a; var x = {escaped_operand} + b;");
+    let (_, script) = recognized_variable(&text);
+    let analysis = accepted_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(relations.len(), 2);
+    assert_eq!(relations[0].reference().fragment(), escaped_operand);
+    assert_eq!(relations[0].semantic_name(), "a");
+    assert_eq!(relations[1].reference().fragment(), "b");
+    assert_eq!(relations[1].semantic_name(), "b");
+    assert!(
+        relations[0]
+            .correspondence()
+            .selected_lexical_binding()
+            .is_some(),
+        "escaped first operand must still resolve to the top-level lexical target a"
+    );
+    assert!(
+        relations[1]
+            .correspondence()
+            .is_no_selected_same_source_contributor(),
+        "second operand b has no same-source contributor"
+    );
+}
