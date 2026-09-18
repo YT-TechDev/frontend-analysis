@@ -38,8 +38,11 @@
 //! same-source `var` contributor in authored order, or to no selected
 //! same-source contributor at all.
 //!
-//! Two evidence layers are kept explicit and are built by two independent
-//! functions:
+//! The independent lifecycle has three stages, matching the research
+//! theorem's `prepare candidate evidence -> authoritative whole-source
+//! consumption -> static-neutral accepted witness -> non-refusing relation
+//! commit` shape, and is driven end to end by
+//! `recognize_and_accept_selected_top_level_script`:
 //!
 //!   - Layer 1 (`parse_selected_top_level_script`): source / placement.
 //!     Recognizes a whole candidate `Script` as an ordered sequence of
@@ -51,11 +54,30 @@
 //!     valid earlier item can never publish evidence when a later item
 //!     fails (the whole-source transactionality theorem).
 //!
+//!   - Static preflight (`preflight_selected_top_level_static_semantics`):
+//!     a bounded, candidate-independent gate over only the two existing
+//!     top-level rules relevant to this shell -- a duplicate selected
+//!     lexical name is rejected, and a selected lexical name colliding with
+//!     a selected top-level `var` name is rejected (duplicate `var`
+//!     contributors alone remain allowed) -- producing the oracle's only
+//!     accepted witness, `AcceptedSelectedTopLevelScript`. A syntactically
+//!     recognized but statically rejected candidate never reaches Layer 2.
+//!     This is not a general Early Error engine and never imports
+//!     production static semantics.
+//!
 //!   - Layer 2 (`build_selected_source_name_correspondence`): relation.
-//!     Consumes only the Layer 1 item sequence (never a production
-//!     accepted-witness type) and independently derives exactly one
-//!     correspondence relation per free-standing use-site item, in exact
-//!     authored occurrence order, without deduplication.
+//!     Consumes only the accepted witness (never an arbitrary item list,
+//!     and never a production accepted-witness type) and independently
+//!     derives exactly one correspondence relation per free-standing
+//!     use-site item, in exact authored occurrence order, without
+//!     deduplication.
+//!
+//! `classify_selected_top_level_script` binds this whole lifecycle to an
+//! executable four-way disposition (`Selected` / `UnsupportedCoverage` /
+//! `DefinitiveGrammarRejectionEvidence` / `ResourceLimited` /
+//! `InternalFailure`), so a fixture such as a valid-but-unselected ASI
+//! boundary is independently proven to classify as `UnsupportedCoverage`
+//! rather than merely named in a disconnected symbolic list.
 //!
 //! `let`/`var` binding items may carry an `= SelectedAcceptedIdentifierReference`
 //! initializer purely so the whole-item grammar can be recognized end to
@@ -94,7 +116,7 @@
 //! state. This oracle proves same-source selected declaration provenance
 //! only.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::{SourceId, SourceText};
 
@@ -637,6 +659,105 @@ fn parse_selected_top_level_script(source: &str) -> Option<Vec<RecognizedTopLeve
     Some(items)
 }
 
+/// The oracle's only bounded static-preflight accepted witness: a
+/// syntactically recognized item sequence that has also independently
+/// passed the two existing top-level static rules relevant to this shell.
+/// Layer 2 can only consume this witness, never an arbitrary
+/// `Vec<RecognizedTopLevelItem>` -- this is a minimal private
+/// representation scoped to this oracle's exact bounded shell, never a
+/// claim about a future production accepted-witness type or layout.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AcceptedSelectedTopLevelScript {
+    items: Vec<RecognizedTopLevelItem>,
+}
+
+impl AcceptedSelectedTopLevelScript {
+    fn items(&self) -> &[RecognizedTopLevelItem] {
+        &self.items
+    }
+}
+
+/// Independently restates -- never imports -- only the two existing
+/// top-level static rules relevant to this bounded shell: a duplicate
+/// selected lexical name is rejected (mirroring the already-accepted
+/// `LexicallyDeclaredNames` duplicate rule), and a selected lexical name
+/// colliding with a selected top-level `var` name is rejected (mirroring
+/// the already-accepted lexical/var collision rule). Duplicate `var`
+/// contributors alone remain allowed -- a `HashSet` records `var` names by
+/// presence only, never by count, so repeated `var` declarators of the
+/// same name never trigger rejection on their own. This is not a general
+/// Early Error engine: it proves only this bounded shell's own
+/// already-accepted rules, and reproduces no unrelated Early Error
+/// machinery.
+fn preflight_selected_top_level_static_semantics(
+    items: Vec<RecognizedTopLevelItem>,
+) -> Option<AcceptedSelectedTopLevelScript> {
+    let mut lexical_names: HashSet<&str> = HashSet::new();
+    let mut var_names: HashSet<&str> = HashSet::new();
+
+    for item in &items {
+        match item {
+            RecognizedTopLevelItem::LexicalBinding(fact) => {
+                if !lexical_names.insert(fact.semantic_name.as_str()) {
+                    return None;
+                }
+            }
+            RecognizedTopLevelItem::VarBinding(fact) => {
+                var_names.insert(fact.semantic_name.as_str());
+            }
+            RecognizedTopLevelItem::UseSite(_) => {}
+        }
+    }
+
+    if lexical_names.intersection(&var_names).next().is_some() {
+        return None;
+    }
+
+    Some(AcceptedSelectedTopLevelScript { items })
+}
+
+/// The oracle's full independent lifecycle front door: source/placement
+/// recognition (Layer 1), then the bounded static preflight gate,
+/// producing the only shape Layer 2 may consume. The free-standing
+/// use-site itself contributes no declaration names at either stage --
+/// only `let`/`var` binding items are examined by the preflight gate --
+/// but the surrounding already-selected declaration shell must still
+/// independently pass it before any relation is ever committed.
+fn recognize_and_accept_selected_top_level_script(
+    source: &str,
+) -> Option<AcceptedSelectedTopLevelScript> {
+    let items = parse_selected_top_level_script(source)?;
+    preflight_selected_top_level_static_semantics(items)
+}
+
+/// The oracle's executable four-way disposition classification, binding a
+/// fixture directly to its outcome rather than only naming these symbols in
+/// a disconnected list. A valid-but-unselected ASI boundary independently
+/// classifies as `UnsupportedCoverage`, never `DefinitiveGrammarRejectionEvidence`.
+/// This bounded recognizer never independently proves definitive grammar
+/// rejection -- doing so would require duplicating production's
+/// already-owned grammar-evidence machinery, which this oracle must not do
+/// -- so it never constructs that variant in practice; the variant exists
+/// so the type itself preserves the project's four-way failure vocabulary
+/// distinction, matching the already-accepted `ResourceLimited`/
+/// `InternalFailure` symbolic minimum used by every predecessor
+/// candidate-independent `IdentifierReference` oracle.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SelectedTopLevelScriptDisposition {
+    Selected(AcceptedSelectedTopLevelScript),
+    UnsupportedCoverage,
+    DefinitiveGrammarRejectionEvidence(Range),
+    ResourceLimited,
+    InternalFailure,
+}
+
+fn classify_selected_top_level_script(source: &str) -> SelectedTopLevelScriptDisposition {
+    match recognize_and_accept_selected_top_level_script(source) {
+        Some(accepted) => SelectedTopLevelScriptDisposition::Selected(accepted),
+        None => SelectedTopLevelScriptDisposition::UnsupportedCoverage,
+    }
+}
+
 /// One independently derived Layer 2 source-name correspondence relation.
 /// Exactly the theorem's vocabulary (`VisibleSelectedLexicalBinding`,
 /// `SameSourceSelectedVarNameContributors`, `NoSelectedSameSourceContributor`)
@@ -658,19 +779,21 @@ struct SelectedUseSiteRelation {
     correspondence: SelectedSourceNameCorrespondence,
 }
 
-/// Central Issue #756 Layer 2 theorem. Consumes only the Layer 1 item
-/// sequence -- never a production accepted-witness type -- and derives
-/// exactly one relation per free-standing use-site item, in exact authored
-/// occurrence order, without reordering or deduplication (W9/W10). Lexical
-/// bindings are collected from the *whole* item sequence before any
+/// Central Issue #756 Layer 2 theorem. Consumes only the bounded static
+/// preflight's accepted witness -- never an arbitrary item list, and never
+/// a production accepted-witness type -- and derives exactly one relation
+/// per free-standing use-site item, in exact authored occurrence order,
+/// without reordering or deduplication (W9/W10). Lexical bindings are
+/// collected from the *whole* accepted item sequence before any
 /// correspondence is computed, so a lexical declaration appearing after a
 /// use-site still corresponds (the forward lexical correspondence theorem,
 /// W8 adjacent: this is same-source correspondence, never previous-only or
 /// execution-order lookup). A visible selected lexical binding always takes
 /// precedence over a same-source `var` contributor of the same name.
 fn build_selected_source_name_correspondence(
-    items: &[RecognizedTopLevelItem],
+    accepted: &AcceptedSelectedTopLevelScript,
 ) -> Vec<SelectedUseSiteRelation> {
+    let items = accepted.items();
     let mut lexical_bindings: HashMap<&str, Range> = HashMap::new();
     let mut var_contributors: HashMap<&str, Vec<Range>> = HashMap::new();
 
@@ -863,8 +986,9 @@ fn positive_direct_escaped_family_pins_exact_provenance_and_no_match() {
             fixture.expected_authored
         );
 
-        let items = parse_selected_top_level_script(fixture.source)
+        let accepted = recognize_and_accept_selected_top_level_script(fixture.source)
             .unwrap_or_else(|| panic!("{:?} must recognize the theorem", fixture.source));
+        let items = accepted.items();
         assert_eq!(items.len(), 1);
         let RecognizedTopLevelItem::UseSite(use_site) = &items[0] else {
             panic!(
@@ -888,7 +1012,7 @@ fn positive_direct_escaped_family_pins_exact_provenance_and_no_match() {
             fixture.expected_authored
         );
 
-        let relations = build_selected_source_name_correspondence(&items);
+        let relations = build_selected_source_name_correspondence(&accepted);
         assert_eq!(relations.len(), 1);
         assert_eq!(relations[0].reference, fixture.reference);
         assert_eq!(relations[0].semantic_name, fixture.expected_semantic_name);
@@ -909,8 +1033,9 @@ fn positive_direct_escaped_family_pins_exact_provenance_and_no_match() {
 #[test]
 fn lexical_correspondence_and_forward_declaration_are_both_independently_validated() {
     let backward_source = "let a;\na;";
-    let backward_items = parse_selected_top_level_script(backward_source)
+    let backward_accepted = recognize_and_accept_selected_top_level_script(backward_source)
         .expect("`let a; a;` must recognize the theorem");
+    let backward_items = backward_accepted.items();
     assert_eq!(backward_items.len(), 2);
     let RecognizedTopLevelItem::LexicalBinding(binding) = &backward_items[0] else {
         panic!("first item must be a lexical binding");
@@ -918,7 +1043,7 @@ fn lexical_correspondence_and_forward_declaration_are_both_independently_validat
     assert_eq!(binding.binding, Range(4, 5));
     assert_eq!(slice(backward_source, binding.binding), "a");
 
-    let backward_relations = build_selected_source_name_correspondence(&backward_items);
+    let backward_relations = build_selected_source_name_correspondence(&backward_accepted);
     assert_eq!(backward_relations.len(), 1);
     assert_eq!(backward_relations[0].reference, Range(7, 8));
     assert_eq!(
@@ -934,8 +1059,9 @@ fn lexical_correspondence_and_forward_declaration_are_both_independently_validat
     // resolution, and must never be rejected because the declaration
     // appears later in source.
     let forward_source = "a;\nlet a;";
-    let forward_items = parse_selected_top_level_script(forward_source)
+    let forward_accepted = recognize_and_accept_selected_top_level_script(forward_source)
         .expect("`a; let a;` must recognize the theorem");
+    let forward_items = forward_accepted.items();
     assert_eq!(forward_items.len(), 2);
     let RecognizedTopLevelItem::UseSite(use_site) = &forward_items[0] else {
         panic!("first item must be the free-standing use-site");
@@ -946,7 +1072,7 @@ fn lexical_correspondence_and_forward_declaration_are_both_independently_validat
     };
     assert_eq!(later_binding.binding, Range(7, 8));
 
-    let forward_relations = build_selected_source_name_correspondence(&forward_items);
+    let forward_relations = build_selected_source_name_correspondence(&forward_accepted);
     assert_eq!(forward_relations.len(), 1);
     assert_eq!(forward_relations[0].reference, Range(0, 1));
     assert_eq!(
@@ -963,11 +1089,11 @@ fn lexical_correspondence_and_forward_declaration_are_both_independently_validat
 #[test]
 fn authored_use_site_occurrence_order_is_preserved_not_target_declaration_order() {
     let source = "let b;\nlet a;\na;\nb;";
-    let items = parse_selected_top_level_script(source)
+    let accepted = recognize_and_accept_selected_top_level_script(source)
         .expect("`let b; let a; a; b;` must recognize the theorem");
-    assert_eq!(items.len(), 4);
+    assert_eq!(accepted.items().len(), 4);
 
-    let relations = build_selected_source_name_correspondence(&items);
+    let relations = build_selected_source_name_correspondence(&accepted);
     assert_eq!(relations.len(), 2);
     assert_eq!(relations[0].semantic_name, "a");
     assert_eq!(relations[1].semantic_name, "b");
@@ -982,11 +1108,11 @@ fn authored_use_site_occurrence_order_is_preserved_not_target_declaration_order(
 #[test]
 fn duplicate_use_site_occurrences_are_never_deduplicated() {
     let source = "let a;\na;\na;";
-    let items =
-        parse_selected_top_level_script(source).expect("`let a; a; a;` must recognize the theorem");
-    assert_eq!(items.len(), 3);
+    let accepted = recognize_and_accept_selected_top_level_script(source)
+        .expect("`let a; a; a;` must recognize the theorem");
+    assert_eq!(accepted.items().len(), 3);
 
-    let relations = build_selected_source_name_correspondence(&items);
+    let relations = build_selected_source_name_correspondence(&accepted);
     assert_eq!(relations.len(), 2);
     assert_ne!(relations[0].reference, relations[1].reference);
     assert_eq!(relations[0].semantic_name, relations[1].semantic_name);
@@ -1002,8 +1128,9 @@ fn duplicate_use_site_occurrences_are_never_deduplicated() {
 #[test]
 fn existing_initializer_relation_remains_separate_from_free_standing_use_site() {
     let source = "let a;\nlet x = a;\na;";
-    let items = parse_selected_top_level_script(source)
+    let accepted = recognize_and_accept_selected_top_level_script(source)
         .expect("`let a; let x = a; a;` must recognize the theorem");
+    let items = accepted.items();
     assert_eq!(items.len(), 3);
 
     let RecognizedTopLevelItem::LexicalBinding(x_binding) = &items[1] else {
@@ -1011,7 +1138,7 @@ fn existing_initializer_relation_remains_separate_from_free_standing_use_site() 
     };
     assert_eq!(x_binding.semantic_name, "x");
 
-    let relations = build_selected_source_name_correspondence(&items);
+    let relations = build_selected_source_name_correspondence(&accepted);
     assert_eq!(relations.len(), 1);
     assert_eq!(relations[0].semantic_name, "a");
     // The final free-standing `a;`, not the initializer-owned `a` inside
@@ -1026,9 +1153,9 @@ fn existing_initializer_relation_remains_separate_from_free_standing_use_site() 
 #[test]
 fn var_contributor_theorem_and_multiple_contributor_authored_order() {
     let single_source = "var a;\na;";
-    let single_items = parse_selected_top_level_script(single_source)
+    let single_accepted = recognize_and_accept_selected_top_level_script(single_source)
         .expect("`var a; a;` must recognize the theorem");
-    let single_relations = build_selected_source_name_correspondence(&single_items);
+    let single_relations = build_selected_source_name_correspondence(&single_accepted);
     assert_eq!(single_relations.len(), 1);
     assert_eq!(
         single_relations[0].correspondence,
@@ -1038,9 +1165,9 @@ fn var_contributor_theorem_and_multiple_contributor_authored_order() {
     );
 
     let multi_source = "var a;\nvar a;\na;";
-    let multi_items = parse_selected_top_level_script(multi_source)
+    let multi_accepted = recognize_and_accept_selected_top_level_script(multi_source)
         .expect("`var a; var a; a;` must recognize the theorem");
-    let multi_relations = build_selected_source_name_correspondence(&multi_items);
+    let multi_relations = build_selected_source_name_correspondence(&multi_accepted);
     assert_eq!(multi_relations.len(), 1);
     assert_eq!(
         multi_relations[0].correspondence,
@@ -1057,8 +1184,9 @@ fn var_contributor_theorem_and_multiple_contributor_authored_order() {
 #[test]
 fn lexical_precedence_over_var_contributor_is_independently_validated() {
     let source = "let a;\nvar x = a;\na;";
-    let items = parse_selected_top_level_script(source)
+    let accepted = recognize_and_accept_selected_top_level_script(source)
         .expect("`let a; var x = a; a;` must recognize the theorem");
+    let items = accepted.items();
     assert_eq!(items.len(), 3);
 
     let RecognizedTopLevelItem::VarBinding(x_binding) = &items[1] else {
@@ -1066,7 +1194,7 @@ fn lexical_precedence_over_var_contributor_is_independently_validated() {
     };
     assert_eq!(x_binding.semantic_name, "x");
 
-    let relations = build_selected_source_name_correspondence(&items);
+    let relations = build_selected_source_name_correspondence(&accepted);
     assert_eq!(relations.len(), 1);
     assert_eq!(relations[0].reference, Range(18, 19));
     assert_eq!(
@@ -1077,16 +1205,77 @@ fn lexical_precedence_over_var_contributor_is_independently_validated() {
     );
 }
 
+/// Static preflight gate (Issue #756 remediation): the surrounding
+/// already-selected declaration shell must independently pass the two
+/// existing top-level static rules relevant to it before any relation is
+/// ever committed, even though the free-standing use-site itself
+/// contributes no declaration names. A duplicate selected lexical name is
+/// rejected; a selected lexical name colliding with a selected top-level
+/// `var` name is rejected in either authored order; duplicate `var`
+/// contributors alone remain allowed. Ordinary positive and forward
+/// correspondence remain unaffected by the gate.
+#[test]
+fn static_preflight_gate_rejects_duplicate_lexical_and_lexical_var_collision_shells() {
+    // Required counterexamples: no accepted witness, and therefore no
+    // relation, is produced for any of these statically rejected shells,
+    // even though each is syntactically well-formed under Layer 1 alone.
+    for source in [
+        "let a;\nlet a;\na;",
+        "let a;\nvar a;\na;",
+        "var a;\nlet a;\na;",
+    ] {
+        assert!(
+            parse_selected_top_level_script(source).is_some(),
+            "{source:?} must be syntactically recognized by Layer 1 alone"
+        );
+        assert!(
+            recognize_and_accept_selected_top_level_script(source).is_none(),
+            "{source:?} must be rejected by the static preflight gate"
+        );
+    }
+
+    // Preserved acceptance: duplicate `var` contributors alone remain
+    // allowed, with both anchors retained in authored contributor order.
+    let preserved_source = "var a;\nvar a;\na;";
+    let preserved_accepted = recognize_and_accept_selected_top_level_script(preserved_source)
+        .expect("`var a; var a; a;` duplicate var contributors alone must remain accepted");
+    let preserved_relations = build_selected_source_name_correspondence(&preserved_accepted);
+    assert_eq!(preserved_relations.len(), 1);
+    assert_eq!(
+        preserved_relations[0].correspondence,
+        SelectedSourceNameCorrespondence::SameSourceSelectedVarNameContributors {
+            contributors: vec![Range(4, 5), Range(11, 12)],
+        }
+    );
+
+    // Preserved ordinary positive and forward source correspondence: the
+    // static preflight gate never rejects a shell with no colliding or
+    // duplicate lexical name, whatever the use-site's authored position
+    // relative to its target declaration.
+    assert!(recognize_and_accept_selected_top_level_script("let a;\na;").is_some());
+    let forward_accepted = recognize_and_accept_selected_top_level_script("a;\nlet a;")
+        .expect("`a; let a;` forward correspondence must remain accepted by the gate");
+    let forward_relations = build_selected_source_name_correspondence(&forward_accepted);
+    assert_eq!(forward_relations.len(), 1);
+    assert_eq!(
+        forward_relations[0].correspondence,
+        SelectedSourceNameCorrespondence::VisibleSelectedLexicalBinding {
+            binding: Range(7, 8)
+        }
+    );
+}
+
 /// No-selected-same-source-contributor theorem (acceptance criterion 14):
 /// this means only that no contributor exists inside the selected
 /// same-source model. It explicitly does not mean runtime-unresolvable, a
 /// `ReferenceError`, a global-property miss, or a `ResolveBinding` failure.
 #[test]
 fn no_selected_same_source_contributor_is_not_runtime_unbound() {
-    let items = parse_selected_top_level_script("a;").expect("`a;` must recognize the theorem");
-    assert_eq!(items.len(), 1);
+    let accepted = recognize_and_accept_selected_top_level_script("a;")
+        .expect("`a;` must recognize the theorem");
+    assert_eq!(accepted.items().len(), 1);
 
-    let relations = build_selected_source_name_correspondence(&items);
+    let relations = build_selected_source_name_correspondence(&accepted);
     assert_eq!(relations.len(), 1);
     assert_eq!(
         relations[0].correspondence,
@@ -1110,13 +1299,29 @@ fn no_selected_same_source_contributor_is_not_runtime_unbound() {
 /// not by an invalid identifier shape (W14).
 #[test]
 fn authored_semicolon_theorem_and_asi_boundaries_remain_unsupported_coverage() {
-    assert!(parse_selected_top_level_script("a;").is_some());
+    // The fixture is directly bound to its executable disposition, not
+    // merely to a disconnected symbolic classification list (Issue #756
+    // remediation): `a;` independently classifies as `Selected`, and each
+    // valid-but-unselected ASI boundary independently classifies as
+    // `UnsupportedCoverage`, never `DefinitiveGrammarRejectionEvidence`.
+    match classify_selected_top_level_script("a;") {
+        SelectedTopLevelScriptDisposition::Selected(accepted) => {
+            assert_eq!(accepted.items().len(), 1);
+        }
+        other => panic!("`a;` must classify as Selected, got {other:?}"),
+    }
 
     for (source, leading_identifier) in [("a", "a"), ("a\nlet b;", "a")] {
-        assert!(
-            parse_selected_top_level_script(source).is_none(),
-            "{source:?} is a valid-but-unselected ASI boundary, not part of this theorem"
+        assert_eq!(
+            classify_selected_top_level_script(source),
+            SelectedTopLevelScriptDisposition::UnsupportedCoverage,
+            "{source:?} is a valid-but-unselected ASI boundary, not part of this theorem, \
+             and must never classify as DefinitiveGrammarRejectionEvidence"
         );
+        // The failure is caused only by the missing authored terminator,
+        // never by an invalid identifier shape: the same leading text
+        // independently recognizes as a valid
+        // `SelectedAcceptedIdentifierReference` on its own.
         assert!(
             recognize_accepted_identifier_reference(leading_identifier).is_some(),
             "{source:?} must fail only for the missing authored semicolon"
@@ -1143,6 +1348,40 @@ fn authored_semicolon_theorem_and_asi_boundaries_remain_unsupported_coverage() {
     }
 }
 
+/// The disposition enum preserves the project's four-way failure vocabulary
+/// as a real, executable distinction, not only as a name in a symbolic
+/// list: `UnsupportedCoverage`, `DefinitiveGrammarRejectionEvidence`,
+/// `ResourceLimited`, and `InternalFailure` remain pairwise distinct values.
+#[test]
+fn disposition_enum_preserves_the_four_way_failure_vocabulary_distinction() {
+    assert_ne!(
+        SelectedTopLevelScriptDisposition::UnsupportedCoverage,
+        SelectedTopLevelScriptDisposition::ResourceLimited
+    );
+    assert_ne!(
+        SelectedTopLevelScriptDisposition::UnsupportedCoverage,
+        SelectedTopLevelScriptDisposition::InternalFailure
+    );
+    assert_ne!(
+        SelectedTopLevelScriptDisposition::ResourceLimited,
+        SelectedTopLevelScriptDisposition::InternalFailure
+    );
+    assert_ne!(
+        SelectedTopLevelScriptDisposition::UnsupportedCoverage,
+        SelectedTopLevelScriptDisposition::DefinitiveGrammarRejectionEvidence(Range(0, 0))
+    );
+
+    // This bounded recognizer never independently constructs
+    // `DefinitiveGrammarRejectionEvidence` in practice (doing so would
+    // require duplicating production's already-owned grammar-evidence
+    // machinery); every non-`Selected` classification this oracle produces
+    // is `UnsupportedCoverage`.
+    assert_eq!(
+        classify_selected_top_level_script("a + b;"),
+        SelectedTopLevelScriptDisposition::UnsupportedCoverage
+    );
+}
+
 /// Escaped `ReservedWord` boundary (acceptance criterion 8, W13): a decoded
 /// unconditionally reserved word never becomes a selected free-standing
 /// use-site.
@@ -1164,7 +1403,22 @@ fn escaped_reserved_word_firewall_emits_no_accepted_use_site_relation() {
 /// candidate, and no valid-prefix truncation ever occurs.
 #[test]
 fn malformed_and_invalid_escape_firewall_never_leaks_a_use_site_relation() {
-    for source in [r"\u{};", r"\uD800;", r"\u{110000};", r"0;", r"a-b;"] {
+    // Built with individually concatenated fragments (never one contiguous
+    // raw `\uXXXX` literal) so the literal bytes `\`, `u`, and the exact
+    // hex digits survive intact through the tooling pipeline rather than
+    // being collapsed into a decoded Unicode scalar by an intermediate
+    // writer (Issue #756 section 12/28 corruption-resistant fixture
+    // pattern; the four-hex-digit classic form is exactly the shape at
+    // risk, unlike the already-protected braced positive fixtures above).
+    let leading_zero_digit = concat!("\\", "u0030", ";");
+    let mid_hyphen = concat!("a", "\\", "u002D", "b;");
+    for source in [
+        r"\u{};",
+        r"\uD800;",
+        r"\u{110000};",
+        leading_zero_digit,
+        mid_hyphen,
+    ] {
         assert!(
             parse_selected_top_level_script(source).is_none(),
             "{source:?}"
@@ -1184,13 +1438,21 @@ fn malformed_and_invalid_escape_firewall_never_leaks_a_use_site_relation() {
         Err(DecodeFailure::NonCodePoint)
     );
     assert_eq!(
-        decode_selected_escaped_identifier(r"0"),
+        decode_selected_escaped_identifier(concat!("\\", "u0030")),
         Err(DecodeFailure::InvalidStart)
     );
     assert_eq!(
-        decode_selected_escaped_identifier(r"a-"),
+        decode_selected_escaped_identifier(concat!("a", "\\", "u002D")),
         Err(DecodeFailure::InvalidPart)
     );
+
+    // Verify the final test source truly contains the intended backslash-u
+    // bytes rather than a decoded scalar (Issue #756 section 12 requires
+    // this be checked, not merely assumed).
+    assert!(leading_zero_digit.starts_with('\\'));
+    assert_eq!(leading_zero_digit.as_bytes()[1], b'u');
+    assert!(mid_hyphen.contains('\\'));
+    assert_eq!(mid_hyphen.len(), "a\\u002Db;".len());
 }
 
 /// General-expression firewall (acceptance criterion 10, W15): richer
