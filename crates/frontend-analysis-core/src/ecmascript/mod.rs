@@ -30,6 +30,8 @@ mod qualification_selected_identifier_reference_initializer_validation_tests;
 #[cfg(test)]
 mod qualification_selected_leading_plus_minus_decimal_unary_expression_initializer_validation_tests;
 #[cfg(test)]
+mod qualification_selected_leading_plus_minus_direct_identifier_reference_unary_expression_initializer_validation_tests;
+#[cfg(test)]
 mod qualification_selected_null_literal_initializer_validation_tests;
 #[cfg(test)]
 mod qualification_selected_one_level_block_bare_var_validation_tests;
