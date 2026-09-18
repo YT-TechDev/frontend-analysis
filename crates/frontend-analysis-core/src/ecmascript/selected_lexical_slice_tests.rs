@@ -7046,6 +7046,10 @@ fn direct_and_escaped_use_site_forms_are_selected() {
         (r"\u0061;", r"\u0061", "a"),
         (r"\u{61};", r"\u{61}", "a"),
         (r"f\u006Fo;", r"f\u006Fo", "foo"),
+        // Escaped contextual `let`: composes escaped spelling, decoded
+        // contextual semantic name, non-strict IdentifierReference
+        // policy, and top-level use-site placement.
+        (r"\u006Cet;", r"\u006Cet", "let"),
     ] {
         let script = recognized_reference_use(text);
         let fact = only_use_site_fact(&script);
@@ -7081,6 +7085,13 @@ fn dispatch_selects_use_site_before_raw_top_level_dispatch() {
     // `LexicalDeclaration`s -- moved here from
     // `formed_unicode_escape_extends_literal_keyword_candidate_without_backtracking`
     // now that this leaf exists.
+    // `var\u0061;` composes the direct textual prefix "var" with a
+    // formed escaped IdentifierPart continuation into one maximal
+    // IdentifierReference (`vara`), proving the use-site probe -- not
+    // the raw `starts_with("var")` dispatch -- owns this source.
+    let script = recognized_reference_use(r"var\u0061;");
+    assert_eq!(only_use_site_fact(&script).semantic_name(), "vara");
+
     for (text, expected_name) in [
         (r"let\u0030;", "let0"),
         (r"const\u0030;", "const0"),
