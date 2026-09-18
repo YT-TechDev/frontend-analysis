@@ -60,12 +60,22 @@
 //! same three initializer owners, tried immediately after the unmodified
 //! decimal-unary predecessor and before the exponent/fractional/decimal-integer
 //! predecessors at all three call sites, via a new bounded
-//! `consume_selected_leading_plus_minus_direct_identifier_reference_unary_expression`
+//! `consume_selected_leading_plus_minus_identifier_reference_unary_expression`
 //! helper reusing the unmodified `skip_selected_trivia` and shared
 //! `consume_selected_identifier_reference` recognizer unchanged and
 //! returning the existing inner `SelectedIdentifierReferenceFact`
 //! unmodified, per the candidate-independent theorem accepted by #746/#747,
-//! by #748.
+//! by #748, and generalized that same bounded helper (renamed from its
+//! original direct-only name to the truthful
+//! `consume_selected_leading_plus_minus_identifier_reference_unary_expression`
+//! name shown above) to additionally accept a selected escaped
+//! non-ReservedWord `IdentifierReference` operand recognized by the same
+//! unmodified shared `consume_selected_identifier_reference` recognizer
+//! call, at the same three call sites, without a second escaped-operand
+//! scanner or decoder; an escaped ReservedWord operand continues to decline
+//! this wrapper and restore the cursor, per the candidate-independent
+//! theorem accepted by #241/#242 and this leaf's own frontier selection at
+//! #688 comment 5724869567, by #750.
 //! Recognition is transactional for the whole authoritative
 //! `SourceText`: tentative declaration/binding/Block/var facts are returned
 //! only when the entire source is consumed by selected items plus selected
@@ -661,17 +671,19 @@ enum SelectedIdentifierReferenceRecognition {
     InternalFailure,
 }
 
-/// Result of the bounded leading `+`/`-` direct `IdentifierReference`
-/// `UnaryExpression` helper (Issue #748). `Matched` carries the exact
-/// existing `SelectedIdentifierReferenceFact` produced by the shared
+/// Result of the bounded leading `+`/`-` `IdentifierReference`
+/// `UnaryExpression` helper (generalized by Issue #750 from the Issue #748
+/// direct-only helper). `Matched` carries the exact existing
+/// `SelectedIdentifierReferenceFact` produced by the shared
 /// `consume_selected_identifier_reference()` recognizer for the operand,
-/// unchanged. `NotSelected` covers every decline: no leading `+`/`-`, an
-/// escaped (non-Reserved or ReservedWord) operand, or no `IdentifierReference`
-/// operand at all. `ResourceLimited` and `InternalFailure` preserve the
-/// shared recognizer's own processing-failure classes without collapsing
-/// them into `NotSelected`.
+/// unchanged, for either a direct-authored or an escaped non-ReservedWord
+/// operand. `NotSelected` covers every decline: no leading `+`/`-`, an
+/// escaped `ReservedWord` operand, or no `IdentifierReference` operand at
+/// all. `ResourceLimited` and `InternalFailure` preserve the shared
+/// recognizer's own processing-failure classes without collapsing them
+/// into `NotSelected`.
 #[derive(Debug)]
-enum SelectedLeadingPlusMinusDirectIdentifierReferenceUnaryExpressionRecognition {
+enum SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition {
     Matched(SelectedIdentifierReferenceFact),
     NotSelected,
     ResourceLimited,
@@ -916,18 +928,18 @@ impl<'source> Cursor<'source> {
                         (None, None)
                     } else {
                         match self
-                            .consume_selected_leading_plus_minus_direct_identifier_reference_unary_expression()
+                            .consume_selected_leading_plus_minus_identifier_reference_unary_expression()
                         {
-                            SelectedLeadingPlusMinusDirectIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
+                            SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
                                 (Some(reference), None)
                             }
-                            SelectedLeadingPlusMinusDirectIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
+                            SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
                                 return Err(ParseFailure::ResourceLimited);
                             }
-                            SelectedLeadingPlusMinusDirectIdentifierReferenceUnaryExpressionRecognition::InternalFailure => {
+                            SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::InternalFailure => {
                                 return Err(ParseFailure::InternalFailure);
                             }
-                            SelectedLeadingPlusMinusDirectIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
+                            SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
                                 if self.consume_selected_plain_exponent_decimal_literal()
                                     || self.consume_selected_plain_fractional_decimal_literal()
                                     || self.consume_selected_decimal_integer()
@@ -1074,18 +1086,18 @@ impl<'source> Cursor<'source> {
                         (None, None)
                     } else {
                         match self
-                            .consume_selected_leading_plus_minus_direct_identifier_reference_unary_expression()
+                            .consume_selected_leading_plus_minus_identifier_reference_unary_expression()
                         {
-                            SelectedLeadingPlusMinusDirectIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
+                            SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
                                 (Some(reference), None)
                             }
-                            SelectedLeadingPlusMinusDirectIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
+                            SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
                                 return Err(ParseFailure::ResourceLimited);
                             }
-                            SelectedLeadingPlusMinusDirectIdentifierReferenceUnaryExpressionRecognition::InternalFailure => {
+                            SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::InternalFailure => {
                                 return Err(ParseFailure::InternalFailure);
                             }
-                            SelectedLeadingPlusMinusDirectIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
+                            SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
                                 if self.consume_selected_plain_exponent_decimal_literal()
                                     || self.consume_selected_plain_fractional_decimal_literal()
                                     || self.consume_selected_decimal_integer()
@@ -1196,18 +1208,18 @@ impl<'source> Cursor<'source> {
                 let mut escaped_reserved_initializer_identifier = None;
                 if !self.consume_selected_leading_plus_minus_decimal_unary_expression() {
                     match self
-                        .consume_selected_leading_plus_minus_direct_identifier_reference_unary_expression()
+                        .consume_selected_leading_plus_minus_identifier_reference_unary_expression()
                     {
-                        SelectedLeadingPlusMinusDirectIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
+                        SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
                             identifier_reference_initializer = Some(reference);
                         }
-                        SelectedLeadingPlusMinusDirectIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
+                        SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
                             return Err(ParseFailure::ResourceLimited);
                         }
-                        SelectedLeadingPlusMinusDirectIdentifierReferenceUnaryExpressionRecognition::InternalFailure => {
+                        SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::InternalFailure => {
                             return Err(ParseFailure::InternalFailure);
                         }
-                        SelectedLeadingPlusMinusDirectIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
+                        SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
                             if !self.consume_selected_plain_exponent_decimal_literal()
                                 && !self.consume_selected_plain_fractional_decimal_literal()
                                 && !self.consume_selected_decimal_integer()
@@ -1710,64 +1722,68 @@ impl<'source> Cursor<'source> {
         }
     }
 
-    /// Recognizes exactly one direct-authored leading `+` or `-` direct
-    /// `IdentifierReference` `UnaryExpression`
-    /// (`SelectedUnaryPlusMinus SelectedUnaryOperandTrivia
-    /// SelectedDirectIdentifierReference`) in the selected initializer
-    /// position, per the candidate-independent theorem accepted by
-    /// #746/#747, without retaining any operator or trivia fact: on a match,
+    /// Recognizes exactly one leading `+` or `-` `IdentifierReference`
+    /// `UnaryExpression` (`SelectedUnaryPlusMinus SelectedUnaryOperandTrivia
+    /// SelectedAcceptedIdentifierReference`, where
+    /// `SelectedAcceptedIdentifierReference ::= SelectedDirectIdentifierReference
+    /// | SelectedEscapedNonReservedIdentifierReference`) in the selected
+    /// initializer position. The direct-operand case is the
+    /// candidate-independent theorem accepted by #746/#747; the escaped
+    /// non-Reserved operand case generalizes that accepted helper per Issue
+    /// #750. Neither case retains any operator or trivia fact: on a match,
     /// the existing inner `SelectedIdentifierReferenceFact` produced by the
     /// unmodified shared `consume_selected_identifier_reference()`
-    /// recognizer is returned unchanged.
+    /// recognizer is returned unchanged, for either operand spelling. The
+    /// operand is recognized and decoded exactly once by that unmodified
+    /// shared recognizer; no second escaped-operand scanner or decoder is
+    /// introduced.
     ///
     /// This bounded local scan commits `self.offset` only after a complete
-    /// direct-authored (escape-free) `IdentifierReference` operand is
-    /// recognized following the operator and any intervening existing
-    /// selected trivia (`skip_selected_trivia`, unchanged). An escaped
-    /// non-ReservedWord operand, an escaped `ReservedWord` operand, or no
-    /// `IdentifierReference` operand at all restores the cursor to its
+    /// direct-authored or escaped non-ReservedWord `IdentifierReference`
+    /// operand is recognized following the operator and any intervening
+    /// existing selected trivia (`skip_selected_trivia`, unchanged). An
+    /// escaped `ReservedWord` operand (e.g. `-\u{69}f`, decoding to `if`) or
+    /// no `IdentifierReference` operand at all restores the cursor to its
     /// starting offset and returns `NotSelected`, leaving the unmodified
     /// decimal-unary predecessor and the unsigned atom/IdentifierReference
-    /// predecessors free to recognize their own atoms. A processing failure
+    /// predecessors free to recognize their own atoms; the restored cursor
+    /// keeps an escaped-ReservedWord operand outside this wrapper and
+    /// outside the existing plain escaped-ReservedWord C6 / EE-04-R08
+    /// initializer route, which owns only its own unwrapped source
+    /// position, not this wrapper's source position. A processing failure
     /// from the shared recognizer (`ResourceLimited` / `InternalFailure`) is
     /// preserved unchanged and is never downgraded to `NotSelected`. A
     /// locally complete unary-reference atom does not itself authorize any
     /// broader source; the enclosing declaration/statement/source
     /// transaction remains authoritative for any unowned trailing source
     /// (e.g. `-a.b`, `-a + b`).
-    fn consume_selected_leading_plus_minus_direct_identifier_reference_unary_expression(
+    fn consume_selected_leading_plus_minus_identifier_reference_unary_expression(
         &mut self,
-    ) -> SelectedLeadingPlusMinusDirectIdentifierReferenceUnaryExpressionRecognition {
+    ) -> SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition {
         let start = self.offset;
 
         if !self.consume_ascii('+') && !self.consume_ascii('-') {
-            return SelectedLeadingPlusMinusDirectIdentifierReferenceUnaryExpressionRecognition::NotSelected;
+            return SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::NotSelected;
         }
 
         self.skip_selected_trivia();
 
         match self.consume_selected_identifier_reference() {
-            SelectedIdentifierReferenceRecognition::Matched(reference)
-                if matches!(
-                    reference.name_state(),
-                    SelectedIdentifierReferenceNameState::Direct
-                ) =>
-            {
-                SelectedLeadingPlusMinusDirectIdentifierReferenceUnaryExpressionRecognition::Matched(
+            SelectedIdentifierReferenceRecognition::Matched(reference) => {
+                SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::Matched(
                     reference,
                 )
             }
-            SelectedIdentifierReferenceRecognition::Matched(_)
-            | SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName { .. }
+            SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName { .. }
             | SelectedIdentifierReferenceRecognition::NotSelected => {
                 self.offset = start;
-                SelectedLeadingPlusMinusDirectIdentifierReferenceUnaryExpressionRecognition::NotSelected
+                SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::NotSelected
             }
             SelectedIdentifierReferenceRecognition::ResourceLimited => {
-                SelectedLeadingPlusMinusDirectIdentifierReferenceUnaryExpressionRecognition::ResourceLimited
+                SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::ResourceLimited
             }
             SelectedIdentifierReferenceRecognition::InternalFailure => {
-                SelectedLeadingPlusMinusDirectIdentifierReferenceUnaryExpressionRecognition::InternalFailure
+                SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::InternalFailure
             }
         }
     }

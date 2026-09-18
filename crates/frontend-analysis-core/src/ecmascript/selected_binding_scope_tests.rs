@@ -386,6 +386,50 @@ fn leading_plus_minus_direct_identifier_reference_unary_expression_composes_unch
 }
 
 #[test]
+fn leading_plus_minus_identifier_reference_unary_expression_composes_unchanged_with_escaped_operand_and_binding_scope()
+ {
+    assert_eq!(
+        relation_snapshots(r"let foo; const x=-\u{66}oo;"),
+        vec![RelationSnapshot {
+            containing_binding: (15, 16, "x".to_owned()),
+            reference: (18, 26, r"\u{66}oo".to_owned()),
+            semantic_name: "foo".to_owned(),
+            target: Some((4, 7, "foo".to_owned(), SelectedLexicalBindingOrder::Before,)),
+        }]
+    );
+
+    assert_eq!(
+        relation_snapshots(r"let foo=-\u{66}oo;"),
+        vec![RelationSnapshot {
+            containing_binding: (4, 7, "foo".to_owned()),
+            reference: (9, 17, r"\u{66}oo".to_owned()),
+            semantic_name: "foo".to_owned(),
+            target: Some((4, 7, "foo".to_owned(), SelectedLexicalBindingOrder::Same)),
+        }]
+    );
+
+    assert_eq!(
+        relation_snapshots(r"const x=+f\u{6F}o; let foo;"),
+        vec![RelationSnapshot {
+            containing_binding: (6, 7, "x".to_owned()),
+            reference: (9, 17, r"f\u{6F}o".to_owned()),
+            semantic_name: "foo".to_owned(),
+            target: Some((23, 26, "foo".to_owned(), SelectedLexicalBindingOrder::After,)),
+        }]
+    );
+
+    assert_eq!(
+        relation_snapshots(r"const x=-\u{7A};"),
+        vec![RelationSnapshot {
+            containing_binding: (6, 7, "x".to_owned()),
+            reference: (9, 15, r"\u{7A}".to_owned()),
+            semantic_name: "z".to_owned(),
+            target: None,
+        }]
+    );
+}
+
+#[test]
 fn unsupported_parenthesized_initializer_never_enters_binding_scope_analysis() {
     let source = SourceText::new(SourceId::new(274), "let x=(y);".to_owned());
     assert!(matches!(
