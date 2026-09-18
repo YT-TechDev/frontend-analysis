@@ -3,14 +3,16 @@ use crate::{SourceId, SourceText};
 use super::qualification::{ProcessingStatus, QualificationVerdictKind, RejectionFamily};
 use super::qualification_validation_tests::{gold_source, gold_subject_range};
 use super::selected_lexical_slice::{
-    SelectedIdentifierReferenceExpressionStatementScript, SelectedLexicalScript,
-    SelectedLexicalSliceOutcome, SelectedOneLevelBlockScript, SelectedVariableStatementScript,
-    recognize_selected_lexical_slice,
+    SelectedBlockReferenceUseEnabledScript, SelectedIdentifierReferenceExpressionStatementScript,
+    SelectedLexicalScript, SelectedLexicalSliceOutcome, SelectedOneLevelBlockScript,
+    SelectedVariableStatementScript, recognize_selected_lexical_slice,
 };
 use super::selected_static_semantics::{
+    SelectedBlockReferenceUseEnabledStaticSemanticsOutcome,
     SelectedIdentifierReferenceExpressionStatementStaticSemanticsOutcome,
     SelectedOneLevelBlockStaticSemanticsOutcome, SelectedStaticSemanticsOutcome,
     SelectedStaticSemanticsRejection, SelectedVariableStatementStaticSemanticsOutcome,
+    evaluate_selected_block_reference_use_enabled_static_semantics,
     evaluate_selected_identifier_reference_expression_statement_static_semantics,
     evaluate_selected_one_level_block_static_semantics, evaluate_selected_static_semantics,
     evaluate_selected_variable_statement_static_semantics, selected_rejection_to_qualification,
@@ -683,7 +685,12 @@ fn production_static_semantics_preserves_architecture_boundaries_in_source() {
     }
 
     assert_eq!(production.matches("first_by_name: HashMap<").count(), 2);
-    assert_eq!(production.matches("try_reserve(1)").count(), 12);
+    // Issue #762 adds `first_use_site_enabled_block_lexical_var_collision`
+    // (2 more `try_reserve(1)` sites, mirroring `first_block_lexical_var_collision`)
+    // and `first_block_reference_use_enabled_lexical_var_name_collision` (4
+    // more, mirroring `first_reference_use_enabled_lexical_var_name_collision`),
+    // raising this count from 12 to 18.
+    assert_eq!(production.matches("try_reserve(1)").count(), 18);
     assert!(production.contains("DuplicateDeclarationBinding"));
     assert!(production.contains("DuplicateBlockLexicalName"));
     assert!(production.contains("DuplicateLexicalName"));
@@ -691,6 +698,7 @@ fn production_static_semantics_preserves_architecture_boundaries_in_source() {
     assert!(production.contains("BlockLexicalVarNameCollision"));
     assert!(production.contains("SelectedOneLevelBlockStaticSemanticsAccepted"));
     assert!(production.contains("EscapedReservedWordInitializer"));
+    assert!(production.contains("SelectedBlockReferenceUseEnabledStaticSemanticsAccepted"));
 }
 
 #[test]
@@ -1387,5 +1395,100 @@ fn reference_use_enabled_accepted_witness_exposes_the_recognized_script() {
             ) => accepted,
             other => panic!("expected acceptance, got {other:?}"),
         };
+    assert_eq!(accepted.script().items().len(), 2);
+}
+
+// --- Issue #762: static semantics for the new fifth / broadest Block
+// reference-use-enabled Script carrier. ---
+
+fn recognized_block_reference_use(
+    text: &str,
+) -> (SourceText, SelectedBlockReferenceUseEnabledScript) {
+    let source = source(text);
+    let script = match recognize_selected_lexical_slice(&source) {
+        SelectedLexicalSliceOutcome::RecognizedBlockReferenceUseEnabledSlice(script) => script,
+        other => {
+            panic!("expected Block-reference-use-enabled recognition for {text:?}, got {other:?}")
+        }
+    };
+    (source, script)
+}
+
+#[test]
+fn block_reference_use_enabled_positive_sources_are_accepted_and_use_sites_contribute_no_names() {
+    for text in [
+        "{ a; }",
+        "{ let a; a; }",
+        "{ var a; a; }",
+        "let a;\n{ a; }",
+        "let a;\n{ a; let a; }",
+        "{ let a; }\n{ a; }",
+        "{ a; }\nlet a;",
+        "var a;\n{ a; }",
+        "{ var a; a; }",
+        "{ a; }\n{ var a; }",
+        "{ a; a; }",
+        "{ a; }\n{ a; }",
+        "a;\n{ a; }\na;",
+    ] {
+        let (_, script) = recognized_block_reference_use(text);
+        assert!(
+            matches!(
+                evaluate_selected_block_reference_use_enabled_static_semantics(&script),
+                SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::Accepted(_)
+            ),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn block_reference_use_enabled_known_static_rejections_remain_rejections_not_unsupported_coverage()
+{
+    // The Block-contained use-site contributes no names, so every rejection
+    // below comes entirely from the already-accepted declaration/Block/var
+    // collision rules; it is never a new use-site rejection category and
+    // never downgraded to `UnsupportedCoverage` (issue section "Static
+    // rejection sealing").
+    let (_, script) = recognized_block_reference_use("let a;\n{ var a; a; }");
+    assert!(matches!(
+        evaluate_selected_block_reference_use_enabled_static_semantics(&script),
+        SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::LexicalVarNameCollision { .. }
+        )
+    ));
+
+    let (_, script) = recognized_block_reference_use("{ let a; var a; a; }");
+    assert!(matches!(
+        evaluate_selected_block_reference_use_enabled_static_semantics(&script),
+        SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::BlockLexicalVarNameCollision { .. }
+        )
+    ));
+
+    let (_, script) = recognized_block_reference_use("{ let a; let a; a; }");
+    assert!(matches!(
+        evaluate_selected_block_reference_use_enabled_static_semantics(&script),
+        SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::DuplicateBlockLexicalName { .. }
+        )
+    ));
+
+    let (_, script) = recognized_block_reference_use("let a;\nlet a;\n{ a; }");
+    assert!(matches!(
+        evaluate_selected_block_reference_use_enabled_static_semantics(&script),
+        SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::DuplicateLexicalName { .. }
+        )
+    ));
+}
+
+#[test]
+fn block_reference_use_enabled_accepted_witness_exposes_the_recognized_script() {
+    let (_, script) = recognized_block_reference_use("let a;\n{ a; }");
+    let accepted = match evaluate_selected_block_reference_use_enabled_static_semantics(&script) {
+        SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::Accepted(accepted) => accepted,
+        other => panic!("expected acceptance, got {other:?}"),
+    };
     assert_eq!(accepted.script().items().len(), 2);
 }

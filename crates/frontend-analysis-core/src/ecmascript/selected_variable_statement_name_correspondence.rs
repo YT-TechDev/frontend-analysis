@@ -36,13 +36,16 @@ use std::collections::HashMap;
 use crate::SourceAnchor;
 
 use super::selected_lexical_slice::{
-    SelectedBlock, SelectedBlockItem, SelectedBlockVarBinding,
+    SelectedBlock, SelectedBlockItem, SelectedBlockReferenceUseEnabledScript,
+    SelectedBlockReferenceUseEnabledTopLevelItem, SelectedBlockVarBinding,
     SelectedIdentifierReferenceExpressionStatementScript, SelectedLexicalBinding,
     SelectedLexicalDeclaration, SelectedOneLevelBlockScript,
-    SelectedReferenceUseEnabledTopLevelItem, SelectedTopLevelItem, SelectedVariableBinding,
-    SelectedVariableStatementScript, SelectedVariableTopLevelItem,
+    SelectedReferenceUseEnabledTopLevelItem, SelectedTopLevelItem, SelectedUseSiteEnabledBlock,
+    SelectedUseSiteEnabledBlockItem, SelectedVariableBinding, SelectedVariableStatementScript,
+    SelectedVariableTopLevelItem,
 };
 use super::selected_static_semantics::{
+    SelectedBlockReferenceUseEnabledStaticSemanticsAccepted,
     SelectedIdentifierReferenceExpressionStatementStaticSemanticsAccepted,
     SelectedOneLevelBlockStaticSemanticsAccepted, SelectedVariableStatementStaticSemanticsAccepted,
 };
@@ -206,6 +209,70 @@ pub(super) enum SelectedTopLevelIdentifierReferenceUseSiteNameCorrespondenceOutc
     InternalFailure,
 }
 
+/// One dedicated correspondence relation for a Block-contained free-standing
+/// `IdentifierReference` `ExpressionStatement` use-site (Issue #762),
+/// matching the accepted #760/#761 Oracle. This is a distinct relation
+/// surface from both `SelectedVariableStatementNameCorrespondenceRelation`
+/// (initializer-owned; always has a `containing_binding`) and
+/// `SelectedTopLevelIdentifierReferenceUseSiteNameCorrespondenceRelation`
+/// (TopLevel-only; has no containing owner at all): a Block-contained
+/// use-site's semantic owner is the exact reference occurrence plus its
+/// exact containing Block, never a `containing_binding`, a TopLevel
+/// placeholder, or a generic containing-source abstraction. It reuses the
+/// existing three correspondence meanings unchanged
+/// (`VisibleSelectedLexicalBinding`, `SameSourceSelectedVarNameContributors`,
+/// `NoSelectedSameSourceContributor`); no fourth meaning is introduced.
+#[derive(Debug)]
+pub(super) struct SelectedBlockUseSiteNameCorrespondenceRelation<'script> {
+    containing_block: &'script SourceAnchor,
+    reference: &'script SourceAnchor,
+    semantic_name: &'script str,
+    correspondence: SelectedVariableStatementNameCorrespondence<'script>,
+}
+
+impl<'script> SelectedBlockUseSiteNameCorrespondenceRelation<'script> {
+    pub(super) fn containing_block(&self) -> &'script SourceAnchor {
+        self.containing_block
+    }
+
+    pub(super) fn reference(&self) -> &'script SourceAnchor {
+        self.reference
+    }
+
+    pub(super) fn semantic_name(&self) -> &'script str {
+        self.semantic_name
+    }
+
+    pub(super) fn correspondence(&self) -> &SelectedVariableStatementNameCorrespondence<'script> {
+        &self.correspondence
+    }
+}
+
+/// Dedicated analysis/result surface for Block-contained free-standing
+/// use-site relations (Issue #762), kept entirely separate from initializer
+/// relations and from `SelectedTopLevelIdentifierReferenceUseSiteNameCorrespondenceAnalysis`
+/// -- no combined relation stream and no global cross-surface ordering
+/// theorem. Relations are in exact authored Block-use-site occurrence
+/// order; duplicate occurrences are preserved one-for-one, never
+/// deduplicated, and distinct Blocks remain distinctly owned.
+#[derive(Debug)]
+pub(super) struct SelectedBlockUseSiteNameCorrespondenceAnalysis<'script> {
+    relations: Vec<SelectedBlockUseSiteNameCorrespondenceRelation<'script>>,
+}
+
+impl<'script> SelectedBlockUseSiteNameCorrespondenceAnalysis<'script> {
+    pub(super) fn relations(&self) -> &[SelectedBlockUseSiteNameCorrespondenceRelation<'script>] {
+        &self.relations
+    }
+}
+
+#[derive(Debug)]
+pub(super) enum SelectedBlockUseSiteNameCorrespondenceOutcome<'script> {
+    Complete(SelectedBlockUseSiteNameCorrespondenceAnalysis<'script>),
+    ResourceLimited,
+    InternalFailure,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AnalysisFailure {
     ResourceLimited,
@@ -251,6 +318,20 @@ fn top_level_bindings(
 }
 
 fn block_bindings(block: &SelectedBlock) -> Result<LexicalBindingsByName<'_>, AnalysisFailure> {
+    let mut bindings_by_name = HashMap::new();
+    for declaration in block.declarations() {
+        insert_declaration_bindings(declaration, &mut bindings_by_name)?;
+    }
+    Ok(bindings_by_name)
+}
+
+/// The `SelectedUseSiteEnabledBlock` counterpart of `block_bindings` (Issue
+/// #762), sharing the same lexical-only accessor shape and insertion
+/// mechanics; the Block's own free-standing use-site items contribute no
+/// lexical binding.
+fn use_site_enabled_block_bindings(
+    block: &SelectedUseSiteEnabledBlock,
+) -> Result<LexicalBindingsByName<'_>, AnalysisFailure> {
     let mut bindings_by_name = HashMap::new();
     for declaration in block.declarations() {
         insert_declaration_bindings(declaration, &mut bindings_by_name)?;
@@ -907,6 +988,342 @@ pub(super) fn analyze_selected_top_level_identifier_reference_use_site_name_corr
         }
         Err(AnalysisFailure::InternalFailure) => {
             SelectedTopLevelIdentifierReferenceUseSiteNameCorrespondenceOutcome::InternalFailure
+        }
+    }
+}
+
+// --- New fifth / broadest carrier accepted-witness routes (Issue #762) ---
+
+fn block_reference_use_enabled_top_level_bindings(
+    script: &SelectedBlockReferenceUseEnabledScript,
+) -> Result<LexicalBindingsByName<'_>, AnalysisFailure> {
+    let mut bindings_by_name = HashMap::new();
+
+    for item in script.items() {
+        let SelectedBlockReferenceUseEnabledTopLevelItem::LexicalDeclaration(declaration) = item
+        else {
+            continue;
+        };
+        insert_declaration_bindings(declaration, &mut bindings_by_name)?;
+    }
+
+    Ok(bindings_by_name)
+}
+
+fn block_reference_use_enabled_var_contributors(
+    script: &SelectedBlockReferenceUseEnabledScript,
+) -> Result<VarContributorsByName<'_>, AnalysisFailure> {
+    let mut contributors_by_name: VarContributorsByName<'_> = HashMap::new();
+
+    // Every selected authored `var` declarator contributes, in exact global
+    // authored order; free-standing use-site items (TopLevel or
+    // Block-contained) contribute nothing (Issue #762).
+    for item in script.items() {
+        match item {
+            SelectedBlockReferenceUseEnabledTopLevelItem::LexicalDeclaration(_)
+            | SelectedBlockReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
+                _,
+            ) => {}
+            SelectedBlockReferenceUseEnabledTopLevelItem::VariableStatement(statement) => {
+                for binding in statement.bindings() {
+                    let Some(name) = binding.semantic_name() else {
+                        return Err(AnalysisFailure::InternalFailure);
+                    };
+                    append_var_contributor(&mut contributors_by_name, name, binding.binding())?;
+                }
+            }
+            SelectedBlockReferenceUseEnabledTopLevelItem::Block(block) => {
+                for binding in block.block_var_bindings() {
+                    let Some(name) = binding.semantic_name() else {
+                        return Err(AnalysisFailure::InternalFailure);
+                    };
+                    append_var_contributor(&mut contributors_by_name, name, binding.binding())?;
+                }
+            }
+            SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block) => {
+                for binding in block.block_var_bindings() {
+                    let Some(name) = binding.semantic_name() else {
+                        return Err(AnalysisFailure::InternalFailure);
+                    };
+                    append_var_contributor(&mut contributors_by_name, name, binding.binding())?;
+                }
+            }
+        }
+    }
+
+    Ok(contributors_by_name)
+}
+
+// Use-site-enabled-Block analog of `append_block_item_relations` (Issue
+// #762): traverses the Block's own retained `LexicalDeclaration`/`Var`
+// items in exact authored Block-item order for the initializer-owned
+// relation stream; the Block's own free-standing use-site items contribute
+// nothing here (see `append_block_use_site_relations` for their dedicated
+// relation surface).
+fn append_use_site_enabled_block_item_relations<'script>(
+    block: &'script SelectedUseSiteEnabledBlock,
+    current_region: SelectedVariableStatementNameCorrespondenceRegion<'script>,
+    current_bindings: &LexicalBindingsByName<'script>,
+    top_level_bindings: &LexicalBindingsByName<'script>,
+    var_contributors: &VarContributorsByName<'script>,
+    relations: &mut Vec<SelectedVariableStatementNameCorrespondenceRelation<'script>>,
+) -> Result<(), AnalysisFailure> {
+    for item in block.items() {
+        match item {
+            SelectedUseSiteEnabledBlockItem::LexicalDeclaration(declaration) => {
+                append_declaration_relations(
+                    declaration,
+                    current_region,
+                    current_bindings,
+                    top_level_bindings,
+                    var_contributors,
+                    relations,
+                )?;
+            }
+            SelectedUseSiteEnabledBlockItem::Var(statement) => {
+                for binding in statement.bindings() {
+                    append_block_var_binding_relation(
+                        binding,
+                        current_region,
+                        current_bindings,
+                        top_level_bindings,
+                        var_contributors,
+                        relations,
+                    )?;
+                }
+            }
+            SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(_) => {}
+        }
+    }
+    Ok(())
+}
+
+fn analyze_block_reference_use_enabled<'script>(
+    script: &'script SelectedBlockReferenceUseEnabledScript,
+) -> Result<SelectedVariableStatementNameCorrespondenceAnalysis<'script>, AnalysisFailure> {
+    let top_level_bindings = block_reference_use_enabled_top_level_bindings(script)?;
+    let var_contributors = block_reference_use_enabled_var_contributors(script)?;
+    let mut relations = Vec::new();
+
+    for item in script.items() {
+        match item {
+            SelectedBlockReferenceUseEnabledTopLevelItem::LexicalDeclaration(declaration) => {
+                append_declaration_relations(
+                    declaration,
+                    SelectedVariableStatementNameCorrespondenceRegion::TopLevel,
+                    &top_level_bindings,
+                    &top_level_bindings,
+                    &var_contributors,
+                    &mut relations,
+                )?;
+            }
+            SelectedBlockReferenceUseEnabledTopLevelItem::Block(block) => {
+                let current_bindings = block_bindings(block)?;
+                let current_region =
+                    SelectedVariableStatementNameCorrespondenceRegion::Block(block.block());
+                append_block_item_relations(
+                    block,
+                    current_region,
+                    &current_bindings,
+                    &top_level_bindings,
+                    &var_contributors,
+                    &mut relations,
+                )?;
+            }
+            SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block) => {
+                let current_bindings = use_site_enabled_block_bindings(block)?;
+                let current_region =
+                    SelectedVariableStatementNameCorrespondenceRegion::Block(block.block());
+                append_use_site_enabled_block_item_relations(
+                    block,
+                    current_region,
+                    &current_bindings,
+                    &top_level_bindings,
+                    &var_contributors,
+                    &mut relations,
+                )?;
+            }
+            SelectedBlockReferenceUseEnabledTopLevelItem::VariableStatement(statement) => {
+                for binding in statement.bindings() {
+                    append_variable_binding_relation(
+                        binding,
+                        &top_level_bindings,
+                        &var_contributors,
+                        &mut relations,
+                    )?;
+                }
+            }
+            SelectedBlockReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
+                _,
+            ) => {}
+        }
+    }
+
+    Ok(SelectedVariableStatementNameCorrespondenceAnalysis { relations })
+}
+
+/// Initializer-relation accepted-witness entrypoint for the new fifth /
+/// broadest carrier (Issue #762). Shares this module's single correspondence
+/// semantic owner and every existing meaning/precedence helper; produces
+/// only the existing initializer-owned relation stream for the retained
+/// `LexicalDeclaration`/`Block`/`UseSiteEnabledBlock`/`VariableStatement`
+/// items -- every free-standing use-site item (TopLevel or Block-contained)
+/// contributes no relation here. Introduces no fourth correspondence
+/// meaning and no parallel type hierarchy.
+pub(super) fn analyze_selected_block_reference_use_enabled_name_correspondence<'script>(
+    accepted: &SelectedBlockReferenceUseEnabledStaticSemanticsAccepted<'script>,
+) -> SelectedVariableStatementNameCorrespondenceOutcome<'script> {
+    match analyze_block_reference_use_enabled(accepted.script()) {
+        Ok(analysis) => SelectedVariableStatementNameCorrespondenceOutcome::Complete(analysis),
+        Err(AnalysisFailure::ResourceLimited) => {
+            SelectedVariableStatementNameCorrespondenceOutcome::ResourceLimited
+        }
+        Err(AnalysisFailure::InternalFailure) => {
+            SelectedVariableStatementNameCorrespondenceOutcome::InternalFailure
+        }
+    }
+}
+
+fn analyze_block_reference_use_enabled_top_level_use_sites<'script>(
+    script: &'script SelectedBlockReferenceUseEnabledScript,
+) -> Result<
+    SelectedTopLevelIdentifierReferenceUseSiteNameCorrespondenceAnalysis<'script>,
+    AnalysisFailure,
+> {
+    let top_level_bindings = block_reference_use_enabled_top_level_bindings(script)?;
+    let var_contributors = block_reference_use_enabled_var_contributors(script)?;
+    let mut relations = Vec::new();
+
+    // Exact authored TopLevel use-site occurrence order; duplicate
+    // occurrences are preserved one-for-one, never deduplicated. Block-
+    // contained use-sites are excluded from this stream (Issue #762): see
+    // `analyze_block_use_sites` for their dedicated relation surface.
+    for item in script.items() {
+        let SelectedBlockReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
+            fact,
+        ) = item
+        else {
+            continue;
+        };
+
+        let correspondence = correspondence_for_name(
+            fact.semantic_name(),
+            SelectedVariableStatementNameCorrespondenceRegion::TopLevel,
+            &top_level_bindings,
+            &top_level_bindings,
+            &var_contributors,
+        )?;
+
+        relations
+            .try_reserve(1)
+            .map_err(|_| AnalysisFailure::ResourceLimited)?;
+        relations.push(
+            SelectedTopLevelIdentifierReferenceUseSiteNameCorrespondenceRelation {
+                reference: fact.reference(),
+                semantic_name: fact.semantic_name(),
+                correspondence,
+            },
+        );
+    }
+
+    Ok(SelectedTopLevelIdentifierReferenceUseSiteNameCorrespondenceAnalysis { relations })
+}
+
+/// TopLevel free-standing use-site correspondence entrypoint for the new
+/// fifth carrier (Issue #762), exposing the existing #758
+/// `SelectedTopLevelIdentifierReferenceUseSiteNameCorrespondenceRelation`
+/// semantics unchanged for the fifth carrier's own TopLevel use-site items.
+/// This is the minimum fifth-witness entrypoint needed; it does not widen or
+/// genericize the historical relation type or its owner fields.
+pub(super) fn analyze_selected_block_reference_use_enabled_top_level_identifier_reference_use_site_name_correspondence<
+    'script,
+>(
+    accepted: &SelectedBlockReferenceUseEnabledStaticSemanticsAccepted<'script>,
+) -> SelectedTopLevelIdentifierReferenceUseSiteNameCorrespondenceOutcome<'script> {
+    match analyze_block_reference_use_enabled_top_level_use_sites(accepted.script()) {
+        Ok(analysis) => {
+            SelectedTopLevelIdentifierReferenceUseSiteNameCorrespondenceOutcome::Complete(analysis)
+        }
+        Err(AnalysisFailure::ResourceLimited) => {
+            SelectedTopLevelIdentifierReferenceUseSiteNameCorrespondenceOutcome::ResourceLimited
+        }
+        Err(AnalysisFailure::InternalFailure) => {
+            SelectedTopLevelIdentifierReferenceUseSiteNameCorrespondenceOutcome::InternalFailure
+        }
+    }
+}
+
+fn analyze_block_use_sites<'script>(
+    script: &'script SelectedBlockReferenceUseEnabledScript,
+) -> Result<SelectedBlockUseSiteNameCorrespondenceAnalysis<'script>, AnalysisFailure> {
+    let top_level_bindings = block_reference_use_enabled_top_level_bindings(script)?;
+    let var_contributors = block_reference_use_enabled_var_contributors(script)?;
+    let mut relations = Vec::new();
+
+    // Exact authored Block-use-site occurrence order, distinct Block
+    // ownership, and one-for-one duplicate preservation (Issue #762): only
+    // `UseSiteEnabledBlock` top-level items are visited, since a historical
+    // `Block` never contains a Block-local use-site item by construction.
+    for item in script.items() {
+        let SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block) = item else {
+            continue;
+        };
+
+        let current_bindings = use_site_enabled_block_bindings(block)?;
+        let current_region =
+            SelectedVariableStatementNameCorrespondenceRegion::Block(block.block());
+
+        for item in block.items() {
+            let SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(fact) =
+                item
+            else {
+                continue;
+            };
+
+            let correspondence = correspondence_for_name(
+                fact.semantic_name(),
+                current_region,
+                &current_bindings,
+                &top_level_bindings,
+                &var_contributors,
+            )?;
+
+            relations
+                .try_reserve(1)
+                .map_err(|_| AnalysisFailure::ResourceLimited)?;
+            relations.push(SelectedBlockUseSiteNameCorrespondenceRelation {
+                containing_block: block.block(),
+                reference: fact.reference(),
+                semantic_name: fact.semantic_name(),
+                correspondence,
+            });
+        }
+    }
+
+    Ok(SelectedBlockUseSiteNameCorrespondenceAnalysis { relations })
+}
+
+/// Dedicated Block-only free-standing use-site correspondence entrypoint
+/// (Issue #762), matching the accepted #760/#761 Oracle. Structurally
+/// consumes only the fifth-carrier accepted witness -- never a raw
+/// recognized Script -- so relation construction is unavailable after
+/// static rejection, `ResourceLimited`, `InternalFailure`, or
+/// `UnsupportedCoverage`. Kept entirely separate from both
+/// `analyze_selected_block_reference_use_enabled_name_correspondence`'s
+/// initializer-owned relation stream and from
+/// `analyze_selected_block_reference_use_enabled_top_level_identifier_reference_use_site_name_correspondence`'s
+/// TopLevel use-site relation stream: none of the three merges into
+/// another, and no global cross-surface ordering theorem is introduced.
+pub(super) fn analyze_selected_block_use_site_name_correspondence<'script>(
+    accepted: &SelectedBlockReferenceUseEnabledStaticSemanticsAccepted<'script>,
+) -> SelectedBlockUseSiteNameCorrespondenceOutcome<'script> {
+    match analyze_block_use_sites(accepted.script()) {
+        Ok(analysis) => SelectedBlockUseSiteNameCorrespondenceOutcome::Complete(analysis),
+        Err(AnalysisFailure::ResourceLimited) => {
+            SelectedBlockUseSiteNameCorrespondenceOutcome::ResourceLimited
+        }
+        Err(AnalysisFailure::InternalFailure) => {
+            SelectedBlockUseSiteNameCorrespondenceOutcome::InternalFailure
         }
     }
 }

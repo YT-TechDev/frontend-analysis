@@ -2664,8 +2664,11 @@ fn top_level_identifier_reference_expression_statement_use_site_asi_general_expr
         "a[b];",
         "a();",
         "a=b;",
-        // Nested-placement firewall (acceptance criterion 15).
-        "{ a; }",
+        // Deeper-nesting firewall (acceptance criterion 15). `{ a; }` itself
+        // is now accepted as a Block-contained use-site by Issue #762 (see
+        // the "Issue #762" section below); only recursion beyond one level
+        // remains outside selected coverage.
+        "{ { a; } }",
         // Escaped-reserved / malformed boundaries (issue section 50).
         r"\u0069f;",
         r"\u{};",
@@ -2689,6 +2692,153 @@ fn top_level_identifier_reference_expression_statement_use_site_whole_source_tra
             matches!(
                 attempt(text),
                 SelectedQualificationAttempt::UnsupportedCoverage
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+// --- Issue #762: one-level Block-contained free-standing
+// `IdentifierReference` `ExpressionStatement` use-site leaf. ---
+
+#[test]
+fn block_identifier_reference_expression_statement_use_site_remains_selected_accepted_incomplete() {
+    for text in [
+        "{ a; }",
+        r"{ \u0061; }",
+        r"{ \u{61}; }",
+        r"{ f\u006Fo; }",
+        "{ let; }",
+        "{ varfoo; }",
+        "{ let a; }",
+        "{ var a; }",
+        "{ let a; a; }",
+        "let a;\n{ a; }",
+        "let a;\n{ a; let a; }",
+        "{ let a; }\n{ a; }",
+        "{ a; }\nlet a;",
+        "var a;\n{ a; }",
+        "{ var a; a; }",
+        "{ a; }\n{ var a; }",
+        "{ a; a; }",
+        "{ a; }\n{ a; }",
+        "a;\n{ a; }\na;",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn block_identifier_reference_expression_statement_use_site_dispatch_reaches_accepted_incomplete_while_declaration_grammar_stays_owned()
+ {
+    // `{ let; }` / `{ varfoo; }` must reach `SelectedAcceptedIncomplete`
+    // through the new Block use-site leaf, while `{ let a; }` / `{ var a; }`
+    // remain owned by the existing lexical-declaration / Block-var grammar
+    // (proved directly at the carrier/item level by
+    // `block_dispatch_selects_use_site_before_raw_block_dispatch` in
+    // `selected_lexical_slice_tests.rs`; this seals the same discriminator
+    // at the qualification entrypoint).
+    for text in ["{ let; }", "{ varfoo; }", "{ let a; }", "{ var a; }"] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn block_identifier_reference_expression_statement_use_site_static_rejections_preserve_authored_primary_subject()
+ {
+    for (text, expected_fragment, expected_range) in [
+        ("let a;\n{ var a; a; }", "a", (13, 14)),
+        ("{ let a; var a; a; }", "a", (13, 14)),
+        ("{ let a; let a; a; }", "a", (13, 14)),
+        ("let a;\nlet a;\n{ a; }", "a", (11, 12)),
+    ] {
+        assert_static_semantics_rejected(text, expected_fragment, expected_range);
+    }
+}
+
+#[test]
+fn block_identifier_reference_expression_statement_use_site_asi_general_expression_and_nesting_boundaries_remain_unsupported()
+ {
+    for text in [
+        // ASI boundaries (issue section "ASI boundary").
+        "{ a }",
+        // General-expression firewall (issue section "General-expression
+        // firewall" / W15).
+        "{ a+b; }",
+        "{ +a; }",
+        "{ -a; }",
+        "{ (a); }",
+        "{ a.b; }",
+        "{ a[b]; }",
+        "{ a(); }",
+        "{ a=b; }",
+        "{ a ? b : c; }",
+        "{ a && b; }",
+        "{ a, b; }",
+        "{ new a; }",
+        // Empty-Block and deeper-nesting firewalls (issue section "Empty
+        // Block / recursive Block boundaries" / W26/W27).
+        "{}",
+        "{ { a; } }",
+        // Escaped-reserved / malformed boundaries.
+        r"{ \u0069f; }",
+        r"{ \u{}; }",
+        r"{ \u0030; }",
+        r"{ a\u002Db; }",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::UnsupportedCoverage
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn block_identifier_reference_expression_statement_use_site_whole_source_transactionality() {
+    for text in [
+        "{ a; ??? }",
+        "{ a; let x = ; }",
+        "{ a; }\n???",
+        "{ a; }\nlet x = ;",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::UnsupportedCoverage
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn block_var_close_brace_asi_regression_remains_selected_accepted_incomplete_after_block_parser_refactor()
+ {
+    // Because the Block parser architecture changes for Issue #762, this
+    // seals that existing Block-var `AutomaticBeforeBlockClose` support
+    // (Issue #717) is unaffected: this source has no Block-contained
+    // use-site, so it must remain owned by the historical `SelectedBlock`
+    // route, not the new fifth carrier.
+    for text in ["{ var a }", "{ var a, b }", "{ let a; var b }"] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
             ),
             "{text:?}"
         );

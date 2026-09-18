@@ -2,11 +2,12 @@ use crate::{SourceAnchor, SourceId, SourceText};
 
 use super::qualification_validation_tests::{gold_source, gold_subject_range};
 use super::selected_lexical_slice::{
-    SelectedBindingNameState, SelectedDeclarationTerminator,
+    SelectedBindingNameState, SelectedBlockReferenceUseEnabledScript,
+    SelectedBlockReferenceUseEnabledTopLevelItem, SelectedDeclarationTerminator,
     SelectedIdentifierReferenceExpressionStatementScript, SelectedInitializerState,
     SelectedInvalidEscapePosition, SelectedLexicalDeclarationKind, SelectedLexicalScript,
     SelectedLexicalSliceOutcome, SelectedReferenceUseEnabledTopLevelItem,
-    SelectedVariableStatement, SelectedVariableStatementScript,
+    SelectedUseSiteEnabledBlockItem, SelectedVariableStatement, SelectedVariableStatementScript,
     SelectedVariableStatementTerminator, SelectedVariableTopLevelItem,
     recognize_selected_lexical_slice,
 };
@@ -27,6 +28,11 @@ fn recognized(text: &str) -> SelectedLexicalScript {
         SelectedLexicalSliceOutcome::RecognizedIdentifierReferenceExpressionStatementSlice(_) => {
             panic!(
                 "expected flat selected-slice recognition, got reference-use-enabled slice for {text:?}"
+            )
+        }
+        SelectedLexicalSliceOutcome::RecognizedBlockReferenceUseEnabledSlice(_) => {
+            panic!(
+                "expected flat selected-slice recognition, got Block-reference-use-enabled slice for {text:?}"
             )
         }
         SelectedLexicalSliceOutcome::UnsupportedCoverage => {
@@ -7130,8 +7136,13 @@ fn top_level_block_composes_with_free_standing_use_site() {
 }
 
 #[test]
-fn nested_block_use_site_remains_unsupported() {
-    assert_unsupported("{ a; }");
+fn deeper_nested_block_use_site_remains_unsupported() {
+    // One-level `{ a; }` becomes a selected Block-contained use-site as of
+    // Issue #762 (see the "Issue #762" section below); only recursion
+    // *beyond* one level remains outside selected coverage (W26 / issue
+    // section "Empty Block / recursive Block boundaries").
+    assert_unsupported("{ { a; } }");
+    assert_unsupported("{ { let a; } }");
 }
 
 #[test]
@@ -7221,4 +7232,311 @@ fn whole_source_transactionality_use_site() {
     // later source fails.
     assert_unsupported("let a;\na;\n???");
     assert_unsupported("let a;\na;\nlet x = ;");
+}
+
+// --- Issue #762: one-level Block-contained free-standing
+// `IdentifierReference` `ExpressionStatement` use-sites, composed with the
+// new fifth / broadest Script carrier. ---
+
+fn recognized_block_reference_use(text: &str) -> SelectedBlockReferenceUseEnabledScript {
+    match recognize_selected_lexical_slice(&source(text)) {
+        SelectedLexicalSliceOutcome::RecognizedBlockReferenceUseEnabledSlice(script) => script,
+        other => {
+            panic!("expected Block-reference-use-enabled recognition for {text:?}, got {other:?}")
+        }
+    }
+}
+
+fn only_block_use_site_fact(
+    script: &SelectedBlockReferenceUseEnabledScript,
+) -> &super::selected_lexical_slice::SelectedIdentifierReferenceFact {
+    let [SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block)] = script.items()
+    else {
+        panic!("expected exactly one use-site-enabled Block item");
+    };
+    let [SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(fact)] =
+        block.items()
+    else {
+        panic!("expected exactly one Block-contained use-site item");
+    };
+    fact
+}
+
+#[test]
+fn block_direct_and_escaped_use_site_forms_are_selected() {
+    for (text, expected_fragment, expected_name) in [
+        ("{ a; }", "a", "a"),
+        (r"{ \u0061; }", r"\u0061", "a"),
+        (r"{ \u{61}; }", r"\u{61}", "a"),
+        (r"{ f\u006Fo; }", r"f\u006Fo", "foo"),
+    ] {
+        let script = recognized_block_reference_use(text);
+        let fact = only_block_use_site_fact(&script);
+        assert_eq!(fact.reference().fragment(), expected_fragment, "{text}");
+        assert_eq!(fact.semantic_name(), expected_name, "{text}");
+    }
+}
+
+#[test]
+fn block_dispatch_selects_use_site_before_raw_block_dispatch() {
+    // `{ let; }` and `{ varfoo; }` must become the new Block use-site,
+    // never a failed lexical-declaration/Block-var recognition; `{ let a; }`
+    // / `{ var a; }` must remain owned by the existing declaration
+    // dispatch, producing the exact historical `SelectedBlock`
+    // representation, not the new use-site-enabled one.
+    let script = recognized_block_reference_use("{ let; }");
+    assert_eq!(only_block_use_site_fact(&script).semantic_name(), "let");
+
+    let script = recognized_block_reference_use("{ varfoo; }");
+    assert_eq!(only_block_use_site_fact(&script).semantic_name(), "varfoo");
+
+    match recognize_selected_lexical_slice(&source("{ let a; }")) {
+        SelectedLexicalSliceOutcome::RecognizedOneLevelBlockSlice(_) => {}
+        other => panic!("expected `{{ let a; }}` to remain a historical Block, got {other:?}"),
+    }
+
+    match recognize_selected_lexical_slice(&source("{ var a; }")) {
+        SelectedLexicalSliceOutcome::RecognizedOneLevelBlockSlice(_) => {}
+        other => panic!("expected `{{ var a; }}` to remain a historical Block, got {other:?}"),
+    }
+}
+
+#[test]
+fn block_use_site_composes_with_lexical_and_var_items_in_authored_order() {
+    let script = recognized_block_reference_use("{ let a; a; }");
+    let [SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block)] = script.items()
+    else {
+        panic!("expected exactly one use-site-enabled Block item");
+    };
+    let [
+        SelectedUseSiteEnabledBlockItem::LexicalDeclaration(_),
+        SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(fact),
+    ] = block.items()
+    else {
+        panic!("expected [LexicalDeclaration, use-site] items");
+    };
+    assert_eq!(fact.semantic_name(), "a");
+
+    let script = recognized_block_reference_use("{ var a; a; }");
+    let [SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block)] = script.items()
+    else {
+        panic!("expected exactly one use-site-enabled Block item");
+    };
+    let [
+        SelectedUseSiteEnabledBlockItem::Var(_),
+        SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(fact),
+    ] = block.items()
+    else {
+        panic!("expected [Var, use-site] items");
+    };
+    assert_eq!(fact.semantic_name(), "a");
+}
+
+#[test]
+fn top_level_declaration_composes_with_block_use_site_in_authored_order() {
+    let script = recognized_block_reference_use("let a;\n{ a; }");
+    let [
+        SelectedBlockReferenceUseEnabledTopLevelItem::LexicalDeclaration(_),
+        SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block),
+    ] = script.items()
+    else {
+        panic!("expected [LexicalDeclaration, UseSiteEnabledBlock] items");
+    };
+    assert_eq!(only_use_site_fact_of(block).semantic_name(), "a");
+
+    let script = recognized_block_reference_use("let a;\n{ a; let a; }");
+    let [
+        SelectedBlockReferenceUseEnabledTopLevelItem::LexicalDeclaration(_),
+        SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block),
+    ] = script.items()
+    else {
+        panic!("expected [LexicalDeclaration, UseSiteEnabledBlock] items");
+    };
+    assert_eq!(only_use_site_fact_of(block).semantic_name(), "a");
+}
+
+fn only_use_site_fact_of(
+    block: &super::selected_lexical_slice::SelectedUseSiteEnabledBlock,
+) -> &super::selected_lexical_slice::SelectedIdentifierReferenceFact {
+    block
+        .items()
+        .iter()
+        .find_map(|item| match item {
+            SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(fact) => {
+                Some(fact)
+            }
+            _ => None,
+        })
+        .expect("expected exactly one Block-contained use-site item")
+}
+
+#[test]
+fn historical_block_composes_with_later_block_use_site_without_reconstruction() {
+    // `{ let a; }` first produces the exact historical `SelectedBlock`;
+    // `{ a; }` then promotes the builder into the fifth carrier, moving the
+    // already-owned historical Block across unchanged (never reparsed).
+    let script = recognized_block_reference_use("{ let a; }\n{ a; }");
+    let [
+        SelectedBlockReferenceUseEnabledTopLevelItem::Block(_),
+        SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block),
+    ] = script.items()
+    else {
+        panic!("expected [Block, UseSiteEnabledBlock] items");
+    };
+    assert_eq!(only_use_site_fact_of(block).semantic_name(), "a");
+}
+
+#[test]
+fn variable_statement_composes_with_later_block_use_site_without_reconstruction() {
+    // Exercises promotion into the fifth carrier from the
+    // `VariableEnabled` builder state specifically (Promotion invariants:
+    // Flat / BlockEnabled / VariableEnabled / ReferenceUseEnabled must all
+    // promote monotonically into `BlockReferenceUseEnabled`).
+    let script = recognized_block_reference_use("var x;\n{ a; }");
+    let [
+        SelectedBlockReferenceUseEnabledTopLevelItem::VariableStatement(_),
+        SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block),
+    ] = script.items()
+    else {
+        panic!("expected [VariableStatement, UseSiteEnabledBlock] items");
+    };
+    assert_eq!(only_use_site_fact_of(block).semantic_name(), "a");
+}
+
+#[test]
+fn top_level_use_site_composes_with_block_use_site_as_separate_surfaces() {
+    let script = recognized_block_reference_use("a;\n{ a; }\na;");
+    let [
+        SelectedBlockReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(first),
+        SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block),
+        SelectedBlockReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(third),
+    ] = script.items()
+    else {
+        panic!("expected [use-site, UseSiteEnabledBlock, use-site] items");
+    };
+    assert_eq!(first.semantic_name(), "a");
+    assert_eq!(only_use_site_fact_of(block).semantic_name(), "a");
+    assert_eq!(third.semantic_name(), "a");
+}
+
+#[test]
+fn empty_block_remains_unsupported_coverage() {
+    assert_unsupported("{}");
+}
+
+#[test]
+fn block_use_site_close_brace_asi_remains_unsupported_coverage() {
+    // Only `AuthoredSemicolon` is selected for the new Block use-site (issue
+    // section "ASI boundary" / W24); `{ a }` remains valid-but-unselected,
+    // never a definitive grammar rejection.
+    assert_unsupported("{ a }");
+}
+
+#[test]
+fn block_use_site_general_expression_neighbors_remain_unsupported_without_valid_prefix_leakage() {
+    for text in [
+        "{ a+b; }",
+        "{ +a; }",
+        "{ -a; }",
+        "{ (a); }",
+        "{ a.b; }",
+        "{ a[b]; }",
+        "{ a(); }",
+        "{ a=b; }",
+        "{ a ? b : c; }",
+        "{ a && b; }",
+        "{ a, b; }",
+        "{ new a; }",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn block_use_site_escaped_reserved_and_malformed_forms_are_not_selected() {
+    for text in [
+        r"{ \u0069f; }",
+        r"{ \u{}; }",
+        r"{ \u0030; }",
+        r"{ a\u002Db; }",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn block_use_site_existing_block_var_close_brace_asi_remains_unaffected() {
+    // The Block parser refactor must not regress existing Block-var
+    // `AutomaticBeforeBlockClose` support: this must remain a historical
+    // (not use-site-enabled) Block.
+    match recognize_selected_lexical_slice(&source("{ var a }")) {
+        SelectedLexicalSliceOutcome::RecognizedOneLevelBlockSlice(script) => {
+            use super::selected_lexical_slice::{
+                SelectedBlockItem, SelectedBlockVarStatementTerminator, SelectedTopLevelItem,
+            };
+            let [SelectedTopLevelItem::Block(block)] = script.items() else {
+                panic!("expected exactly one Block item");
+            };
+            let [SelectedBlockItem::Var(statement)] = block.items() else {
+                panic!("expected exactly one Var item");
+            };
+            assert_eq!(
+                statement.terminator(),
+                SelectedBlockVarStatementTerminator::AutomaticBeforeBlockClose
+            );
+        }
+        other => panic!("expected historical Block recognition, got {other:?}"),
+    }
+}
+
+#[test]
+fn duplicate_block_use_sites_are_preserved_distinctly_in_authored_order() {
+    let script = recognized_block_reference_use("{ a; a; }");
+    let [SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block)] = script.items()
+    else {
+        panic!("expected exactly one use-site-enabled Block item");
+    };
+    let [
+        SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(first),
+        SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(second),
+    ] = block.items()
+    else {
+        panic!("expected two use-site items");
+    };
+    assert_eq!(first.semantic_name(), "a");
+    assert_eq!(second.semantic_name(), "a");
+    assert!(first.reference().range().start() < second.reference().range().start());
+}
+
+#[test]
+fn distinct_blocks_own_distinct_use_sites() {
+    let script = recognized_block_reference_use("{ a; }\n{ a; }");
+    let [
+        SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(first_block),
+        SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(second_block),
+    ] = script.items()
+    else {
+        panic!("expected two use-site-enabled Block items");
+    };
+    assert_ne!(
+        (
+            first_block.block().range().start(),
+            first_block.block().range().end()
+        ),
+        (
+            second_block.block().range().start(),
+            second_block.block().range().end()
+        ),
+        "distinct Blocks must retain distinct authored Block anchors"
+    );
+}
+
+#[test]
+fn block_use_site_whole_source_transactionality() {
+    // A locally valid earlier Block use-site must not leak selected success
+    // if later source fails, whether the failure is inside the same Block,
+    // a later declaration, or a later top-level item.
+    assert_unsupported("{ a; ??? }");
+    assert_unsupported("{ a; let x = ; }");
+    assert_unsupported("{ a; }\n???");
 }
