@@ -38,6 +38,8 @@ mod qualification_selected_one_level_block_bare_var_validation_tests;
 #[cfg(test)]
 mod qualification_selected_one_level_block_composition_validation_tests;
 #[cfg(test)]
+mod qualification_selected_one_level_block_identifier_reference_expression_statement_use_site_validation_tests;
+#[cfg(test)]
 mod qualification_selected_one_level_block_terminal_composition_validation_tests;
 #[cfg(test)]
 mod qualification_selected_one_level_block_validation_tests;
