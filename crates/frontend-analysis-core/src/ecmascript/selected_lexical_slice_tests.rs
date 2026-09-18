@@ -6724,3 +6724,31 @@ fn leading_plus_minus_identifier_reference_unary_expression_trivia_matrix_is_rec
 
     assert_unsupported("let x = +\u{200B}\\u0066oo;");
 }
+
+/// Issue #750 transactionality: a locally complete escaped-unary
+/// `IdentifierReference` fact must not escape as committed selected state
+/// when a later declarator prevents the enclosing owner (`LexicalDeclaration`,
+/// top-level `var`, or Block `var`) from completing, exactly as for the
+/// existing plain-escaped, decimal-unary, and direct-unary predecessors.
+/// A preceding valid escaped-unary RHS also must not suppress or downgrade
+/// later already-owned malformed `BindingIdentifier` `Grammar` evidence.
+#[test]
+fn leading_plus_minus_identifier_reference_unary_expression_escaped_operand_transactionality_commits_no_earlier_fact()
+ {
+    for text in [
+        r"let x=-\u{61},y=;",
+        r"var x=-\u{61},y=;",
+        r"{ var x=-\u{61},y= }",
+    ] {
+        assert_unsupported(text);
+    }
+
+    let subject = grammar_rejection(r"let x=-\u{61}, \u{}=1;");
+    assert_eq!(subject.fragment(), r"\u{}");
+
+    let subject = grammar_rejection(r"var x=-\u{61}, \u{}=1;");
+    assert_eq!(subject.fragment(), r"\u{}");
+
+    let subject = grammar_rejection(r"{ var x=-\u{61}, \u{}=1; }");
+    assert_eq!(subject.fragment(), r"\u{}");
+}
