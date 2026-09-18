@@ -161,29 +161,29 @@ fn append_binding_relation<'script>(
     top_level_bindings: &HashMap<&'script str, &'script SourceAnchor>,
     relations: &mut Vec<SelectedOneLevelBlockBindingScopeRelation<'script>>,
 ) -> Result<(), AnalysisFailure> {
-    let Some(reference) = binding.identifier_reference_initializer() else {
-        return Ok(());
-    };
+    // Issue #754: 0, 1, or 2 retained facts are visited in exact authored
+    // left-to-right order.
+    for reference in binding.identifier_reference_initializer_facts() {
+        relations
+            .try_reserve(1)
+            .map_err(|_| AnalysisFailure::ResourceLimited)?;
 
-    relations
-        .try_reserve(1)
-        .map_err(|_| AnalysisFailure::ResourceLimited)?;
+        let semantic_name = reference.semantic_name();
+        let target = target_for_name(
+            semantic_name,
+            current_region,
+            current_bindings,
+            top_level_bindings,
+        );
 
-    let semantic_name = reference.semantic_name();
-    let target = target_for_name(
-        semantic_name,
-        current_region,
-        current_bindings,
-        top_level_bindings,
-    );
-
-    relations.push(SelectedOneLevelBlockBindingScopeRelation {
-        containing_binding: binding.binding(),
-        current_region,
-        reference: reference.reference(),
-        semantic_name,
-        target,
-    });
+        relations.push(SelectedOneLevelBlockBindingScopeRelation {
+            containing_binding: binding.binding(),
+            current_region,
+            reference: reference.reference(),
+            semantic_name,
+            target,
+        });
+    }
 
     Ok(())
 }

@@ -402,14 +402,24 @@ fn identifier_reference_direct_code_point_family_is_recognized_without_normaliza
         let _ = recognized(text);
     }
 
-    for text in [
-        "const x = 0a;",
-        "const x = !foo;",
-        "const x = foo-bar;",
-        "const x = foo💥;",
-    ] {
+    for text in ["const x = 0a;", "const x = !foo;", "const x = foo💥;"] {
         assert_unsupported(text);
     }
+
+    // Issue #754 stale fixture migration: `foo-bar` was `UnsupportedCoverage`
+    // (a valid `foo` `IdentifierReference` initializer followed by trailing
+    // `-bar` the declaration terminator check then rejected) before the
+    // selected two-`IdentifierReference` additive initializer landed. It is
+    // now the selected `SelectedTwoIdentifierReferenceAdditiveInitializer`
+    // theorem fixed by #752/#753: exactly two ordered facts, `foo` then
+    // `bar`.
+    let migrated = recognized("const x = foo-bar;");
+    let facts: Vec<_> = migrated.declarations()[0].bindings()[0]
+        .identifier_reference_initializer_facts()
+        .collect();
+    assert_eq!(facts.len(), 2);
+    assert_eq!(facts[0].semantic_name(), "foo");
+    assert_eq!(facts[1].semantic_name(), "bar");
 
     let composed = recognized("const x = é; const y = e\u{0301};");
     assert_eq!(composed.declarations().len(), 2);
@@ -6751,4 +6761,248 @@ fn leading_plus_minus_identifier_reference_unary_expression_escaped_operand_tran
 
     let subject = grammar_rejection(r"{ var x=-\u{61}, \u{}=1; }");
     assert_eq!(subject.fragment(), r"\u{}");
+}
+
+// Issue #754: bounded ordered two-`IdentifierReference` additive
+// initializer. #752/PR #753 already independently prove the exact bounded
+// theorem (exactly two accepted `IdentifierReference` operands, exactly one
+// binary `+`/`-`, Direct/Escaped non-Reserved cross-product, exact authored
+// provenance, left-to-right order, `a + a` non-deduplication, and every
+// firewall below) as a candidate-independent Oracle; these production tests
+// do not replace that independent evidence. They seal only that this
+// production slice composes the same bounded theorem, jointly owned by all
+// three initializer owners, without widening beyond it.
+
+#[test]
+fn two_identifier_reference_additive_initializer_retains_two_ordered_facts() {
+    for (text, expected_first, expected_second) in [
+        ("let x = a + b;", "a", "b"),
+        ("let x = a - b;", "a", "b"),
+        ("const x = foo + bar;", "foo", "bar"),
+        ("const x = foo - bar;", "foo", "bar"),
+        ("let x = b + a;", "b", "a"),
+        ("let x = a + a;", "a", "a"),
+    ] {
+        let script = recognized(text);
+        let [binding] = script.declarations()[0].bindings() else {
+            panic!("expected one selected lexical binding for {text:?}");
+        };
+        let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+        assert_eq!(facts.len(), 2, "{text:?}");
+        assert_eq!(facts[0].semantic_name(), expected_first, "{text:?}");
+        assert_eq!(facts[1].semantic_name(), expected_second, "{text:?}");
+        // A plain single-reference initializer's compatibility accessor
+        // keeps returning exactly the first (here, only) fact; for a
+        // two-fact initializer it returns the authored left operand.
+        assert_eq!(
+            binding
+                .identifier_reference_initializer()
+                .unwrap()
+                .semantic_name(),
+            expected_first,
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn two_identifier_reference_additive_initializer_direct_escaped_cross_product_preserves_authored_provenance()
+ {
+    // Classic four-hex-digit `\uXXXX` escape fragments are built with
+    // `concat!` over individually escaped pieces (matching PR #753's own
+    // technique) so the literal backslash-u-hex bytes reliably survive
+    // intact, rather than risking collapse into a decoded Unicode scalar by
+    // an intermediate write/review layer.
+    let esc_61 = concat!("\\", "u0061"); // decodes to "a"
+    let esc_62 = concat!("\\", "u0062"); // decodes to "b"
+    let esc_61_upper_within = concat!("f", "\\", "u006F", "o"); // mixed-part left operand, decodes to "foo"
+    let esc_61r = concat!("b", "\\", "u0061", "r"); // mixed-part right operand, decodes to "bar"
+
+    for (
+        text,
+        expected_first_fragment,
+        expected_first,
+        expected_second_fragment,
+        expected_second,
+    ) in [
+        (
+            "let x = a + b;".to_owned(),
+            "a".to_owned(),
+            "a",
+            "b".to_owned(),
+            "b",
+        ),
+        (
+            format!("let x = {esc_61} + b;"),
+            esc_61.to_owned(),
+            "a",
+            "b".to_owned(),
+            "b",
+        ),
+        (
+            format!("let x = a + {esc_62};"),
+            "a".to_owned(),
+            "a",
+            esc_62.to_owned(),
+            "b",
+        ),
+        (
+            format!("let x = {esc_61} - {esc_62};"),
+            esc_61.to_owned(),
+            "a",
+            esc_62.to_owned(),
+            "b",
+        ),
+        (
+            "let x = \\u{61} + \\u{62};".to_owned(),
+            "\\u{61}".to_owned(),
+            "a",
+            "\\u{62}".to_owned(),
+            "b",
+        ),
+        (
+            format!("let x = {esc_61_upper_within} + bar;"),
+            esc_61_upper_within.to_owned(),
+            "foo",
+            "bar".to_owned(),
+            "bar",
+        ),
+        (
+            format!("let x = foo - {esc_61r};"),
+            "foo".to_owned(),
+            "foo",
+            esc_61r.to_owned(),
+            "bar",
+        ),
+    ] {
+        let script = recognized(&text);
+        let [binding] = script.declarations()[0].bindings() else {
+            panic!("expected one selected lexical binding for {text:?}");
+        };
+        let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+        assert_eq!(facts.len(), 2, "{text:?}");
+        assert_eq!(
+            facts[0].reference().fragment(),
+            expected_first_fragment,
+            "{text:?}"
+        );
+        assert_eq!(facts[0].semantic_name(), expected_first, "{text:?}");
+        assert_eq!(
+            facts[1].reference().fragment(),
+            expected_second_fragment,
+            "{text:?}"
+        );
+        assert_eq!(facts[1].semantic_name(), expected_second, "{text:?}");
+    }
+}
+
+#[test]
+fn two_identifier_reference_additive_initializer_firewalls_remain_unsupported() {
+    for text in [
+        // Cardinality: 3+ operands are never truncated to the first two.
+        "let x = a + b + c;",
+        "let x = a - b - c;",
+        "let x = a + b - c;",
+        // Unary operands on either side.
+        "let x = +a + b;",
+        "let x = -a + b;",
+        "let x = a + +b;",
+        "let x = a + -b;",
+        // Non-IdentifierReference operands.
+        "let x = 1 + b;",
+        "let x = a + 1;",
+        "let x = true + b;",
+        "let x = a + null;",
+        "let x = this + b;",
+        "let x = \"a\" + b;",
+        // UpdateExpression / assignment operator boundaries.
+        "let x = a++b;",
+        "let x = a--b;",
+        "let x = a += b;",
+        "let x = a -= b;",
+        // Precedence / richer expressions.
+        "let x = a + b * c;",
+        "let x = a * b + c;",
+        // Grouping / member / call neighbors.
+        "let x = (a) + b;",
+        "let x = a + (b);",
+        "let x = a.b + c;",
+        "let x = a + b.c;",
+        "let x = a() + b;",
+        "let x = a + b();",
+        // Malformed / position-invalid second operand must not leak the
+        // first operand as a committed fact.
+        r"let x = a + \u{};",
+    ] {
+        assert_unsupported(text);
+    }
+
+    // Escaped ReservedWord operand: never an accepted operand, so it must
+    // not become selected two-fact evidence. Built with `concat!` over an
+    // individually escaped fragment (matching PR #753's own technique) so
+    // the literal backslash-u-hex bytes survive intact.
+    let escaped_if = concat!("\\", "u0069", "f"); // decodes to the reserved word "if"
+    assert_unsupported(&format!("let x = {escaped_if} + a;"));
+    assert_unsupported(&format!("let x = a + {escaped_if};"));
+
+    // Malformed second operand mid-spelling: `-` decodes to `-`, which
+    // is not a valid identifier-part, so this must not leak `a` (or `b`) as
+    // a committed fact.
+    let escaped_dash = concat!("\\", "u002D");
+    assert_unsupported(&format!("let x = a + b{escaped_dash}c;"));
+}
+
+#[test]
+fn two_identifier_reference_additive_initializer_transactionality_commits_no_earlier_fact() {
+    for text in [
+        "let x = a + b, y =;",
+        "var x = a + b, y =;",
+        "{ var x = a + b, y = }",
+    ] {
+        assert_unsupported(text);
+    }
+
+    let subject = grammar_rejection(r"let x = a + b, \u{} = 1;");
+    assert_eq!(subject.fragment(), r"\u{}");
+
+    let subject = grammar_rejection(r"var x = a + b, \u{} = 1;");
+    assert_eq!(subject.fragment(), r"\u{}");
+
+    let subject = grammar_rejection(r"{ var x = a + b, \u{} = 1; }");
+    assert_eq!(subject.fragment(), r"\u{}");
+}
+
+#[test]
+fn two_identifier_reference_additive_initializer_jointly_composes_across_all_three_owners() {
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+
+    let script = recognized_variable("var x = a + b;");
+    let statement = only_variable_statement(&script);
+    let [binding] = statement.bindings() else {
+        panic!("expected one selected top-level var binding");
+    };
+    let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+    assert_eq!(facts.len(), 2);
+    assert_eq!(facts[0].semantic_name(), "a");
+    assert_eq!(facts[1].semantic_name(), "b");
+
+    let block_script = recognized_block("{ var x = a - b; }");
+    let [SelectedTopLevelItem::Block(block)] = block_script.items() else {
+        panic!("expected exactly one Block item");
+    };
+    let [SelectedBlockItem::Var(statement)] = block.items() else {
+        panic!("expected exactly one Block var statement");
+    };
+    let [binding] = statement.bindings() else {
+        panic!("expected one selected Block var binding");
+    };
+    let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+    assert_eq!(facts.len(), 2);
+    assert_eq!(facts[0].semantic_name(), "a");
+    assert_eq!(facts[1].semantic_name(), "b");
+
+    // Joint placement-neutral firewall spot-check: the 3+ operand firewall
+    // holds for every owner, not only `LexicalDeclaration`.
+    assert_unsupported("var x = a + b + c;");
+    assert_unsupported("{ var x = a + b + c; }");
 }

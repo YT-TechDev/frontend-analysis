@@ -370,6 +370,45 @@ fn static_rejection_remains_an_upstream_prerequisite_boundary() {
     ));
 }
 
+// Issue #754: the two-`IdentifierReference` additive initializer widens
+// this consumer's input to 0..2 facts per binding, consumed in exact
+// authored reference order. `#752`/PR #753 independently proves the
+// underlying bounded theorem; these tests seal only that this distinct
+// one-level Block consumer composes it correctly.
+
+#[test]
+fn two_identifier_reference_additive_initializer_composes_two_relations_in_authored_order() {
+    let current_block = block(14, 28, "{ let x=a+b; }");
+    assert_eq!(
+        relation_snapshots("let a; let b; { let x=a+b; }"),
+        vec![
+            RelationSnapshot {
+                containing_binding: anchor(20, 21, "x"),
+                current_region: current_block.clone(),
+                reference: anchor(22, 23, "a"),
+                semantic_name: "a".to_owned(),
+                target: target(4, 5, "a", RegionSnapshot::TopLevel),
+            },
+            RelationSnapshot {
+                containing_binding: anchor(20, 21, "x"),
+                current_region: current_block,
+                reference: anchor(24, 25, "b"),
+                semantic_name: "b".to_owned(),
+                target: target(11, 12, "b", RegionSnapshot::TopLevel),
+            },
+        ]
+    );
+}
+
+#[test]
+fn two_identifier_reference_additive_initializer_does_not_deduplicate_equal_semantic_names() {
+    let relations = relation_snapshots("let a; { let x=a+a; }");
+    assert_eq!(relations.len(), 2);
+    assert_eq!(relations[0].semantic_name, "a");
+    assert_eq!(relations[1].semantic_name, "a");
+    assert_ne!(relations[0].reference.start, relations[1].reference.start);
+}
+
 #[test]
 fn production_remains_private_source_level_and_does_not_reuse_flat_no_target_or_order_types() {
     for forbidden in [

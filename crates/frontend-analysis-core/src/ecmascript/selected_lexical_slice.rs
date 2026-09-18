@@ -75,7 +75,18 @@
 //! scanner or decoder; an escaped ReservedWord operand continues to decline
 //! this wrapper and restore the cursor, per the candidate-independent
 //! theorem accepted by #241/#242 and this leaf's own frontier selection at
-//! #688 comment 5724869567, by #750.
+//! #688 comment 5724869567, by #750, and widened the retained
+//! `IdentifierReference` initializer carrier from at-most-one to a bounded
+//! `None`/`One`/`Two`-equivalent representation, composing an ordered
+//! `SelectedTwoIdentifierReferenceAdditiveInitializer`
+//! (`SelectedAcceptedIdentifierReference SelectedAdditiveTrivia ("+" | "-")
+//! SelectedAdditiveTrivia SelectedAcceptedIdentifierReference`) into the same
+//! three initializer owners via a new bounded
+//! `consume_selected_identifier_reference_initializer` helper that absorbs
+//! the previous plain single-reference route, reuses the unmodified shared
+//! `consume_selected_identifier_reference` recognizer exactly once per
+//! operand, and retains no operator or whole-expression fact, per the
+//! candidate-independent theorem accepted by #752/#753, by #754.
 //! Recognition is transactional for the whole authoritative
 //! `SourceText`: tentative declaration/binding/Block/var facts are returned
 //! only when the entire source is consumed by selected items plus selected
@@ -278,7 +289,7 @@ pub(super) enum SelectedBlockVarStatementTerminator {
 pub(super) struct SelectedBlockVarBinding {
     binding: SourceAnchor,
     name_state: SelectedBindingNameState,
-    identifier_reference_initializer: Option<SelectedIdentifierReferenceFact>,
+    identifier_reference_initializer: Option<SelectedIdentifierReferenceInitializer>,
     escaped_reserved_initializer_identifier: Option<SourceAnchor>,
 }
 
@@ -299,10 +310,26 @@ impl SelectedBlockVarBinding {
         }
     }
 
+    /// The first (and, for a single-reference initializer, only) retained
+    /// fact. Existing single-reference behavior is exactly preserved; use
+    /// [`Self::identifier_reference_initializer_facts`] to observe a second
+    /// authored operand.
     pub(super) fn identifier_reference_initializer(
         &self,
     ) -> Option<&SelectedIdentifierReferenceFact> {
-        self.identifier_reference_initializer.as_ref()
+        self.identifier_reference_initializer
+            .as_ref()
+            .map(SelectedIdentifierReferenceInitializer::first)
+    }
+
+    /// Every retained fact, in authored left-to-right order (0, 1, or 2
+    /// items).
+    pub(super) fn identifier_reference_initializer_facts(
+        &self,
+    ) -> impl Iterator<Item = &SelectedIdentifierReferenceFact> {
+        self.identifier_reference_initializer
+            .iter()
+            .flat_map(SelectedIdentifierReferenceInitializer::facts)
     }
 
     pub(super) fn escaped_reserved_initializer_identifier(&self) -> Option<&SourceAnchor> {
@@ -369,12 +396,57 @@ impl SelectedIdentifierReferenceFact {
     }
 }
 
+/// Crate-private bounded cardinality carrier for the selected
+/// `IdentifierReference` initializer position, widening the previous
+/// at-most-one carrier to admit exactly one additional selected additive
+/// operand (Issue #754). `One` is the unchanged existing single-reference
+/// fact. `Two` retains both authored operands of a selected
+/// `SelectedTwoIdentifierReferenceAdditiveInitializer` in exact authored
+/// left-to-right order (`first` is the left operand, `second` is the right
+/// operand). Three or more facts, a second fact without a first, reordering,
+/// and deduplication are all unrepresentable by this type. The containing
+/// binding's `Option<SelectedIdentifierReferenceInitializer>` field is the
+/// sole retained-reference storage: `None` means zero facts, so no separate
+/// competing fact channel exists anywhere on the binding.
+#[derive(Debug)]
+pub(super) enum SelectedIdentifierReferenceInitializer {
+    One(SelectedIdentifierReferenceFact),
+    Two {
+        first: SelectedIdentifierReferenceFact,
+        second: SelectedIdentifierReferenceFact,
+    },
+}
+
+impl SelectedIdentifierReferenceInitializer {
+    /// The first (and, for `One`, only) retained fact: the sole reference of
+    /// a single-reference initializer, or the authored left operand of a
+    /// two-reference additive initializer. Always defined and never panics.
+    pub(super) fn first(&self) -> &SelectedIdentifierReferenceFact {
+        match self {
+            Self::One(fact) => fact,
+            Self::Two { first, .. } => first,
+        }
+    }
+
+    /// Every retained fact, in exact authored left-to-right order: one item
+    /// for `One`, two for `Two`. Backed by a fixed-size array, never a heap
+    /// allocation.
+    pub(super) fn facts(&self) -> impl Iterator<Item = &SelectedIdentifierReferenceFact> {
+        match self {
+            Self::One(fact) => [Some(fact), None],
+            Self::Two { first, second } => [Some(first), Some(second)],
+        }
+        .into_iter()
+        .flatten()
+    }
+}
+
 #[derive(Debug)]
 pub(super) struct SelectedLexicalBinding {
     binding: SourceAnchor,
     name_state: SelectedBindingNameState,
     initializer: SelectedInitializerState,
-    identifier_reference_initializer: Option<SelectedIdentifierReferenceFact>,
+    identifier_reference_initializer: Option<SelectedIdentifierReferenceInitializer>,
     escaped_reserved_initializer_identifier: Option<SourceAnchor>,
 }
 
@@ -399,10 +471,26 @@ impl SelectedLexicalBinding {
         self.initializer
     }
 
+    /// The first (and, for a single-reference initializer, only) retained
+    /// fact. Existing single-reference behavior is exactly preserved; use
+    /// [`Self::identifier_reference_initializer_facts`] to observe a second
+    /// authored operand.
     pub(super) fn identifier_reference_initializer(
         &self,
     ) -> Option<&SelectedIdentifierReferenceFact> {
-        self.identifier_reference_initializer.as_ref()
+        self.identifier_reference_initializer
+            .as_ref()
+            .map(SelectedIdentifierReferenceInitializer::first)
+    }
+
+    /// Every retained fact, in authored left-to-right order (0, 1, or 2
+    /// items).
+    pub(super) fn identifier_reference_initializer_facts(
+        &self,
+    ) -> impl Iterator<Item = &SelectedIdentifierReferenceFact> {
+        self.identifier_reference_initializer
+            .iter()
+            .flat_map(SelectedIdentifierReferenceInitializer::facts)
     }
 
     pub(super) fn escaped_reserved_initializer_identifier(&self) -> Option<&SourceAnchor> {
@@ -414,7 +502,7 @@ impl SelectedLexicalBinding {
 pub(super) struct SelectedVariableBinding {
     binding: SourceAnchor,
     name_state: SelectedBindingNameState,
-    identifier_reference_initializer: Option<SelectedIdentifierReferenceFact>,
+    identifier_reference_initializer: Option<SelectedIdentifierReferenceInitializer>,
     escaped_reserved_initializer_identifier: Option<SourceAnchor>,
 }
 
@@ -435,10 +523,26 @@ impl SelectedVariableBinding {
         }
     }
 
+    /// The first (and, for a single-reference initializer, only) retained
+    /// fact. Existing single-reference behavior is exactly preserved; use
+    /// [`Self::identifier_reference_initializer_facts`] to observe a second
+    /// authored operand.
     pub(super) fn identifier_reference_initializer(
         &self,
     ) -> Option<&SelectedIdentifierReferenceFact> {
-        self.identifier_reference_initializer.as_ref()
+        self.identifier_reference_initializer
+            .as_ref()
+            .map(SelectedIdentifierReferenceInitializer::first)
+    }
+
+    /// Every retained fact, in authored left-to-right order (0, 1, or 2
+    /// items).
+    pub(super) fn identifier_reference_initializer_facts(
+        &self,
+    ) -> impl Iterator<Item = &SelectedIdentifierReferenceFact> {
+        self.identifier_reference_initializer
+            .iter()
+            .flat_map(SelectedIdentifierReferenceInitializer::facts)
     }
 
     pub(super) fn escaped_reserved_initializer_identifier(&self) -> Option<&SourceAnchor> {
@@ -666,6 +770,34 @@ enum ParseFailure {
 enum SelectedIdentifierReferenceRecognition {
     Matched(SelectedIdentifierReferenceFact),
     EscapedReservedIdentifierName { identifier: SourceAnchor },
+    NotSelected,
+    ResourceLimited,
+    InternalFailure,
+}
+
+/// Result of the bounded 1-or-2 `IdentifierReference` initializer helper
+/// (Issue #754), which absorbs the previous plain
+/// `consume_selected_identifier_reference()` initializer route. `One`
+/// carries the exact existing single-reference behavior unchanged. `Two`
+/// carries both authored operands of a selected
+/// `SelectedTwoIdentifierReferenceAdditiveInitializer` in exact authored
+/// left-to-right order. `EscapedReservedIdentifierName` is the unchanged
+/// existing classification-only route for a first operand whose decoded
+/// spelling is a ReservedWord (a ReservedWord is never an accepted operand,
+/// so no additive continuation is attempted for it). `NotSelected` covers no
+/// `IdentifierReference` operand at all. `ResourceLimited` and
+/// `InternalFailure` preserve the shared recognizer's own processing-failure
+/// classes for either operand, never downgraded to `NotSelected`.
+#[derive(Debug)]
+enum SelectedIdentifierReferenceInitializerRecognition {
+    One(SelectedIdentifierReferenceFact),
+    Two {
+        first: SelectedIdentifierReferenceFact,
+        second: SelectedIdentifierReferenceFact,
+    },
+    EscapedReservedIdentifierName {
+        identifier: SourceAnchor,
+    },
     NotSelected,
     ResourceLimited,
     InternalFailure,
@@ -931,7 +1063,7 @@ impl<'source> Cursor<'source> {
                             .consume_selected_leading_plus_minus_identifier_reference_unary_expression()
                         {
                             SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
-                                (Some(reference), None)
+                                (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
                             }
                             SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
                                 return Err(ParseFailure::ResourceLimited);
@@ -950,20 +1082,26 @@ impl<'source> Cursor<'source> {
                                 {
                                     (None, None)
                                 } else {
-                                    match self.consume_selected_identifier_reference() {
-                                        SelectedIdentifierReferenceRecognition::Matched(reference) => {
-                                            (Some(reference), None)
+                                    match self.consume_selected_identifier_reference_initializer() {
+                                        SelectedIdentifierReferenceInitializerRecognition::One(reference) => {
+                                            (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
                                         }
-                                        SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName {
+                                        SelectedIdentifierReferenceInitializerRecognition::Two { first, second } => {
+                                            (
+                                                Some(SelectedIdentifierReferenceInitializer::Two { first, second }),
+                                                None,
+                                            )
+                                        }
+                                        SelectedIdentifierReferenceInitializerRecognition::EscapedReservedIdentifierName {
                                             identifier,
                                         } => (None, Some(identifier)),
-                                        SelectedIdentifierReferenceRecognition::NotSelected => {
+                                        SelectedIdentifierReferenceInitializerRecognition::NotSelected => {
                                             return Err(ParseFailure::UnsupportedCoverage);
                                         }
-                                        SelectedIdentifierReferenceRecognition::ResourceLimited => {
+                                        SelectedIdentifierReferenceInitializerRecognition::ResourceLimited => {
                                             return Err(ParseFailure::ResourceLimited);
                                         }
-                                        SelectedIdentifierReferenceRecognition::InternalFailure => {
+                                        SelectedIdentifierReferenceInitializerRecognition::InternalFailure => {
                                             return Err(ParseFailure::InternalFailure);
                                         }
                                     }
@@ -1089,7 +1227,7 @@ impl<'source> Cursor<'source> {
                             .consume_selected_leading_plus_minus_identifier_reference_unary_expression()
                         {
                             SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
-                                (Some(reference), None)
+                                (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
                             }
                             SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
                                 return Err(ParseFailure::ResourceLimited);
@@ -1108,20 +1246,26 @@ impl<'source> Cursor<'source> {
                                 {
                                     (None, None)
                                 } else {
-                                    match self.consume_selected_identifier_reference() {
-                                        SelectedIdentifierReferenceRecognition::Matched(reference) => {
-                                            (Some(reference), None)
+                                    match self.consume_selected_identifier_reference_initializer() {
+                                        SelectedIdentifierReferenceInitializerRecognition::One(reference) => {
+                                            (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
                                         }
-                                        SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName {
+                                        SelectedIdentifierReferenceInitializerRecognition::Two { first, second } => {
+                                            (
+                                                Some(SelectedIdentifierReferenceInitializer::Two { first, second }),
+                                                None,
+                                            )
+                                        }
+                                        SelectedIdentifierReferenceInitializerRecognition::EscapedReservedIdentifierName {
                                             identifier,
                                         } => (None, Some(identifier)),
-                                        SelectedIdentifierReferenceRecognition::NotSelected => {
+                                        SelectedIdentifierReferenceInitializerRecognition::NotSelected => {
                                             return Err(ParseFailure::UnsupportedCoverage);
                                         }
-                                        SelectedIdentifierReferenceRecognition::ResourceLimited => {
+                                        SelectedIdentifierReferenceInitializerRecognition::ResourceLimited => {
                                             return Err(ParseFailure::ResourceLimited);
                                         }
-                                        SelectedIdentifierReferenceRecognition::InternalFailure => {
+                                        SelectedIdentifierReferenceInitializerRecognition::InternalFailure => {
                                             return Err(ParseFailure::InternalFailure);
                                         }
                                     }
@@ -1211,7 +1355,8 @@ impl<'source> Cursor<'source> {
                         .consume_selected_leading_plus_minus_identifier_reference_unary_expression()
                     {
                         SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
-                            identifier_reference_initializer = Some(reference);
+                            identifier_reference_initializer =
+                                Some(SelectedIdentifierReferenceInitializer::One(reference));
                         }
                         SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
                             return Err(ParseFailure::ResourceLimited);
@@ -1228,22 +1373,27 @@ impl<'source> Cursor<'source> {
                                 && !self.consume_selected_this_expression()
                                 && !self.consume_selected_escape_free_string_literal()
                             {
-                                match self.consume_selected_identifier_reference() {
-                                    SelectedIdentifierReferenceRecognition::Matched(reference) => {
-                                        identifier_reference_initializer = Some(reference);
+                                match self.consume_selected_identifier_reference_initializer() {
+                                    SelectedIdentifierReferenceInitializerRecognition::One(reference) => {
+                                        identifier_reference_initializer =
+                                            Some(SelectedIdentifierReferenceInitializer::One(reference));
                                     }
-                                    SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName {
+                                    SelectedIdentifierReferenceInitializerRecognition::Two { first, second } => {
+                                        identifier_reference_initializer =
+                                            Some(SelectedIdentifierReferenceInitializer::Two { first, second });
+                                    }
+                                    SelectedIdentifierReferenceInitializerRecognition::EscapedReservedIdentifierName {
                                         identifier,
                                     } => {
                                         escaped_reserved_initializer_identifier = Some(identifier);
                                     }
-                                    SelectedIdentifierReferenceRecognition::NotSelected => {
+                                    SelectedIdentifierReferenceInitializerRecognition::NotSelected => {
                                         return Err(ParseFailure::UnsupportedCoverage);
                                     }
-                                    SelectedIdentifierReferenceRecognition::ResourceLimited => {
+                                    SelectedIdentifierReferenceInitializerRecognition::ResourceLimited => {
                                         return Err(ParseFailure::ResourceLimited);
                                     }
-                                    SelectedIdentifierReferenceRecognition::InternalFailure => {
+                                    SelectedIdentifierReferenceInitializerRecognition::InternalFailure => {
                                         return Err(ParseFailure::InternalFailure);
                                     }
                                 }
@@ -1661,6 +1811,104 @@ impl<'source> Cursor<'source> {
             reference,
             name_state,
         })
+    }
+
+    /// Recognizes the bounded selected `IdentifierReference` initializer
+    /// family fixed by Issue #754:
+    ///
+    /// ```text
+    /// SelectedTwoIdentifierReferenceAdditiveInitializer ::=
+    ///     SelectedAcceptedIdentifierReference
+    ///     SelectedAdditiveTrivia
+    ///     ("+" | "-")
+    ///     SelectedAdditiveTrivia
+    ///     SelectedAcceptedIdentifierReference
+    /// ```
+    ///
+    /// absorbing the plain single-reference route accepted by #334/#338/#750.
+    /// The first operand is recognized exactly once by the unmodified shared
+    /// `consume_selected_identifier_reference()` recognizer. An escaped
+    /// ReservedWord first operand is never an accepted operand, so it is
+    /// returned immediately as the existing classification-only
+    /// `EscapedReservedIdentifierName` route without attempting any additive
+    /// continuation, exactly matching prior behavior for that spelling.
+    ///
+    /// Otherwise, this helper optimistically probes for a continuation:
+    /// selected trivia, exactly one authored binary `+` or `-`, selected
+    /// trivia, and a second `IdentifierReference` operand recognized by the
+    /// same unmodified shared recognizer (never a second scanner/decoder).
+    /// If the whole continuation completes with an accepted (direct or
+    /// escaped non-ReservedWord) second operand, `Two { first, second }` is
+    /// returned with the cursor positioned immediately after the second
+    /// operand. If the continuation does not complete for any reason
+    /// (absent operator; an escaped-ReservedWord, malformed, or entirely
+    /// absent second operand), the cursor is restored to exactly where it
+    /// stood right after the first operand and `One(first)` is returned: no
+    /// probed trivia, operator, or partial second-operand state is left
+    /// committed. This is what naturally excludes longer additive chains
+    /// (`a + b + c`), unary operands, non-`IdentifierReference` operands,
+    /// grouping/member/call forms, and `UpdateExpression`/assignment tokens:
+    /// each one fails to complete the continuation, degrades to `One(first)`
+    /// with the cursor restored to immediately after the first operand, and
+    /// the unconsumed remainder is then rejected by the existing enclosing
+    /// owner terminator/comma transaction exactly as an unrecognized
+    /// initializer suffix always has been — no dedicated firewall logic or
+    /// generic expression parser is introduced here.
+    ///
+    /// A `ResourceLimited` or `InternalFailure` processing failure from
+    /// either operand's recognition is propagated immediately and is never
+    /// downgraded to a completed `One`/`Two` result or to `NotSelected`; no
+    /// first-operand fact is ever returned to the caller when the second
+    /// operand's recognition reports a processing failure.
+    fn consume_selected_identifier_reference_initializer(
+        &mut self,
+    ) -> SelectedIdentifierReferenceInitializerRecognition {
+        let first = match self.consume_selected_identifier_reference() {
+            SelectedIdentifierReferenceRecognition::Matched(fact) => fact,
+            SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName {
+                identifier,
+            } => {
+                return SelectedIdentifierReferenceInitializerRecognition::EscapedReservedIdentifierName {
+                    identifier,
+                };
+            }
+            SelectedIdentifierReferenceRecognition::NotSelected => {
+                return SelectedIdentifierReferenceInitializerRecognition::NotSelected;
+            }
+            SelectedIdentifierReferenceRecognition::ResourceLimited => {
+                return SelectedIdentifierReferenceInitializerRecognition::ResourceLimited;
+            }
+            SelectedIdentifierReferenceRecognition::InternalFailure => {
+                return SelectedIdentifierReferenceInitializerRecognition::InternalFailure;
+            }
+        };
+
+        let after_first = self.offset;
+        self.skip_selected_trivia();
+
+        if !self.consume_ascii('+') && !self.consume_ascii('-') {
+            self.offset = after_first;
+            return SelectedIdentifierReferenceInitializerRecognition::One(first);
+        }
+
+        self.skip_selected_trivia();
+
+        match self.consume_selected_identifier_reference() {
+            SelectedIdentifierReferenceRecognition::Matched(second) => {
+                SelectedIdentifierReferenceInitializerRecognition::Two { first, second }
+            }
+            SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName { .. }
+            | SelectedIdentifierReferenceRecognition::NotSelected => {
+                self.offset = after_first;
+                SelectedIdentifierReferenceInitializerRecognition::One(first)
+            }
+            SelectedIdentifierReferenceRecognition::ResourceLimited => {
+                SelectedIdentifierReferenceInitializerRecognition::ResourceLimited
+            }
+            SelectedIdentifierReferenceRecognition::InternalFailure => {
+                SelectedIdentifierReferenceInitializerRecognition::InternalFailure
+            }
+        }
     }
 
     fn consume_initializer_equals(&mut self) -> bool {
