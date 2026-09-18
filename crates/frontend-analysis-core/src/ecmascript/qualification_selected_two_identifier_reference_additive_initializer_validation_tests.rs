@@ -739,6 +739,70 @@ fn direct_escaped_cross_product_pins_authored_vs_decoded_identity_per_operand() 
             expected_right_semantic: "bar",
             expected_right_spelling: OperandSpellingKind::EscapedNonReserved,
         },
+        // The five cases below are the same theorem restated with the
+        // classic four-hex-digit `\uXXXX` UnicodeEscapeSequence form
+        // (Issue #752 remediation: the braced cases above alone leave the
+        // `formed_escape_at` fixed-width branch, and its composition with
+        // `left_operand_run_end`, unexercised by direct authored evidence).
+        // Built with `concat!` over individually escaped fragments so the
+        // literal bytes `\`, `u`, `0`, `0`, `6`, `1` survive intact rather
+        // than being collapsed into a decoded Unicode scalar by an
+        // intermediate write layer.
+        CrossProductFixture {
+            text: concat!("const x = ", "\\", "u0061", " + b;"),
+            left: Range(10, 16),
+            right: Range(19, 20),
+            expected_left_authored: concat!("\\", "u0061"),
+            expected_left_semantic: "a",
+            expected_left_spelling: OperandSpellingKind::EscapedNonReserved,
+            expected_right_authored: "b",
+            expected_right_semantic: "b",
+            expected_right_spelling: OperandSpellingKind::Direct,
+        },
+        CrossProductFixture {
+            text: concat!("const x = a + ", "\\", "u0062", ";"),
+            left: Range(10, 11),
+            right: Range(14, 20),
+            expected_left_authored: "a",
+            expected_left_semantic: "a",
+            expected_left_spelling: OperandSpellingKind::Direct,
+            expected_right_authored: concat!("\\", "u0062"),
+            expected_right_semantic: "b",
+            expected_right_spelling: OperandSpellingKind::EscapedNonReserved,
+        },
+        CrossProductFixture {
+            text: concat!("const x = ", "\\", "u0061", " - ", "\\", "u0062", ";"),
+            left: Range(10, 16),
+            right: Range(19, 25),
+            expected_left_authored: concat!("\\", "u0061"),
+            expected_left_semantic: "a",
+            expected_left_spelling: OperandSpellingKind::EscapedNonReserved,
+            expected_right_authored: concat!("\\", "u0062"),
+            expected_right_semantic: "b",
+            expected_right_spelling: OperandSpellingKind::EscapedNonReserved,
+        },
+        CrossProductFixture {
+            text: concat!("const x = f", "\\", "u006F", "o + bar;"),
+            left: Range(10, 18),
+            right: Range(21, 24),
+            expected_left_authored: concat!("f", "\\", "u006F", "o"),
+            expected_left_semantic: "foo",
+            expected_left_spelling: OperandSpellingKind::EscapedNonReserved,
+            expected_right_authored: "bar",
+            expected_right_semantic: "bar",
+            expected_right_spelling: OperandSpellingKind::Direct,
+        },
+        CrossProductFixture {
+            text: concat!("const x = foo - b", "\\", "u0061", "r;"),
+            left: Range(10, 13),
+            right: Range(16, 24),
+            expected_left_authored: "foo",
+            expected_left_semantic: "foo",
+            expected_left_spelling: OperandSpellingKind::Direct,
+            expected_right_authored: concat!("b", "\\", "u0061", "r"),
+            expected_right_semantic: "bar",
+            expected_right_spelling: OperandSpellingKind::EscapedNonReserved,
+        },
     ];
 
     for (index, fixture) in fixtures.iter().enumerate() {
