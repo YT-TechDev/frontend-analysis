@@ -52,6 +52,8 @@ mod qualification_selected_top_level_variable_statement_composition_validation_t
 #[cfg(test)]
 mod qualification_selected_top_level_variable_statement_validation_tests;
 #[cfg(test)]
+mod qualification_selected_two_identifier_reference_additive_initializer_validation_tests;
+#[cfg(test)]
 mod qualification_static_semantics_validation_tests;
 #[cfg(test)]
 mod qualification_validation_tests;
