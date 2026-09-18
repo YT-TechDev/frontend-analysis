@@ -404,7 +404,7 @@ fn identifier_reference_direct_code_point_family_is_recognized_without_normaliza
 
     for text in [
         "const x = 0a;",
-        "const x = -foo;",
+        "const x = !foo;",
         "const x = foo-bar;",
         "const x = foo💥;",
     ] {
@@ -6196,9 +6196,12 @@ fn leading_plus_minus_decimal_unary_expression_does_not_claim_non_numeric_or_fut
  {
     for text in [
         // operand firewall: only the accepted separator-free decimal atom
-        // family is admitted
-        "let x = -foo;",
-        "let x = +foo;",
+        // family is admitted (a direct IdentifierReference operand is
+        // outside the decimal-unary theorem and is instead owned by the
+        // separate leading +/- direct IdentifierReference UnaryExpression
+        // leaf; an escaped operand remains outside both leaves)
+        "let x = -\\u0066oo;",
+        "let x = +\\u0066oo;",
         "let x = -(1);",
         "let x = +(1);",
         "let x = -\"x\";",
@@ -6347,7 +6350,7 @@ fn top_level_var_leading_plus_minus_decimal_unary_expression_positive_matrix_is_
 fn top_level_var_leading_plus_minus_decimal_unary_expression_does_not_claim_numeric_or_richer_neighbors()
  {
     for text in [
-        "var x = -foo;",
+        "var x = -\\u0066oo;",
         "var x = -this;",
         "var x = -1_0;",
         "var x = +1n;",
@@ -6421,7 +6424,7 @@ fn one_level_block_var_leading_plus_minus_decimal_unary_expression_positive_matr
 fn one_level_block_var_leading_plus_minus_decimal_unary_expression_does_not_claim_numeric_or_richer_neighbors()
  {
     for text in [
-        "{ var x = -foo; }",
+        "{ var x = -\\u0066oo; }",
         "{ var x = -this; }",
         "{ var x = -1_0; }",
         "{ var x = +1n; }",
@@ -6504,4 +6507,94 @@ fn one_level_block_var_leading_plus_minus_decimal_unary_expression_mixed_with_si
         .expect("final declarator must retain existing IdentifierReference fact");
     assert_eq!(reference.reference().fragment(), "x");
     assert_eq!(reference.semantic_name(), "x");
+}
+
+/// Issue #748: the new bounded leading `+`/`-` direct `IdentifierReference`
+/// `UnaryExpression` helper composes into all three mature initializer
+/// owners and, on each owner, retains the exact existing
+/// `SelectedIdentifierReferenceFact` produced by the unmodified shared
+/// `consume_selected_identifier_reference()` recognizer: the retained
+/// anchor and semantic name are the inner operand only (`a`, not `-a` or
+/// `- a`), never the operator or intervening trivia.
+#[test]
+fn leading_plus_minus_direct_identifier_reference_unary_expression_retains_exact_inner_provenance_across_all_three_owners()
+ {
+    let script = recognized("const x = - a;");
+    let declaration = &script.declarations()[0];
+    let [binding] = declaration.bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    assert_eq!(
+        binding.initializer(),
+        SelectedInitializerState::SelectedPresent
+    );
+    let reference = binding
+        .identifier_reference_initializer()
+        .expect("unary-wrapped LexicalDeclaration RHS reference fact");
+    assert_eq!(reference.reference().fragment(), "a");
+    assert_eq!(reference.semantic_name(), "a");
+
+    let script = recognized_variable("var x = +foo;");
+    let statement = only_variable_statement(&script);
+    let [binding] = statement.bindings() else {
+        panic!("expected one selected variable binding");
+    };
+    let reference = binding
+        .identifier_reference_initializer()
+        .expect("unary-wrapped top-level var RHS reference fact");
+    assert_eq!(reference.reference().fragment(), "foo");
+    assert_eq!(reference.semantic_name(), "foo");
+
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+    let script = recognized_block("{ var x = -\tfoo; }");
+    let [SelectedTopLevelItem::Block(block)] = script.items() else {
+        panic!("expected exactly one Block item");
+    };
+    let [SelectedBlockItem::Var(statement)] = block.items() else {
+        panic!("expected exactly one Block var statement");
+    };
+    let [binding] = statement.bindings() else {
+        panic!("expected one selected Block var binding");
+    };
+    let reference = binding
+        .identifier_reference_initializer()
+        .expect("unary-wrapped Block var RHS reference fact");
+    assert_eq!(reference.reference().fragment(), "foo");
+    assert_eq!(reference.semantic_name(), "foo");
+}
+
+/// Issue #748 critical regression: the accepted decimal-unary predecessor
+/// (#742/#743/#744) keeps sole ownership of `-1e-2`-shaped sources across
+/// all three owners. The new direct-IdentifierReference unary helper is
+/// tried only after the decimal-unary predecessor declines, so it never
+/// observes, and never retains a fact for, this source.
+#[test]
+fn leading_plus_minus_decimal_unary_expression_precedence_remains_reference_silent_across_all_three_owners()
+ {
+    let script = recognized("const x = -1e-2;");
+    let declaration = &script.declarations()[0];
+    let [binding] = declaration.bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    assert!(binding.identifier_reference_initializer().is_none());
+
+    let script = recognized_variable("var x = -1e-2;");
+    let statement = only_variable_statement(&script);
+    let [binding] = statement.bindings() else {
+        panic!("expected one selected variable binding");
+    };
+    assert!(binding.identifier_reference_initializer().is_none());
+
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+    let script = recognized_block("{ var x = -1e-2; }");
+    let [SelectedTopLevelItem::Block(block)] = script.items() else {
+        panic!("expected exactly one Block item");
+    };
+    let [SelectedBlockItem::Var(statement)] = block.items() else {
+        panic!("expected exactly one Block var statement");
+    };
+    let [binding] = statement.bindings() else {
+        panic!("expected one selected Block var binding");
+    };
+    assert!(binding.identifier_reference_initializer().is_none());
 }

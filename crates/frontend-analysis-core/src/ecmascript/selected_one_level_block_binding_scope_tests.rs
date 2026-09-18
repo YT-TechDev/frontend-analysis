@@ -328,6 +328,22 @@ fn multiple_relations_preserve_reference_traversal_order_across_regions() {
 }
 
 #[test]
+fn leading_plus_minus_direct_identifier_reference_unary_expression_composes_unchanged_with_one_level_block_binding_scope()
+ {
+    let current_block = block(0, 22, "{ let a=1; let x=-a; }");
+    assert_eq!(
+        relation_snapshots("{ let a=1; let x=-a; }"),
+        vec![RelationSnapshot {
+            containing_binding: anchor(15, 16, "x"),
+            current_region: current_block.clone(),
+            reference: anchor(18, 19, "a"),
+            semantic_name: "a".to_owned(),
+            target: target(6, 7, "a", current_block),
+        }]
+    );
+}
+
+#[test]
 fn static_rejection_remains_an_upstream_prerequisite_boundary() {
     let duplicate = recognized("{ let x=a; let a=1; let a=2; }");
     assert!(matches!(

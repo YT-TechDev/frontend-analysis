@@ -53,7 +53,19 @@
 //! tried before the unmodified exponent/fractional/decimal-integer
 //! predecessors at all three call sites, reusing those helpers and the
 //! unmodified `skip_selected_trivia` unchanged, per the
-//! candidate-independent theorem accepted by #742/#743, by #744.
+//! candidate-independent theorem accepted by #742/#743, by #744, and
+//! composed a bounded, placement-neutral leading `+`/`-` direct
+//! `IdentifierReference` `UnaryExpression` (`SelectedUnaryPlusMinus
+//! SelectedUnaryOperandTrivia SelectedDirectIdentifierReference`) into the
+//! same three initializer owners, tried immediately after the unmodified
+//! decimal-unary predecessor and before the exponent/fractional/decimal-integer
+//! predecessors at all three call sites, via a new bounded
+//! `consume_selected_leading_plus_minus_direct_identifier_reference_unary_expression`
+//! helper reusing the unmodified `skip_selected_trivia` and shared
+//! `consume_selected_identifier_reference` recognizer unchanged and
+//! returning the existing inner `SelectedIdentifierReferenceFact`
+//! unmodified, per the candidate-independent theorem accepted by #746/#747,
+//! by #748.
 //! Recognition is transactional for the whole authoritative
 //! `SourceText`: tentative declaration/binding/Block/var facts are returned
 //! only when the entire source is consumed by selected items plus selected
@@ -649,6 +661,23 @@ enum SelectedIdentifierReferenceRecognition {
     InternalFailure,
 }
 
+/// Result of the bounded leading `+`/`-` direct `IdentifierReference`
+/// `UnaryExpression` helper (Issue #748). `Matched` carries the exact
+/// existing `SelectedIdentifierReferenceFact` produced by the shared
+/// `consume_selected_identifier_reference()` recognizer for the operand,
+/// unchanged. `NotSelected` covers every decline: no leading `+`/`-`, an
+/// escaped (non-Reserved or ReservedWord) operand, or no `IdentifierReference`
+/// operand at all. `ResourceLimited` and `InternalFailure` preserve the
+/// shared recognizer's own processing-failure classes without collapsing
+/// them into `NotSelected`.
+#[derive(Debug)]
+enum SelectedLeadingPlusMinusDirectIdentifierReferenceUnaryExpressionRecognition {
+    Matched(SelectedIdentifierReferenceFact),
+    NotSelected,
+    ResourceLimited,
+    InternalFailure,
+}
+
 struct Cursor<'source> {
     source: &'source SourceText,
     text: &'source str,
@@ -883,31 +912,50 @@ impl<'source> Cursor<'source> {
                     self.skip_selected_trivia();
                     let facts = if self
                         .consume_selected_leading_plus_minus_decimal_unary_expression()
-                        || self.consume_selected_plain_exponent_decimal_literal()
-                        || self.consume_selected_plain_fractional_decimal_literal()
-                        || self.consume_selected_decimal_integer()
-                        || self.consume_selected_boolean_literal()
-                        || self.consume_selected_null_literal()
-                        || self.consume_selected_this_expression()
-                        || self.consume_selected_escape_free_string_literal()
                     {
                         (None, None)
                     } else {
-                        match self.consume_selected_identifier_reference() {
-                            SelectedIdentifierReferenceRecognition::Matched(reference) => {
+                        match self
+                            .consume_selected_leading_plus_minus_direct_identifier_reference_unary_expression()
+                        {
+                            SelectedLeadingPlusMinusDirectIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
                                 (Some(reference), None)
                             }
-                            SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName {
-                                identifier,
-                            } => (None, Some(identifier)),
-                            SelectedIdentifierReferenceRecognition::NotSelected => {
-                                return Err(ParseFailure::UnsupportedCoverage);
-                            }
-                            SelectedIdentifierReferenceRecognition::ResourceLimited => {
+                            SelectedLeadingPlusMinusDirectIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
                                 return Err(ParseFailure::ResourceLimited);
                             }
-                            SelectedIdentifierReferenceRecognition::InternalFailure => {
+                            SelectedLeadingPlusMinusDirectIdentifierReferenceUnaryExpressionRecognition::InternalFailure => {
                                 return Err(ParseFailure::InternalFailure);
+                            }
+                            SelectedLeadingPlusMinusDirectIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
+                                if self.consume_selected_plain_exponent_decimal_literal()
+                                    || self.consume_selected_plain_fractional_decimal_literal()
+                                    || self.consume_selected_decimal_integer()
+                                    || self.consume_selected_boolean_literal()
+                                    || self.consume_selected_null_literal()
+                                    || self.consume_selected_this_expression()
+                                    || self.consume_selected_escape_free_string_literal()
+                                {
+                                    (None, None)
+                                } else {
+                                    match self.consume_selected_identifier_reference() {
+                                        SelectedIdentifierReferenceRecognition::Matched(reference) => {
+                                            (Some(reference), None)
+                                        }
+                                        SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName {
+                                            identifier,
+                                        } => (None, Some(identifier)),
+                                        SelectedIdentifierReferenceRecognition::NotSelected => {
+                                            return Err(ParseFailure::UnsupportedCoverage);
+                                        }
+                                        SelectedIdentifierReferenceRecognition::ResourceLimited => {
+                                            return Err(ParseFailure::ResourceLimited);
+                                        }
+                                        SelectedIdentifierReferenceRecognition::InternalFailure => {
+                                            return Err(ParseFailure::InternalFailure);
+                                        }
+                                    }
+                                }
                             }
                         }
                     };
@@ -1022,31 +1070,50 @@ impl<'source> Cursor<'source> {
                     self.skip_selected_trivia();
                     let facts = if self
                         .consume_selected_leading_plus_minus_decimal_unary_expression()
-                        || self.consume_selected_plain_exponent_decimal_literal()
-                        || self.consume_selected_plain_fractional_decimal_literal()
-                        || self.consume_selected_decimal_integer()
-                        || self.consume_selected_boolean_literal()
-                        || self.consume_selected_null_literal()
-                        || self.consume_selected_this_expression()
-                        || self.consume_selected_escape_free_string_literal()
                     {
                         (None, None)
                     } else {
-                        match self.consume_selected_identifier_reference() {
-                            SelectedIdentifierReferenceRecognition::Matched(reference) => {
+                        match self
+                            .consume_selected_leading_plus_minus_direct_identifier_reference_unary_expression()
+                        {
+                            SelectedLeadingPlusMinusDirectIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
                                 (Some(reference), None)
                             }
-                            SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName {
-                                identifier,
-                            } => (None, Some(identifier)),
-                            SelectedIdentifierReferenceRecognition::NotSelected => {
-                                return Err(ParseFailure::UnsupportedCoverage);
-                            }
-                            SelectedIdentifierReferenceRecognition::ResourceLimited => {
+                            SelectedLeadingPlusMinusDirectIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
                                 return Err(ParseFailure::ResourceLimited);
                             }
-                            SelectedIdentifierReferenceRecognition::InternalFailure => {
+                            SelectedLeadingPlusMinusDirectIdentifierReferenceUnaryExpressionRecognition::InternalFailure => {
                                 return Err(ParseFailure::InternalFailure);
+                            }
+                            SelectedLeadingPlusMinusDirectIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
+                                if self.consume_selected_plain_exponent_decimal_literal()
+                                    || self.consume_selected_plain_fractional_decimal_literal()
+                                    || self.consume_selected_decimal_integer()
+                                    || self.consume_selected_boolean_literal()
+                                    || self.consume_selected_null_literal()
+                                    || self.consume_selected_this_expression()
+                                    || self.consume_selected_escape_free_string_literal()
+                                {
+                                    (None, None)
+                                } else {
+                                    match self.consume_selected_identifier_reference() {
+                                        SelectedIdentifierReferenceRecognition::Matched(reference) => {
+                                            (Some(reference), None)
+                                        }
+                                        SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName {
+                                            identifier,
+                                        } => (None, Some(identifier)),
+                                        SelectedIdentifierReferenceRecognition::NotSelected => {
+                                            return Err(ParseFailure::UnsupportedCoverage);
+                                        }
+                                        SelectedIdentifierReferenceRecognition::ResourceLimited => {
+                                            return Err(ParseFailure::ResourceLimited);
+                                        }
+                                        SelectedIdentifierReferenceRecognition::InternalFailure => {
+                                            return Err(ParseFailure::InternalFailure);
+                                        }
+                                    }
+                                }
                             }
                         }
                     };
@@ -1127,32 +1194,48 @@ impl<'source> Cursor<'source> {
                 self.skip_selected_trivia();
                 let mut identifier_reference_initializer = None;
                 let mut escaped_reserved_initializer_identifier = None;
-                if !self.consume_selected_leading_plus_minus_decimal_unary_expression()
-                    && !self.consume_selected_plain_exponent_decimal_literal()
-                    && !self.consume_selected_plain_fractional_decimal_literal()
-                    && !self.consume_selected_decimal_integer()
-                    && !self.consume_selected_boolean_literal()
-                    && !self.consume_selected_null_literal()
-                    && !self.consume_selected_this_expression()
-                    && !self.consume_selected_escape_free_string_literal()
-                {
-                    match self.consume_selected_identifier_reference() {
-                        SelectedIdentifierReferenceRecognition::Matched(reference) => {
+                if !self.consume_selected_leading_plus_minus_decimal_unary_expression() {
+                    match self
+                        .consume_selected_leading_plus_minus_direct_identifier_reference_unary_expression()
+                    {
+                        SelectedLeadingPlusMinusDirectIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
                             identifier_reference_initializer = Some(reference);
                         }
-                        SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName {
-                            identifier,
-                        } => {
-                            escaped_reserved_initializer_identifier = Some(identifier);
-                        }
-                        SelectedIdentifierReferenceRecognition::NotSelected => {
-                            return Err(ParseFailure::UnsupportedCoverage);
-                        }
-                        SelectedIdentifierReferenceRecognition::ResourceLimited => {
+                        SelectedLeadingPlusMinusDirectIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
                             return Err(ParseFailure::ResourceLimited);
                         }
-                        SelectedIdentifierReferenceRecognition::InternalFailure => {
+                        SelectedLeadingPlusMinusDirectIdentifierReferenceUnaryExpressionRecognition::InternalFailure => {
                             return Err(ParseFailure::InternalFailure);
+                        }
+                        SelectedLeadingPlusMinusDirectIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
+                            if !self.consume_selected_plain_exponent_decimal_literal()
+                                && !self.consume_selected_plain_fractional_decimal_literal()
+                                && !self.consume_selected_decimal_integer()
+                                && !self.consume_selected_boolean_literal()
+                                && !self.consume_selected_null_literal()
+                                && !self.consume_selected_this_expression()
+                                && !self.consume_selected_escape_free_string_literal()
+                            {
+                                match self.consume_selected_identifier_reference() {
+                                    SelectedIdentifierReferenceRecognition::Matched(reference) => {
+                                        identifier_reference_initializer = Some(reference);
+                                    }
+                                    SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName {
+                                        identifier,
+                                    } => {
+                                        escaped_reserved_initializer_identifier = Some(identifier);
+                                    }
+                                    SelectedIdentifierReferenceRecognition::NotSelected => {
+                                        return Err(ParseFailure::UnsupportedCoverage);
+                                    }
+                                    SelectedIdentifierReferenceRecognition::ResourceLimited => {
+                                        return Err(ParseFailure::ResourceLimited);
+                                    }
+                                    SelectedIdentifierReferenceRecognition::InternalFailure => {
+                                        return Err(ParseFailure::InternalFailure);
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -1624,6 +1707,68 @@ impl<'source> Cursor<'source> {
         } else {
             self.offset = start;
             false
+        }
+    }
+
+    /// Recognizes exactly one direct-authored leading `+` or `-` direct
+    /// `IdentifierReference` `UnaryExpression`
+    /// (`SelectedUnaryPlusMinus SelectedUnaryOperandTrivia
+    /// SelectedDirectIdentifierReference`) in the selected initializer
+    /// position, per the candidate-independent theorem accepted by
+    /// #746/#747, without retaining any operator or trivia fact: on a match,
+    /// the existing inner `SelectedIdentifierReferenceFact` produced by the
+    /// unmodified shared `consume_selected_identifier_reference()`
+    /// recognizer is returned unchanged.
+    ///
+    /// This bounded local scan commits `self.offset` only after a complete
+    /// direct-authored (escape-free) `IdentifierReference` operand is
+    /// recognized following the operator and any intervening existing
+    /// selected trivia (`skip_selected_trivia`, unchanged). An escaped
+    /// non-ReservedWord operand, an escaped `ReservedWord` operand, or no
+    /// `IdentifierReference` operand at all restores the cursor to its
+    /// starting offset and returns `NotSelected`, leaving the unmodified
+    /// decimal-unary predecessor and the unsigned atom/IdentifierReference
+    /// predecessors free to recognize their own atoms. A processing failure
+    /// from the shared recognizer (`ResourceLimited` / `InternalFailure`) is
+    /// preserved unchanged and is never downgraded to `NotSelected`. A
+    /// locally complete unary-reference atom does not itself authorize any
+    /// broader source; the enclosing declaration/statement/source
+    /// transaction remains authoritative for any unowned trailing source
+    /// (e.g. `-a.b`, `-a + b`).
+    fn consume_selected_leading_plus_minus_direct_identifier_reference_unary_expression(
+        &mut self,
+    ) -> SelectedLeadingPlusMinusDirectIdentifierReferenceUnaryExpressionRecognition {
+        let start = self.offset;
+
+        if !self.consume_ascii('+') && !self.consume_ascii('-') {
+            return SelectedLeadingPlusMinusDirectIdentifierReferenceUnaryExpressionRecognition::NotSelected;
+        }
+
+        self.skip_selected_trivia();
+
+        match self.consume_selected_identifier_reference() {
+            SelectedIdentifierReferenceRecognition::Matched(reference)
+                if matches!(
+                    reference.name_state(),
+                    SelectedIdentifierReferenceNameState::Direct
+                ) =>
+            {
+                SelectedLeadingPlusMinusDirectIdentifierReferenceUnaryExpressionRecognition::Matched(
+                    reference,
+                )
+            }
+            SelectedIdentifierReferenceRecognition::Matched(_)
+            | SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName { .. }
+            | SelectedIdentifierReferenceRecognition::NotSelected => {
+                self.offset = start;
+                SelectedLeadingPlusMinusDirectIdentifierReferenceUnaryExpressionRecognition::NotSelected
+            }
+            SelectedIdentifierReferenceRecognition::ResourceLimited => {
+                SelectedLeadingPlusMinusDirectIdentifierReferenceUnaryExpressionRecognition::ResourceLimited
+            }
+            SelectedIdentifierReferenceRecognition::InternalFailure => {
+                SelectedLeadingPlusMinusDirectIdentifierReferenceUnaryExpressionRecognition::InternalFailure
+            }
         }
     }
 
