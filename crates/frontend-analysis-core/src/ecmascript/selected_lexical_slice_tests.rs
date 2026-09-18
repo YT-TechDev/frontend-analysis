@@ -6196,12 +6196,12 @@ fn leading_plus_minus_decimal_unary_expression_does_not_claim_non_numeric_or_fut
  {
     for text in [
         // operand firewall: only the accepted separator-free decimal atom
-        // family is admitted (a direct IdentifierReference operand is
-        // outside the decimal-unary theorem and is instead owned by the
-        // separate leading +/- direct IdentifierReference UnaryExpression
-        // leaf; an escaped operand remains outside both leaves)
-        "let x = -\\u0066oo;",
-        "let x = +\\u0066oo;",
+        // family is admitted (a direct or escaped non-Reserved
+        // IdentifierReference operand is outside the decimal-unary theorem
+        // and is instead owned by the separate leading +/- IdentifierReference
+        // UnaryExpression leaf; see
+        // leading_plus_minus_identifier_reference_unary_expression_accepts_escaped_non_reserved_operand_across_all_three_owners
+        // for its own escaped-operand positive matrix composed by #750)
         "let x = -(1);",
         "let x = +(1);",
         "let x = -\"x\";",
@@ -6350,7 +6350,6 @@ fn top_level_var_leading_plus_minus_decimal_unary_expression_positive_matrix_is_
 fn top_level_var_leading_plus_minus_decimal_unary_expression_does_not_claim_numeric_or_richer_neighbors()
  {
     for text in [
-        "var x = -\\u0066oo;",
         "var x = -this;",
         "var x = -1_0;",
         "var x = +1n;",
@@ -6424,7 +6423,6 @@ fn one_level_block_var_leading_plus_minus_decimal_unary_expression_positive_matr
 fn one_level_block_var_leading_plus_minus_decimal_unary_expression_does_not_claim_numeric_or_richer_neighbors()
  {
     for text in [
-        "{ var x = -\\u0066oo; }",
         "{ var x = -this; }",
         "{ var x = -1_0; }",
         "{ var x = +1n; }",
@@ -6597,4 +6595,132 @@ fn leading_plus_minus_decimal_unary_expression_precedence_remains_reference_sile
         panic!("expected one selected Block var binding");
     };
     assert!(binding.identifier_reference_initializer().is_none());
+}
+
+/// Issue #750: the generalized bounded leading `+`/`-` `IdentifierReference`
+/// `UnaryExpression` helper composes a selected escaped non-ReservedWord
+/// operand into all three mature initializer owners exactly as it already
+/// composes a direct operand, retaining the exact existing
+/// `SelectedIdentifierReferenceFact` produced by the unmodified shared
+/// `consume_selected_identifier_reference()` recognizer: the authored
+/// escaped `SourceAnchor` and the decoded semantic name remain distinct,
+/// and distinct authored spellings sharing one decoded semantic name
+/// retain distinct anchors (no Unicode normalization).
+#[test]
+fn leading_plus_minus_identifier_reference_unary_expression_accepts_escaped_non_reserved_operand_across_all_three_owners()
+ {
+    let script = recognized(r"const x = -\u{66}oo;");
+    let declaration = &script.declarations()[0];
+    let [binding] = declaration.bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    assert_eq!(
+        binding.initializer(),
+        SelectedInitializerState::SelectedPresent
+    );
+    let reference = binding
+        .identifier_reference_initializer()
+        .expect("unary-wrapped LexicalDeclaration RHS escaped reference fact");
+    assert_eq!(reference.reference().fragment(), r"\u{66}oo");
+    assert_eq!(reference.semantic_name(), "foo");
+
+    let script = recognized_variable(r"var x = +f\u{6F}o;");
+    let statement = only_variable_statement(&script);
+    let [binding] = statement.bindings() else {
+        panic!("expected one selected variable binding");
+    };
+    let reference = binding
+        .identifier_reference_initializer()
+        .expect("unary-wrapped top-level var RHS escaped reference fact");
+    // Distinct authored spelling from the LexicalDeclaration case above,
+    // same decoded semantic name: no Unicode normalization collapses them.
+    assert_eq!(reference.reference().fragment(), r"f\u{6F}o");
+    assert_eq!(reference.semantic_name(), "foo");
+
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+    let script = recognized_block(r"{ var x = -\u{1D49C}; }");
+    let [SelectedTopLevelItem::Block(block)] = script.items() else {
+        panic!("expected exactly one Block item");
+    };
+    let [SelectedBlockItem::Var(statement)] = block.items() else {
+        panic!("expected exactly one Block var statement");
+    };
+    let [binding] = statement.bindings() else {
+        panic!("expected one selected Block var binding");
+    };
+    let reference = binding
+        .identifier_reference_initializer()
+        .expect("unary-wrapped Block var RHS escaped reference fact");
+    assert_eq!(reference.reference().fragment(), r"\u{1D49C}");
+    assert_eq!(reference.semantic_name(), "\u{1D49C}");
+}
+
+/// Issue #750 escaped-ReservedWord firewall: a decoded ReservedWord operand
+/// (`\u{69}f` decodes to `if`) remains outside this wrapper across all
+/// three owners and does not leak into the existing plain
+/// escaped-ReservedWord C6 / EE-04-R08 initializer route, which owns only
+/// its own unwrapped source position, not this wrapper's leading `+`/`-`
+/// source position.
+#[test]
+fn leading_plus_minus_identifier_reference_unary_expression_escaped_reserved_word_operand_remains_unsupported_across_all_three_owners()
+ {
+    for text in [
+        r"const x = -\u{69}f;",
+        r"var x = -\u{69}f;",
+        r"{ var x = -\u{69}f; }",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+/// Issue #750 malformed/position-invalid escape firewall: representative
+/// controls equivalent to the shared `consume_selected_identifier_reference`
+/// recognizer's own malformed/non-CodePoint/surrogate/position-invalid
+/// boundaries remain unowned through this wrapper, exactly as through the
+/// unwrapped plain `IdentifierReference` position; in particular a mixed
+/// spelling with an invalid continuation escape does not truncate to a
+/// successful direct prefix.
+#[test]
+fn leading_plus_minus_identifier_reference_unary_expression_malformed_or_position_invalid_escape_remains_unowned()
+ {
+    for text in [
+        r"const x = -\u{30};",
+        r"const x = -a\u{2D}b;",
+        r"const x = -\u{D800};",
+        r"const x = -\u{110000};",
+        r"const x = -\u{};",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+/// Issue #750: the same accepted selected trivia (`skip_selected_trivia`,
+/// unchanged) recognized between the operator and a direct operand is
+/// recognized identically before an escaped non-Reserved operand; a nearby
+/// non-selected space-like code point (U+200B) remains outside the accepted
+/// theorem exactly as for the direct-operand and decimal-unary
+/// predecessors.
+#[test]
+fn leading_plus_minus_identifier_reference_unary_expression_trivia_matrix_is_recognized_for_escaped_operand()
+ {
+    for text in [
+        "let x = - \\u0066oo;",
+        "let x = +\t\\u0066oo;",
+        "let x = -\u{00A0}\\u0066oo;",
+        "let x = +\u{FEFF}\\u0066oo;",
+        "let x = -\u{2028}\\u0066oo;",
+        "let x = +\u{2029}\\u0066oo;",
+    ] {
+        let script = recognized(text);
+        let declaration = &script.declarations()[0];
+        let [binding] = declaration.bindings() else {
+            panic!("expected one selected lexical binding, {text:?}");
+        };
+        let reference = binding
+            .identifier_reference_initializer()
+            .expect("unary-wrapped escaped RHS reference fact");
+        assert_eq!(reference.semantic_name(), "foo", "{text:?}");
+    }
+
+    assert_unsupported("let x = +\u{200B}\\u0066oo;");
 }
