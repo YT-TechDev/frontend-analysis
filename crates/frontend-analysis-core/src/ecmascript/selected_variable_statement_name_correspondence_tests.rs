@@ -560,6 +560,58 @@ fn direct_var_initializer_lexical_and_no_contributor_meanings_are_unchanged() {
 }
 
 #[test]
+fn leading_plus_minus_direct_identifier_reference_unary_expression_composes_unchanged_with_top_level_var_correspondence()
+ {
+    let (_, script) = recognized_variable("let a; var x=-a;");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(range(relation.containing_binding()), (11, 12));
+    assert_eq!(range(relation.reference()), (14, 15));
+    let (binding, region) = relation
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("existing top-level lexical target meaning");
+    assert_eq!(range(binding), (4, 5));
+    assert!(matches!(
+        region,
+        SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+    ));
+
+    let (_, script) = recognized_variable("var a; var x=+a;");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(range(relation.containing_binding()), (11, 12));
+    assert_eq!(range(relation.reference()), (14, 15));
+    let contributors = relation
+        .correspondence()
+        .var_contributors()
+        .expect("existing same-source var contributor meaning");
+    assert_eq!(contributors.len(), 1);
+    assert_eq!(range(contributors[0]), (4, 5));
+
+    let (_, script) = recognized_variable("var x=-z;");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(relation.semantic_name(), "z");
+    assert!(
+        relation
+            .correspondence()
+            .is_no_selected_same_source_contributor()
+    );
+
+    let (_, script) = recognized_variable("var x=-a,y=+b;");
+    let analysis = accepted_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(relations.len(), 2);
+    assert_eq!(range(relations[0].containing_binding()), (4, 5));
+    assert_eq!(range(relations[0].reference()), (7, 8));
+    assert_eq!(relations[0].semantic_name(), "a");
+    assert_eq!(range(relations[1].containing_binding()), (9, 10));
+    assert_eq!(range(relations[1].reference()), (12, 13));
+    assert_eq!(relations[1].semantic_name(), "b");
+}
+
+#[test]
 fn direct_var_initializer_semantic_identity_uses_exact_direct_source_without_normalization() {
     let (_, script) = recognized_variable(r"var \u0061; var x=a;");
     let analysis = accepted_analysis(&script);
@@ -1421,6 +1473,77 @@ fn one_level_block_var_and_lexical_relations_follow_mixed_authored_item_order() 
 
     let reference_ranges: Vec<_> = relations.iter().map(|r| range(r.reference())).collect();
     assert_eq!(reference_ranges, [(8, 9), (17, 18), (26, 27), (35, 36)]);
+}
+
+#[test]
+fn leading_plus_minus_direct_identifier_reference_unary_expression_composes_unchanged_with_block_var_correspondence()
+ {
+    // Current-Block lexical target.
+    let (_, script) = recognized_one_level_block("{ let a; var x=-a; }");
+    let analysis = accepted_one_level_block_analysis(&script);
+    let relation = one_relation(&analysis);
+    let (binding, region) = relation
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("current-Block lexical target meaning");
+    assert_eq!(range(binding), (6, 7));
+    assert!(matches!(
+        region,
+        SelectedVariableStatementNameCorrespondenceRegion::Block(_)
+    ));
+
+    // Top-level lexical fallback.
+    let (_, script) = recognized_one_level_block("let a; { var x=+a; }");
+    let analysis = accepted_one_level_block_analysis(&script);
+    let relation = one_relation(&analysis);
+    let (binding, region) = relation
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("top-level lexical fallback meaning");
+    assert_eq!(range(binding), (4, 5));
+    assert!(matches!(
+        region,
+        SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+    ));
+
+    // Existing same-source var contributor meaning.
+    let (_, script) = recognized_variable("var a; { var x=-a; }");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    let contributors = relation
+        .correspondence()
+        .var_contributors()
+        .expect("existing same-source var contributor meaning");
+    assert_eq!(contributors.len(), 1);
+    assert_eq!(range(contributors[0]), (4, 5));
+
+    // No contributor.
+    let (_, script) = recognized_one_level_block("{ var x=-z; }");
+    let analysis = accepted_one_level_block_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(relation.semantic_name(), "z");
+    assert!(
+        relation
+            .correspondence()
+            .is_no_selected_same_source_contributor()
+    );
+
+    // Mixed authored Block relation order (unary-wrapped var RHS composed
+    // with lexical declarations): relation emission follows exact authored
+    // Block-item order, never a grouping by declaration kind.
+    let (_, script) = recognized_one_level_block("{ let p=q; var x=-a; let r=s; var y=+b; }");
+    let analysis = accepted_one_level_block_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(relations.len(), 4);
+    let semantic_names: Vec<_> = relations.iter().map(|r| r.semantic_name()).collect();
+    assert_eq!(semantic_names, ["q", "a", "s", "b"]);
+    let containing_bindings: Vec<_> = relations
+        .iter()
+        .map(|r| range(r.containing_binding()))
+        .collect();
+    assert_eq!(containing_bindings, [(6, 7), (15, 16), (25, 26), (34, 35)]);
+    let reference_ranges: Vec<_> = relations.iter().map(|r| range(r.reference())).collect();
+    assert_eq!(reference_ranges, [(8, 9), (18, 19), (27, 28), (37, 38)]);
 }
 
 #[test]

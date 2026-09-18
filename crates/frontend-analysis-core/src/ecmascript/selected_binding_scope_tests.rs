@@ -342,6 +342,50 @@ fn static_rejected_sources_cannot_produce_an_accepted_analysis_witness() {
 }
 
 #[test]
+fn leading_plus_minus_direct_identifier_reference_unary_expression_composes_unchanged_with_binding_scope()
+ {
+    assert_eq!(
+        relation_snapshots("let a; const x=-a;"),
+        vec![RelationSnapshot {
+            containing_binding: (13, 14, "x".to_owned()),
+            reference: (16, 17, "a".to_owned()),
+            semantic_name: "a".to_owned(),
+            target: Some((4, 5, "a".to_owned(), SelectedLexicalBindingOrder::Before,)),
+        }]
+    );
+
+    assert_eq!(
+        relation_snapshots("let a=-a;"),
+        vec![RelationSnapshot {
+            containing_binding: (4, 5, "a".to_owned()),
+            reference: (7, 8, "a".to_owned()),
+            semantic_name: "a".to_owned(),
+            target: Some((4, 5, "a".to_owned(), SelectedLexicalBindingOrder::Same)),
+        }]
+    );
+
+    assert_eq!(
+        relation_snapshots("const x=+a; let a;"),
+        vec![RelationSnapshot {
+            containing_binding: (6, 7, "x".to_owned()),
+            reference: (9, 10, "a".to_owned()),
+            semantic_name: "a".to_owned(),
+            target: Some((16, 17, "a".to_owned(), SelectedLexicalBindingOrder::After,)),
+        }]
+    );
+
+    assert_eq!(
+        relation_snapshots("const x=-z;"),
+        vec![RelationSnapshot {
+            containing_binding: (6, 7, "x".to_owned()),
+            reference: (9, 10, "z".to_owned()),
+            semantic_name: "z".to_owned(),
+            target: None,
+        }]
+    );
+}
+
+#[test]
 fn unsupported_parenthesized_initializer_never_enters_binding_scope_analysis() {
     let source = SourceText::new(SourceId::new(274), "let x=(y);".to_owned());
     assert!(matches!(
