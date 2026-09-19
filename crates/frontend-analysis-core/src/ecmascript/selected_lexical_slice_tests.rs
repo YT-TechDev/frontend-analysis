@@ -7840,11 +7840,36 @@ fn two_operand_cardinality_firewall_remains_unsupported() {
 #[test]
 fn two_operand_operand_firewall_remains_unsupported() {
     // Only a direct/escaped `IdentifierReference` operand is accepted;
-    // unary/literal/grouping/member/call operands remain unsupported
-    // (wrong models W25 / issue section "Operand firewall").
+    // literal/grouping/member/call operands remain unsupported (wrong
+    // models W25 / issue section "Operand firewall"). A leading `+`/`-`
+    // *left* operand (`+a+b;`, `-a+b;`) moved to selected-positive coverage
+    // by Issue #773 (see the "Issue #773" section below) and is no longer
+    // listed here; other unary operators/recursion on the left operand
+    // remain outside this leaf.
     for text in [
-        "+a+b;", "-a+b;", "a++b;", "a+-b;", "1+b;", "a+1;", "true+b;", "a+null;", "this+b;",
-        "\"a\"+b;", "(a)+b;", "a+(b);", "a.b+c;", "a+b.c;", "a()+b;", "a+b();",
+        "++a+b;",
+        "--a+b;",
+        "!a+b;",
+        "~a+b;",
+        "typeof a+b;",
+        "void a+b;",
+        "delete a+b;",
+        "+-a+b;",
+        "-+a+b;",
+        "a++b;",
+        "a+-b;",
+        "1+b;",
+        "a+1;",
+        "true+b;",
+        "a+null;",
+        "this+b;",
+        "\"a\"+b;",
+        "(a)+b;",
+        "a+(b);",
+        "a.b+c;",
+        "a+b.c;",
+        "a()+b;",
+        "a+b();",
     ] {
         assert_unsupported(text);
     }
@@ -8404,9 +8429,13 @@ fn unary_use_site_does_not_authorize_richer_expression_neighbors() {
     // longer source: the placement-owned terminator probe rejects the
     // following non-terminator token and rolls back the whole use-site
     // probe, exactly as the unwrapped bare-reference prefix already does.
+    // `+a+b;` / `-a-b;` / `{ +a+b; }` / `{ -a-b; }` moved to
+    // selected-positive coverage by Issue #773 (see the "Issue #773" section
+    // below); a third-or-later additive operand remains outside this leaf.
     for text in [
-        "+a+b;",
-        "-a-b;",
+        "+a+b+c;",
+        "-a-b-c;",
+        "+a+b*c;",
         "+a*b;",
         "-a/b;",
         "+a.b;",
@@ -8416,8 +8445,8 @@ fn unary_use_site_does_not_authorize_richer_expression_neighbors() {
         "+a?b:c;",
         "+a&&b;",
         "+a,b;",
-        "{ +a+b; }",
-        "{ -a-b; }",
+        "{ +a+b+c; }",
+        "{ -a-b-c; }",
         "{ +a*b; }",
         "{ -a.b; }",
         "{ +a(); }",
@@ -8538,4 +8567,319 @@ fn unary_use_site_whole_source_transactionality() {
     assert_unsupported("-a;\nlet x = ;");
     assert_unsupported("{ +a }???");
     assert_unsupported("let a;\n{ -a }\n???");
+}
+
+// --- Issue #773: left-unary exactly-two `IdentifierReference` additive
+// free-standing use-site composition. Widens the existing unary-first body
+// route (Issue #771) with an optional exactly-one authored binary `+`/`-`
+// plain `IdentifierReference` continuation, reusing the unmodified shared
+// `consume_selected_identifier_reference` recognizer and the unmodified
+// `consume_selected_leading_plus_minus_identifier_reference_unary_expression`
+// helper. A successful unary atom still commits `One` absent the
+// continuation; once the continuation begins, the whole body is
+// transactional -- no operator identity, trivia, or whole-expression
+// `SourceAnchor` is retained beyond the existing `One`/`Two` carrier. ---
+
+#[test]
+fn left_unary_use_site_positive_matrix_is_recognized() {
+    for (text, expected_names) in [
+        ("+a+b;", ["a", "b"]),
+        ("+a-b;", ["a", "b"]),
+        ("-a+b;", ["a", "b"]),
+        ("-a-b;", ["a", "b"]),
+        ("+\\u0061+b;", ["a", "b"]),
+        ("-f\\u006Fo+\\u0062;", ["foo", "b"]),
+        ("+a+b", ["a", "b"]),
+        ("-a-b", ["a", "b"]),
+        ("+\\u0061-b", ["a", "b"]),
+    ] {
+        let script = recognized_reference_use(text);
+        let use_site = only_top_level_use_site(&script);
+        let facts = use_site_facts(use_site.body());
+        assert_eq!(facts.len(), 2, "{text:?}");
+        assert_eq!(facts[0].semantic_name(), expected_names[0], "{text:?}");
+        assert_eq!(facts[1].semantic_name(), expected_names[1], "{text:?}");
+        assert!(
+            facts[0].reference().range().start() < facts[1].reference().range().start(),
+            "{text:?}"
+        );
+    }
+
+    for (text, expected_names) in [
+        ("{ +a+b; }", ["a", "b"]),
+        ("{ -a-b; }", ["a", "b"]),
+        ("{ +\\u0061-b }", ["a", "b"]),
+        ("{ -f\\u006Fo+\\u0062 }", ["foo", "b"]),
+    ] {
+        let script = recognized_block_reference_use(text);
+        let use_site = only_block_use_site(&script);
+        let facts = use_site_facts(use_site.body());
+        assert_eq!(facts.len(), 2, "{text:?}");
+        assert_eq!(facts[0].semantic_name(), expected_names[0], "{text:?}");
+        assert_eq!(facts[1].semantic_name(), expected_names[1], "{text:?}");
+        assert!(
+            facts[0].reference().range().start() < facts[1].reference().range().start(),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn left_unary_use_site_successful_unary_only_remains_one() {
+    // Absent a binary continuation, a matched leading unary atom still
+    // commits the existing single-reference `One` occurrence exactly as
+    // Issue #771 already proved -- this is not regressed by #773.
+    for text in ["+a;", "-a;", "+a", "-a"] {
+        let script = recognized_reference_use(text);
+        let facts = use_site_facts(only_top_level_use_site(&script).body());
+        assert_eq!(facts.len(), 1, "{text:?}");
+    }
+}
+
+#[test]
+fn left_unary_use_site_direct_escaped_cross_product_preserves_exact_provenance() {
+    // Direct+Direct, Escaped+Direct, Direct+Escaped, Escaped+Escaped: each
+    // fact independently preserves its exact authored fragment and decoded
+    // semantic name, and the first fact's fragment excludes the leading
+    // unary operator (issue section "Direct / escaped coverage").
+    for (text, expected_fragments, expected_names) in [
+        ("+a+b;", ["a", "b"], ["a", "b"]),
+        ("+\\u0061+b;", ["\\u0061", "b"], ["a", "b"]),
+        ("+a+\\u0062;", ["a", "\\u0062"], ["a", "b"]),
+        ("+\\u0061-\\u0062;", ["\\u0061", "\\u0062"], ["a", "b"]),
+        ("-f\\u006Fo+bar;", ["f\\u006Fo", "bar"], ["foo", "bar"]),
+        ("+foo-b\\u0061r;", ["foo", "b\\u0061r"], ["foo", "bar"]),
+    ] {
+        let script = recognized_reference_use(text);
+        let facts = use_site_facts(only_top_level_use_site(&script).body());
+        assert_eq!(facts.len(), 2, "{text:?}");
+        assert_eq!(
+            facts[0].reference().fragment(),
+            expected_fragments[0],
+            "{text:?}"
+        );
+        assert_eq!(
+            facts[1].reference().fragment(),
+            expected_fragments[1],
+            "{text:?}"
+        );
+        assert_eq!(facts[0].semantic_name(), expected_names[0], "{text:?}");
+        assert_eq!(facts[1].semantic_name(), expected_names[1], "{text:?}");
+    }
+}
+
+#[test]
+fn left_unary_use_site_duplicate_operands_are_preserved_distinctly() {
+    let script = recognized_reference_use("+a+a;");
+    let facts = use_site_facts(only_top_level_use_site(&script).body());
+    assert_eq!(facts.len(), 2);
+    assert_eq!(facts[0].semantic_name(), "a");
+    assert_eq!(facts[1].semantic_name(), "a");
+    assert!(facts[0].reference().range().start() < facts[1].reference().range().start());
+}
+
+#[test]
+fn left_unary_use_site_failed_second_operand_does_not_degrade_to_one() {
+    // Once a binary continuation begins, the whole body is transactional: a
+    // failing, incomplete, or escaped-ReservedWord second operand must
+    // never leak the successfully recognized unary-wrapped first fact as a
+    // completed `One`.
+    for text in [
+        "+a+;",
+        "+a+1;",
+        "+a+\\u0069f;",
+        "+a+\\u{};",
+        "-a+;",
+        "+a+b+c;",
+        "-a-b-c;",
+        "+a+b-c;",
+        "-a-b+c;",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn left_unary_use_site_right_unary_and_operator_recursion_remain_unsupported() {
+    // Right-unary additive (`a+-b`) and unary-operator recursion on the
+    // left operand remain outside this leaf (issue sections 7/18): distinct
+    // punctuator/token-boundary and operator-recursion frontiers, never
+    // assumed symmetric with the accepted left-unary form.
+    for text in [
+        "a+-b;",
+        "a-+b;",
+        "a+ +b;",
+        "a- -b;",
+        "++a+b;",
+        "--a+b;",
+        "+-a+b;",
+        "-+a+b;",
+        "!a+b;",
+        "~a+b;",
+        "typeof a+b;",
+        "void a+b;",
+        "delete a+b;",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn left_unary_use_site_escaped_reserved_word_boundary_remains_unsupported() {
+    for text in [
+        "+\\u0069f+b;",
+        "+a+\\u0069f;",
+        "-\\u0069f-b;",
+        "{ +\\u0069f+b; }",
+        "{ +a+\\u0069f; }",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn left_unary_use_site_malformed_or_invalid_escaped_operand_remains_unowned() {
+    for text in [
+        "+\\u0030+b;",
+        "+a+\\u0030;",
+        "+a\\u002Db+c;",
+        "+a+b\\u002Dc;",
+        "+\\uD800+b;",
+        "+a+\\u{110000};",
+        "+\\u{}+b;",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn left_unary_use_site_richer_expression_and_grouping_neighbors_remain_unsupported() {
+    for text in [
+        "+(a)+b;", "-a+(b);", "+a.b+c;", "+a[b]+c;", "+a()+b;", "+a*b;", "+a+b*c;", "+a*b+c;",
+        "+a=b;", "+a+=b;", "+a?b:c;", "+a&&b;", "+a||b;", "+a,b;",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn left_unary_use_site_comments_remain_unsupported() {
+    for text in [
+        "+a/*comment*/+b;",
+        "+a+b/*comment*/;",
+        "{ -a /*comment*/ - b }",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn left_unary_use_site_general_line_terminator_asi_remains_unsupported() {
+    for text in ["+a+b\nlet c;", "{\n    -a-b\n    let c;\n}"] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn left_unary_use_site_recursive_blocks_remain_unsupported() {
+    for text in ["{ { +a+b; } }", "{ { -a-b } }"] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn left_unary_use_site_terminator_composes_with_all_placement_modes() {
+    // TopLevel: `AuthoredSemicolon` and `AutomaticAtEof`.
+    let script = recognized_reference_use("+a+b;");
+    assert_eq!(
+        only_top_level_use_site(&script).terminator(),
+        SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AuthoredSemicolon
+    );
+    let script = recognized_reference_use("+a+b");
+    assert_eq!(
+        only_top_level_use_site(&script).terminator(),
+        SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticAtEof
+    );
+
+    // Block: `AuthoredSemicolon` and `AutomaticBeforeBlockClose`, which
+    // only peeks `}` and never consumes it.
+    let script = recognized_block_reference_use("{ -a-b; }");
+    assert_eq!(
+        only_block_use_site(&script).terminator(),
+        SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator::AuthoredSemicolon
+    );
+    let script = recognized_block_reference_use("{ -a-b }\nc;");
+    let [
+        SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block),
+        SelectedBlockReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(_),
+    ] = script.items()
+    else {
+        panic!("expected [UseSiteEnabledBlock, use-site] items");
+    };
+    assert_eq!(block.block().fragment(), "{ -a-b }");
+}
+
+#[test]
+fn left_unary_use_site_correspondence_matches_plain_additive_representation() {
+    // Correspondence remains wrapper-blind: `let a; var b; +a+b;` retains
+    // the same inner authored `a`/`b` reference facts as
+    // `let a; var b; a+b;` -- only the first fact's leading unary source
+    // differs.
+    let bare_script = recognized_reference_use("let a;\nvar b;\na+b;");
+    let unary_script = recognized_reference_use("let a;\nvar b;\n+a+b;");
+    let [
+        SelectedReferenceUseEnabledTopLevelItem::LexicalDeclaration(_),
+        SelectedReferenceUseEnabledTopLevelItem::VariableStatement(_),
+        SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
+            bare_use_site,
+        ),
+    ] = bare_script.items()
+    else {
+        panic!("expected [LexicalDeclaration, VariableStatement, use-site] items");
+    };
+    let [
+        SelectedReferenceUseEnabledTopLevelItem::LexicalDeclaration(_),
+        SelectedReferenceUseEnabledTopLevelItem::VariableStatement(_),
+        SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
+            unary_use_site,
+        ),
+    ] = unary_script.items()
+    else {
+        panic!("expected [LexicalDeclaration, VariableStatement, use-site] items");
+    };
+    let bare_facts = use_site_facts(bare_use_site.body());
+    let unary_facts = use_site_facts(unary_use_site.body());
+    assert_eq!(bare_facts.len(), 2);
+    assert_eq!(unary_facts.len(), 2);
+    for (bare_fact, unary_fact) in bare_facts.iter().zip(unary_facts.iter()) {
+        assert_eq!(bare_fact.semantic_name(), unary_fact.semantic_name());
+    }
+}
+
+#[test]
+fn left_unary_use_site_existing_use_sites_do_not_regress() {
+    // Bare, plain-additive, and unary-only use-sites remain exactly as
+    // before this widening.
+    for text in [
+        "a;", "+a;", "-a;", "a+b;", "a-b;", "a", "+a", "a+b", "{ a; }", "{ +a; }", "{ a+b; }",
+        "{ a }", "{ -a }", "{ a-b }",
+    ] {
+        assert!(
+            !matches!(
+                recognize_selected_lexical_slice(&source(text)),
+                SelectedLexicalSliceOutcome::UnsupportedCoverage
+                    | SelectedLexicalSliceOutcome::ResourceLimited
+                    | SelectedLexicalSliceOutcome::InternalFailure
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn left_unary_use_site_whole_source_transactionality() {
+    assert_unsupported("+a+b;\n???");
+    assert_unsupported("-a-b;\nlet x = ;");
+    assert_unsupported("{ +a+b }???");
+    assert_unsupported("let a;\n{ -a-b }\n???");
 }

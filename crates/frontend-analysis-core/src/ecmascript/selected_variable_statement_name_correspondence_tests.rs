@@ -3477,3 +3477,159 @@ fn block_use_site_known_static_rejection_suppresses_relation_construction_for_au
         )
     ));
 }
+
+// --- Issue #773: left-unary exactly-two `IdentifierReference` additive
+// free-standing use-site correspondence. Section 13 of the frozen theorem
+// requires zero correspondence semantic change: the two retained facts of a
+// `+a+b;`-shaped `Two` occurrence are queried exactly as the existing plain
+// `a+b;` `Two` occurrence's facts already are, per operand, in exact
+// authored order -- the leading unary sign is construction syntax only and
+// never reaches this correspondence layer. ---
+
+#[test]
+fn left_unary_use_site_per_operand_correspondence_top_level() {
+    // `let a; var b; +a+b;`: identical correspondence meaning to the
+    // existing `let a; var b; a+b;` per-operand theorem -- only the first
+    // operand's own leading `+`/`-` construction syntax differs.
+    let (_, script) = recognized_reference_use("let a;\nvar b;\n+a+b;");
+    let analysis = accepted_use_site_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(relations.len(), 2);
+    assert_eq!(relations[0].semantic_name(), "a");
+    let (binding, region) = relations[0]
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("left operand must resolve to the lexical binding a");
+    assert_eq!(binding.fragment(), "a");
+    assert!(matches!(
+        region,
+        SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+    ));
+    assert_eq!(relations[1].semantic_name(), "b");
+    let contributors = relations[1]
+        .correspondence()
+        .var_contributors()
+        .expect("right operand must resolve to the Script-wide var contributor b");
+    assert_eq!(contributors.len(), 1);
+}
+
+#[test]
+fn left_unary_use_site_per_operand_correspondence_block() {
+    // `let b; { let a; -a-b; }`: current-Block lexical precedence for `a`,
+    // TopLevel lexical fallback for `b`, exactly as the existing plain
+    // two-operand theorem.
+    let (_, script) = recognized_block_reference_use("let b;\n{ let a;\n-a-b; }");
+    let analysis = accepted_block_use_site_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(relations.len(), 2);
+    assert_eq!(relations[0].semantic_name(), "a");
+    let (binding, region) = relations[0]
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("left operand must resolve to the current-Block lexical binding a");
+    assert_eq!(binding.fragment(), "a");
+    assert!(matches!(
+        region,
+        SelectedVariableStatementNameCorrespondenceRegion::Block(_)
+    ));
+    assert_eq!(relations[1].semantic_name(), "b");
+    let (binding, region) = relations[1]
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("right operand must fall back to the TopLevel lexical binding b");
+    assert_eq!(binding.fragment(), "b");
+    assert!(matches!(
+        region,
+        SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+    ));
+}
+
+#[test]
+fn left_unary_use_site_no_selected_same_source_contributor_for_unmatched_right_operand() {
+    // `let a; +a+z;`: `a` resolves the visible lexical binding (through the
+    // unary-wrapped left operand); `z` has no same-source contributor at
+    // all, exactly as the existing plain-additive theorem.
+    let (_, script) = recognized_reference_use("let a;\n+a+z;");
+    let analysis = accepted_use_site_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(relations.len(), 2);
+    assert_eq!(relations[0].semantic_name(), "a");
+    let (binding, _) = relations[0]
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("left operand must resolve to the visible lexical binding a");
+    assert_eq!(binding.fragment(), "a");
+    assert_eq!(relations[1].semantic_name(), "z");
+    assert!(
+        relations[1]
+            .correspondence()
+            .is_no_selected_same_source_contributor()
+    );
+}
+
+#[test]
+fn left_unary_use_site_duplicate_operands_are_preserved_distinctly() {
+    let (_, script) = recognized_reference_use("+a+a;");
+    let analysis = accepted_use_site_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(
+        relations.len(),
+        2,
+        "duplicate operands must not deduplicate"
+    );
+    assert_eq!(relations[0].semantic_name(), "a");
+    assert_eq!(relations[1].semantic_name(), "a");
+    assert!(relations[0].reference().range().start() < relations[1].reference().range().start());
+}
+
+#[test]
+fn left_unary_use_site_correspondence_is_terminator_blind() {
+    let (_, authored_script) = recognized_reference_use("let a;\nvar b;\n+a+b;");
+    let (_, automatic_script) = recognized_reference_use("let a;\nvar b;\n+a+b");
+
+    let authored_relations = accepted_use_site_analysis(&authored_script);
+    let automatic_relations = accepted_use_site_analysis(&automatic_script);
+
+    for relations in [
+        authored_relations.relations(),
+        automatic_relations.relations(),
+    ] {
+        let [a, b] = relations else {
+            panic!("expected exactly two use-site relations");
+        };
+        let (binding, region) = a
+            .correspondence()
+            .selected_lexical_binding()
+            .expect("a must resolve to the visible top-level lexical binding");
+        assert_eq!(binding.fragment(), "a");
+        assert!(matches!(
+            region,
+            SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+        ));
+        assert_eq!(
+            b.correspondence()
+                .var_contributors()
+                .expect("b must resolve to the same-source var contributors")
+                .len(),
+            1
+        );
+    }
+}
+
+#[test]
+fn left_unary_use_site_known_static_rejection_suppresses_relation_construction() {
+    let source = source("let a;\n{ var a; -b-c; }");
+    let script = match recognize_selected_lexical_slice(&source) {
+        SelectedLexicalSliceOutcome::RecognizedBlockReferenceUseEnabledSlice(script) => script,
+        other => panic!("expected Block-reference-use-enabled recognition, got {other:?}"),
+    };
+    assert!(matches!(
+        evaluate_selected_block_reference_use_enabled_static_semantics(&script),
+        SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::LexicalVarNameCollision { .. }
+        )
+    ));
+    // No relation surface is reachable without an accepted witness: the
+    // locally valid `-b-c;` use-site never publishes a relation once the
+    // existing lexical/var static rejection wins.
+}
