@@ -2603,6 +2603,14 @@ fn top_level_identifier_reference_expression_statement_use_site_remains_selected
         "{ let a; }\na;",
         "let a;\na;\na;",
         "let b;\nlet a;\na;\nb;",
+        // Issue #768: EOF-only automatic termination reaches the same
+        // qualification outcome as the authored-semicolon forms above.
+        "a",
+        "let",
+        "varfoo",
+        r"a",
+        "let a;\na",
+        "let b;\nlet a;\na;\nb",
     ] {
         assert!(
             matches!(
@@ -2652,8 +2660,11 @@ fn top_level_identifier_reference_expression_statement_use_site_static_rejection
 fn top_level_identifier_reference_expression_statement_use_site_asi_general_expression_and_nested_boundaries_remain_unsupported()
  {
     for text in [
-        // ASI boundaries (acceptance criterion 4 / issue section 47).
-        "a",
+        // ASI boundaries (acceptance criterion 4 / issue section 47). Bare
+        // `a` moved to selected-positive TopLevel EOF-automatic-termination
+        // coverage by Issue #768 (see the "Issue #768" section below) and is
+        // no longer listed here; general `LineTerminator` ASI remains
+        // explicitly out of scope, so `a\nlet b;` stays unsupported.
         "a\nlet b;",
         // General-expression firewall (acceptance criterion 31 / W15).
         // `a+b;` moved to selected-positive coverage by Issue #766 (see the
@@ -2724,6 +2735,15 @@ fn block_identifier_reference_expression_statement_use_site_remains_selected_acc
         "{ a; a; }",
         "{ a; }\n{ a; }",
         "a;\n{ a; }\na;",
+        // Issue #768: before-close automatic termination reaches the same
+        // qualification outcome as the authored-semicolon forms above.
+        "{ a }",
+        r"{ a }",
+        "{ let }",
+        "{ varfoo }",
+        "let a;\n{ a }",
+        "{ a }\nlet a;",
+        "a;\n{ a }\na;",
     ] {
         assert!(
             matches!(
@@ -2773,8 +2793,10 @@ fn block_identifier_reference_expression_statement_use_site_static_rejections_pr
 fn block_identifier_reference_expression_statement_use_site_asi_general_expression_and_nesting_boundaries_remain_unsupported()
  {
     for text in [
-        // ASI boundaries (issue section "ASI boundary").
-        "{ a }",
+        // ASI boundaries (issue section "ASI boundary"). `{ a }` moved to
+        // selected-positive Block automatic-before-close-brace termination
+        // coverage by Issue #768 (see the "Issue #768" section below) and is
+        // no longer listed here.
         // General-expression firewall (issue section "General-expression
         // firewall" / W15). `{ a+b; }` moved to selected-positive coverage
         // by Issue #766 (see the "Issue #766" section below) and is no
@@ -2875,6 +2897,14 @@ fn two_operand_identifier_reference_expression_statement_use_site_remains_select
         "a+b;\nc-d;",
         "a+b;\n{ c-d; }\ne+f;",
         "let x=a+b;\nc+d;",
+        // Issue #768: EOF-only / before-close automatic termination reaches
+        // the same qualification outcome as the authored-semicolon forms
+        // above.
+        "a+b",
+        "a-b",
+        "{ a+b }",
+        "let a;\nvar b;\na+b",
+        "let b;\n{ a+b }",
     ] {
         assert!(
             matches!(
@@ -2927,9 +2957,11 @@ fn two_operand_cardinality_operand_and_richer_expression_firewalls_remain_unsupp
         // Escaped-ReservedWord boundary (W26).
         "\\u0069f+b;",
         "a+\\u0069f;",
-        // ASI / recursive-Block boundary (W27/W28).
-        "a+b",
-        "{ a+b }",
+        // ASI / recursive-Block boundary (W27/W28). `a+b` and `{ a+b }`
+        // moved to selected-positive EOF/before-close automatic-termination
+        // coverage by Issue #768 (see the "Issue #768" section below) and
+        // are no longer listed here; recursive Block topology remains
+        // unwidened.
         "{ { a+b; } }",
     ] {
         assert!(

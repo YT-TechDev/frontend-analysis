@@ -154,7 +154,34 @@
 //! Statement has no enclosing binding/comma transaction able to recover a
 //! left-over unconsumed suffix. Existing Script/Block builder topology,
 //! static witnesses, and qualification branches remain unchanged; only the
-//! existing use-site item payload widens.
+//! existing use-site item payload widens. Widened the free-standing
+//! `IdentifierReference` `ExpressionStatement` use-site family by exactly
+//! one statement-level dimension, explicit termination provenance, per the
+//! candidate-independent theorem accepted by #233/#234, #318/#319, #688
+//! comment 5685046994 / #717, #756/#757, #760/#761, and #764/#765, composed
+//! by #688 comment 5741848600, by #768. The placement-neutral body probe
+//! (renamed `consume_selected_identifier_reference_expression_statement_use_site_body`)
+//! now claims no terminator; two new placement-owned callers,
+//! `consume_selected_top_level_identifier_reference_expression_statement_use_site`
+//! and
+//! `consume_selected_block_identifier_reference_expression_statement_use_site`,
+//! each pair the unchanged `One`/`Two` body with a new, owner-specific,
+//! crate-private termination enum
+//! (`SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator`:
+//! `AuthoredSemicolon` | `AutomaticAtEof`; and
+//! `SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator`:
+//! `AuthoredSemicolon` | `AutomaticBeforeBlockClose`), making
+//! `TopLevel + AutomaticBeforeBlockClose` and `Block + AutomaticAtEof`
+//! unrepresentable. Neither new terminator retains a `SourceAnchor`: an
+//! automatic semicolon is synthesized structure, never authored source, and
+//! the containing Block's `}` remains solely owned and consumed by
+//! `Cursor::parse_selected_block`. `SelectedVariableStatementTerminator` and
+//! `SelectedBlockVarStatementTerminator` remain distinct, unchanged,
+//! unreused precedents. Correspondence, static semantics, qualification
+//! branches, Script/Block carrier topology, and completion remain
+//! unchanged; only a mechanical `body()`/`terminator()` accessor split
+//! replaces the previous bare `SelectedFreeStandingIdentifierReferenceUseSite`
+//! use-site item payload.
 //!
 //! This is not aggregate ECMAScript qualification and cannot construct
 //! `QualificationOutcome::Qualified`.
@@ -251,18 +278,19 @@ impl SelectedIdentifierReferenceExpressionStatementScript {
 }
 
 /// One top-level item of the broadest selected Script carrier. The
-/// `IdentifierReferenceExpressionStatement` variant retains the bounded
-/// `SelectedFreeStandingIdentifierReferenceUseSite` occurrence carrier
-/// (Issue #766; exactly one retained `SelectedIdentifierReferenceFact`
-/// before #766): the authored `;` terminator and any authored `+`/`-`
-/// operator are construction invariants of this variant, never a retained
-/// anchor or relation payload.
+/// `IdentifierReferenceExpressionStatement` variant retains the placement-owned
+/// `SelectedTopLevelIdentifierReferenceUseSite` (Issue #768; the bounded
+/// `SelectedFreeStandingIdentifierReferenceUseSite` occurrence carrier alone,
+/// Issue #766, before #768), pairing the existing `One`/`Two` body with this
+/// placement's own `AuthoredSemicolon`/`AutomaticAtEof` termination
+/// provenance: any authored `+`/`-` operator remains a construction
+/// invariant of the body, never a retained anchor or relation payload.
 #[derive(Debug)]
 pub(super) enum SelectedReferenceUseEnabledTopLevelItem {
     LexicalDeclaration(SelectedLexicalDeclaration),
     Block(SelectedBlock),
     VariableStatement(SelectedVariableStatement),
-    IdentifierReferenceExpressionStatement(SelectedFreeStandingIdentifierReferenceUseSite),
+    IdentifierReferenceExpressionStatement(SelectedTopLevelIdentifierReferenceUseSite),
 }
 
 /// New fifth / broadest selected Script carrier (Issue #762), composing the
@@ -288,15 +316,17 @@ impl SelectedBlockReferenceUseEnabledScript {
 /// selected one-level Block containing no Block-local free-standing
 /// use-site; `UseSiteEnabledBlock` is the distinct new representation for a
 /// Block containing at least one. `IdentifierReferenceExpressionStatement`
-/// retains the bounded `SelectedFreeStandingIdentifierReferenceUseSite`
-/// occurrence carrier (Issue #766) for a top-level free-standing use-site.
+/// retains the placement-owned `SelectedTopLevelIdentifierReferenceUseSite`
+/// (Issue #768) for a top-level free-standing use-site -- the same TopLevel
+/// placement owner as `SelectedReferenceUseEnabledTopLevelItem`'s variant of
+/// the same name, never the Block-owned counterpart.
 #[derive(Debug)]
 pub(super) enum SelectedBlockReferenceUseEnabledTopLevelItem {
     LexicalDeclaration(SelectedLexicalDeclaration),
     Block(SelectedBlock),
     UseSiteEnabledBlock(SelectedUseSiteEnabledBlock),
     VariableStatement(SelectedVariableStatement),
-    IdentifierReferenceExpressionStatement(SelectedFreeStandingIdentifierReferenceUseSite),
+    IdentifierReferenceExpressionStatement(SelectedTopLevelIdentifierReferenceUseSite),
 }
 
 /// New use-site-enabled Block representation (Issue #762): a selected
@@ -362,15 +392,18 @@ impl SelectedUseSiteEnabledBlock {
 /// `UseSiteEnabledBlockItem ::= existing selected LexicalDeclaration |
 /// existing selected Block Var statement | selected IdentifierReference
 /// ExpressionStatement use-site` (Issue #762). The use-site variant retains
-/// the bounded `SelectedFreeStandingIdentifierReferenceUseSite` occurrence
-/// carrier (Issue #766); the authored `;` terminator and any authored
-/// `+`/`-` operator are construction invariants of this variant, never a
-/// retained anchor or relation payload.
+/// the placement-owned `SelectedBlockIdentifierReferenceUseSite` (Issue
+/// #768; the bounded `SelectedFreeStandingIdentifierReferenceUseSite`
+/// occurrence carrier alone, Issue #766, before #768), pairing the existing
+/// `One`/`Two` body with this Block placement's own
+/// `AuthoredSemicolon`/`AutomaticBeforeBlockClose` termination provenance:
+/// any authored `+`/`-` operator remains a construction invariant of the
+/// body, never a retained anchor or relation payload.
 #[derive(Debug)]
 pub(super) enum SelectedUseSiteEnabledBlockItem {
     LexicalDeclaration(SelectedLexicalDeclaration),
     Var(SelectedBlockVarStatement),
-    IdentifierReferenceExpressionStatement(SelectedFreeStandingIdentifierReferenceUseSite),
+    IdentifierReferenceExpressionStatement(SelectedBlockIdentifierReferenceUseSite),
 }
 
 #[derive(Debug)]
@@ -950,7 +983,7 @@ impl SelectedScriptBuilder {
     /// directly.
     fn push_use_site(
         &mut self,
-        use_site: SelectedFreeStandingIdentifierReferenceUseSite,
+        use_site: SelectedTopLevelIdentifierReferenceUseSite,
     ) -> Result<(), ParseFailure> {
         match self {
             builder @ Self::Flat(_) => {
@@ -1375,34 +1408,170 @@ impl SelectedFreeStandingIdentifierReferenceUseSite {
     }
 }
 
+/// Payload-free, placement-owned termination provenance for a TopLevel
+/// free-standing `IdentifierReference` `ExpressionStatement` use-site (Issue
+/// #768). `AuthoredSemicolon` proves only that the use-site was terminated
+/// by an authored `;`. `AutomaticAtEof` proves only that the use-site's body
+/// completed and the next source position, after currently selected trivia,
+/// is actual end of input; it carries no authored or synthetic
+/// `SourceAnchor` for the inserted semicolon and no EOF decision offset.
+/// This is a distinct owner from `SelectedVariableStatementTerminator`
+/// (physical shape equality does not establish semantic owner equality) and
+/// from `SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator`: a
+/// TopLevel use-site can never carry `AutomaticBeforeBlockClose`, which this
+/// type cannot represent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator {
+    AuthoredSemicolon,
+    AutomaticAtEof,
+}
+
+/// TopLevel free-standing `IdentifierReference` `ExpressionStatement`
+/// use-site (Issue #768): the existing bounded `One`/`Two` occurrence body
+/// (Issue #766) paired with this placement's own termination provenance.
+/// Reference occurrence cardinality (`body`) and statement termination
+/// provenance (`terminator`) are kept as two independent fields, never
+/// crossed into a Cartesian variant set. Never shared with
+/// `SelectedBlockIdentifierReferenceUseSite`: a TopLevel use-site can never
+/// carry `AutomaticBeforeBlockClose`.
+#[derive(Debug)]
+pub(super) struct SelectedTopLevelIdentifierReferenceUseSite {
+    body: SelectedFreeStandingIdentifierReferenceUseSite,
+    terminator: SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator,
+}
+
+impl SelectedTopLevelIdentifierReferenceUseSite {
+    pub(super) fn body(&self) -> &SelectedFreeStandingIdentifierReferenceUseSite {
+        &self.body
+    }
+
+    pub(super) fn terminator(
+        &self,
+    ) -> SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator {
+        self.terminator
+    }
+}
+
+/// Payload-free, placement-owned termination provenance for a one-level
+/// Block free-standing `IdentifierReference` `ExpressionStatement` use-site
+/// (Issue #768). `AuthoredSemicolon` proves only that the use-site was
+/// terminated by an authored `;`. `AutomaticBeforeBlockClose` proves only
+/// that the use-site's body completed and the next significant source
+/// position, after currently selected trivia, is the containing Block's
+/// closing `}`; it carries no authored or synthetic `SourceAnchor` for the
+/// inserted semicolon and no anchor for `}` itself, which remains the
+/// enclosing Block's own authored syntax and is left unconsumed by this
+/// use-site's parser. This is intentionally not shared with
+/// `SelectedBlockVarStatementTerminator` (physical shape equality does not
+/// establish semantic owner equality) or with
+/// `SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator`: a
+/// Block use-site can never carry `AutomaticAtEof`, which this type cannot
+/// represent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator {
+    AuthoredSemicolon,
+    AutomaticBeforeBlockClose,
+}
+
+/// One-level Block free-standing `IdentifierReference` `ExpressionStatement`
+/// use-site (Issue #768): the existing bounded `One`/`Two` occurrence body
+/// (Issue #766) paired with this placement's own termination provenance.
+/// Reference occurrence cardinality (`body`) and statement termination
+/// provenance (`terminator`) are kept as two independent fields, never
+/// crossed into a Cartesian variant set. Never shared with
+/// `SelectedTopLevelIdentifierReferenceUseSite`: a Block use-site can never
+/// carry `AutomaticAtEof`.
+#[derive(Debug)]
+pub(super) struct SelectedBlockIdentifierReferenceUseSite {
+    body: SelectedFreeStandingIdentifierReferenceUseSite,
+    terminator: SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator,
+}
+
+impl SelectedBlockIdentifierReferenceUseSite {
+    pub(super) fn body(&self) -> &SelectedFreeStandingIdentifierReferenceUseSite {
+        &self.body
+    }
+
+    pub(super) fn terminator(
+        &self,
+    ) -> SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator {
+        self.terminator
+    }
+}
+
 /// Result of the bounded, transactional, placement-neutral free-standing
-/// `IdentifierReference` `ExpressionStatement` use-site probe (Issue #758,
-/// generalized from a TopLevel-only name to this placement-neutral leaf by
-/// Issue #762 per #688 comment 5734964743, widened from an always-exactly-one
-/// retained fact to the bounded `SelectedFreeStandingIdentifierReferenceUseSite`
-/// `One`/`Two` occurrence carrier by Issue #766 per #688 comment 5739718987).
+/// `IdentifierReference` `ExpressionStatement` use-site **body** probe
+/// (Issue #758, generalized from a TopLevel-only name to this
+/// placement-neutral leaf by Issue #762 per #688 comment 5734964743, widened
+/// from an always-exactly-one retained fact to the bounded
+/// `SelectedFreeStandingIdentifierReferenceUseSite` `One`/`Two` occurrence
+/// carrier by Issue #766 per #688 comment 5739718987, narrowed from owning
+/// the whole use-site including its authored-semicolon terminator to owning
+/// only the placement-neutral body -- termination provenance moved entirely
+/// to the placement-owned TopLevel/Block callers -- by Issue #768).
 /// `NotSelected` covers every declining case uniformly: no candidate
-/// reference; an escaped-ReservedWord first or second candidate; a first
-/// candidate reference followed by neither an authored `;` nor exactly one
-/// authored `+`/`-` continuation; or a `+`/`-` continuation whose second
-/// operand or trailing terminator does not complete the whole two-operand
-/// theorem. In every `NotSelected` case the cursor is left exactly where it
-/// stood before the probe began -- including a `+`/`-` continuation that
-/// begins to match but does not complete (e.g. `a+b+c;`, `a+1;`) -- so the
-/// caller's own existing dispatch sees an unperturbed cursor and a locally
-/// recognized prefix never authorizes a richer or longer source. This is why
-/// this owner must not call
+/// reference; an escaped-ReservedWord first or second candidate; or a
+/// `+`/`-` continuation whose second operand does not complete the whole
+/// two-operand theorem. In every `NotSelected` case the cursor is left
+/// exactly where it stood before the probe began -- including a `+`/`-`
+/// continuation that begins to match but does not complete (e.g. `a+`) --
+/// so the caller's own existing dispatch sees an unperturbed cursor and a
+/// locally recognized prefix never authorizes a richer or longer source.
+/// This is why this owner must not call
 /// `consume_selected_identifier_reference_initializer`: that helper's
 /// initializer-specific continuation degrades to a completed `One(first)` on
-/// a failed continuation, which would incorrectly authorize `a+b+c;` up to
-/// `a` as a complete free-standing Statement. `ResourceLimited`/
+/// a failed continuation, which would incorrectly authorize `a+b+c` up to
+/// `a` as a complete free-standing Statement body. `ResourceLimited`/
 /// `InternalFailure` are propagated exactly, never downgraded to
-/// `NotSelected`. This type and its producing method carry no placement
-/// ownership themselves; TopLevel vs. Block placement belongs entirely to
-/// the caller.
+/// `NotSelected`. `Matched` retains no terminator: a locally complete body
+/// (`One` or `Two`) is not yet a complete use-site until the placement owner
+/// also proves an authored `;`, actual EOF, or the containing `}` follows
+/// (per `consume_selected_top_level_identifier_reference_expression_statement_use_site`
+/// / `consume_selected_block_identifier_reference_expression_statement_use_site`);
+/// a placement owner that finds none of those must roll back the whole
+/// probe to its own pre-call snapshot and decline, exactly reproducing this
+/// leaf's pre-#768 all-or-nothing transaction. This type and its producing
+/// method carry no placement ownership themselves; TopLevel vs. Block
+/// placement belongs entirely to the caller.
 #[derive(Debug)]
-enum SelectedIdentifierReferenceExpressionStatementUseSiteRecognition {
+enum SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition {
     Matched(SelectedFreeStandingIdentifierReferenceUseSite),
+    NotSelected,
+    ResourceLimited,
+    InternalFailure,
+}
+
+/// Result of the placement-owned TopLevel free-standing `IdentifierReference`
+/// `ExpressionStatement` use-site probe (Issue #768): the placement-neutral
+/// body probe above, plus this placement's own
+/// `AuthoredSemicolon`/`AutomaticAtEof` termination decision. `NotSelected`
+/// covers a declining body probe unchanged, and additionally a body that
+/// completed but whose immediate next position (after selected trivia) is
+/// neither an authored `;` nor actual end of input -- in that case the
+/// cursor is rolled back to exactly where it stood before the whole probe
+/// began, so a locally recognized body never authorizes a richer or longer
+/// source (e.g. `a.b`, `a+b+c`).
+#[derive(Debug)]
+enum SelectedTopLevelIdentifierReferenceExpressionStatementUseSiteRecognition {
+    Matched(SelectedTopLevelIdentifierReferenceUseSite),
+    NotSelected,
+    ResourceLimited,
+    InternalFailure,
+}
+
+/// Result of the placement-owned one-level Block free-standing
+/// `IdentifierReference` `ExpressionStatement` use-site probe (Issue #768):
+/// the placement-neutral body probe above, plus this placement's own
+/// `AuthoredSemicolon`/`AutomaticBeforeBlockClose` termination decision.
+/// `NotSelected` covers a declining body probe unchanged, and additionally a
+/// body that completed but whose immediate next position (after selected
+/// trivia) is neither an authored `;` nor the containing Block's closing
+/// `}` -- in that case the cursor is rolled back to exactly where it stood
+/// before the whole probe began. `AutomaticBeforeBlockClose` never consumes
+/// `}`: it remains the enclosing Block parser's own authored syntax.
+#[derive(Debug)]
+enum SelectedBlockIdentifierReferenceExpressionStatementUseSiteRecognition {
+    Matched(SelectedBlockIdentifierReferenceUseSite),
     NotSelected,
     ResourceLimited,
     InternalFailure,
@@ -1494,7 +1663,7 @@ impl SelectedBlockBuilder {
     /// already `ReferenceUseEnabled`, the use-site appends directly.
     fn push_use_site(
         &mut self,
-        use_site: SelectedFreeStandingIdentifierReferenceUseSite,
+        use_site: SelectedBlockIdentifierReferenceUseSite,
     ) -> Result<(), ParseFailure> {
         match self {
             builder @ Self::Legacy(_) => {
@@ -1633,14 +1802,19 @@ impl<'source> Cursor<'source> {
         }
     }
 
-    /// Owning single left-to-right Block parse lifecycle (Issue #762). The
-    /// Block source is read exactly once: inside the loop, the bounded
-    /// placement-neutral free-standing use-site probe
-    /// (`consume_selected_identifier_reference_expression_statement_use_site`)
-    /// runs transactionally before the existing raw Block `var` /
-    /// lexical-declaration dispatch, so `{ let; }` / `{ varfoo; }` become
-    /// use-sites while `{ let a; }` / `{ var a; }` remain owned by the
-    /// existing declaration dispatch exactly as before. Every recognized
+    /// Owning single left-to-right Block parse lifecycle (Issue #762,
+    /// widened from an authored-semicolon-only Block-contained use-site
+    /// terminator to also admit before-`}` automatic termination by Issue
+    /// #768). The Block source is read exactly once: inside the loop, the
+    /// bounded Block-owned free-standing use-site probe
+    /// (`consume_selected_block_identifier_reference_expression_statement_use_site`,
+    /// which recognizes the placement-neutral body and then decides this
+    /// placement's own `AuthoredSemicolon`/`AutomaticBeforeBlockClose`
+    /// termination, only ever peeking `}`) runs transactionally before the
+    /// existing raw Block `var` / lexical-declaration dispatch, so
+    /// `{ let; }` / `{ varfoo; }` become use-sites while `{ let a; }` /
+    /// `{ var a; }` remain owned by the existing declaration dispatch
+    /// exactly as before. Every recognized
     /// item is committed directly to the `SelectedBlockBuilder`
     /// Block-local monotonic capability builder: `Legacy` while no
     /// Block-contained use-site has committed, promoting to
@@ -1664,19 +1838,19 @@ impl<'source> Cursor<'source> {
 
         let mut builder = SelectedBlockBuilder::Legacy(Vec::new());
         loop {
-            match self.consume_selected_identifier_reference_expression_statement_use_site() {
-                SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::Matched(
+            match self.consume_selected_block_identifier_reference_expression_statement_use_site() {
+                SelectedBlockIdentifierReferenceExpressionStatementUseSiteRecognition::Matched(
                     use_site,
                 ) => {
                     builder.push_use_site(use_site)?;
                 }
-                SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::ResourceLimited => {
+                SelectedBlockIdentifierReferenceExpressionStatementUseSiteRecognition::ResourceLimited => {
                     return Err(ParseFailure::ResourceLimited);
                 }
-                SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::InternalFailure => {
+                SelectedBlockIdentifierReferenceExpressionStatementUseSiteRecognition::InternalFailure => {
                     return Err(ParseFailure::InternalFailure);
                 }
-                SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::NotSelected => {
+                SelectedBlockIdentifierReferenceExpressionStatementUseSiteRecognition::NotSelected => {
                     if self.remaining().starts_with("var") {
                         let statement = self.parse_selected_block_var_statement()?;
                         builder.push_var_statement(statement)?;
@@ -2625,72 +2799,73 @@ impl<'source> Cursor<'source> {
     }
 
     /// Bounded, transactional, placement-neutral free-standing
-    /// `IdentifierReference` `ExpressionStatement` use-site probe (Issue
-    /// #758, generalized to this placement-neutral leaf by Issue #762 per
-    /// #688 comment 5734964743 -- both TopLevel and Block placement are now
-    /// independently justified callers of this exact same bounded grammar --
-    /// widened by Issue #766 per #688 comment 5739718987 to additionally
-    /// accept exactly one authored `+`/`-` continuation):
+    /// `IdentifierReference` `ExpressionStatement` use-site **body** probe
+    /// (Issue #758, generalized to this placement-neutral leaf by Issue #762
+    /// per #688 comment 5734964743 -- both TopLevel and Block placement are
+    /// now independently justified callers of this exact same bounded
+    /// grammar -- widened by Issue #766 per #688 comment 5739718987 to
+    /// additionally accept exactly one authored `+`/`-` continuation,
+    /// narrowed by Issue #768 to own only the body -- termination provenance
+    /// moved entirely to the placement-owned TopLevel/Block callers):
     ///
     /// ```text
-    /// SelectedIdentifierReferenceExpressionStatementUseSite ::=
+    /// SelectedIdentifierReferenceExpressionStatementUseSiteBody ::=
     ///     SelectedAcceptedIdentifierReference
-    ///     AuthoredSemicolon
-    ///   | SelectedTwoIdentifierReferenceAdditiveExpressionStatement
+    ///   | SelectedTwoIdentifierReferenceAdditiveExpressionStatementBody
     ///
-    /// SelectedTwoIdentifierReferenceAdditiveExpressionStatement ::=
+    /// SelectedTwoIdentifierReferenceAdditiveExpressionStatementBody ::=
     ///     SelectedAcceptedIdentifierReference
     ///     SelectedAdditiveTrivia
     ///     ("+" | "-")
     ///     SelectedAdditiveTrivia
     ///     SelectedAcceptedIdentifierReference
-    ///     SelectedStatementTrailingTrivia
-    ///     AuthoredSemicolon
     /// ```
     ///
     /// Each operand is recognized exactly once by the unmodified shared
     /// `consume_selected_identifier_reference` recognizer -- no second
-    /// scanner or decoder. After the first operand, an authored `;`
-    /// (after existing selected trivia) commits the unchanged
-    /// single-reference `One` occurrence. Otherwise, exactly one authored
-    /// `+` or `-` is required to continue: it is consumed and discarded (no
+    /// scanner or decoder. After the first operand, selected trivia is
+    /// skipped and, absent an authored `+` or `-` at that position, the
+    /// probe commits the unchanged single-reference `One` occurrence
+    /// immediately -- this body helper claims no terminator, so the caller
+    /// decides whether what follows is a valid use-site ending. Otherwise
+    /// exactly one authored `+` or `-` is consumed and discarded (no
     /// operator kind, `SourceAnchor`, or whole-expression anchor is
     /// retained), selected trivia is skipped, and a second operand is
-    /// recognized by the same unmodified shared recognizer. Only when the
-    /// second operand is accepted and immediately followed (after existing
-    /// selected trivia) by an authored `;` does the whole probe commit
+    /// recognized by the same unmodified shared recognizer; once accepted,
+    /// selected trivia is skipped once more and the probe commits
     /// `Two { first, second }`.
     ///
-    /// Every other outcome restores the cursor to exactly where it stood
-    /// before this probe began and declines (`NotSelected`): no candidate
-    /// reference; an escaped-ReservedWord first or second candidate; a first
-    /// candidate followed by neither `;` nor a `+`/`-` continuation; or a
-    /// `+`/`-` continuation whose second operand or trailing terminator does
-    /// not complete. This is a whole-probe transaction, not a
+    /// Only a failing continuation declines (`NotSelected`), restoring the
+    /// cursor to exactly where it stood before this probe began: no
+    /// candidate reference; an escaped-ReservedWord first or second
+    /// candidate; or a `+`/`-` continuation whose second operand does not
+    /// complete. This is a whole-body transaction, not a
     /// first-operand-then-optional-continuation transaction: a locally
-    /// recognized `IdentifierReference` (or `IdentifierReference "+"
-    /// IdentifierReference`) prefix never authorizes a richer, longer, or
-    /// ASI-terminated neighbor (`a+b+c;`, `a+1;`, `a.b;`, `a();`, `a=b;`,
-    /// `a+b`, etc.), and an escaped-ReservedWord operand never gains a new
-    /// Statement-local EE-04-R08 route.
+    /// recognized `IdentifierReference "+" IdentifierReference` prefix never
+    /// authorizes a richer or longer source (`a+b+c`), and an
+    /// escaped-ReservedWord operand never gains a new Statement-local
+    /// EE-04-R08 route. A matched body that the placement-owned caller
+    /// cannot terminate validly (e.g. `a.b`) is rolled back by that caller
+    /// to the same pre-probe snapshot, reproducing this leaf's pre-#768
+    /// all-or-nothing decline for such input exactly.
     ///
     /// This deliberately does not call
     /// `consume_selected_identifier_reference_initializer`: that helper's
     /// initializer-specific continuation intentionally degrades a failed
     /// second operand to a completed `One(first)` so the enclosing
     /// binding/comma transaction can recover the remainder, which would
-    /// incorrectly authorize `a+b+c;` up through `a` as a complete
-    /// free-standing Statement (there is no authored `;` there). Only the
-    /// lexical primitive `consume_selected_identifier_reference` is shared;
-    /// the owner transaction is not.
+    /// incorrectly authorize `a+b+c` up through `a` as a complete
+    /// free-standing Statement body. Only the lexical primitive
+    /// `consume_selected_identifier_reference` is shared; the owner
+    /// transaction is not.
     ///
     /// `ResourceLimited`/`InternalFailure` from either operand's recognition
     /// are propagated exactly, never downgraded to `NotSelected` or to a
     /// completed `One`. This helper retains no placement ownership of its
     /// own: TopLevel vs. Block placement belongs entirely to the caller.
-    fn consume_selected_identifier_reference_expression_statement_use_site(
+    fn consume_selected_identifier_reference_expression_statement_use_site_body(
         &mut self,
-    ) -> SelectedIdentifierReferenceExpressionStatementUseSiteRecognition {
+    ) -> SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition {
         let snapshot = self.offset;
 
         let first = match self.consume_selected_identifier_reference() {
@@ -2698,27 +2873,22 @@ impl<'source> Cursor<'source> {
             SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName { .. }
             | SelectedIdentifierReferenceRecognition::NotSelected => {
                 self.offset = snapshot;
-                return SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::NotSelected;
+                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::NotSelected;
             }
             SelectedIdentifierReferenceRecognition::ResourceLimited => {
-                return SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::ResourceLimited;
+                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::ResourceLimited;
             }
             SelectedIdentifierReferenceRecognition::InternalFailure => {
-                return SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::InternalFailure;
+                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::InternalFailure;
             }
         };
 
         self.skip_selected_trivia();
 
-        if self.consume_ascii(';') {
-            return SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::Matched(
+        if !self.consume_ascii('+') && !self.consume_ascii('-') {
+            return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::Matched(
                 SelectedFreeStandingIdentifierReferenceUseSite::One(first),
             );
-        }
-
-        if !self.consume_ascii('+') && !self.consume_ascii('-') {
-            self.offset = snapshot;
-            return SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::NotSelected;
         }
 
         self.skip_selected_trivia();
@@ -2728,26 +2898,141 @@ impl<'source> Cursor<'source> {
             SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName { .. }
             | SelectedIdentifierReferenceRecognition::NotSelected => {
                 self.offset = snapshot;
-                return SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::NotSelected;
+                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::NotSelected;
             }
             SelectedIdentifierReferenceRecognition::ResourceLimited => {
-                return SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::ResourceLimited;
+                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::ResourceLimited;
             }
             SelectedIdentifierReferenceRecognition::InternalFailure => {
-                return SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::InternalFailure;
+                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::InternalFailure;
             }
         };
 
         self.skip_selected_trivia();
 
-        if self.consume_ascii(';') {
-            SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::Matched(
-                SelectedFreeStandingIdentifierReferenceUseSite::Two { first, second },
-            )
+        SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::Matched(
+            SelectedFreeStandingIdentifierReferenceUseSite::Two { first, second },
+        )
+    }
+
+    /// Placement-owned TopLevel free-standing `IdentifierReference`
+    /// `ExpressionStatement` use-site probe (Issue #768 per #688 comment
+    /// 5741848600, composing the EOF-only ASI / synthetic-source-provenance
+    /// theorem accepted by #233/#234 and #318/#319 with the body probe
+    /// above): recognizes the body transactionally, then decides this
+    /// placement's own termination:
+    ///
+    /// ```text
+    /// SelectedTopLevelIdentifierReferenceExpressionStatementUseSite ::=
+    ///     SelectedIdentifierReferenceExpressionStatementUseSiteBody
+    ///     SelectedStatementTrailingTrivia
+    ///     ( AuthoredSemicolon | AutomaticAtEof )
+    /// ```
+    ///
+    /// A declining body probe (or a `ResourceLimited`/`InternalFailure`
+    /// classification from it) is propagated exactly. Given a matched body,
+    /// selected trivia is skipped and an authored `;` is preferred when
+    /// present (`AuthoredSemicolon`); otherwise actual source end of input
+    /// (`self.is_eof()`, never merely a `LineTerminator` or any other
+    /// position) commits `AutomaticAtEof`. Neither condition holding rolls
+    /// the cursor back to exactly where it stood before this whole probe
+    /// began and declines (`NotSelected`), so a locally recognized body
+    /// never authorizes a richer, longer, or `LineTerminator`-terminated
+    /// neighbor (`a.b`, `a+b+c`, `a\nb`). No `SourceAnchor` -- authored,
+    /// synthetic, or zero-width -- is retained for the automatic semicolon,
+    /// and no EOF decision offset is retained: `AutomaticAtEof` is
+    /// categorical provenance only.
+    fn consume_selected_top_level_identifier_reference_expression_statement_use_site(
+        &mut self,
+    ) -> SelectedTopLevelIdentifierReferenceExpressionStatementUseSiteRecognition {
+        let snapshot = self.offset;
+
+        let body = match self.consume_selected_identifier_reference_expression_statement_use_site_body() {
+            SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::Matched(body) => body,
+            SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::NotSelected => {
+                return SelectedTopLevelIdentifierReferenceExpressionStatementUseSiteRecognition::NotSelected;
+            }
+            SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::ResourceLimited => {
+                return SelectedTopLevelIdentifierReferenceExpressionStatementUseSiteRecognition::ResourceLimited;
+            }
+            SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::InternalFailure => {
+                return SelectedTopLevelIdentifierReferenceExpressionStatementUseSiteRecognition::InternalFailure;
+            }
+        };
+
+        let terminator = if self.consume_ascii(';') {
+            SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AuthoredSemicolon
+        } else if self.is_eof() {
+            SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticAtEof
         } else {
             self.offset = snapshot;
-            SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::NotSelected
-        }
+            return SelectedTopLevelIdentifierReferenceExpressionStatementUseSiteRecognition::NotSelected;
+        };
+
+        SelectedTopLevelIdentifierReferenceExpressionStatementUseSiteRecognition::Matched(
+            SelectedTopLevelIdentifierReferenceUseSite { body, terminator },
+        )
+    }
+
+    /// Placement-owned one-level Block free-standing `IdentifierReference`
+    /// `ExpressionStatement` use-site probe (Issue #768 per #688 comment
+    /// 5741848600, composing the before-`}` ASI / Block-close-ownership
+    /// theorem accepted by #688 comment 5685046994 / #717 with the body
+    /// probe above): recognizes the body transactionally, then decides this
+    /// placement's own termination:
+    ///
+    /// ```text
+    /// SelectedBlockIdentifierReferenceExpressionStatementUseSite ::=
+    ///     SelectedIdentifierReferenceExpressionStatementUseSiteBody
+    ///     SelectedStatementTrailingTrivia
+    ///     ( AuthoredSemicolon | [lookahead == `}`] )
+    /// ```
+    ///
+    /// A declining body probe (or a `ResourceLimited`/`InternalFailure`
+    /// classification from it) is propagated exactly. Given a matched body,
+    /// selected trivia is skipped and an authored `;` is preferred when
+    /// present (`AuthoredSemicolon`); otherwise the next significant source
+    /// position being the containing Block's closing `}` commits
+    /// `AutomaticBeforeBlockClose` -- this probe only peeks at `}`, never
+    /// consumes it, leaving sole ownership of the closing brace with the
+    /// enclosing `Cursor::parse_selected_block` caller. Neither condition
+    /// holding rolls the cursor back to exactly where it stood before this
+    /// whole probe began and declines (`NotSelected`), so a locally
+    /// recognized body never authorizes a richer, longer, or
+    /// `LineTerminator`-terminated neighbor. No `SourceAnchor` -- authored,
+    /// synthetic, or for `}` itself -- is retained for the automatic
+    /// semicolon: `AutomaticBeforeBlockClose` is categorical provenance
+    /// only.
+    fn consume_selected_block_identifier_reference_expression_statement_use_site(
+        &mut self,
+    ) -> SelectedBlockIdentifierReferenceExpressionStatementUseSiteRecognition {
+        let snapshot = self.offset;
+
+        let body = match self.consume_selected_identifier_reference_expression_statement_use_site_body() {
+            SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::Matched(body) => body,
+            SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::NotSelected => {
+                return SelectedBlockIdentifierReferenceExpressionStatementUseSiteRecognition::NotSelected;
+            }
+            SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::ResourceLimited => {
+                return SelectedBlockIdentifierReferenceExpressionStatementUseSiteRecognition::ResourceLimited;
+            }
+            SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::InternalFailure => {
+                return SelectedBlockIdentifierReferenceExpressionStatementUseSiteRecognition::InternalFailure;
+            }
+        };
+
+        let terminator = if self.consume_ascii(';') {
+            SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator::AuthoredSemicolon
+        } else if self.peek_char() == Some('}') {
+            SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticBeforeBlockClose
+        } else {
+            self.offset = snapshot;
+            return SelectedBlockIdentifierReferenceExpressionStatementUseSiteRecognition::NotSelected;
+        };
+
+        SelectedBlockIdentifierReferenceExpressionStatementUseSiteRecognition::Matched(
+            SelectedBlockIdentifierReferenceUseSite { body, terminator },
+        )
     }
 
     /// Recognizes the bounded selected `IdentifierReference` initializer
@@ -3183,19 +3468,19 @@ pub(super) fn recognize_selected_lexical_slice(source: &SourceText) -> SelectedL
         // the literal characters `var` without being the `var` keyword
         // (`varfoo;`). A declining probe leaves the cursor unperturbed, so
         // every existing dispatch decision below is unaffected.
-        match cursor.consume_selected_identifier_reference_expression_statement_use_site() {
-            SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::Matched(use_site) => {
+        match cursor.consume_selected_top_level_identifier_reference_expression_statement_use_site() {
+            SelectedTopLevelIdentifierReferenceExpressionStatementUseSiteRecognition::Matched(use_site) => {
                 if let Err(failure) = builder.push_use_site(use_site) {
                     return parse_failure_to_outcome(failure);
                 }
             }
-            SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::ResourceLimited => {
+            SelectedTopLevelIdentifierReferenceExpressionStatementUseSiteRecognition::ResourceLimited => {
                 return SelectedLexicalSliceOutcome::ResourceLimited;
             }
-            SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::InternalFailure => {
+            SelectedTopLevelIdentifierReferenceExpressionStatementUseSiteRecognition::InternalFailure => {
                 return SelectedLexicalSliceOutcome::InternalFailure;
             }
-            SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::NotSelected => {
+            SelectedTopLevelIdentifierReferenceExpressionStatementUseSiteRecognition::NotSelected => {
                 if cursor.remaining().starts_with("var") {
                     let statement = match cursor.parse_variable_statement() {
                         Ok(statement) => statement,

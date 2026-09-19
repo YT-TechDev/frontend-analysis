@@ -3359,3 +3359,121 @@ fn two_operand_use_site_known_static_rejection_suppresses_relation_construction(
     // operands of the locally valid `b+c;` use-site never publish a
     // relation once the existing lexical/var static rejection wins.
 }
+
+// --- Issue #768: correspondence remains terminator-blind for the new
+// automatic (`AutomaticAtEof` / `AutomaticBeforeBlockClose`) free-standing
+// use-site termination provenance -- relation meaning depends only on the
+// existing `One`/`Two` body, never on how the use-site was terminated. ---
+
+#[test]
+fn top_level_use_site_correspondence_is_terminator_blind_for_one_body() {
+    let (_, authored_script) = recognized_reference_use("let a;\na;");
+    let (_, automatic_script) = recognized_reference_use("let a;\na");
+
+    let authored_analysis = accepted_use_site_analysis(&authored_script);
+    let automatic_analysis = accepted_use_site_analysis(&automatic_script);
+    let authored_relation = &authored_analysis.relations()[0];
+    let automatic_relation = &automatic_analysis.relations()[0];
+
+    for relation in [authored_relation, automatic_relation] {
+        let (binding, region) = relation
+            .correspondence()
+            .selected_lexical_binding()
+            .expect("must resolve to the top-level lexical binding a");
+        assert_eq!(binding.fragment(), "a");
+        assert!(matches!(
+            region,
+            SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+        ));
+    }
+}
+
+#[test]
+fn top_level_use_site_correspondence_is_terminator_blind_for_two_body() {
+    let (_, authored_script) = recognized_reference_use("let a;\nvar b;\na+b;");
+    let (_, automatic_script) = recognized_reference_use("let a;\nvar b;\na+b");
+
+    let authored_relations = accepted_use_site_analysis(&authored_script);
+    let automatic_relations = accepted_use_site_analysis(&automatic_script);
+
+    for relations in [
+        authored_relations.relations(),
+        automatic_relations.relations(),
+    ] {
+        let [a, b] = relations else {
+            panic!("expected exactly two use-site relations");
+        };
+        let (binding, region) = a
+            .correspondence()
+            .selected_lexical_binding()
+            .expect("a must resolve to the visible top-level lexical binding");
+        assert_eq!(binding.fragment(), "a");
+        assert!(matches!(
+            region,
+            SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+        ));
+        assert_eq!(
+            b.correspondence()
+                .var_contributors()
+                .expect("b must resolve to the same-source var contributors")
+                .len(),
+            1
+        );
+    }
+}
+
+#[test]
+fn block_use_site_correspondence_is_terminator_blind() {
+    let (_, authored_script) = recognized_block_reference_use("let b;\n{ let a;\na+b; }");
+    let (_, automatic_script) = recognized_block_reference_use("let b;\n{ let a;\na+b }");
+
+    let authored_relations = accepted_block_use_site_analysis(&authored_script);
+    let automatic_relations = accepted_block_use_site_analysis(&automatic_script);
+
+    for relations in [
+        authored_relations.relations(),
+        automatic_relations.relations(),
+    ] {
+        let [a, b] = relations else {
+            panic!("expected exactly two Block use-site relations");
+        };
+        let (a_binding, a_region) = a
+            .correspondence()
+            .selected_lexical_binding()
+            .expect("a must resolve to the current-Block lexical binding");
+        assert_eq!(a_binding.fragment(), "a");
+        assert!(matches!(
+            a_region,
+            SelectedVariableStatementNameCorrespondenceRegion::Block(_)
+        ));
+
+        let (b_binding, b_region) = b
+            .correspondence()
+            .selected_lexical_binding()
+            .expect("b must resolve to the TopLevel lexical binding");
+        assert_eq!(b_binding.fragment(), "b");
+        assert!(matches!(
+            b_region,
+            SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+        ));
+    }
+}
+
+#[test]
+fn block_use_site_known_static_rejection_suppresses_relation_construction_for_automatic_termination()
+ {
+    // The same static-rejection gate applies whether the locally valid
+    // `b+c` use-site is authored-semicolon-terminated or
+    // before-close-automatic-terminated.
+    let source = source("let a;\n{ var a; b+c }");
+    let script = match recognize_selected_lexical_slice(&source) {
+        SelectedLexicalSliceOutcome::RecognizedBlockReferenceUseEnabledSlice(script) => script,
+        other => panic!("expected Block-reference-use-enabled recognition, got {other:?}"),
+    };
+    assert!(matches!(
+        evaluate_selected_block_reference_use_enabled_static_semantics(&script),
+        SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::LexicalVarNameCollision { .. }
+        )
+    ));
+}

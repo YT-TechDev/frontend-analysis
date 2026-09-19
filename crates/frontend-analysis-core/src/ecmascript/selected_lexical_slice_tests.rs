@@ -2,12 +2,13 @@ use crate::{SourceAnchor, SourceId, SourceText};
 
 use super::qualification_validation_tests::{gold_source, gold_subject_range};
 use super::selected_lexical_slice::{
-    SelectedBindingNameState, SelectedBlockReferenceUseEnabledScript,
-    SelectedBlockReferenceUseEnabledTopLevelItem, SelectedDeclarationTerminator,
-    SelectedFreeStandingIdentifierReferenceUseSite,
-    SelectedIdentifierReferenceExpressionStatementScript, SelectedInitializerState,
-    SelectedInvalidEscapePosition, SelectedLexicalDeclarationKind, SelectedLexicalScript,
-    SelectedLexicalSliceOutcome, SelectedReferenceUseEnabledTopLevelItem,
+    SelectedBindingNameState, SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator,
+    SelectedBlockReferenceUseEnabledScript, SelectedBlockReferenceUseEnabledTopLevelItem,
+    SelectedDeclarationTerminator, SelectedFreeStandingIdentifierReferenceUseSite,
+    SelectedIdentifierReferenceExpressionStatementScript, SelectedIdentifierReferenceNameState,
+    SelectedInitializerState, SelectedInvalidEscapePosition, SelectedLexicalDeclarationKind,
+    SelectedLexicalScript, SelectedLexicalSliceOutcome, SelectedReferenceUseEnabledTopLevelItem,
+    SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator,
     SelectedUseSiteEnabledBlockItem, SelectedVariableStatement, SelectedVariableStatementScript,
     SelectedVariableStatementTerminator, SelectedVariableTopLevelItem,
     recognize_selected_lexical_slice,
@@ -875,13 +876,16 @@ fn broader_script_grammar_remains_unsupported() {
 
 #[test]
 fn whole_source_transaction_prevents_prefix_success_and_truncated_facts() {
+    // "l"/"le"/"let"/"let " moved to selected-positive TopLevel
+    // free-standing-use-site EOF-automatic-termination coverage by Issue
+    // #768 (any accepted `IdentifierReference`, including the contextual
+    // name `let`, now completes at actual EOF) and are no longer listed
+    // here; "const" remains an unconditionally reserved word never accepted
+    // by the free-standing recognizer, so it and its truncated neighbors
+    // stay unsupported.
     for text in [
         "",
         " ",
-        "l",
-        "le",
-        "let",
-        "let ",
         "const",
         "const ",
         "let x,",
@@ -7060,7 +7064,7 @@ fn only_use_site_fact(
     else {
         panic!("expected exactly one selected use-site item");
     };
-    only_fact(use_site)
+    only_fact(use_site.body())
 }
 
 #[test]
@@ -7140,7 +7144,7 @@ fn top_level_block_composes_with_free_standing_use_site() {
     else {
         panic!("expected [Block, use-site] items");
     };
-    assert_eq!(only_fact(use_site).semantic_name(), "a");
+    assert_eq!(only_fact(use_site.body()).semantic_name(), "a");
 
     let script = recognized_reference_use("{ let a; }\na;");
     let [
@@ -7150,7 +7154,7 @@ fn top_level_block_composes_with_free_standing_use_site() {
     else {
         panic!("expected [Block, use-site] items");
     };
-    assert_eq!(only_fact(use_site).semantic_name(), "a");
+    assert_eq!(only_fact(use_site.body()).semantic_name(), "a");
 }
 
 #[test]
@@ -7191,7 +7195,14 @@ fn general_expression_neighbors_remain_unsupported_without_valid_prefix_leakage(
 
 #[test]
 fn asi_forms_remain_unsupported_coverage_not_selected() {
-    assert_unsupported("a");
+    // Bare `a` moved to selected-positive TopLevel EOF-automatic-termination
+    // coverage by Issue #768 (see the "Issue #768" section below) and is no
+    // longer listed here. General `LineTerminator` ASI remains explicitly
+    // out of scope: a `LineTerminator` alone is never sufficient to
+    // terminate the free-standing use-site, so `a` here is not followed by
+    // actual EOF and the whole free-standing probe declines, falling
+    // through to the existing raw dispatch that still cannot complete
+    // `let b;` as a continuation of `a`.
     assert_unsupported("a\nlet b;");
 }
 
@@ -7213,7 +7224,7 @@ fn duplicate_use_sites_are_preserved_distinctly_in_authored_order() {
     else {
         panic!("expected [LexicalDeclaration, use-site, use-site] items");
     };
-    let (first, second) = (only_fact(first), only_fact(second));
+    let (first, second) = (only_fact(first.body()), only_fact(second.body()));
     assert_eq!(first.semantic_name(), "a");
     assert_eq!(second.semantic_name(), "a");
     assert_ne!(
@@ -7239,7 +7250,7 @@ fn authored_use_site_order_is_preserved_not_target_declaration_order() {
         .filter_map(|item| match item {
             SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
                 use_site,
-            ) => Some(only_fact(use_site).semantic_name()),
+            ) => Some(only_fact(use_site.body()).semantic_name()),
             _ => None,
         })
         .collect();
@@ -7279,7 +7290,7 @@ fn only_block_use_site_fact(
     else {
         panic!("expected exactly one Block-contained use-site item");
     };
-    only_fact(use_site)
+    only_fact(use_site.body())
 }
 
 #[test]
@@ -7335,7 +7346,7 @@ fn block_use_site_composes_with_lexical_and_var_items_in_authored_order() {
     else {
         panic!("expected [LexicalDeclaration, use-site] items");
     };
-    assert_eq!(only_fact(use_site).semantic_name(), "a");
+    assert_eq!(only_fact(use_site.body()).semantic_name(), "a");
 
     let script = recognized_block_reference_use("{ var a; a; }");
     let [SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block)] = script.items()
@@ -7349,7 +7360,7 @@ fn block_use_site_composes_with_lexical_and_var_items_in_authored_order() {
     else {
         panic!("expected [Var, use-site] items");
     };
-    assert_eq!(only_fact(use_site).semantic_name(), "a");
+    assert_eq!(only_fact(use_site.body()).semantic_name(), "a");
 }
 
 #[test]
@@ -7383,7 +7394,7 @@ fn only_use_site_fact_of(
         .iter()
         .find_map(|item| match item {
             SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(use_site) => {
-                Some(only_fact(use_site))
+                Some(only_fact(use_site.body()))
             }
             _ => None,
         })
@@ -7434,9 +7445,9 @@ fn top_level_use_site_composes_with_block_use_site_as_separate_surfaces() {
     else {
         panic!("expected [use-site, UseSiteEnabledBlock, use-site] items");
     };
-    assert_eq!(only_fact(first).semantic_name(), "a");
+    assert_eq!(only_fact(first.body()).semantic_name(), "a");
     assert_eq!(only_use_site_fact_of(block).semantic_name(), "a");
-    assert_eq!(only_fact(third).semantic_name(), "a");
+    assert_eq!(only_fact(third.body()).semantic_name(), "a");
 }
 
 #[test]
@@ -7444,13 +7455,10 @@ fn empty_block_remains_unsupported_coverage() {
     assert_unsupported("{}");
 }
 
-#[test]
-fn block_use_site_close_brace_asi_remains_unsupported_coverage() {
-    // Only `AuthoredSemicolon` is selected for the new Block use-site (issue
-    // section "ASI boundary" / W24); `{ a }` remains valid-but-unselected,
-    // never a definitive grammar rejection.
-    assert_unsupported("{ a }");
-}
+// `{ a }` moved to selected-positive Block automatic-before-close-brace
+// termination coverage by Issue #768 (see the "Issue #768" section below);
+// the test previously here asserting it remained unsupported no longer
+// holds.
 
 #[test]
 fn block_use_site_general_expression_neighbors_remain_unsupported_without_valid_prefix_leakage() {
@@ -7528,7 +7536,7 @@ fn block_reference_use_enabled_state_appends_later_top_level_use_sites_directly(
     else {
         panic!("expected [UseSiteEnabledBlock, use-site, use-site] items");
     };
-    let (first, second) = (only_fact(first), only_fact(second));
+    let (first, second) = (only_fact(first.body()), only_fact(second.body()));
     assert_eq!(only_use_site_fact_of(block).semantic_name(), "b");
     assert_eq!(first.semantic_name(), "a");
     assert_eq!(second.semantic_name(), "a");
@@ -7556,7 +7564,7 @@ fn block_use_site_composes_with_block_var_automatic_before_block_close_terminato
     else {
         panic!("expected [use-site, Var] items");
     };
-    assert_eq!(only_fact(use_site).semantic_name(), "a");
+    assert_eq!(only_fact(use_site.body()).semantic_name(), "a");
     use super::selected_lexical_slice::SelectedBlockVarStatementTerminator;
     assert_eq!(
         statement.terminator(),
@@ -7613,7 +7621,7 @@ fn duplicate_block_use_sites_are_preserved_distinctly_in_authored_order() {
     else {
         panic!("expected two use-site items");
     };
-    let (first, second) = (only_fact(first), only_fact(second));
+    let (first, second) = (only_fact(first.body()), only_fact(second.body()));
     assert_eq!(first.semantic_name(), "a");
     assert_eq!(second.semantic_name(), "a");
     assert!(first.reference().range().start() < second.reference().range().start());
@@ -7684,7 +7692,7 @@ fn two_operand_top_level_use_site_forms_are_selected() {
         else {
             panic!("expected exactly one selected use-site item for {text:?}");
         };
-        let facts = use_site_facts(use_site);
+        let facts = use_site_facts(use_site.body());
         assert_eq!(facts.len(), 2, "{text}");
         assert_eq!(facts[0].semantic_name(), expected_names[0], "{text}");
         assert_eq!(facts[1].semantic_name(), expected_names[1], "{text}");
@@ -7709,7 +7717,7 @@ fn two_operand_block_use_site_forms_are_selected() {
         else {
             panic!("expected exactly one Block-contained use-site item for {text:?}");
         };
-        let facts = use_site_facts(use_site);
+        let facts = use_site_facts(use_site.body());
         assert_eq!(facts.len(), 2, "{text}");
         assert_eq!(facts[0].semantic_name(), expected_names[0], "{text}");
         assert_eq!(facts[1].semantic_name(), expected_names[1], "{text}");
@@ -7740,7 +7748,7 @@ fn two_operand_use_site_direct_escaped_cross_product_preserves_exact_provenance(
         else {
             panic!("expected exactly one selected use-site item for {text:?}");
         };
-        let facts = use_site_facts(use_site);
+        let facts = use_site_facts(use_site.body());
         assert_eq!(facts.len(), 2, "{text}");
         assert_eq!(
             facts[0].reference().fragment(),
@@ -7771,12 +7779,12 @@ fn mixed_one_and_two_operand_top_level_use_sites_preserve_authored_order() {
     else {
         panic!("expected [use-site, use-site, use-site] items");
     };
-    assert_eq!(only_fact(first).semantic_name(), "a");
-    let facts = use_site_facts(second);
+    assert_eq!(only_fact(first.body()).semantic_name(), "a");
+    let facts = use_site_facts(second.body());
     assert_eq!(facts.len(), 2);
     assert_eq!(facts[0].semantic_name(), "b");
     assert_eq!(facts[1].semantic_name(), "c");
-    assert_eq!(only_fact(third).semantic_name(), "d");
+    assert_eq!(only_fact(third.body()).semantic_name(), "d");
 }
 
 #[test]
@@ -7794,12 +7802,12 @@ fn mixed_one_and_two_operand_block_use_sites_preserve_authored_order() {
     else {
         panic!("expected [use-site, use-site, use-site] items");
     };
-    assert_eq!(only_fact(first).semantic_name(), "a");
-    let facts = use_site_facts(second);
+    assert_eq!(only_fact(first.body()).semantic_name(), "a");
+    let facts = use_site_facts(second.body());
     assert_eq!(facts.len(), 2);
     assert_eq!(facts[0].semantic_name(), "b");
     assert_eq!(facts[1].semantic_name(), "c");
-    assert_eq!(only_fact(third).semantic_name(), "d");
+    assert_eq!(only_fact(third.body()).semantic_name(), "d");
 }
 
 #[test]
@@ -7810,7 +7818,7 @@ fn two_operand_use_site_duplicate_operands_are_preserved_distinctly() {
     else {
         panic!("expected exactly one selected use-site item");
     };
-    let facts = use_site_facts(use_site);
+    let facts = use_site_facts(use_site.body());
     assert_eq!(facts.len(), 2);
     assert_eq!(facts[0].semantic_name(), "a");
     assert_eq!(facts[1].semantic_name(), "a");
@@ -7864,12 +7872,12 @@ fn two_operand_escaped_reserved_word_boundary_remains_unsupported() {
 }
 
 #[test]
-fn two_operand_asi_and_recursive_block_firewall_remains_unsupported() {
-    // Only `AuthoredSemicolon` is selected (wrong model W27); recursive
-    // Block topology remains unwidened (wrong model W28).
-    for text in ["a+b", "{ a+b }", "{ { a+b; } }"] {
-        assert_unsupported(text);
-    }
+fn two_operand_recursive_block_firewall_remains_unsupported() {
+    // `a+b` and `{ a+b }` moved to selected-positive EOF/before-close
+    // automatic-termination coverage by Issue #768 (see the "Issue #768"
+    // section below) and are no longer listed here; recursive Block
+    // topology remains unwidened (wrong model W24 / #768's W19).
+    assert_unsupported("{ { a+b; } }");
 }
 
 #[test]
@@ -7880,4 +7888,374 @@ fn two_operand_use_site_whole_source_transactionality() {
     assert_unsupported("a+b;\nlet x = ;");
     assert_unsupported("{ a+b; ??? }");
     assert_unsupported("{ a+b; }\n???");
+}
+
+// --- Issue #768: free-standing `IdentifierReference` `ExpressionStatement`
+// automatic termination provenance, composing the EOF-only ASI /
+// synthetic-source-provenance theorem (#233/#234, #318/#319) and the
+// before-`}` ASI / Block-close-ownership theorem (#688 comment 5685046994 /
+// #717) with the already-accepted `One`/`Two` body (#766). Placement-owned
+// terminator: TopLevel admits only `AuthoredSemicolon`/`AutomaticAtEof`,
+// Block admits only `AuthoredSemicolon`/`AutomaticBeforeBlockClose`. ---
+
+fn only_top_level_use_site(
+    script: &SelectedIdentifierReferenceExpressionStatementScript,
+) -> &super::selected_lexical_slice::SelectedTopLevelIdentifierReferenceUseSite {
+    let [SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(use_site)] =
+        script.items()
+    else {
+        panic!("expected exactly one selected use-site item");
+    };
+    use_site
+}
+
+fn only_block_use_site(
+    script: &SelectedBlockReferenceUseEnabledScript,
+) -> &super::selected_lexical_slice::SelectedBlockIdentifierReferenceUseSite {
+    let [SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block)] = script.items()
+    else {
+        panic!("expected exactly one use-site-enabled Block item");
+    };
+    let [SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(use_site)] =
+        block.items()
+    else {
+        panic!("expected exactly one Block-contained use-site item");
+    };
+    use_site
+}
+
+#[test]
+fn top_level_use_site_eof_automatic_termination_selects_one_and_two_bodies() {
+    for text in ["a", "a ", "a\t", "let", "varfoo", r"\u0061", r"f\u006Fo"] {
+        let script = recognized_reference_use(text);
+        let use_site = only_top_level_use_site(&script);
+        assert_eq!(
+            use_site.terminator(),
+            SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticAtEof,
+            "{text:?}"
+        );
+        let facts = use_site_facts(use_site.body());
+        assert_eq!(facts.len(), 1, "{text:?}");
+    }
+
+    for text in ["a+b", "a-b", "a + b ", r"\u0061+b", r"a+\u0062"] {
+        let script = recognized_reference_use(text);
+        let use_site = only_top_level_use_site(&script);
+        assert_eq!(
+            use_site.terminator(),
+            SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticAtEof,
+            "{text:?}"
+        );
+        let facts = use_site_facts(use_site.body());
+        assert_eq!(facts.len(), 2, "{text:?}");
+    }
+}
+
+#[test]
+fn top_level_use_site_automatic_and_authored_termination_share_identical_body_facts() {
+    for (authored, automatic) in [("a;", "a"), ("let;", "let"), (r"\u0061;", r"\u0061")] {
+        let authored_script = recognized_reference_use(authored);
+        let authored_fact = only_fact(only_top_level_use_site(&authored_script).body());
+        let automatic_use_site = recognized_reference_use(automatic);
+        let automatic_use_site = only_top_level_use_site(&automatic_use_site);
+        let automatic_fact = only_fact(automatic_use_site.body());
+        assert_eq!(
+            authored_fact.semantic_name(),
+            automatic_fact.semantic_name()
+        );
+        assert_eq!(
+            authored_fact.reference().fragment(),
+            automatic_fact.reference().fragment()
+        );
+        assert_eq!(
+            automatic_use_site.terminator(),
+            SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticAtEof
+        );
+    }
+
+    for (authored, automatic) in [("a+b;", "a+b"), (r"\u0061-\u0062;", r"\u0061-\u0062")] {
+        let authored_script = recognized_reference_use(authored);
+        let authored_facts = use_site_facts(only_top_level_use_site(&authored_script).body());
+        let automatic_script = recognized_reference_use(automatic);
+        let automatic_use_site = only_top_level_use_site(&automatic_script);
+        let automatic_facts = use_site_facts(automatic_use_site.body());
+        assert_eq!(
+            authored_facts[0].semantic_name(),
+            automatic_facts[0].semantic_name()
+        );
+        assert_eq!(
+            authored_facts[1].semantic_name(),
+            automatic_facts[1].semantic_name()
+        );
+        assert_eq!(
+            automatic_use_site.terminator(),
+            SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticAtEof
+        );
+    }
+}
+
+#[test]
+fn top_level_use_site_authored_semicolon_terminator_is_retained() {
+    let script = recognized_reference_use("a;");
+    assert_eq!(
+        only_top_level_use_site(&script).terminator(),
+        SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AuthoredSemicolon
+    );
+}
+
+#[test]
+fn block_use_site_before_close_automatic_termination_selects_one_and_two_bodies() {
+    for text in [
+        "{ a }",
+        "{ a }",
+        "{ a\t}",
+        "{ let }",
+        "{ varfoo }",
+        r"{ \u0061 }",
+    ] {
+        let script = recognized_block_reference_use(text);
+        let use_site = only_block_use_site(&script);
+        assert_eq!(
+            use_site.terminator(),
+            SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticBeforeBlockClose,
+            "{text:?}"
+        );
+        let facts = use_site_facts(use_site.body());
+        assert_eq!(facts.len(), 1, "{text:?}");
+    }
+
+    for text in ["{ a+b }", "{ a-b }", "{ a + b }", r"{ \u0061+b }"] {
+        let script = recognized_block_reference_use(text);
+        let use_site = only_block_use_site(&script);
+        assert_eq!(
+            use_site.terminator(),
+            SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticBeforeBlockClose,
+            "{text:?}"
+        );
+        let facts = use_site_facts(use_site.body());
+        assert_eq!(facts.len(), 2, "{text:?}");
+    }
+}
+
+#[test]
+fn block_use_site_automatic_and_authored_termination_share_identical_body_facts() {
+    for (authored, automatic) in [("{ a; }", "{ a }"), (r"{ \u0061; }", r"{ \u0061 }")] {
+        let authored_script = recognized_block_reference_use(authored);
+        let authored_fact = only_block_use_site_fact(&authored_script);
+        let automatic_script = recognized_block_reference_use(automatic);
+        let automatic_use_site = only_block_use_site(&automatic_script);
+        let automatic_fact = only_fact(automatic_use_site.body());
+        assert_eq!(
+            authored_fact.semantic_name(),
+            automatic_fact.semantic_name()
+        );
+        assert_eq!(
+            authored_fact.reference().fragment(),
+            automatic_fact.reference().fragment()
+        );
+        assert_eq!(
+            automatic_use_site.terminator(),
+            SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticBeforeBlockClose
+        );
+    }
+
+    for (authored, automatic) in [("{ a+b; }", "{ a+b }"), (r"{ \u0061-b; }", r"{ \u0061-b }")] {
+        let authored_script = recognized_block_reference_use(authored);
+        let authored_facts = use_site_facts(only_block_use_site(&authored_script).body());
+        let automatic_script = recognized_block_reference_use(automatic);
+        let automatic_use_site = only_block_use_site(&automatic_script);
+        let automatic_facts = use_site_facts(automatic_use_site.body());
+        assert_eq!(
+            authored_facts[0].semantic_name(),
+            automatic_facts[0].semantic_name()
+        );
+        assert_eq!(
+            authored_facts[1].semantic_name(),
+            automatic_facts[1].semantic_name()
+        );
+        assert_eq!(
+            automatic_use_site.terminator(),
+            SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticBeforeBlockClose
+        );
+    }
+}
+
+#[test]
+fn block_use_site_authored_semicolon_terminator_is_retained() {
+    let script = recognized_block_reference_use("{ a; }");
+    assert_eq!(
+        only_block_use_site(&script).terminator(),
+        SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator::AuthoredSemicolon
+    );
+}
+
+#[test]
+fn use_site_escaped_operand_automatic_termination_preserves_direct_escaped_provenance() {
+    // Issue #768 review remediation: escaped `IdentifierReference` operands
+    // must retain exact Direct/Escaped provenance, authored fragment, and
+    // left/right authored order under automatic termination, identical to
+    // their authored-`;` counterparts -- not merely the same `semantic_name`.
+
+    // TopLevel `One`, escaped.
+    for (authored, automatic) in [(r"\u0061;", r"\u0061")] {
+        let authored_script = recognized_reference_use(authored);
+        let authored_fact = only_fact(only_top_level_use_site(&authored_script).body());
+        let automatic_script = recognized_reference_use(automatic);
+        let automatic_use_site = only_top_level_use_site(&automatic_script);
+        let automatic_fact = only_fact(automatic_use_site.body());
+
+        for fact in [authored_fact, automatic_fact] {
+            assert_eq!(fact.reference().fragment(), r"\u0061");
+            assert_eq!(fact.semantic_name(), "a");
+            match fact.name_state() {
+                SelectedIdentifierReferenceNameState::Escaped { decoded } => {
+                    assert_eq!(decoded, "a")
+                }
+                other => panic!("expected Escaped name state, got {other:?}"),
+            }
+        }
+        assert_eq!(
+            automatic_use_site.terminator(),
+            SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticAtEof
+        );
+    }
+
+    // TopLevel `Two`, both authored orders of a mixed direct/escaped
+    // operand pair, plus both operands escaped.
+    for (authored, automatic) in [
+        (r"\u0061+b;", r"\u0061+b"),
+        (r"a+\u0062;", r"a+\u0062"),
+        (r"\u0061-\u0062;", r"\u0061-\u0062"),
+    ] {
+        let authored_script = recognized_reference_use(authored);
+        let authored_facts = use_site_facts(only_top_level_use_site(&authored_script).body());
+        let automatic_script = recognized_reference_use(automatic);
+        let automatic_use_site = only_top_level_use_site(&automatic_script);
+        let automatic_facts = use_site_facts(automatic_use_site.body());
+
+        for facts in [&authored_facts, &automatic_facts] {
+            assert_eq!(facts.len(), 2, "{automatic:?}");
+            assert_eq!(facts[0].semantic_name(), "a", "{automatic:?}");
+            assert_eq!(facts[1].semantic_name(), "b", "{automatic:?}");
+            assert!(
+                facts[0].reference().range().start() < facts[1].reference().range().start(),
+                "{automatic:?}"
+            );
+        }
+        assert_eq!(
+            automatic_use_site.terminator(),
+            SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticAtEof
+        );
+    }
+
+    // Block `One`, escaped.
+    for (authored, automatic) in [(r"{ \u0061; }", r"{ \u0061 }")] {
+        let authored_script = recognized_block_reference_use(authored);
+        let authored_fact = only_block_use_site_fact(&authored_script);
+        let automatic_script = recognized_block_reference_use(automatic);
+        let automatic_use_site = only_block_use_site(&automatic_script);
+        let automatic_fact = only_fact(automatic_use_site.body());
+
+        for fact in [authored_fact, automatic_fact] {
+            assert_eq!(fact.reference().fragment(), r"\u0061");
+            assert_eq!(fact.semantic_name(), "a");
+            match fact.name_state() {
+                SelectedIdentifierReferenceNameState::Escaped { decoded } => {
+                    assert_eq!(decoded, "a")
+                }
+                other => panic!("expected Escaped name state, got {other:?}"),
+            }
+        }
+        assert_eq!(
+            automatic_use_site.terminator(),
+            SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticBeforeBlockClose
+        );
+    }
+
+    // Block `Two`, both authored orders of a mixed direct/escaped operand
+    // pair, plus both operands escaped.
+    for (authored, automatic) in [
+        (r"{ \u0061+b; }", r"{ \u0061+b }"),
+        (r"{ a+\u0062; }", r"{ a+\u0062 }"),
+        (r"{ \u0061-\u0062; }", r"{ \u0061-\u0062 }"),
+    ] {
+        let authored_script = recognized_block_reference_use(authored);
+        let authored_facts = use_site_facts(only_block_use_site(&authored_script).body());
+        let automatic_script = recognized_block_reference_use(automatic);
+        let automatic_use_site = only_block_use_site(&automatic_script);
+        let automatic_facts = use_site_facts(automatic_use_site.body());
+
+        for facts in [&authored_facts, &automatic_facts] {
+            assert_eq!(facts.len(), 2, "{automatic:?}");
+            assert_eq!(facts[0].semantic_name(), "a", "{automatic:?}");
+            assert_eq!(facts[1].semantic_name(), "b", "{automatic:?}");
+            assert!(
+                facts[0].reference().range().start() < facts[1].reference().range().start(),
+                "{automatic:?}"
+            );
+        }
+        assert_eq!(
+            automatic_use_site.terminator(),
+            SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticBeforeBlockClose
+        );
+    }
+}
+
+#[test]
+fn block_use_site_automatic_termination_does_not_consume_close_brace() {
+    // The Block use-site owner only peeks `}`; the enclosing Block parser
+    // remains sole owner of consuming it, so a sibling top-level item after
+    // the closed Block still parses, and the Block's own `SourceAnchor`
+    // still spans through the authored `}`.
+    let script = recognized_block_reference_use("{ a }\nb;");
+    let [
+        SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block),
+        SelectedBlockReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
+            second,
+        ),
+    ] = script.items()
+    else {
+        panic!("expected [UseSiteEnabledBlock, use-site] items");
+    };
+    assert_eq!(block.block().fragment(), "{ a }");
+    assert_eq!(only_fact(second.body()).semantic_name(), "b");
+    assert_eq!(
+        second.terminator(),
+        SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AuthoredSemicolon
+    );
+}
+
+#[test]
+fn use_site_general_line_terminator_asi_firewall_remains_unsupported() {
+    // A `LineTerminator` alone is never sufficient automatic termination:
+    // only actual EOF (TopLevel) or the containing `}` (Block) commit.
+    for text in [
+        "a\nlet b;",
+        "a+b\nlet c;",
+        "{\n    a\n    let b;\n}",
+        "{\n    a+b\n    let c;\n}",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn two_operand_automatic_termination_cardinality_firewall_remains_unsupported() {
+    // A shorter `a+b` prefix must never escape a failed third operand, for
+    // either placement's new automatic terminator.
+    for text in ["a+b+c", "a-b-c", "{ a+b+c }", "{ a-b-c }"] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn use_site_automatic_termination_whole_source_transactionality() {
+    // A locally valid automatic-terminated Block use-site must not leak
+    // selected success if later enclosing source fails; TopLevel EOF
+    // termination is definitionally the end of the source, so no later
+    // component can exist to fail.
+    assert_unsupported("{ a }???");
+    assert_unsupported("{ a }\nlet x = ;");
+    assert_unsupported("{ a+b }???");
+    assert_unsupported("let a;\n{ a }\n???");
 }
