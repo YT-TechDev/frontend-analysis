@@ -7174,11 +7174,10 @@ fn general_expression_neighbors_remain_unsupported_without_valid_prefix_leakage(
     // wrong model W15): each of these must remain `UnsupportedCoverage`
     // through the existing whole-source transaction, never a committed
     // use-site for the leading `a`. `a+b;` moved to selected-positive
-    // coverage by Issue #766 (see the "Issue #766" section below) and is no
-    // longer listed here.
+    // coverage by Issue #766 (see the "Issue #766" section below) and `+a;`
+    // / `-a;` moved to selected-positive coverage by Issue #771 (see the
+    // "Issue #771" section below); neither is listed here any longer.
     for text in [
-        "+a;",
-        "-a;",
         "(a);",
         "a.b;",
         "a[b];",
@@ -7463,10 +7462,10 @@ fn empty_block_remains_unsupported_coverage() {
 #[test]
 fn block_use_site_general_expression_neighbors_remain_unsupported_without_valid_prefix_leakage() {
     // `{ a+b; }` moved to selected-positive coverage by Issue #766 (see the
-    // "Issue #766" section below) and is no longer listed here.
+    // "Issue #766" section below) and `{ +a; }` / `{ -a; }` moved to
+    // selected-positive coverage by Issue #771 (see the "Issue #771" section
+    // below); neither is listed here any longer.
     for text in [
-        "{ +a; }",
-        "{ -a; }",
         "{ (a); }",
         "{ a.b; }",
         "{ a[b]; }",
@@ -8258,4 +8257,285 @@ fn use_site_automatic_termination_whole_source_transactionality() {
     assert_unsupported("{ a }\nlet x = ;");
     assert_unsupported("{ a+b }???");
     assert_unsupported("let a;\n{ a }\n???");
+}
+
+// --- Issue #771: leading `+`/`-` `IdentifierReference` free-standing
+// `ExpressionStatement` use-site composition, reusing the already-accepted
+// `consume_selected_leading_plus_minus_identifier_reference_unary_expression`
+// helper (Issue #746/#747, generalized by Issue #750) as one additional
+// bounded body form, mapping a match onto the existing
+// `One(SelectedIdentifierReferenceFact)` occurrence -- the same
+// representation an unwrapped bare reference produces. No unary-specific
+// item/body variant, operator identity, or whole-unary `SourceAnchor` is
+// introduced. ---
+
+#[test]
+fn unary_use_site_positive_matrix_is_recognized() {
+    for (text, expected_name) in [
+        ("+a;", "a"),
+        ("-a;", "a"),
+        ("+ a;", "a"),
+        ("- a;", "a"),
+        ("+\\u0061;", "a"),
+        ("-\\u0061;", "a"),
+        ("+f\\u006Fo;", "foo"),
+        ("+a", "a"),
+        ("-a", "a"),
+        ("+\\u0061", "a"),
+        ("-f\\u006Fo", "foo"),
+    ] {
+        let script = recognized_reference_use(text);
+        let use_site = only_top_level_use_site(&script);
+        let fact = only_fact(use_site.body());
+        assert_eq!(fact.semantic_name(), expected_name, "{text:?}");
+    }
+
+    for (text, expected_name) in [
+        ("{ +a; }", "a"),
+        ("{ -a; }", "a"),
+        ("{ +\\u0061; }", "a"),
+        ("{ -f\\u006Fo; }", "foo"),
+        ("{ +a }", "a"),
+        ("{ -a }", "a"),
+        ("{ +\\u0061 }", "a"),
+        ("{ -f\\u006Fo }", "foo"),
+    ] {
+        let script = recognized_block_reference_use(text);
+        let fact = only_block_use_site_fact(&script);
+        assert_eq!(fact.semantic_name(), expected_name, "{text:?}");
+    }
+}
+
+#[test]
+fn unary_use_site_retains_exact_inner_provenance_not_including_operator() {
+    // Direct operand: inner reference fragment is exactly the authored
+    // identifier, never including the leading `+`/`-`.
+    let script = recognized_reference_use("+a;");
+    let fact = only_fact(only_top_level_use_site(&script).body());
+    assert_eq!(fact.reference().fragment(), "a");
+    assert_eq!(fact.semantic_name(), "a");
+    assert!(matches!(
+        fact.name_state(),
+        SelectedIdentifierReferenceNameState::Direct
+    ));
+
+    let script = recognized_reference_use("-a;");
+    let fact = only_fact(only_top_level_use_site(&script).body());
+    assert_eq!(fact.reference().fragment(), "a");
+    assert_eq!(fact.semantic_name(), "a");
+
+    // Escaped operand: authored escaped fragment and decoded semantic name
+    // remain distinct, and the outer unary source is excluded from both.
+    let script = recognized_reference_use("+\\u0061;");
+    let fact = only_fact(only_top_level_use_site(&script).body());
+    assert_eq!(fact.reference().fragment(), "\\u0061");
+    assert_eq!(fact.semantic_name(), "a");
+    match fact.name_state() {
+        SelectedIdentifierReferenceNameState::Escaped { decoded } => assert_eq!(decoded, "a"),
+        other => panic!("expected Escaped name state, got {other:?}"),
+    }
+
+    let script = recognized_reference_use("-f\\u006Fo;");
+    let fact = only_fact(only_top_level_use_site(&script).body());
+    assert_eq!(fact.reference().fragment(), "f\\u006Fo");
+    assert_eq!(fact.semantic_name(), "foo");
+
+    // Block placement: same exact provenance.
+    let script = recognized_block_reference_use("{ -f\\u006Fo; }");
+    let fact = only_block_use_site_fact(&script);
+    assert_eq!(fact.reference().fragment(), "f\\u006Fo");
+    assert_eq!(fact.semantic_name(), "foo");
+}
+
+#[test]
+fn unary_use_site_matches_unwrapped_bare_reference_representation() {
+    // `a;`, `+a;`, and `-a;` all retain exactly one occurrence via the same
+    // `One(fact)` carrier -- the outer unary operator contributes no
+    // additional representation.
+    for text in ["a;", "+a;", "-a;"] {
+        let script = recognized_reference_use(text);
+        let use_site = only_top_level_use_site(&script);
+        let facts = use_site_facts(use_site.body());
+        assert_eq!(facts.len(), 1, "{text:?}");
+    }
+}
+
+#[test]
+fn unary_use_site_escaped_reserved_word_operand_remains_unsupported() {
+    // Decoded semantic name `if`: an escaped ReservedWord operand remains
+    // outside this wrapper, and does not gain a new Statement-local
+    // escaped-ReservedWord Early Error route.
+    for text in [
+        "+\\u0069f;",
+        "-\\u0069f;",
+        "{ +\\u0069f; }",
+        "{ -\\u0069f; }",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn unary_use_site_malformed_or_invalid_escaped_operand_remains_unowned() {
+    for text in [
+        "+\\u0030;",
+        "-a\\u002Db;",
+        "-\\uD800;",
+        "-\\u{D800};",
+        "-\\u{110000};",
+        "-\\u{};",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn unary_use_site_trivia_matrix_is_recognized() {
+    for (text, expected_name) in [("+ a;", "a"), ("- a;", "a"), ("-\ta;", "a")] {
+        let script = recognized_reference_use(text);
+        let fact = only_fact(only_top_level_use_site(&script).body());
+        assert_eq!(fact.semantic_name(), expected_name, "{text:?}");
+    }
+}
+
+#[test]
+fn unary_use_site_does_not_authorize_richer_expression_neighbors() {
+    // A locally recognized `+a`/`-a` prefix must never commit a richer or
+    // longer source: the placement-owned terminator probe rejects the
+    // following non-terminator token and rolls back the whole use-site
+    // probe, exactly as the unwrapped bare-reference prefix already does.
+    for text in [
+        "+a+b;",
+        "-a-b;",
+        "+a*b;",
+        "-a/b;",
+        "+a.b;",
+        "-a[b];",
+        "+a();",
+        "+a=b;",
+        "+a?b:c;",
+        "+a&&b;",
+        "+a,b;",
+        "{ +a+b; }",
+        "{ -a-b; }",
+        "{ +a*b; }",
+        "{ -a.b; }",
+        "{ +a(); }",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn unary_use_site_other_unary_operators_remain_unsupported() {
+    for text in [
+        "!a;",
+        "~a;",
+        "typeof a;",
+        "void a;",
+        "delete a;",
+        "++a;",
+        "--a;",
+        "+-a;",
+        "-+a;",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn unary_use_site_parenthesized_forms_remain_unsupported() {
+    for text in ["(a);", "+(a);", "-(a);"] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn unary_use_site_comments_remain_unsupported() {
+    for text in ["+a/*comment*/;", "{ -a /*comment*/ }"] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn unary_use_site_general_line_terminator_asi_remains_unsupported() {
+    for text in ["+a\nlet b;", "{\n    -a\n    let b;\n}"] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn unary_use_site_terminator_composes_with_all_placement_modes() {
+    // TopLevel: `AuthoredSemicolon` and `AutomaticAtEof`.
+    let script = recognized_reference_use("+a;");
+    assert_eq!(
+        only_top_level_use_site(&script).terminator(),
+        SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AuthoredSemicolon
+    );
+    let script = recognized_reference_use("+a");
+    assert_eq!(
+        only_top_level_use_site(&script).terminator(),
+        SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticAtEof
+    );
+
+    // Block: `AuthoredSemicolon` and `AutomaticBeforeBlockClose`, which
+    // only peeks `}` and never consumes it.
+    let script = recognized_block_reference_use("{ -a; }");
+    assert_eq!(
+        only_block_use_site(&script).terminator(),
+        SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator::AuthoredSemicolon
+    );
+    let script = recognized_block_reference_use("{ -a }\nb;");
+    let [
+        SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block),
+        SelectedBlockReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(_),
+    ] = script.items()
+    else {
+        panic!("expected [UseSiteEnabledBlock, use-site] items");
+    };
+    assert_eq!(block.block().fragment(), "{ -a }");
+}
+
+#[test]
+fn unary_use_site_correspondence_matches_unwrapped_bare_reference() {
+    // Correspondence remains wrapper-blind: `let a; +a;` retains exactly the
+    // same inner authored `a` reference relation as `let a; a;`.
+    let bare_script = recognized_reference_use("let a;\na;");
+    let unary_script = recognized_reference_use("let a;\n+a;");
+    let [
+        SelectedReferenceUseEnabledTopLevelItem::LexicalDeclaration(_),
+        SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
+            bare_use_site,
+        ),
+    ] = bare_script.items()
+    else {
+        panic!("expected [LexicalDeclaration, use-site] items");
+    };
+    let [
+        SelectedReferenceUseEnabledTopLevelItem::LexicalDeclaration(_),
+        SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
+            unary_use_site,
+        ),
+    ] = unary_script.items()
+    else {
+        panic!("expected [LexicalDeclaration, use-site] items");
+    };
+    let bare_fact = only_fact(bare_use_site.body());
+    let unary_fact = only_fact(unary_use_site.body());
+    assert_eq!(bare_fact.semantic_name(), unary_fact.semantic_name());
+    assert_eq!(
+        bare_fact.reference().fragment(),
+        unary_fact.reference().fragment()
+    );
+}
+
+#[test]
+fn unary_use_site_whole_source_transactionality() {
+    // A locally valid unary use-site must not leak selected success if
+    // later source fails; TopLevel EOF termination is definitionally the
+    // end of the source, so no later component can exist to fail there.
+    assert_unsupported("+a;\n???");
+    assert_unsupported("-a;\nlet x = ;");
+    assert_unsupported("{ +a }???");
+    assert_unsupported("let a;\n{ -a }\n???");
 }
