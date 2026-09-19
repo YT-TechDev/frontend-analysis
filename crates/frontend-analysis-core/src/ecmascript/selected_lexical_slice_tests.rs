@@ -4,6 +4,7 @@ use super::qualification_validation_tests::{gold_source, gold_subject_range};
 use super::selected_lexical_slice::{
     SelectedBindingNameState, SelectedBlockReferenceUseEnabledScript,
     SelectedBlockReferenceUseEnabledTopLevelItem, SelectedDeclarationTerminator,
+    SelectedFreeStandingIdentifierReferenceUseSite,
     SelectedIdentifierReferenceExpressionStatementScript, SelectedInitializerState,
     SelectedInvalidEscapePosition, SelectedLexicalDeclarationKind, SelectedLexicalScript,
     SelectedLexicalSliceOutcome, SelectedReferenceUseEnabledTopLevelItem,
@@ -11,6 +12,23 @@ use super::selected_lexical_slice::{
     SelectedVariableStatementTerminator, SelectedVariableTopLevelItem,
     recognize_selected_lexical_slice,
 };
+
+/// Test-only helper unwrapping a single-reference (`One`) free-standing
+/// use-site occurrence, for existing tests that pre-date the bounded
+/// `One`/`Two` carrier (Issue #766). Panics if the occurrence is `Two`, so
+/// any accidental widening of these single-reference fixtures is caught
+/// immediately rather than silently comparing only the first operand.
+fn only_fact(
+    use_site: &SelectedFreeStandingIdentifierReferenceUseSite,
+) -> &super::selected_lexical_slice::SelectedIdentifierReferenceFact {
+    let mut facts = use_site.facts();
+    let first = facts.next().expect("expected at least one retained fact");
+    assert!(
+        facts.next().is_none(),
+        "expected exactly one retained fact, found a second"
+    );
+    first
+}
 
 fn source(text: &str) -> SourceText {
     SourceText::new(SourceId::new(218), text.to_owned())
@@ -7037,12 +7055,12 @@ fn recognized_reference_use(text: &str) -> SelectedIdentifierReferenceExpression
 fn only_use_site_fact(
     script: &SelectedIdentifierReferenceExpressionStatementScript,
 ) -> &super::selected_lexical_slice::SelectedIdentifierReferenceFact {
-    let [SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(fact)] =
+    let [SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(use_site)] =
         script.items()
     else {
         panic!("expected exactly one selected use-site item");
     };
-    fact
+    only_fact(use_site)
 }
 
 #[test]
@@ -7117,22 +7135,22 @@ fn top_level_block_composes_with_free_standing_use_site() {
     let script = recognized_reference_use("{ var a; }\na;");
     let [
         SelectedReferenceUseEnabledTopLevelItem::Block(_),
-        SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(fact),
+        SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(use_site),
     ] = script.items()
     else {
         panic!("expected [Block, use-site] items");
     };
-    assert_eq!(fact.semantic_name(), "a");
+    assert_eq!(only_fact(use_site).semantic_name(), "a");
 
     let script = recognized_reference_use("{ let a; }\na;");
     let [
         SelectedReferenceUseEnabledTopLevelItem::Block(_),
-        SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(fact),
+        SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(use_site),
     ] = script.items()
     else {
         panic!("expected [Block, use-site] items");
     };
-    assert_eq!(fact.semantic_name(), "a");
+    assert_eq!(only_fact(use_site).semantic_name(), "a");
 }
 
 #[test]
@@ -7151,9 +7169,10 @@ fn general_expression_neighbors_remain_unsupported_without_valid_prefix_leakage(
     // prefix from a richer expression neighbor (acceptance criterion 31 /
     // wrong model W15): each of these must remain `UnsupportedCoverage`
     // through the existing whole-source transaction, never a committed
-    // use-site for the leading `a`.
+    // use-site for the leading `a`. `a+b;` moved to selected-positive
+    // coverage by Issue #766 (see the "Issue #766" section below) and is no
+    // longer listed here.
     for text in [
-        "a+b;",
         "+a;",
         "-a;",
         "(a);",
@@ -7194,6 +7213,7 @@ fn duplicate_use_sites_are_preserved_distinctly_in_authored_order() {
     else {
         panic!("expected [LexicalDeclaration, use-site, use-site] items");
     };
+    let (first, second) = (only_fact(first), only_fact(second));
     assert_eq!(first.semantic_name(), "a");
     assert_eq!(second.semantic_name(), "a");
     assert_ne!(
@@ -7218,8 +7238,8 @@ fn authored_use_site_order_is_preserved_not_target_declaration_order() {
         .iter()
         .filter_map(|item| match item {
             SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
-                fact,
-            ) => Some(fact.semantic_name()),
+                use_site,
+            ) => Some(only_fact(use_site).semantic_name()),
             _ => None,
         })
         .collect();
@@ -7254,12 +7274,12 @@ fn only_block_use_site_fact(
     else {
         panic!("expected exactly one use-site-enabled Block item");
     };
-    let [SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(fact)] =
+    let [SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(use_site)] =
         block.items()
     else {
         panic!("expected exactly one Block-contained use-site item");
     };
-    fact
+    only_fact(use_site)
 }
 
 #[test]
@@ -7310,12 +7330,12 @@ fn block_use_site_composes_with_lexical_and_var_items_in_authored_order() {
     };
     let [
         SelectedUseSiteEnabledBlockItem::LexicalDeclaration(_),
-        SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(fact),
+        SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(use_site),
     ] = block.items()
     else {
         panic!("expected [LexicalDeclaration, use-site] items");
     };
-    assert_eq!(fact.semantic_name(), "a");
+    assert_eq!(only_fact(use_site).semantic_name(), "a");
 
     let script = recognized_block_reference_use("{ var a; a; }");
     let [SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block)] = script.items()
@@ -7324,12 +7344,12 @@ fn block_use_site_composes_with_lexical_and_var_items_in_authored_order() {
     };
     let [
         SelectedUseSiteEnabledBlockItem::Var(_),
-        SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(fact),
+        SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(use_site),
     ] = block.items()
     else {
         panic!("expected [Var, use-site] items");
     };
-    assert_eq!(fact.semantic_name(), "a");
+    assert_eq!(only_fact(use_site).semantic_name(), "a");
 }
 
 #[test]
@@ -7362,8 +7382,8 @@ fn only_use_site_fact_of(
         .items()
         .iter()
         .find_map(|item| match item {
-            SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(fact) => {
-                Some(fact)
+            SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(use_site) => {
+                Some(only_fact(use_site))
             }
             _ => None,
         })
@@ -7414,9 +7434,9 @@ fn top_level_use_site_composes_with_block_use_site_as_separate_surfaces() {
     else {
         panic!("expected [use-site, UseSiteEnabledBlock, use-site] items");
     };
-    assert_eq!(first.semantic_name(), "a");
+    assert_eq!(only_fact(first).semantic_name(), "a");
     assert_eq!(only_use_site_fact_of(block).semantic_name(), "a");
-    assert_eq!(third.semantic_name(), "a");
+    assert_eq!(only_fact(third).semantic_name(), "a");
 }
 
 #[test]
@@ -7434,8 +7454,9 @@ fn block_use_site_close_brace_asi_remains_unsupported_coverage() {
 
 #[test]
 fn block_use_site_general_expression_neighbors_remain_unsupported_without_valid_prefix_leakage() {
+    // `{ a+b; }` moved to selected-positive coverage by Issue #766 (see the
+    // "Issue #766" section below) and is no longer listed here.
     for text in [
-        "{ a+b; }",
         "{ +a; }",
         "{ -a; }",
         "{ (a); }",
@@ -7507,6 +7528,7 @@ fn block_reference_use_enabled_state_appends_later_top_level_use_sites_directly(
     else {
         panic!("expected [UseSiteEnabledBlock, use-site, use-site] items");
     };
+    let (first, second) = (only_fact(first), only_fact(second));
     assert_eq!(only_use_site_fact_of(block).semantic_name(), "b");
     assert_eq!(first.semantic_name(), "a");
     assert_eq!(second.semantic_name(), "a");
@@ -7528,13 +7550,13 @@ fn block_use_site_composes_with_block_var_automatic_before_block_close_terminato
         panic!("expected exactly one use-site-enabled Block item");
     };
     let [
-        SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(fact),
+        SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(use_site),
         SelectedUseSiteEnabledBlockItem::Var(statement),
     ] = block.items()
     else {
         panic!("expected [use-site, Var] items");
     };
-    assert_eq!(fact.semantic_name(), "a");
+    assert_eq!(only_fact(use_site).semantic_name(), "a");
     use super::selected_lexical_slice::SelectedBlockVarStatementTerminator;
     assert_eq!(
         statement.terminator(),
@@ -7591,6 +7613,7 @@ fn duplicate_block_use_sites_are_preserved_distinctly_in_authored_order() {
     else {
         panic!("expected two use-site items");
     };
+    let (first, second) = (only_fact(first), only_fact(second));
     assert_eq!(first.semantic_name(), "a");
     assert_eq!(second.semantic_name(), "a");
     assert!(first.reference().range().start() < second.reference().range().start());
@@ -7627,4 +7650,234 @@ fn block_use_site_whole_source_transactionality() {
     assert_unsupported("{ a; ??? }");
     assert_unsupported("{ a; let x = ; }");
     assert_unsupported("{ a; }\n???");
+}
+
+// --- Issue #766: exactly-two IdentifierReference additive free-standing
+// `ExpressionStatement` use-sites, composing
+// `SelectedTwoIdentifierReferenceAdditiveExpressionStatement` into the
+// existing placement-neutral free-standing use-site owner via the new
+// bounded `SelectedFreeStandingIdentifierReferenceUseSite::Two` carrier. ---
+
+fn use_site_facts(
+    use_site: &SelectedFreeStandingIdentifierReferenceUseSite,
+) -> Vec<&super::selected_lexical_slice::SelectedIdentifierReferenceFact> {
+    use_site.facts().collect()
+}
+
+#[test]
+fn two_operand_top_level_use_site_forms_are_selected() {
+    for (text, expected_names) in [
+        ("a+b;", ["a", "b"]),
+        ("a-b;", ["a", "b"]),
+        ("a + b;", ["a", "b"]),
+        ("\\u0061+b;", ["a", "b"]),
+        ("a+\\u0062;", ["a", "b"]),
+        ("\\u0061-\\u0062;", ["a", "b"]),
+        ("f\\u006Fo-b\\u0061r;", ["foo", "bar"]),
+    ] {
+        let script = recognized_reference_use(text);
+        let [
+            SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
+                use_site,
+            ),
+        ] = script.items()
+        else {
+            panic!("expected exactly one selected use-site item for {text:?}");
+        };
+        let facts = use_site_facts(use_site);
+        assert_eq!(facts.len(), 2, "{text}");
+        assert_eq!(facts[0].semantic_name(), expected_names[0], "{text}");
+        assert_eq!(facts[1].semantic_name(), expected_names[1], "{text}");
+        assert!(
+            facts[0].reference().range().start() < facts[1].reference().range().start(),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn two_operand_block_use_site_forms_are_selected() {
+    for (text, expected_names) in [("{ a+b; }", ["a", "b"]), ("{ \\u0061-b; }", ["a", "b"])] {
+        let script = recognized_block_reference_use(text);
+        let [SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block)] =
+            script.items()
+        else {
+            panic!("expected exactly one use-site-enabled Block item for {text:?}");
+        };
+        let [SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(use_site)] =
+            block.items()
+        else {
+            panic!("expected exactly one Block-contained use-site item for {text:?}");
+        };
+        let facts = use_site_facts(use_site);
+        assert_eq!(facts.len(), 2, "{text}");
+        assert_eq!(facts[0].semantic_name(), expected_names[0], "{text}");
+        assert_eq!(facts[1].semantic_name(), expected_names[1], "{text}");
+        assert!(
+            facts[0].reference().range().start() < facts[1].reference().range().start(),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn two_operand_use_site_direct_escaped_cross_product_preserves_exact_provenance() {
+    // Direct+Direct, Escaped+Direct, Direct+Escaped, Escaped+Escaped: each
+    // fact independently preserves its exact authored fragment and decoded
+    // semantic name (issue section "Direct / Escaped cross-product").
+    for (text, expected_fragments, expected_names) in [
+        ("a+b;", ["a", "b"], ["a", "b"]),
+        ("\\u0061+b;", ["\\u0061", "b"], ["a", "b"]),
+        ("a+\\u0062;", ["a", "\\u0062"], ["a", "b"]),
+        ("\\u0061+\\u0062;", ["\\u0061", "\\u0062"], ["a", "b"]),
+    ] {
+        let script = recognized_reference_use(text);
+        let [
+            SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
+                use_site,
+            ),
+        ] = script.items()
+        else {
+            panic!("expected exactly one selected use-site item for {text:?}");
+        };
+        let facts = use_site_facts(use_site);
+        assert_eq!(facts.len(), 2, "{text}");
+        assert_eq!(
+            facts[0].reference().fragment(),
+            expected_fragments[0],
+            "{text}"
+        );
+        assert_eq!(
+            facts[1].reference().fragment(),
+            expected_fragments[1],
+            "{text}"
+        );
+        assert_eq!(facts[0].semantic_name(), expected_names[0], "{text}");
+        assert_eq!(facts[1].semantic_name(), expected_names[1], "{text}");
+    }
+}
+
+#[test]
+fn mixed_one_and_two_operand_top_level_use_sites_preserve_authored_order() {
+    // Proves the existing item owner was widened in place, not routed
+    // through a second relation channel: `a;` remains `One`, `b+c;` is the
+    // new `Two`, `d;` remains `One`, all inside one `Vec` in authored order.
+    let script = recognized_reference_use("a;\nb+c;\nd;");
+    let [
+        SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(first),
+        SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(second),
+        SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(third),
+    ] = script.items()
+    else {
+        panic!("expected [use-site, use-site, use-site] items");
+    };
+    assert_eq!(only_fact(first).semantic_name(), "a");
+    let facts = use_site_facts(second);
+    assert_eq!(facts.len(), 2);
+    assert_eq!(facts[0].semantic_name(), "b");
+    assert_eq!(facts[1].semantic_name(), "c");
+    assert_eq!(only_fact(third).semantic_name(), "d");
+}
+
+#[test]
+fn mixed_one_and_two_operand_block_use_sites_preserve_authored_order() {
+    let script = recognized_block_reference_use("{ a;\nb+c;\nd; }");
+    let [SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block)] = script.items()
+    else {
+        panic!("expected exactly one use-site-enabled Block item");
+    };
+    let [
+        SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(first),
+        SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(second),
+        SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(third),
+    ] = block.items()
+    else {
+        panic!("expected [use-site, use-site, use-site] items");
+    };
+    assert_eq!(only_fact(first).semantic_name(), "a");
+    let facts = use_site_facts(second);
+    assert_eq!(facts.len(), 2);
+    assert_eq!(facts[0].semantic_name(), "b");
+    assert_eq!(facts[1].semantic_name(), "c");
+    assert_eq!(only_fact(third).semantic_name(), "d");
+}
+
+#[test]
+fn two_operand_use_site_duplicate_operands_are_preserved_distinctly() {
+    let script = recognized_reference_use("a+a;");
+    let [SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(use_site)] =
+        script.items()
+    else {
+        panic!("expected exactly one selected use-site item");
+    };
+    let facts = use_site_facts(use_site);
+    assert_eq!(facts.len(), 2);
+    assert_eq!(facts[0].semantic_name(), "a");
+    assert_eq!(facts[1].semantic_name(), "a");
+    assert!(facts[0].reference().range().start() < facts[1].reference().range().start());
+}
+
+#[test]
+fn two_operand_cardinality_firewall_remains_unsupported() {
+    // A valid `a+b` prefix must never authorize a longer additive chain
+    // (acceptance criterion 14 / wrong models W24/W6): exactly two operands
+    // only, never a truncated/flattened accept of the first two.
+    for text in ["a+b+c;", "a-b-c;", "a+b-c;", "a-b+c;"] {
+        assert_unsupported(text);
+    }
+    for text in ["{ a+b+c; }", "{ a-b-c; }"] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn two_operand_operand_firewall_remains_unsupported() {
+    // Only a direct/escaped `IdentifierReference` operand is accepted;
+    // unary/literal/grouping/member/call operands remain unsupported
+    // (wrong models W25 / issue section "Operand firewall").
+    for text in [
+        "+a+b;", "-a+b;", "a++b;", "a+-b;", "1+b;", "a+1;", "true+b;", "a+null;", "this+b;",
+        "\"a\"+b;", "(a)+b;", "a+(b);", "a.b+c;", "a+b.c;", "a()+b;", "a+b();",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn two_operand_precedence_and_richer_expression_firewall_remains_unsupported() {
+    for text in [
+        "a*b;", "a+b*c;", "a*b+c;", "a**b+c;", "a+b**c;", "a=b+c;", "a+=b;", "a?b:c;", "a||b;",
+        "a&&b;", "a??b;", "a,b;",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn two_operand_escaped_reserved_word_boundary_remains_unsupported() {
+    // The complete free-standing probe declines transactionally for an
+    // escaped-ReservedWord operand in either position; no new Statement-
+    // local Early Error route is introduced (wrong model W26).
+    for text in ["\\u0069f+b;", "a+\\u0069f;"] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn two_operand_asi_and_recursive_block_firewall_remains_unsupported() {
+    // Only `AuthoredSemicolon` is selected (wrong model W27); recursive
+    // Block topology remains unwidened (wrong model W28).
+    for text in ["a+b", "{ a+b }", "{ { a+b; } }"] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn two_operand_use_site_whole_source_transactionality() {
+    // A locally valid two-operand use-site must not leak selected success
+    // if later source fails, at TopLevel or inside a Block.
+    assert_unsupported("a+b;\n???");
+    assert_unsupported("a+b;\nlet x = ;");
+    assert_unsupported("{ a+b; ??? }");
+    assert_unsupported("{ a+b; }\n???");
 }

@@ -2656,7 +2656,8 @@ fn top_level_identifier_reference_expression_statement_use_site_asi_general_expr
         "a",
         "a\nlet b;",
         // General-expression firewall (acceptance criterion 31 / W15).
-        "a+b;",
+        // `a+b;` moved to selected-positive coverage by Issue #766 (see the
+        // "Issue #766" section below) and is no longer listed here.
         "+a;",
         "-a;",
         "(a);",
@@ -2775,8 +2776,9 @@ fn block_identifier_reference_expression_statement_use_site_asi_general_expressi
         // ASI boundaries (issue section "ASI boundary").
         "{ a }",
         // General-expression firewall (issue section "General-expression
-        // firewall" / W15).
-        "{ a+b; }",
+        // firewall" / W15). `{ a+b; }` moved to selected-positive coverage
+        // by Issue #766 (see the "Issue #766" section below) and is no
+        // longer listed here.
         "{ +a; }",
         "{ -a; }",
         "{ (a); }",
@@ -2843,4 +2845,122 @@ fn block_var_close_brace_asi_regression_remains_selected_accepted_incomplete_aft
             "{text:?}"
         );
     }
+}
+
+// --- Issue #766: exactly-two IdentifierReference additive free-standing
+// `ExpressionStatement` use-sites. `a+b;` / `{ a+b; }` move from the old
+// `UnsupportedCoverage` firewall lists into selected-positive coverage;
+// every neighboring firewall source remains unsupported. ---
+
+#[test]
+fn two_operand_identifier_reference_expression_statement_use_site_remains_selected_accepted_incomplete()
+ {
+    for text in [
+        "a+b;",
+        "a-b;",
+        "a + b;",
+        "\\u0061+b;",
+        "a+\\u0062;",
+        "\\u0061-\\u0062;",
+        "f\\u006Fo-b\\u0061r;",
+        "{ a+b; }",
+        "{ \\u0061-b; }",
+        "a;\nb+c;\nd;",
+        "let a;\nvar b;\na+b;",
+        "let b;\n{ let a;\na+b; }",
+        "a+b;\nlet a;\nlet b;",
+        "let b;\n{ a+b;\nlet a; }",
+        "a+a;",
+        "{ a+a; }",
+        "a+b;\nc-d;",
+        "a+b;\n{ c-d; }\ne+f;",
+        "let x=a+b;\nc+d;",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn two_operand_cardinality_operand_and_richer_expression_firewalls_remain_unsupported() {
+    for text in [
+        // Cardinality firewall (acceptance criterion 14 / W24).
+        "a+b+c;",
+        "a-b-c;",
+        "a+b-c;",
+        "a-b+c;",
+        // Operand firewall (W25).
+        "+a+b;",
+        "-a+b;",
+        "a++b;",
+        "a+-b;",
+        "1+b;",
+        "a+1;",
+        "true+b;",
+        "a+null;",
+        "this+b;",
+        "\"a\"+b;",
+        "(a)+b;",
+        "a+(b);",
+        "a.b+c;",
+        "a+b.c;",
+        "a()+b;",
+        "a+b();",
+        // Precedence / richer-expression firewall.
+        "a*b;",
+        "a+b*c;",
+        "a*b+c;",
+        "a**b+c;",
+        "a+b**c;",
+        "a=b+c;",
+        "a+=b;",
+        "a?b:c;",
+        "a||b;",
+        "a&&b;",
+        "a??b;",
+        "a,b;",
+        // Escaped-ReservedWord boundary (W26).
+        "\\u0069f+b;",
+        "a+\\u0069f;",
+        // ASI / recursive-Block boundary (W27/W28).
+        "a+b",
+        "{ a+b }",
+        "{ { a+b; } }",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::UnsupportedCoverage
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn two_operand_use_site_whole_source_transactionality() {
+    for text in [
+        "a+b;\n???",
+        "a+b;\nlet x = ;",
+        "{ a+b; ??? }",
+        "{ a+b; }\n???",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::UnsupportedCoverage
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn two_operand_use_site_known_static_rejection_gates_qualification() {
+    assert_static_semantics_rejected("let a;\n{ var a; b+c; }", "a", (13, 14));
 }
