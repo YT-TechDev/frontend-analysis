@@ -953,7 +953,7 @@ fn analyze_top_level_use_sites<'script>(
             continue;
         };
 
-        for fact in use_site.facts() {
+        for fact in use_site.body().facts() {
             let correspondence = correspondence_for_name(
                 fact.semantic_name(),
                 SelectedVariableStatementNameCorrespondenceRegion::TopLevel,
@@ -1220,7 +1220,7 @@ fn analyze_block_reference_use_enabled_top_level_use_sites<'script>(
             continue;
         };
 
-        for fact in use_site.facts() {
+        for fact in use_site.body().facts() {
             let correspondence = correspondence_for_name(
                 fact.semantic_name(),
                 SelectedVariableStatementNameCorrespondenceRegion::TopLevel,
@@ -1298,7 +1298,7 @@ fn analyze_block_use_sites<'script>(
                 continue;
             };
 
-            for fact in use_site.facts() {
+            for fact in use_site.body().facts() {
                 let correspondence = correspondence_for_name(
                     fact.semantic_name(),
                     current_region,
