@@ -181,7 +181,24 @@
 //! branches, Script/Block carrier topology, and completion remain
 //! unchanged; only a mechanical `body()`/`terminator()` accessor split
 //! replaces the previous bare `SelectedFreeStandingIdentifierReferenceUseSite`
-//! use-site item payload.
+//! use-site item payload. Composed a bounded leading `+`/`-`
+//! `IdentifierReference` `UnaryExpression`
+//! (`SelectedUnaryPlusMinus SelectedUnaryOperandTrivia
+//! SelectedAcceptedIdentifierReference`) into the placement-neutral
+//! free-standing body probe
+//! (`consume_selected_identifier_reference_expression_statement_use_site_body`)
+//! as one additional bounded body form, tried before the existing
+//! bare/additive body logic, reusing the unmodified
+//! `consume_selected_leading_plus_minus_identifier_reference_unary_expression`
+//! helper and mapping a matched result onto the existing
+//! `One(SelectedIdentifierReferenceFact)` occurrence -- the same
+//! representation an unwrapped bare reference produces -- per the
+//! candidate-independent theorem accepted by #746/#747 and this leaf's own
+//! frontier selection at #688 comment 5744036288, by #771. No unary-specific
+//! item or body variant is introduced; no operator, trivia, or whole-unary
+//! `SourceAnchor` is retained; TopLevel/Block placement, terminator
+//! provenance, correspondence, static semantics, qualification branches, and
+//! Script/Block carrier topology remain unchanged.
 //!
 //! This is not aggregate ECMAScript qualification and cannot construct
 //! `QualificationOutcome::Qualified`.
@@ -2806,12 +2823,24 @@ impl<'source> Cursor<'source> {
     /// grammar -- widened by Issue #766 per #688 comment 5739718987 to
     /// additionally accept exactly one authored `+`/`-` continuation,
     /// narrowed by Issue #768 to own only the body -- termination provenance
-    /// moved entirely to the placement-owned TopLevel/Block callers):
+    /// moved entirely to the placement-owned TopLevel/Block callers -- widened
+    /// by Issue #771 per #688 comment 5744036288 to additionally accept a
+    /// leading `+`/`-` `IdentifierReference` `UnaryExpression`, composing the
+    /// already-accepted bounded
+    /// `consume_selected_leading_plus_minus_identifier_reference_unary_expression`
+    /// helper -- unchanged, never reimplemented here -- as one additional
+    /// bounded body form tried before the existing bare/additive body logic):
     ///
     /// ```text
     /// SelectedIdentifierReferenceExpressionStatementUseSiteBody ::=
-    ///     SelectedAcceptedIdentifierReference
+    ///     SelectedLeadingPlusMinusIdentifierReferenceFreeStandingUseSiteBody
+    ///   | SelectedAcceptedIdentifierReference
     ///   | SelectedTwoIdentifierReferenceAdditiveExpressionStatementBody
+    ///
+    /// SelectedLeadingPlusMinusIdentifierReferenceFreeStandingUseSiteBody ::=
+    ///     SelectedUnaryPlusMinus
+    ///     SelectedUnaryOperandTrivia
+    ///     SelectedAcceptedIdentifierReference
     ///
     /// SelectedTwoIdentifierReferenceAdditiveExpressionStatementBody ::=
     ///     SelectedAcceptedIdentifierReference
@@ -2863,10 +2892,54 @@ impl<'source> Cursor<'source> {
     /// are propagated exactly, never downgraded to `NotSelected` or to a
     /// completed `One`. This helper retains no placement ownership of its
     /// own: TopLevel vs. Block placement belongs entirely to the caller.
+    ///
+    /// Issue #771: the unmodified
+    /// `consume_selected_leading_plus_minus_identifier_reference_unary_expression`
+    /// helper is probed first, before the bare/additive logic below. A
+    /// `Matched(reference)` result maps directly onto the existing
+    /// `One(reference)` occurrence -- the same representation an unwrapped
+    /// bare reference produces -- so no unary-specific body variant is
+    /// introduced and no operator, trivia, or whole-unary `SourceAnchor` is
+    /// retained; the authored `+`/`-` is construction syntax only. Selected
+    /// trivia is skipped once more after the match, mirroring the existing
+    /// bare-reference route below (which already skips trailing trivia
+    /// before its own `One(first)` return): the placement-owned caller's
+    /// terminator check (an authored `;`, `self.is_eof()`, or a peeked `}`)
+    /// must observe the cursor positioned exactly after any trailing
+    /// selected trivia, not merely after the last authored reference
+    /// character. A `ResourceLimited`/`InternalFailure` classification from
+    /// the unary helper is propagated immediately, without falling through
+    /// to the bare/additive route below. `NotSelected` falls through
+    /// unchanged: the unary helper already restores `self.offset` to this
+    /// probe's own snapshot on decline, so the existing bare/additive logic
+    /// observes exactly the same starting position it always has. The unary
+    /// helper's own local match (e.g. `+a` inside `+a+b`) never commits this
+    /// whole body probe by itself -- the placement-owned caller's
+    /// termination probe remains solely responsible for rejecting and
+    /// rolling back a locally recognized unary atom that is not followed by
+    /// a valid use-site terminator.
     fn consume_selected_identifier_reference_expression_statement_use_site_body(
         &mut self,
     ) -> SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition {
         let snapshot = self.offset;
+
+        match self.consume_selected_leading_plus_minus_identifier_reference_unary_expression() {
+            SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::Matched(
+                reference,
+            ) => {
+                self.skip_selected_trivia();
+                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::Matched(
+                    SelectedFreeStandingIdentifierReferenceUseSite::One(reference),
+                );
+            }
+            SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
+                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::ResourceLimited;
+            }
+            SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::InternalFailure => {
+                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::InternalFailure;
+            }
+            SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::NotSelected => {}
+        }
 
         let first = match self.consume_selected_identifier_reference() {
             SelectedIdentifierReferenceRecognition::Matched(fact) => fact,

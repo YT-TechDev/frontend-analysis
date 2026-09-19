@@ -2611,6 +2611,19 @@ fn top_level_identifier_reference_expression_statement_use_site_remains_selected
         r"a",
         "let a;\na",
         "let b;\nlet a;\na;\nb",
+        // Issue #771: production composes the already-accepted leading
+        // `+`/`-` `IdentifierReference` `UnaryExpression` into this
+        // free-standing body leaf, but this Oracle's own bounded theorem
+        // (Issue #756) never qualifies a unary-wrapped operand, so these
+        // reach the same `SelectedAcceptedIncomplete` outcome as any other
+        // production-accepted, not-yet-Oracle-qualified source -- never
+        // `UnsupportedCoverage` and never `Qualified`.
+        "+a;",
+        "-a;",
+        "+\\u0061;",
+        "-f\\u006Fo;",
+        "+a",
+        "-a",
     ] {
         assert!(
             matches!(
@@ -2668,14 +2681,33 @@ fn top_level_identifier_reference_expression_statement_use_site_asi_general_expr
         "a\nlet b;",
         // General-expression firewall (acceptance criterion 31 / W15).
         // `a+b;` moved to selected-positive coverage by Issue #766 (see the
-        // "Issue #766" section below) and is no longer listed here.
-        "+a;",
-        "-a;",
+        // "Issue #766" section below) and `+a;` / `-a;` moved to
+        // selected-positive (`SelectedAcceptedIncomplete`) coverage by Issue
+        // #771 (see the "Issue #771" section above); neither is listed here
+        // any longer.
         "(a);",
         "a.b;",
         "a[b];",
         "a();",
         "a=b;",
+        // Richer-expression firewall composed with the new unary body form
+        // (Issue #771): a locally recognized `+a`/`-a` prefix must not
+        // authorize a richer neighbor.
+        "+a+b;",
+        "-a-b;",
+        "+a.b;",
+        "-a[b];",
+        "+a();",
+        "+a=b;",
+        // Other unary operators remain outside this leaf (Issue #771).
+        "!a;",
+        "~a;",
+        "typeof a;",
+        "++a;",
+        "+-a;",
+        // Parenthesized firewall (Issue #771).
+        "+(a);",
+        "-(a);",
         // Deeper-nesting firewall (acceptance criterion 15). `{ a; }` itself
         // is now accepted as a Block-contained use-site by Issue #762 (see
         // the "Issue #762" section below); only recursion beyond one level
@@ -2744,6 +2776,14 @@ fn block_identifier_reference_expression_statement_use_site_remains_selected_acc
         "let a;\n{ a }",
         "{ a }\nlet a;",
         "a;\n{ a }\na;",
+        // Issue #771: the same composed leading `+`/`-` unary body form
+        // reaches `SelectedAcceptedIncomplete` for the Block placement too.
+        "{ +a; }",
+        "{ -a; }",
+        "{ +\\u0061; }",
+        "{ -f\\u006Fo; }",
+        "{ +a }",
+        "{ -a }",
     ] {
         assert!(
             matches!(
@@ -2799,10 +2839,10 @@ fn block_identifier_reference_expression_statement_use_site_asi_general_expressi
         // no longer listed here.
         // General-expression firewall (issue section "General-expression
         // firewall" / W15). `{ a+b; }` moved to selected-positive coverage
-        // by Issue #766 (see the "Issue #766" section below) and is no
-        // longer listed here.
-        "{ +a; }",
-        "{ -a; }",
+        // by Issue #766 (see the "Issue #766" section below) and `{ +a; }` /
+        // `{ -a; }` moved to selected-positive (`SelectedAcceptedIncomplete`)
+        // coverage by Issue #771 (see the "Issue #771" section above);
+        // neither is listed here any longer.
         "{ (a); }",
         "{ a.b; }",
         "{ a[b]; }",
@@ -2812,6 +2852,18 @@ fn block_identifier_reference_expression_statement_use_site_asi_general_expressi
         "{ a && b; }",
         "{ a, b; }",
         "{ new a; }",
+        // Richer-expression firewall composed with the new unary body form
+        // (Issue #771).
+        "{ +a+b; }",
+        "{ -a-b; }",
+        "{ +a.b; }",
+        "{ -a[b]; }",
+        // Other unary operators and parenthesized forms remain outside this
+        // leaf (Issue #771).
+        "{ !a; }",
+        "{ ~a; }",
+        "{ +(a); }",
+        "{ -(a); }",
         // Empty-Block and deeper-nesting firewalls (issue section "Empty
         // Block / recursive Block boundaries" / W26/W27).
         "{}",
