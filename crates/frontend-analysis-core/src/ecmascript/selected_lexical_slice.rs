@@ -111,7 +111,25 @@
 //! whole authoritative
 //! `SourceText`: tentative declaration/binding/Block/var/use-site facts are
 //! returned only when the entire source is consumed by selected items plus
-//! selected trivia.
+//! selected trivia, and composed a bounded, transactional Block-contained
+//! free-standing `IdentifierReference` `ExpressionStatement` use-site leaf
+//! into one owned single-pass selected one-level Block parse
+//! (`Cursor::parse_selected_block`), producing the new crate-private
+//! `SelectedUseSiteEnabledBlock` representation exactly when at least one
+//! Block-contained use-site commits (the exact unchanged historical
+//! `SelectedBlock` otherwise), generalizing the #758 bounded use-site probe
+//! (renamed to the placement-neutral
+//! `consume_selected_identifier_reference_expression_statement_use_site`) to
+//! run transactionally before the existing raw Block `var` /
+//! lexical-declaration dispatch, and composed a new fifth / broadest
+//! selected Script carrier (`SelectedBlockReferenceUseEnabledScript`)
+//! distinguishing historical from use-site-enabled Blocks while retaining
+//! authored top-level order and never reparsing or reconstructing an
+//! already-produced historical Block, per the candidate-independent
+//! theorem accepted by #760/#761 and the production representation /
+//! placement authority accepted by #688 comment 5734964743, by #762.
+//! Historical carriers, `SelectedBlock`, and `SelectedBlockItem` remain
+//! semantically unchanged.
 //!
 //! This is not aggregate ECMAScript qualification and cannot construct
 //! `QualificationOutcome::Qualified`.
@@ -133,6 +151,7 @@ pub(super) enum SelectedLexicalSliceOutcome {
     RecognizedIdentifierReferenceExpressionStatementSlice(
         SelectedIdentifierReferenceExpressionStatementScript,
     ),
+    RecognizedBlockReferenceUseEnabledSlice(SelectedBlockReferenceUseEnabledScript),
     UnsupportedCoverage,
     DefinitiveGrammarRejectionEvidence {
         subject: SourceAnchor,
@@ -216,6 +235,113 @@ pub(super) enum SelectedReferenceUseEnabledTopLevelItem {
     LexicalDeclaration(SelectedLexicalDeclaration),
     Block(SelectedBlock),
     VariableStatement(SelectedVariableStatement),
+    IdentifierReferenceExpressionStatement(SelectedIdentifierReferenceFact),
+}
+
+/// New fifth / broadest selected Script carrier (Issue #762), composing the
+/// #758 free-standing top-level use-site leaf with Block-contained
+/// free-standing use-sites. Historical carriers (`SelectedLexicalScript`,
+/// `SelectedOneLevelBlockScript`, `SelectedVariableStatementScript`,
+/// `SelectedIdentifierReferenceExpressionStatementScript`) remain distinct,
+/// semantically unchanged accepted authorities; this is a new, separate
+/// carrier, never a widening of any of them.
+#[derive(Debug)]
+pub(super) struct SelectedBlockReferenceUseEnabledScript {
+    items: Vec<SelectedBlockReferenceUseEnabledTopLevelItem>,
+}
+
+impl SelectedBlockReferenceUseEnabledScript {
+    pub(super) fn items(&self) -> &[SelectedBlockReferenceUseEnabledTopLevelItem] {
+        &self.items
+    }
+}
+
+/// One top-level item of the fifth / broadest selected Script carrier
+/// (Issue #762). `Block` retains the exact historical representation for a
+/// selected one-level Block containing no Block-local free-standing
+/// use-site; `UseSiteEnabledBlock` is the distinct new representation for a
+/// Block containing at least one. `IdentifierReferenceExpressionStatement`
+/// retains exactly the existing source-backed `SelectedIdentifierReferenceFact`
+/// for a top-level free-standing use-site, unchanged from #758.
+#[derive(Debug)]
+pub(super) enum SelectedBlockReferenceUseEnabledTopLevelItem {
+    LexicalDeclaration(SelectedLexicalDeclaration),
+    Block(SelectedBlock),
+    UseSiteEnabledBlock(SelectedUseSiteEnabledBlock),
+    VariableStatement(SelectedVariableStatement),
+    IdentifierReferenceExpressionStatement(SelectedIdentifierReferenceFact),
+}
+
+/// New use-site-enabled Block representation (Issue #762): a selected
+/// one-level Block containing at least one Block-contained free-standing
+/// `IdentifierReference` `ExpressionStatement` use-site, alongside existing
+/// selected `LexicalDeclaration` / Block `var` items, in exact authored
+/// order. Reuses the existing `SelectedIdentifierReferenceFact` for the
+/// use-site payload; retains no whole-Statement, whole-Expression, or
+/// semicolon anchor, and no item ordinal beyond authored `Vec` position. Is
+/// never produced by reparsing or rescanning an already-produced historical
+/// `SelectedBlock`: the owning single left-to-right Block parse in
+/// `Cursor::parse_selected_block` decides which of the two representations
+/// to construct exactly once, from the same cursor lifecycle.
+#[derive(Debug)]
+pub(super) struct SelectedUseSiteEnabledBlock {
+    block: SourceAnchor,
+    items: Vec<SelectedUseSiteEnabledBlockItem>,
+}
+
+impl SelectedUseSiteEnabledBlock {
+    pub(super) fn block(&self) -> &SourceAnchor {
+        &self.block
+    }
+
+    pub(super) fn items(&self) -> &[SelectedUseSiteEnabledBlockItem] {
+        &self.items
+    }
+
+    /// Every Block-local lexical declaration, in authored item order, with
+    /// `var`-statement and use-site items filtered out. Mirrors
+    /// `SelectedBlock::declarations` exactly for the new representation, so
+    /// existing lexical-only consumers (Block duplicate-lexical checks,
+    /// var-name correspondence) reuse the identical accessor shape.
+    pub(super) fn declarations(&self) -> impl Iterator<Item = &SelectedLexicalDeclaration> {
+        self.items.iter().filter_map(|item| match item {
+            SelectedUseSiteEnabledBlockItem::LexicalDeclaration(declaration) => Some(declaration),
+            SelectedUseSiteEnabledBlockItem::Var(_)
+            | SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(_) => None,
+        })
+    }
+
+    /// Every Block-local `var` binding contributor, in authored Block item
+    /// order and, within each Block `var` statement, exact authored
+    /// `VariableDeclarationList` order, with lexical declarations and
+    /// use-site items filtered out. Mirrors `SelectedBlock::block_var_bindings`
+    /// exactly for the new representation.
+    pub(super) fn block_var_bindings(&self) -> impl Iterator<Item = &SelectedBlockVarBinding> {
+        self.items
+            .iter()
+            .filter_map(|item| match item {
+                SelectedUseSiteEnabledBlockItem::Var(statement) => {
+                    Some(statement.bindings().iter())
+                }
+                SelectedUseSiteEnabledBlockItem::LexicalDeclaration(_)
+                | SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(_) => {
+                    None
+                }
+            })
+            .flatten()
+    }
+}
+
+/// `UseSiteEnabledBlockItem ::= existing selected LexicalDeclaration |
+/// existing selected Block Var statement | selected IdentifierReference
+/// ExpressionStatement use-site` (Issue #762). The use-site variant retains
+/// exactly the existing source-backed `SelectedIdentifierReferenceFact`; the
+/// authored `;` terminator is a construction invariant of this variant,
+/// never a retained anchor or relation payload.
+#[derive(Debug)]
+pub(super) enum SelectedUseSiteEnabledBlockItem {
+    LexicalDeclaration(SelectedLexicalDeclaration),
+    Var(SelectedBlockVarStatement),
     IdentifierReferenceExpressionStatement(SelectedIdentifierReferenceFact),
 }
 
@@ -687,6 +813,7 @@ enum SelectedScriptBuilder {
     BlockEnabled(Vec<SelectedTopLevelItem>),
     VariableEnabled(Vec<SelectedVariableTopLevelItem>),
     ReferenceUseEnabled(Vec<SelectedReferenceUseEnabledTopLevelItem>),
+    BlockReferenceUseEnabled(Vec<SelectedBlockReferenceUseEnabledTopLevelItem>),
 }
 
 impl SelectedScriptBuilder {
@@ -761,6 +888,25 @@ impl SelectedScriptBuilder {
                     .try_reserve(1)
                     .map_err(|_| ParseFailure::ResourceLimited)?;
                 items.push(SelectedReferenceUseEnabledTopLevelItem::Block(block));
+                Ok(())
+            }
+            (
+                Self::BlockReferenceUseEnabled(items),
+                SelectedTopLevelItem::LexicalDeclaration(declaration),
+            ) => {
+                items
+                    .try_reserve(1)
+                    .map_err(|_| ParseFailure::ResourceLimited)?;
+                items.push(
+                    SelectedBlockReferenceUseEnabledTopLevelItem::LexicalDeclaration(declaration),
+                );
+                Ok(())
+            }
+            (Self::BlockReferenceUseEnabled(items), SelectedTopLevelItem::Block(block)) => {
+                items
+                    .try_reserve(1)
+                    .map_err(|_| ParseFailure::ResourceLimited)?;
+                items.push(SelectedBlockReferenceUseEnabledTopLevelItem::Block(block));
                 Ok(())
             }
         }
@@ -880,6 +1026,178 @@ impl SelectedScriptBuilder {
                 );
                 Ok(())
             }
+            Self::BlockReferenceUseEnabled(items) => {
+                items
+                    .try_reserve(1)
+                    .map_err(|_| ParseFailure::ResourceLimited)?;
+                items.push(
+                    SelectedBlockReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
+                        fact,
+                    ),
+                );
+                Ok(())
+            }
+        }
+    }
+
+    /// Commits the transactionally-recognized use-site-enabled Block
+    /// (Issue #762). When the builder is not yet `BlockReferenceUseEnabled`,
+    /// this is the first selected Block-contained use-site: every
+    /// already-owned top-level item moves into the new fifth / broadest item
+    /// representation in exact authored order -- without reparsing or
+    /// reconstructing any already-produced historical `SelectedBlock` -- and
+    /// the builder promotes to `BlockReferenceUseEnabled` exactly once
+    /// before the new Block is appended. Once already
+    /// `BlockReferenceUseEnabled`, the Block appends directly.
+    fn push_use_site_enabled_block(
+        &mut self,
+        block: SelectedUseSiteEnabledBlock,
+    ) -> Result<(), ParseFailure> {
+        match self {
+            builder @ Self::Flat(_) => {
+                let Self::Flat(declarations) = builder else {
+                    return Err(ParseFailure::InternalFailure);
+                };
+                let item_count = declarations
+                    .len()
+                    .checked_add(1)
+                    .ok_or(ParseFailure::InternalFailure)?;
+                let mut items = Vec::new();
+                items
+                    .try_reserve(item_count)
+                    .map_err(|_| ParseFailure::ResourceLimited)?;
+                for declaration in std::mem::take(declarations) {
+                    items.push(
+                        SelectedBlockReferenceUseEnabledTopLevelItem::LexicalDeclaration(
+                            declaration,
+                        ),
+                    );
+                }
+                items
+                    .push(SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block));
+                *builder = Self::BlockReferenceUseEnabled(items);
+                Ok(())
+            }
+            builder @ Self::BlockEnabled(_) => {
+                let Self::BlockEnabled(existing_items) = builder else {
+                    return Err(ParseFailure::InternalFailure);
+                };
+                let item_count = existing_items
+                    .len()
+                    .checked_add(1)
+                    .ok_or(ParseFailure::InternalFailure)?;
+                let mut items = Vec::new();
+                items
+                    .try_reserve(item_count)
+                    .map_err(|_| ParseFailure::ResourceLimited)?;
+                for item in std::mem::take(existing_items) {
+                    match item {
+                        SelectedTopLevelItem::LexicalDeclaration(declaration) => items.push(
+                            SelectedBlockReferenceUseEnabledTopLevelItem::LexicalDeclaration(
+                                declaration,
+                            ),
+                        ),
+                        SelectedTopLevelItem::Block(existing_block) => {
+                            items.push(SelectedBlockReferenceUseEnabledTopLevelItem::Block(
+                                existing_block,
+                            ));
+                        }
+                    }
+                }
+                items
+                    .push(SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block));
+                *builder = Self::BlockReferenceUseEnabled(items);
+                Ok(())
+            }
+            builder @ Self::VariableEnabled(_) => {
+                let Self::VariableEnabled(existing_items) = builder else {
+                    return Err(ParseFailure::InternalFailure);
+                };
+                let item_count = existing_items
+                    .len()
+                    .checked_add(1)
+                    .ok_or(ParseFailure::InternalFailure)?;
+                let mut items = Vec::new();
+                items
+                    .try_reserve(item_count)
+                    .map_err(|_| ParseFailure::ResourceLimited)?;
+                for item in std::mem::take(existing_items) {
+                    match item {
+                        SelectedVariableTopLevelItem::LexicalDeclaration(declaration) => items
+                            .push(
+                                SelectedBlockReferenceUseEnabledTopLevelItem::LexicalDeclaration(
+                                    declaration,
+                                ),
+                            ),
+                        SelectedVariableTopLevelItem::Block(existing_block) => {
+                            items.push(SelectedBlockReferenceUseEnabledTopLevelItem::Block(
+                                existing_block,
+                            ));
+                        }
+                        SelectedVariableTopLevelItem::VariableStatement(statement) => {
+                            items.push(
+                                SelectedBlockReferenceUseEnabledTopLevelItem::VariableStatement(
+                                    statement,
+                                ),
+                            );
+                        }
+                    }
+                }
+                items
+                    .push(SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block));
+                *builder = Self::BlockReferenceUseEnabled(items);
+                Ok(())
+            }
+            builder @ Self::ReferenceUseEnabled(_) => {
+                let Self::ReferenceUseEnabled(existing_items) = builder else {
+                    return Err(ParseFailure::InternalFailure);
+                };
+                let item_count = existing_items
+                    .len()
+                    .checked_add(1)
+                    .ok_or(ParseFailure::InternalFailure)?;
+                let mut items = Vec::new();
+                items
+                    .try_reserve(item_count)
+                    .map_err(|_| ParseFailure::ResourceLimited)?;
+                for item in std::mem::take(existing_items) {
+                    let converted = match item {
+                        SelectedReferenceUseEnabledTopLevelItem::LexicalDeclaration(declaration) => {
+                            SelectedBlockReferenceUseEnabledTopLevelItem::LexicalDeclaration(
+                                declaration,
+                            )
+                        }
+                        SelectedReferenceUseEnabledTopLevelItem::Block(existing_block) => {
+                            SelectedBlockReferenceUseEnabledTopLevelItem::Block(existing_block)
+                        }
+                        SelectedReferenceUseEnabledTopLevelItem::VariableStatement(statement) => {
+                            SelectedBlockReferenceUseEnabledTopLevelItem::VariableStatement(
+                                statement,
+                            )
+                        }
+                        SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
+                            fact,
+                        ) => {
+                            SelectedBlockReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
+                                fact,
+                            )
+                        }
+                    };
+                    items.push(converted);
+                }
+                items
+                    .push(SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block));
+                *builder = Self::BlockReferenceUseEnabled(items);
+                Ok(())
+            }
+            Self::BlockReferenceUseEnabled(items) => {
+                items
+                    .try_reserve(1)
+                    .map_err(|_| ParseFailure::ResourceLimited)?;
+                items
+                    .push(SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block));
+                Ok(())
+            }
         }
     }
 
@@ -951,6 +1269,15 @@ impl SelectedScriptBuilder {
                 ));
                 Ok(())
             }
+            Self::BlockReferenceUseEnabled(items) => {
+                items
+                    .try_reserve(1)
+                    .map_err(|_| ParseFailure::ResourceLimited)?;
+                items.push(
+                    SelectedBlockReferenceUseEnabledTopLevelItem::VariableStatement(statement),
+                );
+                Ok(())
+            }
         }
     }
 }
@@ -979,21 +1306,153 @@ enum SelectedIdentifierReferenceRecognition {
     InternalFailure,
 }
 
-/// Result of the bounded, transactional top-level free-standing
-/// `IdentifierReference` `ExpressionStatement` use-site probe (Issue #758).
-/// `NotSelected` covers every declining case uniformly (no candidate
-/// reference; an escaped-ReservedWord candidate; a candidate reference not
-/// immediately followed by an authored `;`): in every `NotSelected` case
-/// the cursor is left exactly where it stood before the probe began, so the
-/// existing raw top-level dispatch sees an unperturbed cursor.
-/// `ResourceLimited`/`InternalFailure` are propagated exactly, never
-/// downgraded to `NotSelected`.
+/// Result of the bounded, transactional, placement-neutral free-standing
+/// `IdentifierReference` `ExpressionStatement` use-site probe (Issue #758,
+/// generalized from a TopLevel-only name to this placement-neutral leaf by
+/// Issue #762 per #688 comment 5734964743). `NotSelected` covers every
+/// declining case uniformly (no candidate reference; an escaped-ReservedWord
+/// candidate; a candidate reference not immediately followed by an authored
+/// `;`): in every `NotSelected` case the cursor is left exactly where it
+/// stood before the probe began, so the caller's own existing dispatch sees
+/// an unperturbed cursor. `ResourceLimited`/`InternalFailure` are propagated
+/// exactly, never downgraded to `NotSelected`. This type and its producing
+/// method carry no placement ownership themselves; TopLevel vs. Block
+/// placement belongs entirely to the caller.
 #[derive(Debug)]
-enum SelectedTopLevelUseSiteRecognition {
+enum SelectedIdentifierReferenceExpressionStatementUseSiteRecognition {
     Matched(SelectedIdentifierReferenceFact),
     NotSelected,
     ResourceLimited,
     InternalFailure,
+}
+
+/// Result of the owning single left-to-right Block parse lifecycle (Issue
+/// #762): `Legacy` is the exact unchanged historical `SelectedBlock`,
+/// produced when no Block-contained use-site commits. `UseSiteEnabled` is
+/// the new representation, produced when at least one Block-contained
+/// use-site commits. The Block source is read exactly once; this enum
+/// distinguishes only which already-built in-memory representation the
+/// single pass ends with, never a second parse, rescan, or reparse.
+#[derive(Debug)]
+enum SelectedBlockParseOutcome {
+    Legacy(SelectedBlock),
+    UseSiteEnabled(SelectedUseSiteEnabledBlock),
+}
+
+/// Block-local monotonic capability builder (Issue #762) driving
+/// `Cursor::parse_selected_block`'s single owned pass: `Legacy` accumulates
+/// exactly the existing historical `SelectedBlockItem` representation with
+/// no extra allocation or conversion. On the first Block-contained
+/// free-standing use-site, `push_use_site` promotes `Legacy` to
+/// `ReferenceUseEnabled` exactly once, moving every already-owned legacy
+/// item into the wider `SelectedUseSiteEnabledBlockItem` representation in
+/// exact authored order; every subsequent item -- use-site, lexical
+/// declaration, or Block `var` statement -- then appends directly to the
+/// already-wide `Vec`. A Block that never exercises the new use-site
+/// capability therefore finishes through `Legacy` with no wide staging
+/// representation and no post-parse down-conversion allocation.
+#[derive(Debug)]
+enum SelectedBlockBuilder {
+    Legacy(Vec<SelectedBlockItem>),
+    ReferenceUseEnabled(Vec<SelectedUseSiteEnabledBlockItem>),
+}
+
+impl SelectedBlockBuilder {
+    fn push_lexical_declaration(
+        &mut self,
+        declaration: SelectedLexicalDeclaration,
+    ) -> Result<(), ParseFailure> {
+        match self {
+            Self::Legacy(items) => {
+                items
+                    .try_reserve(1)
+                    .map_err(|_| ParseFailure::ResourceLimited)?;
+                items.push(SelectedBlockItem::LexicalDeclaration(declaration));
+                Ok(())
+            }
+            Self::ReferenceUseEnabled(items) => {
+                items
+                    .try_reserve(1)
+                    .map_err(|_| ParseFailure::ResourceLimited)?;
+                items.push(SelectedUseSiteEnabledBlockItem::LexicalDeclaration(
+                    declaration,
+                ));
+                Ok(())
+            }
+        }
+    }
+
+    fn push_var_statement(
+        &mut self,
+        statement: SelectedBlockVarStatement,
+    ) -> Result<(), ParseFailure> {
+        match self {
+            Self::Legacy(items) => {
+                items
+                    .try_reserve(1)
+                    .map_err(|_| ParseFailure::ResourceLimited)?;
+                items.push(SelectedBlockItem::Var(statement));
+                Ok(())
+            }
+            Self::ReferenceUseEnabled(items) => {
+                items
+                    .try_reserve(1)
+                    .map_err(|_| ParseFailure::ResourceLimited)?;
+                items.push(SelectedUseSiteEnabledBlockItem::Var(statement));
+                Ok(())
+            }
+        }
+    }
+
+    /// Commits the transactionally-recognized Block-contained use-site.
+    /// When still `Legacy`, this is the first selected Block-contained
+    /// use-site: every already-owned legacy item moves into the wider item
+    /// representation in exact authored order before the use-site is
+    /// appended, promoting to `ReferenceUseEnabled` exactly once. Once
+    /// already `ReferenceUseEnabled`, the use-site appends directly.
+    fn push_use_site(&mut self, fact: SelectedIdentifierReferenceFact) -> Result<(), ParseFailure> {
+        match self {
+            builder @ Self::Legacy(_) => {
+                let Self::Legacy(existing_items) = builder else {
+                    return Err(ParseFailure::InternalFailure);
+                };
+                let item_count = existing_items
+                    .len()
+                    .checked_add(1)
+                    .ok_or(ParseFailure::InternalFailure)?;
+                let mut items = Vec::new();
+                items
+                    .try_reserve(item_count)
+                    .map_err(|_| ParseFailure::ResourceLimited)?;
+                for item in std::mem::take(existing_items) {
+                    match item {
+                        SelectedBlockItem::LexicalDeclaration(declaration) => {
+                            items.push(SelectedUseSiteEnabledBlockItem::LexicalDeclaration(
+                                declaration,
+                            ));
+                        }
+                        SelectedBlockItem::Var(statement) => {
+                            items.push(SelectedUseSiteEnabledBlockItem::Var(statement));
+                        }
+                    }
+                }
+                items.push(
+                    SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(fact),
+                );
+                *builder = Self::ReferenceUseEnabled(items);
+                Ok(())
+            }
+            Self::ReferenceUseEnabled(items) => {
+                items
+                    .try_reserve(1)
+                    .map_err(|_| ParseFailure::ResourceLimited)?;
+                items.push(
+                    SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(fact),
+                );
+                Ok(())
+            }
+        }
+    }
 }
 
 /// Result of the bounded 1-or-2 `IdentifierReference` initializer helper
@@ -1085,7 +1544,25 @@ impl<'source> Cursor<'source> {
         }
     }
 
-    fn parse_selected_block(&mut self) -> Result<SelectedBlock, ParseFailure> {
+    /// Owning single left-to-right Block parse lifecycle (Issue #762). The
+    /// Block source is read exactly once: inside the loop, the bounded
+    /// placement-neutral free-standing use-site probe
+    /// (`consume_selected_identifier_reference_expression_statement_use_site`)
+    /// runs transactionally before the existing raw Block `var` /
+    /// lexical-declaration dispatch, so `{ let; }` / `{ varfoo; }` become
+    /// use-sites while `{ let a; }` / `{ var a; }` remain owned by the
+    /// existing declaration dispatch exactly as before. Every recognized
+    /// item is committed directly to the `SelectedBlockBuilder`
+    /// Block-local monotonic capability builder: `Legacy` while no
+    /// Block-contained use-site has committed, promoting to
+    /// `ReferenceUseEnabled` exactly once on the first one. A Block that
+    /// never exercises the new capability builds and returns the exact
+    /// historical `SelectedBlock` directly from its `Legacy` items, with no
+    /// wide staging representation and no post-parse down-conversion
+    /// allocation. No second tokenizer, parser, rescan, or source search
+    /// recovers the Block or reference endpoints -- both come from the same
+    /// owned cursor lifecycle used to anchor every item.
+    fn parse_selected_block(&mut self) -> Result<SelectedBlockParseOutcome, ParseFailure> {
         let block_start = self.offset;
         if !self.consume_ascii('{') {
             return Err(ParseFailure::UnsupportedCoverage);
@@ -1096,17 +1573,28 @@ impl<'source> Cursor<'source> {
             return Err(ParseFailure::UnsupportedCoverage);
         }
 
-        let mut items = Vec::new();
+        let mut builder = SelectedBlockBuilder::Legacy(Vec::new());
         loop {
-            let item = if self.remaining().starts_with("var") {
-                SelectedBlockItem::Var(self.parse_selected_block_var_statement()?)
-            } else {
-                SelectedBlockItem::LexicalDeclaration(self.parse_declaration()?)
-            };
-            items
-                .try_reserve(1)
-                .map_err(|_| ParseFailure::ResourceLimited)?;
-            items.push(item);
+            match self.consume_selected_identifier_reference_expression_statement_use_site() {
+                SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::Matched(fact) => {
+                    builder.push_use_site(fact)?;
+                }
+                SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::ResourceLimited => {
+                    return Err(ParseFailure::ResourceLimited);
+                }
+                SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::InternalFailure => {
+                    return Err(ParseFailure::InternalFailure);
+                }
+                SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::NotSelected => {
+                    if self.remaining().starts_with("var") {
+                        let statement = self.parse_selected_block_var_statement()?;
+                        builder.push_var_statement(statement)?;
+                    } else {
+                        let declaration = self.parse_declaration()?;
+                        builder.push_lexical_declaration(declaration)?;
+                    }
+                }
+            }
 
             self.skip_selected_trivia();
             if self.consume_ascii('}') {
@@ -1118,7 +1606,18 @@ impl<'source> Cursor<'source> {
         }
 
         let block = self.anchor(block_start, self.offset)?;
-        Ok(SelectedBlock { block, items })
+
+        Ok(match builder {
+            SelectedBlockBuilder::Legacy(items) => {
+                SelectedBlockParseOutcome::Legacy(SelectedBlock { block, items })
+            }
+            SelectedBlockBuilder::ReferenceUseEnabled(items) => {
+                SelectedBlockParseOutcome::UseSiteEnabled(SelectedUseSiteEnabledBlock {
+                    block,
+                    items,
+                })
+            }
+        })
     }
 
     /// Recognizes exactly:
@@ -2034,11 +2533,14 @@ impl<'source> Cursor<'source> {
         })
     }
 
-    /// Bounded, transactional top-level free-standing `IdentifierReference`
-    /// `ExpressionStatement` use-site probe (Issue #758):
+    /// Bounded, transactional, placement-neutral free-standing
+    /// `IdentifierReference` `ExpressionStatement` use-site probe (Issue
+    /// #758, generalized to this placement-neutral leaf by Issue #762 per
+    /// #688 comment 5734964743 -- both TopLevel and Block placement are now
+    /// independently justified callers of this exact same bounded grammar):
     ///
     /// ```text
-    /// SelectedTopLevelIdentifierReferenceExpressionStatement ::=
+    /// SelectedIdentifierReferenceExpressionStatementUseSite ::=
     ///     SelectedAcceptedIdentifierReference
     ///     AuthoredSemicolon
     /// ```
@@ -2054,35 +2556,37 @@ impl<'source> Cursor<'source> {
     /// form. An escaped-ReservedWord candidate likewise restores the cursor
     /// and declines; no new Statement-local EE-04-R08 route is introduced.
     /// `ResourceLimited`/`InternalFailure` from the shared recognizer are
-    /// propagated exactly.
-    fn consume_selected_top_level_identifier_reference_expression_statement(
+    /// propagated exactly. This helper retains no placement ownership of
+    /// its own: TopLevel vs. Block placement belongs entirely to the
+    /// caller.
+    fn consume_selected_identifier_reference_expression_statement_use_site(
         &mut self,
-    ) -> SelectedTopLevelUseSiteRecognition {
+    ) -> SelectedIdentifierReferenceExpressionStatementUseSiteRecognition {
         let snapshot = self.offset;
 
         match self.consume_selected_identifier_reference() {
             SelectedIdentifierReferenceRecognition::Matched(fact) => {
                 self.skip_selected_trivia();
                 if self.consume_ascii(';') {
-                    SelectedTopLevelUseSiteRecognition::Matched(fact)
+                    SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::Matched(fact)
                 } else {
                     self.offset = snapshot;
-                    SelectedTopLevelUseSiteRecognition::NotSelected
+                    SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::NotSelected
                 }
             }
             SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName { .. } => {
                 self.offset = snapshot;
-                SelectedTopLevelUseSiteRecognition::NotSelected
+                SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::NotSelected
             }
             SelectedIdentifierReferenceRecognition::NotSelected => {
                 self.offset = snapshot;
-                SelectedTopLevelUseSiteRecognition::NotSelected
+                SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::NotSelected
             }
             SelectedIdentifierReferenceRecognition::ResourceLimited => {
-                SelectedTopLevelUseSiteRecognition::ResourceLimited
+                SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::ResourceLimited
             }
             SelectedIdentifierReferenceRecognition::InternalFailure => {
-                SelectedTopLevelUseSiteRecognition::InternalFailure
+                SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::InternalFailure
             }
         }
     }
@@ -2520,19 +3024,19 @@ pub(super) fn recognize_selected_lexical_slice(source: &SourceText) -> SelectedL
         // the literal characters `var` without being the `var` keyword
         // (`varfoo;`). A declining probe leaves the cursor unperturbed, so
         // every existing dispatch decision below is unaffected.
-        match cursor.consume_selected_top_level_identifier_reference_expression_statement() {
-            SelectedTopLevelUseSiteRecognition::Matched(fact) => {
+        match cursor.consume_selected_identifier_reference_expression_statement_use_site() {
+            SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::Matched(fact) => {
                 if let Err(failure) = builder.push_use_site(fact) {
                     return parse_failure_to_outcome(failure);
                 }
             }
-            SelectedTopLevelUseSiteRecognition::ResourceLimited => {
+            SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::ResourceLimited => {
                 return SelectedLexicalSliceOutcome::ResourceLimited;
             }
-            SelectedTopLevelUseSiteRecognition::InternalFailure => {
+            SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::InternalFailure => {
                 return SelectedLexicalSliceOutcome::InternalFailure;
             }
-            SelectedTopLevelUseSiteRecognition::NotSelected => {
+            SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::NotSelected => {
                 if cursor.remaining().starts_with("var") {
                     let statement = match cursor.parse_variable_statement() {
                         Ok(statement) => statement,
@@ -2541,19 +3045,26 @@ pub(super) fn recognize_selected_lexical_slice(source: &SourceText) -> SelectedL
                     if let Err(failure) = builder.push_variable_statement(statement) {
                         return parse_failure_to_outcome(failure);
                     }
-                } else {
-                    let item = if cursor.peek_char() == Some('{') {
-                        match cursor.parse_selected_block() {
-                            Ok(block) => SelectedTopLevelItem::Block(block),
-                            Err(failure) => return parse_failure_to_outcome(failure),
-                        }
-                    } else {
-                        match cursor.parse_declaration() {
-                            Ok(declaration) => {
-                                SelectedTopLevelItem::LexicalDeclaration(declaration)
+                } else if cursor.peek_char() == Some('{') {
+                    match cursor.parse_selected_block() {
+                        Ok(SelectedBlockParseOutcome::Legacy(block)) => {
+                            if let Err(failure) =
+                                builder.push_item(SelectedTopLevelItem::Block(block))
+                            {
+                                return parse_failure_to_outcome(failure);
                             }
-                            Err(failure) => return parse_failure_to_outcome(failure),
                         }
+                        Ok(SelectedBlockParseOutcome::UseSiteEnabled(block)) => {
+                            if let Err(failure) = builder.push_use_site_enabled_block(block) {
+                                return parse_failure_to_outcome(failure);
+                            }
+                        }
+                        Err(failure) => return parse_failure_to_outcome(failure),
+                    }
+                } else {
+                    let item = match cursor.parse_declaration() {
+                        Ok(declaration) => SelectedTopLevelItem::LexicalDeclaration(declaration),
+                        Err(failure) => return parse_failure_to_outcome(failure),
                     };
 
                     if let Err(failure) = builder.push_item(item) {
@@ -2588,6 +3099,11 @@ pub(super) fn recognize_selected_lexical_slice(source: &SourceText) -> SelectedL
         SelectedScriptBuilder::ReferenceUseEnabled(items) => {
             SelectedLexicalSliceOutcome::RecognizedIdentifierReferenceExpressionStatementSlice(
                 SelectedIdentifierReferenceExpressionStatementScript { items },
+            )
+        }
+        SelectedScriptBuilder::BlockReferenceUseEnabled(items) => {
+            SelectedLexicalSliceOutcome::RecognizedBlockReferenceUseEnabledSlice(
+                SelectedBlockReferenceUseEnabledScript { items },
             )
         }
     }

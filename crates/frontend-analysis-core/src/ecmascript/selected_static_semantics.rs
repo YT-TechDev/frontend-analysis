@@ -11,11 +11,13 @@ use crate::{SourceAnchor, SourceText};
 use super::qualification::{EvidenceSubject, QualificationOutcome};
 use super::selected_binding_identifier::is_unconditionally_reserved_word;
 use super::selected_lexical_slice::{
-    SelectedBindingNameState, SelectedBlock, SelectedBlockItem, SelectedBlockVarBinding,
-    SelectedIdentifierReferenceExpressionStatementScript, SelectedInitializerState,
-    SelectedInvalidEscapePosition, SelectedLexicalDeclaration, SelectedLexicalDeclarationKind,
-    SelectedLexicalScript, SelectedOneLevelBlockScript, SelectedReferenceUseEnabledTopLevelItem,
-    SelectedTopLevelItem, SelectedVariableBinding, SelectedVariableStatementScript,
+    SelectedBindingNameState, SelectedBlock, SelectedBlockItem,
+    SelectedBlockReferenceUseEnabledScript, SelectedBlockReferenceUseEnabledTopLevelItem,
+    SelectedBlockVarBinding, SelectedIdentifierReferenceExpressionStatementScript,
+    SelectedInitializerState, SelectedInvalidEscapePosition, SelectedLexicalDeclaration,
+    SelectedLexicalDeclarationKind, SelectedLexicalScript, SelectedOneLevelBlockScript,
+    SelectedReferenceUseEnabledTopLevelItem, SelectedTopLevelItem, SelectedUseSiteEnabledBlock,
+    SelectedUseSiteEnabledBlockItem, SelectedVariableBinding, SelectedVariableStatementScript,
     SelectedVariableTopLevelItem,
 };
 
@@ -67,6 +69,22 @@ impl<'script> SelectedIdentifierReferenceExpressionStatementStaticSemanticsAccep
     }
 }
 
+/// Distinct static accepted witness for the new fifth / broadest selected
+/// Script carrier (Issue #762). Historical accepted witness types --
+/// including the #759 `SelectedIdentifierReferenceExpressionStatementStaticSemanticsAccepted`
+/// witness -- remain unchanged; this is a new, separate witness, never a
+/// widening of any of them.
+#[derive(Debug)]
+pub(super) struct SelectedBlockReferenceUseEnabledStaticSemanticsAccepted<'script> {
+    script: &'script SelectedBlockReferenceUseEnabledScript,
+}
+
+impl<'script> SelectedBlockReferenceUseEnabledStaticSemanticsAccepted<'script> {
+    pub(super) fn script(&self) -> &'script SelectedBlockReferenceUseEnabledScript {
+        self.script
+    }
+}
+
 #[derive(Debug)]
 pub(super) enum SelectedStaticSemanticsOutcome<'script> {
     Accepted(SelectedStaticSemanticsAccepted<'script>),
@@ -94,6 +112,14 @@ pub(super) enum SelectedVariableStatementStaticSemanticsOutcome<'script> {
 #[derive(Debug)]
 pub(super) enum SelectedIdentifierReferenceExpressionStatementStaticSemanticsOutcome<'script> {
     Accepted(SelectedIdentifierReferenceExpressionStatementStaticSemanticsAccepted<'script>),
+    Rejected(SelectedStaticSemanticsRejection),
+    ResourceLimited,
+    InternalFailure,
+}
+
+#[derive(Debug)]
+pub(super) enum SelectedBlockReferenceUseEnabledStaticSemanticsOutcome<'script> {
+    Accepted(SelectedBlockReferenceUseEnabledStaticSemanticsAccepted<'script>),
     Rejected(SelectedStaticSemanticsRejection),
     ResourceLimited,
     InternalFailure,
@@ -402,6 +428,76 @@ fn first_block_lexical_var_collision(
     Ok(None)
 }
 
+/// The `SelectedUseSiteEnabledBlock` counterpart of
+/// `first_block_lexical_var_collision` (Issue #762). Streams the Block's
+/// items in authored order exactly as the historical function does; the
+/// free-standing use-site item contributes neither a lexical nor a `var`
+/// name and is skipped.
+fn first_use_site_enabled_block_lexical_var_collision(
+    block: &SelectedUseSiteEnabledBlock,
+) -> Result<Option<SelectedStaticSemanticsRejection>, SelectedDuplicateCheckFailure> {
+    let mut lexical_by_name: HashMap<&str, &SourceAnchor> = HashMap::new();
+    let mut var_by_name: HashMap<&str, &SourceAnchor> = HashMap::new();
+
+    for item in block.items() {
+        match item {
+            SelectedUseSiteEnabledBlockItem::LexicalDeclaration(declaration) => {
+                for binding in declaration.bindings() {
+                    let Some(name) = binding.semantic_name() else {
+                        return Err(SelectedDuplicateCheckFailure::InternalFailure);
+                    };
+
+                    if let Some(var_binding) = var_by_name.get(name) {
+                        return Ok(Some(
+                            SelectedStaticSemanticsRejection::BlockLexicalVarNameCollision {
+                                lexical_binding: binding.binding().clone(),
+                                var_binding: (*var_binding).clone(),
+                                primary_binding: binding.binding().clone(),
+                            },
+                        ));
+                    }
+
+                    if !lexical_by_name.contains_key(name) {
+                        if lexical_by_name.try_reserve(1).is_err() {
+                            return Err(SelectedDuplicateCheckFailure::ResourceLimited);
+                        }
+                        let previous = lexical_by_name.insert(name, binding.binding());
+                        debug_assert!(previous.is_none());
+                    }
+                }
+            }
+            SelectedUseSiteEnabledBlockItem::Var(statement) => {
+                for binding in statement.bindings() {
+                    let Some(name) = binding.semantic_name() else {
+                        return Err(SelectedDuplicateCheckFailure::InternalFailure);
+                    };
+
+                    if let Some(lexical_binding) = lexical_by_name.get(name) {
+                        return Ok(Some(
+                            SelectedStaticSemanticsRejection::BlockLexicalVarNameCollision {
+                                lexical_binding: (*lexical_binding).clone(),
+                                var_binding: binding.binding().clone(),
+                                primary_binding: binding.binding().clone(),
+                            },
+                        ));
+                    }
+
+                    if !var_by_name.contains_key(name) {
+                        if var_by_name.try_reserve(1).is_err() {
+                            return Err(SelectedDuplicateCheckFailure::ResourceLimited);
+                        }
+                        let previous = var_by_name.insert(name, binding.binding());
+                        debug_assert!(previous.is_none());
+                    }
+                }
+            }
+            SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(_) => {}
+        }
+    }
+
+    Ok(None)
+}
+
 fn first_duplicate_lexical_name<'declaration, I>(
     declarations: I,
 ) -> Result<Option<(SourceAnchor, SourceAnchor)>, SelectedDuplicateCheckFailure>
@@ -621,6 +717,130 @@ fn first_reference_use_enabled_lexical_var_name_collision(
                 }
             }
             SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(_) => {}
+        }
+    }
+
+    Ok(None)
+}
+
+/// The `SelectedBlockReferenceUseEnabledScript` counterpart of
+/// `first_lexical_var_name_collision` (Issue #762). Every `LexicalDeclaration`,
+/// `Block`, `UseSiteEnabledBlock`, and `VariableStatement` item participates
+/// exactly as it already does for the reference-use-enabled (#758) variant;
+/// the free-standing `IdentifierReferenceExpressionStatement` use-site item
+/// (TopLevel or Block-contained) contributes no declaration name and is
+/// skipped.
+fn first_block_reference_use_enabled_lexical_var_name_collision(
+    script: &SelectedBlockReferenceUseEnabledScript,
+) -> Result<Option<SelectedStaticSemanticsRejection>, SelectedDuplicateCheckFailure> {
+    let mut first_lexical_by_name: HashMap<&str, &SourceAnchor> = HashMap::new();
+    let mut first_var_by_name: HashMap<&str, &SourceAnchor> = HashMap::new();
+
+    for item in script.items() {
+        match item {
+            SelectedBlockReferenceUseEnabledTopLevelItem::LexicalDeclaration(declaration) => {
+                for binding in declaration.bindings() {
+                    let Some(name) = binding.semantic_name() else {
+                        return Err(SelectedDuplicateCheckFailure::InternalFailure);
+                    };
+
+                    if let Some(var_binding) = first_var_by_name.get(name) {
+                        return Ok(Some(
+                            SelectedStaticSemanticsRejection::LexicalVarNameCollision {
+                                lexical_binding: binding.binding().clone(),
+                                var_binding: (*var_binding).clone(),
+                                primary_binding: binding.binding().clone(),
+                            },
+                        ));
+                    }
+
+                    if !first_lexical_by_name.contains_key(name) {
+                        if first_lexical_by_name.try_reserve(1).is_err() {
+                            return Err(SelectedDuplicateCheckFailure::ResourceLimited);
+                        }
+                        let previous = first_lexical_by_name.insert(name, binding.binding());
+                        debug_assert!(previous.is_none());
+                    }
+                }
+            }
+            SelectedBlockReferenceUseEnabledTopLevelItem::Block(block) => {
+                for binding in block.block_var_bindings() {
+                    let Some(name) = binding.semantic_name() else {
+                        return Err(SelectedDuplicateCheckFailure::InternalFailure);
+                    };
+
+                    if let Some(lexical_binding) = first_lexical_by_name.get(name) {
+                        return Ok(Some(
+                            SelectedStaticSemanticsRejection::LexicalVarNameCollision {
+                                lexical_binding: (*lexical_binding).clone(),
+                                var_binding: binding.binding().clone(),
+                                primary_binding: binding.binding().clone(),
+                            },
+                        ));
+                    }
+
+                    if !first_var_by_name.contains_key(name) {
+                        if first_var_by_name.try_reserve(1).is_err() {
+                            return Err(SelectedDuplicateCheckFailure::ResourceLimited);
+                        }
+                        let previous = first_var_by_name.insert(name, binding.binding());
+                        debug_assert!(previous.is_none());
+                    }
+                }
+            }
+            SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block) => {
+                for binding in block.block_var_bindings() {
+                    let Some(name) = binding.semantic_name() else {
+                        return Err(SelectedDuplicateCheckFailure::InternalFailure);
+                    };
+
+                    if let Some(lexical_binding) = first_lexical_by_name.get(name) {
+                        return Ok(Some(
+                            SelectedStaticSemanticsRejection::LexicalVarNameCollision {
+                                lexical_binding: (*lexical_binding).clone(),
+                                var_binding: binding.binding().clone(),
+                                primary_binding: binding.binding().clone(),
+                            },
+                        ));
+                    }
+
+                    if !first_var_by_name.contains_key(name) {
+                        if first_var_by_name.try_reserve(1).is_err() {
+                            return Err(SelectedDuplicateCheckFailure::ResourceLimited);
+                        }
+                        let previous = first_var_by_name.insert(name, binding.binding());
+                        debug_assert!(previous.is_none());
+                    }
+                }
+            }
+            SelectedBlockReferenceUseEnabledTopLevelItem::VariableStatement(statement) => {
+                for binding in statement.bindings() {
+                    let Some(name) = binding.semantic_name() else {
+                        return Err(SelectedDuplicateCheckFailure::InternalFailure);
+                    };
+
+                    if let Some(lexical_binding) = first_lexical_by_name.get(name) {
+                        return Ok(Some(
+                            SelectedStaticSemanticsRejection::LexicalVarNameCollision {
+                                lexical_binding: (*lexical_binding).clone(),
+                                var_binding: binding.binding().clone(),
+                                primary_binding: binding.binding().clone(),
+                            },
+                        ));
+                    }
+
+                    if !first_var_by_name.contains_key(name) {
+                        if first_var_by_name.try_reserve(1).is_err() {
+                            return Err(SelectedDuplicateCheckFailure::ResourceLimited);
+                        }
+                        let previous = first_var_by_name.insert(name, binding.binding());
+                        debug_assert!(previous.is_none());
+                    }
+                }
+            }
+            SelectedBlockReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
+                _,
+            ) => {}
         }
     }
 
@@ -1280,6 +1500,283 @@ pub(super) fn evaluate_selected_identifier_reference_expression_statement_static
         }
         Err(SelectedDuplicateCheckFailure::InternalFailure) => {
             SelectedIdentifierReferenceExpressionStatementStaticSemanticsOutcome::InternalFailure
+        }
+    }
+}
+
+/// Evaluates the new fifth / broadest selected Script carrier (Issue #762),
+/// projecting every already-accepted declaration-local, Block-local, Script
+/// duplicate-lexical, and Script lexical/var-collision rule exactly as the
+/// #758 reference-use-enabled variant already does, for both the historical
+/// `Block` and the new `UseSiteEnabledBlock` representation. Every
+/// free-standing `IdentifierReferenceExpressionStatement` use-site item --
+/// TopLevel or Block-contained -- contributes no
+/// `BoundNames`/`LexicallyDeclaredNames`/`VarDeclaredNames` and is skipped
+/// at every tier; it never alters existing evidence-selection order, and
+/// known static rejection is never downgraded to `UnsupportedCoverage`. No
+/// new Early Error identity is introduced.
+pub(super) fn evaluate_selected_block_reference_use_enabled_static_semantics<'script>(
+    script: &'script SelectedBlockReferenceUseEnabledScript,
+) -> SelectedBlockReferenceUseEnabledStaticSemanticsOutcome<'script> {
+    // Tier 1: declaration/binding-local checks in authored order.
+    for item in script.items() {
+        match item {
+            SelectedBlockReferenceUseEnabledTopLevelItem::LexicalDeclaration(declaration) => {
+                match evaluate_selected_declaration_local_static_semantics(declaration) {
+                    Ok(()) => {}
+                    Err(SelectedDeclarationCheckFailure::Rejected(rejection)) => {
+                        return SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::Rejected(
+                            rejection,
+                        );
+                    }
+                    Err(SelectedDeclarationCheckFailure::ResourceLimited) => {
+                        return SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::ResourceLimited;
+                    }
+                    Err(SelectedDeclarationCheckFailure::InternalFailure) => {
+                        return SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::InternalFailure;
+                    }
+                }
+            }
+            SelectedBlockReferenceUseEnabledTopLevelItem::Block(block) => {
+                for item in block.items() {
+                    match item {
+                        SelectedBlockItem::LexicalDeclaration(declaration) => {
+                            match evaluate_selected_declaration_local_static_semantics(declaration)
+                            {
+                                Ok(()) => {}
+                                Err(SelectedDeclarationCheckFailure::Rejected(rejection)) => {
+                                    return SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::Rejected(
+                                        rejection,
+                                    );
+                                }
+                                Err(SelectedDeclarationCheckFailure::ResourceLimited) => {
+                                    return SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::ResourceLimited;
+                                }
+                                Err(SelectedDeclarationCheckFailure::InternalFailure) => {
+                                    return SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::InternalFailure;
+                                }
+                            }
+                        }
+                        SelectedBlockItem::Var(statement) => {
+                            for binding in statement.bindings() {
+                                match evaluate_selected_block_var_binding_local_static_semantics(
+                                    binding,
+                                ) {
+                                    Ok(()) => {}
+                                    Err(SelectedDeclarationCheckFailure::Rejected(rejection)) => {
+                                        return SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::Rejected(
+                                            rejection,
+                                        );
+                                    }
+                                    Err(SelectedDeclarationCheckFailure::ResourceLimited) => {
+                                        return SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::ResourceLimited;
+                                    }
+                                    Err(SelectedDeclarationCheckFailure::InternalFailure) => {
+                                        return SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::InternalFailure;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block) => {
+                for item in block.items() {
+                    match item {
+                        SelectedUseSiteEnabledBlockItem::LexicalDeclaration(declaration) => {
+                            match evaluate_selected_declaration_local_static_semantics(declaration)
+                            {
+                                Ok(()) => {}
+                                Err(SelectedDeclarationCheckFailure::Rejected(rejection)) => {
+                                    return SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::Rejected(
+                                        rejection,
+                                    );
+                                }
+                                Err(SelectedDeclarationCheckFailure::ResourceLimited) => {
+                                    return SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::ResourceLimited;
+                                }
+                                Err(SelectedDeclarationCheckFailure::InternalFailure) => {
+                                    return SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::InternalFailure;
+                                }
+                            }
+                        }
+                        SelectedUseSiteEnabledBlockItem::Var(statement) => {
+                            for binding in statement.bindings() {
+                                match evaluate_selected_block_var_binding_local_static_semantics(
+                                    binding,
+                                ) {
+                                    Ok(()) => {}
+                                    Err(SelectedDeclarationCheckFailure::Rejected(rejection)) => {
+                                        return SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::Rejected(
+                                            rejection,
+                                        );
+                                    }
+                                    Err(SelectedDeclarationCheckFailure::ResourceLimited) => {
+                                        return SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::ResourceLimited;
+                                    }
+                                    Err(SelectedDeclarationCheckFailure::InternalFailure) => {
+                                        return SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::InternalFailure;
+                                    }
+                                }
+                            }
+                        }
+                        SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(
+                            _,
+                        ) => {}
+                    }
+                }
+            }
+            SelectedBlockReferenceUseEnabledTopLevelItem::VariableStatement(statement) => {
+                for binding in statement.bindings() {
+                    match evaluate_selected_variable_binding_local_static_semantics(binding) {
+                        Ok(()) => {}
+                        Err(SelectedDeclarationCheckFailure::Rejected(rejection)) => {
+                            return SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::Rejected(
+                                rejection,
+                            );
+                        }
+                        Err(SelectedDeclarationCheckFailure::ResourceLimited) => {
+                            return SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::ResourceLimited;
+                        }
+                        Err(SelectedDeclarationCheckFailure::InternalFailure) => {
+                            return SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::InternalFailure;
+                        }
+                    }
+                }
+            }
+            SelectedBlockReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
+                _,
+            ) => {}
+        }
+    }
+
+    // Tier 2a / EE-14-R01: selected Blocks (historical and use-site-enabled)
+    // remain independent lexical regions.
+    for item in script.items() {
+        let declarations_check = match item {
+            SelectedBlockReferenceUseEnabledTopLevelItem::Block(block) => {
+                first_duplicate_lexical_name(block.declarations())
+            }
+            SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block) => {
+                first_duplicate_lexical_name(block.declarations())
+            }
+            SelectedBlockReferenceUseEnabledTopLevelItem::LexicalDeclaration(_)
+            | SelectedBlockReferenceUseEnabledTopLevelItem::VariableStatement(_)
+            | SelectedBlockReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
+                _,
+            ) => continue,
+        };
+
+        match declarations_check {
+            Ok(Some((first_binding, duplicate_binding))) => {
+                return SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::Rejected(
+                    SelectedStaticSemanticsRejection::DuplicateBlockLexicalName {
+                        first_binding,
+                        duplicate_binding,
+                    },
+                );
+            }
+            Ok(None) => {}
+            Err(SelectedDuplicateCheckFailure::ResourceLimited) => {
+                return SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::ResourceLimited;
+            }
+            Err(SelectedDuplicateCheckFailure::InternalFailure) => {
+                return SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::InternalFailure;
+            }
+        }
+    }
+
+    // Tier 2b / EE-14-R02: each selected Block's own LexicallyDeclaredNames
+    // vs. its own VarDeclaredNames, in Block source order.
+    for item in script.items() {
+        match item {
+            SelectedBlockReferenceUseEnabledTopLevelItem::Block(block) => {
+                match first_block_lexical_var_collision(block) {
+                    Ok(Some(rejection)) => {
+                        return SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::Rejected(
+                            rejection,
+                        );
+                    }
+                    Ok(None) => {}
+                    Err(SelectedDuplicateCheckFailure::ResourceLimited) => {
+                        return SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::ResourceLimited;
+                    }
+                    Err(SelectedDuplicateCheckFailure::InternalFailure) => {
+                        return SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::InternalFailure;
+                    }
+                }
+            }
+            SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block) => {
+                match first_use_site_enabled_block_lexical_var_collision(block) {
+                    Ok(Some(rejection)) => {
+                        return SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::Rejected(
+                            rejection,
+                        );
+                    }
+                    Ok(None) => {}
+                    Err(SelectedDuplicateCheckFailure::ResourceLimited) => {
+                        return SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::ResourceLimited;
+                    }
+                    Err(SelectedDuplicateCheckFailure::InternalFailure) => {
+                        return SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::InternalFailure;
+                    }
+                }
+            }
+            SelectedBlockReferenceUseEnabledTopLevelItem::LexicalDeclaration(_)
+            | SelectedBlockReferenceUseEnabledTopLevelItem::VariableStatement(_)
+            | SelectedBlockReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
+                _,
+            ) => {}
+        }
+    }
+
+    // Tier 3 / EE-36-R01: only top-level lexical declarations participate.
+    let top_level_declarations =
+        script.items().iter().filter_map(|item| {
+            match item {
+        SelectedBlockReferenceUseEnabledTopLevelItem::LexicalDeclaration(declaration) => {
+            Some(declaration)
+        }
+        SelectedBlockReferenceUseEnabledTopLevelItem::Block(_)
+        | SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(_)
+        | SelectedBlockReferenceUseEnabledTopLevelItem::VariableStatement(_)
+        | SelectedBlockReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
+            _,
+        ) => None,
+    }
+        });
+
+    match first_duplicate_lexical_name(top_level_declarations) {
+        Ok(Some((first_binding, duplicate_binding))) => {
+            return SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::Rejected(
+                SelectedStaticSemanticsRejection::DuplicateLexicalName {
+                    first_binding,
+                    duplicate_binding,
+                },
+            );
+        }
+        Ok(None) => {}
+        Err(SelectedDuplicateCheckFailure::ResourceLimited) => {
+            return SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::ResourceLimited;
+        }
+        Err(SelectedDuplicateCheckFailure::InternalFailure) => {
+            return SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::InternalFailure;
+        }
+    }
+
+    // Tier 4 / EE-36-R02: first collision completed in authored traversal order.
+    match first_block_reference_use_enabled_lexical_var_name_collision(script) {
+        Ok(Some(rejection)) => {
+            SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::Rejected(rejection)
+        }
+        Ok(None) => SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::Accepted(
+            SelectedBlockReferenceUseEnabledStaticSemanticsAccepted { script },
+        ),
+        Err(SelectedDuplicateCheckFailure::ResourceLimited) => {
+            SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::ResourceLimited
+        }
+        Err(SelectedDuplicateCheckFailure::InternalFailure) => {
+            SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::InternalFailure
         }
     }
 }
