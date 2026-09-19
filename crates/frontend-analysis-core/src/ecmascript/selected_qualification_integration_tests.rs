@@ -2624,6 +2624,19 @@ fn top_level_identifier_reference_expression_statement_use_site_remains_selected
         "-f\\u006Fo;",
         "+a",
         "-a",
+        // Issue #773: production further composes that same leading `+`/`-`
+        // `IdentifierReference` `UnaryExpression` with an optional exactly-
+        // one binary `+`/`-` plain `IdentifierReference` continuation, but
+        // this Oracle's own bounded theorem never qualifies a unary-wrapped
+        // left operand, so these also reach `SelectedAcceptedIncomplete`.
+        "+a+b;",
+        "+a-b;",
+        "-a+b;",
+        "-a-b;",
+        "+\\u0061+b;",
+        "-f\\u006Fo+bar;",
+        "+a+b",
+        "-a-b",
     ] {
         assert!(
             matches!(
@@ -2690,11 +2703,14 @@ fn top_level_identifier_reference_expression_statement_use_site_asi_general_expr
         "a[b];",
         "a();",
         "a=b;",
-        // Richer-expression firewall composed with the new unary body form
+        // Richer-expression firewall composed with the unary body form
         // (Issue #771): a locally recognized `+a`/`-a` prefix must not
-        // authorize a richer neighbor.
-        "+a+b;",
-        "-a-b;",
+        // authorize a richer neighbor. `+a+b;` / `-a-b;` moved to
+        // selected-positive coverage by Issue #773 (see the "Issue #773"
+        // section below); a third-or-later additive operand remains outside
+        // this leaf.
+        "+a+b+c;",
+        "-a-b-c;",
         "+a.b;",
         "-a[b];",
         "+a();",
@@ -2784,6 +2800,13 @@ fn block_identifier_reference_expression_statement_use_site_remains_selected_acc
         "{ -f\\u006Fo; }",
         "{ +a }",
         "{ -a }",
+        // Issue #773: the same composed leading `+`/`-` unary-additive body
+        // form reaches `SelectedAcceptedIncomplete` for the Block placement
+        // too.
+        "{ +a+b; }",
+        "{ -a-b; }",
+        "{ +\\u0061-b }",
+        "{ -f\\u006Fo+\\u0062 }",
     ] {
         assert!(
             matches!(
@@ -2852,10 +2875,12 @@ fn block_identifier_reference_expression_statement_use_site_asi_general_expressi
         "{ a && b; }",
         "{ a, b; }",
         "{ new a; }",
-        // Richer-expression firewall composed with the new unary body form
-        // (Issue #771).
-        "{ +a+b; }",
-        "{ -a-b; }",
+        // Richer-expression firewall composed with the unary body form
+        // (Issue #771). `{ +a+b; }` / `{ -a-b; }` moved to selected-positive
+        // coverage by Issue #773 (see the "Issue #773" section below); a
+        // third-or-later additive operand remains outside this leaf.
+        "{ +a+b+c; }",
+        "{ -a-b-c; }",
         "{ +a.b; }",
         "{ -a[b]; }",
         // Other unary operators and parenthesized forms remain outside this
@@ -2976,9 +3001,13 @@ fn two_operand_cardinality_operand_and_richer_expression_firewalls_remain_unsupp
         "a-b-c;",
         "a+b-c;",
         "a-b+c;",
-        // Operand firewall (W25).
-        "+a+b;",
-        "-a+b;",
+        // Operand firewall (W25). A leading `+`/`-` *left* operand (`+a+b;`,
+        // `-a+b;`) moved to selected-positive coverage by Issue #773 (see
+        // the "Issue #773" section below); other unary operators/recursion
+        // on the left operand remain outside this leaf.
+        "++a+b;",
+        "--a+b;",
+        "!a+b;",
         "a++b;",
         "a+-b;",
         "1+b;",
