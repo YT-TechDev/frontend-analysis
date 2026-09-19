@@ -1802,14 +1802,19 @@ impl<'source> Cursor<'source> {
         }
     }
 
-    /// Owning single left-to-right Block parse lifecycle (Issue #762). The
-    /// Block source is read exactly once: inside the loop, the bounded
-    /// placement-neutral free-standing use-site probe
-    /// (`consume_selected_identifier_reference_expression_statement_use_site`)
-    /// runs transactionally before the existing raw Block `var` /
-    /// lexical-declaration dispatch, so `{ let; }` / `{ varfoo; }` become
-    /// use-sites while `{ let a; }` / `{ var a; }` remain owned by the
-    /// existing declaration dispatch exactly as before. Every recognized
+    /// Owning single left-to-right Block parse lifecycle (Issue #762,
+    /// widened from an authored-semicolon-only Block-contained use-site
+    /// terminator to also admit before-`}` automatic termination by Issue
+    /// #768). The Block source is read exactly once: inside the loop, the
+    /// bounded Block-owned free-standing use-site probe
+    /// (`consume_selected_block_identifier_reference_expression_statement_use_site`,
+    /// which recognizes the placement-neutral body and then decides this
+    /// placement's own `AuthoredSemicolon`/`AutomaticBeforeBlockClose`
+    /// termination, only ever peeking `}`) runs transactionally before the
+    /// existing raw Block `var` / lexical-declaration dispatch, so
+    /// `{ let; }` / `{ varfoo; }` become use-sites while `{ let a; }` /
+    /// `{ var a; }` remain owned by the existing declaration dispatch
+    /// exactly as before. Every recognized
     /// item is committed directly to the `SelectedBlockBuilder`
     /// Block-local monotonic capability builder: `Legacy` while no
     /// Block-contained use-site has committed, promoting to

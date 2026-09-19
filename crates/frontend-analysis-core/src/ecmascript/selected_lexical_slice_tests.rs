@@ -5,9 +5,9 @@ use super::selected_lexical_slice::{
     SelectedBindingNameState, SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator,
     SelectedBlockReferenceUseEnabledScript, SelectedBlockReferenceUseEnabledTopLevelItem,
     SelectedDeclarationTerminator, SelectedFreeStandingIdentifierReferenceUseSite,
-    SelectedIdentifierReferenceExpressionStatementScript, SelectedInitializerState,
-    SelectedInvalidEscapePosition, SelectedLexicalDeclarationKind, SelectedLexicalScript,
-    SelectedLexicalSliceOutcome, SelectedReferenceUseEnabledTopLevelItem,
+    SelectedIdentifierReferenceExpressionStatementScript, SelectedIdentifierReferenceNameState,
+    SelectedInitializerState, SelectedInvalidEscapePosition, SelectedLexicalDeclarationKind,
+    SelectedLexicalScript, SelectedLexicalSliceOutcome, SelectedReferenceUseEnabledTopLevelItem,
     SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator,
     SelectedUseSiteEnabledBlockItem, SelectedVariableStatement, SelectedVariableStatementScript,
     SelectedVariableStatementTerminator, SelectedVariableTopLevelItem,
@@ -7926,7 +7926,7 @@ fn only_block_use_site(
 
 #[test]
 fn top_level_use_site_eof_automatic_termination_selects_one_and_two_bodies() {
-    for text in ["a", "a ", "a\t", "let", "varfoo", r"a", r"foo"] {
+    for text in ["a", "a ", "a\t", "let", "varfoo", r"\u0061", r"f\u006Fo"] {
         let script = recognized_reference_use(text);
         let use_site = only_top_level_use_site(&script);
         assert_eq!(
@@ -7938,7 +7938,7 @@ fn top_level_use_site_eof_automatic_termination_selects_one_and_two_bodies() {
         assert_eq!(facts.len(), 1, "{text:?}");
     }
 
-    for text in ["a+b", "a-b", "a + b ", r"a+b", r"a+b"] {
+    for text in ["a+b", "a-b", "a + b ", r"\u0061+b", r"a+\u0062"] {
         let script = recognized_reference_use(text);
         let use_site = only_top_level_use_site(&script);
         assert_eq!(
@@ -7953,7 +7953,7 @@ fn top_level_use_site_eof_automatic_termination_selects_one_and_two_bodies() {
 
 #[test]
 fn top_level_use_site_automatic_and_authored_termination_share_identical_body_facts() {
-    for (authored, automatic) in [("a;", "a"), ("let;", "let"), (r"a;", r"a")] {
+    for (authored, automatic) in [("a;", "a"), ("let;", "let"), (r"\u0061;", r"\u0061")] {
         let authored_script = recognized_reference_use(authored);
         let authored_fact = only_fact(only_top_level_use_site(&authored_script).body());
         let automatic_use_site = recognized_reference_use(automatic);
@@ -7973,7 +7973,7 @@ fn top_level_use_site_automatic_and_authored_termination_share_identical_body_fa
         );
     }
 
-    for (authored, automatic) in [("a+b;", "a+b"), (r"a-b;", r"a-b")] {
+    for (authored, automatic) in [("a+b;", "a+b"), (r"\u0061-\u0062;", r"\u0061-\u0062")] {
         let authored_script = recognized_reference_use(authored);
         let authored_facts = use_site_facts(only_top_level_use_site(&authored_script).body());
         let automatic_script = recognized_reference_use(automatic);
@@ -8011,7 +8011,7 @@ fn block_use_site_before_close_automatic_termination_selects_one_and_two_bodies(
         "{ a\t}",
         "{ let }",
         "{ varfoo }",
-        r"{ a }",
+        r"{ \u0061 }",
     ] {
         let script = recognized_block_reference_use(text);
         let use_site = only_block_use_site(&script);
@@ -8024,7 +8024,7 @@ fn block_use_site_before_close_automatic_termination_selects_one_and_two_bodies(
         assert_eq!(facts.len(), 1, "{text:?}");
     }
 
-    for text in ["{ a+b }", "{ a-b }", "{ a + b }", r"{ a+b }"] {
+    for text in ["{ a+b }", "{ a-b }", "{ a + b }", r"{ \u0061+b }"] {
         let script = recognized_block_reference_use(text);
         let use_site = only_block_use_site(&script);
         assert_eq!(
@@ -8039,7 +8039,7 @@ fn block_use_site_before_close_automatic_termination_selects_one_and_two_bodies(
 
 #[test]
 fn block_use_site_automatic_and_authored_termination_share_identical_body_facts() {
-    for (authored, automatic) in [("{ a; }", "{ a }"), (r"{ a; }", r"{ a }")] {
+    for (authored, automatic) in [("{ a; }", "{ a }"), (r"{ \u0061; }", r"{ \u0061 }")] {
         let authored_script = recognized_block_reference_use(authored);
         let authored_fact = only_block_use_site_fact(&authored_script);
         let automatic_script = recognized_block_reference_use(automatic);
@@ -8059,7 +8059,7 @@ fn block_use_site_automatic_and_authored_termination_share_identical_body_facts(
         );
     }
 
-    for (authored, automatic) in [("{ a+b; }", "{ a+b }"), (r"{ a-b; }", r"{ a-b }")] {
+    for (authored, automatic) in [("{ a+b; }", "{ a+b }"), (r"{ \u0061-b; }", r"{ \u0061-b }")] {
         let authored_script = recognized_block_reference_use(authored);
         let authored_facts = use_site_facts(only_block_use_site(&authored_script).body());
         let automatic_script = recognized_block_reference_use(automatic);
@@ -8087,6 +8087,118 @@ fn block_use_site_authored_semicolon_terminator_is_retained() {
         only_block_use_site(&script).terminator(),
         SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator::AuthoredSemicolon
     );
+}
+
+#[test]
+fn use_site_escaped_operand_automatic_termination_preserves_direct_escaped_provenance() {
+    // Issue #768 review remediation: escaped `IdentifierReference` operands
+    // must retain exact Direct/Escaped provenance, authored fragment, and
+    // left/right authored order under automatic termination, identical to
+    // their authored-`;` counterparts -- not merely the same `semantic_name`.
+
+    // TopLevel `One`, escaped.
+    for (authored, automatic) in [(r"\u0061;", r"\u0061")] {
+        let authored_script = recognized_reference_use(authored);
+        let authored_fact = only_fact(only_top_level_use_site(&authored_script).body());
+        let automatic_script = recognized_reference_use(automatic);
+        let automatic_use_site = only_top_level_use_site(&automatic_script);
+        let automatic_fact = only_fact(automatic_use_site.body());
+
+        for fact in [authored_fact, automatic_fact] {
+            assert_eq!(fact.reference().fragment(), r"\u0061");
+            assert_eq!(fact.semantic_name(), "a");
+            match fact.name_state() {
+                SelectedIdentifierReferenceNameState::Escaped { decoded } => {
+                    assert_eq!(decoded, "a")
+                }
+                other => panic!("expected Escaped name state, got {other:?}"),
+            }
+        }
+        assert_eq!(
+            automatic_use_site.terminator(),
+            SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticAtEof
+        );
+    }
+
+    // TopLevel `Two`, both authored orders of a mixed direct/escaped
+    // operand pair, plus both operands escaped.
+    for (authored, automatic) in [
+        (r"\u0061+b;", r"\u0061+b"),
+        (r"a+\u0062;", r"a+\u0062"),
+        (r"\u0061-\u0062;", r"\u0061-\u0062"),
+    ] {
+        let authored_script = recognized_reference_use(authored);
+        let authored_facts = use_site_facts(only_top_level_use_site(&authored_script).body());
+        let automatic_script = recognized_reference_use(automatic);
+        let automatic_use_site = only_top_level_use_site(&automatic_script);
+        let automatic_facts = use_site_facts(automatic_use_site.body());
+
+        for facts in [&authored_facts, &automatic_facts] {
+            assert_eq!(facts.len(), 2, "{automatic:?}");
+            assert_eq!(facts[0].semantic_name(), "a", "{automatic:?}");
+            assert_eq!(facts[1].semantic_name(), "b", "{automatic:?}");
+            assert!(
+                facts[0].reference().range().start() < facts[1].reference().range().start(),
+                "{automatic:?}"
+            );
+        }
+        assert_eq!(
+            automatic_use_site.terminator(),
+            SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticAtEof
+        );
+    }
+
+    // Block `One`, escaped.
+    for (authored, automatic) in [(r"{ \u0061; }", r"{ \u0061 }")] {
+        let authored_script = recognized_block_reference_use(authored);
+        let authored_fact = only_block_use_site_fact(&authored_script);
+        let automatic_script = recognized_block_reference_use(automatic);
+        let automatic_use_site = only_block_use_site(&automatic_script);
+        let automatic_fact = only_fact(automatic_use_site.body());
+
+        for fact in [authored_fact, automatic_fact] {
+            assert_eq!(fact.reference().fragment(), r"\u0061");
+            assert_eq!(fact.semantic_name(), "a");
+            match fact.name_state() {
+                SelectedIdentifierReferenceNameState::Escaped { decoded } => {
+                    assert_eq!(decoded, "a")
+                }
+                other => panic!("expected Escaped name state, got {other:?}"),
+            }
+        }
+        assert_eq!(
+            automatic_use_site.terminator(),
+            SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticBeforeBlockClose
+        );
+    }
+
+    // Block `Two`, both authored orders of a mixed direct/escaped operand
+    // pair, plus both operands escaped.
+    for (authored, automatic) in [
+        (r"{ \u0061+b; }", r"{ \u0061+b }"),
+        (r"{ a+\u0062; }", r"{ a+\u0062 }"),
+        (r"{ \u0061-\u0062; }", r"{ \u0061-\u0062 }"),
+    ] {
+        let authored_script = recognized_block_reference_use(authored);
+        let authored_facts = use_site_facts(only_block_use_site(&authored_script).body());
+        let automatic_script = recognized_block_reference_use(automatic);
+        let automatic_use_site = only_block_use_site(&automatic_script);
+        let automatic_facts = use_site_facts(automatic_use_site.body());
+
+        for facts in [&authored_facts, &automatic_facts] {
+            assert_eq!(facts.len(), 2, "{automatic:?}");
+            assert_eq!(facts[0].semantic_name(), "a", "{automatic:?}");
+            assert_eq!(facts[1].semantic_name(), "b", "{automatic:?}");
+            assert!(
+                facts[0].reference().range().start() < facts[1].reference().range().start(),
+                "{automatic:?}"
+            );
+        }
+        assert_eq!(
+            automatic_use_site.terminator(),
+            SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticBeforeBlockClose
+        );
+    }
 }
 
 #[test]
