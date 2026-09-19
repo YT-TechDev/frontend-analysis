@@ -1026,27 +1026,15 @@ impl SelectedScriptBuilder {
                 );
                 Ok(())
             }
-            builder @ Self::BlockReferenceUseEnabled(_) => {
-                let Self::BlockReferenceUseEnabled(existing_items) = builder else {
-                    return Err(ParseFailure::InternalFailure);
-                };
-                let item_count = existing_items
-                    .len()
-                    .checked_add(1)
-                    .ok_or(ParseFailure::InternalFailure)?;
-                let mut items = Vec::new();
+            Self::BlockReferenceUseEnabled(items) => {
                 items
-                    .try_reserve(item_count)
+                    .try_reserve(1)
                     .map_err(|_| ParseFailure::ResourceLimited)?;
-                for item in std::mem::take(existing_items) {
-                    items.push(item);
-                }
                 items.push(
                     SelectedBlockReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
                         fact,
                     ),
                 );
-                *builder = Self::BlockReferenceUseEnabled(items);
                 Ok(())
             }
         }
@@ -1351,6 +1339,122 @@ enum SelectedBlockParseOutcome {
     UseSiteEnabled(SelectedUseSiteEnabledBlock),
 }
 
+/// Block-local monotonic capability builder (Issue #762) driving
+/// `Cursor::parse_selected_block`'s single owned pass: `Legacy` accumulates
+/// exactly the existing historical `SelectedBlockItem` representation with
+/// no extra allocation or conversion. On the first Block-contained
+/// free-standing use-site, `push_use_site` promotes `Legacy` to
+/// `ReferenceUseEnabled` exactly once, moving every already-owned legacy
+/// item into the wider `SelectedUseSiteEnabledBlockItem` representation in
+/// exact authored order; every subsequent item -- use-site, lexical
+/// declaration, or Block `var` statement -- then appends directly to the
+/// already-wide `Vec`. A Block that never exercises the new use-site
+/// capability therefore finishes through `Legacy` with no wide staging
+/// representation and no post-parse down-conversion allocation.
+#[derive(Debug)]
+enum SelectedBlockBuilder {
+    Legacy(Vec<SelectedBlockItem>),
+    ReferenceUseEnabled(Vec<SelectedUseSiteEnabledBlockItem>),
+}
+
+impl SelectedBlockBuilder {
+    fn push_lexical_declaration(
+        &mut self,
+        declaration: SelectedLexicalDeclaration,
+    ) -> Result<(), ParseFailure> {
+        match self {
+            Self::Legacy(items) => {
+                items
+                    .try_reserve(1)
+                    .map_err(|_| ParseFailure::ResourceLimited)?;
+                items.push(SelectedBlockItem::LexicalDeclaration(declaration));
+                Ok(())
+            }
+            Self::ReferenceUseEnabled(items) => {
+                items
+                    .try_reserve(1)
+                    .map_err(|_| ParseFailure::ResourceLimited)?;
+                items.push(SelectedUseSiteEnabledBlockItem::LexicalDeclaration(
+                    declaration,
+                ));
+                Ok(())
+            }
+        }
+    }
+
+    fn push_var_statement(
+        &mut self,
+        statement: SelectedBlockVarStatement,
+    ) -> Result<(), ParseFailure> {
+        match self {
+            Self::Legacy(items) => {
+                items
+                    .try_reserve(1)
+                    .map_err(|_| ParseFailure::ResourceLimited)?;
+                items.push(SelectedBlockItem::Var(statement));
+                Ok(())
+            }
+            Self::ReferenceUseEnabled(items) => {
+                items
+                    .try_reserve(1)
+                    .map_err(|_| ParseFailure::ResourceLimited)?;
+                items.push(SelectedUseSiteEnabledBlockItem::Var(statement));
+                Ok(())
+            }
+        }
+    }
+
+    /// Commits the transactionally-recognized Block-contained use-site.
+    /// When still `Legacy`, this is the first selected Block-contained
+    /// use-site: every already-owned legacy item moves into the wider item
+    /// representation in exact authored order before the use-site is
+    /// appended, promoting to `ReferenceUseEnabled` exactly once. Once
+    /// already `ReferenceUseEnabled`, the use-site appends directly.
+    fn push_use_site(&mut self, fact: SelectedIdentifierReferenceFact) -> Result<(), ParseFailure> {
+        match self {
+            builder @ Self::Legacy(_) => {
+                let Self::Legacy(existing_items) = builder else {
+                    return Err(ParseFailure::InternalFailure);
+                };
+                let item_count = existing_items
+                    .len()
+                    .checked_add(1)
+                    .ok_or(ParseFailure::InternalFailure)?;
+                let mut items = Vec::new();
+                items
+                    .try_reserve(item_count)
+                    .map_err(|_| ParseFailure::ResourceLimited)?;
+                for item in std::mem::take(existing_items) {
+                    match item {
+                        SelectedBlockItem::LexicalDeclaration(declaration) => {
+                            items.push(SelectedUseSiteEnabledBlockItem::LexicalDeclaration(
+                                declaration,
+                            ));
+                        }
+                        SelectedBlockItem::Var(statement) => {
+                            items.push(SelectedUseSiteEnabledBlockItem::Var(statement));
+                        }
+                    }
+                }
+                items.push(
+                    SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(fact),
+                );
+                *builder = Self::ReferenceUseEnabled(items);
+                Ok(())
+            }
+            Self::ReferenceUseEnabled(items) => {
+                items
+                    .try_reserve(1)
+                    .map_err(|_| ParseFailure::ResourceLimited)?;
+                items.push(
+                    SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(fact),
+                );
+                Ok(())
+            }
+        }
+    }
+}
+
 /// Result of the bounded 1-or-2 `IdentifierReference` initializer helper
 /// (Issue #754), which absorbs the previous plain
 /// `consume_selected_identifier_reference()` initializer route. `One`
@@ -1448,14 +1552,16 @@ impl<'source> Cursor<'source> {
     /// lexical-declaration dispatch, so `{ let; }` / `{ varfoo; }` become
     /// use-sites while `{ let a; }` / `{ var a; }` remain owned by the
     /// existing declaration dispatch exactly as before. Every recognized
-    /// item -- whether a use-site or an existing declaration/var item -- is
-    /// collected once into a single local `Vec<SelectedUseSiteEnabledBlockItem>`.
-    /// Only after the whole Block (through its closing `}`) is recognized
-    /// does this function decide, from a local `saw_use_site` flag, which of
-    /// the two output representations to construct: no second tokenizer,
-    /// parser, rescan, or source search recovers the Block or reference
-    /// endpoints -- both come from the same owned cursor lifecycle used to
-    /// anchor every item.
+    /// item is committed directly to the `SelectedBlockBuilder`
+    /// Block-local monotonic capability builder: `Legacy` while no
+    /// Block-contained use-site has committed, promoting to
+    /// `ReferenceUseEnabled` exactly once on the first one. A Block that
+    /// never exercises the new capability builds and returns the exact
+    /// historical `SelectedBlock` directly from its `Legacy` items, with no
+    /// wide staging representation and no post-parse down-conversion
+    /// allocation. No second tokenizer, parser, rescan, or source search
+    /// recovers the Block or reference endpoints -- both come from the same
+    /// owned cursor lifecycle used to anchor every item.
     fn parse_selected_block(&mut self) -> Result<SelectedBlockParseOutcome, ParseFailure> {
         let block_start = self.offset;
         if !self.consume_ascii('{') {
@@ -1467,13 +1573,11 @@ impl<'source> Cursor<'source> {
             return Err(ParseFailure::UnsupportedCoverage);
         }
 
-        let mut items = Vec::new();
-        let mut saw_use_site = false;
+        let mut builder = SelectedBlockBuilder::Legacy(Vec::new());
         loop {
-            let item = match self.consume_selected_identifier_reference_expression_statement_use_site() {
+            match self.consume_selected_identifier_reference_expression_statement_use_site() {
                 SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::Matched(fact) => {
-                    saw_use_site = true;
-                    SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(fact)
+                    builder.push_use_site(fact)?;
                 }
                 SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::ResourceLimited => {
                     return Err(ParseFailure::ResourceLimited);
@@ -1483,18 +1587,14 @@ impl<'source> Cursor<'source> {
                 }
                 SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::NotSelected => {
                     if self.remaining().starts_with("var") {
-                        SelectedUseSiteEnabledBlockItem::Var(
-                            self.parse_selected_block_var_statement()?,
-                        )
+                        let statement = self.parse_selected_block_var_statement()?;
+                        builder.push_var_statement(statement)?;
                     } else {
-                        SelectedUseSiteEnabledBlockItem::LexicalDeclaration(self.parse_declaration()?)
+                        let declaration = self.parse_declaration()?;
+                        builder.push_lexical_declaration(declaration)?;
                     }
                 }
-            };
-            items
-                .try_reserve(1)
-                .map_err(|_| ParseFailure::ResourceLimited)?;
-            items.push(item);
+            }
 
             self.skip_selected_trivia();
             if self.consume_ascii('}') {
@@ -1507,36 +1607,17 @@ impl<'source> Cursor<'source> {
 
         let block = self.anchor(block_start, self.offset)?;
 
-        if saw_use_site {
-            return Ok(SelectedBlockParseOutcome::UseSiteEnabled(
-                SelectedUseSiteEnabledBlock { block, items },
-            ));
-        }
-
-        let mut legacy_items = Vec::new();
-        legacy_items
-            .try_reserve(items.len())
-            .map_err(|_| ParseFailure::ResourceLimited)?;
-        for item in items {
-            let legacy_item = match item {
-                SelectedUseSiteEnabledBlockItem::LexicalDeclaration(declaration) => {
-                    SelectedBlockItem::LexicalDeclaration(declaration)
-                }
-                SelectedUseSiteEnabledBlockItem::Var(statement) => {
-                    SelectedBlockItem::Var(statement)
-                }
-                SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(_) => {
-                    // Unreachable: `saw_use_site` would be `true`.
-                    return Err(ParseFailure::InternalFailure);
-                }
-            };
-            legacy_items.push(legacy_item);
-        }
-
-        Ok(SelectedBlockParseOutcome::Legacy(SelectedBlock {
-            block,
-            items: legacy_items,
-        }))
+        Ok(match builder {
+            SelectedBlockBuilder::Legacy(items) => {
+                SelectedBlockParseOutcome::Legacy(SelectedBlock { block, items })
+            }
+            SelectedBlockBuilder::ReferenceUseEnabled(items) => {
+                SelectedBlockParseOutcome::UseSiteEnabled(SelectedUseSiteEnabledBlock {
+                    block,
+                    items,
+                })
+            }
+        })
     }
 
     /// Recognizes exactly:

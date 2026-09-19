@@ -7490,6 +7490,94 @@ fn block_use_site_existing_block_var_close_brace_asi_remains_unaffected() {
 }
 
 #[test]
+fn block_reference_use_enabled_state_appends_later_top_level_use_sites_directly() {
+    // Independent review remediation (PR #763 blocker 1): once
+    // `BlockReferenceUseEnabled` already exists (entered here via a Block
+    // use-site), later top-level use-sites must append directly rather
+    // than rebuilding the whole carrier. This seals the exact retained
+    // authored item order across that composition.
+    let script = recognized_block_reference_use("{ b; }\na;\na;");
+    let [
+        SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block),
+        SelectedBlockReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(first),
+        SelectedBlockReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
+            second,
+        ),
+    ] = script.items()
+    else {
+        panic!("expected [UseSiteEnabledBlock, use-site, use-site] items");
+    };
+    assert_eq!(only_use_site_fact_of(block).semantic_name(), "b");
+    assert_eq!(first.semantic_name(), "a");
+    assert_eq!(second.semantic_name(), "a");
+    assert!(first.reference().range().start() < second.reference().range().start());
+}
+
+#[test]
+fn block_use_site_composes_with_block_var_automatic_before_block_close_terminator() {
+    // Independent review remediation (PR #763 cross-composition
+    // regression): the already-accepted Block-var close-brace ASI
+    // (`AutomaticBeforeBlockClose`) must remain reachable inside the new
+    // wider `SelectedUseSiteEnabledBlock` representation. This does not
+    // authorize close-brace ASI for the new use-site itself; `{ a }` alone
+    // remains `UnsupportedCoverage` (see
+    // `block_use_site_close_brace_asi_remains_unsupported_coverage`).
+    let script = recognized_block_reference_use("{ a; var x }");
+    let [SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block)] = script.items()
+    else {
+        panic!("expected exactly one use-site-enabled Block item");
+    };
+    let [
+        SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(fact),
+        SelectedUseSiteEnabledBlockItem::Var(statement),
+    ] = block.items()
+    else {
+        panic!("expected [use-site, Var] items");
+    };
+    assert_eq!(fact.semantic_name(), "a");
+    use super::selected_lexical_slice::SelectedBlockVarStatementTerminator;
+    assert_eq!(
+        statement.terminator(),
+        SelectedBlockVarStatementTerminator::AutomaticBeforeBlockClose
+    );
+}
+
+#[test]
+fn historical_block_forms_without_a_use_site_remain_exactly_historical() {
+    // Independent review remediation (PR #763): sources containing no
+    // Block-contained free-standing use-site must still finish through the
+    // exact unchanged historical `SelectedBlock` representation after the
+    // Block-local monotonic builder refactor, for the already-accepted
+    // subset (no coverage broadening).
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+
+    for text in [
+        "{ let a; }",
+        "{ var a; }",
+        "{ let a; var b; }",
+        "{ var a }",
+        "{ var a, b }",
+        "{ var x = a; }",
+    ] {
+        match recognize_selected_lexical_slice(&source(text)) {
+            SelectedLexicalSliceOutcome::RecognizedOneLevelBlockSlice(script) => {
+                let [SelectedTopLevelItem::Block(block)] = script.items() else {
+                    panic!("expected exactly one Block item for {text:?}");
+                };
+                assert!(
+                    block.items().iter().all(|item| matches!(
+                        item,
+                        SelectedBlockItem::LexicalDeclaration(_) | SelectedBlockItem::Var(_)
+                    )),
+                    "{text:?}"
+                );
+            }
+            other => panic!("expected historical Block recognition for {text:?}, got {other:?}"),
+        }
+    }
+}
+
+#[test]
 fn duplicate_block_use_sites_are_preserved_distinctly_in_authored_order() {
     let script = recognized_block_reference_use("{ a; a; }");
     let [SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block)] = script.items()
