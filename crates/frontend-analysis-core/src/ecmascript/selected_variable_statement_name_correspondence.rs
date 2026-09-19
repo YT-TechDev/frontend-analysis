@@ -19,7 +19,14 @@
 //! successor adds a second `pub(super)` entrypoint that consumes that witness
 //! directly. It shares this one correspondence semantic owner and every
 //! existing meaning and precedence rule; it does not introduce a fourth
-//! correspondence meaning or a parallel type hierarchy.
+//! correspondence meaning or a parallel type hierarchy. #766 widens every
+//! free-standing use-site relation traversal (TopLevel-only, and
+//! Block-contained) from exactly one fact per structural use-site item to
+//! the bounded `SelectedFreeStandingIdentifierReferenceUseSite::facts()`
+//! one-or-two ordered occurrences per item, emitting one relation per
+//! retained fact in exact authored item order, then exact authored operand
+//! order within each item; the existing relation types, correspondence
+//! meanings, and result-surface separation are unchanged.
 //!
 //! This is not runtime binding resolution. An authored `VariableDeclaration`
 //! contributor is not a unique runtime binding identity or a `ResolveBinding`
@@ -934,33 +941,38 @@ fn analyze_top_level_use_sites<'script>(
     let var_contributors = reference_use_enabled_var_contributors(script)?;
     let mut relations = Vec::new();
 
-    // Exact authored use-site occurrence order; duplicate occurrences are
-    // preserved one-for-one, never deduplicated (Issue #758).
+    // Exact authored use-site item order, then exact authored operand order
+    // within each item; duplicate occurrences are preserved one-for-one,
+    // never deduplicated (Issue #758, widened to one-or-two ordered
+    // operands per item by Issue #766).
     for item in script.items() {
-        let SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(fact) =
-            item
+        let SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
+            use_site,
+        ) = item
         else {
             continue;
         };
 
-        let correspondence = correspondence_for_name(
-            fact.semantic_name(),
-            SelectedVariableStatementNameCorrespondenceRegion::TopLevel,
-            &top_level_bindings,
-            &top_level_bindings,
-            &var_contributors,
-        )?;
+        for fact in use_site.facts() {
+            let correspondence = correspondence_for_name(
+                fact.semantic_name(),
+                SelectedVariableStatementNameCorrespondenceRegion::TopLevel,
+                &top_level_bindings,
+                &top_level_bindings,
+                &var_contributors,
+            )?;
 
-        relations
-            .try_reserve(1)
-            .map_err(|_| AnalysisFailure::ResourceLimited)?;
-        relations.push(
-            SelectedTopLevelIdentifierReferenceUseSiteNameCorrespondenceRelation {
-                reference: fact.reference(),
-                semantic_name: fact.semantic_name(),
-                correspondence,
-            },
-        );
+            relations
+                .try_reserve(1)
+                .map_err(|_| AnalysisFailure::ResourceLimited)?;
+            relations.push(
+                SelectedTopLevelIdentifierReferenceUseSiteNameCorrespondenceRelation {
+                    reference: fact.reference(),
+                    semantic_name: fact.semantic_name(),
+                    correspondence,
+                },
+            );
+        }
     }
 
     Ok(SelectedTopLevelIdentifierReferenceUseSiteNameCorrespondenceAnalysis { relations })
@@ -1194,36 +1206,40 @@ fn analyze_block_reference_use_enabled_top_level_use_sites<'script>(
     let var_contributors = block_reference_use_enabled_var_contributors(script)?;
     let mut relations = Vec::new();
 
-    // Exact authored TopLevel use-site occurrence order; duplicate
-    // occurrences are preserved one-for-one, never deduplicated. Block-
-    // contained use-sites are excluded from this stream (Issue #762): see
-    // `analyze_block_use_sites` for their dedicated relation surface.
+    // Exact authored TopLevel use-site item order, then exact authored
+    // operand order within each item; duplicate occurrences are preserved
+    // one-for-one, never deduplicated (widened to one-or-two ordered
+    // operands per item by Issue #766). Block-contained use-sites are
+    // excluded from this stream (Issue #762): see `analyze_block_use_sites`
+    // for their dedicated relation surface.
     for item in script.items() {
         let SelectedBlockReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
-            fact,
+            use_site,
         ) = item
         else {
             continue;
         };
 
-        let correspondence = correspondence_for_name(
-            fact.semantic_name(),
-            SelectedVariableStatementNameCorrespondenceRegion::TopLevel,
-            &top_level_bindings,
-            &top_level_bindings,
-            &var_contributors,
-        )?;
+        for fact in use_site.facts() {
+            let correspondence = correspondence_for_name(
+                fact.semantic_name(),
+                SelectedVariableStatementNameCorrespondenceRegion::TopLevel,
+                &top_level_bindings,
+                &top_level_bindings,
+                &var_contributors,
+            )?;
 
-        relations
-            .try_reserve(1)
-            .map_err(|_| AnalysisFailure::ResourceLimited)?;
-        relations.push(
-            SelectedTopLevelIdentifierReferenceUseSiteNameCorrespondenceRelation {
-                reference: fact.reference(),
-                semantic_name: fact.semantic_name(),
-                correspondence,
-            },
-        );
+            relations
+                .try_reserve(1)
+                .map_err(|_| AnalysisFailure::ResourceLimited)?;
+            relations.push(
+                SelectedTopLevelIdentifierReferenceUseSiteNameCorrespondenceRelation {
+                    reference: fact.reference(),
+                    semantic_name: fact.semantic_name(),
+                    correspondence,
+                },
+            );
+        }
     }
 
     Ok(SelectedTopLevelIdentifierReferenceUseSiteNameCorrespondenceAnalysis { relations })
@@ -1260,10 +1276,12 @@ fn analyze_block_use_sites<'script>(
     let var_contributors = block_reference_use_enabled_var_contributors(script)?;
     let mut relations = Vec::new();
 
-    // Exact authored Block-use-site occurrence order, distinct Block
-    // ownership, and one-for-one duplicate preservation (Issue #762): only
-    // `UseSiteEnabledBlock` top-level items are visited, since a historical
-    // `Block` never contains a Block-local use-site item by construction.
+    // Exact authored Block-use-site item order, then exact authored operand
+    // order within each item; distinct Block ownership, and one-for-one
+    // duplicate preservation (Issue #762, widened to one-or-two ordered
+    // operands per item by Issue #766): only `UseSiteEnabledBlock` top-level
+    // items are visited, since a historical `Block` never contains a
+    // Block-local use-site item by construction.
     for item in script.items() {
         let SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block) = item else {
             continue;
@@ -1274,29 +1292,31 @@ fn analyze_block_use_sites<'script>(
             SelectedVariableStatementNameCorrespondenceRegion::Block(block.block());
 
         for item in block.items() {
-            let SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(fact) =
+            let SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(use_site) =
                 item
             else {
                 continue;
             };
 
-            let correspondence = correspondence_for_name(
-                fact.semantic_name(),
-                current_region,
-                &current_bindings,
-                &top_level_bindings,
-                &var_contributors,
-            )?;
+            for fact in use_site.facts() {
+                let correspondence = correspondence_for_name(
+                    fact.semantic_name(),
+                    current_region,
+                    &current_bindings,
+                    &top_level_bindings,
+                    &var_contributors,
+                )?;
 
-            relations
-                .try_reserve(1)
-                .map_err(|_| AnalysisFailure::ResourceLimited)?;
-            relations.push(SelectedBlockUseSiteNameCorrespondenceRelation {
-                containing_block: block.block(),
-                reference: fact.reference(),
-                semantic_name: fact.semantic_name(),
-                correspondence,
-            });
+                relations
+                    .try_reserve(1)
+                    .map_err(|_| AnalysisFailure::ResourceLimited)?;
+                relations.push(SelectedBlockUseSiteNameCorrespondenceRelation {
+                    containing_block: block.block(),
+                    reference: fact.reference(),
+                    semantic_name: fact.semantic_name(),
+                    correspondence,
+                });
+            }
         }
     }
 

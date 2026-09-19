@@ -129,7 +129,32 @@
 //! theorem accepted by #760/#761 and the production representation /
 //! placement authority accepted by #688 comment 5734964743, by #762.
 //! Historical carriers, `SelectedBlock`, and `SelectedBlockItem` remain
-//! semantically unchanged.
+//! semantically unchanged. Widened the free-standing `IdentifierReference`
+//! `ExpressionStatement` use-site payload -- shared by
+//! `SelectedReferenceUseEnabledTopLevelItem`,
+//! `SelectedBlockReferenceUseEnabledTopLevelItem`, and
+//! `SelectedUseSiteEnabledBlockItem` -- from exactly one retained
+//! `SelectedIdentifierReferenceFact` to a new crate-private bounded
+//! `SelectedFreeStandingIdentifierReferenceUseSite` (`One` | `Two`)
+//! occurrence carrier, composing an ordered
+//! `SelectedTwoIdentifierReferenceAdditiveExpressionStatement`
+//! (`SelectedAcceptedIdentifierReference SelectedAdditiveTrivia ("+" | "-")
+//! SelectedAdditiveTrivia SelectedAcceptedIdentifierReference`) into the same
+//! placement-neutral
+//! `consume_selected_identifier_reference_expression_statement_use_site`
+//! probe that already owns both TopLevel and Block-contained placements,
+//! reusing the unmodified shared `consume_selected_identifier_reference`
+//! recognizer exactly once per operand and retaining no operator or
+//! whole-expression fact, per the candidate-independent theorem accepted by
+//! #764/#765 and the production representation / placement authority
+//! accepted by #688 comment 5739718987, by #766. Unlike
+//! `consume_selected_identifier_reference_initializer`, a failed additive
+//! continuation rolls back the whole probe to its original snapshot instead
+//! of degrading to a successful single-reference `One`: a free-standing
+//! Statement has no enclosing binding/comma transaction able to recover a
+//! left-over unconsumed suffix. Existing Script/Block builder topology,
+//! static witnesses, and qualification branches remain unchanged; only the
+//! existing use-site item payload widens.
 //!
 //! This is not aggregate ECMAScript qualification and cannot construct
 //! `QualificationOutcome::Qualified`.
@@ -226,16 +251,18 @@ impl SelectedIdentifierReferenceExpressionStatementScript {
 }
 
 /// One top-level item of the broadest selected Script carrier. The
-/// `IdentifierReferenceExpressionStatement` variant retains exactly the
-/// existing source-backed `SelectedIdentifierReferenceFact`: the authored
-/// `;` terminator is a construction invariant of this variant, never a
-/// retained anchor or relation payload.
+/// `IdentifierReferenceExpressionStatement` variant retains the bounded
+/// `SelectedFreeStandingIdentifierReferenceUseSite` occurrence carrier
+/// (Issue #766; exactly one retained `SelectedIdentifierReferenceFact`
+/// before #766): the authored `;` terminator and any authored `+`/`-`
+/// operator are construction invariants of this variant, never a retained
+/// anchor or relation payload.
 #[derive(Debug)]
 pub(super) enum SelectedReferenceUseEnabledTopLevelItem {
     LexicalDeclaration(SelectedLexicalDeclaration),
     Block(SelectedBlock),
     VariableStatement(SelectedVariableStatement),
-    IdentifierReferenceExpressionStatement(SelectedIdentifierReferenceFact),
+    IdentifierReferenceExpressionStatement(SelectedFreeStandingIdentifierReferenceUseSite),
 }
 
 /// New fifth / broadest selected Script carrier (Issue #762), composing the
@@ -261,15 +288,15 @@ impl SelectedBlockReferenceUseEnabledScript {
 /// selected one-level Block containing no Block-local free-standing
 /// use-site; `UseSiteEnabledBlock` is the distinct new representation for a
 /// Block containing at least one. `IdentifierReferenceExpressionStatement`
-/// retains exactly the existing source-backed `SelectedIdentifierReferenceFact`
-/// for a top-level free-standing use-site, unchanged from #758.
+/// retains the bounded `SelectedFreeStandingIdentifierReferenceUseSite`
+/// occurrence carrier (Issue #766) for a top-level free-standing use-site.
 #[derive(Debug)]
 pub(super) enum SelectedBlockReferenceUseEnabledTopLevelItem {
     LexicalDeclaration(SelectedLexicalDeclaration),
     Block(SelectedBlock),
     UseSiteEnabledBlock(SelectedUseSiteEnabledBlock),
     VariableStatement(SelectedVariableStatement),
-    IdentifierReferenceExpressionStatement(SelectedIdentifierReferenceFact),
+    IdentifierReferenceExpressionStatement(SelectedFreeStandingIdentifierReferenceUseSite),
 }
 
 /// New use-site-enabled Block representation (Issue #762): a selected
@@ -335,14 +362,15 @@ impl SelectedUseSiteEnabledBlock {
 /// `UseSiteEnabledBlockItem ::= existing selected LexicalDeclaration |
 /// existing selected Block Var statement | selected IdentifierReference
 /// ExpressionStatement use-site` (Issue #762). The use-site variant retains
-/// exactly the existing source-backed `SelectedIdentifierReferenceFact`; the
-/// authored `;` terminator is a construction invariant of this variant,
-/// never a retained anchor or relation payload.
+/// the bounded `SelectedFreeStandingIdentifierReferenceUseSite` occurrence
+/// carrier (Issue #766); the authored `;` terminator and any authored
+/// `+`/`-` operator are construction invariants of this variant, never a
+/// retained anchor or relation payload.
 #[derive(Debug)]
 pub(super) enum SelectedUseSiteEnabledBlockItem {
     LexicalDeclaration(SelectedLexicalDeclaration),
     Var(SelectedBlockVarStatement),
-    IdentifierReferenceExpressionStatement(SelectedIdentifierReferenceFact),
+    IdentifierReferenceExpressionStatement(SelectedFreeStandingIdentifierReferenceUseSite),
 }
 
 #[derive(Debug)]
@@ -920,7 +948,10 @@ impl SelectedScriptBuilder {
     /// appended, promoting the builder to `ReferenceUseEnabled` exactly
     /// once. Once already `ReferenceUseEnabled`, the use-site appends
     /// directly.
-    fn push_use_site(&mut self, fact: SelectedIdentifierReferenceFact) -> Result<(), ParseFailure> {
+    fn push_use_site(
+        &mut self,
+        use_site: SelectedFreeStandingIdentifierReferenceUseSite,
+    ) -> Result<(), ParseFailure> {
         match self {
             builder @ Self::Flat(_) => {
                 let Self::Flat(declarations) = builder else {
@@ -941,7 +972,7 @@ impl SelectedScriptBuilder {
                 }
                 items.push(
                     SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
-                        fact,
+                        use_site,
                     ),
                 );
                 *builder = Self::ReferenceUseEnabled(items);
@@ -973,7 +1004,7 @@ impl SelectedScriptBuilder {
                 }
                 items.push(
                     SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
-                        fact,
+                        use_site,
                     ),
                 );
                 *builder = Self::ReferenceUseEnabled(items);
@@ -1009,7 +1040,7 @@ impl SelectedScriptBuilder {
                 }
                 items.push(
                     SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
-                        fact,
+                        use_site,
                     ),
                 );
                 *builder = Self::ReferenceUseEnabled(items);
@@ -1021,7 +1052,7 @@ impl SelectedScriptBuilder {
                     .map_err(|_| ParseFailure::ResourceLimited)?;
                 items.push(
                     SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
-                        fact,
+                        use_site,
                     ),
                 );
                 Ok(())
@@ -1032,7 +1063,7 @@ impl SelectedScriptBuilder {
                     .map_err(|_| ParseFailure::ResourceLimited)?;
                 items.push(
                     SelectedBlockReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
-                        fact,
+                        use_site,
                     ),
                 );
                 Ok(())
@@ -1306,21 +1337,72 @@ enum SelectedIdentifierReferenceRecognition {
     InternalFailure,
 }
 
+/// Crate-private bounded cardinality carrier for a free-standing
+/// `IdentifierReference` `ExpressionStatement` use-site occurrence, widening
+/// the previous always-exactly-one-fact use-site payload to admit exactly
+/// one additional selected additive operand (Issue #766). `One` is the
+/// unchanged existing single-reference free-standing use-site. `Two` retains
+/// both authored operands of a selected
+/// `SelectedTwoIdentifierReferenceAdditiveExpressionStatement` in exact
+/// authored left-to-right order (`first` is the left operand, `second` is
+/// the right operand). Three or more facts, a second fact without a first,
+/// reordering, and deduplication are all unrepresentable by this type. This
+/// is a distinct owner from `SelectedIdentifierReferenceInitializer`:
+/// physical shape equivalence does not establish semantic ownership
+/// equivalence, so this type is never constructed from, converted to, or
+/// shared with that initializer-owned carrier -- a free-standing use-site
+/// has no containing binding.
+#[derive(Debug)]
+pub(super) enum SelectedFreeStandingIdentifierReferenceUseSite {
+    One(SelectedIdentifierReferenceFact),
+    Two {
+        first: SelectedIdentifierReferenceFact,
+        second: SelectedIdentifierReferenceFact,
+    },
+}
+
+impl SelectedFreeStandingIdentifierReferenceUseSite {
+    /// Every retained fact, in exact authored left-to-right order: one item
+    /// for `One`, two for `Two`. Backed by a fixed-size array, never a heap
+    /// allocation.
+    pub(super) fn facts(&self) -> impl Iterator<Item = &SelectedIdentifierReferenceFact> {
+        match self {
+            Self::One(fact) => [Some(fact), None],
+            Self::Two { first, second } => [Some(first), Some(second)],
+        }
+        .into_iter()
+        .flatten()
+    }
+}
+
 /// Result of the bounded, transactional, placement-neutral free-standing
 /// `IdentifierReference` `ExpressionStatement` use-site probe (Issue #758,
 /// generalized from a TopLevel-only name to this placement-neutral leaf by
-/// Issue #762 per #688 comment 5734964743). `NotSelected` covers every
-/// declining case uniformly (no candidate reference; an escaped-ReservedWord
-/// candidate; a candidate reference not immediately followed by an authored
-/// `;`): in every `NotSelected` case the cursor is left exactly where it
-/// stood before the probe began, so the caller's own existing dispatch sees
-/// an unperturbed cursor. `ResourceLimited`/`InternalFailure` are propagated
-/// exactly, never downgraded to `NotSelected`. This type and its producing
-/// method carry no placement ownership themselves; TopLevel vs. Block
-/// placement belongs entirely to the caller.
+/// Issue #762 per #688 comment 5734964743, widened from an always-exactly-one
+/// retained fact to the bounded `SelectedFreeStandingIdentifierReferenceUseSite`
+/// `One`/`Two` occurrence carrier by Issue #766 per #688 comment 5739718987).
+/// `NotSelected` covers every declining case uniformly: no candidate
+/// reference; an escaped-ReservedWord first or second candidate; a first
+/// candidate reference followed by neither an authored `;` nor exactly one
+/// authored `+`/`-` continuation; or a `+`/`-` continuation whose second
+/// operand or trailing terminator does not complete the whole two-operand
+/// theorem. In every `NotSelected` case the cursor is left exactly where it
+/// stood before the probe began -- including a `+`/`-` continuation that
+/// begins to match but does not complete (e.g. `a+b+c;`, `a+1;`) -- so the
+/// caller's own existing dispatch sees an unperturbed cursor and a locally
+/// recognized prefix never authorizes a richer or longer source. This is why
+/// this owner must not call
+/// `consume_selected_identifier_reference_initializer`: that helper's
+/// initializer-specific continuation degrades to a completed `One(first)` on
+/// a failed continuation, which would incorrectly authorize `a+b+c;` up to
+/// `a` as a complete free-standing Statement. `ResourceLimited`/
+/// `InternalFailure` are propagated exactly, never downgraded to
+/// `NotSelected`. This type and its producing method carry no placement
+/// ownership themselves; TopLevel vs. Block placement belongs entirely to
+/// the caller.
 #[derive(Debug)]
 enum SelectedIdentifierReferenceExpressionStatementUseSiteRecognition {
-    Matched(SelectedIdentifierReferenceFact),
+    Matched(SelectedFreeStandingIdentifierReferenceUseSite),
     NotSelected,
     ResourceLimited,
     InternalFailure,
@@ -1410,7 +1492,10 @@ impl SelectedBlockBuilder {
     /// representation in exact authored order before the use-site is
     /// appended, promoting to `ReferenceUseEnabled` exactly once. Once
     /// already `ReferenceUseEnabled`, the use-site appends directly.
-    fn push_use_site(&mut self, fact: SelectedIdentifierReferenceFact) -> Result<(), ParseFailure> {
+    fn push_use_site(
+        &mut self,
+        use_site: SelectedFreeStandingIdentifierReferenceUseSite,
+    ) -> Result<(), ParseFailure> {
         match self {
             builder @ Self::Legacy(_) => {
                 let Self::Legacy(existing_items) = builder else {
@@ -1437,7 +1522,9 @@ impl SelectedBlockBuilder {
                     }
                 }
                 items.push(
-                    SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(fact),
+                    SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(
+                        use_site,
+                    ),
                 );
                 *builder = Self::ReferenceUseEnabled(items);
                 Ok(())
@@ -1447,7 +1534,9 @@ impl SelectedBlockBuilder {
                     .try_reserve(1)
                     .map_err(|_| ParseFailure::ResourceLimited)?;
                 items.push(
-                    SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(fact),
+                    SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(
+                        use_site,
+                    ),
                 );
                 Ok(())
             }
@@ -1576,8 +1665,10 @@ impl<'source> Cursor<'source> {
         let mut builder = SelectedBlockBuilder::Legacy(Vec::new());
         loop {
             match self.consume_selected_identifier_reference_expression_statement_use_site() {
-                SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::Matched(fact) => {
-                    builder.push_use_site(fact)?;
+                SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::Matched(
+                    use_site,
+                ) => {
+                    builder.push_use_site(use_site)?;
                 }
                 SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::ResourceLimited => {
                     return Err(ParseFailure::ResourceLimited);
@@ -2537,57 +2628,125 @@ impl<'source> Cursor<'source> {
     /// `IdentifierReference` `ExpressionStatement` use-site probe (Issue
     /// #758, generalized to this placement-neutral leaf by Issue #762 per
     /// #688 comment 5734964743 -- both TopLevel and Block placement are now
-    /// independently justified callers of this exact same bounded grammar):
+    /// independently justified callers of this exact same bounded grammar --
+    /// widened by Issue #766 per #688 comment 5739718987 to additionally
+    /// accept exactly one authored `+`/`-` continuation):
     ///
     /// ```text
     /// SelectedIdentifierReferenceExpressionStatementUseSite ::=
     ///     SelectedAcceptedIdentifierReference
     ///     AuthoredSemicolon
+    ///   | SelectedTwoIdentifierReferenceAdditiveExpressionStatement
+    ///
+    /// SelectedTwoIdentifierReferenceAdditiveExpressionStatement ::=
+    ///     SelectedAcceptedIdentifierReference
+    ///     SelectedAdditiveTrivia
+    ///     ("+" | "-")
+    ///     SelectedAdditiveTrivia
+    ///     SelectedAcceptedIdentifierReference
+    ///     SelectedStatementTrailingTrivia
+    ///     AuthoredSemicolon
     /// ```
     ///
-    /// The candidate reference is recognized exactly once by the unmodified
-    /// shared `consume_selected_identifier_reference` recognizer -- no
-    /// second scanner or decoder. A matched candidate not immediately
-    /// followed (after existing selected trivia) by an authored `;`
-    /// restores the cursor to exactly where it stood before this probe
-    /// began and declines (`NotSelected`): a locally recognized
-    /// `IdentifierReference` prefix never authorizes a richer expression
-    /// neighbor (`a+b;`, `a.b;`, `a();`, `a=b;`, etc.) or an ASI-terminated
-    /// form. An escaped-ReservedWord candidate likewise restores the cursor
-    /// and declines; no new Statement-local EE-04-R08 route is introduced.
-    /// `ResourceLimited`/`InternalFailure` from the shared recognizer are
-    /// propagated exactly. This helper retains no placement ownership of
-    /// its own: TopLevel vs. Block placement belongs entirely to the
-    /// caller.
+    /// Each operand is recognized exactly once by the unmodified shared
+    /// `consume_selected_identifier_reference` recognizer -- no second
+    /// scanner or decoder. After the first operand, an authored `;`
+    /// (after existing selected trivia) commits the unchanged
+    /// single-reference `One` occurrence. Otherwise, exactly one authored
+    /// `+` or `-` is required to continue: it is consumed and discarded (no
+    /// operator kind, `SourceAnchor`, or whole-expression anchor is
+    /// retained), selected trivia is skipped, and a second operand is
+    /// recognized by the same unmodified shared recognizer. Only when the
+    /// second operand is accepted and immediately followed (after existing
+    /// selected trivia) by an authored `;` does the whole probe commit
+    /// `Two { first, second }`.
+    ///
+    /// Every other outcome restores the cursor to exactly where it stood
+    /// before this probe began and declines (`NotSelected`): no candidate
+    /// reference; an escaped-ReservedWord first or second candidate; a first
+    /// candidate followed by neither `;` nor a `+`/`-` continuation; or a
+    /// `+`/`-` continuation whose second operand or trailing terminator does
+    /// not complete. This is a whole-probe transaction, not a
+    /// first-operand-then-optional-continuation transaction: a locally
+    /// recognized `IdentifierReference` (or `IdentifierReference "+"
+    /// IdentifierReference`) prefix never authorizes a richer, longer, or
+    /// ASI-terminated neighbor (`a+b+c;`, `a+1;`, `a.b;`, `a();`, `a=b;`,
+    /// `a+b`, etc.), and an escaped-ReservedWord operand never gains a new
+    /// Statement-local EE-04-R08 route.
+    ///
+    /// This deliberately does not call
+    /// `consume_selected_identifier_reference_initializer`: that helper's
+    /// initializer-specific continuation intentionally degrades a failed
+    /// second operand to a completed `One(first)` so the enclosing
+    /// binding/comma transaction can recover the remainder, which would
+    /// incorrectly authorize `a+b+c;` up through `a` as a complete
+    /// free-standing Statement (there is no authored `;` there). Only the
+    /// lexical primitive `consume_selected_identifier_reference` is shared;
+    /// the owner transaction is not.
+    ///
+    /// `ResourceLimited`/`InternalFailure` from either operand's recognition
+    /// are propagated exactly, never downgraded to `NotSelected` or to a
+    /// completed `One`. This helper retains no placement ownership of its
+    /// own: TopLevel vs. Block placement belongs entirely to the caller.
     fn consume_selected_identifier_reference_expression_statement_use_site(
         &mut self,
     ) -> SelectedIdentifierReferenceExpressionStatementUseSiteRecognition {
         let snapshot = self.offset;
 
-        match self.consume_selected_identifier_reference() {
-            SelectedIdentifierReferenceRecognition::Matched(fact) => {
-                self.skip_selected_trivia();
-                if self.consume_ascii(';') {
-                    SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::Matched(fact)
-                } else {
-                    self.offset = snapshot;
-                    SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::NotSelected
-                }
-            }
-            SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName { .. } => {
+        let first = match self.consume_selected_identifier_reference() {
+            SelectedIdentifierReferenceRecognition::Matched(fact) => fact,
+            SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName { .. }
+            | SelectedIdentifierReferenceRecognition::NotSelected => {
                 self.offset = snapshot;
-                SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::NotSelected
-            }
-            SelectedIdentifierReferenceRecognition::NotSelected => {
-                self.offset = snapshot;
-                SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::NotSelected
+                return SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::NotSelected;
             }
             SelectedIdentifierReferenceRecognition::ResourceLimited => {
-                SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::ResourceLimited
+                return SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::ResourceLimited;
             }
             SelectedIdentifierReferenceRecognition::InternalFailure => {
-                SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::InternalFailure
+                return SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::InternalFailure;
             }
+        };
+
+        self.skip_selected_trivia();
+
+        if self.consume_ascii(';') {
+            return SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::Matched(
+                SelectedFreeStandingIdentifierReferenceUseSite::One(first),
+            );
+        }
+
+        if !self.consume_ascii('+') && !self.consume_ascii('-') {
+            self.offset = snapshot;
+            return SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::NotSelected;
+        }
+
+        self.skip_selected_trivia();
+
+        let second = match self.consume_selected_identifier_reference() {
+            SelectedIdentifierReferenceRecognition::Matched(fact) => fact,
+            SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName { .. }
+            | SelectedIdentifierReferenceRecognition::NotSelected => {
+                self.offset = snapshot;
+                return SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::NotSelected;
+            }
+            SelectedIdentifierReferenceRecognition::ResourceLimited => {
+                return SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::ResourceLimited;
+            }
+            SelectedIdentifierReferenceRecognition::InternalFailure => {
+                return SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::InternalFailure;
+            }
+        };
+
+        self.skip_selected_trivia();
+
+        if self.consume_ascii(';') {
+            SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::Matched(
+                SelectedFreeStandingIdentifierReferenceUseSite::Two { first, second },
+            )
+        } else {
+            self.offset = snapshot;
+            SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::NotSelected
         }
     }
 
@@ -3025,8 +3184,8 @@ pub(super) fn recognize_selected_lexical_slice(source: &SourceText) -> SelectedL
         // (`varfoo;`). A declining probe leaves the cursor unperturbed, so
         // every existing dispatch decision below is unaffected.
         match cursor.consume_selected_identifier_reference_expression_statement_use_site() {
-            SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::Matched(fact) => {
-                if let Err(failure) = builder.push_use_site(fact) {
+            SelectedIdentifierReferenceExpressionStatementUseSiteRecognition::Matched(use_site) => {
+                if let Err(failure) = builder.push_use_site(use_site) {
                     return parse_failure_to_outcome(failure);
                 }
             }
