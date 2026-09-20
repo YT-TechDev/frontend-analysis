@@ -83,7 +83,7 @@ fn rustc_binary_name() -> &'static str {
 /// looking for `rust-toolchain.toml`. Fixtures compile from a temporary
 /// directory, where that file is not discoverable, so the shim silently falls
 /// back to the machine's default toolchain. On the host that first ran this
-/// harness that meant the version probe saw 1.98.1 (probed from the repository)
+/// harness that meant the version probe saw 1.97.1 (probed from the repository)
 /// while every fixture was compiled by 1.94.1 (the ambient default).
 ///
 /// Same command spelling is not the same compiler. So the identity is resolved
