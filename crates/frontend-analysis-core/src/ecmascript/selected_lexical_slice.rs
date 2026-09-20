@@ -2083,7 +2083,9 @@ impl<'source> Cursor<'source> {
                             .consume_selected_leading_plus_minus_identifier_reference_unary_expression()
                         {
                             SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
-                                (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
+                                let initializer = self
+                                    .consume_selected_leading_plus_minus_identifier_reference_left_additive_initializer(reference)?;
+                                (Some(initializer), None)
                             }
                             SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
                                 return Err(ParseFailure::ResourceLimited);
@@ -2247,7 +2249,9 @@ impl<'source> Cursor<'source> {
                             .consume_selected_leading_plus_minus_identifier_reference_unary_expression()
                         {
                             SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
-                                (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
+                                let initializer = self
+                                    .consume_selected_leading_plus_minus_identifier_reference_left_additive_initializer(reference)?;
+                                (Some(initializer), None)
                             }
                             SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
                                 return Err(ParseFailure::ResourceLimited);
@@ -2375,8 +2379,9 @@ impl<'source> Cursor<'source> {
                         .consume_selected_leading_plus_minus_identifier_reference_unary_expression()
                     {
                         SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
-                            identifier_reference_initializer =
-                                Some(SelectedIdentifierReferenceInitializer::One(reference));
+                            identifier_reference_initializer = Some(
+                                self.consume_selected_leading_plus_minus_identifier_reference_left_additive_initializer(reference)?,
+                            );
                         }
                         SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
                             return Err(ParseFailure::ResourceLimited);
@@ -3407,6 +3412,81 @@ impl<'source> Cursor<'source> {
             }
             SelectedIdentifierReferenceRecognition::InternalFailure => {
                 SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::InternalFailure
+            }
+        }
+    }
+
+    /// Composes an already-matched leading `+`/`-` `IdentifierReference`
+    /// `UnaryExpression` fact (from
+    /// `consume_selected_leading_plus_minus_identifier_reference_unary_expression`,
+    /// unchanged) as the left operand of the initializer-owned exactly-two
+    /// `IdentifierReference` additive continuation theorem (Issue #775 per
+    /// #688 comment 5744972977, reusing the candidate-independent additive
+    /// theorem accepted by #752/#753):
+    ///
+    /// ```text
+    /// SelectedLeadingPlusMinusIdentifierReferenceLeftAdditiveInitializer ::=
+    ///     SelectedLeadingPlusMinusIdentifierReferenceUnaryExpression
+    ///     SelectedAdditiveTrivia
+    ///     ("+" | "-")
+    ///     SelectedAdditiveTrivia
+    ///     SelectedAcceptedIdentifierReference
+    /// ```
+    ///
+    /// The caller passes the already-recognized `first` fact and the cursor
+    /// positioned immediately after it. Selected trivia is skipped; absent an
+    /// authored binary `+`/`-` at that position, the cursor is restored to
+    /// immediately after `first` and `One(first)` is returned unchanged --
+    /// this is the existing accepted `+a` initializer behavior, exactly
+    /// preserved. Otherwise exactly one authored `+`/`-` is consumed and
+    /// discarded (no operator kind or `SourceAnchor` retained), selected
+    /// trivia is skipped, and a second operand is recognized by the same
+    /// unmodified shared `consume_selected_identifier_reference` recognizer.
+    /// An accepted second operand commits `Two { first, second }`.
+    ///
+    /// This deliberately mirrors the initializer-owned local-continuation
+    /// theorem already used by `consume_selected_identifier_reference_initializer`,
+    /// not the free-standing whole-body rollback theorem used by
+    /// `consume_selected_identifier_reference_expression_statement_use_site_body`
+    /// (Issue #774): a declining, escaped-ReservedWord, or absent second
+    /// operand restores the cursor to immediately after `first` and degrades
+    /// to a completed `One(first)`, never to `NotSelected`. This is safe only
+    /// because the enclosing declaration/statement owner remains
+    /// authoritative over the complete unconsumed source: `+a+`, `+a+1`, and
+    /// `+a+\u{69}f` still fail as complete declarations, since the owner
+    /// cannot validly terminate on the leftover `+`/operand source, and
+    /// `+a+b+c` still cannot truncate to a successful `Two(a,b)` declaration
+    /// for the same reason. A `ResourceLimited`/`InternalFailure`
+    /// classification from the second operand's recognition is propagated
+    /// immediately and never degrades to a completed `One`/`Two` result.
+    fn consume_selected_leading_plus_minus_identifier_reference_left_additive_initializer(
+        &mut self,
+        first: SelectedIdentifierReferenceFact,
+    ) -> Result<SelectedIdentifierReferenceInitializer, ParseFailure> {
+        let after_first = self.offset;
+        self.skip_selected_trivia();
+
+        if !self.consume_ascii('+') && !self.consume_ascii('-') {
+            self.offset = after_first;
+            return Ok(SelectedIdentifierReferenceInitializer::One(first));
+        }
+
+        self.skip_selected_trivia();
+
+        match self.consume_selected_identifier_reference() {
+            SelectedIdentifierReferenceRecognition::Matched(second) => {
+                Ok(SelectedIdentifierReferenceInitializer::Two { first, second })
+            }
+            SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName { .. }
+            | SelectedIdentifierReferenceRecognition::NotSelected => {
+                self.offset = after_first;
+                Ok(SelectedIdentifierReferenceInitializer::One(first))
+            }
+            SelectedIdentifierReferenceRecognition::ResourceLimited => {
+                Err(ParseFailure::ResourceLimited)
+            }
+            SelectedIdentifierReferenceRecognition::InternalFailure => {
+                Err(ParseFailure::InternalFailure)
             }
         }
     }
