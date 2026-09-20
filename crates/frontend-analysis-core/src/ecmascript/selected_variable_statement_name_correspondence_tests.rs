@@ -2510,6 +2510,50 @@ fn two_identifier_reference_additive_initializer_composes_for_one_level_block_va
     ));
 }
 
+/// Issue #779: the right-unary exactly-two `IdentifierReference` additive
+/// initializer reaches this consumer through the unchanged `Two { first,
+/// second }` carrier. Both inner facts resolve independently under the
+/// existing correspondence precedence, for top-level `var` and Block `var`
+/// alike; no correspondence meaning or precedence rule changes.
+#[test]
+fn right_unary_additive_initializer_resolves_both_inner_facts_independently() {
+    let (_, script) = recognized_variable("let a; var b; var x=a+-b;");
+    let analysis = accepted_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(relations.len(), 2);
+    assert_eq!(relations[0].semantic_name(), "a");
+    assert_eq!(relations[1].semantic_name(), "b");
+    // The right unary sign is excluded from the second reference anchor:
+    // `a` at 20, `+` at 21, `-` at 22, `b` at 23.
+    assert_eq!(range(relations[0].reference()), (20, 21));
+    assert_eq!(range(relations[1].reference()), (23, 24));
+
+    // Block `var`, with each inner fact resolving to a different region
+    // under the existing precedence.
+    let (_, script) = recognized_one_level_block("let b; { let a; var x=a-+b; }");
+    let analysis = accepted_one_level_block_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(relations.len(), 2);
+    assert_eq!(relations[0].semantic_name(), "a");
+    assert_eq!(relations[1].semantic_name(), "b");
+    let (_, first_target_region) = relations[0]
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("first fact must resolve to the Block-local lexical target a");
+    assert!(matches!(
+        first_target_region,
+        SelectedVariableStatementNameCorrespondenceRegion::Block(_)
+    ));
+    let (_, second_target_region) = relations[1]
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("second fact must resolve to the top-level lexical target b");
+    assert!(matches!(
+        second_target_region,
+        SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+    ));
+}
+
 #[test]
 fn two_identifier_reference_additive_initializer_direct_escaped_combination_for_var() {
     // Fixture text is built with `concat!` over an individually escaped
