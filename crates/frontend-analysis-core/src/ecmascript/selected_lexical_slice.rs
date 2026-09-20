@@ -3213,10 +3213,66 @@ impl<'source> Cursor<'source> {
     /// `EscapedReservedIdentifierName` route without attempting any additive
     /// continuation, exactly matching prior behavior for that spelling.
     ///
+    /// Issue #779 widens that continuation's right operand by exactly one
+    /// bounded alternative -- an optional right-unary `+`/`-` wrapper -- per
+    /// the candidate-independent token-boundary theorem accepted by
+    /// #777/#778 and the production representation / placement authority
+    /// accepted by #688 comment 5748542106:
+    ///
+    /// ```text
+    /// SelectedIdentifierReferenceRightUnaryAdditiveInitializer ::=
+    ///     SelectedAcceptedIdentifierReference
+    ///     SelectedAdditiveTriviaBeforeBinary
+    ///     SelectedBinaryPlusMinus
+    ///     SelectedBinaryUnaryBoundary
+    ///     SelectedUnaryPlusMinus
+    ///     SelectedUnaryOperandTrivia
+    ///     SelectedAcceptedIdentifierReference
+    /// ```
+    ///
+    /// `SelectedBinaryUnaryBoundary` is the sole new load-bearing
+    /// recognition capability, and it is discriminated by selected-trivia
+    /// cardinality rather than by code-point identity alone, because
+    /// ECMAScript's longest-input-element rule makes `++` and `--` single
+    /// punctuators rather than two adjacent `+`/`-` code points:
+    ///
+    /// ```text
+    /// binary != unary:
+    ///     inter-operator selected trivia MAY be empty
+    /// binary == unary:
+    ///     inter-operator selected trivia MUST be non-empty
+    /// ```
+    ///
+    /// so `a+-b` / `a-+b` are recognized with zero inter-operator trivia and
+    /// `a+ +b` / `a- -b` only because non-empty selected trivia separates the
+    /// two punctuators, while `a++b` / `a--b` decline this continuation
+    /// entirely and are never split into a binary plus a unary sign. The
+    /// binary sign, whether the inter-operator selected trivia was non-empty,
+    /// and the right unary sign are transient recognition-time state only:
+    /// they are compared locally on the same owned cursor and then dropped,
+    /// so no tokenizer, token stream, `Punctuator` enum, operator kind,
+    /// trivia `SourceAnchor`, `UnaryExpression`/`AdditiveExpression`
+    /// `SourceAnchor`, or generic expression representation is introduced,
+    /// and the retained carrier stays the unchanged `One`/`Two` pair. At most
+    /// one right-unary wrapper is admitted -- no recursion -- so `a+-+b` and
+    /// `a-++b` still fail the second operand and decline. The right unary
+    /// sign is consumed and discarded before the shared recognizer runs, so
+    /// it is never part of the second operand's authored `SourceAnchor`. The
+    /// already-accepted left-unary helper
+    /// `consume_selected_leading_plus_minus_identifier_reference_left_additive_initializer`
+    /// is deliberately *not* widened here: it owns the left-unary plus
+    /// plain-right theorem, and widening it would admit unapproved both-unary
+    /// forms such as `+a+-b`. Free-standing right-unary use-sites (`a+-b;`)
+    /// likewise remain outside this leaf, since
+    /// `consume_selected_identifier_reference_expression_statement_use_site_body`
+    /// owns a distinct carrier and whole-body rollback contract.
+    ///
     /// Otherwise, this helper optimistically probes for a continuation:
     /// selected trivia, exactly one authored binary `+` or `-`, selected
-    /// trivia, and a second `IdentifierReference` operand recognized by the
-    /// same unmodified shared recognizer (never a second scanner/decoder).
+    /// trivia, an optional single right-unary `+`/`-` admitted only by the
+    /// boundary above together with its own selected operand trivia, and a
+    /// second `IdentifierReference` operand recognized by the same unmodified
+    /// shared recognizer (never a second scanner/decoder).
     /// If the whole continuation completes with an accepted (direct or
     /// escaped non-ReservedWord) second operand, `Two { first, second }` is
     /// returned with the cursor positioned immediately after the second
@@ -3266,12 +3322,27 @@ impl<'source> Cursor<'source> {
         let after_first = self.offset;
         self.skip_selected_trivia();
 
-        if !self.consume_ascii('+') && !self.consume_ascii('-') {
+        let binary_sign = if self.consume_ascii('+') {
+            '+'
+        } else if self.consume_ascii('-') {
+            '-'
+        } else {
             self.offset = after_first;
             return SelectedIdentifierReferenceInitializerRecognition::One(first);
-        }
+        };
 
+        let before_inter_operator_trivia = self.offset;
         self.skip_selected_trivia();
+
+        if let Some(unary_sign @ ('+' | '-')) = self.peek_char() {
+            if unary_sign == binary_sign && self.offset == before_inter_operator_trivia {
+                self.offset = after_first;
+                return SelectedIdentifierReferenceInitializerRecognition::One(first);
+            }
+
+            let _ = self.advance_char();
+            self.skip_selected_trivia();
+        }
 
         match self.consume_selected_identifier_reference() {
             SelectedIdentifierReferenceRecognition::Matched(second) => {
