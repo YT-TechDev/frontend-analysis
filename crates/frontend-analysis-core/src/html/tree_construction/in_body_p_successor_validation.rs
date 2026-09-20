@@ -1245,7 +1245,7 @@ fn p9_repeated_stray_ends_create_two_exact_diagnostic_synthesis_closure_groups()
 
     let actions = p_actions(&observation);
     assert_eq!(actions.len(), 6);
-    for group in actions.chunks_exact(3) {
+    for group in actions.as_chunks::<3>().0 {
         assert!(matches!(group[0], Action::PDiagnostic { .. }));
         assert!(matches!(group[1], Action::SynthesizedP { .. }));
         assert!(matches!(

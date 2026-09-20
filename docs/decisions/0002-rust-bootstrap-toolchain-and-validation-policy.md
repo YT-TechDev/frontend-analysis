@@ -11,6 +11,15 @@
 | Superseded by | None |
 | Affected normative contracts | None at this decision stage — existing maintainership, architecture, Rust Core, security, and validation contracts already require explicit approval and evidence while deliberately selecting no toolchain or workspace implementation. This ADR defines the bootstrap policy within those boundaries. Issue #44 may later update contributor-facing documentation to reflect accepted commands without weakening the owning contracts. |
 
+## Current pin amendment (2026-09)
+
+Issue [#782](https://github.com/YT-TechDev/frontend-analysis/issues/782)
+requalified the repository development and CI toolchain from the original
+bootstrap pin, Rust `1.97.1`, to the current accepted pin, exact stable Rust
+`1.98.1`. The exact-pin update policy is unchanged, and the pin remains a
+reproducibility baseline rather than an MSRV promise. The original decision
+rationale below remains historical evidence.
+
 ## Context
 
 [ADR 0001](0001-repository-topology-and-workspace-ownership.md) establishes

@@ -53,7 +53,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const TRIPWIRE_MESSAGE: &str = "generated Named Character Reference data tests are test-only";
 
 /// The exact toolchain this evidence is only meaningful against.
-const ACCEPTED_RUSTC_VERSION: &str = "1.97.1";
+const ACCEPTED_RUSTC_VERSION: &str = "1.98.1";
 
 /// The three names the ownership theorem is *about*. A diagnostic that does not
 /// name the relevant one is not evidence about this theorem, whatever its code.
@@ -139,7 +139,7 @@ impl ResolvedCompiler {
 
     /// Resolves one initial launcher to `<sysroot>/bin/rustc`, validates every
     /// resolution stage, canonicalizes the concrete path, and verifies that
-    /// exact executable as stable Rust 1.97.1. Any failure stops before fixture
+    /// exact executable as stable Rust 1.98.1. Any failure stops before fixture
     /// evidence can be accepted; there is deliberately no launcher fallback.
     fn resolve_from_launcher(launcher: &Path) -> Result<Self, String> {
         let output = Command::new(launcher)
@@ -309,9 +309,9 @@ fn version_line_from_output(
 
 /// Exact bounded parser for the only accepted `rustc --version` identity.
 ///
-/// The line must begin exactly with `rustc 1.97.1`, and the version token must
+/// The line must begin exactly with `rustc 1.98.1`, and the version token must
 /// end there or be followed by whitespace. This rejects prefix collisions such
-/// as `1.97.10`, channel suffixes such as `-nightly`/`-beta`, and arbitrary
+/// as `1.98.10`, channel suffixes such as `-nightly`/`-beta`, and arbitrary
 /// wrapper prefixes while deliberately not overfitting the commit/date prose.
 fn is_accepted_rustc_version_line(line: &str) -> bool {
     let Some(after_rustc) = line.strip_prefix("rustc ") else {
@@ -786,16 +786,16 @@ fn f1e_a_fixture_directory_cannot_redirect_the_harness_to_an_ambient_compiler() 
 }
 
 // ---------------------------------------------------------------------------
-// F1-R1 — exact stable 1.97.1 version identity regressions
+// F1-R1 — exact stable 1.98.1 version identity regressions
 // ---------------------------------------------------------------------------
 
 #[test]
-fn r1a_exact_stable_1_97_1_version_is_accepted() {
+fn r1a_exact_stable_1_98_1_version_is_accepted() {
     for (label, stdout) in [
-        ("LF", b"rustc 1.97.1 (8bab26f4f 2026-07-14)\n".as_slice()),
+        ("LF", b"rustc 1.98.1 (48a229cea 2026-09-01)\n".as_slice()),
         (
             "CRLF",
-            b"rustc 1.97.1 (8bab26f4f 2026-07-14)\r\n".as_slice(),
+            b"rustc 1.98.1 (48a229cea 2026-09-01)\r\n".as_slice(),
         ),
     ] {
         let version = version_line_from_output(Path::new("r1a-rustc"), true, stdout)
@@ -808,28 +808,28 @@ fn r1a_exact_stable_1_97_1_version_is_accepted() {
 }
 
 #[test]
-fn r1b_1_97_10_prefix_collision_is_rejected() {
+fn r1b_1_98_10_prefix_collision_is_rejected() {
     assert!(!is_accepted_rustc_version_line(
-        "rustc 1.97.10 (prefix-collision)"
+        "rustc 1.98.10 (prefix-collision)"
     ));
 }
 
 #[test]
 fn r1c_nightly_suffix_is_rejected() {
     assert!(!is_accepted_rustc_version_line(
-        "rustc 1.97.1-nightly (nightly)"
+        "rustc 1.98.1-nightly (nightly)"
     ));
 }
 
 #[test]
 fn r1d_beta_suffix_is_rejected() {
-    assert!(!is_accepted_rustc_version_line("rustc 1.97.1-beta (beta)"));
+    assert!(!is_accepted_rustc_version_line("rustc 1.98.1-beta (beta)"));
 }
 
 #[test]
 fn r1e_arbitrary_rustc_prefix_is_rejected() {
     assert!(!is_accepted_rustc_version_line(
-        "some-rustc 1.97.1 (wrapper)"
+        "some-rustc 1.98.1 (wrapper)"
     ));
 }
 
@@ -863,7 +863,7 @@ fn r1f_empty_malformed_and_stderr_only_version_output_are_rejected() {
 
 #[test]
 fn r1g_nonzero_version_command_is_rejected() {
-    let error = version_line_from_output(Path::new("r1g-rustc"), false, b"rustc 1.97.1 (fake)\n")
+    let error = version_line_from_output(Path::new("r1g-rustc"), false, b"rustc 1.98.1 (fake)\n")
         .expect_err("a nonzero version command cannot establish compiler identity");
     assert!(
         error.contains("did not report a version successfully"),
@@ -881,7 +881,7 @@ fn r2a_nonzero_sysroot_command_fails_resolution() {
     let Some((sysroot, _concrete)) = fake_sysroot_with_version(
         &fixture.directory,
         "r2a valid sysroot",
-        "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+        "rustc 1.98.1 (48a229cea 2026-09-01)",
     ) else {
         return;
     };
@@ -927,7 +927,7 @@ fn r2c_missing_concrete_rustc_fails_resolution_without_launcher_fallback() {
         &fixture.directory,
         "r2c-launcher",
         &sysroot,
-        "rustc 1.97.1 (launcher must never be fallback)",
+        "rustc 1.98.1 (launcher must never be fallback)",
     ) else {
         return;
     };
@@ -943,7 +943,7 @@ fn r2d_deleted_concrete_rustc_fails_the_next_exact_identity_invocation() {
     let Some((sysroot, _concrete)) = fake_sysroot_with_version(
         &fixture.directory,
         "r2d sysroot",
-        "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+        "rustc 1.98.1 (48a229cea 2026-09-01)",
     ) else {
         return;
     };
@@ -981,7 +981,7 @@ fn r2f_only_the_concrete_sysroot_compiler_defines_identity() {
     let Some((accepted_sysroot, accepted_concrete)) = fake_sysroot_with_version(
         &fixture.directory,
         "accepted sysroot with spaces",
-        "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+        "rustc 1.98.1 (48a229cea 2026-09-01)",
     ) else {
         return;
     };
@@ -1002,13 +1002,13 @@ fn r2f_only_the_concrete_sysroot_compiler_defines_identity() {
     assert!(resolved.executable.is_absolute());
     assert!(resolved.verify_accepted_version().is_ok());
 
-    // Inverse pressure: a launcher that itself says 1.97.1 cannot launder a
-    // concrete `1.97.10` compiler. This attacks both resolver identity and the
+    // Inverse pressure: a launcher that itself says 1.98.1 cannot launder a
+    // concrete `1.98.10` compiler. This attacks both resolver identity and the
     // old substring check through the real resolve path.
     let Some((wrong_sysroot, _wrong_concrete)) = fake_sysroot_with_version(
         &fixture.directory,
         "wrong concrete sysroot",
-        "rustc 1.97.10 (prefix-collision)",
+        "rustc 1.98.10 (prefix-collision)",
     ) else {
         return;
     };
@@ -1016,7 +1016,7 @@ fn r2f_only_the_concrete_sysroot_compiler_defines_identity() {
         &fixture.directory,
         "r2f-deceptive-launcher",
         &wrong_sysroot,
-        "rustc 1.97.1 (launcher-only identity)",
+        "rustc 1.98.1 (launcher-only identity)",
     ) else {
         return;
     };

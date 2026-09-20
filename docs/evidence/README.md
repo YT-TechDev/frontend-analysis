@@ -1,9 +1,9 @@
-# Language Research Evidence
+# Evidence Records
 
 ## Purpose
 
-This directory preserves durable, reviewable research evidence for the HTML, CSS,
-and JavaScript / ECMAScript tracks of Frontend Analysis.
+This directory preserves durable, reviewable evidence for language research and
+cross-cutting repository qualification.
 
 These records exist to answer:
 
@@ -41,6 +41,15 @@ Language research follows these rules:
    modules, stores, lattices, graphs, crates, or public APIs.
 8. Research status and production status remain distinct. A stable evidence set
    may authorize architecture consolidation without authorizing implementation.
+
+## Repository Qualification Records
+
+`repository/` contains durable task/evidence records for cross-cutting
+repository, toolchain, and CI qualification. It is not normative architecture,
+toolchain-policy authority, or language-semantic authority.
+
+- [Repository qualification evidence](repository/README.md)
+- [2026-09 Rust 1.98.1 toolchain migration](repository/2026-09-rust-1.98.1-toolchain-migration.md)
 
 ## Current Language Records
 

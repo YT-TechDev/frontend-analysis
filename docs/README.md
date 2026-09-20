@@ -85,11 +85,11 @@ contract.
 
 ### Contributor Setup and Validation
 
-With `rustup` available, install the selected Rust `1.97.1` toolchain when
+With `rustup` available, install the selected Rust `1.98.1` toolchain when
 needed, then run the production checks:
 
 ```bash
-rustup toolchain install 1.97.1 \
+rustup toolchain install 1.98.1 \
   --profile minimal \
   --component rustfmt \
   --component clippy
@@ -108,7 +108,7 @@ status is owned by [Validation and Completion Evidence](development/VALIDATION.m
 
 | Category | Current status | Reason |
 | --- | --- | --- |
-| Toolchain identity | Applicable | Exact Rust `1.97.1` is pinned. |
+| Toolchain identity | Applicable | Exact Rust `1.98.1` is pinned. |
 | Workspace policy and locked Cargo metadata | Applicable | One package, one member, zero dependencies, one library target, and the committed lockfile are validated. |
 | Source formatting | Applicable | Production Rust source exists. |
 | Clippy source lint | Applicable | The production library and all targets are linted with warnings denied. |

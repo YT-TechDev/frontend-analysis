@@ -145,12 +145,12 @@ All changes must also follow [Secure Development](../docs/development/SECURE_DEV
 
 ## Current Rust Workspace Validation
 
-`rustup` is a prerequisite. The repository toolchain file selects Rust `1.97.1`
+`rustup` is a prerequisite. The repository toolchain file selects Rust `1.98.1`
 with rustfmt and Clippy. Prepare that exact toolchain when it is not already
 installed:
 
 ```bash
-rustup toolchain install 1.97.1 \
+rustup toolchain install 1.98.1 \
   --profile minimal \
   --component rustfmt \
   --component clippy
