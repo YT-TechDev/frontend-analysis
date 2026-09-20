@@ -19,7 +19,7 @@ coordinates preserve authoritative UTF-8 byte offsets; they do not imply
 parser, browser-protocol, Unicode-display, or presentation position
 compatibility.
 
-Rust `1.97.1` is pinned for reproducible development and CI, but the pin is not
+Rust `1.98.1` is pinned for reproducible development and CI, but the pin is not
 an MSRV promise. See the [documentation index](docs/README.md) for detailed
 current-state and validation guidance and the
 [Validated Source Anchors Guide](docs/architecture/VALIDATED_SOURCE_ANCHORS.md)

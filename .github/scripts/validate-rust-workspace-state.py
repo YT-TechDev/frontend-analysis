@@ -13,7 +13,7 @@ import tomllib
 
 TOOLCHAIN = (
     "[toolchain]\n"
-    'channel = "1.97.1"\n'
+    'channel = "1.98.1"\n'
     'components = ["clippy", "rustfmt"]\n'
     'profile = "minimal"\n'
 )
@@ -82,7 +82,7 @@ def validate_toolchain(root: Path) -> None:
     fail(path.is_file(), "rust-toolchain.toml is missing")
     fail(
         path.read_text(encoding="utf-8") == TOOLCHAIN,
-        "rust-toolchain.toml does not match the accepted Rust 1.97.1 toolchain",
+        "rust-toolchain.toml does not match the accepted Rust 1.98.1 toolchain",
     )
 
 
