@@ -3744,3 +3744,76 @@ fn right_unary_use_site_reuses_per_operand_correspondence_in_authored_order() {
         1
     );
 }
+
+// --- Issue #787: the leading-unary-first / right-unary-wrapped both-unary
+// spelling retains the same ordered `Two` facts consumed by the existing
+// correspondence layer. ---
+
+#[test]
+fn both_unary_use_site_reuses_per_operand_correspondence_in_authored_order() {
+    let (_, script) = recognized_reference_use("let a;\nvar b;\n+a+-b;");
+    let analysis = accepted_use_site_analysis(&script);
+    let [a, b] = analysis.relations() else {
+        panic!("expected exactly two use-site relations");
+    };
+    assert_eq!(a.semantic_name(), "a");
+    assert_eq!(b.semantic_name(), "b");
+    assert!(a.reference().range().start() < b.reference().range().start());
+    assert!(a.correspondence().selected_lexical_binding().is_some());
+    assert_eq!(
+        b.correspondence()
+            .var_contributors()
+            .expect("b must resolve to the same-source var contributor")
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn both_unary_use_site_per_operand_correspondence_block() {
+    // `let b; { let a; -a-+b; }`: current-Block lexical precedence for `a`,
+    // TopLevel lexical fallback for `b`, exactly as the existing left-unary
+    // and right-unary two-operand theorems independently proved.
+    let (_, script) = recognized_block_reference_use("let b;\n{ let a;\n-a-+b; }");
+    let analysis = accepted_block_use_site_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(relations.len(), 2);
+    assert_eq!(relations[0].semantic_name(), "a");
+    let (binding, region) = relations[0]
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("left operand must resolve to the current-Block lexical binding a");
+    assert_eq!(binding.fragment(), "a");
+    assert!(matches!(
+        region,
+        SelectedVariableStatementNameCorrespondenceRegion::Block(_)
+    ));
+    assert_eq!(relations[1].semantic_name(), "b");
+    let (binding, region) = relations[1]
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("right operand must fall back to the TopLevel lexical binding b");
+    assert_eq!(binding.fragment(), "b");
+    assert!(matches!(
+        region,
+        SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+    ));
+}
+
+#[test]
+fn both_unary_use_site_known_static_rejection_suppresses_relation_construction() {
+    let source = source("let x;\n{ var x;\n+a+-b; }");
+    let script = match recognize_selected_lexical_slice(&source) {
+        SelectedLexicalSliceOutcome::RecognizedBlockReferenceUseEnabledSlice(script) => script,
+        other => panic!("expected Block-reference-use-enabled recognition, got {other:?}"),
+    };
+    assert!(matches!(
+        evaluate_selected_block_reference_use_enabled_static_semantics(&script),
+        SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::LexicalVarNameCollision { .. }
+        )
+    ));
+    // No relation surface is reachable without an accepted witness: the
+    // locally valid `+a+-b;` both-unary use-site never publishes a relation
+    // once the existing `x`/`x` lexical/var static rejection wins.
+}

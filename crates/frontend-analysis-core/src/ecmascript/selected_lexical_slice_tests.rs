@@ -7811,6 +7811,13 @@ fn right_unary_additive_free_standing_use_sites_preserve_facts_and_placement() {
 
 #[test]
 fn right_unary_additive_free_standing_failed_continuation_rolls_back_whole_body() {
+    // The leading-unary-first both-unary forms this test used to seal as
+    // unsupported (`+a+-b;`, `-a-+b;`, `+a+ +b;`, `-a- -b;`) were deliberately
+    // retained here as future firewalls per the #781-era production; Issue
+    // #787 moves them into selected-positive coverage on the distinct
+    // leading-unary-first route (see
+    // `left_unary_use_site_both_unary_positive_matrix_is_recognized` below).
+    // This bare-reference-first route's own firewalls remain unchanged.
     for text in [
         "a+-;",
         r"a+-\u0069f;",
@@ -7819,10 +7826,6 @@ fn right_unary_additive_free_standing_failed_continuation_rolls_back_whole_body(
         "a++b;",
         "a--b;",
         "a+-b+c;",
-        "+a+-b;",
-        "-a-+b;",
-        "+a+ +b;",
-        "-a- -b;",
         "{ a+-; }",
         "{ a+-+b; }",
     ] {
@@ -10073,14 +10076,14 @@ fn left_unary_use_site_failed_second_operand_does_not_degrade_to_one() {
 }
 
 #[test]
-fn left_unary_use_site_both_unary_and_operator_recursion_remain_unsupported() {
-    // The unary-first route is deliberately unchanged: both-unary forms and
-    // unary-operator recursion remain outside this leaf.
+fn left_unary_use_site_operator_recursion_and_other_unary_families_remain_unsupported() {
+    // Issue #787 moves the both-unary forms this test used to seal as
+    // unsupported (`+a+-b;`, `-a-+b;`, `+a+ +b;`, `-a- -b;`) into
+    // selected-positive coverage (see
+    // `left_unary_use_site_both_unary_positive_matrix_is_recognized` below);
+    // unary-operator recursion and other unary families on the leading
+    // operand remain outside this leaf exactly as before.
     for text in [
-        "+a+-b;",
-        "-a-+b;",
-        "+a+ +b;",
-        "-a- -b;",
         "++a+b;",
         "--a+b;",
         "+-a+b;",
@@ -10253,4 +10256,313 @@ fn left_unary_use_site_whole_source_transactionality() {
     assert_unsupported("-a-b;\nlet x = ;");
     assert_unsupported("{ +a+b }???");
     assert_unsupported("let a;\n{ -a-b }\n???");
+}
+
+// --- Issue #787: both-unary exactly-two `IdentifierReference` additive
+// free-standing use-site composition. Widens the leading-unary-first body
+// route's existing exactly-one-binary-`+`/`-` continuation (Issue #773) with
+// an optional right-unary `+`/`-` wrapper on the second operand, reusing the
+// candidate-independent binary/right-unary token-boundary theorem accepted
+// by #777/#778 and mirroring the bare-reference-first widening Issue #781
+// already applied to the plain-left route. The plain-right alternative on
+// this route remains unchanged and accepted; the right-unary-wrapped
+// alternative is the only new bounded addition. This whole-body probe
+// remains transactional exactly as #773 established: a failing continuation
+// (plain or right-unary-wrapped) restores the pre-probe snapshot and
+// declines, never degrading to `One(first)`. No new representation, operator
+// identity, or `SourceAnchor` is retained beyond the existing `Two { first,
+// second }` carrier. ---
+
+#[test]
+fn left_unary_use_site_both_unary_positive_matrix_is_recognized() {
+    for (text, expected_names) in [
+        // Opposite signs: zero inter-operator selected trivia is admitted.
+        ("+a+-b;", ["a", "b"]),
+        ("+a-+b;", ["a", "b"]),
+        ("-a+-b;", ["a", "b"]),
+        ("-a-+b;", ["a", "b"]),
+        // Same signs: admitted only because non-empty selected trivia
+        // separates the two punctuators.
+        ("+a+ +b;", ["a", "b"]),
+        ("+a- -b;", ["a", "b"]),
+        ("-a+ +b;", ["a", "b"]),
+        ("-a- -b;", ["a", "b"]),
+        // Issue #787 issue-text worked example: mixed escaped/direct
+        // operands, opposite signs.
+        ("+\\u0061-+f\\u006Fo;", ["a", "foo"]),
+        // Trivia in every selected position.
+        ("+a + - b;", ["a", "b"]),
+        ("-a - + b;", ["a", "b"]),
+        // Automatic-at-EOF termination.
+        ("+a+-b", ["a", "b"]),
+        ("-a- -b", ["a", "b"]),
+    ] {
+        let script = recognized_reference_use(text);
+        let use_site = only_top_level_use_site(&script);
+        let facts = use_site_facts(use_site.body());
+        assert_eq!(facts.len(), 2, "{text:?}");
+        assert_eq!(facts[0].semantic_name(), expected_names[0], "{text:?}");
+        assert_eq!(facts[1].semantic_name(), expected_names[1], "{text:?}");
+        assert!(
+            facts[0].reference().range().start() < facts[1].reference().range().start(),
+            "{text:?}"
+        );
+    }
+
+    for (text, expected_names) in [
+        ("{ +a+-b; }", ["a", "b"]),
+        ("{ -a-+b; }", ["a", "b"]),
+        ("{ +a+ +b }", ["a", "b"]),
+        ("{ -a- -b }", ["a", "b"]),
+    ] {
+        let script = recognized_block_reference_use(text);
+        let use_site = only_block_use_site(&script);
+        let facts = use_site_facts(use_site.body());
+        assert_eq!(facts.len(), 2, "{text:?}");
+        assert_eq!(facts[0].semantic_name(), expected_names[0], "{text:?}");
+        assert_eq!(facts[1].semantic_name(), expected_names[1], "{text:?}");
+        assert!(
+            facts[0].reference().range().start() < facts[1].reference().range().start(),
+            "{text:?}"
+        );
+    }
+}
+
+/// The load-bearing #777/#778 punctuator boundary, restated against the
+/// leading-unary-first free-standing production: authored `++`/`--` is a
+/// single competing punctuator and is never split into a binary sign plus a
+/// right-unary sign, so same-sign forms are selected only when non-empty
+/// selected trivia separates the two punctuators. The rejected spellings
+/// roll back the whole body (never degrading to `One(first)`), since the
+/// binary continuation has already begun.
+#[test]
+fn left_unary_use_site_both_unary_token_boundary_never_splits_update_expression_punctuators() {
+    for text in [
+        "+a++b;",
+        "+a--b;",
+        "-a++b;",
+        "-a--b;",
+        "{ +a++b; }",
+        "{ -a--b; }",
+    ] {
+        assert_unsupported(text);
+    }
+
+    // A LineTerminator is existing selected trivia, so it separates the two
+    // punctuators exactly as a space does.
+    let script = recognized_reference_use("+a+\n+b;");
+    let facts = use_site_facts(only_top_level_use_site(&script).body());
+    assert_eq!(facts.len(), 2);
+    assert_eq!(facts[0].semantic_name(), "a");
+    assert_eq!(facts[1].semantic_name(), "b");
+}
+
+/// Direct/Escaped cross-product across both operands, plus exact source
+/// provenance: the leading unary sign never enters the first fact's anchor,
+/// and the right unary sign never enters the second fact's anchor.
+#[test]
+fn left_unary_use_site_both_unary_direct_escaped_cross_product_preserves_authored_provenance() {
+    let esc_61 = concat!("\\", "u0061"); // decodes to "a"
+    let esc_62 = concat!("\\", "u0062"); // decodes to "b"
+    let esc_within_foo = concat!("f", "\\", "u006F", "o"); // mixed-part, decodes to "foo"
+    let esc_within_bar = concat!("b", "\\", "u0061", "r"); // mixed-part, decodes to "bar"
+
+    for (
+        text,
+        expected_first_fragment,
+        expected_first,
+        expected_second_fragment,
+        expected_second,
+    ) in [
+        // Direct / Direct
+        (
+            "+a+-b;".to_owned(),
+            "a".to_owned(),
+            "a",
+            "b".to_owned(),
+            "b",
+        ),
+        // Escaped / Direct
+        (
+            format!("+{esc_61}+-b;"),
+            esc_61.to_owned(),
+            "a",
+            "b".to_owned(),
+            "b",
+        ),
+        // Direct / Escaped
+        (
+            format!("+a-+{esc_62};"),
+            "a".to_owned(),
+            "a",
+            esc_62.to_owned(),
+            "b",
+        ),
+        // Escaped / Escaped, same signs separated by selected trivia.
+        (
+            format!("-{esc_61}- -{esc_62};"),
+            esc_61.to_owned(),
+            "a",
+            esc_62.to_owned(),
+            "b",
+        ),
+        // Mixed-part escaped operands on both sides.
+        (
+            format!("+{esc_within_foo}-+{esc_within_bar};"),
+            esc_within_foo.to_owned(),
+            "foo",
+            esc_within_bar.to_owned(),
+            "bar",
+        ),
+    ] {
+        let script = recognized_reference_use(&text);
+        let facts = use_site_facts(only_top_level_use_site(&script).body());
+        assert_eq!(facts.len(), 2, "{text:?}");
+        assert_eq!(
+            facts[0].reference().fragment(),
+            expected_first_fragment,
+            "{text:?}"
+        );
+        assert_eq!(facts[0].semantic_name(), expected_first, "{text:?}");
+        assert_eq!(
+            facts[1].reference().fragment(),
+            expected_second_fragment,
+            "{text:?}"
+        );
+        assert_eq!(facts[1].semantic_name(), expected_second, "{text:?}");
+    }
+}
+
+#[test]
+fn left_unary_use_site_both_unary_duplicate_operands_are_preserved_distinctly() {
+    let script = recognized_reference_use("+a+-a;");
+    let facts = use_site_facts(only_top_level_use_site(&script).body());
+    assert_eq!(facts.len(), 2);
+    assert_eq!(facts[0].semantic_name(), "a");
+    assert_eq!(facts[1].semantic_name(), "a");
+    assert!(facts[0].reference().range().start() < facts[1].reference().range().start());
+}
+
+#[test]
+fn left_unary_use_site_both_unary_failed_continuation_rolls_back_whole_body() {
+    // Once the binary continuation begins, the whole body remains
+    // transactional exactly as #773 established: a failing, incomplete, or
+    // escaped-ReservedWord right-unary-wrapped second operand must never
+    // leak the successfully recognized unary-wrapped first fact as a
+    // completed `One`, and a valid bounded prefix must never authorize a
+    // richer or longer source.
+    for text in [
+        "+a+-;",
+        "+a+-1;",
+        "+a+-true;",
+        "+a+-\\u0069f;",
+        "+a+-\\u{};",
+        "+a+-+b;",
+        "+a-+-b;",
+        "+a+--b;",
+        "+a-++b;",
+        "+a+-b+c;",
+        "-a-+b-c;",
+        "+a+-b*c;",
+        "+a+-b.c;",
+        "+a+-b();",
+        "+a+-(b);",
+        "{ +a+-; }",
+        "{ +a+-+b; }",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn left_unary_use_site_both_unary_heterogeneous_operands_remain_unsupported() {
+    for text in [
+        "+a+-1;",
+        "+1+-b;",
+        "+a+true;",
+        "+a+null;",
+        "+a+this;",
+        "+a+\"b\";",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn left_unary_use_site_both_unary_comments_and_general_asi_remain_unsupported() {
+    for text in ["+a+/*comment*/-b;", "+a+-b/*comment*/;", "+a+-b\nlet c;"] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn left_unary_use_site_both_unary_recursive_blocks_remain_unsupported() {
+    assert_unsupported("{ { +a+-b; } }");
+}
+
+#[test]
+fn left_unary_use_site_both_unary_terminator_composes_with_all_placement_modes() {
+    // TopLevel: `AuthoredSemicolon` and `AutomaticAtEof`.
+    let script = recognized_reference_use("+a+-b;");
+    assert_eq!(
+        only_top_level_use_site(&script).terminator(),
+        SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AuthoredSemicolon
+    );
+    let script = recognized_reference_use("+a+-b");
+    assert_eq!(
+        only_top_level_use_site(&script).terminator(),
+        SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticAtEof
+    );
+
+    // Block: `AuthoredSemicolon` and `AutomaticBeforeBlockClose`, which only
+    // peeks `}` and never consumes it.
+    let script = recognized_block_reference_use("{ -a-+b; }");
+    assert_eq!(
+        only_block_use_site(&script).terminator(),
+        SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator::AuthoredSemicolon
+    );
+    let script = recognized_block_reference_use("{ -a-+b }");
+    assert_eq!(
+        only_block_use_site(&script).terminator(),
+        SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticBeforeBlockClose
+    );
+}
+
+#[test]
+fn left_unary_use_site_both_unary_existing_use_sites_do_not_regress() {
+    // Bare, plain-additive, and unary-only use-sites remain exactly as
+    // before this widening.
+    for text in [
+        "a;",
+        "+a;",
+        "-a;",
+        "a+b;",
+        "+a+b;",
+        "a+-b;",
+        "a-+b;",
+        "a+ +b;",
+        "a- -b;",
+        "{ a; }",
+        "{ +a; }",
+        "{ a+b; }",
+        "{ a+-b; }",
+    ] {
+        assert!(
+            !matches!(
+                recognize_selected_lexical_slice(&source(text)),
+                SelectedLexicalSliceOutcome::UnsupportedCoverage
+                    | SelectedLexicalSliceOutcome::ResourceLimited
+                    | SelectedLexicalSliceOutcome::InternalFailure
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn left_unary_use_site_both_unary_whole_source_transactionality() {
+    assert_unsupported("+a+-b;\n???");
+    assert_unsupported("+a+-b;\nlet x = ;");
+    assert_unsupported("{ +a+-b; ??? }");
+    assert_unsupported("{ +a+-b; }\n???");
 }
