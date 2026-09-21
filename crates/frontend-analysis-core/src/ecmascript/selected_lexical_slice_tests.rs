@@ -7792,13 +7792,47 @@ fn right_unary_additive_initializer_incomplete_or_richer_continuation_firewalls_
     }
 }
 
-/// Free-standing right-unary use-sites remain unsupported after this leaf:
-/// the free-standing body probe owns a distinct carrier and a distinct
-/// whole-body rollback contract, so initializer composition must not widen
-/// it (#688 comment 5748542106).
 #[test]
-fn right_unary_additive_initializer_does_not_widen_free_standing_use_sites() {
-    for text in ["a+-b;", "a-+b;", "a+ +b;", "a- -b;", "{ a+-b; }"] {
+fn right_unary_additive_free_standing_use_sites_preserve_facts_and_placement() {
+    for (text, expected_fragments) in [
+        ("a+-b;", ["a", "b"]),
+        (r"a-+\u0062;", ["a", r"\u0062"]),
+        (r"\u0061+ +b", [r"\u0061", "b"]),
+        (r"\u0061- -\u0062", [r"\u0061", r"\u0062"]),
+        ("a+ -a;", ["a", "a"]),
+    ] {
+        let script = recognized_reference_use(text);
+        let use_site = only_top_level_use_site(&script);
+        let facts = use_site_facts(use_site.body());
+        assert_eq!(facts.len(), 2, "{text:?}");
+        assert_eq!(facts[0].reference().fragment(), expected_fragments[0]);
+        assert_eq!(facts[1].reference().fragment(), expected_fragments[1]);
+        assert!(facts[0].reference().range().start() < facts[1].reference().range().start());
+    }
+
+    for text in ["{ a+-b; }", "{ a-+b; }", "{ a+ +b }", "{ a- -b }"] {
+        let script = recognized_block_reference_use(text);
+        assert_eq!(use_site_facts(only_block_use_site(&script).body()).len(), 2);
+    }
+}
+
+#[test]
+fn right_unary_additive_free_standing_failed_continuation_rolls_back_whole_body() {
+    for text in [
+        "a+-;",
+        r"a+-\u0069f;",
+        "a+-1;",
+        "a+-+b;",
+        "a++b;",
+        "a--b;",
+        "a+-b+c;",
+        "+a+-b;",
+        "-a-+b;",
+        "+a+ +b;",
+        "-a- -b;",
+        "{ a+-; }",
+        "{ a+-+b; }",
+    ] {
         assert_unsupported(text);
     }
 }
@@ -8671,7 +8705,6 @@ fn two_operand_operand_firewall_remains_unsupported() {
         "+-a+b;",
         "-+a+b;",
         "a++b;",
-        "a+-b;",
         "1+b;",
         "a+1;",
         "true+b;",
@@ -9514,16 +9547,14 @@ fn left_unary_use_site_failed_second_operand_does_not_degrade_to_one() {
 }
 
 #[test]
-fn left_unary_use_site_right_unary_and_operator_recursion_remain_unsupported() {
-    // Right-unary additive (`a+-b`) and unary-operator recursion on the
-    // left operand remain outside this leaf (issue sections 7/18): distinct
-    // punctuator/token-boundary and operator-recursion frontiers, never
-    // assumed symmetric with the accepted left-unary form.
+fn left_unary_use_site_both_unary_and_operator_recursion_remain_unsupported() {
+    // The unary-first route is deliberately unchanged: both-unary forms and
+    // unary-operator recursion remain outside this leaf.
     for text in [
-        "a+-b;",
-        "a-+b;",
-        "a+ +b;",
-        "a- -b;",
+        "+a+-b;",
+        "-a-+b;",
+        "+a+ +b;",
+        "-a- -b;",
         "++a+b;",
         "--a+b;",
         "+-a+b;",

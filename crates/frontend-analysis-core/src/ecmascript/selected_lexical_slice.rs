@@ -210,8 +210,8 @@
 //! probe back to its pre-unary snapshot (`NotSelected`), never degrading to
 //! `One(first)`, mirroring the existing plain-additive continuation's own
 //! transactional decline. No new item, body variant, operator, trivia, or
-//! whole-expression `SourceAnchor` is retained; right-unary additive
-//! (`a+-b`), `++`/`--`, and three-or-more additive operands remain outside;
+//! whole-expression `SourceAnchor` is retained; `++`/`--` and three-or-more
+//! additive operands remain outside;
 //! TopLevel/Block placement, terminator provenance, correspondence, static
 //! semantics, qualification branches, and Script/Block carrier topology
 //! remain unchanged, per the candidate-independent theorem accepted by
@@ -2900,12 +2900,15 @@ impl<'source> Cursor<'source> {
     /// retained), selected trivia is skipped, and a second operand is
     /// recognized by the same unmodified shared recognizer; once accepted,
     /// selected trivia is skipped once more and the probe commits
-    /// `Two { first, second }`. This same first-operand-then-optional-binary-
-    /// continuation shape is now shared verbatim by both the plain
-    /// bare-reference-first route below and the leading-unary-first route
-    /// (Issue #773): whichever recognizer supplies `first`, the remaining
-    /// binary-continuation logic is identical, and both routes commit into
-    /// the same unmodified `One`/`Two` carrier.
+    /// `Two { first, second }`.
+    ///
+    /// Issue #781 widens only the plain bare-reference-first continuation
+    /// with one optional right-unary `+`/`-`. Opposite binary and unary signs
+    /// may be adjacent, while equal signs require non-empty selected trivia,
+    /// so `a+-b`, `a-+b`, `a+ +b`, and `a- -b` select without splitting
+    /// `++` or `--`. The signs and trivia cardinality are transient; the
+    /// retained result remains `Two { first, second }`. The leading-unary-
+    /// first route above remains unchanged and admits no both-unary form.
     ///
     /// Only a failing continuation declines (`NotSelected`), restoring the
     /// cursor to exactly where it stood before this probe began: no
@@ -2974,9 +2977,9 @@ impl<'source> Cursor<'source> {
     /// itself -- the placement-owned caller's termination probe remains
     /// solely responsible for rejecting and rolling back a locally
     /// recognized unary atom, or unary-plus-binary pair, that is not
-    /// followed by a valid use-site terminator. Right-unary additive
-    /// (`a+-b`), unary-operator recursion (`++a+b`, `!a+b`), and a third or
-    /// later additive operand (`+a+b+c`) remain outside this leaf.
+    /// followed by a valid use-site terminator. Unary-operator recursion
+    /// (`++a+b`, `!a+b`), both-unary forms (`+a+-b`), and a third or later
+    /// additive operand (`+a+b+c`) remain outside this leaf.
     fn consume_selected_identifier_reference_expression_statement_use_site_body(
         &mut self,
     ) -> SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition {
@@ -3043,13 +3046,28 @@ impl<'source> Cursor<'source> {
 
         self.skip_selected_trivia();
 
-        if !self.consume_ascii('+') && !self.consume_ascii('-') {
+        let binary_sign = if self.consume_ascii('+') {
+            '+'
+        } else if self.consume_ascii('-') {
+            '-'
+        } else {
             return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::Matched(
                 SelectedFreeStandingIdentifierReferenceUseSite::One(first),
             );
-        }
+        };
 
+        let before_inter_operator_trivia = self.offset;
         self.skip_selected_trivia();
+
+        if let Some(unary_sign @ ('+' | '-')) = self.peek_char() {
+            if unary_sign == binary_sign && self.offset == before_inter_operator_trivia {
+                self.offset = snapshot;
+                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::NotSelected;
+            }
+
+            let _ = self.advance_char();
+            self.skip_selected_trivia();
+        }
 
         let second = match self.consume_selected_identifier_reference() {
             SelectedIdentifierReferenceRecognition::Matched(fact) => fact,
