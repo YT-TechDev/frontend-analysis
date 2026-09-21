@@ -7919,7 +7919,7 @@ fn both_unary_additive_initializer_positive_matrix_is_recognized_across_all_thre
         // Trivia in every selected position.
         ("const x=+a + - b;", "a", "b"),
         ("const x=-a - + b;", "a", "b"),
-        // #785 issue-text example: braced classic-escape mix.
+        // Spaced direct/direct both-unary example, opposite outer signs.
         ("const x = +foo - -bar;", "foo", "bar"),
     ] {
         let script = recognized(text);

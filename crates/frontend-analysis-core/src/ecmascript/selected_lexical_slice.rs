@@ -3524,15 +3524,31 @@ impl<'source> Cursor<'source> {
     /// instead of a plain first operand:
     ///
     /// ```text
-    /// SelectedBothUnaryIdentifierReferenceAdditiveInitializer ::=
+    /// SelectedLeadingPlusMinusIdentifierReferenceLeftAdditiveInitializer ::=
     ///     SelectedLeadingPlusMinusIdentifierReferenceUnaryExpression
     ///     SelectedAdditiveTrivia
     ///     SelectedBinaryPlusMinus
-    ///     SelectedBinaryUnaryBoundary
-    ///     SelectedUnaryPlusMinus
-    ///     SelectedUnaryOperandTrivia
-    ///     SelectedAcceptedIdentifierReference
+    ///     SelectedAdditiveTrivia
+    ///     (
+    ///         SelectedAcceptedIdentifierReference
+    ///       |
+    ///         SelectedBinaryUnaryBoundary
+    ///         SelectedUnaryPlusMinus
+    ///         SelectedUnaryOperandTrivia
+    ///         SelectedAcceptedIdentifierReference
+    ///     )
     /// ```
+    ///
+    /// The plain-right alternative (`+a+b`, `-a-b`) remains accepted exactly
+    /// as before Issue #785; the right-unary-wrapped alternative (`+a+-b`,
+    /// `+a-+b`, `+a+ +b`, `+a- -b`) is the new bounded addition. The
+    /// `SelectedAdditiveTrivia` shown once, before the alternation, is the
+    /// single trivia position both alternatives share: for the plain-right
+    /// alternative it is simply the trivia preceding the second operand; for
+    /// the right-unary alternative that same position doubles as the
+    /// inter-operator trivia the `SelectedBinaryUnaryBoundary` theorem
+    /// inspects, so trivia is never modeled as owned by both branches at
+    /// once.
     ///
     /// The caller passes the already-recognized `first` fact and the cursor
     /// positioned immediately after it. Selected trivia is skipped; absent an
