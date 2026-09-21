@@ -2637,6 +2637,17 @@ fn top_level_identifier_reference_expression_statement_use_site_remains_selected
         "-f\\u006Fo+bar;",
         "+a+b",
         "-a-b",
+        // Issue #787: production further widens that same continuation's
+        // second operand with an optional right-unary `+`/`-` wrapper, but
+        // this Oracle's own bounded theorem still never qualifies a
+        // unary-wrapped operand, so these also reach
+        // `SelectedAcceptedIncomplete`.
+        "+a+-b;",
+        "+a-+b;",
+        "-a+-b;",
+        "-a-+b;",
+        "+a+ +b;",
+        "-a- -b;",
     ] {
         assert!(
             matches!(
@@ -2715,6 +2726,10 @@ fn top_level_identifier_reference_expression_statement_use_site_asi_general_expr
         "-a[b];",
         "+a();",
         "+a=b;",
+        // Issue #787: a right-unary-wrapped second operand still admits no
+        // third-or-later additive operand.
+        "+a+-b+c;",
+        "-a-+b-c;",
         // Other unary operators remain outside this leaf (Issue #771).
         "!a;",
         "~a;",
@@ -2807,6 +2822,12 @@ fn block_identifier_reference_expression_statement_use_site_remains_selected_acc
         "{ -a-b; }",
         "{ +\\u0061-b }",
         "{ -f\\u006Fo+\\u0062 }",
+        // Issue #787: the same right-unary-wrapped second operand reaches
+        // `SelectedAcceptedIncomplete` for the Block placement too.
+        "{ +a+-b; }",
+        "{ -a-+b; }",
+        "{ +a+ +b }",
+        "{ -a- -b }",
     ] {
         assert!(
             matches!(
@@ -2883,6 +2904,10 @@ fn block_identifier_reference_expression_statement_use_site_asi_general_expressi
         "{ -a-b-c; }",
         "{ +a.b; }",
         "{ -a[b]; }",
+        // Issue #787: a right-unary-wrapped second operand still admits no
+        // third-or-later additive operand, for the Block placement too.
+        "{ +a+-b+c; }",
+        "{ -a-+b-c; }",
         // Other unary operators and parenthesized forms remain outside this
         // leaf (Issue #771).
         "{ !a; }",

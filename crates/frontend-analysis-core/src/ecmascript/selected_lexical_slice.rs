@@ -2853,10 +2853,15 @@ impl<'source> Cursor<'source> {
     /// `consume_selected_leading_plus_minus_identifier_reference_unary_expression`
     /// helper -- unchanged, never reimplemented here -- as one additional
     /// bounded body form tried before the existing bare/additive body logic
-    /// -- and widened by Issue #773 per #688 comment 5744425380 to compose
-    /// that same leading `+`/`-` `IdentifierReference` `UnaryExpression` with
-    /// an optional exactly-one authored binary `+`/`-` plain
-    /// `IdentifierReference` continuation):
+    /// -- widened by Issue #773 per #688 comment 5744425380 to compose that
+    /// same leading `+`/`-` `IdentifierReference` `UnaryExpression` with an
+    /// optional exactly-one authored binary `+`/`-` plain `IdentifierReference`
+    /// continuation -- and widened by Issue #787 per #688 comment 5759154638
+    /// to additionally admit an optional right-unary `+`/`-` wrapper on that
+    /// same continuation's second operand, reusing the candidate-independent
+    /// binary/right-unary token-boundary theorem accepted by #777/#778,
+    /// exactly mirroring the bare-reference-first widening Issue #781 already
+    /// applied below):
     ///
     /// ```text
     /// SelectedIdentifierReferenceExpressionStatementUseSiteBody ::=
@@ -2868,9 +2873,16 @@ impl<'source> Cursor<'source> {
     /// SelectedLeadingPlusMinusIdentifierReferenceLeftAdditiveUseSiteBody ::=
     ///     SelectedLeadingPlusMinusIdentifierReferenceUnaryExpression
     ///     SelectedAdditiveTrivia
-    ///     ("+" | "-")
+    ///     SelectedBinaryPlusMinus
     ///     SelectedAdditiveTrivia
-    ///     SelectedAcceptedIdentifierReference
+    ///     (
+    ///         SelectedAcceptedIdentifierReference
+    ///       |
+    ///         SelectedBinaryUnaryBoundary
+    ///         SelectedUnaryPlusMinus
+    ///         SelectedUnaryOperandTrivia
+    ///         SelectedAcceptedIdentifierReference
+    ///     )
     ///
     /// SelectedLeadingPlusMinusIdentifierReferenceFreeStandingUseSiteBody ::=
     ///     SelectedLeadingPlusMinusIdentifierReferenceUnaryExpression
@@ -2902,22 +2914,32 @@ impl<'source> Cursor<'source> {
     /// selected trivia is skipped once more and the probe commits
     /// `Two { first, second }`.
     ///
-    /// Issue #781 widens only the plain bare-reference-first continuation
-    /// with one optional right-unary `+`/`-`. Opposite binary and unary signs
-    /// may be adjacent, while equal signs require non-empty selected trivia,
-    /// so `a+-b`, `a-+b`, `a+ +b`, and `a- -b` select without splitting
-    /// `++` or `--`. The signs and trivia cardinality are transient; the
-    /// retained result remains `Two { first, second }`. The leading-unary-
-    /// first route above remains unchanged and admits no both-unary form.
+    /// Issue #781 widens the plain bare-reference-first continuation with one
+    /// optional right-unary `+`/`-`. Opposite binary and unary signs may be
+    /// adjacent, while equal signs require non-empty selected trivia, so
+    /// `a+-b`, `a-+b`, `a+ +b`, and `a- -b` select without splitting `++` or
+    /// `--`. Issue #787 applies this identical boundary theorem to the
+    /// leading-unary-first route above (`+a+-b`, `+a-+b`, `+a+ +b`,
+    /// `+a- -b`), so both continuations now admit the same bounded
+    /// right-unary-wrapped second operand -- closing the final both-unary
+    /// cell of the bounded exactly-two matrix. In either continuation the
+    /// signs and inter-operator trivia cardinality are transient recognition
+    /// state only, compared locally and then dropped; the retained result
+    /// remains the unchanged `Two { first, second }` carrier, and at most one
+    /// right-unary wrapper is admitted -- no recursion -- so `+a+-+b` and
+    /// `+a-+-b` still fail the second operand and decline.
     ///
     /// Only a failing continuation declines (`NotSelected`), restoring the
     /// cursor to exactly where it stood before this probe began: no
     /// candidate reference; an escaped-ReservedWord first or second
-    /// candidate; or a `+`/`-` continuation whose second operand does not
-    /// complete. This is a whole-body transaction, not a
-    /// first-operand-then-optional-continuation transaction: a locally
-    /// recognized `IdentifierReference "+" IdentifierReference` prefix never
-    /// authorizes a richer or longer source (`a+b+c`, `+a+b+c`), and an
+    /// candidate; or a `+`/`-` continuation (plain or right-unary-wrapped)
+    /// whose second operand does not complete. This is a whole-body
+    /// transaction, not a first-operand-then-optional-continuation
+    /// transaction, and it deliberately does not reuse the initializer's
+    /// degrade-to-`One`-on-failure recovery model (Issue #785/#786): a
+    /// locally recognized `IdentifierReference "+" IdentifierReference`
+    /// prefix, with or without a right-unary wrapper, never authorizes a
+    /// richer or longer source (`a+b+c`, `+a+b+c`, `+a+-b+c`), and an
     /// escaped-ReservedWord operand never gains a new Statement-local
     /// EE-04-R08 route. A matched body that the placement-owned caller
     /// cannot terminate validly (e.g. `a.b`, `+a+b+c`) is rolled back by that
@@ -2939,25 +2961,35 @@ impl<'source> Cursor<'source> {
     /// completed `One`. This helper retains no placement ownership of its
     /// own: TopLevel vs. Block placement belongs entirely to the caller.
     ///
-    /// Issue #771 (widened by Issue #773): the unmodified
+    /// Issue #771 (widened by Issue #773, then by Issue #787): the unmodified
     /// `consume_selected_leading_plus_minus_identifier_reference_unary_expression`
     /// helper is probed first, before the bare/additive logic below. A
     /// `Matched(first)` result no longer commits `One(first)` unconditionally:
     /// selected trivia is skipped and, absent an authored `+` or `-` at that
     /// position, `One(first)` still commits immediately exactly as before
-    /// #773. Otherwise exactly one authored `+` or `-` is consumed and
+    /// #773. Otherwise exactly one authored binary `+` or `-` is consumed and
     /// discarded (no operator kind or `SourceAnchor` retained), selected
-    /// trivia is skipped, and a second operand is recognized by the same
-    /// unmodified shared `consume_selected_identifier_reference` recognizer;
-    /// once accepted, selected trivia is skipped once more and the probe
-    /// commits `Two { first, second }` -- the exact same carrier and
-    /// left-to-right ordering the plain bare/additive route below produces,
-    /// never a new item or body variant. A declining or escaped-ReservedWord
-    /// second operand restores the cursor to this whole body probe's
-    /// original pre-unary snapshot and declines (`NotSelected`), never
-    /// degrading to `One(first)`: `+a+` and `+a+\u0069f` are not valid
-    /// prefixes of a richer unselected syntax. No operator, trivia, or
-    /// whole-unary/whole-additive `SourceAnchor` is retained; the authored
+    /// trivia is skipped, and the same #777/#778 binary/right-unary boundary
+    /// applied below governs an optional right-unary sign at that position
+    /// (Issue #787): opposite binary and unary signs may be adjacent with no
+    /// inter-operator trivia (`+a+-b`, `+a-+b`), while equal signs require
+    /// non-empty inter-operator selected trivia (`+a+ +b`, `+a- -b`), so
+    /// authored `++`/`--` is never split into a binary sign plus a
+    /// right-unary sign (`+a++b`, `+a--b` remain outside); at most one
+    /// right-unary wrapper is admitted, so `+a+-+b` still fails the second
+    /// operand. When present, the right-unary sign is consumed and discarded
+    /// before the shared recognizer runs, so it is never part of the second
+    /// operand's authored `SourceAnchor`. A second operand is then recognized
+    /// by the same unmodified shared `consume_selected_identifier_reference`
+    /// recognizer; once accepted, selected trivia is skipped once more and
+    /// the probe commits `Two { first, second }` -- the exact same carrier
+    /// and left-to-right ordering the plain bare/additive route below
+    /// produces, never a new item or body variant. A declining or
+    /// escaped-ReservedWord second operand restores the cursor to this whole
+    /// body probe's original pre-unary snapshot and declines (`NotSelected`),
+    /// never degrading to `One(first)`: `+a+`, `+a+\u0069f`, and `+a+-+b` are
+    /// not valid prefixes of a richer unselected syntax. No operator, trivia,
+    /// or whole-unary/whole-additive `SourceAnchor` is retained; the authored
     /// `+`/`-` spellings are construction syntax only. Selected trivia is
     /// skipped once more after the final committed operand in either case,
     /// mirroring the existing bare-reference route below (which already
@@ -2978,8 +3010,8 @@ impl<'source> Cursor<'source> {
     /// solely responsible for rejecting and rolling back a locally
     /// recognized unary atom, or unary-plus-binary pair, that is not
     /// followed by a valid use-site terminator. Unary-operator recursion
-    /// (`++a+b`, `!a+b`), both-unary forms (`+a+-b`), and a third or later
-    /// additive operand (`+a+b+c`) remain outside this leaf.
+    /// (`++a+b`, `!a+b`), recursive right-unary wrapping (`+a+-+b`), and a
+    /// third or later additive operand (`+a+b+c`) remain outside this leaf.
     fn consume_selected_identifier_reference_expression_statement_use_site_body(
         &mut self,
     ) -> SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition {
@@ -2991,13 +3023,28 @@ impl<'source> Cursor<'source> {
             ) => {
                 self.skip_selected_trivia();
 
-                if !self.consume_ascii('+') && !self.consume_ascii('-') {
+                let binary_sign = if self.consume_ascii('+') {
+                    '+'
+                } else if self.consume_ascii('-') {
+                    '-'
+                } else {
                     return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::Matched(
                         SelectedFreeStandingIdentifierReferenceUseSite::One(first),
                     );
-                }
+                };
 
+                let before_inter_operator_trivia = self.offset;
                 self.skip_selected_trivia();
+
+                if let Some(unary_sign @ ('+' | '-')) = self.peek_char() {
+                    if unary_sign == binary_sign && self.offset == before_inter_operator_trivia {
+                        self.offset = snapshot;
+                        return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::NotSelected;
+                    }
+
+                    let _ = self.advance_char();
+                    self.skip_selected_trivia();
+                }
 
                 let second = match self.consume_selected_identifier_reference() {
                     SelectedIdentifierReferenceRecognition::Matched(fact) => fact,
