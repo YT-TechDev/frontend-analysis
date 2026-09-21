@@ -9510,8 +9510,6 @@ fn two_operand_operand_firewall_remains_unsupported() {
         "+-a+b;",
         "-+a+b;",
         "a++b;",
-        "1+b;",
-        "a+1;",
         "true+b;",
         "a+null;",
         "this+b;",
@@ -10841,4 +10839,310 @@ fn left_unary_use_site_both_unary_whole_source_transactionality() {
     assert_unsupported("+a+-b;\nlet x = ;");
     assert_unsupported("{ +a+-b; ??? }");
     assert_unsupported("{ +a+-b; }\n???");
+}
+
+// --- Issue #793 (per #688 comment 5764090454): composes the
+// candidate-independent one-reference / one-plain-decimal heterogeneous
+// additive theorem accepted by #789/#790 into free-standing production,
+// reusing the existing `SelectedFreeStandingIdentifierReferenceUseSite::One`
+// carrier unchanged. Reference-left (`a + 1;`) widens the existing plain
+// bare-reference-first continuation in
+// `consume_selected_identifier_reference_expression_statement_use_site_body`;
+// Decimal-left (`1 + a;`) is a distinct free-standing-local bounded route
+// that deliberately does not reuse the initializer-owned partial-rollback
+// transaction helper (`consume_selected_plain_decimal_atom_initializer`).
+// Neither the Decimal operand, the binary operator, nor the orientation is
+// retained: only the sole `IdentifierReference` fact is, as `One(reference)`.
+// #789/#790 remain the candidate-independent Oracle for the constituent
+// heterogeneous theorem; these production tests author expected
+// facts/ranges independently of the candidate under test. `a+1;` / `1+b;`
+// move from the firewall lists above into selected-positive coverage. ---
+
+#[test]
+fn one_reference_one_plain_decimal_additive_use_site_positive_matrix_is_recognized() {
+    let esc_61 = concat!("\\", "u0061"); // decodes to "a"
+    let esc_foo = concat!("f", "\\", "u006F", "o"); // mixed-part, decodes to "foo"
+    let esc_bar = concat!("b", "\\", "u0061", "r"); // mixed-part, decodes to "bar"
+
+    for (text, expected_name) in [
+        // Reference-left, both operators, all three plain Decimal atom
+        // families.
+        ("a + 1;".to_owned(), "a"),
+        ("a - 1.0;".to_owned(), "a"),
+        ("a + .5;".to_owned(), "a"),
+        ("a - 1e-2;".to_owned(), "a"),
+        // Decimal-left, both operators, all three plain Decimal atom
+        // families.
+        ("1 + a;".to_owned(), "a"),
+        ("1.0 - a;".to_owned(), "a"),
+        (".5 + a;".to_owned(), "a"),
+        ("1e-2 - a;".to_owned(), "a"),
+        // Direct / escaped `IdentifierReference` provenance, both
+        // orientations.
+        (format!("{esc_61} + 1;"), "a"),
+        (format!("1 + {esc_61};"), "a"),
+        (format!("{esc_foo} - 1e2;"), "foo"),
+        (format!(".5 + {esc_bar};"), "bar"),
+    ] {
+        let script = recognized_reference_use(&text);
+        let fact = only_use_site_fact(&script);
+        assert_eq!(fact.semantic_name(), expected_name, "{text:?}");
+    }
+}
+
+/// Exact retained provenance: the retained fact's authored anchor and
+/// decoded semantic name cover only the `IdentifierReference` operand,
+/// never the Decimal operand, the binary operator, selected trivia, or the
+/// exponent-internal sign owned by the Decimal atom -- in either
+/// orientation.
+#[test]
+fn one_reference_one_plain_decimal_additive_use_site_exact_retained_provenance_excludes_decimal_and_operator()
+ {
+    let esc_61 = concat!("\\", "u0061");
+    let esc_foo = concat!("f", "\\", "u006F", "o");
+
+    let text = format!("{esc_61} + 1e-2;");
+    let script = recognized_reference_use(&text);
+    let fact = only_use_site_fact(&script);
+    assert_eq!(fact.reference().fragment(), esc_61);
+    assert_eq!(fact.semantic_name(), "a");
+
+    let text = format!("1e-2 + {esc_foo};");
+    let script = recognized_reference_use(&text);
+    let fact = only_use_site_fact(&script);
+    assert_eq!(fact.reference().fragment(), esc_foo);
+    assert_eq!(fact.semantic_name(), "foo");
+}
+
+#[test]
+fn one_reference_one_plain_decimal_additive_use_site_composes_across_top_level_and_block() {
+    for (text, expected_name) in [("a + 1;", "a"), ("1 + a;", "a")] {
+        let script = recognized_reference_use(text);
+        let fact = only_use_site_fact(&script);
+        assert_eq!(fact.semantic_name(), expected_name, "{text:?}");
+    }
+
+    for (text, expected_name) in [("{ a - 1e2; }", "a"), ("{ 1e2 - a; }", "a")] {
+        let script = recognized_block_reference_use(text);
+        let fact = only_block_use_site_fact(&script);
+        assert_eq!(fact.semantic_name(), expected_name, "{text:?}");
+    }
+}
+
+#[test]
+fn one_reference_one_plain_decimal_additive_use_site_termination_matrix() {
+    for text in ["a + 1;", "1 + a;"] {
+        let script = recognized_reference_use(text);
+        let use_site = only_top_level_use_site(&script);
+        assert_eq!(
+            use_site.terminator(),
+            SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AuthoredSemicolon,
+            "{text:?}"
+        );
+        assert_eq!(use_site_facts(use_site.body()).len(), 1, "{text:?}");
+    }
+
+    for text in ["a + 1", "1 + a"] {
+        let script = recognized_reference_use(text);
+        let use_site = only_top_level_use_site(&script);
+        assert_eq!(
+            use_site.terminator(),
+            SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticAtEof,
+            "{text:?}"
+        );
+        assert_eq!(use_site_facts(use_site.body()).len(), 1, "{text:?}");
+    }
+
+    for text in ["{ a + 1; }", "{ 1 + a; }"] {
+        let script = recognized_block_reference_use(text);
+        let use_site = only_block_use_site(&script);
+        assert_eq!(
+            use_site.terminator(),
+            SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator::AuthoredSemicolon,
+            "{text:?}"
+        );
+        assert_eq!(use_site_facts(use_site.body()).len(), 1, "{text:?}");
+    }
+
+    for text in ["{ a + 1 }", "{ 1 + a }"] {
+        let script = recognized_block_reference_use(text);
+        let use_site = only_block_use_site(&script);
+        assert_eq!(
+            use_site.terminator(),
+            SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticBeforeBlockClose,
+            "{text:?}"
+        );
+        assert_eq!(use_site_facts(use_site.body()).len(), 1, "{text:?}");
+    }
+}
+
+#[test]
+fn one_reference_one_plain_decimal_additive_use_site_selected_trivia_continuation_is_recognized() {
+    for (text, expected_name) in [("a\n+ 1;", "a"), ("1\n- a;", "a")] {
+        let script = recognized_reference_use(text);
+        let fact = only_use_site_fact(&script);
+        assert_eq!(fact.semantic_name(), expected_name, "{text:?}");
+    }
+}
+
+/// Right-unary firewall (per #688 comment 5764090454): the existing
+/// accepted right-unary two-reference forms (`a+-b`, `a-+b`, `a+ +b`,
+/// `a- -b`) remain unchanged, but a right-unary wrapper never admits the new
+/// plain-Decimal alternative -- `a+-1`, `a-+1`, `a+ +1`, and `a- -1` remain
+/// outside this leaf.
+#[test]
+fn one_reference_one_plain_decimal_additive_use_site_right_unary_firewall_remains_unsupported() {
+    for text in ["a+-1;", "a-+1;", "a+ +1;", "a- -1;"] {
+        assert_unsupported(text);
+    }
+
+    // Regression: the predecessor right-unary two-reference theorem is
+    // undisturbed.
+    let script = recognized_reference_use("a+-b;");
+    let facts = use_site_facts(only_top_level_use_site(&script).body());
+    assert_eq!(facts.len(), 2);
+    assert_eq!(facts[0].semantic_name(), "a");
+    assert_eq!(facts[1].semantic_name(), "b");
+}
+
+/// Leading-unary branch hard-zero (per #688 comment 5764090454): the
+/// leading-unary-first route is never widened with a Decimal sibling.
+#[test]
+fn one_reference_one_plain_decimal_additive_use_site_leading_unary_branch_hard_zero_remains_unsupported()
+ {
+    for text in ["+a + 1;", "-a + 1;"] {
+        assert_unsupported(text);
+    }
+
+    // Regression: the predecessor leading-unary-first theorem is
+    // undisturbed.
+    let script = recognized_reference_use("+a+b;");
+    let facts = use_site_facts(only_top_level_use_site(&script).body());
+    assert_eq!(facts.len(), 2);
+}
+
+/// Decimal-left unary firewall (per #688 comment 5764090454): neither the
+/// Decimal atom nor the `IdentifierReference` operand may be wrapped in a
+/// leading unary sign for this theorem. The exponent-internal sign in
+/// `1e-2` remains owned by the Decimal atom and stays in scope.
+#[test]
+fn one_reference_one_plain_decimal_additive_use_site_decimal_left_unary_firewall_remains_unsupported()
+ {
+    for text in [
+        "1 + +a;", "1 + -a;", "1 - +a;", "1 - -a;", "+1 + a;", "-1 + a;",
+    ] {
+        assert_unsupported(text);
+    }
+
+    // Regression / boundary spot-check: the exponent-internal sign remains
+    // in scope.
+    let script = recognized_reference_use("1e-2 + a;");
+    let fact = only_use_site_fact(&script);
+    assert_eq!(fact.semantic_name(), "a");
+}
+
+/// Cardinality, zero-reference, operand-family, richer-expression,
+/// numeric-frontier, comment, and escaped-ReservedWord firewalls (per #688
+/// comment 5764090454): a valid bounded `IdentifierReference`/plain-Decimal
+/// prefix never authorizes a richer or differently-typed complete source.
+#[test]
+fn one_reference_one_plain_decimal_additive_use_site_firewalls_remain_unsupported() {
+    for text in [
+        // Cardinality: 3+ operands are never truncated to a valid prefix.
+        "a + 1 + b;",
+        "1 + a + 2;",
+        "a - 1 - b;",
+        "1 - a - 2;",
+        // Zero-reference: a bare or all-Decimal source stays outside.
+        "1;",
+        "1 + 2;",
+        // Richer-expression / precedence / grouping / member / call.
+        "(a) + 1;",
+        "1 + (a);",
+        "a.b + 1;",
+        "1 + a.b;",
+        "a() + 1;",
+        "1 + a();",
+        "a + 1 * b;",
+        "a * 1 + b;",
+        "a = 1 + b;",
+        "a += 1;",
+        "a ? 1 : b;",
+        "a || 1;",
+        "a && 1;",
+        "a ?? 1;",
+        // Other operand families.
+        "a + true;",
+        "true + a;",
+        "a + null;",
+        "null + a;",
+        "a + this;",
+        "this + a;",
+        "a + \"x\";",
+        "\"x\" + a;",
+        // Numeric frontier: separator / non-decimal radix / BigInt.
+        "a + 1_0;",
+        "1_0 + a;",
+        "a + 0x10;",
+        "0x10 + a;",
+        "a + 1n;",
+        "1n + a;",
+        // Comments.
+        "a/*c*/+1;",
+        "1+/*c*/a;",
+        // General ASI / recursive Block.
+        "a + 1\nlet b;",
+        "{ { a + 1; } }",
+        "{ { 1 + a; } }",
+    ] {
+        assert_unsupported(text);
+    }
+
+    for text in ["{ a + 1 + b; }", "{ 1 + a + 2; }"] {
+        assert_unsupported(text);
+    }
+
+    // Escaped ReservedWord operand: never an accepted operand in either
+    // orientation.
+    let escaped_if = concat!("\\", "u0069", "f"); // decodes to the reserved word "if"
+    assert_unsupported(&format!("{escaped_if} + 1;"));
+    assert_unsupported(&format!("1 + {escaped_if};"));
+
+    // Malformed escape.
+    assert_unsupported(r"1 + \u{};");
+}
+
+/// Body-level decline: an incomplete continuation must restore the whole
+/// free-standing body snapshot, never a partial `DecimalOnly`-style commit.
+#[test]
+fn one_reference_one_plain_decimal_additive_use_site_body_level_decline_restores_whole_body() {
+    for text in ["a + ;", "1 + ;", "a + true;", "1 + true;"] {
+        assert_unsupported(text);
+    }
+}
+
+/// Placement-level richer-tail rollback: a locally complete bounded prefix
+/// must never authorize a longer additive chain -- the placement terminator
+/// rejects the remaining token and the entire use-site rolls back, never a
+/// truncated `One` publication.
+#[test]
+fn one_reference_one_plain_decimal_additive_use_site_richer_tail_rolls_back_whole_use_site() {
+    for text in [
+        "a + 1 + b;",
+        "1 + a + 2;",
+        "{ a + 1 + b; }",
+        "{ 1 + a + 2; }",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn one_reference_one_plain_decimal_additive_use_site_whole_source_transactionality() {
+    assert_unsupported("a + 1;\n???");
+    assert_unsupported("1 + a;\n???");
+    assert_unsupported("a + 1;\nlet x = ;");
+    assert_unsupported("1 + a;\nlet x = ;");
+    assert_unsupported("{ a + 1; ??? }");
+    assert_unsupported("{ 1 + a; }\n???");
 }

@@ -1428,8 +1428,13 @@ enum SelectedIdentifierReferenceRecognition {
 /// Crate-private bounded cardinality carrier for a free-standing
 /// `IdentifierReference` `ExpressionStatement` use-site occurrence, widening
 /// the previous always-exactly-one-fact use-site payload to admit exactly
-/// one additional selected additive operand (Issue #766). `One` is the
-/// unchanged existing single-reference free-standing use-site. `Two` retains
+/// one additional selected additive operand (Issue #766). `One` represents
+/// a free-standing use-site body retaining exactly one `IdentifierReference`
+/// fact (Issue #793): a plain single-reference use-site (`a;`), or a
+/// selected one-reference / one-plain-decimal heterogeneous additive
+/// use-site (`a + 1;`, `1 + a;`) whose consumed-and-discarded Decimal
+/// operand, binary operator, and left/right orientation are never retained.
+/// `Two` retains
 /// both authored operands of a selected
 /// `SelectedTwoIdentifierReferenceAdditiveExpressionStatement` in exact
 /// authored left-to-right order (`first` is the left operand, `second` is
@@ -3096,6 +3101,51 @@ impl<'source> Cursor<'source> {
     /// followed by a valid use-site terminator. Unary-operator recursion
     /// (`++a+b`, `!a+b`), recursive right-unary wrapping (`+a+-+b`), and a
     /// third or later additive operand (`+a+b+c`) remain outside this leaf.
+    ///
+    /// Issue #793 (per #688 comment 5764090454) widens this leaf with the
+    /// bounded one-reference / one-plain-decimal heterogeneous additive
+    /// theorem already accepted for the initializer position by Issue #791,
+    /// composing the candidate-independent theorem accepted by #789/#790.
+    /// Two intentionally asymmetric routes compose the same retained
+    /// `One(reference)` result:
+    ///
+    /// Reference-left (`a + 1;`): only the plain bare-reference-first route
+    /// below is widened -- never the leading-unary-first route above, which
+    /// stays hard-zero for this leaf, so `+a + 1;`/`-a + 1;` remain outside.
+    /// When the plain route's second-operand `IdentifierReference` probe
+    /// declines *and* no right-unary `+`/`-` wrapper was consumed for this
+    /// continuation, one accepted plain Decimal atom is tried, via the
+    /// existing unmodified `consume_selected_plain_exponent_decimal_literal`
+    /// / `consume_selected_plain_fractional_decimal_literal` /
+    /// `consume_selected_decimal_integer` helpers in that order, at the
+    /// cursor position immediately after the binary operator and its
+    /// trivia. A right-unary wrapper having been consumed forecloses the
+    /// Decimal fallback unconditionally, so `a+-1;`/`a-+1;`/`a+ +1;`/`a- -1;`
+    /// stay outside exactly like their initializer counterparts. A matched
+    /// Decimal atom commits `One(first)` with the cursor left after its own
+    /// trailing selected trivia; a declining Decimal atom (or a
+    /// right-unary-guarded decline) restores the cursor to this whole body
+    /// probe's original snapshot and returns `NotSelected` -- never `Two`,
+    /// and never a degrade-to-`One` partial rollback.
+    ///
+    /// Decimal-left (`1 + a;`): when the bare first-operand
+    /// `IdentifierReference` probe declines outright (not an
+    /// escaped-ReservedWord decline), a distinct free-standing-local route,
+    /// `consume_selected_plain_decimal_atom_identifier_reference_free_standing_use_site_body`,
+    /// is tried from this same snapshot.
+    ///
+    /// Both routes deliberately do not call the initializer-owned
+    /// `consume_selected_plain_decimal_atom_initializer` (Issue #791): that
+    /// helper may commit a locally successful `DecimalOnly` result when its
+    /// continuation declines, which would incorrectly let a bare Decimal
+    /// atom (`1;`) or a truncated richer chain (`1 + a + 2;` up through
+    /// `1`) become a complete free-standing use-site. Only the lower-level
+    /// Decimal atom recognizers are shared; the transaction owner is not.
+    /// Either route's Decimal atom is consumed and discarded -- never
+    /// retained as a fact, operator, or orientation -- and a
+    /// `ResourceLimited`/`InternalFailure` classification from either
+    /// route's `IdentifierReference` operand is propagated immediately,
+    /// never downgraded to a completed `One` or to `NotSelected`.
     fn consume_selected_identifier_reference_expression_statement_use_site_body(
         &mut self,
     ) -> SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition {
@@ -3162,10 +3212,15 @@ impl<'source> Cursor<'source> {
 
         let first = match self.consume_selected_identifier_reference() {
             SelectedIdentifierReferenceRecognition::Matched(fact) => fact,
-            SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName { .. }
-            | SelectedIdentifierReferenceRecognition::NotSelected => {
+            SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName { .. } => {
                 self.offset = snapshot;
                 return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::NotSelected;
+            }
+            SelectedIdentifierReferenceRecognition::NotSelected => {
+                return self
+                    .consume_selected_plain_decimal_atom_identifier_reference_free_standing_use_site_body(
+                        snapshot,
+                    );
             }
             SelectedIdentifierReferenceRecognition::ResourceLimited => {
                 return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::ResourceLimited;
@@ -3190,6 +3245,7 @@ impl<'source> Cursor<'source> {
         let before_inter_operator_trivia = self.offset;
         self.skip_selected_trivia();
 
+        let mut right_unary_consumed = false;
         if let Some(unary_sign @ ('+' | '-')) = self.peek_char() {
             if unary_sign == binary_sign && self.offset == before_inter_operator_trivia {
                 self.offset = snapshot;
@@ -3198,28 +3254,133 @@ impl<'source> Cursor<'source> {
 
             let _ = self.advance_char();
             self.skip_selected_trivia();
+            right_unary_consumed = true;
         }
 
-        let second = match self.consume_selected_identifier_reference() {
-            SelectedIdentifierReferenceRecognition::Matched(fact) => fact,
+        let after_operator = self.offset;
+        match self.consume_selected_identifier_reference() {
+            SelectedIdentifierReferenceRecognition::Matched(second) => {
+                self.skip_selected_trivia();
+                SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::Matched(
+                    SelectedFreeStandingIdentifierReferenceUseSite::Two { first, second },
+                )
+            }
             SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName { .. }
             | SelectedIdentifierReferenceRecognition::NotSelected => {
+                self.offset = after_operator;
+                if !right_unary_consumed
+                    && (self.consume_selected_plain_exponent_decimal_literal()
+                        || self.consume_selected_plain_fractional_decimal_literal()
+                        || self.consume_selected_decimal_integer())
+                {
+                    self.skip_selected_trivia();
+                    return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::Matched(
+                        SelectedFreeStandingIdentifierReferenceUseSite::One(first),
+                    );
+                }
                 self.offset = snapshot;
-                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::NotSelected;
+                SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::NotSelected
             }
             SelectedIdentifierReferenceRecognition::ResourceLimited => {
-                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::ResourceLimited;
+                SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::ResourceLimited
             }
             SelectedIdentifierReferenceRecognition::InternalFailure => {
-                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::InternalFailure;
+                SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::InternalFailure
             }
-        };
+        }
+    }
+
+    /// Composes the Decimal-left orientation of the bounded one-reference /
+    /// one-plain-decimal heterogeneous additive free-standing use-site
+    /// theorem (Issue #793, per #688 comment 5764090454), reusing the
+    /// candidate-independent theorem accepted by #789/#790:
+    ///
+    /// ```text
+    /// SelectedPlainDecimalAtomIdentifierReferenceFreeStandingUseSiteBody ::=
+    ///     SelectedAcceptedPlainDecimalAtom
+    ///     SelectedAdditiveTrivia
+    ///     ("+" | "-")
+    ///     SelectedAdditiveTrivia
+    ///     SelectedAcceptedIdentifierReference
+    /// ```
+    ///
+    /// Called only from
+    /// `consume_selected_identifier_reference_expression_statement_use_site_body`,
+    /// with `body_snapshot` the exact offset that whole body probe started
+    /// from (never merely this route's own local starting offset, since none
+    /// exists separately) and the cursor already positioned there. The
+    /// Decimal atom is recognized exactly once, via the existing unmodified
+    /// `consume_selected_plain_exponent_decimal_literal` /
+    /// `consume_selected_plain_fractional_decimal_literal` /
+    /// `consume_selected_decimal_integer` helpers in that exact order, never
+    /// rescanned; no accepted atom at all restores `body_snapshot` and
+    /// declines (`NotSelected`) immediately, leaving the caller's other
+    /// routes free to recognize the same source.
+    ///
+    /// There is no Decimal-only free-standing predecessor. This deliberately
+    /// does not call the initializer-owned
+    /// `consume_selected_plain_decimal_atom_initializer` (Issue #791): that
+    /// helper's continuation may degrade to a locally successful
+    /// `DecimalOnly` result when the reference continuation declines, which
+    /// would incorrectly authorize a bare Decimal atom (`1;`) or a truncated
+    /// richer chain (`1 + a + 2;` up through `1`) as a complete free-standing
+    /// use-site. Physical lexical similarity does not establish
+    /// transaction-owner equivalence, so only the lower-level Decimal atom
+    /// recognizers are shared here; every decline in this route -- an absent
+    /// binary `+`/`-`, or a declining/escaped-ReservedWord/absent
+    /// `IdentifierReference` operand -- restores the cursor to exactly
+    /// `body_snapshot` and returns `NotSelected`, never a partial commit.
+    ///
+    /// A matched `IdentifierReference` operand (via the same unmodified
+    /// shared `consume_selected_identifier_reference` recognizer, never a
+    /// second scanner/decoder) commits
+    /// `SelectedFreeStandingIdentifierReferenceUseSite::One` carrying only
+    /// that operand's existing `SelectedIdentifierReferenceFact`, with the
+    /// cursor left after its own trailing selected trivia; the Decimal atom,
+    /// the operator, and the orientation are never retained. A
+    /// `ResourceLimited`/`InternalFailure` classification from that
+    /// operand's recognition is propagated immediately and never downgraded
+    /// to a completed `One` or to `NotSelected`.
+    fn consume_selected_plain_decimal_atom_identifier_reference_free_standing_use_site_body(
+        &mut self,
+        body_snapshot: usize,
+    ) -> SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition {
+        if !(self.consume_selected_plain_exponent_decimal_literal()
+            || self.consume_selected_plain_fractional_decimal_literal()
+            || self.consume_selected_decimal_integer())
+        {
+            self.offset = body_snapshot;
+            return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::NotSelected;
+        }
 
         self.skip_selected_trivia();
 
-        SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::Matched(
-            SelectedFreeStandingIdentifierReferenceUseSite::Two { first, second },
-        )
+        if !(self.consume_ascii('+') || self.consume_ascii('-')) {
+            self.offset = body_snapshot;
+            return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::NotSelected;
+        }
+
+        self.skip_selected_trivia();
+
+        match self.consume_selected_identifier_reference() {
+            SelectedIdentifierReferenceRecognition::Matched(reference) => {
+                self.skip_selected_trivia();
+                SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::Matched(
+                    SelectedFreeStandingIdentifierReferenceUseSite::One(reference),
+                )
+            }
+            SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName { .. }
+            | SelectedIdentifierReferenceRecognition::NotSelected => {
+                self.offset = body_snapshot;
+                SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::NotSelected
+            }
+            SelectedIdentifierReferenceRecognition::ResourceLimited => {
+                SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::ResourceLimited
+            }
+            SelectedIdentifierReferenceRecognition::InternalFailure => {
+                SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::InternalFailure
+            }
+        }
     }
 
     /// Placement-owned TopLevel free-standing `IdentifierReference`

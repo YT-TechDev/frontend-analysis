@@ -3065,8 +3065,6 @@ fn two_operand_cardinality_operand_and_richer_expression_firewalls_remain_unsupp
         "--a+b;",
         "!a+b;",
         "a++b;",
-        "1+b;",
-        "a+1;",
         "true+b;",
         "a+null;",
         "this+b;",
@@ -3142,4 +3140,131 @@ fn two_operand_use_site_whole_source_transactionality() {
 #[test]
 fn two_operand_use_site_known_static_rejection_gates_qualification() {
     assert_static_semantics_rejected("let a;\n{ var a; b+-c; }", "a", (13, 14));
+}
+
+// --- Issue #793 (per #688 comment 5764090454): composes the
+// candidate-independent one-reference / one-plain-decimal heterogeneous
+// additive theorem accepted by #789/#790 into free-standing production,
+// reusing the existing `SelectedFreeStandingIdentifierReferenceUseSite::One`
+// carrier. `a+1;` and `1+b;` move from the firewall list above into
+// selected-positive coverage; qualification lifecycle for every newly
+// selected complete source remains exactly `SelectedAcceptedIncomplete`. ---
+
+#[test]
+fn one_reference_one_plain_decimal_additive_use_site_remains_selected_accepted_incomplete() {
+    for text in [
+        // Reference-left, both operators, all three plain Decimal atom
+        // families, TopLevel authored-semicolon.
+        "a + 1;",
+        "a - 1.0;",
+        "a + .5;",
+        "a - 1e-2;",
+        // Decimal-left, both operators, all three plain Decimal atom
+        // families, TopLevel authored-semicolon.
+        "1 + a;",
+        "1.0 - a;",
+        ".5 + a;",
+        "1e-2 - a;",
+        // Direct / escaped provenance, both orientations.
+        "\\u0061 + 1;",
+        "1 + \\u0061;",
+        "f\\u006Fo - 1e2;",
+        ".5 + b\\u0061r;",
+        // One-level Block, authored semicolon.
+        "{ a + 1; }",
+        "{ 1 + a; }",
+        // Automatic termination: TopLevel EOF, Block before-close.
+        "a + 1",
+        "1 + a",
+        "{ a + 1 }",
+        "{ 1 + a }",
+        // Selected-trivia LineTerminator continuation.
+        "a\n+ 1;",
+        "1\n- a;",
+        // Correspondence sealing sources (Block-contained lexical + use-site).
+        "let a;\na + 1;",
+        "let a;\n1 + a;",
+        "let a;\n{ 1 + a; }",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn one_reference_one_plain_decimal_additive_use_site_firewalls_remain_unsupported() {
+    for text in [
+        // Right-unary firewall (reference-left): a consumed right-unary
+        // wrapper forecloses the Decimal fallback unconditionally.
+        "a+-1;",
+        "a-+1;",
+        "a+ +1;",
+        "a- -1;",
+        // Leading-unary branch hard-zero.
+        "+a + 1;",
+        "-a + 1;",
+        // Decimal-left unary firewall.
+        "1 + +a;",
+        "1 + -a;",
+        "+1 + a;",
+        "-1 + a;",
+        // Body-level incomplete continuation.
+        "a + ;",
+        "1 + ;",
+        "a + true;",
+        "1 + true;",
+        // Cardinality / richer-tail rollback.
+        "a + 1 + b;",
+        "1 + a + 2;",
+        // Zero-reference firewall.
+        "1;",
+        "1 + 2;",
+        // Richer-expression / grouping / member / call.
+        "(a) + 1;",
+        "1 + (a);",
+        "a.b + 1;",
+        "1 + a.b;",
+        "a() + 1;",
+        "1 + a();",
+        "a + 1 * b;",
+        "a = 1 + b;",
+        // Other operand families.
+        "a + true;",
+        "true + a;",
+        "a + null;",
+        "null + a;",
+        "a + this;",
+        "this + a;",
+        "a + \"x\";",
+        "\"x\" + a;",
+        // Numeric frontier.
+        "a + 1_0;",
+        "1_0 + a;",
+        "a + 0x10;",
+        "0x10 + a;",
+        "a + 1n;",
+        "1n + a;",
+        // Comments / general ASI / recursive Block.
+        "a/*c*/+1;",
+        "1+/*c*/a;",
+        "a + 1\nlet b;",
+        "{ { a + 1; } }",
+        // Escaped ReservedWord / malformed.
+        "\\u0069f + 1;",
+        "1 + \\u0069f;",
+        "1 + \\u{};",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::UnsupportedCoverage
+            ),
+            "{text:?}"
+        );
+    }
 }
