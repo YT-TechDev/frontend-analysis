@@ -3864,3 +3864,96 @@ fn both_unary_use_site_known_static_rejection_suppresses_relation_construction()
     // locally valid `+a+-b;` both-unary use-site never publishes a relation
     // once the existing `x`/`x` lexical/var static rejection wins.
 }
+
+// --- Issue #793 (per #688 comment 5764090454): one-reference /
+// one-plain-decimal heterogeneous additive free-standing use-site
+// correspondence. The retained body is the unchanged `One(reference)`
+// carrier, so the existing per-item `use_site.body().facts()` consumer
+// naturally emits exactly one existing relation for both the Reference-left
+// and Decimal-left orientations, with unchanged TopLevel/Block precedence
+// and no new relation type, meaning, or ordering theorem. ---
+
+#[test]
+fn one_reference_one_plain_decimal_use_site_correspondence_top_level() {
+    for (text, expected_name) in [("let a;\na + 1;", "a"), ("let a;\n1 + a;", "a")] {
+        let (_, script) = recognized_reference_use(text);
+        let analysis = accepted_use_site_analysis(&script);
+        let relations = analysis.relations();
+        assert_eq!(relations.len(), 1, "{text:?}");
+        assert_eq!(relations[0].semantic_name(), expected_name, "{text:?}");
+        let (binding, region) = relations[0]
+            .correspondence()
+            .selected_lexical_binding()
+            .unwrap_or_else(|| panic!("must resolve to the lexical binding, {text:?}"));
+        assert_eq!(binding.fragment(), expected_name, "{text:?}");
+        assert!(
+            matches!(
+                region,
+                SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn one_reference_one_plain_decimal_use_site_correspondence_block() {
+    for (text, expected_name) in [("{ let a;\na + 1; }", "a"), ("{ let a;\n1 + a; }", "a")] {
+        let (_, script) = recognized_block_reference_use(text);
+        let analysis = accepted_block_use_site_analysis(&script);
+        let relations = analysis.relations();
+        assert_eq!(relations.len(), 1, "{text:?}");
+        assert_eq!(relations[0].semantic_name(), expected_name, "{text:?}");
+        let (binding, region) = relations[0]
+            .correspondence()
+            .selected_lexical_binding()
+            .unwrap_or_else(|| {
+                panic!("must resolve to the current-Block lexical binding, {text:?}")
+            });
+        assert_eq!(binding.fragment(), expected_name, "{text:?}");
+        assert!(
+            matches!(
+                region,
+                SelectedVariableStatementNameCorrespondenceRegion::Block(_)
+            ),
+            "{text:?}"
+        );
+    }
+
+    // Block-owned use-site falling back to the TopLevel lexical binding,
+    // preserving existing Block correspondence precedence and region
+    // semantics.
+    let (_, script) = recognized_block_reference_use("let a;\n{ 1 + a; }");
+    let analysis = accepted_block_use_site_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(relations.len(), 1);
+    assert_eq!(relations[0].semantic_name(), "a");
+    let (binding, region) = relations[0]
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("must fall back to the TopLevel lexical binding a");
+    assert_eq!(binding.fragment(), "a");
+    assert!(matches!(
+        region,
+        SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+    ));
+}
+
+#[test]
+fn one_reference_one_plain_decimal_use_site_known_static_rejection_suppresses_relation_construction()
+ {
+    let source = source("let a;\n{ var a;\n1 + a; }");
+    let script = match recognize_selected_lexical_slice(&source) {
+        SelectedLexicalSliceOutcome::RecognizedBlockReferenceUseEnabledSlice(script) => script,
+        other => panic!("expected Block-reference-use-enabled recognition, got {other:?}"),
+    };
+    assert!(matches!(
+        evaluate_selected_block_reference_use_enabled_static_semantics(&script),
+        SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::LexicalVarNameCollision { .. }
+        )
+    ));
+    // No relation surface is reachable without an accepted witness: the
+    // locally valid `1 + a;` heterogeneous use-site never publishes a
+    // relation once the existing `a`/`a` lexical/var static rejection wins.
+}
