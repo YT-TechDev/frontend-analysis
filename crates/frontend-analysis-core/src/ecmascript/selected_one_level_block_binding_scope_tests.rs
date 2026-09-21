@@ -471,6 +471,39 @@ fn two_identifier_reference_additive_initializer_does_not_deduplicate_equal_sema
     assert_ne!(relations[0].reference.start, relations[1].reference.start);
 }
 
+// Issue #791 (per #688 comment 5762579228): the one-reference /
+// one-plain-decimal heterogeneous additive initializer reaches this
+// distinct Block consumer through the unchanged `One(reference)` carrier --
+// exactly one relation, in either orientation, with unchanged region
+// semantics.
+
+#[test]
+fn one_reference_one_plain_decimal_additive_initializer_composes_exactly_one_relation() {
+    let current_block = block(7, 21, "{ let x=a+1; }");
+    assert_eq!(
+        relation_snapshots("let a; { let x=a+1; }"),
+        vec![RelationSnapshot {
+            containing_binding: anchor(13, 14, "x"),
+            current_region: current_block,
+            reference: anchor(15, 16, "a"),
+            semantic_name: "a".to_owned(),
+            target: target(4, 5, "a", RegionSnapshot::TopLevel),
+        }]
+    );
+
+    let current_block = block(7, 21, "{ let x=1+a; }");
+    assert_eq!(
+        relation_snapshots("let a; { let x=1+a; }"),
+        vec![RelationSnapshot {
+            containing_binding: anchor(13, 14, "x"),
+            current_region: current_block,
+            reference: anchor(17, 18, "a"),
+            semantic_name: "a".to_owned(),
+            target: target(4, 5, "a", RegionSnapshot::TopLevel),
+        }]
+    );
+}
+
 #[test]
 fn production_remains_private_source_level_and_does_not_reuse_flat_no_target_or_order_types() {
     for forbidden in [

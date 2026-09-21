@@ -2510,6 +2510,53 @@ fn two_identifier_reference_additive_initializer_composes_for_one_level_block_va
     ));
 }
 
+// Issue #791 (per #688 comment 5762579228): the one-reference /
+// one-plain-decimal heterogeneous additive initializer reaches this
+// consumer through the unchanged `One(reference)` carrier -- exactly one
+// relation, in either orientation, for both top-level `var` and Block
+// `var`. #789/#790 independently proves the underlying candidate-independent
+// theorem; these tests seal only that this consumer composes the new
+// producer correctly, with no new relation type or precedence.
+
+#[test]
+fn one_reference_one_plain_decimal_additive_initializer_composes_exactly_one_relation_for_var() {
+    let (_, script) = recognized_variable("let a; var x = a + 1;");
+    let analysis = accepted_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(relations.len(), 1);
+    assert_eq!(relations[0].semantic_name(), "a");
+
+    let (_, script) = recognized_variable("let a; var x = 1 + a;");
+    let analysis = accepted_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(relations.len(), 1);
+    assert_eq!(relations[0].semantic_name(), "a");
+}
+
+#[test]
+fn one_reference_one_plain_decimal_additive_initializer_composes_exactly_one_relation_for_one_level_block_var()
+ {
+    let (_, script) = recognized_one_level_block("let a; { var x = a + 1; }");
+    let analysis = accepted_one_level_block_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(relations.len(), 1);
+    assert_eq!(relations[0].semantic_name(), "a");
+    assert!(matches!(
+        relations[0].current_region(),
+        SelectedVariableStatementNameCorrespondenceRegion::Block(_)
+    ));
+
+    let (_, script) = recognized_one_level_block("let a; { var x = 1 + a; }");
+    let analysis = accepted_one_level_block_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(relations.len(), 1);
+    assert_eq!(relations[0].semantic_name(), "a");
+    assert!(matches!(
+        relations[0].current_region(),
+        SelectedVariableStatementNameCorrespondenceRegion::Block(_)
+    ));
+}
+
 /// Issue #779: the right-unary exactly-two `IdentifierReference` additive
 /// initializer reaches this consumer through the unchanged `Two { first,
 /// second }` carrier. Both inner facts resolve independently under the

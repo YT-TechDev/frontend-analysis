@@ -708,7 +708,6 @@ fn escaped_identifier_reference_valid_atom_does_not_widen_expression_or_asi_cove
     for text in [
         r"const x = \u0066oo.bar;",
         r"const x = \u0066oo();",
-        r"const x = \u0066oo + 1;",
         r"const x = \u0066oo = bar;",
         r"const x = \u0066oo ? bar : baz;",
         r"const x = \u0066oo/*comment*/;",
@@ -800,7 +799,6 @@ fn identifier_reference_prefixes_do_not_widen_richer_expression_or_escape_covera
     for text in [
         "const x = foo.bar;",
         "const x = foo();",
-        "const x = foo + 1;",
         "const x = (foo);",
         "const x = foo = bar;",
         "const x = foo ? bar : baz;",
@@ -3546,7 +3544,6 @@ fn variable_statement_frontier_keeps_non_eof_and_broader_var_grammar_unsupported
         r"var\u{};",
         "var x=foo.bar;",
         "var x=foo();",
-        "var x=foo+1;",
         "var x=(foo);",
     ] {
         assert_unsupported(text);
@@ -3868,14 +3865,12 @@ fn var_identifier_reference_boundary_keeps_richer_expression_and_literal_neighbo
     for text in [
         "var x=foo.bar;",
         "var x=foo();",
-        "var x=foo+1;",
         "var x=(foo);",
         "var x=foo=bar;",
         "var x=foo?bar:baz;",
         "var x=foo/*comment*/;",
         r"var x=\u0066oo.bar;",
         r"var x=\u0066oo();",
-        r"var x=\u0066oo+1;",
         r"var x=\u0066oo/*comment*/;",
     ] {
         assert_unsupported(text);
@@ -4942,8 +4937,11 @@ fn plain_fractional_decimal_literal_does_not_claim_numeric_or_richer_neighbors()
         "let x = .5.foo;",
         "let x = 1.0();",
         "let x = .5();",
-        "let x = 1.0 + x;",
-        "let x = .5 + x;",
+        // "let x = 1.0 + x;" / "let x = .5 + x;" are no longer negative
+        // controls here: Issue #791 makes the selected `LexicalDeclaration`
+        // initializer position additionally admit a Decimal-left
+        // one-reference / one-plain-decimal additive initializer; see the
+        // "Issue #791" test section below for full coverage.
         "let x = 1.0 = x;",
         "let x = 1.0 ? x : y;",
         "let x = 1.0/*comment*/;",
@@ -5309,8 +5307,11 @@ fn top_level_var_plain_fractional_decimal_literal_does_not_claim_numeric_or_rich
         "var x = .5.foo;",
         "var x = 1.0();",
         "var x = .5();",
-        "var x = 1.0 + x;",
-        "var x = .5 + x;",
+        // "var x = 1.0 + x;" / "var x = .5 + x;" are no longer negative
+        // controls here: Issue #791 makes both selected `var` initializer
+        // positions additionally admit a Decimal-left one-reference /
+        // one-plain-decimal additive initializer; see the "Issue #791" test
+        // section below for full coverage.
         "var x = 1.0 = x;",
         "var x = 1.0 ? x : y;",
         "var x = 1.0/*comment*/;",
@@ -5354,8 +5355,11 @@ fn one_level_block_var_plain_fractional_decimal_literal_does_not_claim_numeric_o
         "{ var x = .5.foo; }",
         "{ var x = 1.0(); }",
         "{ var x = .5(); }",
-        "{ var x = 1.0 + x; }",
-        "{ var x = .5 + x; }",
+        // "{ var x = 1.0 + x; }" / "{ var x = .5 + x; }" are no longer
+        // negative controls here: Issue #791 makes both selected `var`
+        // initializer positions additionally admit a Decimal-left
+        // one-reference / one-plain-decimal additive initializer; see the
+        // "Issue #791" test section below for full coverage.
         "{ var x = 1.0 = x; }",
         "{ var x = 1.0 ? x : y; }",
         "{ var x = 1.0/*comment*/; }",
@@ -5669,13 +5673,16 @@ fn plain_exponent_decimal_literal_does_not_claim_numeric_or_richer_neighbors() {
         // prefix never authorizes a broader expression
         "let x = 1e2.foo;",
         "let x = 1e2();",
-        "let x = 1e2 + x;",
+        // "let x = 1e2 + x;" / "let x = .5e2 + x;" are no longer negative
+        // controls here: Issue #791 makes the selected `LexicalDeclaration`
+        // initializer position additionally admit a Decimal-left
+        // one-reference / one-plain-decimal additive initializer; see the
+        // "Issue #791" test section below for full coverage.
         "let x = 1e2 = x;",
         "let x = 1e2 ? x : y;",
         "let x = 1e2/*comment*/;",
         "let x = 1e2 unexpected;",
         "let x = 1.0e2.foo;",
-        "let x = .5e2 + x;",
     ] {
         assert_unsupported(text);
     }
@@ -5932,13 +5939,16 @@ fn top_level_var_and_block_var_plain_exponent_decimal_literal_does_not_claim_num
         // prefix never authorizes a broader expression
         "var x = 1e2.foo;",
         "var x = 1e2();",
-        "var x = 1e2 + x;",
+        // "var x = 1e2 + x;" / "var x = .5e2 + x;" are no longer negative
+        // controls here: Issue #791 makes both selected `var` initializer
+        // positions additionally admit a Decimal-left one-reference /
+        // one-plain-decimal additive initializer; see the "Issue #791" test
+        // section below for full coverage.
         "var x = 1e2 = x;",
         "var x = 1e2 ? x : y;",
         "var x = 1e2/*comment*/;",
         "var x = 1e2 unexpected;",
         "var x = 1.0e2.foo;",
-        "var x = .5e2 + x;",
     ] {
         assert_unsupported(text);
     }
@@ -5960,13 +5970,16 @@ fn top_level_var_and_block_var_plain_exponent_decimal_literal_does_not_claim_num
         // below for full coverage.
         "{ var x = 1e2.foo; }",
         "{ var x = 1e2(); }",
-        "{ var x = 1e2 + x; }",
+        // "{ var x = 1e2 + x; }" / "{ var x = .5e2 + x; }" are no longer
+        // negative controls here: Issue #791 makes both selected `var`
+        // initializer positions additionally admit a Decimal-left
+        // one-reference / one-plain-decimal additive initializer; see the
+        // "Issue #791" test section below for full coverage.
         "{ var x = 1e2 = x; }",
         "{ var x = 1e2 ? x : y; }",
         "{ var x = 1e2/*comment*/; }",
         "{ var x = 1e2 unexpected; }",
         "{ var x = 1.0e2.foo; }",
-        "{ var x = .5e2 + x; }",
     ] {
         assert_unsupported(text);
     }
@@ -6952,9 +6965,12 @@ fn two_identifier_reference_additive_initializer_firewalls_remain_unsupported() 
         // two-reference positive matrix below, per the candidate-independent
         // token-boundary theorem accepted by #777/#778. The `++`/`--`
         // punctuator boundary below remains a genuinely unselected neighbor.
-        // Non-IdentifierReference operands.
-        "let x = 1 + b;",
-        "let x = a + 1;",
+        // Issue #791 migration: `let x = 1 + b;` / `let x = a + 1;` moved
+        // out of this firewall to the now-selected one-reference /
+        // one-plain-decimal positive matrix below, per the
+        // candidate-independent theorem accepted by #789/#790. Other
+        // non-IdentifierReference operand families remain genuinely
+        // unselected neighbors.
         "let x = true + b;",
         "let x = a + null;",
         "let x = this + b;",
@@ -7049,6 +7065,266 @@ fn two_identifier_reference_additive_initializer_jointly_composes_across_all_thr
     // holds for every owner, not only `LexicalDeclaration`.
     assert_unsupported("var x = a + b + c;");
     assert_unsupported("{ var x = a + b + c; }");
+}
+
+// --- Issue #791 (per #688 comment 5762579228): composes the
+// candidate-independent one-reference / one-plain-decimal heterogeneous
+// additive initializer theorem accepted by #789/#790 into production,
+// reusing the existing `SelectedIdentifierReferenceInitializer::One`
+// carrier unchanged. Reference-left (`a + 1`) widens the existing
+// `consume_selected_identifier_reference_initializer` continuation;
+// Decimal-left (`1 + a`) reuses the existing accepted Decimal atom
+// recognition exactly once and then probes a bounded post-atom additive
+// `IdentifierReference` continuation
+// (`consume_selected_plain_decimal_atom_initializer`). Neither the Decimal
+// operand, the binary operator, nor the orientation is retained: only the
+// sole `IdentifierReference` fact is, as `One(reference)`. #789/#790 remain
+// the candidate-independent Oracle for the constituent heterogeneous
+// theorem; these production tests author expected facts/ranges
+// independently of the candidate under test. ---
+
+#[test]
+fn one_reference_one_plain_decimal_additive_initializer_positive_matrix_is_recognized() {
+    let esc_61 = concat!("\\", "u0061"); // decodes to "a"
+    let esc_foo = concat!("f", "\\", "u006F", "o"); // mixed-part, decodes to "foo"
+    let esc_bar = concat!("b", "\\", "u0061", "r"); // mixed-part, decodes to "bar"
+
+    for (text, expected_name) in [
+        // Reference-left, both operators, all three plain Decimal atom
+        // families.
+        ("const x = a + 1;".to_owned(), "a"),
+        ("const x = a - 1.0;".to_owned(), "a"),
+        ("const x = a + .5;".to_owned(), "a"),
+        ("const x = a - 1e-2;".to_owned(), "a"),
+        // Decimal-left, both operators, all three plain Decimal atom
+        // families.
+        ("const x = 1 + a;".to_owned(), "a"),
+        ("const x = 1.0 - a;".to_owned(), "a"),
+        ("const x = .5 + a;".to_owned(), "a"),
+        ("const x = 1e-2 - a;".to_owned(), "a"),
+        // Direct / escaped `IdentifierReference` provenance, both
+        // orientations.
+        (format!("const x = {esc_61} + 1;"), "a"),
+        (format!("const x = 1 + {esc_61};"), "a"),
+        (format!("const x = {esc_foo} - 1e2;"), "foo"),
+        (format!("const x = .5 + {esc_bar};"), "bar"),
+    ] {
+        let script = recognized(&text);
+        let [binding] = script.declarations()[0].bindings() else {
+            panic!("expected one selected lexical binding for {text:?}");
+        };
+        let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+        assert_eq!(facts.len(), 1, "{text:?}");
+        assert_eq!(facts[0].semantic_name(), expected_name, "{text:?}");
+    }
+}
+
+/// Exact retained provenance: the retained fact's authored anchor and
+/// decoded semantic name cover only the `IdentifierReference` operand,
+/// never the Decimal operand, the binary operator, selected trivia, or the
+/// exponent-internal sign owned by the Decimal atom -- in either
+/// orientation.
+#[test]
+fn one_reference_one_plain_decimal_additive_initializer_exact_retained_provenance_excludes_decimal_and_operator()
+ {
+    let esc_61 = concat!("\\", "u0061"); // decodes to "a"
+    let esc_foo = concat!("f", "\\", "u006F", "o"); // mixed-part, decodes to "foo"
+
+    let text = format!("const x = {esc_61} + 1e-2;");
+    let script = recognized(&text);
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+    assert_eq!(facts.len(), 1);
+    assert_eq!(facts[0].reference().fragment(), esc_61);
+    assert_eq!(facts[0].semantic_name(), "a");
+
+    let text = format!("const x = 1e-2 + {esc_foo};");
+    let script = recognized(&text);
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+    assert_eq!(facts.len(), 1);
+    assert_eq!(facts[0].reference().fragment(), esc_foo);
+    assert_eq!(facts[0].semantic_name(), "foo");
+}
+
+#[test]
+fn one_reference_one_plain_decimal_additive_initializer_jointly_composes_across_all_three_owners() {
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+
+    for (text, expected_name) in [("const x = a + 1;", "a"), ("const x = 1 + a;", "a")] {
+        let script = recognized(text);
+        let [binding] = script.declarations()[0].bindings() else {
+            panic!("expected one selected lexical binding, {text:?}");
+        };
+        let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+        assert_eq!(facts.len(), 1, "{text:?}");
+        assert_eq!(facts[0].semantic_name(), expected_name, "{text:?}");
+    }
+
+    for (text, expected_name) in [("var x = a + 1;", "a"), ("var x = 1 + a;", "a")] {
+        let script = recognized_variable(text);
+        let statement = only_variable_statement(&script);
+        let [binding] = statement.bindings() else {
+            panic!("expected one selected top-level var binding, {text:?}");
+        };
+        let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+        assert_eq!(facts.len(), 1, "{text:?}");
+        assert_eq!(facts[0].semantic_name(), expected_name, "{text:?}");
+    }
+
+    for (text, expected_name) in [("{ var x = a - 1e2; }", "a"), ("{ var x = 1e2 - a; }", "a")] {
+        let block_script = recognized_block(text);
+        let [SelectedTopLevelItem::Block(block)] = block_script.items() else {
+            panic!("expected exactly one Block item, {text:?}");
+        };
+        let [SelectedBlockItem::Var(statement)] = block.items() else {
+            panic!("expected exactly one Block var statement, {text:?}");
+        };
+        let [binding] = statement.bindings() else {
+            panic!("expected one selected Block var binding, {text:?}");
+        };
+        let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+        assert_eq!(facts.len(), 1, "{text:?}");
+        assert_eq!(facts[0].semantic_name(), expected_name, "{text:?}");
+    }
+}
+
+/// Reference-left right-unary boundary (per #688 comment 5762579228): the
+/// existing accepted right-unary two-reference forms (`a+-b`, `a-+b`,
+/// `a+ +b`, `a- -b`) remain unchanged, but a right-unary wrapper never
+/// admits the new plain-Decimal alternative -- `a+-1`, `a-+1`, `a+ +1`, and
+/// `a- -1` remain outside this leaf.
+#[test]
+fn one_reference_one_plain_decimal_additive_initializer_right_unary_firewall_remains_unsupported() {
+    for text in [
+        "let x = a+-1;",
+        "let x = a-+1;",
+        "let x = a+ +1;",
+        "let x = a- -1;",
+    ] {
+        assert_unsupported(text);
+    }
+
+    // Regression: the predecessor right-unary two-reference theorem is
+    // undisturbed.
+    let script = recognized("let x = a+-b;");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+    assert_eq!(facts.len(), 2);
+    assert_eq!(facts[0].semantic_name(), "a");
+    assert_eq!(facts[1].semantic_name(), "b");
+}
+
+/// Decimal-left unary firewall (per #688 comment 5762579228): neither the
+/// Decimal atom nor the `IdentifierReference` operand may be wrapped in a
+/// leading unary sign for this theorem -- `1 + +a`, `1 + -a`, `1 - +a`,
+/// `1 - -a`, `+1 + a`, and `-1 + a` remain outside. The exponent-internal
+/// sign in `1e-2` remains owned by the Decimal atom and stays in scope.
+#[test]
+fn one_reference_one_plain_decimal_additive_initializer_decimal_left_unary_firewall_remains_unsupported()
+ {
+    for text in [
+        "let x = 1 + +a;",
+        "let x = 1 + -a;",
+        "let x = 1 - +a;",
+        "let x = 1 - -a;",
+        "let x = +1 + a;",
+        "let x = -1 + a;",
+    ] {
+        assert_unsupported(text);
+    }
+
+    // Regression / boundary spot-check: the exponent-internal sign remains
+    // in scope.
+    let script = recognized("let x = 1e-2 + a;");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+    assert_eq!(facts.len(), 1);
+    assert_eq!(facts[0].semantic_name(), "a");
+}
+
+/// Cardinality, operand-family, richer-expression, numeric-frontier, and
+/// escaped-ReservedWord firewalls (per #688 comment 5762579228): a valid
+/// bounded `IdentifierReference`/plain-Decimal prefix never authorizes a
+/// richer or differently-typed complete source.
+#[test]
+fn one_reference_one_plain_decimal_additive_initializer_firewalls_remain_unsupported() {
+    for text in [
+        // Cardinality: 3+ operands are never truncated to a valid prefix.
+        "let x = a + 1 + b;",
+        "let x = 1 + a + 2;",
+        "let x = a - 1 - b;",
+        "let x = 1 - a - 2;",
+        // Unary composition on either operand.
+        "let x = +a + 1;",
+        "let x = -a + 1;",
+        "let x = a + +1;",
+        "let x = a + -1;",
+        // Richer-expression / precedence / grouping / member / call.
+        "let x = (a) + 1;",
+        "let x = 1 + (a);",
+        "let x = a.b + 1;",
+        "let x = 1 + a.b;",
+        "let x = a() + 1;",
+        "let x = 1 + a();",
+        "let x = a + 1 * b;",
+        "let x = a * 1 + b;",
+        "let x = a = 1 + b;",
+        "let x = a += 1;",
+        "let x = a ? 1 : b;",
+        "let x = a || 1;",
+        "let x = a && 1;",
+        "let x = a ?? 1;",
+        // Numeric frontier: separator / non-decimal radix / BigInt.
+        "let x = a + 1_0;",
+        "let x = 1_0 + a;",
+        "let x = a + 0x10;",
+        "let x = 0x10 + a;",
+        "let x = a + 1n;",
+        "let x = 1n + a;",
+        // Comments.
+        "let x = a/*c*/+1;",
+        "let x = 1+/*c*/a;",
+    ] {
+        assert_unsupported(text);
+    }
+
+    // Escaped ReservedWord operand: never an accepted operand in either
+    // orientation, so it must not become selected evidence.
+    let escaped_if = concat!("\\", "u0069", "f"); // decodes to the reserved word "if"
+    assert_unsupported(&format!("let x = {escaped_if} + 1;"));
+    assert_unsupported(&format!("let x = 1 + {escaped_if};"));
+}
+
+/// Whole-source transactionality: a locally complete heterogeneous
+/// initializer must not escape as committed selected state when a later
+/// declarator or Grammar failure rejects the containing source.
+#[test]
+fn one_reference_one_plain_decimal_additive_initializer_transactionality_commits_no_earlier_fact() {
+    for text in [
+        "let x = a + 1, y =;",
+        "var x = 1 + a, y =;",
+        "{ var x = a + 1, y = }",
+    ] {
+        assert_unsupported(text);
+    }
+
+    let subject = grammar_rejection(r"let x = a + 1, \u{} = 1;");
+    assert_eq!(subject.fragment(), r"\u{}");
+
+    let subject = grammar_rejection(r"var x = 1 + a, \u{} = 1;");
+    assert_eq!(subject.fragment(), r"\u{}");
+
+    let subject = grammar_rejection(r"{ var x = a + 1, \u{} = 1; }");
+    assert_eq!(subject.fragment(), r"\u{}");
 }
 
 // --- Issue #775: composes the already-accepted leading `+`/`-`

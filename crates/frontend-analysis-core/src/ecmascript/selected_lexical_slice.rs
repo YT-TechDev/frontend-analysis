@@ -590,10 +590,14 @@ impl SelectedBlockVarBinding {
         }
     }
 
-    /// The first (and, for a single-reference initializer, only) retained
-    /// fact. Existing single-reference behavior is exactly preserved; use
+    /// The sole retained `IdentifierReference` fact when the initializer
+    /// retains exactly one (a `One` carrier): either a single-operand
+    /// initializer's only reference, or the one retained reference of a
+    /// selected two-syntax-operand `IdentifierReference`/plain-Decimal
+    /// additive initializer (Issue #791). Existing single-operand behavior
+    /// is exactly preserved; use
     /// [`Self::identifier_reference_initializer_facts`] to observe a second
-    /// authored operand.
+    /// authored `IdentifierReference` operand (a `Two` carrier).
     pub(super) fn identifier_reference_initializer(
         &self,
     ) -> Option<&SelectedIdentifierReferenceFact> {
@@ -679,14 +683,19 @@ impl SelectedIdentifierReferenceFact {
 /// Crate-private bounded cardinality carrier for the selected
 /// `IdentifierReference` initializer position, widening the previous
 /// at-most-one carrier to admit exactly one additional selected additive
-/// operand (Issue #754). `One` is the unchanged existing single-reference
-/// fact. `Two` retains both authored operands of a selected
-/// `SelectedTwoIdentifierReferenceAdditiveInitializer` in exact authored
-/// left-to-right order (`first` is the left operand, `second` is the right
-/// operand). Three or more facts, a second fact without a first, reordering,
-/// and deduplication are all unrepresentable by this type. The containing
-/// binding's `Option<SelectedIdentifierReferenceInitializer>` field is the
-/// sole retained-reference storage: `None` means zero facts, so no separate
+/// operand (Issue #754). `One` retains exactly one source-backed
+/// `IdentifierReference` fact: either a single-operand initializer's only
+/// reference, or the sole retained reference of a selected two-syntax-operand
+/// `IdentifierReference`/plain-Decimal additive initializer (Issue #791, per
+/// #688 comment 5762579228), whose Decimal operand, binary operator, and
+/// left/right orientation are never retained. `Two` retains both authored
+/// operands of a selected `SelectedTwoIdentifierReferenceAdditiveInitializer`
+/// in exact authored left-to-right order (`first` is the left operand,
+/// `second` is the right operand). Three or more facts, a second fact
+/// without a first, reordering, and deduplication are all unrepresentable by
+/// this type. The containing binding's
+/// `Option<SelectedIdentifierReferenceInitializer>` field is the sole
+/// retained-reference storage: `None` means zero facts, so no separate
 /// competing fact channel exists anywhere on the binding.
 #[derive(Debug)]
 pub(super) enum SelectedIdentifierReferenceInitializer {
@@ -698,9 +707,12 @@ pub(super) enum SelectedIdentifierReferenceInitializer {
 }
 
 impl SelectedIdentifierReferenceInitializer {
-    /// The first (and, for `One`, only) retained fact: the sole reference of
-    /// a single-reference initializer, or the authored left operand of a
-    /// two-reference additive initializer. Always defined and never panics.
+    /// The first (and, for `One`, only) retained fact: the sole retained
+    /// `IdentifierReference` fact of a `One` initializer (whether its syntax
+    /// is a single-operand initializer or a selected two-syntax-operand
+    /// `IdentifierReference`/plain-Decimal additive initializer, Issue
+    /// #791), or the authored left operand of a two-reference additive
+    /// initializer. Always defined and never panics.
     pub(super) fn first(&self) -> &SelectedIdentifierReferenceFact {
         match self {
             Self::One(fact) => fact,
@@ -751,10 +763,14 @@ impl SelectedLexicalBinding {
         self.initializer
     }
 
-    /// The first (and, for a single-reference initializer, only) retained
-    /// fact. Existing single-reference behavior is exactly preserved; use
+    /// The sole retained `IdentifierReference` fact when the initializer
+    /// retains exactly one (a `One` carrier): either a single-operand
+    /// initializer's only reference, or the one retained reference of a
+    /// selected two-syntax-operand `IdentifierReference`/plain-Decimal
+    /// additive initializer (Issue #791). Existing single-operand behavior
+    /// is exactly preserved; use
     /// [`Self::identifier_reference_initializer_facts`] to observe a second
-    /// authored operand.
+    /// authored `IdentifierReference` operand (a `Two` carrier).
     pub(super) fn identifier_reference_initializer(
         &self,
     ) -> Option<&SelectedIdentifierReferenceFact> {
@@ -803,10 +819,14 @@ impl SelectedVariableBinding {
         }
     }
 
-    /// The first (and, for a single-reference initializer, only) retained
-    /// fact. Existing single-reference behavior is exactly preserved; use
+    /// The sole retained `IdentifierReference` fact when the initializer
+    /// retains exactly one (a `One` carrier): either a single-operand
+    /// initializer's only reference, or the one retained reference of a
+    /// selected two-syntax-operand `IdentifierReference`/plain-Decimal
+    /// additive initializer (Issue #791). Existing single-operand behavior
+    /// is exactly preserved; use
     /// [`Self::identifier_reference_initializer_facts`] to observe a second
-    /// authored operand.
+    /// authored `IdentifierReference` operand (a `Two` carrier).
     pub(super) fn identifier_reference_initializer(
         &self,
     ) -> Option<&SelectedIdentifierReferenceFact> {
@@ -1751,14 +1771,17 @@ impl SelectedBlockBuilder {
 /// Result of the bounded 1-or-2 `IdentifierReference` initializer helper
 /// (Issue #754), which absorbs the previous plain
 /// `consume_selected_identifier_reference()` initializer route. `One`
-/// carries the exact existing single-reference behavior unchanged. `Two`
-/// carries both authored operands of a selected
-/// `SelectedTwoIdentifierReferenceAdditiveInitializer` in exact authored
-/// left-to-right order. `EscapedReservedIdentifierName` is the unchanged
-/// existing classification-only route for a first operand whose decoded
-/// spelling is a ReservedWord (a ReservedWord is never an accepted operand,
-/// so no additive continuation is attempted for it). `NotSelected` covers no
-/// `IdentifierReference` operand at all. `ResourceLimited` and
+/// carries the sole retained fact: either the exact existing
+/// single-reference behavior unchanged, or (Issue #791) the first operand of
+/// a selected two-syntax-operand `IdentifierReference`-then-plain-Decimal
+/// additive initializer, whose Decimal second operand is consumed and
+/// discarded rather than retained. `Two` carries both authored operands of a
+/// selected `SelectedTwoIdentifierReferenceAdditiveInitializer` in exact
+/// authored left-to-right order. `EscapedReservedIdentifierName` is the
+/// unchanged existing classification-only route for a first operand whose
+/// decoded spelling is a ReservedWord (a ReservedWord is never an accepted
+/// operand, so no additive continuation is attempted for it). `NotSelected`
+/// covers no `IdentifierReference` operand at all. `ResourceLimited` and
 /// `InternalFailure` preserve the shared recognizer's own processing-failure
 /// classes for either operand, never downgraded to `NotSelected`.
 #[derive(Debug)]
@@ -1791,6 +1814,29 @@ enum SelectedIdentifierReferenceInitializerRecognition {
 enum SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition {
     Matched(SelectedIdentifierReferenceFact),
     NotSelected,
+    ResourceLimited,
+    InternalFailure,
+}
+
+/// Result of the bounded plain-Decimal-atom initializer helper composing
+/// the Decimal-left orientation of the one-reference / one-plain-decimal
+/// additive initializer theorem (Issue #791, per #688 comment 5762579228).
+/// `NotSelected` covers no accepted plain Decimal atom at all, leaving the
+/// unmodified Boolean/null/`this`/`String`/`IdentifierReference`
+/// predecessors free to recognize their own initializer syntax.
+/// `DecimalOnly` is the exact existing presence-only accepted Decimal-atom
+/// initializer, unchanged: no additive continuation was authored, or the
+/// probed continuation declined. `DecimalWithReference` carries only the
+/// second operand's `SelectedIdentifierReferenceFact`; the Decimal atom, the
+/// binary operator, and the orientation are never retained. `ResourceLimited`
+/// and `InternalFailure` preserve the shared `IdentifierReference`
+/// recognizer's own processing-failure classes and are never downgraded to
+/// `DecimalOnly`.
+#[derive(Debug)]
+enum SelectedPlainDecimalAtomInitializerRecognition {
+    NotSelected,
+    DecimalOnly,
+    DecimalWithReference(SelectedIdentifierReferenceFact),
     ResourceLimited,
     InternalFailure,
 }
@@ -2094,37 +2140,50 @@ impl<'source> Cursor<'source> {
                                 return Err(ParseFailure::InternalFailure);
                             }
                             SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
-                                if self.consume_selected_plain_exponent_decimal_literal()
-                                    || self.consume_selected_plain_fractional_decimal_literal()
-                                    || self.consume_selected_decimal_integer()
-                                    || self.consume_selected_boolean_literal()
-                                    || self.consume_selected_null_literal()
-                                    || self.consume_selected_this_expression()
-                                    || self.consume_selected_escape_free_string_literal()
-                                {
-                                    (None, None)
-                                } else {
-                                    match self.consume_selected_identifier_reference_initializer() {
-                                        SelectedIdentifierReferenceInitializerRecognition::One(reference) => {
-                                            (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
-                                        }
-                                        SelectedIdentifierReferenceInitializerRecognition::Two { first, second } => {
-                                            (
-                                                Some(SelectedIdentifierReferenceInitializer::Two { first, second }),
-                                                None,
-                                            )
-                                        }
-                                        SelectedIdentifierReferenceInitializerRecognition::EscapedReservedIdentifierName {
-                                            identifier,
-                                        } => (None, Some(identifier)),
-                                        SelectedIdentifierReferenceInitializerRecognition::NotSelected => {
-                                            return Err(ParseFailure::UnsupportedCoverage);
-                                        }
-                                        SelectedIdentifierReferenceInitializerRecognition::ResourceLimited => {
-                                            return Err(ParseFailure::ResourceLimited);
-                                        }
-                                        SelectedIdentifierReferenceInitializerRecognition::InternalFailure => {
-                                            return Err(ParseFailure::InternalFailure);
+                                match self.consume_selected_plain_decimal_atom_initializer() {
+                                    SelectedPlainDecimalAtomInitializerRecognition::DecimalOnly => {
+                                        (None, None)
+                                    }
+                                    SelectedPlainDecimalAtomInitializerRecognition::DecimalWithReference(reference) => {
+                                        (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
+                                    }
+                                    SelectedPlainDecimalAtomInitializerRecognition::ResourceLimited => {
+                                        return Err(ParseFailure::ResourceLimited);
+                                    }
+                                    SelectedPlainDecimalAtomInitializerRecognition::InternalFailure => {
+                                        return Err(ParseFailure::InternalFailure);
+                                    }
+                                    SelectedPlainDecimalAtomInitializerRecognition::NotSelected => {
+                                        if self.consume_selected_boolean_literal()
+                                            || self.consume_selected_null_literal()
+                                            || self.consume_selected_this_expression()
+                                            || self.consume_selected_escape_free_string_literal()
+                                        {
+                                            (None, None)
+                                        } else {
+                                            match self.consume_selected_identifier_reference_initializer() {
+                                                SelectedIdentifierReferenceInitializerRecognition::One(reference) => {
+                                                    (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
+                                                }
+                                                SelectedIdentifierReferenceInitializerRecognition::Two { first, second } => {
+                                                    (
+                                                        Some(SelectedIdentifierReferenceInitializer::Two { first, second }),
+                                                        None,
+                                                    )
+                                                }
+                                                SelectedIdentifierReferenceInitializerRecognition::EscapedReservedIdentifierName {
+                                                    identifier,
+                                                } => (None, Some(identifier)),
+                                                SelectedIdentifierReferenceInitializerRecognition::NotSelected => {
+                                                    return Err(ParseFailure::UnsupportedCoverage);
+                                                }
+                                                SelectedIdentifierReferenceInitializerRecognition::ResourceLimited => {
+                                                    return Err(ParseFailure::ResourceLimited);
+                                                }
+                                                SelectedIdentifierReferenceInitializerRecognition::InternalFailure => {
+                                                    return Err(ParseFailure::InternalFailure);
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -2260,37 +2319,50 @@ impl<'source> Cursor<'source> {
                                 return Err(ParseFailure::InternalFailure);
                             }
                             SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
-                                if self.consume_selected_plain_exponent_decimal_literal()
-                                    || self.consume_selected_plain_fractional_decimal_literal()
-                                    || self.consume_selected_decimal_integer()
-                                    || self.consume_selected_boolean_literal()
-                                    || self.consume_selected_null_literal()
-                                    || self.consume_selected_this_expression()
-                                    || self.consume_selected_escape_free_string_literal()
-                                {
-                                    (None, None)
-                                } else {
-                                    match self.consume_selected_identifier_reference_initializer() {
-                                        SelectedIdentifierReferenceInitializerRecognition::One(reference) => {
-                                            (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
-                                        }
-                                        SelectedIdentifierReferenceInitializerRecognition::Two { first, second } => {
-                                            (
-                                                Some(SelectedIdentifierReferenceInitializer::Two { first, second }),
-                                                None,
-                                            )
-                                        }
-                                        SelectedIdentifierReferenceInitializerRecognition::EscapedReservedIdentifierName {
-                                            identifier,
-                                        } => (None, Some(identifier)),
-                                        SelectedIdentifierReferenceInitializerRecognition::NotSelected => {
-                                            return Err(ParseFailure::UnsupportedCoverage);
-                                        }
-                                        SelectedIdentifierReferenceInitializerRecognition::ResourceLimited => {
-                                            return Err(ParseFailure::ResourceLimited);
-                                        }
-                                        SelectedIdentifierReferenceInitializerRecognition::InternalFailure => {
-                                            return Err(ParseFailure::InternalFailure);
+                                match self.consume_selected_plain_decimal_atom_initializer() {
+                                    SelectedPlainDecimalAtomInitializerRecognition::DecimalOnly => {
+                                        (None, None)
+                                    }
+                                    SelectedPlainDecimalAtomInitializerRecognition::DecimalWithReference(reference) => {
+                                        (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
+                                    }
+                                    SelectedPlainDecimalAtomInitializerRecognition::ResourceLimited => {
+                                        return Err(ParseFailure::ResourceLimited);
+                                    }
+                                    SelectedPlainDecimalAtomInitializerRecognition::InternalFailure => {
+                                        return Err(ParseFailure::InternalFailure);
+                                    }
+                                    SelectedPlainDecimalAtomInitializerRecognition::NotSelected => {
+                                        if self.consume_selected_boolean_literal()
+                                            || self.consume_selected_null_literal()
+                                            || self.consume_selected_this_expression()
+                                            || self.consume_selected_escape_free_string_literal()
+                                        {
+                                            (None, None)
+                                        } else {
+                                            match self.consume_selected_identifier_reference_initializer() {
+                                                SelectedIdentifierReferenceInitializerRecognition::One(reference) => {
+                                                    (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
+                                                }
+                                                SelectedIdentifierReferenceInitializerRecognition::Two { first, second } => {
+                                                    (
+                                                        Some(SelectedIdentifierReferenceInitializer::Two { first, second }),
+                                                        None,
+                                                    )
+                                                }
+                                                SelectedIdentifierReferenceInitializerRecognition::EscapedReservedIdentifierName {
+                                                    identifier,
+                                                } => (None, Some(identifier)),
+                                                SelectedIdentifierReferenceInitializerRecognition::NotSelected => {
+                                                    return Err(ParseFailure::UnsupportedCoverage);
+                                                }
+                                                SelectedIdentifierReferenceInitializerRecognition::ResourceLimited => {
+                                                    return Err(ParseFailure::ResourceLimited);
+                                                }
+                                                SelectedIdentifierReferenceInitializerRecognition::InternalFailure => {
+                                                    return Err(ParseFailure::InternalFailure);
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -2390,36 +2462,48 @@ impl<'source> Cursor<'source> {
                             return Err(ParseFailure::InternalFailure);
                         }
                         SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
-                            if !self.consume_selected_plain_exponent_decimal_literal()
-                                && !self.consume_selected_plain_fractional_decimal_literal()
-                                && !self.consume_selected_decimal_integer()
-                                && !self.consume_selected_boolean_literal()
-                                && !self.consume_selected_null_literal()
-                                && !self.consume_selected_this_expression()
-                                && !self.consume_selected_escape_free_string_literal()
-                            {
-                                match self.consume_selected_identifier_reference_initializer() {
-                                    SelectedIdentifierReferenceInitializerRecognition::One(reference) => {
-                                        identifier_reference_initializer =
-                                            Some(SelectedIdentifierReferenceInitializer::One(reference));
-                                    }
-                                    SelectedIdentifierReferenceInitializerRecognition::Two { first, second } => {
-                                        identifier_reference_initializer =
-                                            Some(SelectedIdentifierReferenceInitializer::Two { first, second });
-                                    }
-                                    SelectedIdentifierReferenceInitializerRecognition::EscapedReservedIdentifierName {
-                                        identifier,
-                                    } => {
-                                        escaped_reserved_initializer_identifier = Some(identifier);
-                                    }
-                                    SelectedIdentifierReferenceInitializerRecognition::NotSelected => {
-                                        return Err(ParseFailure::UnsupportedCoverage);
-                                    }
-                                    SelectedIdentifierReferenceInitializerRecognition::ResourceLimited => {
-                                        return Err(ParseFailure::ResourceLimited);
-                                    }
-                                    SelectedIdentifierReferenceInitializerRecognition::InternalFailure => {
-                                        return Err(ParseFailure::InternalFailure);
+                            match self.consume_selected_plain_decimal_atom_initializer() {
+                                SelectedPlainDecimalAtomInitializerRecognition::DecimalOnly => {}
+                                SelectedPlainDecimalAtomInitializerRecognition::DecimalWithReference(reference) => {
+                                    identifier_reference_initializer =
+                                        Some(SelectedIdentifierReferenceInitializer::One(reference));
+                                }
+                                SelectedPlainDecimalAtomInitializerRecognition::ResourceLimited => {
+                                    return Err(ParseFailure::ResourceLimited);
+                                }
+                                SelectedPlainDecimalAtomInitializerRecognition::InternalFailure => {
+                                    return Err(ParseFailure::InternalFailure);
+                                }
+                                SelectedPlainDecimalAtomInitializerRecognition::NotSelected => {
+                                    if !self.consume_selected_boolean_literal()
+                                        && !self.consume_selected_null_literal()
+                                        && !self.consume_selected_this_expression()
+                                        && !self.consume_selected_escape_free_string_literal()
+                                    {
+                                        match self.consume_selected_identifier_reference_initializer() {
+                                            SelectedIdentifierReferenceInitializerRecognition::One(reference) => {
+                                                identifier_reference_initializer =
+                                                    Some(SelectedIdentifierReferenceInitializer::One(reference));
+                                            }
+                                            SelectedIdentifierReferenceInitializerRecognition::Two { first, second } => {
+                                                identifier_reference_initializer =
+                                                    Some(SelectedIdentifierReferenceInitializer::Two { first, second });
+                                            }
+                                            SelectedIdentifierReferenceInitializerRecognition::EscapedReservedIdentifierName {
+                                                identifier,
+                                            } => {
+                                                escaped_reserved_initializer_identifier = Some(identifier);
+                                            }
+                                            SelectedIdentifierReferenceInitializerRecognition::NotSelected => {
+                                                return Err(ParseFailure::UnsupportedCoverage);
+                                            }
+                                            SelectedIdentifierReferenceInitializerRecognition::ResourceLimited => {
+                                                return Err(ParseFailure::ResourceLimited);
+                                            }
+                                            SelectedIdentifierReferenceInitializerRecognition::InternalFailure => {
+                                                return Err(ParseFailure::InternalFailure);
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -3364,6 +3448,23 @@ impl<'source> Cursor<'source> {
     /// downgraded to a completed `One`/`Two` result or to `NotSelected`; no
     /// first-operand fact is ever returned to the caller when the second
     /// operand's recognition reports a processing failure.
+    ///
+    /// Widened by Issue #791 (per #688 comment 5762579228) to additionally
+    /// admit a plain accepted Decimal atom (separator-free exponent,
+    /// fractional, or decimal-integer, tried via the existing unmodified
+    /// `consume_selected_plain_exponent_decimal_literal`,
+    /// `consume_selected_plain_fractional_decimal_literal`, and
+    /// `consume_selected_decimal_integer` helpers in that order) as an
+    /// alternative second operand, but *only* when no right-unary `+`/`-`
+    /// wrapper was consumed for this continuation: the existing accepted
+    /// right-unary forms (`a+-b`, `a-+b`, `a+ +b`, `a- -b`) remain
+    /// `IdentifierReference`-only, so `a+-1`, `a-+1`, `a+ +1`, and `a- -1`
+    /// stay outside this widening. A successful Decimal alternative retains
+    /// only `One(first)`; the Decimal atom is consumed and discarded, never
+    /// retained as a fact, operator, or orientation. A declining Decimal
+    /// alternative (or a right-unary-guarded decline) restores the cursor to
+    /// exactly where it stood right after the first operand and returns
+    /// `One(first)`, identically to every other continuation decline above.
     fn consume_selected_identifier_reference_initializer(
         &mut self,
     ) -> SelectedIdentifierReferenceInitializerRecognition {
@@ -3402,6 +3503,7 @@ impl<'source> Cursor<'source> {
         let before_inter_operator_trivia = self.offset;
         self.skip_selected_trivia();
 
+        let mut right_unary_consumed = false;
         if let Some(unary_sign @ ('+' | '-')) = self.peek_char() {
             if unary_sign == binary_sign && self.offset == before_inter_operator_trivia {
                 self.offset = after_first;
@@ -3410,14 +3512,24 @@ impl<'source> Cursor<'source> {
 
             let _ = self.advance_char();
             self.skip_selected_trivia();
+            right_unary_consumed = true;
         }
 
+        let after_operator = self.offset;
         match self.consume_selected_identifier_reference() {
             SelectedIdentifierReferenceRecognition::Matched(second) => {
                 SelectedIdentifierReferenceInitializerRecognition::Two { first, second }
             }
             SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName { .. }
             | SelectedIdentifierReferenceRecognition::NotSelected => {
+                self.offset = after_operator;
+                if !right_unary_consumed
+                    && (self.consume_selected_plain_exponent_decimal_literal()
+                        || self.consume_selected_plain_fractional_decimal_literal()
+                        || self.consume_selected_decimal_integer())
+                {
+                    return SelectedIdentifierReferenceInitializerRecognition::One(first);
+                }
                 self.offset = after_first;
                 SelectedIdentifierReferenceInitializerRecognition::One(first)
             }
@@ -3677,6 +3789,94 @@ impl<'source> Cursor<'source> {
             }
             SelectedIdentifierReferenceRecognition::InternalFailure => {
                 Err(ParseFailure::InternalFailure)
+            }
+        }
+    }
+
+    /// Recognizes one accepted separator-free plain Decimal atom (via the
+    /// existing unmodified `consume_selected_plain_exponent_decimal_literal`,
+    /// `consume_selected_plain_fractional_decimal_literal`, and
+    /// `consume_selected_decimal_integer` helpers, tried in that exact order
+    /// exactly once, never rescanned) and then probes a bounded post-atom
+    /// additive `IdentifierReference` continuation, composing the
+    /// Decimal-left orientation of the one-reference / one-plain-decimal
+    /// additive initializer theorem (Issue #791, per #688 comment
+    /// 5762579228):
+    ///
+    /// ```text
+    /// SelectedPlainDecimalAtomInitializer ::=
+    ///     SelectedAcceptedPlainDecimalAtom
+    ///     (
+    ///         SelectedAdditiveTrivia
+    ///         ("+" | "-")
+    ///         SelectedAdditiveTrivia
+    ///         SelectedAcceptedIdentifierReference
+    ///     )?
+    /// ```
+    ///
+    /// On no accepted Decimal atom at all, this returns `NotSelected` with
+    /// the cursor left entirely unchanged, leaving the unmodified
+    /// Boolean/null/`this`/`String`/`IdentifierReference` predecessors free
+    /// to recognize their own initializer syntax. Once an accepted Decimal
+    /// atom is recognized, its post-atom cursor position is remembered and
+    /// selected trivia is skipped; absent an authored binary `+`/`-` at that
+    /// position, the cursor is restored to exactly that remembered position
+    /// and `DecimalOnly` is returned -- the exact existing presence-only
+    /// Decimal initializer, unchanged. Otherwise exactly one authored binary
+    /// `+`/`-` is consumed, selected trivia is skipped, and one plain
+    /// `IdentifierReference` operand is recognized by the same unmodified
+    /// shared `consume_selected_identifier_reference` recognizer -- never a
+    /// leading- or right-unary-wrapped operand, since the #791 theorem is
+    /// plain Decimal atom plus plain `IdentifierReference` only. A matched
+    /// operand yields `DecimalWithReference`, carrying only that operand's
+    /// `SelectedIdentifierReferenceFact`; the Decimal atom, the operator,
+    /// and the orientation are never retained. A declining, escaped
+    /// `ReservedWord`, or entirely absent operand restores the cursor to
+    /// exactly the remembered post-atom position and returns `DecimalOnly`,
+    /// preserving the existing Decimal-only initializer unchanged; the
+    /// enclosing declaration/statement owner then judges any leftover
+    /// source exactly as an unrecognized initializer suffix always has been.
+    /// This is what naturally excludes longer additive chains (`1 + a + 2`),
+    /// unary operands on either side (`1 + +a`, `+1 + a`), and richer
+    /// operand families, without any dedicated firewall logic beyond the
+    /// existing enclosing transaction. A `ResourceLimited` or
+    /// `InternalFailure` processing failure from the `IdentifierReference`
+    /// continuation is propagated immediately and is never downgraded to a
+    /// completed `DecimalOnly` result.
+    fn consume_selected_plain_decimal_atom_initializer(
+        &mut self,
+    ) -> SelectedPlainDecimalAtomInitializerRecognition {
+        if !(self.consume_selected_plain_exponent_decimal_literal()
+            || self.consume_selected_plain_fractional_decimal_literal()
+            || self.consume_selected_decimal_integer())
+        {
+            return SelectedPlainDecimalAtomInitializerRecognition::NotSelected;
+        }
+
+        let after_decimal = self.offset;
+        self.skip_selected_trivia();
+
+        if !(self.consume_ascii('+') || self.consume_ascii('-')) {
+            self.offset = after_decimal;
+            return SelectedPlainDecimalAtomInitializerRecognition::DecimalOnly;
+        }
+
+        self.skip_selected_trivia();
+
+        match self.consume_selected_identifier_reference() {
+            SelectedIdentifierReferenceRecognition::Matched(reference) => {
+                SelectedPlainDecimalAtomInitializerRecognition::DecimalWithReference(reference)
+            }
+            SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName { .. }
+            | SelectedIdentifierReferenceRecognition::NotSelected => {
+                self.offset = after_decimal;
+                SelectedPlainDecimalAtomInitializerRecognition::DecimalOnly
+            }
+            SelectedIdentifierReferenceRecognition::ResourceLimited => {
+                SelectedPlainDecimalAtomInitializerRecognition::ResourceLimited
+            }
+            SelectedIdentifierReferenceRecognition::InternalFailure => {
+                SelectedPlainDecimalAtomInitializerRecognition::InternalFailure
             }
         }
     }
