@@ -2637,10 +2637,9 @@ fn top_level_identifier_reference_expression_statement_use_site_remains_selected
         "-f\\u006Fo+bar;",
         "+a+b",
         "-a-b",
-        // Issue #787: production further widens that same continuation's
-        // second operand with an optional right-unary `+`/`-` wrapper, but
-        // this Oracle's own bounded theorem still never qualifies a
-        // unary-wrapped operand, so these also reach
+        // Issue #787 widens production recognition with the both-unary
+        // right operand while preserving the existing qualification
+        // lifecycle; these complete selected sources therefore remain
         // `SelectedAcceptedIncomplete`.
         "+a+-b;",
         "+a-+b;",
