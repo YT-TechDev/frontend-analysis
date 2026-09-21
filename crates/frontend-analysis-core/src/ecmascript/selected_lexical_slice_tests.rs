@@ -7686,8 +7686,9 @@ fn right_unary_additive_initializer_second_anchor_excludes_the_unary_sign() {
 /// the new right-unary alternative -- a plain single reference still commits
 /// `One`, a plain two-reference additive still commits `Two`, a unary-only
 /// initializer still commits `One`, and the left-unary additive route
-/// (#775/#776) still commits its own `Two` without gaining a right-unary
-/// partner.
+/// (#775/#776) still commits its own `Two` for a plain right operand (its
+/// separate Issue #785 widening to an optional right-unary partner is sealed
+/// by the both-unary test group below).
 #[test]
 fn right_unary_additive_initializer_does_not_disturb_plain_or_left_unary_predecessors() {
     for (text, expected) in [
@@ -7733,12 +7734,6 @@ fn right_unary_additive_initializer_incomplete_or_richer_continuation_firewalls_
         "const x=a-+-b;",
         "const x=a+--b;",
         "const x=a-++b;",
-        // Both-unary composition: the accepted left-unary helper is
-        // deliberately not widened, so these remain outside.
-        "const x=+a+-b;",
-        "const x=-a-+b;",
-        "const x=+a+ +b;",
-        "const x=-a- -b;",
         // Other unary operator families.
         "const x=a+!b;",
         "const x=a+~b;",
@@ -7782,11 +7777,9 @@ fn right_unary_additive_initializer_incomplete_or_richer_continuation_firewalls_
         "var x=a+-;",
         "var x=a+-+b;",
         "var x=a+-b+c;",
-        "var x=+a+-b;",
         "{ var x=a+-; }",
         "{ var x=a+-+b; }",
         "{ var x=a+-b+c; }",
-        "{ var x=+a+-b; }",
     ] {
         assert_unsupported(text);
     }
@@ -7890,6 +7883,539 @@ fn right_unary_additive_initializer_duplicate_occurrences_and_declarator_order_a
     assert_eq!(z_facts.len(), 2);
     assert_eq!(z_facts[0].semantic_name(), "d");
     assert_eq!(z_facts[1].semantic_name(), "e");
+}
+
+// --- Issue #785: both-unary exactly-two `IdentifierReference` additive
+// initializer composition, jointly across `parse_declaration`,
+// `parse_variable_statement`, and `parse_selected_block_var_statement`, per
+// the production representation / placement authority accepted by #688
+// comment 5757139580. Composes the already-accepted leading `+`/`-`
+// `IdentifierReference` `UnaryExpression` (#746/#747, #750) as the left
+// operand with the already-accepted right-unary continuation (#779/#780),
+// reusing the same #777/#778 candidate-independent token-boundary theorem
+// for the binary/right-unary punctuator boundary. The retained carrier stays
+// the unchanged `SelectedIdentifierReferenceInitializer::Two { first,
+// second }`: no operator kind, trivia span, or whole-expression
+// `SourceAnchor` is retained, and neither unary sign ever enters its
+// operand's anchor. These production tests author expected facts/ranges
+// independently of the candidate under test. ---
+
+#[test]
+fn both_unary_additive_initializer_positive_matrix_is_recognized_across_all_three_owners() {
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+
+    for (text, expected_first, expected_second) in [
+        // Opposite signs: zero inter-operator selected trivia is admitted.
+        ("const x=+a+-b;", "a", "b"),
+        ("const x=+a-+b;", "a", "b"),
+        ("const x=-a+-b;", "a", "b"),
+        ("const x=-a-+b;", "a", "b"),
+        // Same signs: admitted only because non-empty selected trivia
+        // separates the two punctuators.
+        ("const x=+a+ +b;", "a", "b"),
+        ("const x=+a- -b;", "a", "b"),
+        ("const x=-a+ +b;", "a", "b"),
+        ("const x=-a- -b;", "a", "b"),
+        // Trivia in every selected position.
+        ("const x=+a + - b;", "a", "b"),
+        ("const x=-a - + b;", "a", "b"),
+        // Spaced direct/direct both-unary example, opposite outer signs.
+        ("const x = +foo - -bar;", "foo", "bar"),
+    ] {
+        let script = recognized(text);
+        let [binding] = script.declarations()[0].bindings() else {
+            panic!("expected one selected lexical binding, {text:?}");
+        };
+        let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+        assert_eq!(facts.len(), 2, "{text:?}");
+        assert_eq!(facts[0].semantic_name(), expected_first, "{text:?}");
+        assert_eq!(facts[1].semantic_name(), expected_second, "{text:?}");
+        assert!(
+            facts[0].reference().range().start() < facts[1].reference().range().start(),
+            "{text:?}"
+        );
+    }
+
+    for (text, expected_first, expected_second) in
+        [("var x=+a+-b;", "a", "b"), ("var x=-a- -b;", "a", "b")]
+    {
+        let script = recognized_variable(text);
+        let statement = only_variable_statement(&script);
+        let [binding] = statement.bindings() else {
+            panic!("expected one selected top-level var binding, {text:?}");
+        };
+        let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+        assert_eq!(facts.len(), 2, "{text:?}");
+        assert_eq!(facts[0].semantic_name(), expected_first, "{text:?}");
+        assert_eq!(facts[1].semantic_name(), expected_second, "{text:?}");
+    }
+
+    for (text, expected_first, expected_second) in [
+        ("{ var x=+a- -b }", "a", "b"),
+        ("{ var x=-a+ +b; }", "a", "b"),
+    ] {
+        let block_script = recognized_block(text);
+        let [SelectedTopLevelItem::Block(block)] = block_script.items() else {
+            panic!("expected exactly one Block item, {text:?}");
+        };
+        let [SelectedBlockItem::Var(statement)] = block.items() else {
+            panic!("expected exactly one Block var statement, {text:?}");
+        };
+        let [binding] = statement.bindings() else {
+            panic!("expected one selected Block var binding, {text:?}");
+        };
+        let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+        assert_eq!(facts.len(), 2, "{text:?}");
+        assert_eq!(facts[0].semantic_name(), expected_first, "{text:?}");
+        assert_eq!(facts[1].semantic_name(), expected_second, "{text:?}");
+    }
+}
+
+/// The load-bearing #777/#778 punctuator boundary, restated against the
+/// both-unary production: authored `++`/`--` is a single competing
+/// punctuator and is never split into a binary sign plus a right-unary
+/// sign, so same-sign forms are selected only when non-empty selected
+/// trivia separates the two punctuators. The rejected spellings degrade to
+/// the existing local `One(first)` with the cursor restored to immediately
+/// after the left-unary-wrapped first operand, so the enclosing owner
+/// rejects the whole declaration.
+#[test]
+fn both_unary_additive_initializer_token_boundary_never_splits_update_expression_punctuators() {
+    for text in [
+        "const x=+a++b;",
+        "const x=+a--b;",
+        "const x=-a++b;",
+        "const x=-a--b;",
+        "var x=+a++b;",
+        "var x=-a--b;",
+        "{ var x=+a++b; }",
+        "{ var x=-a--b; }",
+    ] {
+        assert_unsupported(text);
+    }
+
+    for (selected, outside) in [
+        ("const x=+a+ +b;", "const x=+a++b;"),
+        ("const x=-a- -b;", "const x=-a--b;"),
+    ] {
+        let script = recognized(selected);
+        let [binding] = script.declarations()[0].bindings() else {
+            panic!("expected one selected lexical binding, {selected:?}");
+        };
+        assert_eq!(
+            binding.identifier_reference_initializer_facts().count(),
+            2,
+            "{selected:?}"
+        );
+        assert_unsupported(outside);
+    }
+
+    // A LineTerminator is existing selected trivia, so it separates the two
+    // punctuators exactly as a space does.
+    let script = recognized("const x=+a+\n+b;");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+    assert_eq!(facts.len(), 2);
+    assert_eq!(facts[0].semantic_name(), "a");
+    assert_eq!(facts[1].semantic_name(), "b");
+}
+
+/// Direct/Escaped cross-product across both operands, plus exact source
+/// provenance, including the #785 issue-text worked example. Classic
+/// four-hex-digit `\uXXXX` escape fragments are built with `concat!` over
+/// individually escaped pieces (matching PR #753's own technique, reused by
+/// the plain/left-unary/right-unary cross-product tests above) so the
+/// literal backslash-u-hex bytes reliably survive intact.
+#[test]
+fn both_unary_additive_initializer_direct_escaped_cross_product_preserves_authored_provenance() {
+    let esc_61 = concat!("\\", "u0061"); // decodes to "a"
+    let esc_62 = concat!("\\", "u0062"); // decodes to "b"
+    let esc_within_foo = concat!("f", "\\", "u006F", "o"); // mixed-part, decodes to "foo"
+    let esc_within_bar = concat!("b", "\\", "u0061", "r"); // mixed-part, decodes to "bar"
+
+    // #785 issue-text worked example: `const x=+` + esc_61 + `-+` +
+    // esc_within_foo + `;`.
+    let text = format!("const x=+{esc_61}-+{esc_within_foo};");
+    let script = recognized(&text);
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+    assert_eq!(facts.len(), 2);
+    assert_eq!(facts[0].reference().fragment(), esc_61);
+    assert_eq!(facts[0].semantic_name(), "a");
+    assert_eq!(facts[1].reference().fragment(), esc_within_foo);
+    assert_eq!(facts[1].semantic_name(), "foo");
+
+    for (
+        text,
+        expected_first_fragment,
+        expected_first,
+        expected_second_fragment,
+        expected_second,
+    ) in [
+        // Direct / Direct
+        (
+            "const x=+a+-b;".to_owned(),
+            "a".to_owned(),
+            "a",
+            "b".to_owned(),
+            "b",
+        ),
+        // Escaped / Direct
+        (
+            format!("const x=+{esc_61}+-b;"),
+            esc_61.to_owned(),
+            "a",
+            "b".to_owned(),
+            "b",
+        ),
+        // Direct / Escaped
+        (
+            format!("const x=+a-+{esc_62};"),
+            "a".to_owned(),
+            "a",
+            esc_62.to_owned(),
+            "b",
+        ),
+        // Escaped / Escaped, same signs separated by selected trivia.
+        (
+            format!("const x=-{esc_61}- -{esc_62};"),
+            esc_61.to_owned(),
+            "a",
+            esc_62.to_owned(),
+            "b",
+        ),
+        // Mixed-part escaped operands on both sides.
+        (
+            format!("const x=-{esc_within_foo}+ +{esc_within_bar};"),
+            esc_within_foo.to_owned(),
+            "foo",
+            esc_within_bar.to_owned(),
+            "bar",
+        ),
+        // Braced `\u{...}` escape form on both operands.
+        (
+            "let x = -\\u{61} + -\\u{62};".to_owned(),
+            "\\u{61}".to_owned(),
+            "a",
+            "\\u{62}".to_owned(),
+            "b",
+        ),
+    ] {
+        let script = recognized(&text);
+        let [binding] = script.declarations()[0].bindings() else {
+            panic!("expected one selected lexical binding, {text:?}");
+        };
+        let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+        assert_eq!(facts.len(), 2, "{text:?}");
+        assert_eq!(
+            facts[0].reference().fragment(),
+            expected_first_fragment,
+            "{text:?}"
+        );
+        assert_eq!(facts[0].semantic_name(), expected_first, "{text:?}");
+        assert_eq!(
+            facts[1].reference().fragment(),
+            expected_second_fragment,
+            "{text:?}"
+        );
+        assert_eq!(facts[1].semantic_name(), expected_second, "{text:?}");
+    }
+}
+
+/// Neither unary sign ever enters a retained `SourceAnchor`: the first
+/// fact's anchor excludes the leading unary sign, and the second fact's
+/// anchor excludes the right unary sign. Asserted against exact authored
+/// byte offsets rather than only against relative order.
+#[test]
+fn both_unary_additive_initializer_anchors_exclude_both_unary_signs() {
+    for (text, first_start, second_start) in [
+        // `const x=+a+-b;`: `a` at 9, `b` at 12 (not the leading `+` at 8
+        // and not the right unary `-` at 11).
+        ("const x=+a+-b;", 9_usize, 12_usize),
+        // `const x=-a- -b;`: `a` at 9, `b` at 13.
+        ("const x=-a- -b;", 9, 13),
+        // `const x=+a + - b;`: `a` at 9, `b` at 15 -- trivia in every
+        // selected position.
+        ("const x=+a + - b;", 9, 15),
+    ] {
+        let script = recognized(text);
+        let [binding] = script.declarations()[0].bindings() else {
+            panic!("expected one selected lexical binding, {text:?}");
+        };
+        let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+        assert_eq!(facts.len(), 2, "{text:?}");
+        assert_eq!(
+            facts[0].reference().range().start(),
+            first_start,
+            "{text:?}"
+        );
+        assert_eq!(
+            facts[0].reference().range().end(),
+            first_start + 1,
+            "{text:?}"
+        );
+        assert_eq!(facts[0].reference().fragment(), "a", "{text:?}");
+        assert_eq!(
+            facts[1].reference().range().start(),
+            second_start,
+            "{text:?}"
+        );
+        assert_eq!(
+            facts[1].reference().range().end(),
+            second_start + 1,
+            "{text:?}"
+        );
+        assert_eq!(facts[1].reference().fragment(), "b", "{text:?}");
+    }
+}
+
+/// Regression: every accepted predecessor initializer route is undisturbed
+/// by the new both-unary alternative -- a plain single reference, a
+/// unary-only reference, a plain two-reference additive, the left-unary
+/// plain-right route (#775/#776), and the plain-left right-unary route
+/// (#779/#780) all still commit exactly the facts they did before.
+#[test]
+fn both_unary_additive_initializer_does_not_disturb_existing_predecessors() {
+    for (text, expected) in [
+        ("const x=a;", vec!["a"]),
+        ("const x=+a;", vec!["a"]),
+        ("const x=-a;", vec!["a"]),
+        ("const x=a+b;", vec!["a", "b"]),
+        ("const x=+a+b;", vec!["a", "b"]),
+        ("const x=-a-b;", vec!["a", "b"]),
+        ("const x=a+-b;", vec!["a", "b"]),
+        ("const x=a-+b;", vec!["a", "b"]),
+        ("const x=a+ +b;", vec!["a", "b"]),
+        ("const x=a- -b;", vec!["a", "b"]),
+    ] {
+        let script = recognized(text);
+        let [binding] = script.declarations()[0].bindings() else {
+            panic!("expected one selected lexical binding, {text:?}");
+        };
+        let names: Vec<_> = binding
+            .identifier_reference_initializer_facts()
+            .map(|fact| fact.semantic_name().to_owned())
+            .collect();
+        assert_eq!(names, expected, "{text:?}");
+    }
+
+    for (text, expected) in [
+        ("var x=+a+b;", vec!["a", "b"]),
+        ("var x=a+-b;", vec!["a", "b"]),
+    ] {
+        let script = recognized_variable(text);
+        let statement = only_variable_statement(&script);
+        let [binding] = statement.bindings() else {
+            panic!("expected one selected top-level var binding, {text:?}");
+        };
+        let names: Vec<_> = binding
+            .identifier_reference_initializer_facts()
+            .map(|fact| fact.semantic_name().to_owned())
+            .collect();
+        assert_eq!(names, expected, "{text:?}");
+    }
+}
+
+/// An incomplete or richer both-unary continuation never authorizes a
+/// complete declaration: the initializer-local rollback degrades to
+/// `One(first)` with the cursor restored to immediately after the
+/// left-unary-wrapped first operand, and the enclosing owner then rejects
+/// the unconsumed suffix. The second operand also gains no new
+/// escaped-ReservedWord route merely because it follows both a left-unary
+/// and a right-unary sign.
+#[test]
+fn both_unary_additive_initializer_incomplete_or_richer_continuation_firewalls_remain_unsupported()
+{
+    for text in [
+        // Absent / non-`IdentifierReference` second operand.
+        "const x=+a+-;",
+        "const x=+a+-1;",
+        "const x=+a+-true;",
+        "const x=+a+-null;",
+        "const x=+a+-this;",
+        "const x=+a+-\"b\";",
+        "const x=+1+-b;",
+        // Left operator recursion / invalid left unary: never a valid
+        // leading-unary first operand.
+        "const x=++a+-b;",
+        "const x=--a-+b;",
+        "const x=+-a+-b;",
+        "const x=-+a-+b;",
+        // Recursive right unary: exactly one right-unary wrapper is
+        // admitted.
+        "const x=+a+-+b;",
+        "const x=+a-+-b;",
+        "const x=+a+--b;",
+        "const x=+a-++b;",
+        // Update-punctuator ambiguity: authored `++`/`--` is never split.
+        "const x=+a++b;",
+        "const x=+a--b;",
+        "const x=-a++b;",
+        "const x=-a--b;",
+        // Other unary operator families.
+        "const x=+a+!b;",
+        "const x=+a+~b;",
+        "const x=+a+typeof b;",
+        "const x=+a+void b;",
+        "const x=+a+delete b;",
+        // Heterogeneous operands.
+        "const x=+a+-1;",
+        "const x=+1+-b;",
+        "const x=+a+true;",
+        "const x=+a+null;",
+        "const x=+a+this;",
+        "const x=+a+\"b\";",
+        // Cardinality / richer expressions: never truncated to a bounded
+        // accepted prefix.
+        "const x=+a+-b+c;",
+        "const x=-a-+b-c;",
+        "const x=+a+-b*c;",
+        "const x=+a+-b.c;",
+        "const x=+a+-b();",
+        "const x=+a+-(b);",
+        // Comments are not selected trivia.
+        "const x=+a+/*comment*/-b;",
+        "const x=+a+-b/*comment*/;",
+        // Malformed second operand must not leak the first operand.
+        r"const x=+a+-\u{};",
+    ] {
+        assert_unsupported(text);
+    }
+
+    // Escaped ReservedWord second operand: no new wrapped
+    // escaped-ReservedWord route is introduced behind the right unary sign.
+    let escaped_if = concat!("\\", "u0069", "f");
+    assert_unsupported(&format!("const x=+a+-{escaped_if};"));
+    assert_unsupported(&format!("const x=-a- -{escaped_if};"));
+    // Escaped ReservedWord left operand: the unary helper's own decline
+    // remains unchanged, so this stays outside regardless of any following
+    // both-unary continuation.
+    assert_unsupported(&format!("const x=+{escaped_if}+-b;"));
+
+    // Malformed escape mid-spelling behind the right unary sign.
+    let escaped_dash = concat!("\\", "u002D");
+    assert_unsupported(&format!("const x=+a+-b{escaped_dash};"));
+
+    // The same firewalls hold for every owner, not only `LexicalDeclaration`.
+    for text in [
+        "var x=+a+-;",
+        "var x=+a+-+b;",
+        "var x=+a+-b+c;",
+        "var x=+a++b;",
+        "{ var x=+a+-; }",
+        "{ var x=+a+-+b; }",
+        "{ var x=+a+-b+c; }",
+        "{ var x=+a++b; }",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+/// Whole-owner transactionality: a valid both-unary additive initializer
+/// must not escape as committed selected state when a later declarator,
+/// binding, or terminator fails, across all three owners. The authoritative
+/// failure subject and class are preserved.
+#[test]
+fn both_unary_additive_initializer_transactionality_commits_no_earlier_fact() {
+    for text in [
+        "const x=+a+-b, y=;",
+        "var x=+a+-b, y=;",
+        "{ var x=+a+-b, y= }",
+    ] {
+        assert_unsupported(text);
+    }
+
+    let subject = grammar_rejection(r"const x=+a+-b, \u{}=1;");
+    assert_eq!(subject.fragment(), r"\u{}");
+
+    let subject = grammar_rejection(r"var x=+a+-b, \u{}=1;");
+    assert_eq!(subject.fragment(), r"\u{}");
+
+    let subject = grammar_rejection(r"{ var x=+a+-b, \u{}=1; }");
+    assert_eq!(subject.fragment(), r"\u{}");
+}
+
+/// Duplicate authored occurrences are never deduplicated, and `1..N`
+/// declarator composition preserves authored declarator order across mixed
+/// both-unary, right-unary, left-unary, plain-additive, and single-reference
+/// initializers.
+#[test]
+fn both_unary_additive_initializer_duplicate_occurrences_and_declarator_order_are_preserved() {
+    let script = recognized("const x=+a+-a;");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+    assert_eq!(facts.len(), 2);
+    assert_eq!(facts[0].semantic_name(), "a");
+    assert_eq!(facts[1].semantic_name(), "a");
+    assert!(facts[0].reference().range().start() < facts[1].reference().range().start());
+
+    let script = recognized_variable("var x=+a+-b, y=c, z=-d+ +e, w=f-g;");
+    let statement = only_variable_statement(&script);
+    let [x, y, z, w] = statement.bindings() else {
+        panic!("expected four selected top-level var bindings");
+    };
+    let x_facts: Vec<_> = x.identifier_reference_initializer_facts().collect();
+    assert_eq!(x_facts.len(), 2);
+    assert_eq!(x_facts[0].semantic_name(), "a");
+    assert_eq!(x_facts[1].semantic_name(), "b");
+
+    let y_facts: Vec<_> = y.identifier_reference_initializer_facts().collect();
+    assert_eq!(y_facts.len(), 1);
+    assert_eq!(y_facts[0].semantic_name(), "c");
+
+    let z_facts: Vec<_> = z.identifier_reference_initializer_facts().collect();
+    assert_eq!(z_facts.len(), 2);
+    assert_eq!(z_facts[0].semantic_name(), "d");
+    assert_eq!(z_facts[1].semantic_name(), "e");
+
+    let w_facts: Vec<_> = w.identifier_reference_initializer_facts().collect();
+    assert_eq!(w_facts.len(), 2);
+    assert_eq!(w_facts[0].semantic_name(), "f");
+    assert_eq!(w_facts[1].semantic_name(), "g");
+}
+
+#[test]
+fn both_unary_additive_initializer_jointly_composes_across_all_three_owners() {
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+
+    let script = recognized_variable("var x=+a+-b;");
+    let statement = only_variable_statement(&script);
+    let [binding] = statement.bindings() else {
+        panic!("expected one selected top-level var binding");
+    };
+    let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+    assert_eq!(facts.len(), 2);
+    assert_eq!(facts[0].semantic_name(), "a");
+    assert_eq!(facts[1].semantic_name(), "b");
+
+    let block_script = recognized_block("{ var x=-a- -b }");
+    let [SelectedTopLevelItem::Block(block)] = block_script.items() else {
+        panic!("expected exactly one Block item");
+    };
+    let [SelectedBlockItem::Var(statement)] = block.items() else {
+        panic!("expected exactly one Block var statement");
+    };
+    let [binding] = statement.bindings() else {
+        panic!("expected one selected Block var binding");
+    };
+    let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+    assert_eq!(facts.len(), 2);
+    assert_eq!(facts[0].semantic_name(), "a");
+    assert_eq!(facts[1].semantic_name(), "b");
+
+    // Joint placement-neutral firewall spot-check: the incomplete-
+    // continuation and token-boundary firewalls hold for every owner, not
+    // only `LexicalDeclaration`.
+    assert_unsupported("var x=+a+-b+c;");
+    assert_unsupported("{ var x=+a+-b+c; }");
+    assert_unsupported("var x=+a++b;");
+    assert_unsupported("{ var x=+a++b; }");
 }
 
 // --- Issue #758: top-level free-standing `IdentifierReference`
