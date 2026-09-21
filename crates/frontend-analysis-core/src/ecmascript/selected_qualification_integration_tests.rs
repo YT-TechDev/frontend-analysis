@@ -178,6 +178,37 @@ fn escaped_identifier_reference_initializers_remain_selected_accepted_incomplete
     }
 }
 
+/// Issue #791 (per #688 comment 5762579228): the newly selected
+/// one-reference / one-plain-decimal heterogeneous additive initializer
+/// reaches the same existing `SelectedAcceptedIncomplete` lifecycle as any
+/// other production-accepted, not-yet-Oracle-qualified source -- never
+/// `UnsupportedCoverage` and never `Qualified`. #789/#790 remain the
+/// candidate-independent Oracle for the underlying theorem; this leaf adds
+/// no new qualification branch.
+#[test]
+fn one_reference_one_plain_decimal_additive_initializer_remains_selected_accepted_incomplete() {
+    for text in [
+        "const x = a + 1;",
+        "const x = 1 + a;",
+        "let x = a - 1.0;",
+        "let x = .5 - a;",
+        "var x = a + 1e-2;",
+        "var x = 1e-2 + a;",
+        "{ var x = a - 1e2; }",
+        "{ var x = 1e2 - a; }",
+        r"const x = a + 1;",
+        r"const x = 1 + a;",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text}"
+        );
+    }
+}
+
 #[test]
 fn escaped_identifier_reference_invalid_and_tail_families_remain_unsupported() {
     for text in [
@@ -199,7 +230,6 @@ fn escaped_identifier_reference_invalid_and_tail_families_remain_unsupported() {
         r"const x = \u200D;",
         r"const x = \u0066oo.bar;",
         r"const x = \u0066oo();",
-        r"const x = \u0066oo + 1;",
         r"const x = \u0066oo = bar;",
         r"const x = \u0066oo ? bar : baz;",
         r"const x = \u0066oo/*comment*/;",
@@ -523,7 +553,6 @@ fn unsupported_rhs_and_broader_grammar_remain_unsupported_without_source_verdict
         "const x=if;",
         "const x=foo.bar;",
         "const x=foo();",
-        "const x=foo + 1;",
         "const x=(foo);",
         "const x=foo = bar;",
         "const x=foo ? bar : baz;",
@@ -1076,7 +1105,6 @@ fn top_level_variable_statement_grammar_and_deferred_boundaries_remain_distinct(
         r"var x=\u0066oo();",
         "var x=foo.bar;",
         "var x=foo();",
-        "var x=foo+1;",
     ] {
         assert!(
             matches!(

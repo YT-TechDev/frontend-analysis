@@ -621,3 +621,34 @@ fn two_identifier_reference_additive_initializer_direct_escaped_combinations_com
         ]
     );
 }
+
+// Issue #791 (per #688 comment 5762579228): the one-reference /
+// one-plain-decimal heterogeneous additive initializer reaches this
+// consumer through the unchanged `One(reference)` carrier -- exactly one
+// relation, in either orientation, with the Decimal operand and the binary
+// operator never entering this consumer's input at all. #789/#790
+// independently proves the underlying candidate-independent theorem; this
+// test seals only that this consumer composes the new producer correctly.
+
+#[test]
+fn one_reference_one_plain_decimal_additive_initializer_composes_exactly_one_relation() {
+    assert_eq!(
+        relation_snapshots("let a; const x=a+1;"),
+        vec![RelationSnapshot {
+            containing_binding: (13, 14, "x".to_owned()),
+            reference: (15, 16, "a".to_owned()),
+            semantic_name: "a".to_owned(),
+            target: Some((4, 5, "a".to_owned(), SelectedLexicalBindingOrder::Before,)),
+        }]
+    );
+
+    assert_eq!(
+        relation_snapshots("let a; const x=1+a;"),
+        vec![RelationSnapshot {
+            containing_binding: (13, 14, "x".to_owned()),
+            reference: (17, 18, "a".to_owned()),
+            semantic_name: "a".to_owned(),
+            target: Some((4, 5, "a".to_owned(), SelectedLexicalBindingOrder::Before,)),
+        }]
+    );
+}
