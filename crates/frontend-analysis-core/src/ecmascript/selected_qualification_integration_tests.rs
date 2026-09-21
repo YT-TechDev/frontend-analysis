@@ -3038,6 +3038,9 @@ fn two_operand_cardinality_operand_and_richer_expression_firewalls_remain_unsupp
         "a&&b;",
         "a??b;",
         "a,b;",
+        // Issue #781: recognizing the right-unary body does not widen
+        // general LineTerminator-triggered ASI.
+        "a+-b\nlet c;",
         // Escaped-ReservedWord boundary (W26).
         "\\u0069f+b;",
         "a+\\u0069f;",
@@ -3047,6 +3050,10 @@ fn two_operand_cardinality_operand_and_richer_expression_firewalls_remain_unsupp
         // are no longer listed here; recursive Block topology remains
         // unwidened.
         "{ { a+b; } }",
+        "{ { a+-b; } }",
+        // Selected trivia remains comment-free at the binary/right-unary
+        // punctuator boundary.
+        "a+/*comment*/+b;",
     ] {
         assert!(
             matches!(
@@ -3065,6 +3072,10 @@ fn two_operand_use_site_whole_source_transactionality() {
         "a+b;\nlet x = ;",
         "{ a+b; ??? }",
         "{ a+b; }\n???",
+        "a+-b;\n???",
+        "a+-b;\nlet x = ;",
+        "{ a+-b; ??? }",
+        "{ a+-b; }\n???",
     ] {
         assert!(
             matches!(
@@ -3078,5 +3089,5 @@ fn two_operand_use_site_whole_source_transactionality() {
 
 #[test]
 fn two_operand_use_site_known_static_rejection_gates_qualification() {
-    assert_static_semantics_rejected("let a;\n{ var a; b+c; }", "a", (13, 14));
+    assert_static_semantics_rejected("let a;\n{ var a; b+-c; }", "a", (13, 14));
 }
