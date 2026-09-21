@@ -3677,3 +3677,26 @@ fn left_unary_use_site_known_static_rejection_suppresses_relation_construction()
     // locally valid `-b-c;` use-site never publishes a relation once the
     // existing lexical/var static rejection wins.
 }
+
+// --- Issue #781: the plain-left right-unary additive spelling retains the
+// same ordered `Two` facts consumed by the existing correspondence layer. ---
+
+#[test]
+fn right_unary_use_site_reuses_per_operand_correspondence_in_authored_order() {
+    let (_, script) = recognized_reference_use("let a;\nvar b;\na+-b;");
+    let analysis = accepted_use_site_analysis(&script);
+    let [a, b] = analysis.relations() else {
+        panic!("expected exactly two use-site relations");
+    };
+    assert_eq!(a.semantic_name(), "a");
+    assert_eq!(b.semantic_name(), "b");
+    assert!(a.reference().range().start() < b.reference().range().start());
+    assert!(a.correspondence().selected_lexical_binding().is_some());
+    assert_eq!(
+        b.correspondence()
+            .var_contributors()
+            .expect("b must resolve to the same-source var contributor")
+            .len(),
+        1
+    );
+}

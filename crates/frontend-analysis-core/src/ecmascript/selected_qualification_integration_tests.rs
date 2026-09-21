@@ -2957,6 +2957,10 @@ fn two_operand_identifier_reference_expression_statement_use_site_remains_select
     for text in [
         "a+b;",
         "a-b;",
+        "a+-b;",
+        "a-+b;",
+        "a+ +b;",
+        "a- -b;",
         "a + b;",
         "\\u0061+b;",
         "a+\\u0062;",
@@ -3009,7 +3013,6 @@ fn two_operand_cardinality_operand_and_richer_expression_firewalls_remain_unsupp
         "--a+b;",
         "!a+b;",
         "a++b;",
-        "a+-b;",
         "1+b;",
         "a+1;",
         "true+b;",

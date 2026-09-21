@@ -1324,6 +1324,7 @@ fn reference_use_enabled_positive_sources_are_accepted_and_use_site_contributes_
         "a;",
         "let a;\na;",
         "var a;\na;",
+        "let a;\nvar b;\na+-b;",
         "{ var a; }\na;",
         "{ let a; }\na;",
         "let a;\nlet x = a;\na;",
