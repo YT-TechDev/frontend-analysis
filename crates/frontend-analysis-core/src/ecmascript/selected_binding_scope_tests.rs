@@ -494,6 +494,38 @@ fn right_unary_additive_initializer_composes_the_same_two_relations_as_plain_add
     );
 }
 
+/// Issue #785: the both-unary exactly-two `IdentifierReference` additive
+/// initializer reaches this consumer through the unchanged `Two { first,
+/// second }` carrier, producing exactly the same two ordered relations as
+/// the plain `a + b` spelling above -- with both the left unary sign and the
+/// right unary sign excluded from their respective reference anchors. No new
+/// relation type, relation meaning, or ordering rule is introduced by the
+/// new syntax.
+#[test]
+fn both_unary_additive_initializer_composes_the_same_two_relations_as_plain_additive() {
+    assert_eq!(
+        relation_snapshots("let a; let b; const x = +a+-b;"),
+        vec![
+            RelationSnapshot {
+                containing_binding: (20, 21, "x".to_owned()),
+                // The leading `+` at 24 is recognition-time evidence only:
+                // the first reference anchor starts at `a`, at 25.
+                reference: (25, 26, "a".to_owned()),
+                semantic_name: "a".to_owned(),
+                target: Some((4, 5, "a".to_owned(), SelectedLexicalBindingOrder::Before,)),
+            },
+            RelationSnapshot {
+                containing_binding: (20, 21, "x".to_owned()),
+                // The `-` at 27 is recognition-time evidence only: the
+                // second reference anchor starts at `b`, at 28.
+                reference: (28, 29, "b".to_owned()),
+                semantic_name: "b".to_owned(),
+                target: Some((11, 12, "b".to_owned(), SelectedLexicalBindingOrder::Before,)),
+            },
+        ]
+    );
+}
+
 #[test]
 fn two_identifier_reference_additive_initializer_order_is_authored_not_target_declaration_order() {
     // `b` is declared before `a`, but the reference order is `a` then `b`

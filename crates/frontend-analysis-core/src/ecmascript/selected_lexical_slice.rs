@@ -3276,12 +3276,15 @@ impl<'source> Cursor<'source> {
     /// `a-++b` still fail the second operand and decline. The right unary
     /// sign is consumed and discarded before the shared recognizer runs, so
     /// it is never part of the second operand's authored `SourceAnchor`. The
-    /// already-accepted left-unary helper
+    /// left-unary helper
     /// `consume_selected_leading_plus_minus_identifier_reference_left_additive_initializer`
-    /// is deliberately *not* widened here: it owns the left-unary plus
-    /// plain-right theorem, and widening it would admit unapproved both-unary
-    /// forms such as `+a+-b`. Free-standing right-unary use-sites (`a+-b;`)
-    /// likewise remain outside this leaf, since
+    /// is a distinct owner for the leading-unary-first route and is not
+    /// called from here; Issue #785 (per #688 comment 5757139580) widens
+    /// that helper directly with the identical boundary logic to compose the
+    /// both-unary family (`+a+-b`), reusing this same #777/#778 theorem
+    /// rather than duplicating it in a new shared function. Free-standing
+    /// right-unary use-sites (`a+-b;`) likewise remain outside this leaf,
+    /// since
     /// `consume_selected_identifier_reference_expression_statement_use_site_body`
     /// owns a distinct carrier and whole-body rollback contract.
     ///
@@ -3511,14 +3514,23 @@ impl<'source> Cursor<'source> {
     /// unchanged) as the left operand of the initializer-owned exactly-two
     /// `IdentifierReference` additive continuation theorem (Issue #775 per
     /// #688 comment 5744972977, reusing the candidate-independent additive
-    /// theorem accepted by #752/#753):
+    /// theorem accepted by #752/#753), widened by Issue #785 (per #688
+    /// comment 5757139580) to additionally admit an optional right-unary
+    /// `+`/`-` wrapper on the second operand, reusing the
+    /// candidate-independent binary/right-unary token-boundary theorem
+    /// accepted by #777/#778 and mirroring the continuation logic already
+    /// used by `consume_selected_identifier_reference_initializer` (Issue
+    /// #779) exactly, starting from the already-matched left-unary `first`
+    /// instead of a plain first operand:
     ///
     /// ```text
-    /// SelectedLeadingPlusMinusIdentifierReferenceLeftAdditiveInitializer ::=
+    /// SelectedBothUnaryIdentifierReferenceAdditiveInitializer ::=
     ///     SelectedLeadingPlusMinusIdentifierReferenceUnaryExpression
     ///     SelectedAdditiveTrivia
-    ///     ("+" | "-")
-    ///     SelectedAdditiveTrivia
+    ///     SelectedBinaryPlusMinus
+    ///     SelectedBinaryUnaryBoundary
+    ///     SelectedUnaryPlusMinus
+    ///     SelectedUnaryOperandTrivia
     ///     SelectedAcceptedIdentifierReference
     /// ```
     ///
@@ -3527,11 +3539,22 @@ impl<'source> Cursor<'source> {
     /// authored binary `+`/`-` at that position, the cursor is restored to
     /// immediately after `first` and `One(first)` is returned unchanged --
     /// this is the existing accepted `+a` initializer behavior, exactly
-    /// preserved. Otherwise exactly one authored `+`/`-` is consumed and
-    /// discarded (no operator kind or `SourceAnchor` retained), selected
-    /// trivia is skipped, and a second operand is recognized by the same
+    /// preserved. Otherwise exactly one authored binary `+`/`-` is consumed,
+    /// selected trivia is skipped, and the same #777/#778 boundary applies to
+    /// an optional right-unary sign at that position: opposite binary and
+    /// unary signs may be adjacent with no inter-operator trivia (`+a+-b`,
+    /// `+a-+b`), while equal signs require non-empty inter-operator selected
+    /// trivia (`+a+ +b`, `+a- -b`), so authored `++`/`--` is never split into
+    /// a binary sign plus a right-unary sign (`+a++b`, `+a--b` remain
+    /// outside). At most one right-unary wrapper is admitted -- no recursion
+    /// -- so `+a+-+b` still fails the second operand. When present, the
+    /// right-unary sign is consumed and discarded before the shared
+    /// recognizer runs, so it is never part of the second operand's authored
+    /// `SourceAnchor`. A second operand is then recognized by the same
     /// unmodified shared `consume_selected_identifier_reference` recognizer.
-    /// An accepted second operand commits `Two { first, second }`.
+    /// An accepted second operand commits `Two { first, second }`; neither
+    /// the left unary sign, the binary sign, the right unary sign, nor any
+    /// inter-operator trivia is retained.
     ///
     /// This deliberately mirrors the initializer-owned local-continuation
     /// theorem already used by `consume_selected_identifier_reference_initializer`,
@@ -3541,11 +3564,11 @@ impl<'source> Cursor<'source> {
     /// operand restores the cursor to immediately after `first` and degrades
     /// to a completed `One(first)`, never to `NotSelected`. This is safe only
     /// because the enclosing declaration/statement owner remains
-    /// authoritative over the complete unconsumed source: `+a+`, `+a+1`, and
-    /// `+a+\u{69}f` still fail as complete declarations, since the owner
-    /// cannot validly terminate on the leftover `+`/operand source, and
-    /// `+a+b+c` still cannot truncate to a successful `Two(a,b)` declaration
-    /// for the same reason. A `ResourceLimited`/`InternalFailure`
+    /// authoritative over the complete unconsumed source: `+a+`, `+a+1`,
+    /// `+a+\u{69}f`, and `+a+-+b` still fail as complete declarations, since
+    /// the owner cannot validly terminate on the leftover `+`/operand source,
+    /// and `+a+-b+c` still cannot truncate to a successful `Two(a,b)`
+    /// declaration for the same reason. A `ResourceLimited`/`InternalFailure`
     /// classification from the second operand's recognition is propagated
     /// immediately and never degrades to a completed `One`/`Two` result.
     fn consume_selected_leading_plus_minus_identifier_reference_left_additive_initializer(
@@ -3555,12 +3578,27 @@ impl<'source> Cursor<'source> {
         let after_first = self.offset;
         self.skip_selected_trivia();
 
-        if !self.consume_ascii('+') && !self.consume_ascii('-') {
+        let binary_sign = if self.consume_ascii('+') {
+            '+'
+        } else if self.consume_ascii('-') {
+            '-'
+        } else {
             self.offset = after_first;
             return Ok(SelectedIdentifierReferenceInitializer::One(first));
-        }
+        };
 
+        let before_inter_operator_trivia = self.offset;
         self.skip_selected_trivia();
+
+        if let Some(unary_sign @ ('+' | '-')) = self.peek_char() {
+            if unary_sign == binary_sign && self.offset == before_inter_operator_trivia {
+                self.offset = after_first;
+                return Ok(SelectedIdentifierReferenceInitializer::One(first));
+            }
+
+            let _ = self.advance_char();
+            self.skip_selected_trivia();
+        }
 
         match self.consume_selected_identifier_reference() {
             SelectedIdentifierReferenceRecognition::Matched(second) => {

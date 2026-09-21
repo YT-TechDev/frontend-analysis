@@ -430,6 +430,38 @@ fn right_unary_additive_initializer_composes_the_same_two_relations_as_plain_add
     );
 }
 
+/// Issue #785: the both-unary exactly-two `IdentifierReference` additive
+/// initializer reaches this distinct Block consumer through the unchanged
+/// `Two { first, second }` carrier, producing exactly the same two ordered
+/// relations as the plain `a+b` spelling above, with both the left unary
+/// sign and the right unary sign excluded from their respective reference
+/// anchors.
+#[test]
+fn both_unary_additive_initializer_composes_the_same_two_relations_as_plain_additive() {
+    let current_block = block(14, 30, "{ let x=+a+-b; }");
+    assert_eq!(
+        relation_snapshots("let a; let b; { let x=+a+-b; }"),
+        vec![
+            RelationSnapshot {
+                containing_binding: anchor(20, 21, "x"),
+                current_region: current_block.clone(),
+                // The leading `+` at 22 is recognition-time evidence only.
+                reference: anchor(23, 24, "a"),
+                semantic_name: "a".to_owned(),
+                target: target(4, 5, "a", RegionSnapshot::TopLevel),
+            },
+            RelationSnapshot {
+                containing_binding: anchor(20, 21, "x"),
+                current_region: current_block,
+                // The `-` at 25 is recognition-time evidence only.
+                reference: anchor(26, 27, "b"),
+                semantic_name: "b".to_owned(),
+                target: target(11, 12, "b", RegionSnapshot::TopLevel),
+            },
+        ]
+    );
+}
+
 #[test]
 fn two_identifier_reference_additive_initializer_does_not_deduplicate_equal_semantic_names() {
     let relations = relation_snapshots("let a; { let x=a+a; }");
