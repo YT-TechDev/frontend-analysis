@@ -237,6 +237,36 @@ fn three_identifier_reference_additive_initializer_remains_selected_accepted_inc
     }
 }
 
+/// Issue #803 (per #688 comment 5779735385): the newly selected unbounded
+/// 2..N ordered `IdentifierReference` additive-chain initializer reaches the
+/// same existing `SelectedAcceptedIncomplete` lifecycle as any other
+/// production-accepted, not-yet-Oracle-qualified source -- never
+/// `UnsupportedCoverage` and never `Qualified` -- for all three joint owners
+/// (`LexicalDeclaration`, top-level `var`, and Block `var`), and for both
+/// the fourth-operand transition and further 5+ growth. #801/PR #802 remain
+/// the candidate-independent Oracle for the underlying theorem; this leaf
+/// adds no new qualification branch.
+#[test]
+fn many_identifier_reference_additive_initializer_remains_selected_accepted_incomplete() {
+    for text in [
+        "const x = a + b + c + d;",
+        "let x = a - b + c - d;",
+        "const x = a + b + c + d + e;",
+        "var x = a + b + c + d;",
+        "{ var x = a + b + c + d; }",
+        "var x = a + b + c + d + e;",
+        "{ var x = a + b + c + d + e; }",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text}"
+        );
+    }
+}
+
 #[test]
 fn escaped_identifier_reference_invalid_and_tail_families_remain_unsupported() {
     for text in [
@@ -3226,6 +3256,18 @@ fn two_operand_use_site_known_static_rejection_gates_qualification() {
 #[test]
 fn three_identifier_reference_additive_initializer_known_static_rejection_gates_qualification() {
     assert_static_semantics_rejected("let a;\n{ var a; const x=a+b+c; }", "a", (13, 14));
+}
+
+/// Issue #803 (per #688 comment 5779735385) section 22/43: a source
+/// containing a valid `Many` initializer still reaches an existing static
+/// rejection unchanged when another existing obligation fails -- no new
+/// rejection type and no changed rejection ordering. Reuses the smallest
+/// existing static conflict already proven above (a Block `var` duplicating
+/// an enclosing top-level lexical name), with the free-standing use-site
+/// replaced by a complete four-operand initializer.
+#[test]
+fn many_identifier_reference_additive_initializer_known_static_rejection_gates_qualification() {
+    assert_static_semantics_rejected("let a;\n{ var a; const x=a+b+c+d; }", "a", (13, 14));
 }
 
 /// Issue #799 (per #688 comment 5775218176) section 42: a source containing
