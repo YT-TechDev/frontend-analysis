@@ -23,10 +23,11 @@
 //! free-standing use-site relation traversal (TopLevel-only, and
 //! Block-contained) from exactly one fact per structural use-site item to
 //! the bounded `SelectedFreeStandingIdentifierReferenceUseSite::facts()`
-//! one-or-two ordered occurrences per item, emitting one relation per
-//! retained fact in exact authored item order, then exact authored operand
-//! order within each item; the existing relation types, correspondence
-//! meanings, and result-surface separation are unchanged.
+//! one/two ordered occurrences per item (widened again to one/two/three by
+//! Issue #799), emitting one relation per retained fact in exact authored
+//! item order, then exact authored operand order within each item; the
+//! existing relation types, correspondence meanings, and result-surface
+//! separation are unchanged.
 //!
 //! This is not runtime binding resolution. An authored `VariableDeclaration`
 //! contributor is not a unique runtime binding identity or a `ResolveBinding`

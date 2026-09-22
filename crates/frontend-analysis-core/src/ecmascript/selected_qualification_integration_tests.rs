@@ -3077,14 +3077,60 @@ fn two_operand_identifier_reference_expression_statement_use_site_remains_select
     }
 }
 
+// --- Issue #799 (per #688 comment 5775218176): composes the
+// candidate-independent exactly-three ordered `IdentifierReference` additive
+// theorem accepted by #795/PR #796 into free-standing production. `a+b+c;`
+// and its neighbors move from the old `UnsupportedCoverage` firewall list
+// into selected-positive coverage; every newly selected complete source
+// reaches exactly the existing `SelectedAcceptedIncomplete` lifecycle, never
+// a new qualification branch or evidence family. ---
+
 #[test]
-fn two_operand_cardinality_operand_and_richer_expression_firewalls_remain_unsupported() {
+fn three_operand_identifier_reference_expression_statement_use_site_remains_selected_accepted_incomplete()
+ {
     for text in [
-        // Cardinality firewall (acceptance criterion 14 / W24).
+        // All four operator-pair combinations, TopLevel authored-semicolon.
         "a+b+c;",
         "a-b-c;",
         "a+b-c;",
         "a-b+c;",
+        // Direct / escaped provenance, all three positions.
+        "\\u0061+b+c;",
+        "a+\\u0062+c;",
+        "a+b+\\u0063;",
+        // One-level Block, authored semicolon.
+        "{ a+b+c; }",
+        "{ a-b-c; }",
+        // Automatic termination: TopLevel EOF, Block before-close.
+        "a+b+c",
+        "{ a+b+c }",
+        // Duplicate operands.
+        "a+a+a;",
+        // Mixed one/two/three-operand item-order composition.
+        "a;\nb+c;\nd+e+f;\ng;",
+        // Correspondence composition (per-operand independent resolution).
+        "let c;\nlet a;\nvar b;\na+b+c;",
+        "let c;\nvar b;\n{ let a;\na+b+c; }",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn two_operand_cardinality_operand_and_richer_expression_firewalls_remain_unsupported() {
+    for text in [
+        // Cardinality firewall: exactly three plain operands (`a+b+c;`,
+        // `a-b-c;`, `a+b-c;`, `a-b+c;`) migrated to selected-positive
+        // coverage by Issue #799 (see
+        // `three_operand_identifier_reference_expression_statement_use_site_remains_selected_accepted_incomplete`);
+        // four-or-more operands remain outside.
+        "a+b+c+d;",
         // Operand firewall (W25). A leading `+`/`-` *left* operand (`+a+b;`,
         // `-a+b;`) moved to selected-positive coverage by Issue #773 (see
         // the "Issue #773" section below); other unary operators/recursion
@@ -3180,6 +3226,18 @@ fn two_operand_use_site_known_static_rejection_gates_qualification() {
 #[test]
 fn three_identifier_reference_additive_initializer_known_static_rejection_gates_qualification() {
     assert_static_semantics_rejected("let a;\n{ var a; const x=a+b+c; }", "a", (13, 14));
+}
+
+/// Issue #799 (per #688 comment 5775218176) section 42: a source containing
+/// a valid free-standing `Three` use-site still reaches an existing static
+/// rejection unchanged when another existing obligation fails -- no new
+/// rejection type and no changed rejection ordering. Reuses the smallest
+/// existing static conflict already proven above (a Block `var` duplicating
+/// an enclosing top-level lexical name), with the initializer replaced by a
+/// complete three-operand free-standing use-site.
+#[test]
+fn three_operand_use_site_known_static_rejection_gates_qualification() {
+    assert_static_semantics_rejected("let a;\n{ var a; b+c+d; }", "a", (13, 14));
 }
 
 // --- Issue #793 (per #688 comment 5764090454): composes the
