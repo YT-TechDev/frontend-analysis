@@ -1447,23 +1447,30 @@ enum SelectedIdentifierReferenceRecognition {
 /// Crate-private bounded cardinality carrier for a free-standing
 /// `IdentifierReference` `ExpressionStatement` use-site occurrence, widening
 /// the previous always-exactly-one-fact use-site payload to admit exactly
-/// one additional selected additive operand (Issue #766). `One` represents
-/// a free-standing use-site body retaining exactly one `IdentifierReference`
-/// fact (Issue #793): a plain single-reference use-site (`a;`), or a
-/// selected one-reference / one-plain-decimal heterogeneous additive
-/// use-site (`a + 1;`, `1 + a;`) whose consumed-and-discarded Decimal
-/// operand, binary operator, and left/right orientation are never retained.
-/// `Two` retains
-/// both authored operands of a selected
+/// one additional selected additive operand (Issue #766), then a second
+/// additional operand (Issue #799). `One` represents a free-standing
+/// use-site body retaining exactly one `IdentifierReference` fact (Issue
+/// #793): a plain single-reference use-site (`a;`), or a selected
+/// one-reference / one-plain-decimal heterogeneous additive use-site
+/// (`a + 1;`, `1 + a;`) whose consumed-and-discarded Decimal operand,
+/// binary operator, and left/right orientation are never retained. `Two`
+/// retains both authored operands of a selected
 /// `SelectedTwoIdentifierReferenceAdditiveExpressionStatement` in exact
 /// authored left-to-right order (`first` is the left operand, `second` is
-/// the right operand). Three or more facts, a second fact without a first,
-/// reordering, and deduplication are all unrepresentable by this type. This
-/// is a distinct owner from `SelectedIdentifierReferenceInitializer`:
-/// physical shape equivalence does not establish semantic ownership
-/// equivalence, so this type is never constructed from, converted to, or
-/// shared with that initializer-owned carrier -- a free-standing use-site
-/// has no containing binding.
+/// the right operand). `Three` retains all three authored operands of a
+/// selected `SelectedExactlyThreeIdentifierReferenceAdditiveFreeStandingUseSiteBody`
+/// (Issue #799) in exact authored left-to-right order; it composes the
+/// accepted candidate-independent theorem proven by #795/PR #796 for
+/// plain/plain/plain `IdentifierReference` operands only, reachable solely
+/// through this leaf's own whole-body transaction (never through the
+/// initializer-owned third-operand continuation). Four or more facts, a
+/// second or third fact without its predecessors, holes, reordering, and
+/// deduplication are all unrepresentable by this type. This is a distinct
+/// owner from `SelectedIdentifierReferenceInitializer`: physical shape
+/// equivalence does not establish semantic ownership equivalence, so this
+/// type is never constructed from, converted to, or shared with that
+/// initializer-owned carrier -- a free-standing use-site has no containing
+/// binding.
 #[derive(Debug)]
 pub(super) enum SelectedFreeStandingIdentifierReferenceUseSite {
     One(SelectedIdentifierReferenceFact),
@@ -1471,16 +1478,26 @@ pub(super) enum SelectedFreeStandingIdentifierReferenceUseSite {
         first: SelectedIdentifierReferenceFact,
         second: SelectedIdentifierReferenceFact,
     },
+    Three {
+        first: SelectedIdentifierReferenceFact,
+        second: SelectedIdentifierReferenceFact,
+        third: SelectedIdentifierReferenceFact,
+    },
 }
 
 impl SelectedFreeStandingIdentifierReferenceUseSite {
     /// Every retained fact, in exact authored left-to-right order: one item
-    /// for `One`, two for `Two`. Backed by a fixed-size array, never a heap
-    /// allocation.
+    /// for `One`, two for `Two`, three for `Three`. Backed by a fixed-size
+    /// array, never a heap allocation.
     pub(super) fn facts(&self) -> impl Iterator<Item = &SelectedIdentifierReferenceFact> {
         match self {
-            Self::One(fact) => [Some(fact), None],
-            Self::Two { first, second } => [Some(first), Some(second)],
+            Self::One(fact) => [Some(fact), None, None],
+            Self::Two { first, second } => [Some(first), Some(second), None],
+            Self::Three {
+                first,
+                second,
+                third,
+            } => [Some(first), Some(second), Some(third)],
         }
         .into_iter()
         .flatten()
@@ -1506,8 +1523,9 @@ pub(super) enum SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator
 }
 
 /// TopLevel free-standing `IdentifierReference` `ExpressionStatement`
-/// use-site (Issue #768): the existing bounded `One`/`Two` occurrence body
-/// (Issue #766) paired with this placement's own termination provenance.
+/// use-site (Issue #768): the existing bounded `One`/`Two`/`Three` occurrence
+/// body (Issue #766, widened by Issue #799) paired with this placement's own
+/// termination provenance.
 /// Reference occurrence cardinality (`body`) and statement termination
 /// provenance (`terminator`) are kept as two independent fields, never
 /// crossed into a Cartesian variant set. Never shared with
@@ -1553,8 +1571,9 @@ pub(super) enum SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator {
 }
 
 /// One-level Block free-standing `IdentifierReference` `ExpressionStatement`
-/// use-site (Issue #768): the existing bounded `One`/`Two` occurrence body
-/// (Issue #766) paired with this placement's own termination provenance.
+/// use-site (Issue #768): the existing bounded `One`/`Two`/`Three` occurrence
+/// body (Issue #766, widened by Issue #799) paired with this placement's own
+/// termination provenance.
 /// Reference occurrence cardinality (`body`) and statement termination
 /// provenance (`terminator`) are kept as two independent fields, never
 /// crossed into a Cartesian variant set. Never shared with
@@ -1587,28 +1606,33 @@ impl SelectedBlockIdentifierReferenceUseSite {
 /// carrier by Issue #766 per #688 comment 5739718987, narrowed from owning
 /// the whole use-site including its authored-semicolon terminator to owning
 /// only the placement-neutral body -- termination provenance moved entirely
-/// to the placement-owned TopLevel/Block callers -- by Issue #768).
-/// `NotSelected` covers every declining case uniformly: no candidate
-/// reference; an escaped-ReservedWord first or second candidate; or a
-/// `+`/`-` continuation whose second operand does not complete the whole
-/// two-operand theorem. In every `NotSelected` case the cursor is left
-/// exactly where it stood before the probe began -- including a `+`/`-`
-/// continuation that begins to match but does not complete (e.g. `a+`) --
-/// so the caller's own existing dispatch sees an unperturbed cursor and a
-/// locally recognized prefix never authorizes a richer or longer source.
-/// This is why this owner must not call
+/// to the placement-owned TopLevel/Block callers -- by Issue #768, widened
+/// again to the bounded `Three` occurrence by Issue #799 per #688 comment
+/// 5775218176). `NotSelected` covers every declining case uniformly: no
+/// candidate reference; an escaped-ReservedWord first, second, or third
+/// candidate; a `+`/`-` continuation whose second operand does not complete
+/// the two-operand theorem; or, only after a plain (never right-unary-wrapped)
+/// second operand, a second `+`/`-` continuation whose third operand does
+/// not complete the three-operand theorem. In every `NotSelected` case the
+/// cursor is left exactly where it stood before the probe began -- including
+/// a `+`/`-` continuation that begins to match but does not complete (e.g.
+/// `a+`, `a+b+`) -- so the caller's own existing dispatch sees an
+/// unperturbed cursor and a locally recognized prefix never authorizes a
+/// richer or longer source. This is why this owner must not call
 /// `consume_selected_identifier_reference_initializer`: that helper has
-/// initializer-owned staged partial-recovery semantics (degrading a failed
-/// continuation to a completed `One`/`Two` result) and, for a plain
-/// three-operand chain, now fully composes a complete `Three(first, second,
-/// third)` (Issue #797 per #688 comment 5771773635), which would incorrectly
-/// authorize `a+b+c` as a complete free-standing Statement body; free-standing
-/// use-sites use whole-body rollback instead and cannot reuse that owner
-/// contract. `ResourceLimited`/
+/// initializer-owned staged partial-recovery semantics, degrading a failed
+/// continuation to a completed `One`/`Two` result -- including a failed
+/// third-operand continuation, which it degrades to `Two` rather than
+/// rolling back the whole candidate -- whereas this leaf's own bounded
+/// third-operand probe (below) restores the entire body snapshot and
+/// declines on the identical failure. Physical shape equivalence between
+/// the two `Three`-bearing carriers still does not establish shared
+/// ownership. `ResourceLimited`/
 /// `InternalFailure` are propagated exactly, never downgraded to
 /// `NotSelected`. `Matched` retains no terminator: a locally complete body
-/// (`One` or `Two`) is not yet a complete use-site until the placement owner
-/// also proves an authored `;`, actual EOF, or the containing `}` follows
+/// (`One`, `Two`, or `Three`) is not yet a complete use-site until the
+/// placement owner also proves an authored `;`, actual EOF, or the
+/// containing `}` follows
 /// (per `consume_selected_top_level_identifier_reference_expression_statement_use_site`
 /// / `consume_selected_block_identifier_reference_expression_statement_use_site`);
 /// a placement owner that finds none of those must roll back the whole
@@ -1633,7 +1657,7 @@ enum SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition {
 /// neither an authored `;` nor actual end of input -- in that case the
 /// cursor is rolled back to exactly where it stood before the whole probe
 /// began, so a locally recognized body never authorizes a richer or longer
-/// source (e.g. `a.b`, `a+b+c`).
+/// source (e.g. `a.b`, `a+b+c+d`).
 #[derive(Debug)]
 enum SelectedTopLevelIdentifierReferenceExpressionStatementUseSiteRecognition {
     Matched(SelectedTopLevelIdentifierReferenceUseSite),
@@ -3038,7 +3062,27 @@ impl<'source> Cursor<'source> {
     ///     ("+" | "-")
     ///     SelectedAdditiveTrivia
     ///     SelectedAcceptedIdentifierReference
+    ///
+    /// SelectedExactlyThreeIdentifierReferenceAdditiveFreeStandingUseSiteBody ::=
+    ///     SelectedAcceptedIdentifierReference
+    ///     SelectedAdditiveTrivia
+    ///     ("+" | "-")
+    ///     SelectedAdditiveTrivia
+    ///     SelectedAcceptedIdentifierReference
+    ///     SelectedAdditiveTrivia
+    ///     ("+" | "-")
+    ///     SelectedAdditiveTrivia
+    ///     SelectedAcceptedIdentifierReference
     /// ```
+    ///
+    /// The third-operand continuation (Issue #799 per #688 comment
+    /// 5775218176) is reachable only from the plain bare-reference-first
+    /// route's `Two`-operand match arm, and only when its second operand was
+    /// plain (never right-unary-wrapped) -- see
+    /// `consume_selected_identifier_reference_expression_statement_use_site_body_third_operand`
+    /// below for its bounded transaction. The leading-unary-first route
+    /// above and the right-unary-wrapped second-operand alternative both
+    /// remain bounded to `Two`: neither is widened by Issue #799.
     ///
     /// Each operand is recognized exactly once by the unmodified shared
     /// `consume_selected_identifier_reference` recognizer -- no second
@@ -3071,33 +3115,44 @@ impl<'source> Cursor<'source> {
     ///
     /// Only a failing continuation declines (`NotSelected`), restoring the
     /// cursor to exactly where it stood before this probe began: no
-    /// candidate reference; an escaped-ReservedWord first or second
-    /// candidate; or a `+`/`-` continuation (plain or right-unary-wrapped)
-    /// whose second operand does not complete. This is a whole-body
-    /// transaction, not a first-operand-then-optional-continuation
+    /// candidate reference; an escaped-ReservedWord first, second, or third
+    /// candidate; a `+`/`-` continuation (plain or right-unary-wrapped)
+    /// whose second operand does not complete; or, only after a plain second
+    /// operand on the bare-reference-first route, a second `+`/`-`
+    /// continuation whose third operand does not complete. This is a
+    /// whole-body transaction, not a first-operand-then-optional-continuation
     /// transaction, and it deliberately does not reuse the initializer's
-    /// degrade-to-`One`-on-failure recovery model (Issue #785/#786): a
-    /// locally recognized `IdentifierReference "+" IdentifierReference`
-    /// prefix, with or without a right-unary wrapper, never authorizes a
-    /// richer or longer source (`a+b+c`, `+a+b+c`, `+a+-b+c`), and an
-    /// escaped-ReservedWord operand never gains a new Statement-local
-    /// EE-04-R08 route. A matched body that the placement-owned caller
-    /// cannot terminate validly (e.g. `a.b`, `+a+b+c`) is rolled back by that
-    /// caller to the same pre-probe snapshot, reproducing this leaf's
-    /// pre-#768 all-or-nothing decline for such input exactly.
+    /// degrade-to-`One`/`Two`-on-failure recovery model (Issue #785/#786,
+    /// #797): a locally recognized `IdentifierReference "+" IdentifierReference`
+    /// prefix, with or without a right-unary wrapper, never by itself
+    /// authorizes a richer or longer source than what this probe itself
+    /// completes -- the leading-unary-first route and the right-unary-wrapped
+    /// second-operand alternative remain bounded to `Two` (`+a+b+c`,
+    /// `+a+-b+c` stay outside), and the plain bare-reference-first route's
+    /// own bounded third-operand continuation either fully completes
+    /// `Three` (`a+b+c`) or rolls back the entire candidate (`a+b+`,
+    /// `a+b+\u0069f`) -- and an escaped-ReservedWord operand never gains a
+    /// new Statement-local EE-04-R08 route. A matched body that the
+    /// placement-owned caller cannot terminate validly (e.g. `a.b`,
+    /// `+a+b+c`, `a+b+c+d`) is rolled back by that caller to the same
+    /// pre-probe snapshot, reproducing this leaf's pre-#768 all-or-nothing
+    /// decline for such input exactly.
     ///
     /// This deliberately does not call
     /// `consume_selected_identifier_reference_initializer`: that helper has
     /// initializer-owned staged partial-recovery semantics, intentionally
-    /// degrading a failed continuation to a completed `One`/`Two` result so
-    /// the enclosing binding/comma transaction can recover the remainder,
-    /// and, for a plain three-operand chain, now fully composes a complete
-    /// `Three(first, second, third)` (Issue #797 per #688 comment
-    /// 5771773635), which would incorrectly authorize `a+b+c` as a complete
-    /// free-standing Statement body. Free-standing use-sites use whole-body
-    /// rollback instead and cannot reuse that owner contract; only the
-    /// lexical primitive `consume_selected_identifier_reference` is shared,
-    /// never the owner transaction.
+    /// degrading a failed continuation to a completed `One`/`Two` result
+    /// (and, for a plain three-operand chain, a failed third-operand
+    /// continuation to a completed `Two` -- Issue #797 per #688 comment
+    /// 5771773635) so the enclosing binding/comma transaction can recover
+    /// the remainder. `a+b+c` is instead independently composed to `Three`
+    /// by this leaf's own third-operand helper (Issue #799 per #688 comment
+    /// 5775218176), whose declining continuation rolls back the *entire*
+    /// free-standing candidate rather than degrading to `Two` -- free-standing
+    /// use-sites remain a whole-body transaction and still cannot reuse the
+    /// initializer's owner contract; only the lexical primitive
+    /// `consume_selected_identifier_reference` is shared, never the owner
+    /// transaction.
     ///
     /// `ResourceLimited`/`InternalFailure` from either operand's recognition
     /// are propagated exactly, never downgraded to `NotSelected` or to a
@@ -3315,8 +3370,15 @@ impl<'source> Cursor<'source> {
         match self.consume_selected_identifier_reference() {
             SelectedIdentifierReferenceRecognition::Matched(second) => {
                 self.skip_selected_trivia();
-                SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::Matched(
-                    SelectedFreeStandingIdentifierReferenceUseSite::Two { first, second },
+
+                if right_unary_consumed {
+                    return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::Matched(
+                        SelectedFreeStandingIdentifierReferenceUseSite::Two { first, second },
+                    );
+                }
+
+                self.consume_selected_identifier_reference_expression_statement_use_site_body_third_operand(
+                    snapshot, first, second,
                 )
             }
             SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName { .. }
@@ -3333,6 +3395,92 @@ impl<'source> Cursor<'source> {
                     );
                 }
                 self.offset = snapshot;
+                SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::NotSelected
+            }
+            SelectedIdentifierReferenceRecognition::ResourceLimited => {
+                SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::ResourceLimited
+            }
+            SelectedIdentifierReferenceRecognition::InternalFailure => {
+                SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::InternalFailure
+            }
+        }
+    }
+
+    /// Composes the bounded optional third-operand continuation of the
+    /// exactly-three `IdentifierReference` additive free-standing use-site
+    /// theorem (Issue #799 per #688 comment 5775218176), reusing the
+    /// accepted candidate-independent theorem proven by #795/PR #796. Called
+    /// only from
+    /// `consume_selected_identifier_reference_expression_statement_use_site_body`,
+    /// immediately after a plain (never right-unary-wrapped) second operand
+    /// has matched and its own trailing selected trivia has already been
+    /// skipped, with `body_snapshot` the exact offset the *whole* body probe
+    /// started from -- never merely the offset after the second operand,
+    /// since a declining third continuation here must roll back the entire
+    /// candidate, not degrade to `Two`.
+    ///
+    /// Absent an authored binary `+`/`-` at this position, `Two { first,
+    /// second }` commits immediately: `a+b;` is unaffected by this leaf's
+    /// existence. Otherwise exactly one authored binary `+`/`-` is consumed
+    /// (never a right-unary wrapper -- the #795 theorem is plain/plain/plain
+    /// only), selected trivia is skipped, and a third operand is recognized
+    /// by the same unmodified shared `consume_selected_identifier_reference`
+    /// recognizer, never a second scanner/decoder or a tokenizer/Punctuator
+    /// enum introduced merely to reject a malformed boundary (`a+b+-c`,
+    /// `a+b++c`, `a+b+=c`, `a+b+;`).
+    ///
+    /// A matched (direct or escaped non-ReservedWord) third operand commits
+    /// `Three { first, second, third }` with the cursor positioned after its
+    /// own trailing selected trivia -- this is what naturally excludes a
+    /// fourth operand (`a+b+c+d`): this helper still returns a complete
+    /// `Three`, and the placement-owned caller rejects the untouched `+d`
+    /// remainder by rolling back the whole use-site, since no complete
+    /// selected source may publish a truncated `Three` prefix.
+    ///
+    /// An escaped-ReservedWord, malformed, or entirely absent third operand
+    /// restores the cursor to exactly `body_snapshot` and returns
+    /// `NotSelected` -- deliberately not `Two { first, second }`. This is
+    /// the load-bearing rollback distinction from the initializer's own
+    /// `consume_selected_identifier_reference_initializer_third_operand`
+    /// (Issue #797), which restores only `after_second` and degrades to a
+    /// completed `Two` on the identical decline: an initializer's staged
+    /// local recovery lets the enclosing declaration/var owner judge the
+    /// remainder, but a free-standing use-site is a whole-body transaction
+    /// with no enclosing owner to hand a partial result to, so once a second
+    /// additive continuation has started it must fully complete or the
+    /// entire candidate declines. A `ResourceLimited`/`InternalFailure`
+    /// classification from the third operand's recognition is propagated
+    /// immediately and is never downgraded to `NotSelected` or to a
+    /// completed `Two`, and never publishes the already-recognized
+    /// `first`/`second` facts through a successful body result.
+    fn consume_selected_identifier_reference_expression_statement_use_site_body_third_operand(
+        &mut self,
+        body_snapshot: usize,
+        first: SelectedIdentifierReferenceFact,
+        second: SelectedIdentifierReferenceFact,
+    ) -> SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition {
+        if !(self.consume_ascii('+') || self.consume_ascii('-')) {
+            return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::Matched(
+                SelectedFreeStandingIdentifierReferenceUseSite::Two { first, second },
+            );
+        }
+
+        self.skip_selected_trivia();
+
+        match self.consume_selected_identifier_reference() {
+            SelectedIdentifierReferenceRecognition::Matched(third) => {
+                self.skip_selected_trivia();
+                SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::Matched(
+                    SelectedFreeStandingIdentifierReferenceUseSite::Three {
+                        first,
+                        second,
+                        third,
+                    },
+                )
+            }
+            SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName { .. }
+            | SelectedIdentifierReferenceRecognition::NotSelected => {
+                self.offset = body_snapshot;
                 SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::NotSelected
             }
             SelectedIdentifierReferenceRecognition::ResourceLimited => {
@@ -3460,7 +3608,7 @@ impl<'source> Cursor<'source> {
     /// the cursor back to exactly where it stood before this whole probe
     /// began and declines (`NotSelected`), so a locally recognized body
     /// never authorizes a richer, longer, or `LineTerminator`-terminated
-    /// neighbor (`a.b`, `a+b+c`, `a\nb`). No `SourceAnchor` -- authored,
+    /// neighbor (`a.b`, `a+b+c+d`, `a\nb`). No `SourceAnchor` -- authored,
     /// synthetic, or zero-width -- is retained for the automatic semicolon,
     /// and no EOF decision offset is retained: `AutomaticAtEof` is
     /// categorical provenance only.

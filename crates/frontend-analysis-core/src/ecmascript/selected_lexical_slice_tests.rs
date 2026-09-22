@@ -9890,14 +9890,15 @@ fn two_operand_use_site_duplicate_operands_are_preserved_distinctly() {
 }
 
 #[test]
-fn two_operand_cardinality_firewall_remains_unsupported() {
-    // A valid `a+b` prefix must never authorize a longer additive chain
-    // (acceptance criterion 14 / wrong models W24/W6): exactly two operands
-    // only, never a truncated/flattened accept of the first two.
-    for text in ["a+b+c;", "a-b-c;", "a+b-c;", "a-b+c;"] {
-        assert_unsupported(text);
-    }
-    for text in ["{ a+b+c; }", "{ a-b-c; }"] {
+fn three_operand_cardinality_firewall_remains_unsupported() {
+    // A valid `a+b+c` prefix must never authorize a longer additive chain
+    // (Issue #799 acceptance criterion 18 / wrong model W19): exactly three
+    // operands only, never a truncated/flattened accept of the first three.
+    // The plain exactly-three forms this test used to reject (`a+b+c;`,
+    // `a-b-c;`, `a+b-c;`, `a-b+c;`, `{ a+b+c; }`, `{ a-b-c; }`) migrated to
+    // positive coverage by Issue #799 -- see
+    // `three_operand_use_site_all_operator_pair_combinations_are_selected`.
+    for text in ["a+b+c+d;", "a+b+c+d+e;", "{ a+b+c+d; }"] {
         assert_unsupported(text);
     }
 }
@@ -10326,10 +10327,13 @@ fn use_site_general_line_terminator_asi_firewall_remains_unsupported() {
 }
 
 #[test]
-fn two_operand_automatic_termination_cardinality_firewall_remains_unsupported() {
-    // A shorter `a+b` prefix must never escape a failed third operand, for
-    // either placement's new automatic terminator.
-    for text in ["a+b+c", "a-b-c", "{ a+b+c }", "{ a-b-c }"] {
+fn three_operand_automatic_termination_cardinality_firewall_remains_unsupported() {
+    // A shorter `a+b+c` prefix must never escape a failed fourth operand,
+    // for either placement's automatic terminator (Issue #799). The plain
+    // exactly-three forms this test used to reject (`a+b+c`, `a-b-c`,
+    // `{ a+b+c }`, `{ a-b-c }`) migrated to positive coverage by Issue #799
+    // -- see `three_operand_use_site_terminator_composition_is_recognized`.
+    for text in ["a+b+c+d", "{ a+b+c+d }"] {
         assert_unsupported(text);
     }
 }
@@ -11557,4 +11561,387 @@ fn one_reference_one_plain_decimal_additive_use_site_whole_source_transactionali
     assert_unsupported("1 + a;\nlet x = ;");
     assert_unsupported("{ a + 1; ??? }");
     assert_unsupported("{ 1 + a; }\n???");
+}
+
+// --- Issue #799 (per #688 comment 5775218176): composes the
+// candidate-independent exactly-three ordered `IdentifierReference` additive
+// theorem accepted by #795/PR #796 into the free-standing
+// `ExpressionStatement` use-site owner, widening
+// `SelectedFreeStandingIdentifierReferenceUseSite` /
+// `SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition` with
+// a bounded `Three { first, second, third }` variant and probing for an
+// optional third plain operand only after a plain (never right-unary-wrapped)
+// second operand on the bare-reference-first route. #795/#796 remain the
+// candidate-independent Oracle for the constituent three-fact theorem, and
+// #764/#765 remain the candidate-independent Oracle for the exactly-two
+// free-standing use-site theorem (both left unchanged by this Issue); these
+// production tests author expected facts/ranges independently of either
+// candidate. Unlike the initializer's own third-operand continuation (Issue
+// #797), a declining third continuation here rolls back the *entire*
+// free-standing candidate to `NotSelected` rather than degrading to `Two`:
+// a free-standing use-site is a whole-body transaction with no enclosing
+// declaration/comma owner to hand a partial result to. ---
+
+#[test]
+fn three_operand_top_level_use_site_all_operator_pair_combinations_are_selected() {
+    for (text, expected) in [
+        ("a+b+c;", ["a", "b", "c"]),
+        ("a-b-c;", ["a", "b", "c"]),
+        ("a+b-c;", ["a", "b", "c"]),
+        ("a-b+c;", ["a", "b", "c"]),
+        ("c+b+a;", ["c", "b", "a"]),
+    ] {
+        let script = recognized_reference_use(text);
+        let [
+            SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
+                use_site,
+            ),
+        ] = script.items()
+        else {
+            panic!("expected exactly one selected use-site item for {text:?}");
+        };
+        let facts = use_site_facts(use_site.body());
+        assert_eq!(facts.len(), 3, "{text}");
+        assert_eq!(facts[0].semantic_name(), expected[0], "{text}");
+        assert_eq!(facts[1].semantic_name(), expected[1], "{text}");
+        assert_eq!(facts[2].semantic_name(), expected[2], "{text}");
+        assert!(
+            facts[0].reference().range().start() < facts[1].reference().range().start(),
+            "{text}"
+        );
+        assert!(
+            facts[1].reference().range().start() < facts[2].reference().range().start(),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn three_operand_block_use_site_all_operator_pair_combinations_are_selected() {
+    for (text, expected) in [
+        ("{ a+b+c; }", ["a", "b", "c"]),
+        ("{ a-b-c; }", ["a", "b", "c"]),
+        ("{ a+b-c; }", ["a", "b", "c"]),
+        ("{ a-b+c; }", ["a", "b", "c"]),
+    ] {
+        let script = recognized_block_reference_use(text);
+        let [SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block)] =
+            script.items()
+        else {
+            panic!("expected exactly one use-site-enabled Block item for {text:?}");
+        };
+        let [SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(use_site)] =
+            block.items()
+        else {
+            panic!("expected exactly one Block-contained use-site item for {text:?}");
+        };
+        let facts = use_site_facts(use_site.body());
+        assert_eq!(facts.len(), 3, "{text}");
+        assert_eq!(facts[0].semantic_name(), expected[0], "{text}");
+        assert_eq!(facts[1].semantic_name(), expected[1], "{text}");
+        assert_eq!(facts[2].semantic_name(), expected[2], "{text}");
+    }
+}
+
+#[test]
+fn three_operand_use_site_direct_escaped_cross_product_preserves_authored_provenance() {
+    let esc_61 = concat!("\\", "u0061"); // decodes to "a"
+    let esc_62 = concat!("\\", "u0062"); // decodes to "b"
+    let esc_63 = concat!("\\", "u0063"); // decodes to "c"
+
+    for (text, expected_fragments, expected_names) in [
+        (
+            format!("{esc_61}+b+c;"),
+            [esc_61.to_owned(), "b".to_owned(), "c".to_owned()],
+            ["a", "b", "c"],
+        ),
+        (
+            format!("a+{esc_62}+c;"),
+            ["a".to_owned(), esc_62.to_owned(), "c".to_owned()],
+            ["a", "b", "c"],
+        ),
+        (
+            format!("a+b+{esc_63};"),
+            ["a".to_owned(), "b".to_owned(), esc_63.to_owned()],
+            ["a", "b", "c"],
+        ),
+        (
+            format!("{esc_61}+{esc_62}+{esc_63};"),
+            [esc_61.to_owned(), esc_62.to_owned(), esc_63.to_owned()],
+            ["a", "b", "c"],
+        ),
+    ] {
+        let script = recognized_reference_use(&text);
+        let [
+            SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
+                use_site,
+            ),
+        ] = script.items()
+        else {
+            panic!("expected exactly one selected use-site item for {text:?}");
+        };
+        let facts = use_site_facts(use_site.body());
+        assert_eq!(facts.len(), 3, "{text:?}");
+        for i in 0..3 {
+            assert_eq!(
+                facts[i].reference().fragment(),
+                expected_fragments[i],
+                "{text:?}"
+            );
+            assert_eq!(facts[i].semantic_name(), expected_names[i], "{text:?}");
+        }
+    }
+}
+
+#[test]
+fn three_operand_use_site_duplicate_operands_are_preserved_distinctly() {
+    let script = recognized_reference_use("a+a+a;");
+    let [SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(use_site)] =
+        script.items()
+    else {
+        panic!("expected exactly one selected use-site item");
+    };
+    let facts = use_site_facts(use_site.body());
+    assert_eq!(facts.len(), 3);
+    assert_eq!(facts[0].semantic_name(), "a");
+    assert_eq!(facts[1].semantic_name(), "a");
+    assert_eq!(facts[2].semantic_name(), "a");
+    assert_ne!(facts[0].reference().range(), facts[1].reference().range());
+    assert_ne!(facts[1].reference().range(), facts[2].reference().range());
+    assert_ne!(facts[0].reference().range(), facts[2].reference().range());
+}
+
+#[test]
+fn mixed_one_two_and_three_operand_top_level_use_sites_preserve_authored_order() {
+    let script = recognized_reference_use("a;\nb+c;\nd+e+f;\ng;");
+    let [
+        SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(first),
+        SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(second),
+        SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(third),
+        SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(fourth),
+    ] = script.items()
+    else {
+        panic!("expected [use-site, use-site, use-site, use-site] items");
+    };
+    assert_eq!(only_fact(first.body()).semantic_name(), "a");
+    let facts = use_site_facts(second.body());
+    assert_eq!(facts.len(), 2);
+    assert_eq!(facts[0].semantic_name(), "b");
+    assert_eq!(facts[1].semantic_name(), "c");
+    let facts = use_site_facts(third.body());
+    assert_eq!(facts.len(), 3);
+    assert_eq!(facts[0].semantic_name(), "d");
+    assert_eq!(facts[1].semantic_name(), "e");
+    assert_eq!(facts[2].semantic_name(), "f");
+    assert_eq!(only_fact(fourth.body()).semantic_name(), "g");
+}
+
+/// Escaped-ReservedWord third operand (mandatory adversarial coverage): the
+/// shared recognizer advances through the escaped `IdentifierName` before
+/// classifying it as a ReservedWord, so the third probe must restore the
+/// *entire* body snapshot rather than consume-and-discard it or degrade to
+/// `Two` -- this is the load-bearing rollback distinction from the
+/// initializer's own third-operand continuation (Issue #797).
+#[test]
+fn three_operand_use_site_escaped_reserved_third_operand_remains_unsupported() {
+    let escaped_if = concat!("\\", "u0069", "f"); // decodes to the reserved word "if"
+    for text in [
+        format!("a+b+{escaped_if};"),
+        format!("{{ a+b+{escaped_if}; }}"),
+    ] {
+        assert_unsupported(&text);
+    }
+}
+
+/// Malformed third operand: a normal unsupported third-operand spelling
+/// restores the whole body snapshot and declines -- never a partial `Two`
+/// publication.
+#[test]
+fn three_operand_use_site_malformed_third_operand_remains_unsupported() {
+    for text in [r"a+b+\u{};", "a+b+0;", "a+b+;"] {
+        assert_unsupported(text);
+    }
+}
+
+/// Punctuator / `UpdateExpression` / assignment-operator boundary: a third
+/// probe may tentatively consume a single `+`/`-`, but any decline restores
+/// the whole body snapshot -- no tokenizer or `Punctuator` enum is
+/// introduced merely to reject these.
+#[test]
+fn three_operand_use_site_punctuator_boundary_remains_unsupported() {
+    for text in [
+        "a+b++c;", "a+b--c;", "a+b+=c;", "a+b-=c;", "a+b+-c;", "a+b-+c;", "a+b+ +c;", "a+b- -c;",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+/// Fourth-or-later operand: the body helper may locally prepare a complete
+/// `Three` with the cursor positioned after the third operand, but the
+/// placement-owned caller must reject the untouched remainder and roll back
+/// the whole use-site -- no complete selected source may publish a truncated
+/// `Three` prefix (see also `three_operand_cardinality_firewall_remains_unsupported`).
+#[test]
+fn three_operand_use_site_fourth_operand_firewall_remains_unsupported() {
+    for text in ["a+b+c+d;", "{ a+b+c+d; }", "a+b+c+d+e;"] {
+        assert_unsupported(text);
+    }
+}
+
+/// Right-unary-second firewall: the #795 theorem is plain/plain/plain only,
+/// so a third continuation is never probed when the second operand used the
+/// existing right-unary `+`/`-` wrapper -- these remain bounded to exactly
+/// two.
+#[test]
+fn three_operand_use_site_right_unary_second_firewall_remains_unsupported() {
+    for text in ["a+-b+c;", "a-+b+c;", "a+ +b+c;", "a- -b+c;"] {
+        assert_unsupported(text);
+    }
+}
+
+/// Leading-unary-first firewall: the leading-unary-first route remains a
+/// distinct, unwidened owner, so a third operand is never composed onto it.
+#[test]
+fn three_operand_use_site_leading_unary_first_firewall_remains_unsupported() {
+    for text in ["+a+b+c;", "-a-b-c;", "+a+-b+c;", "-a-+b+c;"] {
+        assert_unsupported(text);
+    }
+}
+
+/// Heterogeneous three-syntax firewall: the accepted #793 Decimal fallback
+/// remains exactly two-syntax-operand; no new heterogeneous three-operand
+/// theorem is authorized by this Issue.
+#[test]
+fn three_operand_use_site_heterogeneous_firewall_remains_unsupported() {
+    for text in [
+        "a+b+1;",
+        "a+1+c;",
+        "1+a+b;",
+        "a+b+true;",
+        "a+null+c;",
+        "this+b+c;",
+        "\"a\"+b+c;",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+/// Richer-expression / precedence / grouping / member / call neighbors: no
+/// generic precedence parser or AST/CST is introduced, so a complete `Three`
+/// prefix followed by richer syntax is rejected by the placement-owned
+/// caller and the whole use-site rolls back.
+#[test]
+fn three_operand_use_site_richer_expression_firewall_remains_unsupported() {
+    for text in [
+        "a+b+c.d;",
+        "a+b+c();",
+        "a+b+c[d];",
+        "a+b+c=d;",
+        "a+b+c?d:e;",
+        "a+b+c*d;",
+        "a+b*c+d;",
+        "a*b+c+d;",
+        "(a)+b+c;",
+        "a+(b)+c;",
+        "a+b+(c);",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+/// Terminator composition: `Three` composes with both existing placement
+/// terminators unchanged (TopLevel authored-semicolon / EOF ASI, Block
+/// authored-semicolon / before-`}` ASI); no new terminator type or general
+/// `LineTerminator` ASI is introduced.
+#[test]
+fn three_operand_use_site_terminator_composition_is_recognized() {
+    for text in ["a+b+c;", "a+b+c"] {
+        let script = recognized_reference_use(text);
+        let [
+            SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
+                use_site,
+            ),
+        ] = script.items()
+        else {
+            panic!("expected exactly one selected use-site item for {text:?}");
+        };
+        assert_eq!(use_site_facts(use_site.body()).len(), 3, "{text:?}");
+    }
+
+    let script = recognized_reference_use("a+b+c;");
+    let [SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(use_site)] =
+        script.items()
+    else {
+        panic!("expected exactly one selected use-site item");
+    };
+    assert_eq!(
+        use_site.terminator(),
+        SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AuthoredSemicolon
+    );
+
+    let script = recognized_reference_use("a+b+c");
+    let [SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(use_site)] =
+        script.items()
+    else {
+        panic!("expected exactly one selected use-site item");
+    };
+    assert_eq!(
+        use_site.terminator(),
+        SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticAtEof
+    );
+
+    for text in ["{ a+b+c; }", "{ a+b+c }"] {
+        let script = recognized_block_reference_use(text);
+        let [SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block)] =
+            script.items()
+        else {
+            panic!("expected exactly one use-site-enabled Block item for {text:?}");
+        };
+        let [SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(use_site)] =
+            block.items()
+        else {
+            panic!("expected exactly one Block-contained use-site item for {text:?}");
+        };
+        assert_eq!(use_site_facts(use_site.body()).len(), 3, "{text:?}");
+    }
+
+    let script = recognized_block_reference_use("{ a+b+c; }");
+    let [SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block)] = script.items()
+    else {
+        panic!("expected exactly one use-site-enabled Block item");
+    };
+    let [SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(use_site)] =
+        block.items()
+    else {
+        panic!("expected exactly one Block-contained use-site item");
+    };
+    assert_eq!(
+        use_site.terminator(),
+        SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator::AuthoredSemicolon
+    );
+
+    let script = recognized_block_reference_use("{ a+b+c }");
+    let [SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block)] = script.items()
+    else {
+        panic!("expected exactly one use-site-enabled Block item");
+    };
+    let [SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(use_site)] =
+        block.items()
+    else {
+        panic!("expected exactly one Block-contained use-site item");
+    };
+    assert_eq!(
+        use_site.terminator(),
+        SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticBeforeBlockClose
+    );
+}
+
+/// Whole-source transactionality: a locally valid `Three` earlier in the
+/// source must not leak selected success if later source fails.
+#[test]
+fn three_operand_use_site_whole_source_transactionality() {
+    assert_unsupported("a+b+c;\n???");
+    assert_unsupported("a+b+c;\nlet x = ;");
+    assert_unsupported("{ a+b+c; ??? }");
+    assert_unsupported("{ a+b+c; }\n???");
 }
