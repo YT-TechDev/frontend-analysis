@@ -522,6 +522,60 @@ fn three_identifier_reference_additive_initializer_does_not_deduplicate_equal_se
     assert_ne!(relations[0].reference.start, relations[2].reference.start);
 }
 
+// Issue #803 (per #688 comment 5779735385): the unbounded 2..N
+// `IdentifierReference` additive-chain initializer widens this distinct
+// Block consumer's input to 0..N facts per binding, consumed in exact
+// authored reference order. This consumer's own logic is unchanged;
+// #801/PR #802 independently proves the underlying candidate-independent
+// N-fact theorem. This test mixes current-Block and TopLevel targets across
+// five facts (with one operand left deliberately undeclared), proving each
+// independently resolves through existing region rules.
+
+#[test]
+fn many_identifier_reference_additive_initializer_composes_five_relations_in_authored_order() {
+    let current_block = block(14, 52, "{ let a; let b; const x = a+b+c+d+e; }");
+    assert_eq!(
+        relation_snapshots("let c; let d; { let a; let b; const x = a+b+c+d+e; }"),
+        vec![
+            RelationSnapshot {
+                containing_binding: anchor(36, 37, "x"),
+                current_region: current_block.clone(),
+                reference: anchor(40, 41, "a"),
+                semantic_name: "a".to_owned(),
+                target: target(20, 21, "a", current_block.clone()),
+            },
+            RelationSnapshot {
+                containing_binding: anchor(36, 37, "x"),
+                current_region: current_block.clone(),
+                reference: anchor(42, 43, "b"),
+                semantic_name: "b".to_owned(),
+                target: target(27, 28, "b", current_block.clone()),
+            },
+            RelationSnapshot {
+                containing_binding: anchor(36, 37, "x"),
+                current_region: current_block.clone(),
+                reference: anchor(44, 45, "c"),
+                semantic_name: "c".to_owned(),
+                target: target(4, 5, "c", RegionSnapshot::TopLevel),
+            },
+            RelationSnapshot {
+                containing_binding: anchor(36, 37, "x"),
+                current_region: current_block.clone(),
+                reference: anchor(46, 47, "d"),
+                semantic_name: "d".to_owned(),
+                target: target(11, 12, "d", RegionSnapshot::TopLevel),
+            },
+            RelationSnapshot {
+                containing_binding: anchor(36, 37, "x"),
+                current_region: current_block,
+                reference: anchor(48, 49, "e"),
+                semantic_name: "e".to_owned(),
+                target: TargetSnapshot::NoSelectedLexicalBindingTargetInCoveredRegions,
+            },
+        ]
+    );
+}
+
 // Issue #791 (per #688 comment 5762579228): the one-reference /
 // one-plain-decimal heterogeneous additive initializer reaches this
 // distinct Block consumer through the unchanged `One(reference)` carrier --

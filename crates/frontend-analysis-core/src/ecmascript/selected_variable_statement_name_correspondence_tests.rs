@@ -2642,6 +2642,157 @@ fn three_identifier_reference_additive_initializer_composes_with_outer_declarato
     );
 }
 
+// Issue #803 (per #688 comment 5779735385): the unbounded 2..N
+// `IdentifierReference` additive-chain initializer widens this consumer's
+// input to 0..N facts per binding/declarator, consumed in exact authored
+// reference order without reordering or deduplication. This consumer's own
+// logic is unchanged; #801/PR #802 independently proves the underlying
+// candidate-independent N-fact theorem. These tests seal only that this
+// consumer composes it correctly across top-level `var`, Block `var`,
+// declarator lists, and duplicate occurrences, with no new relation type or
+// precedence.
+
+#[test]
+fn many_identifier_reference_additive_initializer_composes_for_top_level_var() {
+    let (_, script) = recognized_variable("let a; var b; let c; let d; var x = a+b+c+d;");
+    let analysis = accepted_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(
+        relations
+            .iter()
+            .map(|relation| relation.semantic_name())
+            .collect::<Vec<_>>(),
+        ["a", "b", "c", "d"]
+    );
+    assert!(
+        relations[0]
+            .correspondence()
+            .selected_lexical_binding()
+            .is_some(),
+        "a must resolve to its top-level lexical target"
+    );
+    assert!(
+        relations[1].correspondence().var_contributors().is_some(),
+        "b must resolve to its top-level var contributor"
+    );
+    assert!(
+        relations[2]
+            .correspondence()
+            .selected_lexical_binding()
+            .is_some(),
+        "c must resolve to its top-level lexical target"
+    );
+    assert!(
+        relations[3]
+            .correspondence()
+            .selected_lexical_binding()
+            .is_some(),
+        "d must resolve to its top-level lexical target"
+    );
+}
+
+#[test]
+fn many_identifier_reference_additive_initializer_composes_for_one_level_block_var() {
+    // `var b;` at the top level (alongside a Block) is itself a top-level
+    // `VariableStatement`, so this script is `recognized_variable`, not
+    // `recognized_one_level_block` (reserved for scripts with only
+    // top-level lexical declarations plus a Block).
+    let (_, script) = recognized_variable("let c; let d; var b; { let a; var x = a+b+c+d; }");
+    let analysis = accepted_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(relations.len(), 4);
+    assert_eq!(relations[0].semantic_name(), "a");
+    assert_eq!(relations[1].semantic_name(), "b");
+    assert_eq!(relations[2].semantic_name(), "c");
+    assert_eq!(relations[3].semantic_name(), "d");
+    assert!(matches!(
+        relations[0].current_region(),
+        SelectedVariableStatementNameCorrespondenceRegion::Block(_)
+    ));
+    assert!(matches!(
+        relations[1].current_region(),
+        SelectedVariableStatementNameCorrespondenceRegion::Block(_)
+    ));
+    assert!(matches!(
+        relations[2].current_region(),
+        SelectedVariableStatementNameCorrespondenceRegion::Block(_)
+    ));
+    assert!(matches!(
+        relations[3].current_region(),
+        SelectedVariableStatementNameCorrespondenceRegion::Block(_)
+    ));
+
+    let (_, first_target_region) = relations[0]
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("a must resolve to the Block-local lexical target");
+    assert!(matches!(
+        first_target_region,
+        SelectedVariableStatementNameCorrespondenceRegion::Block(_)
+    ));
+    assert!(
+        relations[1].correspondence().var_contributors().is_some(),
+        "b must resolve to its top-level var contributor"
+    );
+    let (_, third_target_region) = relations[2]
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("c must resolve to the top-level lexical target");
+    assert!(matches!(
+        third_target_region,
+        SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+    ));
+    let (_, fourth_target_region) = relations[3]
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("d must resolve to the top-level lexical target");
+    assert!(matches!(
+        fourth_target_region,
+        SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+    ));
+}
+
+#[test]
+fn many_identifier_reference_additive_initializer_does_not_deduplicate_equal_semantic_names_for_var()
+ {
+    let (_, script) = recognized_variable("let a; var x = a + a + a + a;");
+    let analysis = accepted_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(relations.len(), 4);
+    for relation in relations {
+        assert_eq!(relation.semantic_name(), "a");
+    }
+    for i in 0..relations.len() {
+        for j in (i + 1)..relations.len() {
+            assert_ne!(
+                range(relations[i].reference()),
+                range(relations[j].reference())
+            );
+        }
+    }
+}
+
+#[test]
+fn many_identifier_reference_additive_initializer_composes_with_outer_declarator_list_cardinality_for_var()
+ {
+    // Outer `1..N` x inner `1..N` composition, spanning `One` through
+    // `Many`: `x=a, y=b+c, z=d+e+f+g+h` composes as `x.one, y.first,
+    // y.second, z.first, z.second, z.third, z.rest[0], z.rest[1]`, in exact
+    // authored declarator and operand order.
+    let (_, script) = recognized_variable(
+        "let a; let b; let c; let d; let e; let f; let g; let h; var x=a, y=b+c, z=d+e+f+g+h;",
+    );
+    let analysis = accepted_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(
+        relations
+            .iter()
+            .map(|relation| relation.semantic_name())
+            .collect::<Vec<_>>(),
+        ["a", "b", "c", "d", "e", "f", "g", "h"]
+    );
+}
+
 // Issue #791 (per #688 comment 5762579228): the one-reference /
 // one-plain-decimal heterogeneous additive initializer reaches this
 // consumer through the unchanged `One(reference)` carrier -- exactly one
