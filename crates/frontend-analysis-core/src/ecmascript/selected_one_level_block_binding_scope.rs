@@ -161,8 +161,9 @@ fn append_binding_relation<'script>(
     top_level_bindings: &HashMap<&'script str, &'script SourceAnchor>,
     relations: &mut Vec<SelectedOneLevelBlockBindingScopeRelation<'script>>,
 ) -> Result<(), AnalysisFailure> {
-    // Issue #754: 0, 1, or 2 retained facts are visited in exact authored
-    // left-to-right order.
+    // Issue #754, widened to a third retained fact by Issue #797 (per #688
+    // comment 5771773635): 0, 1, 2, or 3 retained facts are visited in exact
+    // authored left-to-right order.
     for reference in binding.identifier_reference_initializer_facts() {
         relations
             .try_reserve(1)

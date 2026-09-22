@@ -622,6 +622,61 @@ fn two_identifier_reference_additive_initializer_direct_escaped_combinations_com
     );
 }
 
+// Issue #797 (per #688 comment 5771773635): the exactly-three
+// `IdentifierReference` additive initializer widens this consumer's input to
+// 0..3 facts per binding, consumed in exact authored reference order. This
+// consumer's own logic is unchanged (it already iterates
+// `identifier_reference_initializer_facts()` without branching on
+// cardinality); #795/PR #796 independently proves the underlying bounded
+// three-fact theorem. This test seals only that a single top-level lexical
+// binding composes three independent relations, in authored (not target
+// declaration) order.
+
+#[test]
+fn three_identifier_reference_additive_initializer_composes_three_relations_in_authored_order() {
+    // Target declaration order (`c`, `a`, `b`) deliberately differs from
+    // authored operand order (`a`, `b`, `c`), so only authored order can
+    // explain the expected relation order below.
+    assert_eq!(
+        relation_snapshots("let c; let a; let b; const x = a+b+c;"),
+        vec![
+            RelationSnapshot {
+                containing_binding: (27, 28, "x".to_owned()),
+                reference: (31, 32, "a".to_owned()),
+                semantic_name: "a".to_owned(),
+                target: Some((11, 12, "a".to_owned(), SelectedLexicalBindingOrder::Before,)),
+            },
+            RelationSnapshot {
+                containing_binding: (27, 28, "x".to_owned()),
+                reference: (33, 34, "b".to_owned()),
+                semantic_name: "b".to_owned(),
+                target: Some((18, 19, "b".to_owned(), SelectedLexicalBindingOrder::Before,)),
+            },
+            RelationSnapshot {
+                containing_binding: (27, 28, "x".to_owned()),
+                reference: (35, 36, "c".to_owned()),
+                semantic_name: "c".to_owned(),
+                target: Some((4, 5, "c".to_owned(), SelectedLexicalBindingOrder::Before,)),
+            },
+        ]
+    );
+}
+
+#[test]
+fn three_identifier_reference_additive_initializer_does_not_deduplicate_equal_semantic_names() {
+    // `a + a + a`: three independently owned relations, never collapsed.
+    let relations = relation_snapshots("let a; const x = a + a + a;");
+    assert_eq!(relations.len(), 3);
+    for relation in &relations {
+        assert_eq!(relation.semantic_name, "a");
+    }
+    let offsets: Vec<_> = relations.iter().map(|r| r.reference.0).collect();
+    assert_eq!(offsets.len(), 3);
+    assert_ne!(offsets[0], offsets[1]);
+    assert_ne!(offsets[1], offsets[2]);
+    assert_ne!(offsets[0], offsets[2]);
+}
+
 // Issue #791 (per #688 comment 5762579228): the one-reference /
 // one-plain-decimal heterogeneous additive initializer reaches this
 // consumer through the unchanged `One(reference)` carrier -- exactly one

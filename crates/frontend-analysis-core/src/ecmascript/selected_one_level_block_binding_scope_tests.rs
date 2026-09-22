@@ -471,6 +471,57 @@ fn two_identifier_reference_additive_initializer_does_not_deduplicate_equal_sema
     assert_ne!(relations[0].reference.start, relations[1].reference.start);
 }
 
+// Issue #797 (per #688 comment 5771773635): the exactly-three
+// `IdentifierReference` additive initializer widens this distinct Block
+// consumer's input to 0..3 facts per binding, consumed in exact authored
+// reference order. This consumer's own logic is unchanged; #795/PR #796
+// independently proves the underlying bounded three-fact theorem. This test
+// mixes current-Block and TopLevel targets across the three facts, proving
+// each independently resolves through existing region rules.
+
+#[test]
+fn three_identifier_reference_additive_initializer_composes_three_relations_in_authored_order() {
+    let current_block = block(7, 41, "{ let a; let b; const x = a+b+c; }");
+    assert_eq!(
+        relation_snapshots("let c; { let a; let b; const x = a+b+c; }"),
+        vec![
+            RelationSnapshot {
+                containing_binding: anchor(29, 30, "x"),
+                current_region: current_block.clone(),
+                reference: anchor(33, 34, "a"),
+                semantic_name: "a".to_owned(),
+                target: target(13, 14, "a", current_block.clone()),
+            },
+            RelationSnapshot {
+                containing_binding: anchor(29, 30, "x"),
+                current_region: current_block.clone(),
+                reference: anchor(35, 36, "b"),
+                semantic_name: "b".to_owned(),
+                target: target(20, 21, "b", current_block.clone()),
+            },
+            RelationSnapshot {
+                containing_binding: anchor(29, 30, "x"),
+                current_region: current_block,
+                reference: anchor(37, 38, "c"),
+                semantic_name: "c".to_owned(),
+                target: target(4, 5, "c", RegionSnapshot::TopLevel),
+            },
+        ]
+    );
+}
+
+#[test]
+fn three_identifier_reference_additive_initializer_does_not_deduplicate_equal_semantic_names() {
+    let relations = relation_snapshots("let a; { let x=a+a+a; }");
+    assert_eq!(relations.len(), 3);
+    for relation in &relations {
+        assert_eq!(relation.semantic_name, "a");
+    }
+    assert_ne!(relations[0].reference.start, relations[1].reference.start);
+    assert_ne!(relations[1].reference.start, relations[2].reference.start);
+    assert_ne!(relations[0].reference.start, relations[2].reference.start);
+}
+
 // Issue #791 (per #688 comment 5762579228): the one-reference /
 // one-plain-decimal heterogeneous additive initializer reaches this
 // distinct Block consumer through the unchanged `One(reference)` carrier --
