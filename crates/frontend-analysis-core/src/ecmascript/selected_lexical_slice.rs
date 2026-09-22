@@ -3620,8 +3620,12 @@ impl<'source> Cursor<'source> {
     /// they are compared locally on the same owned cursor and then dropped,
     /// so no tokenizer, token stream, `Punctuator` enum, operator kind,
     /// trivia `SourceAnchor`, `UnaryExpression`/`AdditiveExpression`
-    /// `SourceAnchor`, or generic expression representation is introduced,
-    /// and the retained carrier stays the unchanged `One`/`Two` pair. At most
+    /// `SourceAnchor`, or generic expression representation is introduced.
+    /// For this right-unary subfamily, the retained result remains bounded
+    /// to `One`/`Two`; Issue #797's `Three` continuation (per #688 comment
+    /// 5771773635) is reachable only after a plain second
+    /// `IdentifierReference`, never after this right-unary-wrapped
+    /// continuation. At most
     /// one right-unary wrapper is admitted -- no recursion -- so `a+-+b` and
     /// `a-++b` still fail the second operand and decline. The right unary
     /// sign is consumed and discarded before the shared recognizer runs, so
@@ -3644,23 +3648,51 @@ impl<'source> Cursor<'source> {
     /// boundary above together with its own selected operand trivia, and a
     /// second `IdentifierReference` operand recognized by the same unmodified
     /// shared recognizer (never a second scanner/decoder).
-    /// If the whole continuation completes with an accepted (direct or
-    /// escaped non-ReservedWord) second operand, `Two { first, second }` is
-    /// returned with the cursor positioned immediately after the second
-    /// operand. If the continuation does not complete for any reason
-    /// (absent operator; an escaped-ReservedWord, malformed, or entirely
-    /// absent second operand), the cursor is restored to exactly where it
-    /// stood right after the first operand and `One(first)` is returned: no
-    /// probed trivia, operator, or partial second-operand state is left
-    /// committed. This is what naturally excludes longer additive chains
-    /// (`a + b + c`), unary operands, non-`IdentifierReference` operands,
-    /// grouping/member/call forms, and `UpdateExpression`/assignment tokens:
-    /// each one fails to complete the continuation, degrades to `One(first)`
-    /// with the cursor restored to immediately after the first operand, and
-    /// the unconsumed remainder is then rejected by the existing enclosing
-    /// owner terminator/comma transaction exactly as an unrecognized
-    /// initializer suffix always has been — no dedicated firewall logic or
-    /// generic expression parser is introduced here.
+    /// If the continuation does not complete for any reason (absent
+    /// operator; an escaped-ReservedWord, malformed, or entirely absent
+    /// second operand), the cursor is restored to exactly where it stood
+    /// right after the first operand and `One(first)` is returned: no probed
+    /// trivia, operator, or partial second-operand state is left committed.
+    /// This pre-#797 second-operand recovery is unchanged, and still
+    /// excludes unary operands, non-`IdentifierReference` operands,
+    /// grouping/member/call forms, and `UpdateExpression`/assignment tokens
+    /// at the second-operand position: each one fails to complete the
+    /// continuation, degrades to `One(first)` with the cursor restored to
+    /// immediately after the first operand, and the unconsumed remainder is
+    /// then rejected by the existing enclosing owner terminator/comma
+    /// transaction exactly as an unrecognized initializer suffix always has
+    /// been -- no dedicated firewall logic or generic expression parser is
+    /// introduced here.
+    ///
+    /// If the continuation instead completes with an accepted (direct or
+    /// escaped non-ReservedWord) second operand, the cursor is positioned
+    /// immediately after that second operand and this helper's result then
+    /// depends on how the second operand was recognized. A
+    /// right-unary-wrapped second operand (the
+    /// `SelectedIdentifierReferenceRightUnaryAdditiveInitializer`
+    /// alternative above) commits `Two { first, second }` directly: Issue
+    /// #797's third-operand continuation below is never probed for this
+    /// subfamily. A plain second operand instead hands `first` and `second`
+    /// to `consume_selected_identifier_reference_initializer_third_operand`
+    /// (Issue #797 per #688 comment 5771773635), which probes for one
+    /// bounded optional third plain `IdentifierReference` operand: a
+    /// declining probe restores the cursor to exactly `after_second` (the
+    /// position immediately after the second operand established here) and
+    /// still commits `Two { first, second }` -- so `a + b` sources are
+    /// entirely unaffected by Issue #797 -- while a complete third operand
+    /// commits `Three { first, second, third }`, and a
+    /// `ResourceLimited`/`InternalFailure` classification from the third
+    /// operand's recognition is propagated immediately rather than
+    /// downgraded to `Two`. This is what naturally excludes unary third
+    /// operands, non-`IdentifierReference` third operands, grouping/member/call
+    /// forms, and `UpdateExpression`/assignment tokens at the third-operand
+    /// position, and still excludes a fourth-or-later operand from
+    /// complete-source acceptance: this helper may locally prepare a
+    /// `Three(first, second, third)`, but the enclosing declaration/statement
+    /// owner rejects an unconsumed fourth continuation (e.g. `a+b+c+d`),
+    /// exactly as an unrecognized initializer suffix always has been. This
+    /// helper never admits an arbitrary-N additive chain; the accepted
+    /// cardinalities remain exactly one, two, or three.
     ///
     /// A `ResourceLimited` or `InternalFailure` processing failure from
     /// either operand's recognition is propagated immediately and is never
