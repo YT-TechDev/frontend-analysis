@@ -6949,10 +6949,12 @@ fn two_identifier_reference_additive_initializer_direct_escaped_cross_product_pr
 #[test]
 fn two_identifier_reference_additive_initializer_firewalls_remain_unsupported() {
     for text in [
-        // Cardinality: 3+ operands are never truncated to the first two.
-        "let x = a + b + c;",
-        "let x = a - b - c;",
-        "let x = a + b - c;",
+        // Cardinality: a plain/plain/plain 3rd operand migrated to positive
+        // three-operand coverage by Issue #797 (per #688 comment
+        // 5771773635) -- see
+        // `three_identifier_reference_additive_initializer_retains_three_ordered_facts`;
+        // a 4th-or-later operand remains outside every owner.
+        "let x = a + b + c + d;",
         // Cardinality with a left-unary-wrapped first operand (Issue #775
         // migration: `let x = +a + b;` / `let x = -a + b;` moved out of this
         // firewall to the now-selected left-unary two-reference positive
@@ -7061,10 +7063,420 @@ fn two_identifier_reference_additive_initializer_jointly_composes_across_all_thr
     assert_eq!(facts[0].semantic_name(), "a");
     assert_eq!(facts[1].semantic_name(), "b");
 
-    // Joint placement-neutral firewall spot-check: the 3+ operand firewall
-    // holds for every owner, not only `LexicalDeclaration`.
-    assert_unsupported("var x = a + b + c;");
-    assert_unsupported("{ var x = a + b + c; }");
+    // Joint placement-neutral firewall spot-check: the 4+ operand firewall
+    // holds for every owner, not only `LexicalDeclaration` (a plain 3rd
+    // operand migrated to positive coverage by Issue #797 per #688 comment
+    // 5771773635 -- see
+    // `three_identifier_reference_additive_initializer_jointly_composes_across_all_three_owners`).
+    assert_unsupported("var x = a + b + c + d;");
+    assert_unsupported("{ var x = a + b + c + d; }");
+}
+
+// --- Issue #797 (per #688 comment 5771773635): composes the
+// candidate-independent exactly-three ordered `IdentifierReference` additive
+// initializer theorem accepted by #795/PR #796 into production, widening
+// `SelectedIdentifierReferenceInitializer` /
+// `SelectedIdentifierReferenceInitializerRecognition` with a bounded
+// `Three { first, second, third }` variant and probing for an optional third
+// plain operand only after a plain (never right-unary-wrapped) second
+// operand. #795/#796 remain the candidate-independent Oracle for the
+// constituent three-fact theorem; these production tests author expected
+// facts/ranges independently of the candidate under test. ---
+
+#[test]
+fn three_identifier_reference_additive_initializer_retains_three_ordered_facts() {
+    for (text, expected) in [
+        ("let x = a + b + c;", ["a", "b", "c"]),
+        ("let x = a - b - c;", ["a", "b", "c"]),
+        ("let x = a + b - c;", ["a", "b", "c"]),
+        ("let x = a - b + c;", ["a", "b", "c"]),
+        ("const x = foo + bar + baz;", ["foo", "bar", "baz"]),
+        ("let x = c + b + a;", ["c", "b", "a"]),
+    ] {
+        let script = recognized(text);
+        let [binding] = script.declarations()[0].bindings() else {
+            panic!("expected one selected lexical binding for {text:?}");
+        };
+        let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+        assert_eq!(facts.len(), 3, "{text:?}");
+        assert_eq!(facts[0].semantic_name(), expected[0], "{text:?}");
+        assert_eq!(facts[1].semantic_name(), expected[1], "{text:?}");
+        assert_eq!(facts[2].semantic_name(), expected[2], "{text:?}");
+        // The compatibility singular accessor keeps returning exactly the
+        // first fact for a three-fact initializer.
+        assert_eq!(
+            binding
+                .identifier_reference_initializer()
+                .unwrap()
+                .semantic_name(),
+            expected[0],
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn three_identifier_reference_additive_initializer_direct_escaped_cross_product_preserves_authored_provenance()
+ {
+    let esc_61 = concat!("\\", "u0061"); // decodes to "a"
+    let esc_62 = concat!("\\", "u0062"); // decodes to "b"
+    let esc_63 = concat!("\\", "u0063"); // decodes to "c"
+
+    for (text, expected_fragments, expected_names) in [
+        (
+            format!("let x = {esc_61} + b + c;"),
+            [esc_61.to_owned(), "b".to_owned(), "c".to_owned()],
+            ["a", "b", "c"],
+        ),
+        (
+            format!("let x = a + {esc_62} + c;"),
+            ["a".to_owned(), esc_62.to_owned(), "c".to_owned()],
+            ["a", "b", "c"],
+        ),
+        (
+            format!("let x = a + b + {esc_63};"),
+            ["a".to_owned(), "b".to_owned(), esc_63.to_owned()],
+            ["a", "b", "c"],
+        ),
+        (
+            format!("let x = {esc_61} + {esc_62} + {esc_63};"),
+            [esc_61.to_owned(), esc_62.to_owned(), esc_63.to_owned()],
+            ["a", "b", "c"],
+        ),
+    ] {
+        let script = recognized(&text);
+        let [binding] = script.declarations()[0].bindings() else {
+            panic!("expected one selected lexical binding for {text:?}");
+        };
+        let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+        assert_eq!(facts.len(), 3, "{text:?}");
+        for i in 0..3 {
+            assert_eq!(
+                facts[i].reference().fragment(),
+                expected_fragments[i],
+                "{text:?}"
+            );
+            assert_eq!(facts[i].semantic_name(), expected_names[i], "{text:?}");
+        }
+    }
+}
+
+#[test]
+fn three_identifier_reference_additive_initializer_duplicate_occurrences_are_preserved() {
+    let script = recognized("let x = a + a + a;");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+    assert_eq!(facts.len(), 3);
+    assert_eq!(facts[0].semantic_name(), "a");
+    assert_eq!(facts[1].semantic_name(), "a");
+    assert_eq!(facts[2].semantic_name(), "a");
+    // Distinct authored byte ranges, never deduplicated.
+    assert_ne!(facts[0].reference().range(), facts[1].reference().range());
+    assert_ne!(facts[1].reference().range(), facts[2].reference().range());
+    assert_ne!(facts[0].reference().range(), facts[2].reference().range());
+}
+
+/// Escaped-ReservedWord third operand (mandatory adversarial coverage, per
+/// #688 comment 5771773635 section 9): the shared recognizer advances
+/// through the escaped `IdentifierName` before classifying it as a
+/// ReservedWord, so the third probe must restore to exactly `after_second`
+/// rather than consume-and-discard it -- the enclosing owner then sees the
+/// untouched escaped tail and rejects the complete source.
+#[test]
+fn three_identifier_reference_additive_initializer_escaped_reserved_third_operand_remains_unsupported()
+ {
+    let escaped_if = concat!("\\", "u0069", "f"); // decodes to the reserved word "if"
+    for text in [
+        format!("let x = a+b+{escaped_if};"),
+        format!("var x = a+b+{escaped_if};"),
+        format!("{{ var x = a+b+{escaped_if}; }}"),
+    ] {
+        assert_unsupported(&text);
+    }
+}
+
+/// Malformed third operand: a normal unsupported third-operand spelling
+/// restores to `after_second` and degrades to `Two`, leaving the untouched
+/// tail for the enclosing owner to reject as a complete source.
+#[test]
+fn three_identifier_reference_additive_initializer_malformed_third_operand_remains_unsupported() {
+    for text in [
+        r"let x = a+b+\u{};",
+        r"let x = a+b+0;",
+        "let x = a+b+c\\u002D;",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+/// Fourth-or-later operand: the local helper may prepare a complete `Three`
+/// with the cursor positioned after the third operand, but the enclosing
+/// declaration/statement owner must reject the untouched remainder -- no
+/// complete selected source may publish a truncated `Three` prefix.
+#[test]
+fn three_identifier_reference_additive_initializer_fourth_operand_firewall_remains_unsupported() {
+    for text in [
+        "let x = a+b+c+d;",
+        "var x = a+b+c+d;",
+        "{ var x = a+b+c+d; }",
+        "let x = a+b+c+d+e;",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+/// Right-unary-second firewall (per #688 comment 5771773635 section 11): the
+/// #795 theorem is plain/plain/plain only, so a third continuation is never
+/// probed when the second operand used an existing right-unary `+`/`-`
+/// wrapper -- these remain bounded to exactly two.
+#[test]
+fn three_identifier_reference_additive_initializer_right_unary_second_firewall_remains_unsupported()
+{
+    for text in [
+        "let x = a+-b+c;",
+        "let x = a-+b+c;",
+        "let x = a+ +b+c;",
+        "let x = a- -b+c;",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+/// Leading-unary-first firewall: the leading-unary-first route remains a
+/// distinct, unwidened owner, so a third operand is never composed onto it.
+#[test]
+fn three_identifier_reference_additive_initializer_leading_unary_first_firewall_remains_unsupported()
+ {
+    for text in [
+        "let x = +a+b+c;",
+        "let x = -a-b-c;",
+        "let x = +a+-b+c;",
+        "let x = -a-+b+c;",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+/// Heterogeneous three-syntax firewall: the accepted #791 Decimal fallback
+/// remains exactly two-syntax-operand; no new heterogeneous three-operand
+/// theorem is authorized.
+#[test]
+fn three_identifier_reference_additive_initializer_heterogeneous_firewall_remains_unsupported() {
+    for text in [
+        "let x = a+b+1;",
+        "let x = a+1+c;",
+        "let x = 1+a+b;",
+        "let x = a+b+true;",
+        "let x = a+null+c;",
+        "let x = this+b+c;",
+        "let x = \"a\"+b+c;",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+/// Punctuator / `UpdateExpression` / assignment-operator boundary: a third
+/// probe may tentatively consume a single `+`/`-`, but any decline restores
+/// `after_second`, leaving the authored tail for the enclosing owner to
+/// reject -- no tokenizer or `Punctuator` enum is introduced.
+#[test]
+fn three_identifier_reference_additive_initializer_punctuator_firewall_remains_unsupported() {
+    for text in [
+        "let x = a+b++c;",
+        "let x = a+b--c;",
+        "let x = a+b+=c;",
+        "let x = a+b-=c;",
+        "let x = a+b+-c;",
+        "let x = a+b-+c;",
+        "let x = a+b+ +c;",
+        "let x = a+b- -c;",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+/// Richer-expression / precedence / grouping / member / call neighbors: no
+/// generic precedence parser or AST/CST is introduced, so a complete `Three`
+/// prefix followed by richer syntax is rejected by the enclosing owner.
+#[test]
+fn three_identifier_reference_additive_initializer_richer_expression_firewall_remains_unsupported()
+{
+    for text in [
+        "let x = a+b+c.d;",
+        "let x = a+b+c();",
+        "let x = a+b+c[d];",
+        "let x = a+b+c=d;",
+        "let x = a+b+c?d:e;",
+        "let x = a+b+c*d;",
+        "let x = a+b*c+d;",
+        "let x = a*b+c+d;",
+        "let x = (a)+b+c;",
+        "let x = a+(b)+c;",
+        "let x = a+b+(c);",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+/// Terminator composition: the new `Three` initializer composes with every
+/// existing owner termination unchanged (authored semicolon, EOF ASI for
+/// `LexicalDeclaration`/top-level `var`, and existing Block-var before-`}`
+/// ASI); no new Block lexical before-`}` ASI is inferred.
+#[test]
+fn three_identifier_reference_additive_initializer_terminator_composition_is_recognized() {
+    for text in ["const x=a+b+c;", "const x=a+b+c"] {
+        let script = recognized(text);
+        let declaration = &script.declarations()[0];
+        let [binding] = declaration.bindings() else {
+            panic!("expected one selected lexical binding for {text:?}");
+        };
+        assert_eq!(
+            binding.identifier_reference_initializer_facts().count(),
+            3,
+            "{text:?}"
+        );
+    }
+    let script = recognized("const x=a+b+c;");
+    assert!(matches!(
+        script.declarations()[0].terminator(),
+        SelectedDeclarationTerminator::AuthoredSemicolon(_)
+    ));
+    let script = recognized("const x=a+b+c");
+    assert!(matches!(
+        script.declarations()[0].terminator(),
+        SelectedDeclarationTerminator::AutomaticAtEof
+    ));
+
+    for text in ["var x=a+b+c;", "var x=a+b+c"] {
+        let script = recognized_variable(text);
+        let statement = only_variable_statement(&script);
+        let [binding] = statement.bindings() else {
+            panic!("expected one selected top-level var binding for {text:?}");
+        };
+        assert_eq!(
+            binding.identifier_reference_initializer_facts().count(),
+            3,
+            "{text:?}"
+        );
+    }
+    let script = recognized_variable("var x=a+b+c;");
+    assert!(matches!(
+        only_variable_statement(&script).terminator(),
+        SelectedVariableStatementTerminator::AuthoredSemicolon
+    ));
+    let script = recognized_variable("var x=a+b+c");
+    assert!(matches!(
+        only_variable_statement(&script).terminator(),
+        SelectedVariableStatementTerminator::AutomaticAtEof
+    ));
+
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+    for text in ["{ var x=a+b+c; }", "{ var x=a+b+c }"] {
+        let block_script = recognized_block(text);
+        let [SelectedTopLevelItem::Block(block)] = block_script.items() else {
+            panic!("expected exactly one Block item for {text:?}");
+        };
+        let [SelectedBlockItem::Var(statement)] = block.items() else {
+            panic!("expected exactly one Block var statement for {text:?}");
+        };
+        let [binding] = statement.bindings() else {
+            panic!("expected one selected Block var binding for {text:?}");
+        };
+        assert_eq!(
+            binding.identifier_reference_initializer_facts().count(),
+            3,
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn three_identifier_reference_additive_initializer_jointly_composes_across_all_three_owners() {
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+
+    let script = recognized_variable("var x = a + b + c;");
+    let statement = only_variable_statement(&script);
+    let [binding] = statement.bindings() else {
+        panic!("expected one selected top-level var binding");
+    };
+    let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+    assert_eq!(facts.len(), 3);
+    assert_eq!(facts[0].semantic_name(), "a");
+    assert_eq!(facts[1].semantic_name(), "b");
+    assert_eq!(facts[2].semantic_name(), "c");
+
+    let block_script = recognized_block("{ var x = a - b + c; }");
+    let [SelectedTopLevelItem::Block(block)] = block_script.items() else {
+        panic!("expected exactly one Block item");
+    };
+    let [SelectedBlockItem::Var(statement)] = block.items() else {
+        panic!("expected exactly one Block var statement");
+    };
+    let [binding] = statement.bindings() else {
+        panic!("expected one selected Block var binding");
+    };
+    let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+    assert_eq!(facts.len(), 3);
+    assert_eq!(facts[0].semantic_name(), "a");
+    assert_eq!(facts[1].semantic_name(), "b");
+    assert_eq!(facts[2].semantic_name(), "c");
+}
+
+/// Outer `1..N` declarator-list composition x inner `1..3` retained-fact
+/// composition: authored declarator order and authored operand order are
+/// both preserved independently.
+#[test]
+fn three_identifier_reference_additive_initializer_composes_with_outer_declarator_list_cardinality()
+{
+    let script = recognized("let x=a, y=b+c, z=d+e+f;");
+    let bindings = script.declarations()[0].bindings();
+    assert_eq!(bindings.len(), 3);
+
+    let x_facts: Vec<_> = bindings[0]
+        .identifier_reference_initializer_facts()
+        .collect();
+    assert_eq!(x_facts.len(), 1);
+    assert_eq!(x_facts[0].semantic_name(), "a");
+
+    let y_facts: Vec<_> = bindings[1]
+        .identifier_reference_initializer_facts()
+        .collect();
+    assert_eq!(y_facts.len(), 2);
+    assert_eq!(y_facts[0].semantic_name(), "b");
+    assert_eq!(y_facts[1].semantic_name(), "c");
+
+    let z_facts: Vec<_> = bindings[2]
+        .identifier_reference_initializer_facts()
+        .collect();
+    assert_eq!(z_facts.len(), 3);
+    assert_eq!(z_facts[0].semantic_name(), "d");
+    assert_eq!(z_facts[1].semantic_name(), "e");
+    assert_eq!(z_facts[2].semantic_name(), "f");
+}
+
+/// Whole-owner transactionality: a locally prepared `Three` from an earlier
+/// declarator must not escape as committed selected state when a later
+/// declarator, binding, or terminator fails, across all three owners.
+#[test]
+fn three_identifier_reference_additive_initializer_transactionality_commits_no_earlier_fact() {
+    for text in [
+        "let x=a+b+c, y=;",
+        "var x=a+b+c, y=;",
+        "{ var x=a+b+c, y=; }",
+    ] {
+        assert_unsupported(text);
+    }
+
+    let subject = grammar_rejection(r"let x = a+b+c, \u{} = 1;");
+    assert_eq!(subject.fragment(), r"\u{}");
+
+    let subject = grammar_rejection(r"var x = a+b+c, \u{} = 1;");
+    assert_eq!(subject.fragment(), r"\u{}");
+
+    let subject = grammar_rejection(r"{ var x = a+b+c, \u{} = 1; }");
+    assert_eq!(subject.fragment(), r"\u{}");
 }
 
 // --- Issue #791 (per #688 comment 5762579228): composes the

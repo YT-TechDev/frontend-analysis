@@ -105,8 +105,10 @@ pub(super) fn analyze_selected_binding_scope<'script>(
     let mut containing_position = 0usize;
     for declaration in script.declarations() {
         for binding in declaration.bindings() {
-            // Issue #754: 0, 1, or 2 retained facts are visited in exact
-            // authored left-to-right order; the containing binding's
+            // Issue #754, widened to a third retained fact by Issue #797
+            // (per #688 comment 5771773635): 0, 1, 2, or 3 retained facts are
+            // visited in exact authored left-to-right order; the containing
+            // binding's
             // declaration position (`containing_position`) is unaffected by
             // and shared across however many facts this one binding retains.
             for reference in binding.identifier_reference_initializer_facts() {

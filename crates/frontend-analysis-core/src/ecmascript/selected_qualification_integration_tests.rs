@@ -209,6 +209,34 @@ fn one_reference_one_plain_decimal_additive_initializer_remains_selected_accepte
     }
 }
 
+/// Issue #797 (per #688 comment 5771773635): the newly selected
+/// exactly-three ordered `IdentifierReference` additive initializer reaches
+/// the same existing `SelectedAcceptedIncomplete` lifecycle as any other
+/// production-accepted, not-yet-Oracle-qualified source -- never
+/// `UnsupportedCoverage` and never `Qualified` -- for all three joint
+/// owners (`LexicalDeclaration`, top-level `var`, and Block `var`). #795/PR
+/// #796 remain the candidate-independent Oracle for the underlying theorem;
+/// this leaf adds no new qualification branch.
+#[test]
+fn three_identifier_reference_additive_initializer_remains_selected_accepted_incomplete() {
+    for text in [
+        "const x = a + b + c;",
+        "let x = a - b - c;",
+        "let x = a + b - c;",
+        "let x = a - b + c;",
+        "var x = a + b + c;",
+        "{ var x = a + b + c; }",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text}"
+        );
+    }
+}
+
 #[test]
 fn escaped_identifier_reference_invalid_and_tail_families_remain_unsupported() {
     for text in [
@@ -3140,6 +3168,18 @@ fn two_operand_use_site_whole_source_transactionality() {
 #[test]
 fn two_operand_use_site_known_static_rejection_gates_qualification() {
     assert_static_semantics_rejected("let a;\n{ var a; b+-c; }", "a", (13, 14));
+}
+
+/// Issue #797 (per #688 comment 5771773635) section 22/43: a source
+/// containing a valid `Three` initializer still reaches an existing static
+/// rejection unchanged when another existing obligation fails -- no new
+/// rejection type and no changed rejection ordering. Reuses the smallest
+/// existing static conflict already proven above (a Block `var` duplicating
+/// an enclosing top-level lexical name), with the free-standing use-site
+/// replaced by a complete three-operand initializer.
+#[test]
+fn three_identifier_reference_additive_initializer_known_static_rejection_gates_qualification() {
+    assert_static_semantics_rejected("let a;\n{ var a; const x=a+b+c; }", "a", (13, 14));
 }
 
 // --- Issue #793 (per #688 comment 5764090454): composes the

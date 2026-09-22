@@ -590,14 +590,15 @@ impl SelectedBlockVarBinding {
         }
     }
 
-    /// The sole retained `IdentifierReference` fact when the initializer
-    /// retains exactly one (a `One` carrier): either a single-operand
-    /// initializer's only reference, or the one retained reference of a
-    /// selected two-syntax-operand `IdentifierReference`/plain-Decimal
-    /// additive initializer (Issue #791). Existing single-operand behavior
-    /// is exactly preserved; use
-    /// [`Self::identifier_reference_initializer_facts`] to observe a second
-    /// authored `IdentifierReference` operand (a `Two` carrier).
+    /// The first retained `IdentifierReference` fact, regardless of how many
+    /// facts the initializer retains overall (a `One`, `Two`, or `Three`
+    /// carrier): either a single-operand initializer's only reference, the
+    /// one retained reference of a selected two-syntax-operand
+    /// `IdentifierReference`/plain-Decimal additive initializer (Issue
+    /// #791), or the authored left operand of a two- or three-reference
+    /// additive initializer. Existing single-operand behavior is exactly
+    /// preserved; use [`Self::identifier_reference_initializer_facts`] to
+    /// observe every retained fact.
     pub(super) fn identifier_reference_initializer(
         &self,
     ) -> Option<&SelectedIdentifierReferenceFact> {
@@ -606,7 +607,7 @@ impl SelectedBlockVarBinding {
             .map(SelectedIdentifierReferenceInitializer::first)
     }
 
-    /// Every retained fact, in authored left-to-right order (0, 1, or 2
+    /// Every retained fact, in authored left-to-right order (0, 1, 2, or 3
     /// items).
     pub(super) fn identifier_reference_initializer_facts(
         &self,
@@ -682,18 +683,23 @@ impl SelectedIdentifierReferenceFact {
 
 /// Crate-private bounded cardinality carrier for the selected
 /// `IdentifierReference` initializer position, widening the previous
-/// at-most-one carrier to admit exactly one additional selected additive
-/// operand (Issue #754). `One` retains exactly one source-backed
-/// `IdentifierReference` fact: either a single-operand initializer's only
-/// reference, or the sole retained reference of a selected two-syntax-operand
-/// `IdentifierReference`/plain-Decimal additive initializer (Issue #791, per
-/// #688 comment 5762579228), whose Decimal operand, binary operator, and
-/// left/right orientation are never retained. `Two` retains both authored
-/// operands of a selected `SelectedTwoIdentifierReferenceAdditiveInitializer`
-/// in exact authored left-to-right order (`first` is the left operand,
-/// `second` is the right operand). Three or more facts, a second fact
-/// without a first, reordering, and deduplication are all unrepresentable by
-/// this type. The containing binding's
+/// at-most-one carrier to admit up to two additional selected additive
+/// operands (Issue #754; Issue #797 per #688 comment 5771773635). `One`
+/// retains exactly one source-backed `IdentifierReference` fact: either a
+/// single-operand initializer's only reference, or the sole retained
+/// reference of a selected two-syntax-operand `IdentifierReference`/plain-Decimal
+/// additive initializer (Issue #791, per #688 comment 5762579228), whose
+/// Decimal operand, binary operator, and left/right orientation are never
+/// retained. `Two` retains both authored operands of a selected
+/// `SelectedTwoIdentifierReferenceAdditiveInitializer` in exact authored
+/// left-to-right order (`first` is the left operand, `second` is the right
+/// operand). `Three` retains all three authored operands of a selected
+/// `SelectedExactlyThreeIdentifierReferenceAdditiveInitializer` (Issue #797)
+/// in exact authored left-to-right order; it composes the accepted
+/// candidate-independent theorem proven by #795/PR #796 for plain/plain/plain
+/// `IdentifierReference` operands only. Four or more facts, a second or third
+/// fact without its predecessors, holes, reordering, and deduplication are
+/// all unrepresentable by this type. The containing binding's
 /// `Option<SelectedIdentifierReferenceInitializer>` field is the sole
 /// retained-reference storage: `None` means zero facts, so no separate
 /// competing fact channel exists anywhere on the binding.
@@ -704,6 +710,11 @@ pub(super) enum SelectedIdentifierReferenceInitializer {
         first: SelectedIdentifierReferenceFact,
         second: SelectedIdentifierReferenceFact,
     },
+    Three {
+        first: SelectedIdentifierReferenceFact,
+        second: SelectedIdentifierReferenceFact,
+        third: SelectedIdentifierReferenceFact,
+    },
 }
 
 impl SelectedIdentifierReferenceInitializer {
@@ -711,22 +722,28 @@ impl SelectedIdentifierReferenceInitializer {
     /// `IdentifierReference` fact of a `One` initializer (whether its syntax
     /// is a single-operand initializer or a selected two-syntax-operand
     /// `IdentifierReference`/plain-Decimal additive initializer, Issue
-    /// #791), or the authored left operand of a two-reference additive
-    /// initializer. Always defined and never panics.
+    /// #791), or the authored left operand of a two- or three-reference
+    /// additive initializer. Always defined and never panics.
     pub(super) fn first(&self) -> &SelectedIdentifierReferenceFact {
         match self {
             Self::One(fact) => fact,
             Self::Two { first, .. } => first,
+            Self::Three { first, .. } => first,
         }
     }
 
     /// Every retained fact, in exact authored left-to-right order: one item
-    /// for `One`, two for `Two`. Backed by a fixed-size array, never a heap
-    /// allocation.
+    /// for `One`, two for `Two`, three for `Three`. Backed by a fixed-size
+    /// array, never a heap allocation.
     pub(super) fn facts(&self) -> impl Iterator<Item = &SelectedIdentifierReferenceFact> {
         match self {
-            Self::One(fact) => [Some(fact), None],
-            Self::Two { first, second } => [Some(first), Some(second)],
+            Self::One(fact) => [Some(fact), None, None],
+            Self::Two { first, second } => [Some(first), Some(second), None],
+            Self::Three {
+                first,
+                second,
+                third,
+            } => [Some(first), Some(second), Some(third)],
         }
         .into_iter()
         .flatten()
@@ -763,14 +780,15 @@ impl SelectedLexicalBinding {
         self.initializer
     }
 
-    /// The sole retained `IdentifierReference` fact when the initializer
-    /// retains exactly one (a `One` carrier): either a single-operand
-    /// initializer's only reference, or the one retained reference of a
-    /// selected two-syntax-operand `IdentifierReference`/plain-Decimal
-    /// additive initializer (Issue #791). Existing single-operand behavior
-    /// is exactly preserved; use
-    /// [`Self::identifier_reference_initializer_facts`] to observe a second
-    /// authored `IdentifierReference` operand (a `Two` carrier).
+    /// The first retained `IdentifierReference` fact, regardless of how many
+    /// facts the initializer retains overall (a `One`, `Two`, or `Three`
+    /// carrier): either a single-operand initializer's only reference, the
+    /// one retained reference of a selected two-syntax-operand
+    /// `IdentifierReference`/plain-Decimal additive initializer (Issue
+    /// #791), or the authored left operand of a two- or three-reference
+    /// additive initializer. Existing single-operand behavior is exactly
+    /// preserved; use [`Self::identifier_reference_initializer_facts`] to
+    /// observe every retained fact.
     pub(super) fn identifier_reference_initializer(
         &self,
     ) -> Option<&SelectedIdentifierReferenceFact> {
@@ -779,7 +797,7 @@ impl SelectedLexicalBinding {
             .map(SelectedIdentifierReferenceInitializer::first)
     }
 
-    /// Every retained fact, in authored left-to-right order (0, 1, or 2
+    /// Every retained fact, in authored left-to-right order (0, 1, 2, or 3
     /// items).
     pub(super) fn identifier_reference_initializer_facts(
         &self,
@@ -819,14 +837,15 @@ impl SelectedVariableBinding {
         }
     }
 
-    /// The sole retained `IdentifierReference` fact when the initializer
-    /// retains exactly one (a `One` carrier): either a single-operand
-    /// initializer's only reference, or the one retained reference of a
-    /// selected two-syntax-operand `IdentifierReference`/plain-Decimal
-    /// additive initializer (Issue #791). Existing single-operand behavior
-    /// is exactly preserved; use
-    /// [`Self::identifier_reference_initializer_facts`] to observe a second
-    /// authored `IdentifierReference` operand (a `Two` carrier).
+    /// The first retained `IdentifierReference` fact, regardless of how many
+    /// facts the initializer retains overall (a `One`, `Two`, or `Three`
+    /// carrier): either a single-operand initializer's only reference, the
+    /// one retained reference of a selected two-syntax-operand
+    /// `IdentifierReference`/plain-Decimal additive initializer (Issue
+    /// #791), or the authored left operand of a two- or three-reference
+    /// additive initializer. Existing single-operand behavior is exactly
+    /// preserved; use [`Self::identifier_reference_initializer_facts`] to
+    /// observe every retained fact.
     pub(super) fn identifier_reference_initializer(
         &self,
     ) -> Option<&SelectedIdentifierReferenceFact> {
@@ -835,7 +854,7 @@ impl SelectedVariableBinding {
             .map(SelectedIdentifierReferenceInitializer::first)
     }
 
-    /// Every retained fact, in authored left-to-right order (0, 1, or 2
+    /// Every retained fact, in authored left-to-right order (0, 1, 2, or 3
     /// items).
     pub(super) fn identifier_reference_initializer_facts(
         &self,
@@ -1578,10 +1597,14 @@ impl SelectedBlockIdentifierReferenceUseSite {
 /// so the caller's own existing dispatch sees an unperturbed cursor and a
 /// locally recognized prefix never authorizes a richer or longer source.
 /// This is why this owner must not call
-/// `consume_selected_identifier_reference_initializer`: that helper's
-/// initializer-specific continuation degrades to a completed `One(first)` on
-/// a failed continuation, which would incorrectly authorize `a+b+c` up to
-/// `a` as a complete free-standing Statement body. `ResourceLimited`/
+/// `consume_selected_identifier_reference_initializer`: that helper has
+/// initializer-owned staged partial-recovery semantics (degrading a failed
+/// continuation to a completed `One`/`Two` result) and, for a plain
+/// three-operand chain, now fully composes a complete `Three(first, second,
+/// third)` (Issue #797 per #688 comment 5771773635), which would incorrectly
+/// authorize `a+b+c` as a complete free-standing Statement body; free-standing
+/// use-sites use whole-body rollback instead and cannot reuse that owner
+/// contract. `ResourceLimited`/
 /// `InternalFailure` are propagated exactly, never downgraded to
 /// `NotSelected`. `Matched` retains no terminator: a locally complete body
 /// (`One` or `Two`) is not yet a complete use-site until the placement owner
@@ -1773,8 +1796,9 @@ impl SelectedBlockBuilder {
     }
 }
 
-/// Result of the bounded 1-or-2 `IdentifierReference` initializer helper
-/// (Issue #754), which absorbs the previous plain
+/// Result of the bounded 1-, 2-, or 3-operand `IdentifierReference`
+/// initializer helper (Issue #754; widened to three operands by Issue #797
+/// per #688 comment 5771773635), which absorbs the previous plain
 /// `consume_selected_identifier_reference()` initializer route. `One`
 /// carries the sole retained fact: either the exact existing
 /// single-reference behavior unchanged, or (Issue #791) the first operand of
@@ -1782,19 +1806,30 @@ impl SelectedBlockBuilder {
 /// additive initializer, whose Decimal second operand is consumed and
 /// discarded rather than retained. `Two` carries both authored operands of a
 /// selected `SelectedTwoIdentifierReferenceAdditiveInitializer` in exact
-/// authored left-to-right order. `EscapedReservedIdentifierName` is the
+/// authored left-to-right order. `Three` carries all three authored operands
+/// of a selected `SelectedExactlyThreeIdentifierReferenceAdditiveInitializer`
+/// in exact authored left-to-right order, composing the accepted
+/// candidate-independent theorem proven by #795/PR #796 for plain/plain/plain
+/// operands only; it is reachable only when the second operand was plain
+/// (never right-unary-wrapped). `EscapedReservedIdentifierName` is the
 /// unchanged existing classification-only route for a first operand whose
 /// decoded spelling is a ReservedWord (a ReservedWord is never an accepted
 /// operand, so no additive continuation is attempted for it). `NotSelected`
 /// covers no `IdentifierReference` operand at all. `ResourceLimited` and
 /// `InternalFailure` preserve the shared recognizer's own processing-failure
-/// classes for either operand, never downgraded to `NotSelected`.
+/// classes for any operand, never downgraded to `NotSelected` or to a
+/// completed `One`/`Two` result.
 #[derive(Debug)]
 enum SelectedIdentifierReferenceInitializerRecognition {
     One(SelectedIdentifierReferenceFact),
     Two {
         first: SelectedIdentifierReferenceFact,
         second: SelectedIdentifierReferenceFact,
+    },
+    Three {
+        first: SelectedIdentifierReferenceFact,
+        second: SelectedIdentifierReferenceFact,
+        third: SelectedIdentifierReferenceFact,
     },
     EscapedReservedIdentifierName {
         identifier: SourceAnchor,
@@ -2176,6 +2211,12 @@ impl<'source> Cursor<'source> {
                                                         None,
                                                     )
                                                 }
+                                                SelectedIdentifierReferenceInitializerRecognition::Three { first, second, third } => {
+                                                    (
+                                                        Some(SelectedIdentifierReferenceInitializer::Three { first, second, third }),
+                                                        None,
+                                                    )
+                                                }
                                                 SelectedIdentifierReferenceInitializerRecognition::EscapedReservedIdentifierName {
                                                     identifier,
                                                 } => (None, Some(identifier)),
@@ -2355,6 +2396,12 @@ impl<'source> Cursor<'source> {
                                                         None,
                                                     )
                                                 }
+                                                SelectedIdentifierReferenceInitializerRecognition::Three { first, second, third } => {
+                                                    (
+                                                        Some(SelectedIdentifierReferenceInitializer::Three { first, second, third }),
+                                                        None,
+                                                    )
+                                                }
                                                 SelectedIdentifierReferenceInitializerRecognition::EscapedReservedIdentifierName {
                                                     identifier,
                                                 } => (None, Some(identifier)),
@@ -2493,6 +2540,10 @@ impl<'source> Cursor<'source> {
                                             SelectedIdentifierReferenceInitializerRecognition::Two { first, second } => {
                                                 identifier_reference_initializer =
                                                     Some(SelectedIdentifierReferenceInitializer::Two { first, second });
+                                            }
+                                            SelectedIdentifierReferenceInitializerRecognition::Three { first, second, third } => {
+                                                identifier_reference_initializer =
+                                                    Some(SelectedIdentifierReferenceInitializer::Three { first, second, third });
                                             }
                                             SelectedIdentifierReferenceInitializerRecognition::EscapedReservedIdentifierName {
                                                 identifier,
@@ -3036,14 +3087,17 @@ impl<'source> Cursor<'source> {
     /// pre-#768 all-or-nothing decline for such input exactly.
     ///
     /// This deliberately does not call
-    /// `consume_selected_identifier_reference_initializer`: that helper's
-    /// initializer-specific continuation intentionally degrades a failed
-    /// second operand to a completed `One(first)` so the enclosing
-    /// binding/comma transaction can recover the remainder, which would
-    /// incorrectly authorize `a+b+c` up through `a` as a complete
-    /// free-standing Statement body. Only the lexical primitive
-    /// `consume_selected_identifier_reference` is shared; the owner
-    /// transaction is not.
+    /// `consume_selected_identifier_reference_initializer`: that helper has
+    /// initializer-owned staged partial-recovery semantics, intentionally
+    /// degrading a failed continuation to a completed `One`/`Two` result so
+    /// the enclosing binding/comma transaction can recover the remainder,
+    /// and, for a plain three-operand chain, now fully composes a complete
+    /// `Three(first, second, third)` (Issue #797 per #688 comment
+    /// 5771773635), which would incorrectly authorize `a+b+c` as a complete
+    /// free-standing Statement body. Free-standing use-sites use whole-body
+    /// rollback instead and cannot reuse that owner contract; only the
+    /// lexical primitive `consume_selected_identifier_reference` is shared,
+    /// never the owner transaction.
     ///
     /// `ResourceLimited`/`InternalFailure` from either operand's recognition
     /// are propagated exactly, never downgraded to `NotSelected` or to a
@@ -3504,7 +3558,11 @@ impl<'source> Cursor<'source> {
     }
 
     /// Recognizes the bounded selected `IdentifierReference` initializer
-    /// family fixed by Issue #754:
+    /// family fixed by Issue #754, widened by Issue #797 (per #688 comment
+    /// 5771773635) to an optional bounded third operand -- see
+    /// `consume_selected_identifier_reference_initializer_third_operand`,
+    /// called from the `Two`-operand match arm below whenever the second
+    /// operand was plain (never right-unary-wrapped):
     ///
     /// ```text
     /// SelectedTwoIdentifierReferenceAdditiveInitializer ::=
@@ -3562,8 +3620,12 @@ impl<'source> Cursor<'source> {
     /// they are compared locally on the same owned cursor and then dropped,
     /// so no tokenizer, token stream, `Punctuator` enum, operator kind,
     /// trivia `SourceAnchor`, `UnaryExpression`/`AdditiveExpression`
-    /// `SourceAnchor`, or generic expression representation is introduced,
-    /// and the retained carrier stays the unchanged `One`/`Two` pair. At most
+    /// `SourceAnchor`, or generic expression representation is introduced.
+    /// For this right-unary subfamily, the retained result remains bounded
+    /// to `One`/`Two`; Issue #797's `Three` continuation (per #688 comment
+    /// 5771773635) is reachable only after a plain second
+    /// `IdentifierReference`, never after this right-unary-wrapped
+    /// continuation. At most
     /// one right-unary wrapper is admitted -- no recursion -- so `a+-+b` and
     /// `a-++b` still fail the second operand and decline. The right unary
     /// sign is consumed and discarded before the shared recognizer runs, so
@@ -3586,23 +3648,51 @@ impl<'source> Cursor<'source> {
     /// boundary above together with its own selected operand trivia, and a
     /// second `IdentifierReference` operand recognized by the same unmodified
     /// shared recognizer (never a second scanner/decoder).
-    /// If the whole continuation completes with an accepted (direct or
-    /// escaped non-ReservedWord) second operand, `Two { first, second }` is
-    /// returned with the cursor positioned immediately after the second
-    /// operand. If the continuation does not complete for any reason
-    /// (absent operator; an escaped-ReservedWord, malformed, or entirely
-    /// absent second operand), the cursor is restored to exactly where it
-    /// stood right after the first operand and `One(first)` is returned: no
-    /// probed trivia, operator, or partial second-operand state is left
-    /// committed. This is what naturally excludes longer additive chains
-    /// (`a + b + c`), unary operands, non-`IdentifierReference` operands,
-    /// grouping/member/call forms, and `UpdateExpression`/assignment tokens:
-    /// each one fails to complete the continuation, degrades to `One(first)`
-    /// with the cursor restored to immediately after the first operand, and
-    /// the unconsumed remainder is then rejected by the existing enclosing
-    /// owner terminator/comma transaction exactly as an unrecognized
-    /// initializer suffix always has been — no dedicated firewall logic or
-    /// generic expression parser is introduced here.
+    /// If the continuation does not complete for any reason (absent
+    /// operator; an escaped-ReservedWord, malformed, or entirely absent
+    /// second operand), the cursor is restored to exactly where it stood
+    /// right after the first operand and `One(first)` is returned: no probed
+    /// trivia, operator, or partial second-operand state is left committed.
+    /// This pre-#797 second-operand recovery is unchanged, and still
+    /// excludes unary operands, non-`IdentifierReference` operands,
+    /// grouping/member/call forms, and `UpdateExpression`/assignment tokens
+    /// at the second-operand position: each one fails to complete the
+    /// continuation, degrades to `One(first)` with the cursor restored to
+    /// immediately after the first operand, and the unconsumed remainder is
+    /// then rejected by the existing enclosing owner terminator/comma
+    /// transaction exactly as an unrecognized initializer suffix always has
+    /// been -- no dedicated firewall logic or generic expression parser is
+    /// introduced here.
+    ///
+    /// If the continuation instead completes with an accepted (direct or
+    /// escaped non-ReservedWord) second operand, the cursor is positioned
+    /// immediately after that second operand and this helper's result then
+    /// depends on how the second operand was recognized. A
+    /// right-unary-wrapped second operand (the
+    /// `SelectedIdentifierReferenceRightUnaryAdditiveInitializer`
+    /// alternative above) commits `Two { first, second }` directly: Issue
+    /// #797's third-operand continuation below is never probed for this
+    /// subfamily. A plain second operand instead hands `first` and `second`
+    /// to `consume_selected_identifier_reference_initializer_third_operand`
+    /// (Issue #797 per #688 comment 5771773635), which probes for one
+    /// bounded optional third plain `IdentifierReference` operand: a
+    /// declining probe restores the cursor to exactly `after_second` (the
+    /// position immediately after the second operand established here) and
+    /// still commits `Two { first, second }` -- so `a + b` sources are
+    /// entirely unaffected by Issue #797 -- while a complete third operand
+    /// commits `Three { first, second, third }`, and a
+    /// `ResourceLimited`/`InternalFailure` classification from the third
+    /// operand's recognition is propagated immediately rather than
+    /// downgraded to `Two`. This is what naturally excludes unary third
+    /// operands, non-`IdentifierReference` third operands, grouping/member/call
+    /// forms, and `UpdateExpression`/assignment tokens at the third-operand
+    /// position, and still excludes a fourth-or-later operand from
+    /// complete-source acceptance: this helper may locally prepare a
+    /// `Three(first, second, third)`, but the enclosing declaration/statement
+    /// owner rejects an unconsumed fourth continuation (e.g. `a+b+c+d`),
+    /// exactly as an unrecognized initializer suffix always has been. This
+    /// helper never admits an arbitrary-N additive chain; the accepted
+    /// cardinalities remain exactly one, two, or three.
     ///
     /// A `ResourceLimited` or `InternalFailure` processing failure from
     /// either operand's recognition is propagated immediately and is never
@@ -3679,7 +3769,13 @@ impl<'source> Cursor<'source> {
         let after_operator = self.offset;
         match self.consume_selected_identifier_reference() {
             SelectedIdentifierReferenceRecognition::Matched(second) => {
-                SelectedIdentifierReferenceInitializerRecognition::Two { first, second }
+                if right_unary_consumed {
+                    return SelectedIdentifierReferenceInitializerRecognition::Two {
+                        first,
+                        second,
+                    };
+                }
+                self.consume_selected_identifier_reference_initializer_third_operand(first, second)
             }
             SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName { .. }
             | SelectedIdentifierReferenceRecognition::NotSelected => {
@@ -3693,6 +3789,83 @@ impl<'source> Cursor<'source> {
                 }
                 self.offset = after_first;
                 SelectedIdentifierReferenceInitializerRecognition::One(first)
+            }
+            SelectedIdentifierReferenceRecognition::ResourceLimited => {
+                SelectedIdentifierReferenceInitializerRecognition::ResourceLimited
+            }
+            SelectedIdentifierReferenceRecognition::InternalFailure => {
+                SelectedIdentifierReferenceInitializerRecognition::InternalFailure
+            }
+        }
+    }
+
+    /// Composes the bounded optional third-operand continuation of the
+    /// exactly-three `IdentifierReference` additive initializer theorem
+    /// (Issue #797 per #688 comment 5771773635), reusing the accepted
+    /// candidate-independent theorem proven by #795/PR #796. Called only
+    /// from `consume_selected_identifier_reference_initializer` immediately
+    /// after a plain (never right-unary-wrapped) second operand has matched,
+    /// with the cursor positioned immediately after that second operand
+    /// (`after_second` -- before any trivia probed for the second binary
+    /// operator).
+    ///
+    /// `after_second` is remembered first. Selected trivia is skipped; absent
+    /// an authored binary `+`/`-` at that position, the cursor is restored to
+    /// exactly `after_second` and `Two { first, second }` is returned --
+    /// identical to the pre-#797 decline behavior, since `after_second` is
+    /// precisely the cursor position `consume_selected_identifier_reference_initializer`
+    /// itself would have left after matching a plain second operand. This
+    /// keeps the enclosing declaration/statement owner's significant
+    /// initializer end exact for `a+b` sources.
+    ///
+    /// Otherwise exactly one authored binary `+`/`-` is consumed (never a
+    /// right-unary wrapper -- the #797 theorem is plain/plain/plain only, so
+    /// no `SelectedBinaryUnaryBoundary` probing applies to this operator),
+    /// selected trivia is skipped, and a third operand is recognized by the
+    /// same unmodified shared `consume_selected_identifier_reference`
+    /// recognizer. A matched (direct or escaped non-ReservedWord) third
+    /// operand commits `Three { first, second, third }` with the cursor
+    /// positioned immediately after it -- this is what naturally excludes a
+    /// fourth operand (`a+b+c+d`): the local helper still returns a complete
+    /// `Three`, and the enclosing owner rejects the untouched `+d` remainder,
+    /// since no complete selected source may publish a truncated `Three`
+    /// prefix. An escaped-ReservedWord, malformed, or entirely absent third
+    /// operand restores the cursor to exactly `after_second` and returns
+    /// `Two { first, second }`, leaving the untouched tail (e.g. an escaped
+    /// spelling decoding to a ReservedWord, `++c`, `+ +c`, `+c.d`) for the
+    /// enclosing owner to judge exactly as an
+    /// unrecognized initializer suffix always has been -- no dedicated
+    /// firewall logic, tokenizer, or generic expression parser is
+    /// introduced. A `ResourceLimited`/`InternalFailure` processing failure
+    /// from the third operand's recognition is propagated immediately and is
+    /// never downgraded to a completed `Two` result.
+    fn consume_selected_identifier_reference_initializer_third_operand(
+        &mut self,
+        first: SelectedIdentifierReferenceFact,
+        second: SelectedIdentifierReferenceFact,
+    ) -> SelectedIdentifierReferenceInitializerRecognition {
+        let after_second = self.offset;
+        self.skip_selected_trivia();
+
+        if !self.consume_ascii('+') && !self.consume_ascii('-') {
+            self.offset = after_second;
+            return SelectedIdentifierReferenceInitializerRecognition::Two { first, second };
+        }
+
+        self.skip_selected_trivia();
+
+        match self.consume_selected_identifier_reference() {
+            SelectedIdentifierReferenceRecognition::Matched(third) => {
+                SelectedIdentifierReferenceInitializerRecognition::Three {
+                    first,
+                    second,
+                    third,
+                }
+            }
+            SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName { .. }
+            | SelectedIdentifierReferenceRecognition::NotSelected => {
+                self.offset = after_second;
+                SelectedIdentifierReferenceInitializerRecognition::Two { first, second }
             }
             SelectedIdentifierReferenceRecognition::ResourceLimited => {
                 SelectedIdentifierReferenceInitializerRecognition::ResourceLimited
