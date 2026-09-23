@@ -6959,10 +6959,10 @@ fn two_identifier_reference_additive_initializer_firewalls_remain_unsupported() 
         // Cardinality with a left-unary-wrapped first operand (Issue #775
         // migration: `let x = +a + b;` / `let x = -a + b;` moved out of this
         // firewall to the now-selected left-unary two-reference positive
-        // matrix below; this 3+ boundary remains a genuinely unselected
-        // neighbor).
-        "let x = +a + b + c;",
-        "let x = -a - b - c;",
+        // matrix below; the leading-unary-first 3+ boundary (`+a + b + c;`,
+        // `-a - b - c;`) migrated to positive optional-unary coverage by
+        // Issue #811 (per #688 comment 5791317234) -- see
+        // `optional_unary_identifier_reference_additive_initializer_positive_cardinality_matrix`).
         // Issue #779 migration: `let x = a + +b;` / `let x = a + -b;` moved
         // out of this firewall to the now-selected right-unary
         // two-reference positive matrix below, per the candidate-independent
@@ -7211,37 +7211,23 @@ fn three_identifier_reference_additive_initializer_malformed_third_operand_remai
 // The free-standing use-site's own fourth-operand firewall is unaffected and
 // remains covered by `three_operand_use_site_fourth_operand_firewall_remains_unsupported`.
 
-/// Right-unary-second firewall (per #688 comment 5771773635 section 11): the
-/// #795 theorem is plain/plain/plain only, so a third continuation is never
-/// probed when the second operand used an existing right-unary `+`/`-`
-/// wrapper -- these remain bounded to exactly two.
-#[test]
-fn three_identifier_reference_additive_initializer_right_unary_second_firewall_remains_unsupported()
-{
-    for text in [
-        "let x = a+-b+c;",
-        "let x = a-+b+c;",
-        "let x = a+ +b+c;",
-        "let x = a- -b+c;",
-    ] {
-        assert_unsupported(text);
-    }
-}
-
-/// Leading-unary-first firewall: the leading-unary-first route remains a
-/// distinct, unwidened owner, so a third operand is never composed onto it.
-#[test]
-fn three_identifier_reference_additive_initializer_leading_unary_first_firewall_remains_unsupported()
- {
-    for text in [
-        "let x = +a+b+c;",
-        "let x = -a-b-c;",
-        "let x = +a+-b+c;",
-        "let x = -a-+b+c;",
-    ] {
-        assert_unsupported(text);
-    }
-}
+// Right-unary-second firewall (per #688 comment 5771773635 section 11) and
+// leading-unary-first firewall: the pre-#811 #795/#801/#803 theorems were
+// plain/plain/.../plain only, so a third-or-later continuation was never
+// probed after a right-unary-wrapped second operand, and the
+// leading-unary-first route never composed a third operand at all. Issue
+// #811 (per #688 comment 5791317234) composes the accepted optional-unary
+// theorem proven by #809/PR #810 into the same initializer-owned staged
+// tail, so every case previously sealed by
+// `three_identifier_reference_additive_initializer_right_unary_second_firewall_remains_unsupported`
+// and
+// `three_identifier_reference_additive_initializer_leading_unary_first_firewall_remains_unsupported`
+// is now selected-positive -- see
+// `optional_unary_identifier_reference_additive_initializer_positive_cardinality_matrix`.
+// Free-standing optional-unary 3+ use-sites remain outside this Issue and
+// stay covered by their own unchanged negative firewalls
+// (`three_operand_use_site_right_unary_second_firewall_remains_unsupported`,
+// `three_operand_use_site_leading_unary_first_firewall_remains_unsupported`).
 
 /// Heterogeneous three-syntax firewall: the accepted #791 Decimal fallback
 /// remains exactly two-syntax-operand; no new heterogeneous three-operand
@@ -7264,7 +7250,14 @@ fn three_identifier_reference_additive_initializer_heterogeneous_firewall_remain
 /// Punctuator / `UpdateExpression` / assignment-operator boundary: a third
 /// probe may tentatively consume a single `+`/`-`, but any decline restores
 /// `after_second`, leaving the authored tail for the enclosing owner to
-/// reject -- no tokenizer or `Punctuator` enum is introduced.
+/// reject -- no tokenizer or `Punctuator` enum is introduced. The
+/// opposite-sign and separated-same-sign third-operand forms
+/// (`a+b+-c`, `a+b-+c`, `a+b+ +c`, `a+b- -c`) migrated to positive
+/// optional-unary coverage by Issue #811 (per #688 comment 5791317234) --
+/// see `optional_unary_identifier_reference_additive_initializer_positive_cardinality_matrix`;
+/// authored `++`/`--`/`+=`/`-=` remain genuinely unselected neighbors, since
+/// the #777/#778 boundary theorem never splits an authored `++`/`--`
+/// punctuator into a binary sign plus a unary sign.
 #[test]
 fn three_identifier_reference_additive_initializer_punctuator_firewall_remains_unsupported() {
     for text in [
@@ -7272,10 +7265,6 @@ fn three_identifier_reference_additive_initializer_punctuator_firewall_remains_u
         "let x = a+b--c;",
         "let x = a+b+=c;",
         "let x = a+b-=c;",
-        "let x = a+b+-c;",
-        "let x = a+b-+c;",
-        "let x = a+b+ +c;",
-        "let x = a+b- -c;",
     ] {
         assert_unsupported(text);
     }
@@ -7599,8 +7588,12 @@ fn many_identifier_reference_additive_initializer_malformed_and_non_reference_co
         "let x = a+b+c+0;",
         "let x = a+b+c+d+0;",
         r"let x = a+b+c+d+\u{};",
-        // Unary-looking continuation.
-        "let x = a+b+c+-d;",
+        // Same-sign zero-trivia `UpdateExpression`-adjacent continuation:
+        // authored `++` is never split into a binary sign plus a unary
+        // sign. The opposite-sign fourth operand (`a+b+c+-d`) migrated to
+        // positive optional-unary coverage by Issue #811 (per #688 comment
+        // 5791317234) -- see
+        // `optional_unary_identifier_reference_additive_initializer_positive_cardinality_matrix`.
         "let x = a+b+c++d;",
         // Member/call/assignment tail after a complete `Many` prefix.
         "let x = a+b+c+d.e;",
@@ -7768,6 +7761,236 @@ fn many_identifier_reference_additive_initializer_transactionality_commits_no_ea
     assert_eq!(subject.fragment(), r"\u{}");
 
     let subject = grammar_rejection(r"{ var x = a+b+c+d, \u{} = 1; }");
+    assert_eq!(subject.fragment(), r"\u{}");
+}
+
+// --- Issue #811 (per #688 comment 5791317234): composes the accepted
+// candidate-independent optional-leading-`+`/`-` `IdentifierReference`
+// additive-chain theorem proven by #809/PR #810 -- itself composing the
+// accepted #777/#778 binary/right-unary punctuator-boundary theorem with
+// the accepted #801/#802 plain-additive-chain theorem -- into the existing
+// initializer owner. Every selected operand from the first onward is
+// independently plain or exactly-one leading `+`/`-` wrapped; no new
+// Oracle, carrier, or resource-lifecycle behavior is introduced. These
+// production tests author expected facts/ranges independently of the
+// #809/#810 candidate under test. ---
+
+#[test]
+fn optional_unary_identifier_reference_additive_initializer_positive_cardinality_matrix() {
+    for (text, expected) in [
+        // 3 operands.
+        ("let x = +a+b+c;", vec!["a", "b", "c"]),
+        ("let x = a+-b+c;", vec!["a", "b", "c"]),
+        ("let x = a+b+-c;", vec!["a", "b", "c"]),
+        ("let x = +a+-b+ +c;", vec!["a", "b", "c"]),
+        // 4 operands.
+        ("let x = +a+-b+c- -d;", vec!["a", "b", "c", "d"]),
+        ("let x = -a+ +b-c+ +d;", vec!["a", "b", "c", "d"]),
+        // 5 operands.
+        ("let x = +a-b+ +c-d+-e;", vec!["a", "b", "c", "d", "e"]),
+        // 8-operand sentinel: detects accidental bounded production logic.
+        (
+            "let x = +a-b+ +c-d+-e+f- -g+h;",
+            vec!["a", "b", "c", "d", "e", "f", "g", "h"],
+        ),
+    ] {
+        let script = recognized(text);
+        let [binding] = script.declarations()[0].bindings() else {
+            panic!("expected one selected lexical binding for {text:?}");
+        };
+        let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+        assert_eq!(facts.len(), expected.len(), "{text:?}");
+        for (fact, name) in facts.iter().zip(expected.iter()) {
+            assert_eq!(fact.semantic_name(), *name, "{text:?}");
+        }
+        assert_eq!(
+            binding
+                .identifier_reference_initializer()
+                .unwrap()
+                .semantic_name(),
+            expected[0],
+            "{text:?}"
+        );
+    }
+}
+
+/// Direct/Escaped provenance and duplicate preservation at the third,
+/// fourth-transition, interior-`Many`, and final continuation positions --
+/// exactly the positions newly widened by Issue #811 to admit an optional
+/// leading `+`/`-` wrapper. The escaped spelling decodes to the same
+/// semantic name as its Direct neighbors; the leading/binary sign is never
+/// part of the retained `SourceAnchor`, so the escaped fragment (never the
+/// sign) is what each fact's `reference()` must reproduce.
+#[test]
+fn optional_unary_identifier_reference_additive_initializer_direct_escaped_and_duplicate_provenance()
+ {
+    let esc_c = concat!("\\", "u0063"); // decodes to "c" (third operand)
+    let esc_d = concat!("\\", "u0064"); // decodes to "d" (fourth-transition operand)
+    let esc_e = concat!("\\", "u0065"); // decodes to "e" (interior `Many` operand)
+    let esc_f = concat!("\\", "u0066"); // decodes to "f" (final operand)
+
+    for (text, expected_fragments, expected_names) in [
+        (
+            format!("let x = a+b+-{esc_c}+d;"),
+            vec!["a", "b", esc_c, "d"],
+            vec!["a", "b", "c", "d"],
+        ),
+        (
+            format!("let x = a+b+c+-{esc_d};"),
+            vec!["a", "b", "c", esc_d],
+            vec!["a", "b", "c", "d"],
+        ),
+        (
+            format!("let x = a+b+c+d+-{esc_e}+f;"),
+            vec!["a", "b", "c", "d", esc_e, "f"],
+            vec!["a", "b", "c", "d", "e", "f"],
+        ),
+        (
+            format!("let x = a+b+c+d+e+-{esc_f};"),
+            vec!["a", "b", "c", "d", "e", esc_f],
+            vec!["a", "b", "c", "d", "e", "f"],
+        ),
+    ] {
+        let script = recognized(&text);
+        let [binding] = script.declarations()[0].bindings() else {
+            panic!("expected one selected lexical binding for {text:?}");
+        };
+        let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+        assert_eq!(facts.len(), expected_names.len(), "{text:?}");
+        for i in 0..facts.len() {
+            assert_eq!(
+                facts[i].reference().fragment(),
+                expected_fragments[i],
+                "{text:?}"
+            );
+            assert_eq!(facts[i].semantic_name(), expected_names[i], "{text:?}");
+        }
+    }
+
+    // Duplicate occurrences under optional-unary syntax are never
+    // deduplicated by semantic name or authored spelling.
+    let script = recognized("let x = +a+-a+a- -a;");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+    assert_eq!(facts.len(), 4);
+    for fact in &facts {
+        assert_eq!(fact.semantic_name(), "a");
+    }
+    for i in 0..facts.len() {
+        for j in (i + 1)..facts.len() {
+            assert_ne!(facts[i].reference().range(), facts[j].reference().range());
+        }
+    }
+}
+
+/// Three-owner / terminator sealing: the same optional-unary widening is
+/// jointly composed through `LexicalDeclaration`, top-level `var`, and
+/// one-level Block `var`, and holds under every existing terminator
+/// provenance (authored semicolon, EOF ASI, and before-`}` ASI) without any
+/// new termination class.
+#[test]
+fn optional_unary_identifier_reference_additive_initializer_jointly_composes_across_all_three_owners_and_terminators()
+ {
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+
+    for text in ["const x=+a-b+ +c-d+-e;", "const x=+a-b+ +c-d+-e"] {
+        let script = recognized(text);
+        let [binding] = script.declarations()[0].bindings() else {
+            panic!("expected one selected lexical binding for {text:?}");
+        };
+        let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+        assert_eq!(facts.len(), 5, "{text:?}");
+    }
+    assert!(matches!(
+        recognized("const x=+a-b+ +c-d+-e;").declarations()[0].terminator(),
+        SelectedDeclarationTerminator::AuthoredSemicolon(_)
+    ));
+    assert!(matches!(
+        recognized("const x=+a-b+ +c-d+-e").declarations()[0].terminator(),
+        SelectedDeclarationTerminator::AutomaticAtEof
+    ));
+
+    for text in ["var x=+a-b+ +c-d+-e;", "var x=+a-b+ +c-d+-e"] {
+        let script = recognized_variable(text);
+        let statement = only_variable_statement(&script);
+        let [binding] = statement.bindings() else {
+            panic!("expected one selected top-level var binding for {text:?}");
+        };
+        assert_eq!(
+            binding.identifier_reference_initializer_facts().count(),
+            5,
+            "{text:?}"
+        );
+    }
+    assert!(matches!(
+        only_variable_statement(&recognized_variable("var x=+a-b+ +c-d+-e;")).terminator(),
+        SelectedVariableStatementTerminator::AuthoredSemicolon
+    ));
+    assert!(matches!(
+        only_variable_statement(&recognized_variable("var x=+a-b+ +c-d+-e")).terminator(),
+        SelectedVariableStatementTerminator::AutomaticAtEof
+    ));
+
+    for text in ["{ var x=+a-b+ +c-d+-e; }", "{ var x=+a-b+ +c-d+-e }"] {
+        let block_script = recognized_block(text);
+        let [SelectedTopLevelItem::Block(block)] = block_script.items() else {
+            panic!("expected exactly one Block item for {text:?}");
+        };
+        let [SelectedBlockItem::Var(statement)] = block.items() else {
+            panic!("expected exactly one Block var statement for {text:?}");
+        };
+        let [binding] = statement.bindings() else {
+            panic!("expected one selected Block var binding for {text:?}");
+        };
+        assert_eq!(
+            binding.identifier_reference_initializer_facts().count(),
+            5,
+            "{text:?}"
+        );
+    }
+}
+
+/// Transaction sealing: a locally valid optional-unary `Two`/`Three`/`Many`
+/// prefix must never leak accepted whole-source state when later source is
+/// unsupported -- later malformed continuation, later escaped ReservedWord,
+/// later recursive-unary continuation, a later non-reference/heterogeneous
+/// operand, a later richer tail, a later declarator failure, and an invalid
+/// whole-source remainder are all covered, across all three initializer
+/// placements.
+#[test]
+fn optional_unary_identifier_reference_additive_initializer_later_failure_remains_unsupported() {
+    let escaped_if = concat!("\\", "u0069", "f"); // decodes to the reserved word "if"
+    for text in [
+        // Later malformed continuation.
+        r"let x = +a-b+ +c-d+-e+\u{};",
+        // Later escaped ReservedWord continuation.
+        &format!("let x = +a-b+ +c-d+-e+{escaped_if};"),
+        // Later recursive-unary continuation: exactly one wrapper only.
+        "let x = +a-b+ +c-d+-e+-+f;",
+        "let x = +a-b+ +c-d+-e++f;",
+        // Later non-reference/heterogeneous operand.
+        "let x = +a-b+ +c-d+-e+1;",
+        "let x = +a-b+ +c-d+-e+true;",
+        // Later richer expression tail.
+        "let x = +a-b+ +c-d+-e+f.g;",
+        "let x = +a-b+ +c-d+-e+f();",
+        "let x = +a-b+ +c-d+-e+f=g;",
+        // Later declarator failure must not leak the earlier optional-unary
+        // `Many` prefix as committed selected state.
+        "let x=+a-b+ +c-d+-e, y=;",
+        "var x=+a-b+ +c-d+-e, y=;",
+        "{ var x=+a-b+ +c-d+-e, y=; }",
+    ] {
+        assert_unsupported(text);
+    }
+
+    let subject = grammar_rejection(r"let x = +a-b+ +c-d+-e, \u{} = 1;");
+    assert_eq!(subject.fragment(), r"\u{}");
+    let subject = grammar_rejection(r"var x = +a-b+ +c-d+-e, \u{} = 1;");
+    assert_eq!(subject.fragment(), r"\u{}");
+    let subject = grammar_rejection(r"{ var x = +a-b+ +c-d+-e, \u{} = 1; }");
     assert_eq!(subject.fragment(), r"\u{}");
 }
 
@@ -8256,12 +8479,9 @@ fn left_unary_additive_initializer_does_not_disturb_unary_only_or_plain_two_pred
 #[test]
 fn left_unary_additive_initializer_incomplete_or_richer_continuation_firewalls_remain_unsupported()
 {
-    for text in [
-        "let x = +a + ;",
-        "let x = +a + 1;",
-        "let x = +a + b + c;",
-        "let x = -a - b - c;",
-    ] {
+    // `let x = +a + b + c;` / `let x = -a - b - c;` migrated to positive
+    // optional-unary coverage by Issue #811 (per #688 comment 5791317234).
+    for text in ["let x = +a + ;", "let x = +a + 1;"] {
         assert_unsupported(text);
     }
 
@@ -8362,11 +8582,11 @@ fn left_unary_additive_initializer_jointly_composes_across_all_three_owners() {
     assert_eq!(facts[0].semantic_name(), "a");
     assert_eq!(facts[1].semantic_name(), "b");
 
-    // Joint placement-neutral firewall spot-check: the cardinality and
-    // incomplete-continuation firewalls hold for every owner, not only
-    // `LexicalDeclaration`.
-    assert_unsupported("var x = +a + b + c;");
-    assert_unsupported("{ var x = +a + b + c; }");
+    // Joint placement-neutral firewall spot-check: the incomplete-
+    // continuation firewall holds for every owner, not only
+    // `LexicalDeclaration`. `var x = +a + b + c;` / `{ var x = +a + b + c; }`
+    // migrated to positive optional-unary coverage by Issue #811 (per #688
+    // comment 5791317234).
     assert_unsupported("var x = +a + ;");
     assert_unsupported("{ var x = +a + ; }");
 }
@@ -8720,10 +8940,11 @@ fn right_unary_additive_initializer_incomplete_or_richer_continuation_firewalls_
         "const x=a+typeof b;",
         "const x=a+void b;",
         "const x=a+delete b;",
-        // Cardinality / richer expressions: never truncated to a bounded
-        // accepted prefix.
-        "const x=a+-b+c;",
-        "const x=a-+b-c;",
+        // Richer expressions: never truncated to a bounded accepted prefix.
+        // The plain-third-operand cardinality forms (`a+-b+c;`, `a-+b-c;`)
+        // migrated to positive optional-unary coverage by Issue #811 (per
+        // #688 comment 5791317234) -- see
+        // `optional_unary_identifier_reference_additive_initializer_positive_cardinality_matrix`.
         "const x=a+-b*c;",
         "const x=a+-b.c;",
         "const x=a+-b();",
@@ -8756,10 +8977,8 @@ fn right_unary_additive_initializer_incomplete_or_richer_continuation_firewalls_
     for text in [
         "var x=a+-;",
         "var x=a+-+b;",
-        "var x=a+-b+c;",
         "{ var x=a+-; }",
         "{ var x=a+-+b; }",
-        "{ var x=a+-b+c; }",
     ] {
         assert_unsupported(text);
     }
@@ -9252,10 +9471,11 @@ fn both_unary_additive_initializer_incomplete_or_richer_continuation_firewalls_r
         "const x=+a+null;",
         "const x=+a+this;",
         "const x=+a+\"b\";",
-        // Cardinality / richer expressions: never truncated to a bounded
-        // accepted prefix.
-        "const x=+a+-b+c;",
-        "const x=-a-+b-c;",
+        // Richer expressions: never truncated to a bounded accepted prefix.
+        // The plain-third-operand cardinality forms (`+a+-b+c;`, `-a-+b-c;`)
+        // migrated to positive optional-unary coverage by Issue #811 (per
+        // #688 comment 5791317234) -- see
+        // `optional_unary_identifier_reference_additive_initializer_positive_cardinality_matrix`.
         "const x=+a+-b*c;",
         "const x=+a+-b.c;",
         "const x=+a+-b();",
@@ -9287,11 +9507,9 @@ fn both_unary_additive_initializer_incomplete_or_richer_continuation_firewalls_r
     for text in [
         "var x=+a+-;",
         "var x=+a+-+b;",
-        "var x=+a+-b+c;",
         "var x=+a++b;",
         "{ var x=+a+-; }",
         "{ var x=+a+-+b; }",
-        "{ var x=+a+-b+c; }",
         "{ var x=+a++b; }",
     ] {
         assert_unsupported(text);
@@ -9392,11 +9610,10 @@ fn both_unary_additive_initializer_jointly_composes_across_all_three_owners() {
     assert_eq!(facts[0].semantic_name(), "a");
     assert_eq!(facts[1].semantic_name(), "b");
 
-    // Joint placement-neutral firewall spot-check: the incomplete-
-    // continuation and token-boundary firewalls hold for every owner, not
-    // only `LexicalDeclaration`.
-    assert_unsupported("var x=+a+-b+c;");
-    assert_unsupported("{ var x=+a+-b+c; }");
+    // Joint placement-neutral firewall spot-check: the token-boundary
+    // firewall holds for every owner, not only `LexicalDeclaration`.
+    // `var x=+a+-b+c;` / `{ var x=+a+-b+c; }` migrated to positive
+    // optional-unary coverage by Issue #811 (per #688 comment 5791317234).
     assert_unsupported("var x=+a++b;");
     assert_unsupported("{ var x=+a++b; }");
 }

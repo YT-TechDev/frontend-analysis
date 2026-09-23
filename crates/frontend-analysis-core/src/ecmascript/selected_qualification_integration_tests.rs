@@ -267,6 +267,66 @@ fn many_identifier_reference_additive_initializer_remains_selected_accepted_inco
     }
 }
 
+/// Issue #811 (per #688 comment 5791317234): composing the accepted
+/// optional-leading-`+`/`-` `IdentifierReference` additive-chain theorem
+/// proven by #809/PR #810 into the initializer owner reaches the same
+/// existing `SelectedAcceptedIncomplete` lifecycle as any other
+/// production-accepted, not-yet-Oracle-qualified source -- never
+/// `UnsupportedCoverage` and never `Qualified` -- for all three joint owners
+/// (`LexicalDeclaration`, top-level `var`, and Block `var`), across
+/// leading-unary-first, right-unary-second, and interior/final unary-wrapped
+/// operand positions. #809/PR #810 remain the candidate-independent Oracle
+/// for the underlying theorem; this leaf adds no new qualification branch.
+#[test]
+fn optional_unary_identifier_reference_additive_initializer_remains_selected_accepted_incomplete() {
+    for text in [
+        "const x = +a+b+c;",
+        "let x = a+-b+c;",
+        "let x = a+b+-c;",
+        "const x = +a-b+ +c-d+-e;",
+        "var x = +a-b+ +c-d+-e;",
+        "{ var x = +a-b+ +c-d+-e; }",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text}"
+        );
+    }
+}
+
+/// A valid optional-unary N initializer does not bypass an existing
+/// unrelated static conflict: an escaped-ReservedWord binding identifier
+/// elsewhere in the same declaration/statement still reaches the existing
+/// `StaticSemanticsRejected` verdict unchanged, per the pre-existing
+/// EE-04-R08 rule this leaf adds no new branch for.
+#[test]
+fn optional_unary_identifier_reference_additive_initializer_with_unrelated_static_conflict_reaches_existing_rejection()
+ {
+    let escaped_if = concat!("\\", "u0069", "f"); // decodes to the reserved word "if"
+    for text in [
+        format!("let x = +a-b+ +c-d+-e, {escaped_if};"),
+        format!("var x = +a-b+ +c-d+-e, {escaped_if};"),
+        format!("{{ var x = +a-b+ +c-d+-e, {escaped_if}; }}"),
+    ] {
+        let outcome = qualification_outcome(&text);
+        assert_eq!(outcome.processing(), ProcessingStatus::Complete, "{text}");
+        assert_eq!(
+            outcome.verdict(),
+            Some(QualificationVerdictKind::StaticSemanticsRejected),
+            "{text}"
+        );
+        let evidence = outcome.rejection_evidence().expect("static evidence");
+        assert_eq!(
+            evidence.family(),
+            RejectionFamily::StaticSemantics,
+            "{text}"
+        );
+    }
+}
+
 #[test]
 fn escaped_identifier_reference_invalid_and_tail_families_remain_unsupported() {
     for text in [
