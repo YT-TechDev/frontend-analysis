@@ -9016,7 +9016,11 @@ fn right_unary_additive_free_standing_failed_continuation_rolls_back_whole_body(
     // #787 moves them into selected-positive coverage on the distinct
     // leading-unary-first route (see
     // `left_unary_use_site_both_unary_positive_matrix_is_recognized` below).
-    // This bare-reference-first route's own firewalls remain unchanged.
+    // `a+-b+c;` moved to selected-positive coverage by Issue #813 (a
+    // complete right-unary-wrapped second operand followed by a complete
+    // third operand is no longer a failing continuation -- see the "Issue
+    // #813" section below). This bare-reference-first route's other
+    // firewalls remain unchanged.
     for text in [
         "a+-;",
         r"a+-\u0069f;",
@@ -9024,7 +9028,6 @@ fn right_unary_additive_free_standing_failed_continuation_rolls_back_whole_body(
         "a+-+b;",
         "a++b;",
         "a--b;",
-        "a+-b+c;",
         "{ a+-; }",
         "{ a+-+b; }",
     ] {
@@ -10979,11 +10982,13 @@ fn unary_use_site_does_not_authorize_richer_expression_neighbors() {
     // following non-terminator token and rolls back the whole use-site
     // probe, exactly as the unwrapped bare-reference prefix already does.
     // `+a+b;` / `-a-b;` / `{ +a+b; }` / `{ -a-b; }` moved to
-    // selected-positive coverage by Issue #773 (see the "Issue #773" section
-    // below); a third-or-later additive operand remains outside this leaf.
+    // selected-positive coverage by Issue #773 (see the "Issue #773"
+    // section below); `+a+b+c;` / `-a-b-c;` / `{ +a+b+c; }` / `{ -a-b-c; }`
+    // moved to selected-positive coverage by Issue #813 (see the "Issue
+    // #813" section below), since the leading-unary-first route now
+    // composes with the third-operand-and-later continuation exactly like
+    // the plain bare-reference-first route.
     for text in [
-        "+a+b+c;",
-        "-a-b-c;",
         "+a+b*c;",
         "+a*b;",
         "-a/b;",
@@ -10994,8 +10999,6 @@ fn unary_use_site_does_not_authorize_richer_expression_neighbors() {
         "+a?b:c;",
         "+a&&b;",
         "+a,b;",
-        "{ +a+b+c; }",
-        "{ -a-b-c; }",
         "{ +a*b; }",
         "{ -a.b; }",
         "{ +a(); }",
@@ -11232,18 +11235,11 @@ fn left_unary_use_site_failed_second_operand_does_not_degrade_to_one() {
     // Once a binary continuation begins, the whole body is transactional: a
     // failing, incomplete, or escaped-ReservedWord second operand must
     // never leak the successfully recognized unary-wrapped first fact as a
-    // completed `One`.
-    for text in [
-        "+a+;",
-        "+a+1;",
-        "+a+\\u0069f;",
-        "+a+\\u{};",
-        "-a+;",
-        "+a+b+c;",
-        "-a-b-c;",
-        "+a+b-c;",
-        "-a-b+c;",
-    ] {
+    // completed `One`. `+a+b+c;` / `-a-b-c;` / `+a+b-c;` / `-a-b+c;` moved
+    // to selected-positive coverage by Issue #813 (a complete second
+    // operand followed by a complete third operand is no longer a failing
+    // continuation -- see the "Issue #813" section below).
+    for text in ["+a+;", "+a+1;", "+a+\\u0069f;", "+a+\\u{};", "-a+;"] {
         assert_unsupported(text);
     }
 }
@@ -11623,7 +11619,10 @@ fn left_unary_use_site_both_unary_failed_continuation_rolls_back_whole_body() {
     // escaped-ReservedWord right-unary-wrapped second operand must never
     // leak the successfully recognized unary-wrapped first fact as a
     // completed `One`, and a valid bounded prefix must never authorize a
-    // richer or longer source.
+    // richer or longer source. `+a+-b+c;` / `-a-+b-c;` moved to
+    // selected-positive coverage by Issue #813 (a complete both-unary
+    // second operand followed by a complete third operand is no longer a
+    // failing continuation -- see the "Issue #813" section below).
     for text in [
         "+a+-;",
         "+a+-1;",
@@ -11634,8 +11633,6 @@ fn left_unary_use_site_both_unary_failed_continuation_rolls_back_whole_body() {
         "+a-+-b;",
         "+a+--b;",
         "+a-++b;",
-        "+a+-b+c;",
-        "-a-+b-c;",
         "+a+-b*c;",
         "+a+-b.c;",
         "+a+-b();",
@@ -12249,32 +12246,16 @@ fn three_operand_use_site_malformed_third_operand_remains_unsupported() {
 /// Punctuator / `UpdateExpression` / assignment-operator boundary: a third
 /// probe may tentatively consume a single `+`/`-`, but any decline restores
 /// the whole body snapshot -- no tokenizer or `Punctuator` enum is
-/// introduced merely to reject these.
+/// introduced merely to reject these. `a+b+-c;` / `a+b-+c;` / `a+b+ +c;` /
+/// `a+b- -c;` moved to selected-positive coverage by Issue #813, since the
+/// third operand may now independently be optional-leading-`+`/`-`
+/// wrapped, applying the same #777/#778 boundary as the second operand
+/// (see the "Issue #813" section below); the same-sign zero-trivia forms
+/// (`a+b++c;`, `a+b--c;`) and the assignment-operator forms remain outside
+/// this production regardless.
 #[test]
 fn three_operand_use_site_punctuator_boundary_remains_unsupported() {
-    for text in [
-        "a+b++c;", "a+b--c;", "a+b+=c;", "a+b-=c;", "a+b+-c;", "a+b-+c;", "a+b+ +c;", "a+b- -c;",
-    ] {
-        assert_unsupported(text);
-    }
-}
-
-/// Right-unary-second firewall: the #795 theorem is plain/plain/plain only,
-/// so a third continuation is never probed when the second operand used the
-/// existing right-unary `+`/`-` wrapper -- these remain bounded to exactly
-/// two.
-#[test]
-fn three_operand_use_site_right_unary_second_firewall_remains_unsupported() {
-    for text in ["a+-b+c;", "a-+b+c;", "a+ +b+c;", "a- -b+c;"] {
-        assert_unsupported(text);
-    }
-}
-
-/// Leading-unary-first firewall: the leading-unary-first route remains a
-/// distinct, unwidened owner, so a third operand is never composed onto it.
-#[test]
-fn three_operand_use_site_leading_unary_first_firewall_remains_unsupported() {
-    for text in ["+a+b+c;", "-a-b-c;", "+a+-b+c;", "-a-+b+c;"] {
+    for text in ["a+b++c;", "a+b--c;", "a+b+=c;", "a+b-=c;"] {
         assert_unsupported(text);
     }
 }
@@ -12575,10 +12556,14 @@ fn many_operand_use_site_escaped_reserved_continuation_remains_unsupported() {
     }
 }
 
-/// Malformed, non-reference, unary-looking, and doubled-punctuator
+/// Malformed, non-reference, same-sign-zero-trivia, and doubled-punctuator
 /// fourth/later continuation: every one restores the whole free-standing
 /// body snapshot and declines -- never a truncated `Three`/`Many`
-/// publication.
+/// publication. `a+b+c+-d;` / `a+b+c+d+-e;` moved to selected-positive
+/// coverage by Issue #813, since the fourth and fifth operands may now
+/// independently be optional-leading-`+`/`-` wrapped (see the "Issue #813"
+/// section below); the same-sign zero-trivia forms (`a+b+c++d;`,
+/// `a+b+c+d++e;`) remain outside this production regardless.
 #[test]
 fn many_operand_use_site_malformed_and_non_reference_continuation_remains_unsupported() {
     for text in [
@@ -12587,10 +12572,8 @@ fn many_operand_use_site_malformed_and_non_reference_continuation_remains_unsupp
         "a+b+c+d+0;",
         r"a+b+c+d+\u{};",
         "a+b+c+d+;",
-        // Unary-looking continuation.
-        "a+b+c+-d;",
+        // Same-sign zero-trivia continuation.
         "a+b+c++d;",
-        "a+b+c+d+-e;",
         "a+b+c+d++e;",
         // Doubled-punctuator boundary.
         "a+b+c+d+=e;",
@@ -12753,4 +12736,191 @@ fn one_two_three_many_one_operand_use_sites_preserve_authored_order() {
         .collect();
     assert_eq!(many_names, vec!["g", "h", "i", "j"]);
     assert_eq!(only_fact(one_k.body()).semantic_name(), "k");
+}
+
+// --- Issue #813: free-standing optional-leading-`+`/`-` `IdentifierReference`
+// additive-chain 2..N production. Composes the accepted candidate-independent
+// theorem proven by #809/PR #810 into the existing free-standing
+// `ExpressionStatement` use-site owner (#799/#800, #807/#808), reusing the
+// #777/#778 binary/right-unary punctuator-boundary theorem at every operand
+// boundary from the second onward. Removes the two previous bounded-to-`Two`
+// early returns (leading-unary-first + accepted second, and plain first +
+// right-unary second), so every accepted two-reference optional-unary
+// combination now composes with the existing third/fourth/Many staging
+// exactly like the plain/plain route already did. No new Oracle, carrier
+// variant, or terminator type is introduced; `One`/`Two`/`Three`/`Many`
+// remain the only representation, and `Many.len() >= 4` remains the private
+// invariant. ---
+
+#[test]
+fn additive_free_standing_use_site_positive_cardinality_and_wrapper_position_matrix_is_recognized()
+{
+    // 3-operand: unary wrapper at first, second, interior/final, and both a
+    // leading-unary first plus a both-unary second.
+    for (text, expected_names) in [
+        ("+a+b+c;", vec!["a", "b", "c"]),
+        ("a+-b+c;", vec!["a", "b", "c"]),
+        ("a+b+-c;", vec!["a", "b", "c"]),
+        ("+a+-b+ +c;", vec!["a", "b", "c"]),
+        // 4-operand.
+        ("+a+-b+c- -d;", vec!["a", "b", "c", "d"]),
+        ("-a+ +b-c+ +d;", vec!["a", "b", "c", "d"]),
+        // 5-operand.
+        ("+a-b+ +c-d+-e;", vec!["a", "b", "c", "d", "e"]),
+        // 8-operand sentinel.
+        (
+            "+a-b+ +c-d+-e+f- -g+h;",
+            vec!["a", "b", "c", "d", "e", "f", "g", "h"],
+        ),
+    ] {
+        let script = recognized_reference_use(text);
+        let use_site = only_top_level_use_site(&script);
+        let facts = use_site_facts(use_site.body());
+        assert_eq!(facts.len(), expected_names.len(), "{text:?}");
+        for (fact, expected_name) in facts.iter().zip(expected_names) {
+            assert_eq!(fact.semantic_name(), expected_name, "{text:?}");
+        }
+        for window in facts.windows(2) {
+            assert!(
+                window[0].reference().range().start() < window[1].reference().range().start(),
+                "{text:?}"
+            );
+        }
+        assert_eq!(
+            use_site.terminator(),
+            SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AuthoredSemicolon
+        );
+    }
+
+    // Automatic-at-EOF termination composes identically for a long chain.
+    let script = recognized_reference_use("+a-b+ +c-d+-e+f- -g+h");
+    let use_site = only_top_level_use_site(&script);
+    assert_eq!(use_site_facts(use_site.body()).len(), 8);
+    assert_eq!(
+        use_site.terminator(),
+        SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticAtEof
+    );
+
+    // One-level Block placement, proportionate coverage of the same matrix.
+    for (text, expected_names) in [
+        ("{ +a+b+c; }", vec!["a", "b", "c"]),
+        ("{ a+-b+c; }", vec!["a", "b", "c"]),
+        ("{ a+b+-c; }", vec!["a", "b", "c"]),
+        ("{ +a+-b+ +c; }", vec!["a", "b", "c"]),
+        ("{ +a+-b+c- -d; }", vec!["a", "b", "c", "d"]),
+        ("{ -a+ +b-c+ +d; }", vec!["a", "b", "c", "d"]),
+        ("{ +a-b+ +c-d+-e; }", vec!["a", "b", "c", "d", "e"]),
+        (
+            "{ +a-b+ +c-d+-e+f- -g+h; }",
+            vec!["a", "b", "c", "d", "e", "f", "g", "h"],
+        ),
+        (
+            "{ +a-b+ +c-d+-e+f- -g+h }",
+            vec!["a", "b", "c", "d", "e", "f", "g", "h"],
+        ),
+    ] {
+        let script = recognized_block_reference_use(text);
+        let use_site = only_block_use_site(&script);
+        let facts = use_site_facts(use_site.body());
+        assert_eq!(facts.len(), expected_names.len(), "{text:?}");
+        for (fact, expected_name) in facts.iter().zip(expected_names) {
+            assert_eq!(fact.semantic_name(), expected_name, "{text:?}");
+        }
+    }
+}
+
+/// Direct/Escaped provenance and exact duplicate preservation at every newly
+/// enabled position (third, fourth, interior `Many`, final), independently
+/// of whether each operand is plain or optional-leading-`+`/`-` wrapped: the
+/// leading unary sign never enters the wrapped operand's own `SourceAnchor`.
+#[test]
+fn additive_free_standing_use_site_direct_escaped_and_duplicate_provenance_at_new_positions() {
+    let esc_63 = concat!("\\", "u0063"); // decodes to "c"
+    let esc_64 = concat!("\\", "u0064"); // decodes to "d"
+
+    // Escaped third operand, plain and right-unary-wrapped.
+    for (text, expected_fragments) in [
+        (format!("a+b+{esc_63};"), ["a", "b", esc_63]),
+        (format!("a+b+-{esc_63};"), ["a", "b", esc_63]),
+    ] {
+        let script = recognized_reference_use(&text);
+        let facts = use_site_facts(only_top_level_use_site(&script).body());
+        assert_eq!(facts.len(), 3, "{text:?}");
+        assert_eq!(facts[2].reference().fragment(), expected_fragments[2]);
+        assert_eq!(facts[2].semantic_name(), "c");
+    }
+
+    // Escaped fourth operand, plain and leading-unary-wrapped.
+    for text in [format!("a+b+c+{esc_64};"), format!("a+b+c+-{esc_64};")] {
+        let script = recognized_reference_use(&text);
+        let facts = use_site_facts(only_top_level_use_site(&script).body());
+        assert_eq!(facts.len(), 4, "{text}");
+        assert_eq!(facts[3].reference().fragment(), esc_64);
+        assert_eq!(facts[3].semantic_name(), "d");
+    }
+
+    // Escaped interior-`Many` and final operand, both optional-unary
+    // wrapped, in a 5-operand chain.
+    let text = format!("a+b+c+-{esc_64}+-e;");
+    let script = recognized_reference_use(&text);
+    let facts = use_site_facts(only_top_level_use_site(&script).body());
+    assert_eq!(facts.len(), 5);
+    assert_eq!(facts[3].reference().fragment(), esc_64);
+    assert_eq!(facts[3].semantic_name(), "d");
+    assert_eq!(facts[4].semantic_name(), "e");
+
+    // Duplicate authored occurrences are never deduplicated, across the
+    // widened third/fourth/Many positions.
+    let script = recognized_reference_use("a+b+a+-b+a;");
+    let facts = use_site_facts(only_top_level_use_site(&script).body());
+    assert_eq!(facts.len(), 5);
+    let names: Vec<_> = facts.iter().map(|f| f.semantic_name()).collect();
+    assert_eq!(names, vec!["a", "b", "a", "b", "a"]);
+    for window in facts.windows(2) {
+        assert!(window[0].reference().range().start() < window[1].reference().range().start());
+    }
+}
+
+/// Escaped-`ReservedWord` and malformed continuation at the newly enabled
+/// third/fourth/later boundary, in both the plain and optional-leading-`+`/
+/// `-` alternatives: a normal decline after an authored additive
+/// continuation has begun restores the whole `body_snapshot` and returns
+/// `NotSelected` -- never a truncated `Three`/`Many` publication, and never
+/// a new Statement-local Early Error route.
+#[test]
+fn additive_free_standing_use_site_escaped_reserved_and_malformed_new_continuation_remains_unsupported()
+ {
+    let escaped_if = concat!("\\", "u0069", "f"); // decodes to the reserved word "if"
+    for text in [
+        format!("a+b+-{escaped_if};"),
+        format!("a+b+c+{escaped_if};"),
+        format!("a+b+c+-{escaped_if};"),
+        format!("a+b+{escaped_if};"),
+        format!("{{ a+b+-{escaped_if}; }}"),
+        format!("{{ a+b+c+-{escaped_if}; }}"),
+    ] {
+        assert_unsupported(&text);
+    }
+
+    for text in [
+        r"a+b+\u{};",
+        r"a+b+c+\u{};",
+        r"a+b+c+-\u{};",
+        r"a+b+-\u{};",
+        r"{ a+b+c+-\u{}; }",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+/// Whole-source transactionality: a locally valid new optional-unary
+/// `Three`/`Many` use-site must not leak selected success if later source
+/// fails, at TopLevel or inside a Block.
+#[test]
+fn additive_free_standing_use_site_whole_source_transactionality() {
+    assert_unsupported("+a+b+c;\n???");
+    assert_unsupported("a+-b+c;\nlet x = ;");
+    assert_unsupported("{ +a+b+c; ??? }");
+    assert_unsupported("{ a+-b+c; }\n???");
+    assert_unsupported("+a-b+ +c-d+-e+f- -g+h;\n???");
 }

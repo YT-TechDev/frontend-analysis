@@ -2863,18 +2863,13 @@ fn top_level_identifier_reference_expression_statement_use_site_asi_general_expr
         // (Issue #771): a locally recognized `+a`/`-a` prefix must not
         // authorize a richer neighbor. `+a+b;` / `-a-b;` moved to
         // selected-positive coverage by Issue #773 (see the "Issue #773"
-        // section below); a third-or-later additive operand remains outside
-        // this leaf.
-        "+a+b+c;",
-        "-a-b-c;",
+        // section below); `+a+b+c;` / `-a-b-c;` / `+a+-b+c;` / `-a-+b-c;`
+        // moved to selected-positive coverage by Issue #813 (see the "Issue
+        // #813" section below).
         "+a.b;",
         "-a[b];",
         "+a();",
         "+a=b;",
-        // Issue #787: a right-unary-wrapped second operand still admits no
-        // third-or-later additive operand.
-        "+a+-b+c;",
-        "-a-+b-c;",
         // Other unary operators remain outside this leaf (Issue #771).
         "!a;",
         "~a;",
@@ -3043,16 +3038,12 @@ fn block_identifier_reference_expression_statement_use_site_asi_general_expressi
         "{ new a; }",
         // Richer-expression firewall composed with the unary body form
         // (Issue #771). `{ +a+b; }` / `{ -a-b; }` moved to selected-positive
-        // coverage by Issue #773 (see the "Issue #773" section below); a
-        // third-or-later additive operand remains outside this leaf.
-        "{ +a+b+c; }",
-        "{ -a-b-c; }",
+        // coverage by Issue #773 (see the "Issue #773" section below);
+        // `{ +a+b+c; }` / `{ -a-b-c; }` / `{ +a+-b+c; }` / `{ -a-+b-c; }`
+        // moved to selected-positive coverage by Issue #813 (see the "Issue
+        // #813" section below).
         "{ +a.b; }",
         "{ -a[b]; }",
-        // Issue #787: a right-unary-wrapped second operand still admits no
-        // third-or-later additive operand, for the Block placement too.
-        "{ +a+-b+c; }",
-        "{ -a-+b-c; }",
         // Other unary operators and parenthesized forms remain outside this
         // leaf (Issue #771).
         "{ !a; }",
@@ -3399,6 +3390,65 @@ fn many_operand_identifier_reference_expression_statement_use_site_remains_selec
 #[test]
 fn many_operand_use_site_known_static_rejection_gates_qualification() {
     assert_static_semantics_rejected("let a;\n{ var a; b+c+d+e; }", "a", (13, 14));
+}
+
+// --- Issue #813: composes the accepted candidate-independent
+// optional-leading-`+`/`-` `IdentifierReference` additive-chain 2..N theorem
+// proven by #809/PR #810 into the free-standing production, removing the
+// two previous bounded-to-`Two` early returns so every accepted
+// two-reference optional-unary combination now composes with the existing
+// third/fourth/Many staging. `+a+b+c;`, `a+-b+c;`, and their neighbors move
+// from the firewall list above into selected-positive coverage; every newly
+// selected complete source reaches exactly the existing
+// `SelectedAcceptedIncomplete` lifecycle, never a new qualification branch
+// or evidence family. ---
+
+#[test]
+fn optional_unary_three_and_many_operand_use_site_remains_selected_accepted_incomplete() {
+    for text in [
+        // Leading-unary-first, plain second, now composing with the third
+        // operand instead of stopping at `Two`.
+        "+a+b+c;",
+        "-a-b-c;",
+        // Both-unary second, now composing with the third operand.
+        "+a+-b+c;",
+        "-a-+b+c;",
+        // Right-unary second on the plain bare-reference-first route.
+        "a+-b+c;",
+        "a- -b+c;",
+        // Optional-unary fourth and later operands.
+        "a+b+c+-d;",
+        "a+b+c+d+-e;",
+        // 8-operand sentinel with wrapper positions at first, interior, and
+        // final.
+        "+a-b+ +c-d+-e+f- -g+h;",
+        // One-level Block, authored semicolon.
+        "{ +a+b+c; }",
+        "{ a+-b+c; }",
+        // Automatic termination: TopLevel EOF, Block before-close.
+        "+a+b+c",
+        "{ a+-b+c }",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+/// Issue #813 section 42: a source containing a valid free-standing
+/// optional-unary `Three` use-site still reaches an existing static
+/// rejection unchanged when another existing obligation fails -- no new
+/// rejection type and no changed rejection ordering. Reuses the smallest
+/// existing static conflict already proven above (a Block `var` duplicating
+/// an enclosing top-level lexical name), with the free-standing use-site
+/// replaced by a complete leading-unary-first three-operand use-site.
+#[test]
+fn optional_unary_three_operand_use_site_known_static_rejection_gates_qualification() {
+    assert_static_semantics_rejected("let a;\n{ var a; +b+c+d; }", "a", (13, 14));
 }
 
 // --- Issue #793 (per #688 comment 5764090454): composes the

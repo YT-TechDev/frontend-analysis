@@ -4699,3 +4699,79 @@ fn many_operand_use_site_known_static_rejection_suppresses_relation_construction
     // publish a relation once the existing lexical/var static rejection
     // wins.
 }
+
+// --- Issue #813: free-standing optional-leading-`+`/`-` `IdentifierReference`
+// additive-chain 2..N production. Semantic logic in this module is
+// unchanged by this Issue: the existing `for fact in use_site.body().facts()`
+// consumer already composes `Three`/`Many` wrapper-blind and
+// cardinality-generic, so widening which operands may carry an optional
+// leading `+`/`-` does not introduce a new relation type, branch, sorting,
+// or deduplication. These tests prove that composition for the newly
+// widened optional-unary `Three`/`Many` sources. ---
+
+#[test]
+fn optional_unary_three_operand_use_site_item_order_and_operand_order_composition_top_level() {
+    // `+a+-b+c;`: leading-unary first, right-unary second, plain third --
+    // exact authored operand order, wrapper-blind.
+    let (_, script) = recognized_reference_use("let c;\nlet a;\nvar b;\n+a+-b+c;");
+    let analysis = accepted_use_site_analysis(&script);
+    let names: Vec<&str> = analysis
+        .relations()
+        .iter()
+        .map(|relation| relation.semantic_name())
+        .collect();
+    assert_eq!(names, ["a", "b", "c"]);
+}
+
+#[test]
+fn optional_unary_three_operand_use_site_item_order_and_operand_order_composition_block() {
+    let (_, script) = recognized_block_reference_use("{ let c;\nlet a;\nvar b;\n+a+-b+c; }");
+    let analysis = accepted_block_use_site_analysis(&script);
+    let names: Vec<&str> = analysis
+        .relations()
+        .iter()
+        .map(|relation| relation.semantic_name())
+        .collect();
+    assert_eq!(names, ["a", "b", "c"]);
+}
+
+#[test]
+fn optional_unary_many_operand_use_site_item_order_and_operand_order_composition_top_level() {
+    // `a; +b+-c; d+e+f+g; +h-i+ +j-k+-l;`: authored item order, then
+    // authored operand order within each item, for a mix of bare, `Two`,
+    // plain `Three`, and a 5-operand optional-unary `Many` -- never later
+    // source sorting.
+    let (_, script) = recognized_reference_use("a;\n+b+-c;\nd+e+f+g;\n+h-i+ +j-k+-l;");
+    let analysis = accepted_use_site_analysis(&script);
+    let names: Vec<&str> = analysis
+        .relations()
+        .iter()
+        .map(|relation| relation.semantic_name())
+        .collect();
+    assert_eq!(
+        names,
+        ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"]
+    );
+}
+
+#[test]
+fn optional_unary_many_operand_use_site_duplicate_operands_top_level() {
+    let (_, script) = recognized_reference_use("let a;\n+a+-a+a+-a+a;");
+    let analysis = accepted_use_site_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(
+        relations.len(),
+        5,
+        "duplicate optional-unary operands must not deduplicate"
+    );
+    for relation in relations {
+        assert_eq!(relation.semantic_name(), "a");
+    }
+    for i in 0..relations.len() {
+        for j in (i + 1)..relations.len() {
+            assert!(
+                relations[i].reference().range().start() < relations[j].reference().range().start()
+            );
+        }
+    }
+}
