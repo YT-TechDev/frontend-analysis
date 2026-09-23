@@ -2035,6 +2035,51 @@ enum SelectedIdentifierReferenceInitializerContinuationRecognition {
     InternalFailure,
 }
 
+/// Result of the free-standing-owner-private optional-leading-`+`/`-`
+/// continuation primitive (Issue #813, composing the accepted
+/// candidate-independent theorem proven by #809/PR #810 with the
+/// binary/right-unary punctuator boundary theorem accepted by #777/#778),
+/// applied repeatedly at the third, fourth, and every later selected
+/// free-standing operand boundary. Unlike the initializer's own
+/// `SelectedIdentifierReferenceInitializerContinuationRecognition` above,
+/// this free-standing variant distinguishes `NoContinuation` (no authored
+/// binary `+`/`-` at the entry position at all -- the caller commits its
+/// current complete prefix) from a started-but-invalid continuation
+/// (`NotSelected` -- a continuation began but did not complete as a
+/// selected operand; the primitive restores the whole free-standing
+/// candidate to the caller-supplied `body_snapshot` before returning
+/// `NotSelected`, and the caller must never degrade that result to a
+/// shorter prefix): the initializer owner has no such distinction because
+/// both cases identically degrade to its latest complete prefix, but a
+/// free-standing use-site is a whole-body transaction with no enclosing
+/// owner to hand a partial result to (Issue #799/#807).
+///
+/// `Matched` carries the exact existing `SelectedIdentifierReferenceFact`
+/// for the continuation's inner `IdentifierReference` -- plain, or
+/// exactly-one leading `+`/`-` wrapped -- produced by the unmodified shared
+/// `consume_selected_identifier_reference` recognizer (plain alternative) or
+/// by the unmodified shared
+/// `consume_selected_leading_plus_minus_identifier_reference_unary_expression`
+/// (unary alternative); the binary sign, whether any leading unary sign was
+/// present, and any inter-operator trivia are transient recognition-time
+/// state only and are never retained. `NotSelected` covers a same-sign
+/// zero-trivia adjacency the #777/#778 theorem excludes (`a+b++c`,
+/// `a+b--c`) and an escaped-ReservedWord/malformed/absent operand after a
+/// legitimately consumed binary operator -- in every case the cursor is
+/// restored to exactly the whole-body `body_snapshot` this probe's caller
+/// supplies, never merely this continuation's own entry position.
+/// `ResourceLimited` and `InternalFailure` preserve the shared recognizers'
+/// own processing-failure classes and are never collapsed into
+/// `NotSelected` or a completed shorter prefix.
+#[derive(Debug)]
+enum SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition {
+    NoContinuation,
+    Matched(SelectedIdentifierReferenceFact),
+    NotSelected,
+    ResourceLimited,
+    InternalFailure,
+}
+
 /// Result of the bounded plain-Decimal-atom initializer helper composing
 /// the Decimal-left orientation of the one-reference / one-plain-decimal
 /// additive initializer theorem (Issue #791, per #688 comment 5762579228).
@@ -3245,13 +3290,18 @@ impl<'source> Cursor<'source> {
     /// ```
     ///
     /// The third-operand continuation (Issue #799 per #688 comment
-    /// 5775218176) is reachable only from the plain bare-reference-first
-    /// route's `Two`-operand match arm, and only when its second operand was
-    /// plain (never right-unary-wrapped) -- see
+    /// 5775218176, widened by Issue #813 to admit optional-unary third and
+    /// later operands) is reachable from every accepted `Two`-operand match
+    /// arm below -- the plain bare-reference-first route regardless of
+    /// whether its second operand was plain or right-unary-wrapped, and the
+    /// leading-unary-first route regardless of whether its second operand
+    /// was plain or right-unary-wrapped -- see
     /// `consume_selected_identifier_reference_expression_statement_use_site_body_third_operand`
-    /// below for its bounded transaction. The leading-unary-first route
-    /// above and the right-unary-wrapped second-operand alternative both
-    /// remain bounded to `Two`: neither is widened by Issue #799.
+    /// below for its whole-body transaction. Issue #813 removed the two
+    /// previous bounded-to-`Two` early returns (leading-unary-first +
+    /// accepted second, and plain first + right-unary second) that used to
+    /// stop here; every accepted two-reference optional-unary combination
+    /// now proceeds into this same third-operand stage.
     ///
     /// Each operand is recognized exactly once by the unmodified shared
     /// `consume_selected_identifier_reference` recognizer -- no second
@@ -3295,17 +3345,17 @@ impl<'source> Cursor<'source> {
     /// #797): a locally recognized `IdentifierReference "+" IdentifierReference`
     /// prefix, with or without a right-unary wrapper, never by itself
     /// authorizes a richer or longer source than what this probe itself
-    /// completes -- the leading-unary-first route and the right-unary-wrapped
-    /// second-operand alternative remain bounded to `Two` (`+a+b+c`,
-    /// `+a+-b+c` stay outside), and the plain bare-reference-first route's
-    /// own third-operand continuation either completes `Three` (`a+b+c`),
+    /// completes -- every accepted two-reference optional-unary combination
+    /// (leading-unary-first or plain first, plain or right-unary-wrapped
+    /// second) enters the same third-operand continuation (Issue #813),
+    /// which either completes `Three` (`a+b+c`, `+a+b+c`, `a+-b+c`),
     /// extends into the unbounded `Many` continuation (`a+b+c+d`,
     /// `a+b+c+d+e`; Issue #807 per #688 comment 5780964757), or rolls back
     /// the entire candidate (`a+b+`, `a+b+\u0069f`, `a+b+c+`,
     /// `a+b+c+\u0069f`) -- and an escaped-ReservedWord operand never gains a
     /// new Statement-local EE-04-R08 route. A matched body that the
     /// placement-owned caller cannot terminate validly (e.g. `a.b`,
-    /// `+a+b+c`, `a+b+c+d.e`) is rolled back by that caller to the same
+    /// `a+b+c.d`, `a+b+c+d.e`) is rolled back by that caller to the same
     /// pre-probe snapshot, reproducing this leaf's pre-#768 all-or-nothing
     /// decline for such input exactly.
     ///
@@ -3379,8 +3429,10 @@ impl<'source> Cursor<'source> {
     /// solely responsible for rejecting and rolling back a locally
     /// recognized unary atom, or unary-plus-binary pair, that is not
     /// followed by a valid use-site terminator. Unary-operator recursion
-    /// (`++a+b`, `!a+b`), recursive right-unary wrapping (`+a+-+b`), and a
-    /// third or later additive operand (`+a+b+c`) remain outside this leaf.
+    /// (`++a+b`, `!a+b`) and recursive right-unary wrapping (`+a+-+b`)
+    /// remain outside this leaf; a third or later additive operand
+    /// (`+a+b+c`) is composed by the same third-operand continuation the
+    /// plain bare-reference-first route below reaches (Issue #813).
     ///
     /// Issue #793 (per #688 comment 5764090454) widens this leaf with the
     /// bounded one-reference / one-plain-decimal heterogeneous additive
@@ -3477,9 +3529,10 @@ impl<'source> Cursor<'source> {
 
                 self.skip_selected_trivia();
 
-                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::Matched(
-                    SelectedFreeStandingIdentifierReferenceUseSite::Two { first, second },
-                );
+                return self
+                    .consume_selected_identifier_reference_expression_statement_use_site_body_third_operand(
+                        snapshot, first, second,
+                    );
             }
             SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
                 return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::ResourceLimited;
@@ -3542,12 +3595,6 @@ impl<'source> Cursor<'source> {
             SelectedIdentifierReferenceRecognition::Matched(second) => {
                 self.skip_selected_trivia();
 
-                if right_unary_consumed {
-                    return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::Matched(
-                        SelectedFreeStandingIdentifierReferenceUseSite::Two { first, second },
-                    );
-                }
-
                 self.consume_selected_identifier_reference_expression_statement_use_site_body_third_operand(
                     snapshot, first, second,
                 )
@@ -3577,71 +3624,185 @@ impl<'source> Cursor<'source> {
         }
     }
 
+    /// Free-standing-owner-private optional-leading-`+`/`-` continuation
+    /// primitive (Issue #813, composing the accepted candidate-independent
+    /// theorem proven by #809/PR #810 with the binary/right-unary
+    /// punctuator boundary theorem accepted by #777/#778). Applied
+    /// identically at the third, fourth, and every later selected
+    /// free-standing operand boundary by
+    /// `consume_selected_identifier_reference_expression_statement_use_site_body_third_operand`,
+    /// `..._many_operands`, and `..._many_growth` below, so the same
+    /// binary/unary boundary recognition is not duplicated independently in
+    /// each of those three call sites.
+    ///
+    /// Entry contract: the cursor is positioned immediately after the
+    /// current final retained operand *and* after that operand's own
+    /// trailing selected trivia (already skipped by the caller); `entry`
+    /// records that exact position. This differs from the
+    /// initializer-owner-private
+    /// `consume_selected_identifier_reference_initializer_continuation_operand`
+    /// above, whose entry precedes the caller's trailing-trivia skip and
+    /// which therefore skips that trivia itself -- a second, independent
+    /// reason (beyond the transaction-rollback distinction below) this
+    /// primitive is not shared with that initializer-owned helper (Issue
+    /// #813, reaffirming the #803 shared-helper rejection per #688 comment
+    /// 5779735385).
+    ///
+    /// Absent an authored binary `+`/`-` at `entry`, this returns
+    /// `NoContinuation` with the cursor left unchanged at `entry`: the
+    /// caller commits its own current complete prefix (`a+b+c;` has no
+    /// continuation after `c`). This is deliberately distinct from a
+    /// started-but-invalid continuation below, which instead restores the
+    /// caller-supplied `body_snapshot` -- the exact offset the *whole*
+    /// free-standing body probe began from -- and returns `NotSelected`,
+    /// since once an authored additive continuation begins it must fully
+    /// complete or the entire free-standing candidate declines; this
+    /// primitive never returns a shorter prefix of its own.
+    ///
+    /// Otherwise exactly one authored binary `+`/`-` is consumed and its
+    /// sign remembered, selected trivia is skipped, and the #777/#778
+    /// binary/unary boundary is applied to decide the operand alternative:
+    /// a same-sign zero-trivia adjacency (`a+b++c`, `a+b--c`) is never
+    /// split into a binary sign plus a right-unary sign and instead
+    /// restores `body_snapshot` and declines. Otherwise, when the next
+    /// authored character is unary `+`/`-`, the cursor is left exactly at
+    /// that unary sign and delegated whole to the existing unmodified
+    /// `consume_selected_leading_plus_minus_identifier_reference_unary_expression`
+    /// -- never a manual reimplementation of unary-sign consumption,
+    /// operand trivia, or `IdentifierReference` recognition. Absent a unary
+    /// sign, the operand is recognized by the existing unmodified
+    /// `consume_selected_identifier_reference` recognizer, exactly as the
+    /// plain-only #795/#801/#807 theorem already did. Either alternative's
+    /// `Matched` fact is returned unchanged, with the cursor positioned
+    /// immediately after that operand (trailing selected trivia is the
+    /// caller's responsibility to skip, exactly as before); `NotSelected`
+    /// from either alternative restores `body_snapshot`; `ResourceLimited`/
+    /// `InternalFailure` from either alternative is propagated immediately.
+    ///
+    /// Neither the binary sign, any leading unary sign, nor any trivia is
+    /// ever retained -- only the exact existing inner
+    /// `SelectedIdentifierReferenceFact`. This primitive owns no
+    /// richer-expression-tail rejection: `a+b+c.d;`, `a+b+c();`,
+    /// `a+b+c*d;`, and `a+b+c=d;` all have no additive `+`/`-` immediately
+    /// after `c`, so this primitive returns `NoContinuation` for each and
+    /// the placement-owned terminator remains solely responsible for
+    /// rejecting and rolling back the resulting locally recognized prefix.
+    fn consume_selected_identifier_reference_expression_statement_use_site_body_additive_continuation(
+        &mut self,
+        body_snapshot: usize,
+    ) -> SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition {
+        let entry = self.offset;
+
+        let binary_sign = if self.consume_ascii('+') {
+            '+'
+        } else if self.consume_ascii('-') {
+            '-'
+        } else {
+            self.offset = entry;
+            return SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::NoContinuation;
+        };
+
+        let before_inter_operator_trivia = self.offset;
+        self.skip_selected_trivia();
+
+        if let Some(unary_sign @ ('+' | '-')) = self.peek_char() {
+            if unary_sign == binary_sign && self.offset == before_inter_operator_trivia {
+                self.offset = body_snapshot;
+                return SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::NotSelected;
+            }
+
+            return match self
+                .consume_selected_leading_plus_minus_identifier_reference_unary_expression()
+            {
+                SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::Matched(
+                    fact,
+                ) => SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::Matched(fact),
+                SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
+                    self.offset = body_snapshot;
+                    SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::NotSelected
+                }
+                SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
+                    SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::ResourceLimited
+                }
+                SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::InternalFailure => {
+                    SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::InternalFailure
+                }
+            };
+        }
+
+        match self.consume_selected_identifier_reference() {
+            SelectedIdentifierReferenceRecognition::Matched(fact) => {
+                SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::Matched(fact)
+            }
+            SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName { .. }
+            | SelectedIdentifierReferenceRecognition::NotSelected => {
+                self.offset = body_snapshot;
+                SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::NotSelected
+            }
+            SelectedIdentifierReferenceRecognition::ResourceLimited => {
+                SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::ResourceLimited
+            }
+            SelectedIdentifierReferenceRecognition::InternalFailure => {
+                SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::InternalFailure
+            }
+        }
+    }
+
     /// Composes the bounded optional third-operand continuation of the
-    /// exactly-three `IdentifierReference` additive free-standing use-site
-    /// theorem (Issue #799 per #688 comment 5775218176), reusing the
-    /// accepted candidate-independent theorem proven by #795/PR #796. Called
-    /// only from
-    /// `consume_selected_identifier_reference_expression_statement_use_site_body`,
-    /// immediately after a plain (never right-unary-wrapped) second operand
-    /// has matched and its own trailing selected trivia has already been
-    /// skipped, with `body_snapshot` the exact offset the *whole* body probe
-    /// started from -- never merely the offset after the second operand,
-    /// since a declining third continuation here must roll back the entire
-    /// candidate, not degrade to `Two`.
+    /// unbounded optional-leading-`+`/`-` `IdentifierReference` additive
+    /// free-standing use-site theorem (Issue #799 per #688 comment
+    /// 5775218176, widened by Issue #813 to compose the accepted
+    /// candidate-independent optional-unary theorem proven by #809/PR
+    /// #810 via the free-standing-private continuation primitive above).
+    /// Called from
+    /// `consume_selected_identifier_reference_expression_statement_use_site_body`
+    /// after *any* accepted second operand -- plain, leading-unary-wrapped
+    /// first, right-unary-wrapped second, or both -- with `body_snapshot`
+    /// the exact offset the *whole* body probe started from -- never merely
+    /// the offset after the second operand, since a declining third
+    /// continuation here must roll back the entire candidate, not degrade
+    /// to `Two`.
     ///
-    /// Absent an authored binary `+`/`-` at this position, `Two { first,
-    /// second }` commits immediately: `a+b;` is unaffected by this leaf's
-    /// existence. Otherwise exactly one authored binary `+`/`-` is consumed
-    /// (never a right-unary wrapper -- the #795 theorem is plain/plain/plain
-    /// only), selected trivia is skipped, and a third operand is recognized
-    /// by the same unmodified shared `consume_selected_identifier_reference`
-    /// recognizer, never a second scanner/decoder or a tokenizer/Punctuator
-    /// enum introduced merely to reject a malformed boundary (`a+b+-c`,
-    /// `a+b++c`, `a+b+=c`, `a+b+;`).
-    ///
-    /// A matched (direct or escaped non-ReservedWord) third operand commits
-    /// the cursor positioned after its own trailing selected trivia and
-    /// hands off to
+    /// `NoContinuation` from the primitive commits `Two { first, second }`
+    /// immediately: `a+b;` and `+a+-b;` are unaffected by this leaf's
+    /// existence. `Matched(third)` skips the third operand's own trailing
+    /// selected trivia and hands off to
     /// `consume_selected_identifier_reference_expression_statement_use_site_body_many_operands`
     /// (Issue #807 per #688 comment 5780964757), which alone decides
     /// whether the candidate completes as `Three { first, second, third }`
     /// or extends into the unbounded `Many` continuation (`a+b+c+d`); this
     /// helper itself never constructs `Three` or `Many` directly once a
-    /// third operand has matched.
-    ///
-    /// An escaped-ReservedWord, malformed, or entirely absent third operand
-    /// restores the cursor to exactly `body_snapshot` and returns
-    /// `NotSelected` -- deliberately not `Two { first, second }`. This is
-    /// the load-bearing rollback distinction from the initializer's own
+    /// third operand has matched. `NotSelected` is the whole-body decline
+    /// the primitive already rolled `body_snapshot` back for -- deliberately
+    /// not `Two { first, second }`. This is the load-bearing rollback
+    /// distinction from the initializer's own
     /// `consume_selected_identifier_reference_initializer_third_operand`
-    /// (Issue #797), which restores only `after_second` and degrades to a
-    /// completed `Two` on the identical decline: an initializer's staged
-    /// local recovery lets the enclosing declaration/var owner judge the
-    /// remainder, but a free-standing use-site is a whole-body transaction
-    /// with no enclosing owner to hand a partial result to, so once a second
-    /// additive continuation has started it must fully complete or the
-    /// entire candidate declines. A `ResourceLimited`/`InternalFailure`
-    /// classification from the third operand's recognition is propagated
-    /// immediately and is never downgraded to `NotSelected` or to a
-    /// completed `Two`, and never publishes the already-recognized
-    /// `first`/`second` facts through a successful body result.
+    /// (Issue #797/#811), which restores only `after_second` and degrades
+    /// to a completed `Two` on the identical decline: an initializer's
+    /// staged local recovery lets the enclosing declaration/var owner judge
+    /// the remainder, but a free-standing use-site is a whole-body
+    /// transaction with no enclosing owner to hand a partial result to, so
+    /// once a second additive continuation has started it must fully
+    /// complete or the entire candidate declines. `ResourceLimited`/
+    /// `InternalFailure` from the primitive is propagated immediately and
+    /// is never downgraded to `NotSelected` or to a completed `Two`, and
+    /// never publishes the already-recognized `first`/`second` facts
+    /// through a successful body result.
     fn consume_selected_identifier_reference_expression_statement_use_site_body_third_operand(
         &mut self,
         body_snapshot: usize,
         first: SelectedIdentifierReferenceFact,
         second: SelectedIdentifierReferenceFact,
     ) -> SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition {
-        if !(self.consume_ascii('+') || self.consume_ascii('-')) {
-            return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::Matched(
-                SelectedFreeStandingIdentifierReferenceUseSite::Two { first, second },
-            );
-        }
-
-        self.skip_selected_trivia();
-
-        match self.consume_selected_identifier_reference() {
-            SelectedIdentifierReferenceRecognition::Matched(third) => {
+        match self
+            .consume_selected_identifier_reference_expression_statement_use_site_body_additive_continuation(body_snapshot)
+        {
+            SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::NoContinuation => {
+                SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::Matched(
+                    SelectedFreeStandingIdentifierReferenceUseSite::Two { first, second },
+                )
+            }
+            SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::Matched(third) => {
                 self.skip_selected_trivia();
                 self.consume_selected_identifier_reference_expression_statement_use_site_body_many_operands(
                     body_snapshot,
@@ -3650,25 +3811,23 @@ impl<'source> Cursor<'source> {
                     third,
                 )
             }
-            SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName { .. }
-            | SelectedIdentifierReferenceRecognition::NotSelected => {
-                self.offset = body_snapshot;
+            SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::NotSelected => {
                 SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::NotSelected
             }
-            SelectedIdentifierReferenceRecognition::ResourceLimited => {
+            SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::ResourceLimited => {
                 SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::ResourceLimited
             }
-            SelectedIdentifierReferenceRecognition::InternalFailure => {
+            SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::InternalFailure => {
                 SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::InternalFailure
             }
         }
     }
 
-    /// Composes the fourth-operand transition of the unbounded ordered
-    /// plain-`IdentifierReference` additive free-standing use-site theorem
-    /// (Issue #807 per #688 comment 5780964757), reusing the accepted
-    /// candidate-independent theorem proven by #801/PR #802. Called only
-    /// from
+    /// Composes the fourth-operand transition of the unbounded
+    /// optional-leading-`+`/`-` `IdentifierReference` additive
+    /// free-standing use-site theorem (Issue #807 per #688 comment
+    /// 5780964757, widened by Issue #813 via the free-standing-private
+    /// continuation primitive above). Called only from
     /// `consume_selected_identifier_reference_expression_statement_use_site_body_third_operand`
     /// immediately after a complete `Three { first, second, third }` prefix
     /// has been recognized, with `body_snapshot` the exact offset the
@@ -3677,36 +3836,31 @@ impl<'source> Cursor<'source> {
     /// back the entire candidate, exactly like the third-operand
     /// continuation above -- never degrading to a shorter `Three` prefix).
     ///
-    /// Absent an authored binary `+`/`-` immediately after the third
-    /// operand's own trailing selected trivia, `Three { first, second,
-    /// third }` commits immediately, unaffected by this helper's existence:
+    /// `NoContinuation` commits `Three { first, second, third }`
+    /// immediately, unaffected by this helper's existence:
     /// `One`/`Two`/`Three` resource behavior is unchanged by merely
-    /// attempting a fourth operand (`a+b+c+1`, `a+b+c+true`). Otherwise
-    /// exactly one authored binary `+`/`-` is consumed, selected trivia is
-    /// skipped, and a fourth operand is recognized by the same unmodified
-    /// shared `consume_selected_identifier_reference` recognizer.
+    /// attempting a fourth operand (`a+b+c+1`, `a+b+c+true`).
     ///
-    /// Only once the fourth selected fact is actually proven is a retained
-    /// `Vec` allocated (`try_reserve(4)`, matching the four facts --
-    /// `first`, `second`, `third`, `fourth` -- it must hold immediately,
-    /// moving the already-owned facts rather than cloning them); a
-    /// `try_reserve` failure is `ResourceLimited`, propagated immediately.
-    /// Control then moves to
+    /// Only once `Matched(fourth)` actually proves the fourth selected fact
+    /// is a retained `Vec` allocated (`try_reserve(4)`, matching the four
+    /// facts -- `first`, `second`, `third`, `fourth` -- it must hold
+    /// immediately, moving the already-owned facts rather than cloning
+    /// them, after skipping the fourth operand's own trailing selected
+    /// trivia); a `try_reserve` failure is `ResourceLimited`, propagated
+    /// immediately. Control then moves to
     /// `consume_selected_identifier_reference_expression_statement_use_site_body_many_growth`
     /// for the unbounded fifth-and-later continuation.
     ///
-    /// An escaped-ReservedWord, malformed, or entirely absent fourth
-    /// operand restores the cursor to exactly `body_snapshot` and returns
-    /// `NotSelected` -- deliberately never `Three { first, second, third }`:
-    /// once a third additive continuation has started it must fully
-    /// complete or the entire candidate declines, exactly mirroring the
-    /// third-operand continuation's own whole-body transaction and
-    /// intentionally not the initializer's staged partial-recovery model
-    /// (Issue #803), which has no enclosing free-standing owner to hand a
-    /// partial result to. A `ResourceLimited`/`InternalFailure`
-    /// classification from the fourth operand's recognition is propagated
-    /// immediately and is never downgraded to `NotSelected` or to a
-    /// completed `Three`.
+    /// `NotSelected` is the whole-body decline the primitive already rolled
+    /// `body_snapshot` back for -- deliberately never `Three { first,
+    /// second, third }`: once a third additive continuation has started it
+    /// must fully complete or the entire candidate declines, exactly
+    /// mirroring the third-operand continuation's own whole-body
+    /// transaction and intentionally not the initializer's staged
+    /// partial-recovery model (Issue #803), which has no enclosing
+    /// free-standing owner to hand a partial result to. `ResourceLimited`/
+    /// `InternalFailure` from the primitive is propagated immediately and
+    /// is never downgraded to `NotSelected` or to a completed `Three`.
     fn consume_selected_identifier_reference_expression_statement_use_site_body_many_operands(
         &mut self,
         body_snapshot: usize,
@@ -3714,29 +3868,26 @@ impl<'source> Cursor<'source> {
         second: SelectedIdentifierReferenceFact,
         third: SelectedIdentifierReferenceFact,
     ) -> SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition {
-        if !(self.consume_ascii('+') || self.consume_ascii('-')) {
-            return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::Matched(
-                SelectedFreeStandingIdentifierReferenceUseSite::Three {
-                    first,
-                    second,
-                    third,
-                },
-            );
-        }
-
-        self.skip_selected_trivia();
-
-        let fourth = match self.consume_selected_identifier_reference() {
-            SelectedIdentifierReferenceRecognition::Matched(fourth) => fourth,
-            SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName { .. }
-            | SelectedIdentifierReferenceRecognition::NotSelected => {
-                self.offset = body_snapshot;
+        let fourth = match self
+            .consume_selected_identifier_reference_expression_statement_use_site_body_additive_continuation(body_snapshot)
+        {
+            SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::NoContinuation => {
+                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::Matched(
+                    SelectedFreeStandingIdentifierReferenceUseSite::Three {
+                        first,
+                        second,
+                        third,
+                    },
+                );
+            }
+            SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::Matched(fourth) => fourth,
+            SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::NotSelected => {
                 return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::NotSelected;
             }
-            SelectedIdentifierReferenceRecognition::ResourceLimited => {
+            SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::ResourceLimited => {
                 return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::ResourceLimited;
             }
-            SelectedIdentifierReferenceRecognition::InternalFailure => {
+            SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::InternalFailure => {
                 return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::InternalFailure;
             }
         };
@@ -3759,9 +3910,10 @@ impl<'source> Cursor<'source> {
     }
 
     /// Composes the unbounded fifth-and-later continuation of the selected
-    /// plain-`IdentifierReference` additive-chain theorem (Issue #807 per
-    /// #688 comment 5780964757), once a `Many` prefix already exists.
-    /// Called only from
+    /// optional-leading-`+`/`-` `IdentifierReference` additive-chain
+    /// theorem (Issue #807 per #688 comment 5780964757, widened by Issue
+    /// #813 via the free-standing-private continuation primitive above),
+    /// once a `Many` prefix already exists. Called only from
     /// `consume_selected_identifier_reference_expression_statement_use_site_body_many_operands`
     /// (the transition immediately after the fourth operand) and from
     /// itself (every later operand), with the cursor positioned immediately
@@ -3769,60 +3921,48 @@ impl<'source> Cursor<'source> {
     /// trivia, and `body_snapshot` the exact offset the *whole* body probe
     /// started from.
     ///
-    /// Each iteration mirrors the fourth-operand transition: an authored
-    /// binary `+`/`-` is required, selected trivia is skipped, and the next
-    /// operand is recognized by the unmodified shared
-    /// `consume_selected_identifier_reference()` recognizer. Absent that
-    /// continuation, the cursor is already positioned exactly at the end of
-    /// the current final retained operand (nothing was consumed by the
-    /// failed operator probe), and the current `Many(facts)` result commits
-    /// immediately.
-    ///
-    /// A matched next operand is retained only after `facts.try_reserve(1)`
+    /// Each iteration probes the same continuation primitive as the fourth
+    /// transition. `NoContinuation` commits the current `Many(facts)`
+    /// immediately. `Matched(next)` skips that operand's own trailing
+    /// selected trivia and is retained only after `facts.try_reserve(1)`
     /// succeeds -- a reservation failure is `ResourceLimited`, propagated
-    /// immediately. An escaped-ReservedWord, malformed, or entirely absent
-    /// next operand restores the cursor to exactly `body_snapshot` and
-    /// returns `NotSelected`, never a shorter `Many` prefix: once a later
-    /// additive continuation has started it must fully complete or the
-    /// entire candidate declines, exactly like every earlier operand
-    /// boundary in this whole-body transaction. A `ResourceLimited`/
-    /// `InternalFailure` classification from either the reservation or the
-    /// operand's own recognition is propagated immediately and never
-    /// downgrades the already-proven `Many` prefix. No fixed maximum
-    /// cardinality exists.
+    /// immediately. `NotSelected` is the whole-body decline the primitive
+    /// already rolled `body_snapshot` back for, never a shorter `Many`
+    /// prefix: once a later additive continuation has started it must
+    /// fully complete or the entire candidate declines, exactly like every
+    /// earlier operand boundary in this whole-body transaction.
+    /// `ResourceLimited`/`InternalFailure` from either the reservation or
+    /// the primitive itself is propagated immediately and never downgrades
+    /// the already-proven `Many` prefix. No fixed maximum cardinality
+    /// exists.
     fn consume_selected_identifier_reference_expression_statement_use_site_body_many_growth(
         &mut self,
         body_snapshot: usize,
         mut facts: Vec<SelectedIdentifierReferenceFact>,
     ) -> SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition {
         loop {
-            if !(self.consume_ascii('+') || self.consume_ascii('-')) {
-                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::Matched(
-                    SelectedFreeStandingIdentifierReferenceUseSite::Many(facts),
-                );
-            }
-
-            self.skip_selected_trivia();
-
-            match self.consume_selected_identifier_reference() {
-                SelectedIdentifierReferenceRecognition::Matched(next) => {
+            match self
+                .consume_selected_identifier_reference_expression_statement_use_site_body_additive_continuation(body_snapshot)
+            {
+                SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::NoContinuation => {
+                    return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::Matched(
+                        SelectedFreeStandingIdentifierReferenceUseSite::Many(facts),
+                    );
+                }
+                SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::Matched(next) => {
                     self.skip_selected_trivia();
                     if facts.try_reserve(1).is_err() {
                         return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::ResourceLimited;
                     }
                     facts.push(next);
                 }
-                SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName {
-                    ..
-                }
-                | SelectedIdentifierReferenceRecognition::NotSelected => {
-                    self.offset = body_snapshot;
+                SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::NotSelected => {
                     return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::NotSelected;
                 }
-                SelectedIdentifierReferenceRecognition::ResourceLimited => {
+                SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::ResourceLimited => {
                     return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::ResourceLimited;
                 }
-                SelectedIdentifierReferenceRecognition::InternalFailure => {
+                SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::InternalFailure => {
                     return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::InternalFailure;
                 }
             }
