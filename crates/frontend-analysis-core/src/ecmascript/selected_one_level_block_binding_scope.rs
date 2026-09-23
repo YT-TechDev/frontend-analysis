@@ -161,9 +161,11 @@ fn append_binding_relation<'script>(
     top_level_bindings: &HashMap<&'script str, &'script SourceAnchor>,
     relations: &mut Vec<SelectedOneLevelBlockBindingScopeRelation<'script>>,
 ) -> Result<(), AnalysisFailure> {
-    // Issue #754, widened to a third retained fact by Issue #797 (per #688
-    // comment 5771773635): 0, 1, 2, or 3 retained facts are visited in exact
-    // authored left-to-right order.
+    // Issue #754, widened to an unbounded ordered chain by Issue #803 (per
+    // #688 comment 5779735385) and composed with optional-leading-+/-
+    // operands by Issue #811 (per #688 comment 5791317234): an arbitrary
+    // finite number (0..N) of retained facts are visited in exact authored
+    // left-to-right order.
     for reference in binding.identifier_reference_initializer_facts() {
         relations
             .try_reserve(1)

@@ -731,6 +731,60 @@ fn many_identifier_reference_additive_initializer_composes_five_relations_in_aut
     );
 }
 
+// Issue #811 (per #688 comment 5791317234): composing the accepted
+// optional-leading-`+`/`-` `IdentifierReference` additive-chain theorem
+// proven by #809/PR #810 widens this consumer's input facts to
+// independently plain-or-unary-wrapped operands, with no change to this
+// consumer's own cardinality-agnostic iteration logic. This test seals only
+// that the unary wrapper signs never enter the retained relation's
+// `reference()` anchor and that authored (not target declaration) order
+// still governs relation order for an optional-unary `Many` initializer.
+
+#[test]
+fn optional_unary_many_identifier_reference_additive_initializer_composes_five_relations_in_authored_order()
+ {
+    // Target declaration order (`d`, `a`, `c`, `b`) deliberately differs
+    // from authored operand order (`a`, `b`, `c`, `d`, `e`); `e` has no
+    // declared target at all. Every operand is independently plain or
+    // exactly-one leading `+`/`-` wrapped (`+a`, `-b`, `c`, `-d`, `e`); the
+    // wrapper signs never enter the retained reference anchors below.
+    assert_eq!(
+        relation_snapshots("let d; let a; let c; let b; const x = +a+-b+c- -d+e;"),
+        vec![
+            RelationSnapshot {
+                containing_binding: (34, 35, "x".to_owned()),
+                reference: (39, 40, "a".to_owned()),
+                semantic_name: "a".to_owned(),
+                target: Some((11, 12, "a".to_owned(), SelectedLexicalBindingOrder::Before,)),
+            },
+            RelationSnapshot {
+                containing_binding: (34, 35, "x".to_owned()),
+                reference: (42, 43, "b".to_owned()),
+                semantic_name: "b".to_owned(),
+                target: Some((25, 26, "b".to_owned(), SelectedLexicalBindingOrder::Before,)),
+            },
+            RelationSnapshot {
+                containing_binding: (34, 35, "x".to_owned()),
+                reference: (44, 45, "c".to_owned()),
+                semantic_name: "c".to_owned(),
+                target: Some((18, 19, "c".to_owned(), SelectedLexicalBindingOrder::Before,)),
+            },
+            RelationSnapshot {
+                containing_binding: (34, 35, "x".to_owned()),
+                reference: (48, 49, "d".to_owned()),
+                semantic_name: "d".to_owned(),
+                target: Some((4, 5, "d".to_owned(), SelectedLexicalBindingOrder::Before,)),
+            },
+            RelationSnapshot {
+                containing_binding: (34, 35, "x".to_owned()),
+                reference: (50, 51, "e".to_owned()),
+                semantic_name: "e".to_owned(),
+                target: None,
+            },
+        ]
+    );
+}
+
 // Issue #791 (per #688 comment 5762579228): the one-reference /
 // one-plain-decimal heterogeneous additive initializer reaches this
 // consumer through the unchanged `One(reference)` carrier -- exactly one
