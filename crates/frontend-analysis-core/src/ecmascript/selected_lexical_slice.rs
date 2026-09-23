@@ -4302,38 +4302,60 @@ impl<'source> Cursor<'source> {
     /// exactly `entry` and `NotSelected` is returned. Otherwise exactly one
     /// authored binary `+`/`-` is consumed, selected trivia is skipped
     /// again, and the accepted #777/#778 `SelectedBinaryUnaryBoundary`
-    /// theorem is applied to an optional leading `+`/`-` on the next
-    /// operand: opposite binary and unary signs may be adjacent with no
-    /// inter-operator trivia (`a+b+-c`, `a+b-+c`), while equal signs require
-    /// non-empty inter-operator selected trivia (`a+b+ +c`, `a+b- -c`), so
-    /// authored `++`/`--` is never split into a binary sign plus a leading
-    /// unary sign (`a+b++c`, `a+b--c` decline this continuation entirely,
-    /// restoring exactly `entry`). At most one leading unary wrapper is
-    /// admitted -- no recursion -- so `a+b+-+c` still fails the operand.
-    /// When present, the leading unary sign is consumed and discarded before
-    /// the shared recognizer runs, so it is never part of the operand's
-    /// authored `SourceAnchor`; when absent, the plain
-    /// `IdentifierReference` alternative composes freely, exactly as
-    /// #801/#802 already established. Either alternative is then recognized
-    /// by the same unmodified shared `consume_selected_identifier_reference`
-    /// recognizer -- never a second scanner or decoder.
+    /// theorem decides whether an authored leading `+`/`-` at that position
+    /// begins an allowed unary alternative: opposite binary and unary signs
+    /// may be adjacent with no inter-operator trivia (`a+b+-c`, `a+b-+c`),
+    /// while equal signs require non-empty inter-operator selected trivia
+    /// (`a+b+ +c`, `a+b- -c`), so authored `++`/`--` is never split into a
+    /// binary sign plus a leading unary sign (`a+b++c`, `a+b--c` decline
+    /// this continuation entirely, restoring exactly `entry`).
     ///
-    /// A matched (direct or escaped non-ReservedWord) operand returns
-    /// `Matched`, with the cursor positioned immediately after that operand.
-    /// An escaped-ReservedWord, malformed, or entirely absent operand
-    /// restores the cursor to exactly `entry` and returns `NotSelected`,
-    /// leaving the untouched tail (e.g. an escaped spelling decoding to a
-    /// ReservedWord, `\u{}`, a non-`IdentifierReference` atom, or a
-    /// richer-expression neighbor) for the enclosing owner to judge exactly
-    /// as an unrecognized initializer suffix always has been -- no
+    /// This helper only decides the boundary; it never itself consumes a
+    /// leading unary sign or scans the operand behind it. When the boundary
+    /// allows a unary alternative, the cursor is left exactly at that sign
+    /// (no trivia probing has moved past it) and recognition is delegated
+    /// whole to the existing, unmodified
+    /// `consume_selected_leading_plus_minus_identifier_reference_unary_expression`
+    /// helper -- the same one used by the plain-first and leading-unary-first
+    /// second-operand routes -- which alone owns consuming that one leading
+    /// sign, its own operand trivia, `IdentifierReference` recognition, and
+    /// normal-decline rollback. Its `Matched` result is returned unchanged;
+    /// its `NotSelected` result (an escaped-ReservedWord, malformed, or
+    /// absent operand behind the sign, or a recursive second wrapper such as
+    /// `a+b+-+c`) is not returned directly, since that helper only rolls
+    /// back to the position immediately before the sign it consumed, not to
+    /// this continuation's own `entry` (which additionally precedes the
+    /// consumed binary sign and inter-operator trivia): this helper restores
+    /// `entry` itself before reporting `NotSelected`. `ResourceLimited` and
+    /// `InternalFailure` from that delegate are propagated exactly, never
+    /// downgraded to `NotSelected`.
+    ///
+    /// When the next authored character is not an allowed leading `+`/`-`,
+    /// the plain `IdentifierReference` alternative composes freely, exactly
+    /// as #801/#802 already established, recognized by the existing shared
+    /// `consume_selected_identifier_reference` recognizer -- never a second
+    /// scanner or decoder. A matched (direct or escaped non-ReservedWord)
+    /// operand returns `Matched`, with the cursor positioned immediately
+    /// after that operand. An escaped-ReservedWord, malformed, or entirely
+    /// absent operand restores the cursor to exactly `entry` and returns
+    /// `NotSelected`, leaving the untouched tail (e.g. an escaped spelling
+    /// decoding to a ReservedWord, `\u{}`, a non-`IdentifierReference` atom,
+    /// or a richer-expression neighbor) for the enclosing owner to judge
+    /// exactly as an unrecognized initializer suffix always has been -- no
     /// dedicated firewall logic, tokenizer, or generic expression parser is
-    /// introduced. `ResourceLimited`/`InternalFailure` from the shared
-    /// recognizer is propagated immediately and is never downgraded to
+    /// introduced. `ResourceLimited`/`InternalFailure` from that recognizer
+    /// is likewise propagated immediately and is never downgraded to
     /// `NotSelected`.
     ///
-    /// This mirrors, rather than shares, the boundary logic independently
-    /// used by `consume_selected_identifier_reference_initializer`'s and
-    /// `consume_selected_leading_plus_minus_identifier_reference_left_additive_initializer`'s
+    /// Both alternatives ultimately retain the same existing inner
+    /// `SelectedIdentifierReferenceFact`; neither the binary sign, any
+    /// leading unary sign, nor any trivia is ever retained.
+    ///
+    /// This helper only decides the #777/#778 boundary and dispatches to
+    /// the two existing owned recognizers above; it duplicates neither's
+    /// recognition. It mirrors, rather than shares, the same dispatch
+    /// independently used by `consume_selected_identifier_reference_initializer`'s
+    /// and `consume_selected_leading_plus_minus_identifier_reference_left_additive_initializer`'s
     /// own second-operand probes: those two remain their own special-cased
     /// routes (the former preserves its plain-first Decimal fallback; the
     /// latter starts from an already-matched leading-unary first operand),
@@ -4366,8 +4388,23 @@ impl<'source> Cursor<'source> {
                 return SelectedIdentifierReferenceInitializerContinuationRecognition::NotSelected;
             }
 
-            let _ = self.advance_char();
-            self.skip_selected_trivia();
+            return match self
+                .consume_selected_leading_plus_minus_identifier_reference_unary_expression()
+            {
+                SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::Matched(
+                    fact,
+                ) => SelectedIdentifierReferenceInitializerContinuationRecognition::Matched(fact),
+                SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
+                    self.offset = entry;
+                    SelectedIdentifierReferenceInitializerContinuationRecognition::NotSelected
+                }
+                SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
+                    SelectedIdentifierReferenceInitializerContinuationRecognition::ResourceLimited
+                }
+                SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::InternalFailure => {
+                    SelectedIdentifierReferenceInitializerContinuationRecognition::InternalFailure
+                }
+            };
         }
 
         match self.consume_selected_identifier_reference() {
