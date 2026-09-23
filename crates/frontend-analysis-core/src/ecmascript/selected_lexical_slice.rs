@@ -4316,10 +4316,16 @@ impl<'source> Cursor<'source> {
     /// (no trivia probing has moved past it) and recognition is delegated
     /// whole to the existing, unmodified
     /// `consume_selected_leading_plus_minus_identifier_reference_unary_expression`
-    /// helper -- the same one used by the plain-first and leading-unary-first
-    /// second-operand routes -- which alone owns consuming that one leading
-    /// sign, its own operand trivia, `IdentifierReference` recognition, and
-    /// normal-decline rollback. Its `Matched` result is returned unchanged;
+    /// helper -- the existing owned recognizer for a standalone exactly-one-
+    /// leading-`+`/`-` `IdentifierReference` `UnaryExpression`, which alone
+    /// owns consuming that one leading sign, its own operand trivia,
+    /// `IdentifierReference` recognition, and normal-decline rollback. Issue
+    /// #811 reuses that existing owner specifically for this new
+    /// initializer continuation primitive's unary alternative; the older
+    /// special-cased second-operand routes below remain unchanged and
+    /// continue to own their existing local boundary/wrapper-consumption
+    /// logic rather than calling this helper. Its `Matched` result is
+    /// returned unchanged;
     /// its `NotSelected` result (an escaped-ReservedWord, malformed, or
     /// absent operand behind the sign, or a recursive second wrapper such as
     /// `a+b+-+c`) is not returned directly, since that helper only rolls
