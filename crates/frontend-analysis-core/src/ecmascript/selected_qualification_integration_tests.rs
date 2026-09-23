@@ -3159,8 +3159,10 @@ fn two_operand_cardinality_operand_and_richer_expression_firewalls_remain_unsupp
         // `a-b-c;`, `a+b-c;`, `a-b+c;`) migrated to selected-positive
         // coverage by Issue #799 (see
         // `three_operand_identifier_reference_expression_statement_use_site_remains_selected_accepted_incomplete`);
-        // four-or-more operands remain outside.
-        "a+b+c+d;",
+        // four-or-more plain operands (`a+b+c+d;`) migrated to
+        // selected-positive coverage by Issue #807 (see
+        // `many_operand_identifier_reference_expression_statement_use_site_remains_selected_accepted_incomplete`);
+        // there is no remaining plain-cardinality firewall.
         // Operand firewall (W25). A leading `+`/`-` *left* operand (`+a+b;`,
         // `-a+b;`) moved to selected-positive coverage by Issue #773 (see
         // the "Issue #773" section below); other unary operators/recursion
@@ -3280,6 +3282,63 @@ fn many_identifier_reference_additive_initializer_known_static_rejection_gates_q
 #[test]
 fn three_operand_use_site_known_static_rejection_gates_qualification() {
     assert_static_semantics_rejected("let a;\n{ var a; b+c+d; }", "a", (13, 14));
+}
+
+// --- Issue #807 (per #688 comment 5780964757): composes the
+// candidate-independent ordered 2..N `IdentifierReference` additive-chain
+// theorem accepted by #801/PR #802 into free-standing production. `a+b+c+d;`
+// and its neighbors move from the firewall list above into selected-positive
+// coverage; every newly selected complete source reaches exactly the
+// existing `SelectedAcceptedIncomplete` lifecycle, never a new qualification
+// branch or evidence family. ---
+
+#[test]
+fn many_operand_identifier_reference_expression_statement_use_site_remains_selected_accepted_incomplete()
+ {
+    for text in [
+        // Four, five, and eight operands, mixed operators, TopLevel
+        // authored-semicolon.
+        "a+b+c+d;",
+        "a-b+c-d;",
+        "a+b+c+d+e;",
+        "a+b-c+d-e+f+g+h;",
+        // Direct / escaped provenance: fourth and later operand.
+        "a+b+c+\\u0064;",
+        "a+b+c+d+\\u0065+f+g+h;",
+        // One-level Block, authored semicolon.
+        "{ a+b+c+d; }",
+        "{ a-b+c-d+e; }",
+        // Automatic termination: TopLevel EOF, Block before-close.
+        "a+b+c+d",
+        "{ a+b+c+d }",
+        // Duplicate operands.
+        "a+a+a+a;",
+        // Mixed one/two/three/many-operand item-order composition.
+        "a;\nb+c;\nd+e+f;\ng+h+i+j;\nk;",
+        // Correspondence composition (per-operand independent resolution).
+        "let d;\nlet a;\nvar c;\nlet b;\na+b+c+d;",
+        "let d;\nvar c;\nlet e;\n{ let a;\nlet b;\na+b+c+d+e; }",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+/// Issue #807 (per #688 comment 5780964757) section 42: a source containing
+/// a valid free-standing `Many` use-site still reaches an existing static
+/// rejection unchanged when another existing obligation fails -- no new
+/// rejection type and no changed rejection ordering. Reuses the smallest
+/// existing static conflict already proven above (a Block `var` duplicating
+/// an enclosing top-level lexical name), with the free-standing use-site
+/// replaced by a complete four-operand free-standing use-site.
+#[test]
+fn many_operand_use_site_known_static_rejection_gates_qualification() {
+    assert_static_semantics_rejected("let a;\n{ var a; b+c+d+e; }", "a", (13, 14));
 }
 
 // --- Issue #793 (per #688 comment 5764090454): composes the

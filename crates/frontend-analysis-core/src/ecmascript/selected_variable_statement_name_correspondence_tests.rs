@@ -4418,3 +4418,188 @@ fn three_operand_use_site_known_static_rejection_suppresses_relation_constructio
     // publish a relation once the existing lexical/var static rejection
     // wins.
 }
+
+// --- Issue #807 (per #688 comment 5780964757): unbounded ordered 2..N
+// IdentifierReference additive free-standing `ExpressionStatement` use-site
+// correspondence. Each retained fact of a
+// `SelectedFreeStandingIdentifierReferenceUseSite::Many` occurrence is an
+// independent correspondence query, emitting one relation per fact in exact
+// authored item order, then exact authored operand order within each item
+// -- the existing `for fact in use_site.body().facts()` consumer composes
+// this naturally, with no new relation type, meaning, sorting, or
+// deduplication. Production semantic logic in this module is unchanged by
+// this Issue; only this test module widens. ---
+
+#[test]
+fn many_operand_use_site_per_operand_correspondence_top_level() {
+    // `let d; let a; var c; let b; a+b+c+d;`: declaration order (d, a, c,
+    // b) differs from authored reference order (a, b, c, d) -- four
+    // independent per-operand queries, never one shared result for the
+    // whole additive use-site.
+    let (_, script) = recognized_reference_use("let d;\nlet a;\nvar c;\nlet b;\na+b+c+d;");
+    let analysis = accepted_use_site_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(relations.len(), 4);
+
+    assert_eq!(relations[0].semantic_name(), "a");
+    let (binding, region) = relations[0]
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("first operand must resolve to the lexical binding a");
+    assert_eq!(binding.fragment(), "a");
+    assert!(matches!(
+        region,
+        SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+    ));
+
+    assert_eq!(relations[1].semantic_name(), "b");
+    let (binding, region) = relations[1]
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("second operand must resolve to the lexical binding b");
+    assert_eq!(binding.fragment(), "b");
+    assert!(matches!(
+        region,
+        SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+    ));
+
+    assert_eq!(relations[2].semantic_name(), "c");
+    let contributors = relations[2]
+        .correspondence()
+        .var_contributors()
+        .expect("third operand must resolve to the Script-wide var contributor c");
+    assert_eq!(contributors.len(), 1);
+
+    assert_eq!(relations[3].semantic_name(), "d");
+    let (binding, region) = relations[3]
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("fourth operand must resolve to the lexical binding d");
+    assert_eq!(binding.fragment(), "d");
+    assert!(matches!(
+        region,
+        SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+    ));
+}
+
+#[test]
+fn many_operand_use_site_per_operand_correspondence_block() {
+    // `let d; var c; let e; { let a; let b; a+b+c+d+e; }`: five operands
+    // mixing current-Block lexical bindings (a, b), the Script-wide var
+    // contributor (c), and TopLevel lexical fallback (d, e).
+    let (_, script) =
+        recognized_block_reference_use("let d;\nvar c;\nlet e;\n{ let a;\nlet b;\na+b+c+d+e; }");
+    let analysis = accepted_block_use_site_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(relations.len(), 5);
+
+    assert_eq!(relations[0].semantic_name(), "a");
+    let (binding, region) = relations[0]
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("first operand must resolve to the current-Block lexical binding a");
+    assert_eq!(binding.fragment(), "a");
+    assert!(matches!(
+        region,
+        SelectedVariableStatementNameCorrespondenceRegion::Block(_)
+    ));
+
+    assert_eq!(relations[1].semantic_name(), "b");
+    let (binding, region) = relations[1]
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("second operand must resolve to the current-Block lexical binding b");
+    assert_eq!(binding.fragment(), "b");
+    assert!(matches!(
+        region,
+        SelectedVariableStatementNameCorrespondenceRegion::Block(_)
+    ));
+
+    assert_eq!(relations[2].semantic_name(), "c");
+    let contributors = relations[2]
+        .correspondence()
+        .var_contributors()
+        .expect("third operand must resolve to the Script-wide var contributor c");
+    assert_eq!(contributors.len(), 1);
+
+    assert_eq!(relations[3].semantic_name(), "d");
+    let (binding, region) = relations[3]
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("fourth operand must fall back to the TopLevel lexical binding d");
+    assert_eq!(binding.fragment(), "d");
+    assert!(matches!(
+        region,
+        SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+    ));
+
+    assert_eq!(relations[4].semantic_name(), "e");
+    let (binding, region) = relations[4]
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("fifth operand must fall back to the TopLevel lexical binding e");
+    assert_eq!(binding.fragment(), "e");
+    assert!(matches!(
+        region,
+        SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+    ));
+}
+
+#[test]
+fn many_operand_use_site_duplicate_operands_top_level() {
+    let (_, script) = recognized_reference_use("let a;\na+a+a+a+a;");
+    let analysis = accepted_use_site_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(
+        relations.len(),
+        5,
+        "duplicate operands must not deduplicate"
+    );
+    for relation in relations {
+        assert_eq!(relation.semantic_name(), "a");
+    }
+    for i in 0..relations.len() {
+        for j in (i + 1)..relations.len() {
+            assert!(
+                relations[i].reference().range().start() < relations[j].reference().range().start()
+            );
+        }
+    }
+}
+
+#[test]
+fn one_two_three_many_one_operand_use_site_item_order_and_operand_order_composition_top_level() {
+    // `a; b+c; d+e+f; g+h+i+j; k;`: authored item order, then authored
+    // operand order within each item -- never later source sorting, and
+    // `Many` composes exactly like every earlier bounded cardinality.
+    let (_, script) = recognized_reference_use("a;\nb+c;\nd+e+f;\ng+h+i+j;\nk;");
+    let analysis = accepted_use_site_analysis(&script);
+    let names: Vec<&str> = analysis
+        .relations()
+        .iter()
+        .map(|relation| relation.semantic_name())
+        .collect();
+    assert_eq!(
+        names,
+        ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"]
+    );
+}
+
+#[test]
+fn many_operand_use_site_known_static_rejection_suppresses_relation_construction() {
+    let source = source("let a;\n{ var a; b+c+d+e; }");
+    let script = match recognize_selected_lexical_slice(&source) {
+        SelectedLexicalSliceOutcome::RecognizedBlockReferenceUseEnabledSlice(script) => script,
+        other => panic!("expected Block-reference-use-enabled recognition, got {other:?}"),
+    };
+    assert!(matches!(
+        evaluate_selected_block_reference_use_enabled_static_semantics(&script),
+        SelectedBlockReferenceUseEnabledStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::LexicalVarNameCollision { .. }
+        )
+    ));
+    // No relation surface is reachable without an accepted witness: none of
+    // the four operands of the locally valid `b+c+d+e;` use-site ever
+    // publish a relation once the existing lexical/var static rejection
+    // wins.
+}

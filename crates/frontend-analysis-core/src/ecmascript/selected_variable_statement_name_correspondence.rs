@@ -22,12 +22,13 @@
 //! correspondence meaning or a parallel type hierarchy. #766 widens every
 //! free-standing use-site relation traversal (TopLevel-only, and
 //! Block-contained) from exactly one fact per structural use-site item to
-//! the bounded `SelectedFreeStandingIdentifierReferenceUseSite::facts()`
-//! one/two ordered occurrences per item (widened again to one/two/three by
-//! Issue #799), emitting one relation per retained fact in exact authored
-//! item order, then exact authored operand order within each item; the
-//! existing relation types, correspondence meanings, and result-surface
-//! separation are unchanged.
+//! the `SelectedFreeStandingIdentifierReferenceUseSite::facts()`
+//! one/two ordered occurrences per item (widened to one/two/three by Issue
+//! #799, then to an unbounded one/two/three/four-or-more ordered chain by
+//! Issue #807 per #688 comment 5780964757), emitting one relation per
+//! retained fact in exact authored item order, then exact authored operand
+//! order within each item; the existing relation types, correspondence
+//! meanings, and result-surface separation are unchanged.
 //!
 //! This is not runtime binding resolution. An authored `VariableDeclaration`
 //! contributor is not a unique runtime binding identity or a `ResolveBinding`
@@ -948,7 +949,8 @@ fn analyze_top_level_use_sites<'script>(
     // Exact authored use-site item order, then exact authored operand order
     // within each item; duplicate occurrences are preserved one-for-one,
     // never deduplicated (Issue #758, widened to one-or-two ordered
-    // operands per item by Issue #766).
+    // operands per item by Issue #766, then to an unbounded ordered chain
+    // by Issue #807).
     for item in script.items() {
         let SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
             use_site,
@@ -1213,9 +1215,10 @@ fn analyze_block_reference_use_enabled_top_level_use_sites<'script>(
     // Exact authored TopLevel use-site item order, then exact authored
     // operand order within each item; duplicate occurrences are preserved
     // one-for-one, never deduplicated (widened to one-or-two ordered
-    // operands per item by Issue #766). Block-contained use-sites are
-    // excluded from this stream (Issue #762): see `analyze_block_use_sites`
-    // for their dedicated relation surface.
+    // operands per item by Issue #766, then to an unbounded ordered chain
+    // by Issue #807). Block-contained use-sites are excluded from this
+    // stream (Issue #762): see `analyze_block_use_sites` for their
+    // dedicated relation surface.
     for item in script.items() {
         let SelectedBlockReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
             use_site,
@@ -1283,9 +1286,10 @@ fn analyze_block_use_sites<'script>(
     // Exact authored Block-use-site item order, then exact authored operand
     // order within each item; distinct Block ownership, and one-for-one
     // duplicate preservation (Issue #762, widened to one-or-two ordered
-    // operands per item by Issue #766): only `UseSiteEnabledBlock` top-level
-    // items are visited, since a historical `Block` never contains a
-    // Block-local use-site item by construction.
+    // operands per item by Issue #766, then to an unbounded ordered chain
+    // by Issue #807): only `UseSiteEnabledBlock` top-level items are
+    // visited, since a historical `Block` never contains a Block-local
+    // use-site item by construction.
     for item in script.items() {
         let SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block) = item else {
             continue;

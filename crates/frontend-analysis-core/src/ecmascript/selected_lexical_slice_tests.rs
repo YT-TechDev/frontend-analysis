@@ -10182,20 +10182,6 @@ fn two_operand_use_site_duplicate_operands_are_preserved_distinctly() {
 }
 
 #[test]
-fn three_operand_cardinality_firewall_remains_unsupported() {
-    // A valid `a+b+c` prefix must never authorize a longer additive chain
-    // (Issue #799 acceptance criterion 18 / wrong model W19): exactly three
-    // operands only, never a truncated/flattened accept of the first three.
-    // The plain exactly-three forms this test used to reject (`a+b+c;`,
-    // `a-b-c;`, `a+b-c;`, `a-b+c;`, `{ a+b+c; }`, `{ a-b-c; }`) migrated to
-    // positive coverage by Issue #799 -- see
-    // `three_operand_use_site_all_operator_pair_combinations_are_selected`.
-    for text in ["a+b+c+d;", "a+b+c+d+e;", "{ a+b+c+d; }"] {
-        assert_unsupported(text);
-    }
-}
-
-#[test]
 fn two_operand_operand_firewall_remains_unsupported() {
     // Only a direct/escaped `IdentifierReference` operand is accepted;
     // literal/grouping/member/call operands remain unsupported (wrong
@@ -10614,18 +10600,6 @@ fn use_site_general_line_terminator_asi_firewall_remains_unsupported() {
         "{\n    a\n    let b;\n}",
         "{\n    a+b\n    let c;\n}",
     ] {
-        assert_unsupported(text);
-    }
-}
-
-#[test]
-fn three_operand_automatic_termination_cardinality_firewall_remains_unsupported() {
-    // A shorter `a+b+c` prefix must never escape a failed fourth operand,
-    // for either placement's automatic terminator (Issue #799). The plain
-    // exactly-three forms this test used to reject (`a+b+c`, `a-b-c`,
-    // `{ a+b+c }`, `{ a-b-c }`) migrated to positive coverage by Issue #799
-    // -- see `three_operand_use_site_terminator_composition_is_recognized`.
-    for text in ["a+b+c+d", "{ a+b+c+d }"] {
         assert_unsupported(text);
     }
 }
@@ -12068,18 +12042,6 @@ fn three_operand_use_site_punctuator_boundary_remains_unsupported() {
     }
 }
 
-/// Fourth-or-later operand: the body helper may locally prepare a complete
-/// `Three` with the cursor positioned after the third operand, but the
-/// placement-owned caller must reject the untouched remainder and roll back
-/// the whole use-site -- no complete selected source may publish a truncated
-/// `Three` prefix (see also `three_operand_cardinality_firewall_remains_unsupported`).
-#[test]
-fn three_operand_use_site_fourth_operand_firewall_remains_unsupported() {
-    for text in ["a+b+c+d;", "{ a+b+c+d; }", "a+b+c+d+e;"] {
-        assert_unsupported(text);
-    }
-}
-
 /// Right-unary-second firewall: the #795 theorem is plain/plain/plain only,
 /// so a third continuation is never probed when the second operand used the
 /// existing right-unary `+`/`-` wrapper -- these remain bounded to exactly
@@ -12236,4 +12198,342 @@ fn three_operand_use_site_whole_source_transactionality() {
     assert_unsupported("a+b+c;\nlet x = ;");
     assert_unsupported("{ a+b+c; ??? }");
     assert_unsupported("{ a+b+c; }\n???");
+}
+
+// --- Issue #807 (per #688 comment 5780964757): composes the
+// candidate-independent ordered 2..N `IdentifierReference` additive-chain
+// theorem accepted by #801/PR #802 into the free-standing
+// `ExpressionStatement` use-site owner, widening
+// `SelectedFreeStandingIdentifierReferenceUseSite` /
+// `SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition` with
+// a `Many(Vec<Fact>)` variant reachable only once a fourth selected fact is
+// actually proven after a complete plain `Three` prefix, and growing the
+// retained `Vec` by exactly one fact per later matched operand with no
+// fixed maximum. `One`/`Two`/`Three` representation and resource behavior
+// remain exactly unchanged. #801/#802 remain the candidate-independent
+// Oracle for the constituent N-fact theorem; these production tests author
+// expected facts/ranges independently of the candidate under test. Unlike
+// the initializer's own `Many` continuation (Issue #803), a declining
+// fourth-or-later continuation here rolls back the *entire* free-standing
+// candidate to `NotSelected` rather than degrading to a shorter `Three`/
+// `Many` prefix: a free-standing use-site is a whole-body transaction with
+// no enclosing declaration/comma owner to hand a partial result to. ---
+
+#[test]
+fn many_operand_top_level_use_site_retains_ordered_facts() {
+    for (text, expected) in [
+        ("a+b+c+d;", vec!["a", "b", "c", "d"]),
+        ("a-b+c-d;", vec!["a", "b", "c", "d"]),
+        (
+            "foo+bar+baz+qux+quux;",
+            vec!["foo", "bar", "baz", "qux", "quux"],
+        ),
+        (
+            "a+b-c+d-e+f+g+h;",
+            vec!["a", "b", "c", "d", "e", "f", "g", "h"],
+        ),
+        ("a+a+a+a;", vec!["a", "a", "a", "a"]),
+    ] {
+        let script = recognized_reference_use(text);
+        let [
+            SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
+                use_site,
+            ),
+        ] = script.items()
+        else {
+            panic!("expected exactly one selected use-site item for {text:?}");
+        };
+        let facts = use_site_facts(use_site.body());
+        assert_eq!(facts.len(), expected.len(), "{text:?}");
+        for (fact, name) in facts.iter().zip(expected.iter()) {
+            assert_eq!(fact.semantic_name(), *name, "{text:?}");
+        }
+    }
+
+    // Duplicate occurrences are preserved one-for-one, never deduplicated,
+    // with distinct authored byte ranges.
+    let script = recognized_reference_use("a+a+a+a;");
+    let [SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(use_site)] =
+        script.items()
+    else {
+        panic!("expected exactly one selected use-site item");
+    };
+    let facts = use_site_facts(use_site.body());
+    for i in 0..facts.len() {
+        for j in (i + 1)..facts.len() {
+            assert_ne!(facts[i].reference().range(), facts[j].reference().range());
+        }
+    }
+}
+
+#[test]
+fn many_operand_block_use_site_retains_ordered_facts() {
+    for (text, expected) in [
+        ("{ a+b+c+d; }", vec!["a", "b", "c", "d"]),
+        ("{ a-b+c-d+e; }", vec!["a", "b", "c", "d", "e"]),
+        (
+            "{ a+b-c+d-e+f+g+h; }",
+            vec!["a", "b", "c", "d", "e", "f", "g", "h"],
+        ),
+    ] {
+        let script = recognized_block_reference_use(text);
+        let [SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block)] =
+            script.items()
+        else {
+            panic!("expected exactly one use-site-enabled Block item for {text:?}");
+        };
+        let [SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(use_site)] =
+            block.items()
+        else {
+            panic!("expected exactly one Block-contained use-site item for {text:?}");
+        };
+        let facts = use_site_facts(use_site.body());
+        assert_eq!(facts.len(), expected.len(), "{text:?}");
+        for (fact, name) in facts.iter().zip(expected.iter()) {
+            assert_eq!(fact.semantic_name(), *name, "{text:?}");
+        }
+    }
+}
+
+#[test]
+fn many_operand_use_site_direct_escaped_cross_product_preserves_authored_provenance() {
+    let esc_d = concat!("\\", "u0064"); // decodes to "d" (fourth operand)
+    let esc_e = concat!("\\", "u0065"); // decodes to "e" (interior Many operand)
+    let esc_h = concat!("\\", "u0068"); // decodes to "h" (final Many operand)
+
+    for (text, expected_fragments, expected_names) in [
+        (
+            format!("a+b+c+{esc_d};"),
+            vec!["a", "b", "c", esc_d],
+            vec!["a", "b", "c", "d"],
+        ),
+        (
+            format!("a+b+c+d+{esc_e}+f+g+h;"),
+            vec!["a", "b", "c", "d", esc_e, "f", "g", "h"],
+            vec!["a", "b", "c", "d", "e", "f", "g", "h"],
+        ),
+        (
+            format!("a+b+c+d+e+f+g+{esc_h};"),
+            vec!["a", "b", "c", "d", "e", "f", "g", esc_h],
+            vec!["a", "b", "c", "d", "e", "f", "g", "h"],
+        ),
+    ] {
+        let script = recognized_reference_use(&text);
+        let [
+            SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
+                use_site,
+            ),
+        ] = script.items()
+        else {
+            panic!("expected exactly one selected use-site item for {text:?}");
+        };
+        let facts = use_site_facts(use_site.body());
+        assert_eq!(facts.len(), expected_names.len(), "{text:?}");
+        for i in 0..facts.len() {
+            assert_eq!(
+                facts[i].reference().fragment(),
+                expected_fragments[i],
+                "{text:?}"
+            );
+            assert_eq!(facts[i].semantic_name(), expected_names[i], "{text:?}");
+        }
+    }
+}
+
+/// Escaped-ReservedWord fourth/later operand (mandatory adversarial
+/// coverage): the shared recognizer advances through the escaped
+/// `IdentifierName` before classifying it as a ReservedWord, so the whole
+/// free-standing candidate must restore to `body_snapshot` and decline --
+/// never publish a truncated `Three`/`Many` prefix.
+#[test]
+fn many_operand_use_site_escaped_reserved_continuation_remains_unsupported() {
+    let escaped_if = concat!("\\", "u0069", "f"); // decodes to the reserved word "if"
+    for text in [
+        format!("a+b+c+{escaped_if};"),
+        format!("{{ a+b+c+{escaped_if}; }}"),
+        format!("a+b+c+d+{escaped_if};"),
+        format!("{{ a+b+c+d+{escaped_if}; }}"),
+    ] {
+        assert_unsupported(&text);
+    }
+}
+
+/// Malformed, non-reference, unary-looking, and doubled-punctuator
+/// fourth/later continuation: every one restores the whole free-standing
+/// body snapshot and declines -- never a truncated `Three`/`Many`
+/// publication.
+#[test]
+fn many_operand_use_site_malformed_and_non_reference_continuation_remains_unsupported() {
+    for text in [
+        r"a+b+c+\u{};",
+        "a+b+c+0;",
+        "a+b+c+d+0;",
+        r"a+b+c+d+\u{};",
+        "a+b+c+d+;",
+        // Unary-looking continuation.
+        "a+b+c+-d;",
+        "a+b+c++d;",
+        "a+b+c+d+-e;",
+        "a+b+c+d++e;",
+        // Doubled-punctuator boundary.
+        "a+b+c+d+=e;",
+        "a+b+c+d-=e;",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+/// Richer-expression / precedence / grouping / member / call / assignment /
+/// conditional neighbors: no generic precedence parser or AST/CST is
+/// introduced, so a complete `Many` prefix followed by richer syntax is
+/// rejected by the placement-owned caller and the whole use-site rolls
+/// back.
+#[test]
+fn many_operand_use_site_richer_expression_firewall_remains_unsupported() {
+    for text in [
+        "a+b+c+d.e;",
+        "a+b+c+d();",
+        "a+b+c+d[e];",
+        "a+b+c+d=e;",
+        "a+b+c+d?e:f;",
+        "a+b+c+d*e;",
+        "a+b+c+d+e.f;",
+        "a+b+c+d+e();",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+/// Terminator composition: `Many` composes with both existing placement
+/// terminators unchanged (TopLevel authored-semicolon / EOF ASI, Block
+/// authored-semicolon / before-`}` ASI); no new terminator type or general
+/// `LineTerminator` ASI is introduced.
+#[test]
+fn many_operand_use_site_terminator_composition_is_recognized() {
+    for text in ["a+b+c+d;", "a+b+c+d"] {
+        let script = recognized_reference_use(text);
+        let [
+            SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
+                use_site,
+            ),
+        ] = script.items()
+        else {
+            panic!("expected exactly one selected use-site item for {text:?}");
+        };
+        assert_eq!(use_site_facts(use_site.body()).len(), 4, "{text:?}");
+    }
+
+    let script = recognized_reference_use("a+b+c+d;");
+    let [SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(use_site)] =
+        script.items()
+    else {
+        panic!("expected exactly one selected use-site item");
+    };
+    assert_eq!(
+        use_site.terminator(),
+        SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AuthoredSemicolon
+    );
+
+    let script = recognized_reference_use("a+b+c+d");
+    let [SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(use_site)] =
+        script.items()
+    else {
+        panic!("expected exactly one selected use-site item");
+    };
+    assert_eq!(
+        use_site.terminator(),
+        SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticAtEof
+    );
+
+    for text in ["{ a+b+c+d; }", "{ a+b+c+d }"] {
+        let script = recognized_block_reference_use(text);
+        let [SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block)] =
+            script.items()
+        else {
+            panic!("expected exactly one use-site-enabled Block item for {text:?}");
+        };
+        let [SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(use_site)] =
+            block.items()
+        else {
+            panic!("expected exactly one Block-contained use-site item for {text:?}");
+        };
+        assert_eq!(use_site_facts(use_site.body()).len(), 4, "{text:?}");
+    }
+
+    let script = recognized_block_reference_use("{ a+b+c+d; }");
+    let [SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block)] = script.items()
+    else {
+        panic!("expected exactly one use-site-enabled Block item");
+    };
+    let [SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(use_site)] =
+        block.items()
+    else {
+        panic!("expected exactly one Block-contained use-site item");
+    };
+    assert_eq!(
+        use_site.terminator(),
+        SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator::AuthoredSemicolon
+    );
+
+    let script = recognized_block_reference_use("{ a+b+c+d }");
+    let [SelectedBlockReferenceUseEnabledTopLevelItem::UseSiteEnabledBlock(block)] = script.items()
+    else {
+        panic!("expected exactly one use-site-enabled Block item");
+    };
+    let [SelectedUseSiteEnabledBlockItem::IdentifierReferenceExpressionStatement(use_site)] =
+        block.items()
+    else {
+        panic!("expected exactly one Block-contained use-site item");
+    };
+    assert_eq!(
+        use_site.terminator(),
+        SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticBeforeBlockClose
+    );
+}
+
+/// Whole-source transactionality: a locally valid `Many` earlier in the
+/// source must not leak selected success if later source fails.
+#[test]
+fn many_operand_use_site_whole_source_transactionality() {
+    assert_unsupported("a+b+c+d;\n???");
+    assert_unsupported("a+b+c+d;\nlet x = ;");
+    assert_unsupported("{ a+b+c+d; ??? }");
+    assert_unsupported("{ a+b+c+d; }\n???");
+}
+
+/// Item-order x operand-order: `One`, `Two`, `Three`, `Many`, and another
+/// `One` use-site item in one script each retain exact authored operand
+/// order internally, composed in exact authored item order externally --
+/// proving the existing item owner was widened in place, not routed
+/// through a second relation channel.
+#[test]
+fn one_two_three_many_one_operand_use_sites_preserve_authored_order() {
+    let script = recognized_reference_use("a;\nb+c;\nd+e+f;\ng+h+i+j;\nk;");
+    let [
+        SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(one_a),
+        SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(two),
+        SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(three),
+        SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(many),
+        SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(one_k),
+    ] = script.items()
+    else {
+        panic!("expected [use-site, use-site, use-site, use-site, use-site] items");
+    };
+    assert_eq!(only_fact(one_a.body()).semantic_name(), "a");
+    let two_names: Vec<_> = use_site_facts(two.body())
+        .iter()
+        .map(|fact| fact.semantic_name())
+        .collect();
+    assert_eq!(two_names, vec!["b", "c"]);
+    let three_names: Vec<_> = use_site_facts(three.body())
+        .iter()
+        .map(|fact| fact.semantic_name())
+        .collect();
+    assert_eq!(three_names, vec!["d", "e", "f"]);
+    let many_names: Vec<_> = use_site_facts(many.body())
+        .iter()
+        .map(|fact| fact.semantic_name())
+        .collect();
+    assert_eq!(many_names, vec!["g", "h", "i", "j"]);
+    assert_eq!(only_fact(one_k.body()).semantic_name(), "k");
 }
