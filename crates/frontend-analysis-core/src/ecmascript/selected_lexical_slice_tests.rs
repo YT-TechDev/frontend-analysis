@@ -7192,14 +7192,16 @@ fn three_identifier_reference_additive_initializer_escaped_reserved_third_operan
 
 /// Malformed third operand: a normal unsupported third-operand spelling
 /// restores to `after_second` and degrades to `Two`, leaving the untouched
-/// tail for the enclosing owner to reject as a complete source.
+/// tail for the enclosing owner to reject as a complete source. `a+b+0`
+/// migrated from this firewall to positive heterogeneous coverage by Issue
+/// #817 (per #815/#816): a plain accepted Decimal atom is no longer a
+/// malformed third-operand spelling, since the `Two{a,b}` prefix is now
+/// tried against the heterogeneous continuation before the whole source is
+/// rejected -- see
+/// `heterogeneous_reference_decimal_additive_chain_initializer_positive_matrix_is_recognized`.
 #[test]
 fn three_identifier_reference_additive_initializer_malformed_third_operand_remains_unsupported() {
-    for text in [
-        r"let x = a+b+\u{};",
-        r"let x = a+b+0;",
-        "let x = a+b+c\\u002D;",
-    ] {
+    for text in [r"let x = a+b+\u{};", "let x = a+b+c\\u002D;"] {
         assert_unsupported(text);
     }
 }
@@ -7229,15 +7231,18 @@ fn three_identifier_reference_additive_initializer_malformed_third_operand_remai
 // (`three_operand_use_site_right_unary_second_firewall_remains_unsupported`,
 // `three_operand_use_site_leading_unary_first_firewall_remains_unsupported`).
 
-/// Heterogeneous three-syntax firewall: the accepted #791 Decimal fallback
-/// remains exactly two-syntax-operand; no new heterogeneous three-operand
-/// theorem is authorized.
+/// Heterogeneous three-syntax firewall: `IdentifierReference`/plain-Decimal
+/// heterogeneous composition (Issue #791) migrated from a bounded
+/// exactly-two-syntax-operand shape to an arbitrary finite chain by Issue
+/// #817 (per #815/#816) -- see
+/// `heterogeneous_reference_decimal_additive_chain_initializer_positive_matrix_is_recognized`
+/// for the newly selected three-syntax-operand Decimal/`IdentifierReference`
+/// mixes. Every other operand family remains outside this or any additive
+/// theorem: `Boolean`, `null`, `this`, and `String` never compose with an
+/// additive chain (Issue #817 section 28).
 #[test]
 fn three_identifier_reference_additive_initializer_heterogeneous_firewall_remains_unsupported() {
     for text in [
-        "let x = a+b+1;",
-        "let x = a+1+c;",
-        "let x = 1+a+b;",
         "let x = a+b+true;",
         "let x = a+null+c;",
         "let x = this+b+c;",
@@ -7579,14 +7584,18 @@ fn many_identifier_reference_additive_initializer_escaped_reserved_continuation_
 /// Malformed and non-reference fourth/fifth continuation: a normal
 /// unsupported continuation spelling restores to the end of the latest
 /// complete prefix and degrades to `Three`/`Many`, leaving the untouched
-/// tail for the enclosing owner to reject as a complete source.
+/// tail for the enclosing owner to reject as a complete source. `a+b+c+0`
+/// and `a+b+c+d+0` migrated from this firewall to positive heterogeneous
+/// coverage by Issue #817 (per #815/#816): a plain accepted Decimal atom is
+/// no longer a malformed continuation spelling, since the proven
+/// `Three`/`Many` prefix is now tried against the heterogeneous
+/// continuation before the whole source is rejected -- see
+/// `heterogeneous_reference_decimal_additive_chain_initializer_positive_matrix_is_recognized`.
 #[test]
 fn many_identifier_reference_additive_initializer_malformed_and_non_reference_continuation_remains_unsupported()
  {
     for text in [
         r"let x = a+b+c+\u{};",
-        "let x = a+b+c+0;",
-        "let x = a+b+c+d+0;",
         r"let x = a+b+c+d+\u{};",
         // Same-sign zero-trivia `UpdateExpression`-adjacent continuation:
         // authored `++` is never split into a binary sign plus a unary
@@ -8178,18 +8187,19 @@ fn one_reference_one_plain_decimal_additive_initializer_decimal_left_unary_firew
     assert_eq!(facts[0].semantic_name(), "a");
 }
 
-/// Cardinality, operand-family, richer-expression, numeric-frontier, and
+/// Operand-family, richer-expression, numeric-frontier, and
 /// escaped-ReservedWord firewalls (per #688 comment 5762579228): a valid
 /// bounded `IdentifierReference`/plain-Decimal prefix never authorizes a
-/// richer or differently-typed complete source.
+/// richer or differently-typed complete source. Cardinality beyond two
+/// syntax operands migrated from this firewall to positive heterogeneous
+/// 2..N coverage by Issue #817 (per #815/#816) when every later operand is
+/// itself a plain `IdentifierReference` or plain Decimal atom -- see
+/// `heterogeneous_reference_decimal_additive_chain_initializer_positive_matrix_is_recognized`;
+/// a third or later *unary-wrapped* or richer-family operand remains outside
+/// every theorem and is covered below.
 #[test]
 fn one_reference_one_plain_decimal_additive_initializer_firewalls_remain_unsupported() {
     for text in [
-        // Cardinality: 3+ operands are never truncated to a valid prefix.
-        "let x = a + 1 + b;",
-        "let x = 1 + a + 2;",
-        "let x = a - 1 - b;",
-        "let x = 1 - a - 2;",
         // Unary composition on either operand.
         "let x = +a + 1;",
         "let x = -a + 1;",
@@ -8252,6 +8262,302 @@ fn one_reference_one_plain_decimal_additive_initializer_transactionality_commits
 
     let subject = grammar_rejection(r"{ var x = a + 1, \u{} = 1; }");
     assert_eq!(subject.fragment(), r"\u{}");
+}
+
+// --- Issue #817: composes the accepted #789 bounded heterogeneous
+// one-`IdentifierReference`/one-plain-Decimal-atom theorem (#791) with the
+// accepted #801/#802 arbitrary-cardinality plain-`IdentifierReference`
+// additive-chain theorem (#803/#805, widened to optional-leading-`+`/`-`
+// operands by #811) into a new heterogeneous `IdentifierReference`/plain-Decimal
+// additive-chain 2..N initializer production, per the candidate-independent
+// theorem accepted by #815/PR #816. Retained-fact cardinality tracks only
+// how many `IdentifierReference` operands were proven, never how many
+// syntax operands (`IdentifierReference` or Decimal alike) were scanned to
+// reach them; every selected candidate remains plain-operand-only -- no
+// leading- or right-unary wrapper ever composes with a Decimal operand, and
+// #789's existing exactly-two-operand shape, #815/#816's Oracle, and
+// #809/#810's optional-unary theorem are otherwise untouched. These
+// production tests author expected facts/ranges independently of the
+// #815/#816 candidate under test. ---
+
+#[test]
+fn heterogeneous_reference_decimal_additive_chain_initializer_positive_matrix_is_recognized() {
+    for (text, expected) in [
+        // Bounded predecessors (#791), regression.
+        ("let x = a + 1;", vec!["a"]),
+        ("let x = 1 + a;", vec!["a"]),
+        // Three syntax operands.
+        ("let x = a+1+b;", vec!["a", "b"]),
+        ("let x = 1+a+2;", vec!["a"]),
+        ("let x = a+b+1;", vec!["a", "b"]),
+        ("let x = 1+a+b;", vec!["a", "b"]),
+        // Consecutive Decimals before the first reference.
+        ("let x = 1+2+a;", vec!["a"]),
+        ("let x = 1+2+3+a;", vec!["a"]),
+        // Consecutive Decimals after a reference.
+        ("let x = a+1+2+b;", vec!["a", "b"]),
+        // One retained reference, many syntax operands.
+        ("let x = 1+2+3+a+4+5;", vec!["a"]),
+        // Multiple retained references.
+        ("let x = a+1+b+2+c;", vec!["a", "b", "c"]),
+        // Mostly references.
+        ("let x = a+b+c+1+d+e;", vec!["a", "b", "c", "d", "e"]),
+        // 8-syntax-operand sentinels: detects accidental syntax-operand-keyed
+        // resource/cardinality logic.
+        ("let x = 1+a+2+b+3+c+4+d;", vec!["a", "b", "c", "d"]),
+        ("let x = a+1+b+2+c+3+d+4;", vec!["a", "b", "c", "d"]),
+        // Exponent sign ownership: the exponent-internal sign stays owned by
+        // the Decimal atom and never leaks into a following binary operator.
+        ("let x = a+1e-2+b;", vec!["a", "b"]),
+        ("let x = 1e+2+a+3;", vec!["a"]),
+        ("let x = a+1e-2+b-3e+4+c;", vec!["a", "b", "c"]),
+        // `-` operator exercised too.
+        ("let x = a-1-b;", vec!["a", "b"]),
+        ("let x = 1-2-a;", vec!["a"]),
+    ] {
+        let script = recognized(text);
+        let [binding] = script.declarations()[0].bindings() else {
+            panic!("expected one selected lexical binding for {text:?}");
+        };
+        let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+        assert_eq!(facts.len(), expected.len(), "{text:?}");
+        for (fact, name) in facts.iter().zip(expected.iter()) {
+            assert_eq!(fact.semantic_name(), *name, "{text:?}");
+        }
+    }
+}
+
+#[test]
+fn heterogeneous_reference_decimal_additive_chain_initializer_jointly_composes_across_all_three_owners()
+ {
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+
+    for (text, expected) in [
+        ("const x = a+1+b;", vec!["a", "b"]),
+        ("const x = 1+a+2+b;", vec!["a", "b"]),
+    ] {
+        let script = recognized(text);
+        let [binding] = script.declarations()[0].bindings() else {
+            panic!("expected one selected lexical binding, {text:?}");
+        };
+        let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+        assert_eq!(facts.len(), expected.len(), "{text:?}");
+        for (fact, name) in facts.iter().zip(expected.iter()) {
+            assert_eq!(fact.semantic_name(), *name, "{text:?}");
+        }
+    }
+
+    for (text, expected) in [
+        ("var x = a+1+b;", vec!["a", "b"]),
+        ("var x = 1+a+2+b;", vec!["a", "b"]),
+    ] {
+        let script = recognized_variable(text);
+        let statement = only_variable_statement(&script);
+        let [binding] = statement.bindings() else {
+            panic!("expected one selected top-level var binding, {text:?}");
+        };
+        let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+        assert_eq!(facts.len(), expected.len(), "{text:?}");
+        for (fact, name) in facts.iter().zip(expected.iter()) {
+            assert_eq!(fact.semantic_name(), *name, "{text:?}");
+        }
+    }
+
+    for (text, expected) in [
+        ("{ var x = a+1+b; }", vec!["a", "b"]),
+        ("{ var x = 1+a+2+b; }", vec!["a", "b"]),
+    ] {
+        let block_script = recognized_block(text);
+        let [SelectedTopLevelItem::Block(block)] = block_script.items() else {
+            panic!("expected exactly one Block item, {text:?}");
+        };
+        let [SelectedBlockItem::Var(statement)] = block.items() else {
+            panic!("expected exactly one Block var statement, {text:?}");
+        };
+        let [binding] = statement.bindings() else {
+            panic!("expected one selected Block var binding, {text:?}");
+        };
+        let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+        assert_eq!(facts.len(), expected.len(), "{text:?}");
+        for (fact, name) in facts.iter().zip(expected.iter()) {
+            assert_eq!(fact.semantic_name(), *name, "{text:?}");
+        }
+    }
+}
+
+/// Central architecture invariant: retained-fact cardinality tracks only how
+/// many `IdentifierReference` operands were proven, never how many syntax
+/// operands (`IdentifierReference` or Decimal alike) were scanned to reach
+/// them.
+#[test]
+fn heterogeneous_reference_decimal_additive_chain_initializer_retained_fact_count_diverges_from_syntax_operand_count()
+ {
+    let script = recognized("let x = 1+2+a+3+4;");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+    assert_eq!(facts.len(), 1);
+    assert_eq!(facts[0].semantic_name(), "a");
+
+    let script = recognized("let x = a+1+b+2+c;");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+    assert_eq!(facts.len(), 3);
+    assert_eq!(facts[0].semantic_name(), "a");
+    assert_eq!(facts[1].semantic_name(), "b");
+    assert_eq!(facts[2].semantic_name(), "c");
+
+    let script = recognized("let x = a+b+c+1+d+e;");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+    assert_eq!(facts.len(), 5);
+    for (fact, name) in facts.iter().zip(["a", "b", "c", "d", "e"].iter()) {
+        assert_eq!(fact.semantic_name(), *name);
+    }
+}
+
+#[test]
+fn heterogeneous_reference_decimal_additive_chain_initializer_exact_retained_provenance_and_duplicates()
+ {
+    let esc_61 = concat!("\\", "u0061"); // decodes to "a"
+    let esc_foo = concat!("f", "\\", "u006F", "o"); // mixed-part, decodes to "foo"
+
+    let text = format!("let x = 1 + {esc_61} + 2 + {esc_foo} + 3;");
+    let script = recognized(&text);
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+    assert_eq!(facts.len(), 2);
+    assert_eq!(facts[0].reference().fragment(), esc_61);
+    assert_eq!(facts[0].semantic_name(), "a");
+    assert_eq!(facts[1].reference().fragment(), esc_foo);
+    assert_eq!(facts[1].semantic_name(), "foo");
+
+    // Duplicate references remain distinct, retained one-for-one in
+    // authored order.
+    let script = recognized("let x = a+1+a+2+a;");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+    assert_eq!(facts.len(), 3);
+    assert!(facts.iter().all(|fact| fact.semantic_name() == "a"));
+    assert!(facts[0].reference().range().start() < facts[1].reference().range().start());
+    assert!(facts[1].reference().range().start() < facts[2].reference().range().start());
+}
+
+/// Unary firewalls (section 25 of Issue #817): before heterogeneous entry, a
+/// leading- or right-unary-wrapped reference permanently excludes any later
+/// Decimal continuation; after heterogeneous entry, no unary-wrapped
+/// operand of any kind is admitted.
+#[test]
+fn heterogeneous_reference_decimal_additive_chain_initializer_unary_firewalls_remain_unsupported() {
+    for text in [
+        "let x = +a+1+b;",
+        "let x = -a+1+b;",
+        "let x = a+-b+1;",
+        "let x = a-+b+1;",
+        "let x = a+b+-c+1;",
+        "let x = a+1+-b;",
+        "let x = 1+a+-b;",
+        "let x = a+1+b+-c;",
+        "let x = +1+a;",
+        "let x = -1+a;",
+        "let x = 1+-a;",
+        "let x = 1-+a;",
+    ] {
+        assert_unsupported(text);
+    }
+
+    // Regression: the predecessor all-reference optional-unary chain remains
+    // exactly as selected as before Issue #817.
+    let script = recognized("let x = +a+-b;");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+    assert_eq!(facts.len(), 2);
+    assert_eq!(facts[0].semantic_name(), "a");
+    assert_eq!(facts[1].semantic_name(), "b");
+}
+
+/// Zero-reference firewall (section 26 of Issue #817): a chain that never
+/// proves an `IdentifierReference` operand remains outside this theorem, no
+/// matter how many tentative Decimal continuations it authors.
+#[test]
+fn heterogeneous_reference_decimal_additive_chain_initializer_zero_reference_firewall_remains_unsupported()
+ {
+    for text in ["let x = 1+2;", "let x = 1+2+3;", "let x = 1e-2+3+4;"] {
+        assert_unsupported(text);
+    }
+
+    // Regression: a lone accepted Decimal atom remains a valid `DecimalOnly`
+    // initializer, retaining zero `IdentifierReference` facts.
+    let script = recognized("let x = 1;");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    assert_eq!(binding.identifier_reference_initializer_facts().count(), 0);
+}
+
+/// Whole-source transactionality: a locally complete heterogeneous
+/// initializer must not escape as committed selected state when a later
+/// declarator or Grammar failure rejects the containing source.
+#[test]
+fn heterogeneous_reference_decimal_additive_chain_initializer_transactionality_commits_no_earlier_fact()
+ {
+    for text in [
+        "let x = a+1+b, y =;",
+        "var x = 1+2+a+3, y =;",
+        "{ var x = a+1+b+2, y = }",
+    ] {
+        assert_unsupported(text);
+    }
+
+    let subject = grammar_rejection(r"let x = a+1+b, \u{} = 1;");
+    assert_eq!(subject.fragment(), r"\u{}");
+}
+
+/// Ownership regression (PR #818 review remediation): the escaped
+/// `ReservedWord` continuation firewall remains exactly as unsupported after
+/// remediating the duplicate `IdentifierReference` recognition on
+/// heterogeneous entry, at the second-operand, third-operand, and
+/// fourth/Many-operand boundaries alike. Each source authors a plain prefix
+/// eligible for heterogeneous entry (`plain_so_far == true`) followed
+/// immediately by an escaped-`ReservedWord` continuation, which is neither a
+/// valid `IdentifierReference` (a ReservedWord is never accepted) nor a
+/// valid plain-Decimal atom (it does not start with a digit or `.`), so the
+/// whole source remains unsupported exactly as before Issue #817.
+#[test]
+fn heterogeneous_reference_decimal_additive_chain_initializer_escaped_reserved_continuation_firewall_remains_unsupported()
+ {
+    let escaped_if = concat!("\\", "u0069", "f"); // decodes to the reserved word "if"
+
+    for text in [
+        format!("let x = a + {escaped_if};"),
+        format!("let x = a + b + {escaped_if};"),
+        format!("let x = a + b + c + {escaped_if};"),
+    ] {
+        assert_unsupported(&text);
+    }
+
+    // Regression: a plain reference immediately following a Decimal-entered
+    // chain still composes correctly once the escaped-ReservedWord firewall
+    // is no longer in the way.
+    let script = recognized("let x = a+1+b;");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+    assert_eq!(facts.len(), 2);
+    assert_eq!(facts[0].semantic_name(), "a");
+    assert_eq!(facts[1].semantic_name(), "b");
 }
 
 // --- Issue #775: composes the already-accepted leading `+`/`-`
