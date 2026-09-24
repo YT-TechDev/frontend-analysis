@@ -2132,21 +2132,45 @@ enum SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition {
 /// initializer-owned callers below can track whether every operand
 /// recognized so far remains eligible to compose the heterogeneous
 /// `IdentifierReference`/plain-Decimal theorem accepted by #815/#816, which
-/// admits only plain operands. `NotSelected` covers every normal decline: no
-/// authored binary `+`/`-` at all, a same-sign zero-trivia adjacency the
-/// #777/#778 theorem excludes (`a+b++c`, `a+b--c`), or an
-/// escaped-ReservedWord/malformed/absent operand after a legitimately
-/// consumed operator -- in every case the cursor is restored to exactly the
-/// entry position this probe started from. `ResourceLimited` and
+/// admits only plain operands.
+///
+/// The two non-`Matched` decline outcomes (Issue #817 splits the previous
+/// single `NotSelected` outcome to prevent a duplicate `IdentifierReference`
+/// recognition -- including a duplicate escaped-operand decode -- when a
+/// caller subsequently probes only a plain Decimal alternative, per
+/// #815/#816): `NoContinuation` covers no authored binary `+`/`-` at this
+/// boundary at all, so there is no operand position for any alternative
+/// (Decimal included) to probe. `OperandDeclined` covers every case where a
+/// binary `+`/`-` (and any inter-operator trivia) *was* legitimately
+/// consumed but no `IdentifierReference` operand completed there -- a
+/// same-sign zero-trivia adjacency the #777/#778 theorem excludes
+/// (`a+b++c`, `a+b--c`), a declined leading-unary alternative, or an
+/// escaped-ReservedWord/malformed/absent plain operand -- and carries
+/// `operand_entry`, the exact cursor position immediately after that
+/// already-consumed operator and trivia (before any operand alternative was
+/// attempted there). In every `OperandDeclined` case this primitive has
+/// already restored the cursor to this boundary's own entry position (the
+/// pre-#817 `NotSelected` contract, unchanged); `operand_entry` is carried
+/// only as transient recognition-control state for an eligible caller to
+/// probe a plain Decimal alternative from that exact already-owned
+/// position, never by rediscovering it through a source search, backward
+/// scan, operator reconstruction, or `SourceAnchor` arithmetic. Neither
+/// decline outcome permits or implies retrying `IdentifierReference`
+/// recognition at `operand_entry` -- that recognition, if attempted at all,
+/// has already run exactly once for this boundary. `ResourceLimited` and
 /// `InternalFailure` preserve the shared recognizer's own
-/// processing-failure classes and are never collapsed into `NotSelected`.
+/// processing-failure classes and are never collapsed into either decline
+/// outcome.
 #[derive(Debug)]
 enum SelectedIdentifierReferenceInitializerContinuationRecognition {
     Matched {
         fact: SelectedIdentifierReferenceFact,
         plain: bool,
     },
-    NotSelected,
+    NoContinuation,
+    OperandDeclined {
+        operand_entry: usize,
+    },
     ResourceLimited,
     InternalFailure,
 }
@@ -4490,24 +4514,30 @@ impl<'source> Cursor<'source> {
     /// stay outside this widening. Widened by Issue #817 (composing the
     /// accepted candidate-independent heterogeneous
     /// `IdentifierReference`/plain-Decimal additive-chain theorem proven by
-    /// #815/PR #816): a successful Decimal alternative no longer commits
-    /// `One(first)` unconditionally. Instead the already-complete `One(first)`
-    /// carrier is handed to the owner-private heterogeneous continuation
-    /// loop (positioned immediately after the first operand, before the
-    /// binary sign this decimal alternative itself consumed is
-    /// re-attempted), which grows it with any further plain Decimal
-    /// (discarded) or plain `IdentifierReference` (retained) operand and
-    /// otherwise leaves the carrier and cursor exactly as they already
-    /// were; the loop's own decimal-atom grammar never begins with a `+`/`-`
-    /// sign, so it naturally excludes a right-unary-guarded decline without
-    /// this call site needing to re-check `right_unary_consumed` itself. A
+    /// #815/PR #816): the existing owned `after_operator` position -- the
+    /// position immediately after the operator, its trivia, and any
+    /// already-consumed right-unary sign, remembered before this call site's
+    /// own single `IdentifierReference` attempt for the second operand -- is
+    /// preserved exactly as it was before Issue #817. On a declined second
+    /// operand, this call site resumes exactly there to probe *only* a plain
+    /// Decimal alternative: it never retries `IdentifierReference`
+    /// recognition (so an escaped operand is never decoded/classified
+    /// twice), and Decimal's own separator-free grammar never begins with a
+    /// `+`/`-` sign, so a right-unary-guarded position naturally fails this
+    /// probe without this call site needing to re-check
+    /// `right_unary_consumed` itself. A matched Decimal no longer commits
+    /// `One(first)` unconditionally: it proves the heterogeneous theorem for
+    /// this boundary and hands the already-complete `One(first)` carrier,
+    /// with the cursor now positioned immediately after that just-consumed
+    /// Decimal atom, to the owner-private heterogeneous continuation loop,
+    /// which grows it with any further plain Decimal (discarded) or plain
+    /// `IdentifierReference` (retained) operand. A
     /// `ResourceLimited`/`InternalFailure` processing failure from the loop
     /// is propagated immediately and is never downgraded to a completed
     /// `One` result. A declining Decimal alternative (or a
-    /// right-unary-guarded decline, or the loop finding no further operand)
-    /// restores the cursor to exactly where it stood right after the first
-    /// operand and returns `One(first)`, identically to every other
-    /// continuation decline above.
+    /// right-unary-guarded decline) restores the cursor to exactly where it
+    /// stood right after the first operand and returns `One(first)`,
+    /// identically to every other continuation decline above.
     fn consume_selected_identifier_reference_initializer(
         &mut self,
     ) -> SelectedIdentifierReferenceInitializerRecognition {
@@ -4558,6 +4588,7 @@ impl<'source> Cursor<'source> {
             right_unary_consumed = true;
         }
 
+        let after_operator = self.offset;
         match self.consume_selected_identifier_reference() {
             SelectedIdentifierReferenceRecognition::Matched(second) => self
                 .consume_selected_identifier_reference_initializer_third_operand(
@@ -4567,10 +4598,19 @@ impl<'source> Cursor<'source> {
                 ),
             SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName { .. }
             | SelectedIdentifierReferenceRecognition::NotSelected => {
+                self.offset = after_operator;
+                if !right_unary_consumed
+                    && (self.consume_selected_plain_exponent_decimal_literal()
+                        || self.consume_selected_plain_fractional_decimal_literal()
+                        || self.consume_selected_decimal_integer())
+                {
+                    return self
+                        .grow_selected_heterogeneous_identifier_reference_decimal_initializer(
+                            SelectedIdentifierReferenceInitializer::One(first),
+                        );
+                }
                 self.offset = after_first;
-                self.grow_selected_heterogeneous_identifier_reference_decimal_initializer(
-                    SelectedIdentifierReferenceInitializer::One(first),
-                )
+                SelectedIdentifierReferenceInitializerRecognition::One(first)
             }
             SelectedIdentifierReferenceRecognition::ResourceLimited => {
                 SelectedIdentifierReferenceInitializerRecognition::ResourceLimited
@@ -4613,16 +4653,21 @@ impl<'source> Cursor<'source> {
 
     /// Owner-private heterogeneous `IdentifierReference`/plain-Decimal
     /// additive continuation loop (Issue #817, composing the accepted
-    /// candidate-independent theorem proven by #815/PR #816), entered only
-    /// once the theorem is already proven for the caller-supplied `carrier`
-    /// -- i.e. the caller already knows at least one plain Decimal atom has
-    /// been recognized somewhere in the chain (whether committed, as at the
-    /// Decimal-first entry, or merely about to be attempted at this call's
-    /// first iteration, as at every reference-first call site above) and
-    /// `carrier` already holds every `IdentifierReference` fact proven so
-    /// far. The cursor must already be positioned immediately after the
-    /// latest committed operand (Decimal or `IdentifierReference` alike),
-    /// before any trivia has been probed for a further continuation.
+    /// candidate-independent theorem proven by #815/PR #816). Every call
+    /// site genuinely proves the theorem *before* calling this loop: at
+    /// least one plain Decimal atom has just been consumed by the caller
+    /// immediately before this call (never merely attempted or searched for
+    /// by this loop itself), and `carrier` already holds at least one
+    /// `IdentifierReference` fact proven earlier in the same chain. This
+    /// loop never performs the first Decimal-vs-`IdentifierReference`
+    /// dispatch that proves entry into heterogeneous mode -- each caller
+    /// owns that single dispatch itself (probing a plain Decimal alternative
+    /// from its own already-owned operand-entry position after its own
+    /// single `IdentifierReference` attempt has declined) precisely so an
+    /// escaped or malformed operand is never decoded or classified twice.
+    /// The cursor must already be positioned immediately after that
+    /// just-consumed Decimal atom, before any trivia has been probed for a
+    /// further continuation.
     ///
     /// Each iteration mirrors the plain-reference continuation primitive's
     /// own shape but composes only the #815/#816 theorem's plain operand
@@ -4757,9 +4802,12 @@ impl<'source> Cursor<'source> {
     /// back to the position immediately before the sign it consumed, not to
     /// this continuation's own `entry` (which additionally precedes the
     /// consumed binary sign and inter-operator trivia): this helper restores
-    /// `entry` itself before reporting `NotSelected`. `ResourceLimited` and
-    /// `InternalFailure` from that delegate are propagated exactly, never
-    /// downgraded to `NotSelected`.
+    /// `entry` itself before reporting `OperandDeclined { operand_entry }`
+    /// (Issue #817; `operand_entry` is exactly the position immediately
+    /// after the already-consumed operator and trivia -- the leading unary
+    /// sign's own position -- see the type's own documentation).
+    /// `ResourceLimited` and `InternalFailure` from that delegate are
+    /// propagated exactly, never downgraded to a decline outcome.
     ///
     /// When the next authored character is not an allowed leading `+`/`-`,
     /// the plain `IdentifierReference` alternative composes freely, exactly
@@ -4769,18 +4817,29 @@ impl<'source> Cursor<'source> {
     /// operand returns `Matched`, with the cursor positioned immediately
     /// after that operand. An escaped-ReservedWord, malformed, or entirely
     /// absent operand restores the cursor to exactly `entry` and returns
-    /// `NotSelected`, leaving the untouched tail (e.g. an escaped spelling
-    /// decoding to a ReservedWord, `\u{}`, a non-`IdentifierReference` atom,
-    /// or a richer-expression neighbor) for the enclosing owner to judge
-    /// exactly as an unrecognized initializer suffix always has been -- no
-    /// dedicated firewall logic, tokenizer, or generic expression parser is
+    /// `OperandDeclined { operand_entry }` (Issue #817; `operand_entry`
+    /// equals `entry` plus the already-consumed operator and trivia, i.e.
+    /// exactly where this failed `IdentifierReference` attempt began),
+    /// leaving the untouched tail (e.g. an escaped spelling decoding to a
+    /// ReservedWord, `\u{}`, a non-`IdentifierReference` atom, or a
+    /// richer-expression neighbor) for the enclosing owner to judge exactly
+    /// as an unrecognized initializer suffix always has been -- no dedicated
+    /// firewall logic, tokenizer, or generic expression parser is
     /// introduced. `ResourceLimited`/`InternalFailure` from that recognizer
-    /// is likewise propagated immediately and is never downgraded to
-    /// `NotSelected`.
+    /// is likewise propagated immediately and is never downgraded to a
+    /// decline outcome.
     ///
     /// Both alternatives ultimately retain the same existing inner
     /// `SelectedIdentifierReferenceFact`; neither the binary sign, any
-    /// leading unary sign, nor any trivia is ever retained.
+    /// leading unary sign, nor any trivia is ever retained. `operand_entry`
+    /// is transient recognition-control state only, carried forward from
+    /// the exact position this primitive already computed while consuming
+    /// the operator and trivia -- never reconstructed afterward by a caller
+    /// through source search, backward scan, or `SourceAnchor` arithmetic --
+    /// and it never authorizes retrying `IdentifierReference` recognition at
+    /// that position: whichever `IdentifierReference` alternative this
+    /// primitive attempted (plain or leading-unary) already ran exactly once
+    /// before either decline outcome is returned.
     ///
     /// This helper only decides the #777/#778 boundary and dispatches to
     /// the two existing owned recognizers above; it duplicates neither's
@@ -4807,16 +4866,19 @@ impl<'source> Cursor<'source> {
             '-'
         } else {
             self.offset = entry;
-            return SelectedIdentifierReferenceInitializerContinuationRecognition::NotSelected;
+            return SelectedIdentifierReferenceInitializerContinuationRecognition::NoContinuation;
         };
 
         let before_inter_operator_trivia = self.offset;
         self.skip_selected_trivia();
+        let operand_entry = self.offset;
 
         if let Some(unary_sign @ ('+' | '-')) = self.peek_char() {
             if unary_sign == binary_sign && self.offset == before_inter_operator_trivia {
                 self.offset = entry;
-                return SelectedIdentifierReferenceInitializerContinuationRecognition::NotSelected;
+                return SelectedIdentifierReferenceInitializerContinuationRecognition::OperandDeclined {
+                    operand_entry,
+                };
             }
 
             return match self
@@ -4830,7 +4892,9 @@ impl<'source> Cursor<'source> {
                 },
                 SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
                     self.offset = entry;
-                    SelectedIdentifierReferenceInitializerContinuationRecognition::NotSelected
+                    SelectedIdentifierReferenceInitializerContinuationRecognition::OperandDeclined {
+                        operand_entry,
+                    }
                 }
                 SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
                     SelectedIdentifierReferenceInitializerContinuationRecognition::ResourceLimited
@@ -4851,7 +4915,9 @@ impl<'source> Cursor<'source> {
             SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName { .. }
             | SelectedIdentifierReferenceRecognition::NotSelected => {
                 self.offset = entry;
-                SelectedIdentifierReferenceInitializerContinuationRecognition::NotSelected
+                SelectedIdentifierReferenceInitializerContinuationRecognition::OperandDeclined {
+                    operand_entry,
+                }
             }
             SelectedIdentifierReferenceRecognition::ResourceLimited => {
                 SelectedIdentifierReferenceInitializerContinuationRecognition::ResourceLimited
@@ -4890,18 +4956,25 @@ impl<'source> Cursor<'source> {
     /// `second` alike -- was plain, never leading- or right-unary-wrapped
     /// (that bit is never derived by inspecting source, only carried
     /// forward from each operand's own recognition, per Issue #817's
-    /// plain-vs-unary transient-state requirement). When a continuation
-    /// declines and `plain_so_far` is `true`, the already-complete
-    /// `Two { first, second }` carrier is additionally handed to the
+    /// plain-vs-unary transient-state requirement). An `OperandDeclined`
+    /// continuation carries `operand_entry`, the exact position immediately
+    /// after the already-consumed operator and trivia where the declined
+    /// `IdentifierReference` attempt began; when `plain_so_far` is `true`,
+    /// this call site probes only a plain Decimal alternative from that
+    /// *already-owned* `operand_entry` position -- never retrying
+    /// `IdentifierReference` recognition, which the continuation-operand
+    /// primitive already ran exactly once for this boundary. A matched
+    /// Decimal proves the heterogeneous theorem for this boundary and hands
+    /// the already-complete `Two { first, second }` carrier to the
     /// owner-private heterogeneous continuation loop, which grows it with
     /// any further plain Decimal (discarded) or plain `IdentifierReference`
-    /// (retained) operand and otherwise leaves the carrier and cursor
-    /// exactly as they already were. When `plain_so_far` is `false`, or the
-    /// loop finds no further operand, the decline commits
-    /// `Two { first, second }` exactly as before Issue #817 -- identical to
-    /// the pre-#811 decline behavior for `a+b`, `a+-b`, `+a+b`, and `+a+-b`
-    /// alike. A matched (direct or escaped non-ReservedWord) third operand
-    /// is handed to
+    /// (retained) operand. When `plain_so_far` is `false`, `operand_entry`
+    /// is a `NoContinuation` outcome, or the Decimal probe itself declines,
+    /// the cursor is restored to the continuation-operand primitive's own
+    /// `entry` and the decline commits `Two { first, second }` exactly as
+    /// before Issue #817 -- identical to the pre-#811 decline behavior for
+    /// `a+b`, `a+-b`, `+a+b`, and `+a+-b` alike. A matched (direct or escaped
+    /// non-ReservedWord) third operand is handed to
     /// `consume_selected_identifier_reference_initializer_many_operands`
     /// together with `plain_so_far` narrowed by whether this third operand
     /// was itself plain, which attempts one further fourth-operand
@@ -4927,13 +5000,26 @@ impl<'source> Cursor<'source> {
                 third,
                 plain_so_far && plain,
             ),
-            SelectedIdentifierReferenceInitializerContinuationRecognition::NotSelected => {
+            SelectedIdentifierReferenceInitializerContinuationRecognition::OperandDeclined {
+                operand_entry,
+            } => {
+                let prefix_end = self.offset;
                 if plain_so_far {
-                    return self
-                        .grow_selected_heterogeneous_identifier_reference_decimal_initializer(
-                            SelectedIdentifierReferenceInitializer::Two { first, second },
-                        );
+                    self.offset = operand_entry;
+                    if self.consume_selected_plain_exponent_decimal_literal()
+                        || self.consume_selected_plain_fractional_decimal_literal()
+                        || self.consume_selected_decimal_integer()
+                    {
+                        return self
+                            .grow_selected_heterogeneous_identifier_reference_decimal_initializer(
+                                SelectedIdentifierReferenceInitializer::Two { first, second },
+                            );
+                    }
+                    self.offset = prefix_end;
                 }
+                SelectedIdentifierReferenceInitializerRecognition::Two { first, second }
+            }
+            SelectedIdentifierReferenceInitializerContinuationRecognition::NoContinuation => {
                 SelectedIdentifierReferenceInitializerRecognition::Two { first, second }
             }
             SelectedIdentifierReferenceInitializerContinuationRecognition::ResourceLimited => {
@@ -4961,24 +5047,30 @@ impl<'source> Cursor<'source> {
     /// earlier operand boundary. Absent that continuation (no operator, a
     /// same-sign zero-trivia adjacency, an escaped `ReservedWord`, or no
     /// `IdentifierReference` operand at all), the cursor is restored to
-    /// exactly the end of the third operand. Widened by Issue #817: when the
+    /// exactly the end of the third operand. Widened by Issue #817: an
+    /// `OperandDeclined` continuation carries `operand_entry`, the exact
+    /// position immediately after the already-consumed operator and trivia
+    /// where the declined `IdentifierReference` attempt began; when the
     /// caller-supplied `plain_so_far` transient bit is `true` (every operand
-    /// through `third` was plain), that decline additionally hands the
-    /// already-complete `Three { first, second, third }` carrier to the
-    /// owner-private heterogeneous continuation loop, which grows it with
-    /// any further plain Decimal (discarded) or plain `IdentifierReference`
-    /// (retained) operand and otherwise leaves the carrier and cursor
-    /// exactly as they already were; when `plain_so_far` is `false`, or the
-    /// loop finds no further operand, the unchanged `Three { first, second,
-    /// third }` result is returned -- so `One`/`Two`/`Three` resource
-    /// behavior is never affected by merely attempting a fourth operand
-    /// (`a+b+c+1`). Only once the fourth selected fact is actually proven is
-    /// a retained-fact `Vec` allocated (`try_reserve(3)`, matching the three
-    /// operands -- `second`, `third`, `fourth` -- it must hold immediately),
-    /// moving the already-owned facts rather than cloning them; control then
-    /// moves to `consume_selected_identifier_reference_initializer_many_growth`,
-    /// with `plain_so_far` narrowed by whether this fourth operand was
-    /// itself plain, for the unbounded fifth-and-later continuation. A
+    /// through `third` was plain), this call site probes only a plain
+    /// Decimal alternative from that already-owned `operand_entry` position
+    /// -- never retrying `IdentifierReference` recognition. A matched
+    /// Decimal hands the already-complete `Three { first, second, third }`
+    /// carrier to the owner-private heterogeneous continuation loop, which
+    /// grows it with any further plain Decimal (discarded) or plain
+    /// `IdentifierReference` (retained) operand. When `plain_so_far` is
+    /// `false`, the continuation was `NoContinuation`, or the Decimal probe
+    /// itself declines, the cursor is restored and the unchanged
+    /// `Three { first, second, third }` result is returned -- so
+    /// `One`/`Two`/`Three` resource behavior is never affected by merely
+    /// attempting a fourth operand (`a+b+c+1`). Only once the fourth
+    /// selected fact is actually proven is a retained-fact `Vec` allocated
+    /// (`try_reserve(3)`, matching the three operands -- `second`, `third`,
+    /// `fourth` -- it must hold immediately), moving the already-owned facts
+    /// rather than cloning them; control then moves to
+    /// `consume_selected_identifier_reference_initializer_many_growth`, with
+    /// `plain_so_far` narrowed by whether this fourth operand was itself
+    /// plain, for the unbounded fifth-and-later continuation. A
     /// `ResourceLimited`/`InternalFailure` processing failure from the
     /// continuation-operand primitive, from the initial `Vec` reservation,
     /// or from the heterogeneous continuation loop, is propagated
@@ -5009,17 +5101,34 @@ impl<'source> Cursor<'source> {
                     plain_so_far && plain,
                 )
             }
-            SelectedIdentifierReferenceInitializerContinuationRecognition::NotSelected => {
+            SelectedIdentifierReferenceInitializerContinuationRecognition::OperandDeclined {
+                operand_entry,
+            } => {
+                let prefix_end = self.offset;
                 if plain_so_far {
-                    return self
-                        .grow_selected_heterogeneous_identifier_reference_decimal_initializer(
-                            SelectedIdentifierReferenceInitializer::Three {
-                                first,
-                                second,
-                                third,
-                            },
-                        );
+                    self.offset = operand_entry;
+                    if self.consume_selected_plain_exponent_decimal_literal()
+                        || self.consume_selected_plain_fractional_decimal_literal()
+                        || self.consume_selected_decimal_integer()
+                    {
+                        return self
+                            .grow_selected_heterogeneous_identifier_reference_decimal_initializer(
+                                SelectedIdentifierReferenceInitializer::Three {
+                                    first,
+                                    second,
+                                    third,
+                                },
+                            );
+                    }
+                    self.offset = prefix_end;
                 }
+                SelectedIdentifierReferenceInitializerRecognition::Three {
+                    first,
+                    second,
+                    third,
+                }
+            }
+            SelectedIdentifierReferenceInitializerContinuationRecognition::NoContinuation => {
                 SelectedIdentifierReferenceInitializerRecognition::Three {
                     first,
                     second,
@@ -5052,24 +5161,30 @@ impl<'source> Cursor<'source> {
     /// #777/#778 binary/unary boundary independently at every later
     /// operand. Absent that continuation, the cursor is restored to exactly
     /// the end of the current final retained operand. Widened by Issue
-    /// #817: the caller-supplied, then loop-narrowed, `plain_so_far`
-    /// transient bit records whether every operand retained in `rest` so
-    /// far was plain; when it is still `true` at a decline, the current
-    /// `Many { first, rest }` carrier is additionally handed to the
-    /// owner-private heterogeneous continuation loop, which grows it with
-    /// any further plain Decimal (discarded) or plain `IdentifierReference`
-    /// (retained) operand and otherwise leaves the carrier and cursor
-    /// exactly as they already were; when `plain_so_far` is `false`, or the
-    /// loop finds no further operand, the current `Many { first, rest }`
-    /// result is returned, leaving the untouched suffix for the enclosing
-    /// owner to judge exactly as an unrecognized initializer suffix always
-    /// has been -- no dedicated firewall logic, tokenizer, or generic
-    /// expression parser is introduced. A matched operand is retained only
-    /// after `rest.try_reserve(1)` succeeds; a `ResourceLimited`/`InternalFailure`
-    /// processing failure -- from the reservation, the continuation-operand
-    /// primitive, or the heterogeneous continuation loop -- is propagated
-    /// immediately and never downgrades the already-proven `Many` prefix.
-    /// No fixed maximum cardinality exists.
+    /// #817: an `OperandDeclined` continuation carries `operand_entry`, the
+    /// exact position immediately after the already-consumed operator and
+    /// trivia where the declined `IdentifierReference` attempt began. The
+    /// caller-supplied, then loop-narrowed, `plain_so_far` transient bit
+    /// records whether every operand retained in `rest` so far was plain;
+    /// when it is still `true` at such a decline, this loop probes only a
+    /// plain Decimal alternative from that already-owned `operand_entry`
+    /// position -- never retrying `IdentifierReference` recognition. A
+    /// matched Decimal hands the current `Many { first, rest }` carrier to
+    /// the owner-private heterogeneous continuation loop, which grows it
+    /// with any further plain Decimal (discarded) or plain
+    /// `IdentifierReference` (retained) operand. When `plain_so_far` is
+    /// `false`, the continuation was `NoContinuation`, or the Decimal probe
+    /// itself declines, the cursor is restored and the current
+    /// `Many { first, rest }` result is returned, leaving the untouched
+    /// suffix for the enclosing owner to judge exactly as an unrecognized
+    /// initializer suffix always has been -- no dedicated firewall logic,
+    /// tokenizer, or generic expression parser is introduced. A matched
+    /// operand is retained only after `rest.try_reserve(1)` succeeds; a
+    /// `ResourceLimited`/`InternalFailure` processing failure -- from the
+    /// reservation, the continuation-operand primitive, or the heterogeneous
+    /// continuation loop -- is propagated immediately and never downgrades
+    /// the already-proven `Many` prefix. No fixed maximum cardinality
+    /// exists.
     fn consume_selected_identifier_reference_initializer_many_growth(
         &mut self,
         first: SelectedIdentifierReferenceFact,
@@ -5088,13 +5203,26 @@ impl<'source> Cursor<'source> {
                     rest.push(next);
                     plain_so_far = plain_so_far && plain;
                 }
-                SelectedIdentifierReferenceInitializerContinuationRecognition::NotSelected => {
+                SelectedIdentifierReferenceInitializerContinuationRecognition::OperandDeclined {
+                    operand_entry,
+                } => {
+                    let prefix_end = self.offset;
                     if plain_so_far {
-                        return self
-                            .grow_selected_heterogeneous_identifier_reference_decimal_initializer(
-                                SelectedIdentifierReferenceInitializer::Many { first, rest },
-                            );
+                        self.offset = operand_entry;
+                        if self.consume_selected_plain_exponent_decimal_literal()
+                            || self.consume_selected_plain_fractional_decimal_literal()
+                            || self.consume_selected_decimal_integer()
+                        {
+                            return self
+                                .grow_selected_heterogeneous_identifier_reference_decimal_initializer(
+                                    SelectedIdentifierReferenceInitializer::Many { first, rest },
+                                );
+                        }
+                        self.offset = prefix_end;
                     }
+                    return SelectedIdentifierReferenceInitializerRecognition::Many { first, rest };
+                }
+                SelectedIdentifierReferenceInitializerContinuationRecognition::NoContinuation => {
                     return SelectedIdentifierReferenceInitializerRecognition::Many { first, rest };
                 }
                 SelectedIdentifierReferenceInitializerContinuationRecognition::ResourceLimited => {

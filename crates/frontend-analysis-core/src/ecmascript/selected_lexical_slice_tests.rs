@@ -8524,6 +8524,42 @@ fn heterogeneous_reference_decimal_additive_chain_initializer_transactionality_c
     assert_eq!(subject.fragment(), r"\u{}");
 }
 
+/// Ownership regression (PR #818 review remediation): the escaped
+/// `ReservedWord` continuation firewall remains exactly as unsupported after
+/// remediating the duplicate `IdentifierReference` recognition on
+/// heterogeneous entry, at the second-operand, third-operand, and
+/// fourth/Many-operand boundaries alike. Each source authors a plain prefix
+/// eligible for heterogeneous entry (`plain_so_far == true`) followed
+/// immediately by an escaped-`ReservedWord` continuation, which is neither a
+/// valid `IdentifierReference` (a ReservedWord is never accepted) nor a
+/// valid plain-Decimal atom (it does not start with a digit or `.`), so the
+/// whole source remains unsupported exactly as before Issue #817.
+#[test]
+fn heterogeneous_reference_decimal_additive_chain_initializer_escaped_reserved_continuation_firewall_remains_unsupported()
+ {
+    let escaped_if = concat!("\\", "u0069", "f"); // decodes to the reserved word "if"
+
+    for text in [
+        format!("let x = a + {escaped_if};"),
+        format!("let x = a + b + {escaped_if};"),
+        format!("let x = a + b + c + {escaped_if};"),
+    ] {
+        assert_unsupported(&text);
+    }
+
+    // Regression: a plain reference immediately following a Decimal-entered
+    // chain still composes correctly once the escaped-ReservedWord firewall
+    // is no longer in the way.
+    let script = recognized("let x = a+1+b;");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+    assert_eq!(facts.len(), 2);
+    assert_eq!(facts[0].semantic_name(), "a");
+    assert_eq!(facts[1].semantic_name(), "b");
+}
+
 // --- Issue #775: composes the already-accepted leading `+`/`-`
 // `IdentifierReference` `UnaryExpression` (#746/#747, #750) as the left
 // operand of the already-accepted exactly-two `IdentifierReference` additive
