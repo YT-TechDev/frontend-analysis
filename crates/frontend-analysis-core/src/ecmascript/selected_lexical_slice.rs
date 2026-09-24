@@ -2272,19 +2272,32 @@ enum SelectedIdentifierReferenceInitializerContinuationRecognition {
 /// `consume_selected_leading_plus_minus_identifier_reference_unary_expression`
 /// (unary alternative); the binary sign, whether any leading unary sign was
 /// present, and any inter-operator trivia are transient recognition-time
-/// state only and are never retained. `NotSelected` covers a same-sign
-/// zero-trivia adjacency the #777/#778 theorem excludes (`a+b++c`,
-/// `a+b--c`) and an escaped-ReservedWord/malformed/absent operand after a
-/// legitimately consumed binary operator -- in every case the cursor is
-/// restored to exactly the whole-body `body_snapshot` this probe's caller
-/// supplies, never merely this continuation's own entry position.
-/// `ResourceLimited` and `InternalFailure` preserve the shared recognizers'
-/// own processing-failure classes and are never collapsed into
+/// state only and are never retained. `Matched` additionally carries
+/// `plain` (Issue #819 remediation), a transient recognition-control bit
+/// that is `true` exactly when this operand was recognized via the plain
+/// alternative (`false` for the leading-unary alternative); it is not part
+/// of the fact, is never persisted on any carrier, and exists solely so
+/// `..._third_operand`/`..._many_operands`/`..._many_growth` below can track
+/// whether every operand recognized by *this* settled continuation so far
+/// remains eligible, on its own eventual decline, to probe a plain Decimal
+/// alternative under the heterogeneous theorem accepted by #815/#816 --
+/// this primitive itself never attempts that Decimal alternative and never
+/// changes its own decline behavior based on `plain`. `NotSelected` covers
+/// a same-sign zero-trivia adjacency the #777/#778 theorem excludes
+/// (`a+b++c`, `a+b--c`) and an escaped-ReservedWord/malformed/absent
+/// operand after a legitimately consumed binary operator -- in every case
+/// the cursor is restored to exactly the whole-body `body_snapshot` this
+/// probe's caller supplies, never merely this continuation's own entry
+/// position. `ResourceLimited` and `InternalFailure` preserve the shared
+/// recognizers' own processing-failure classes and are never collapsed into
 /// `NotSelected` or a completed shorter prefix.
 #[derive(Debug)]
 enum SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition {
     NoContinuation,
-    Matched(SelectedIdentifierReferenceFact),
+    Matched {
+        fact: SelectedIdentifierReferenceFact,
+        plain: bool,
+    },
     NotSelected,
     ResourceLimited,
     InternalFailure,
@@ -3780,21 +3793,30 @@ impl<'source> Cursor<'source> {
     /// Issue #819 (per #688 comment 5814566341) widens both routes from a
     /// bounded exactly-two-syntax-operand shape to the accepted
     /// candidate-independent heterogeneous `IdentifierReference`/
-    /// plain-Decimal additive-chain 2..N theorem proven by #815/PR #816,
-    /// through
-    /// `consume_selected_identifier_reference_expression_statement_use_site_body_heterogeneous_growth`
-    /// -- never through the leading-unary-first route above, which stays
+    /// plain-Decimal additive-chain 2..N theorem proven by #815/PR #816 --
+    /// never through the leading-unary-first route above, which stays
     /// hard-zero for this widening exactly as it already does for #793, so
-    /// `+a + 1 + b;`/`-a + 1 + b;` remain outside. Reference-left: a
-    /// `Matched(second)` reference (plain or right-unary-wrapped) hands off
-    /// to that growth loop with `Two { first, second }` and `plain_so_far`
-    /// exactly `!right_unary_consumed`, never `decimal_seen` (no Decimal has
-    /// been proven yet at that point); the existing Decimal fallback (tried
-    /// only when no right-unary wrapper was consumed) hands off with `One
-    /// (first)`, `decimal_seen: true`, and `plain_so_far: true` instead of
-    /// unconditionally committing `One(first)`. Decimal-left is widened
-    /// inside `consume_selected_plain_decimal_atom_identifier_reference_free_standing_use_site_body`
-    /// itself. Both hand-offs preserve this leaf's existing whole-body
+    /// `+a + 1 + b;`/`-a + 1 + b;` remain outside, and its own `Matched`
+    /// second operand always passes `plain_so_far: false` into
+    /// `..._third_operand`. Reference-left: a `Matched(second)` reference
+    /// (plain or right-unary-wrapped) hands off to `..._third_operand`
+    /// -- the same settled all-reference continuation the leading-unary-first
+    /// route already used before #819, which remains the sole recognizer and
+    /// resource owner for every boundary it can still resolve on its own --
+    /// with `plain_so_far` exactly `!right_unary_consumed`; that continuation
+    /// engages `..._heterogeneous_growth` only from its own normal decline,
+    /// via `..._all_reference_decimal_fallback`, never unconditionally
+    /// (Issue #819 remediation of the initial candidate's ownership
+    /// widening). The existing Decimal fallback here (tried only when no
+    /// right-unary wrapper was consumed for the second operand, where no
+    /// settled all-reference continuation ever had ownership to begin with,
+    /// since no second reference was ever proven) hands off directly to
+    /// `..._heterogeneous_growth` with `One(first)`, `decimal_seen: true`,
+    /// and `plain_so_far: true`, instead of unconditionally committing
+    /// `One(first)`. Decimal-left is widened inside
+    /// `consume_selected_plain_decimal_atom_identifier_reference_free_standing_use_site_body`
+    /// itself, which likewise never had settled all-reference ownership to
+    /// preserve. Every hand-off preserves this leaf's existing whole-body
     /// transaction: a subsequently declining continuation restores
     /// `snapshot` and returns `NotSelected`, never a shorter `One`/`Two`
     /// prefix.
@@ -3851,7 +3873,7 @@ impl<'source> Cursor<'source> {
 
                 return self
                     .consume_selected_identifier_reference_expression_statement_use_site_body_third_operand(
-                        snapshot, first, second,
+                        snapshot, first, second, false,
                     );
             }
             SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
@@ -3915,10 +3937,10 @@ impl<'source> Cursor<'source> {
             SelectedIdentifierReferenceRecognition::Matched(second) => {
                 self.skip_selected_trivia();
 
-                self.consume_selected_identifier_reference_expression_statement_use_site_body_heterogeneous_growth(
+                self.consume_selected_identifier_reference_expression_statement_use_site_body_third_operand(
                     snapshot,
-                    SelectedFreeStandingIdentifierReferenceUseSite::Two { first, second },
-                    false,
+                    first,
+                    second,
                     !right_unary_consumed,
                 )
             }
@@ -4043,7 +4065,10 @@ impl<'source> Cursor<'source> {
             {
                 SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::Matched(
                     fact,
-                ) => SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::Matched(fact),
+                ) => SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::Matched {
+                    fact,
+                    plain: false,
+                },
                 SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
                     self.offset = body_snapshot;
                     SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::NotSelected
@@ -4059,7 +4084,10 @@ impl<'source> Cursor<'source> {
 
         match self.consume_selected_identifier_reference() {
             SelectedIdentifierReferenceRecognition::Matched(fact) => {
-                SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::Matched(fact)
+                SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::Matched {
+                    fact,
+                    plain: true,
+                }
             }
             SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName { .. }
             | SelectedIdentifierReferenceRecognition::NotSelected => {
@@ -4073,6 +4101,86 @@ impl<'source> Cursor<'source> {
                 SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::InternalFailure
             }
         }
+    }
+
+    /// Free-standing-owner-private Decimal fallback (Issue #819 remediation
+    /// of the initial #819 candidate's ownership widening): probes a single
+    /// plain Decimal atom at `boundary_entry` -- the exact cursor position
+    /// the caller already owned immediately before invoking the settled
+    /// `..._additive_continuation` primitive above for this boundary, and
+    /// which that primitive's own `NotSelected` decline already discarded by
+    /// resetting to `body_snapshot` -- never by rediscovering it through a
+    /// source search, backward scan, operator reconstruction, or
+    /// `SourceAnchor` arithmetic. Called only from
+    /// `..._third_operand`/`..._many_operands`/`..._many_growth` below,
+    /// exactly once per boundary, only after that settled primitive has
+    /// already declined normally (an escaped-ReservedWord/malformed/absent
+    /// operand, or a same-sign zero-trivia adjacency) at a boundary whose
+    /// entire prefix (`plain_so_far`) remains plain-only-eligible; it is
+    /// never consulted while the settled primitive itself still matches, so
+    /// the existing all-reference/optional-unary continuation remains the
+    /// sole recognizer and resource owner for every boundary it can still
+    /// resolve on its own -- this fallback exists only for the boundary
+    /// where that continuation has already normally declined.
+    ///
+    /// `plain_so_far` false skips the probe entirely (some earlier operand
+    /// in this chain was already leading-/right-unary-wrapped, so the
+    /// plain-only heterogeneous theorem can never apply) and restores
+    /// `body_snapshot` immediately. Otherwise the cursor is reset to
+    /// `boundary_entry` and exactly one binary `+`/`-` (already proven
+    /// present there, since the settled primitive only reaches `NotSelected`
+    /// after consuming one) is re-consumed -- never re-attempting
+    /// `IdentifierReference` recognition, which the settled primitive above
+    /// already ran exactly once for this boundary and declined -- followed
+    /// by selected trivia and the existing unmodified
+    /// `consume_selected_plain_exponent_decimal_literal` /
+    /// `consume_selected_plain_fractional_decimal_literal` /
+    /// `consume_selected_decimal_integer` helpers in that order. A same-sign
+    /// zero-trivia adjacency or any leading-/right-unary sign at this
+    /// position never spuriously matches here, since none of the three
+    /// Decimal scanners accept a leading sign; the settled primitive's own
+    /// rejection of those forms is therefore preserved by construction,
+    /// without duplicating that check.
+    ///
+    /// A matched Decimal atom proves the chain now contains at least one
+    /// Decimal and at least one already-retained `IdentifierReference`
+    /// (`carrier`), so it hands `carrier` to
+    /// `..._heterogeneous_growth` with `decimal_seen: true`, which alone
+    /// owns the remaining chain from here per the accepted #815/#816
+    /// theorem. No accepted Decimal atom restores `body_snapshot` and
+    /// declines (`NotSelected`) -- never a shorter `carrier` prefix, exactly
+    /// matching this owner's existing whole-body transaction.
+    fn consume_selected_identifier_reference_expression_statement_use_site_body_all_reference_decimal_fallback(
+        &mut self,
+        body_snapshot: usize,
+        boundary_entry: usize,
+        plain_so_far: bool,
+        carrier: SelectedFreeStandingIdentifierReferenceUseSite,
+    ) -> SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition {
+        if plain_so_far {
+            self.offset = boundary_entry;
+
+            if self.consume_ascii('+') || self.consume_ascii('-') {
+                self.skip_selected_trivia();
+
+                if self.consume_selected_plain_exponent_decimal_literal()
+                    || self.consume_selected_plain_fractional_decimal_literal()
+                    || self.consume_selected_decimal_integer()
+                {
+                    self.skip_selected_trivia();
+                    return self
+                        .consume_selected_identifier_reference_expression_statement_use_site_body_heterogeneous_growth(
+                            body_snapshot,
+                            carrier,
+                            true,
+                            plain_so_far,
+                        );
+                }
+            }
+        }
+
+        self.offset = body_snapshot;
+        SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::NotSelected
     }
 
     /// Composes the bounded optional third-operand continuation of the
@@ -4092,35 +4200,49 @@ impl<'source> Cursor<'source> {
     ///
     /// `NoContinuation` from the primitive commits `Two { first, second }`
     /// immediately: `a+b;` and `+a+-b;` are unaffected by this leaf's
-    /// existence. `Matched(third)` skips the third operand's own trailing
-    /// selected trivia and hands off to
+    /// existence. `Matched { fact: third, plain }` skips the third operand's
+    /// own trailing selected trivia and hands off to
     /// `consume_selected_identifier_reference_expression_statement_use_site_body_many_operands`
-    /// (Issue #807 per #688 comment 5780964757), which alone decides
-    /// whether the candidate completes as `Three { first, second, third }`
-    /// or extends into the unbounded `Many` continuation (`a+b+c+d`); this
-    /// helper itself never constructs `Three` or `Many` directly once a
-    /// third operand has matched. `NotSelected` is the whole-body decline
-    /// the primitive already rolled `body_snapshot` back for -- deliberately
-    /// not `Two { first, second }`. This is the load-bearing rollback
-    /// distinction from the initializer's own
-    /// `consume_selected_identifier_reference_initializer_third_operand`
+    /// (Issue #807 per #688 comment 5780964757), narrowing `plain_so_far` by
+    /// AND-accumulation with `plain` (Issue #819 remediation), which alone
+    /// decides whether the candidate completes as `Three { first, second,
+    /// third }` or extends into the unbounded `Many` continuation
+    /// (`a+b+c+d`); this helper itself never constructs `Three` or `Many`
+    /// directly once a third operand has matched. `NotSelected` is this
+    /// settled primitive's own normal decline; while `plain_so_far` remains
+    /// eligible (`first`/`second` were never leading-/right-unary-wrapped)
+    /// it is handed to
+    /// `..._all_reference_decimal_fallback` with the exact boundary offset
+    /// this call captured before probing the primitive, to try a plain
+    /// Decimal alternative under the heterogeneous theorem accepted by
+    /// #815/#816 (Issue #819 remediation) before finally declining; this
+    /// fallback is the sole point where the heterogeneous continuation may
+    /// ever begin owning what was, until now, purely settled all-reference
+    /// recognition -- deliberately not `Two { first, second }` either way.
+    /// This is the load-bearing rollback distinction from the initializer's
+    /// own `consume_selected_identifier_reference_initializer_third_operand`
     /// (Issue #797/#811), which restores only `after_second` and degrades
     /// to a completed `Two` on the identical decline: an initializer's
     /// staged local recovery lets the enclosing declaration/var owner judge
     /// the remainder, but a free-standing use-site is a whole-body
     /// transaction with no enclosing owner to hand a partial result to, so
     /// once a second additive continuation has started it must fully
-    /// complete or the entire candidate declines. `ResourceLimited`/
-    /// `InternalFailure` from the primitive is propagated immediately and
-    /// is never downgraded to `NotSelected` or to a completed `Two`, and
-    /// never publishes the already-recognized `first`/`second` facts
-    /// through a successful body result.
+    /// complete (as a plain-reference continuation, or -- only on that
+    /// continuation's own normal decline -- as a heterogeneous one) or the
+    /// entire candidate declines. `ResourceLimited`/`InternalFailure` from
+    /// the primitive is propagated immediately and is never downgraded to
+    /// `NotSelected` or to a completed `Two`, and never publishes the
+    /// already-recognized `first`/`second` facts through a successful body
+    /// result.
     fn consume_selected_identifier_reference_expression_statement_use_site_body_third_operand(
         &mut self,
         body_snapshot: usize,
         first: SelectedIdentifierReferenceFact,
         second: SelectedIdentifierReferenceFact,
+        plain_so_far: bool,
     ) -> SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition {
+        let boundary_entry = self.offset;
+
         match self
             .consume_selected_identifier_reference_expression_statement_use_site_body_additive_continuation(body_snapshot)
         {
@@ -4129,17 +4251,26 @@ impl<'source> Cursor<'source> {
                     SelectedFreeStandingIdentifierReferenceUseSite::Two { first, second },
                 )
             }
-            SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::Matched(third) => {
+            SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::Matched {
+                fact: third,
+                plain,
+            } => {
                 self.skip_selected_trivia();
                 self.consume_selected_identifier_reference_expression_statement_use_site_body_many_operands(
                     body_snapshot,
                     first,
                     second,
                     third,
+                    plain_so_far && plain,
                 )
             }
             SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::NotSelected => {
-                SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::NotSelected
+                self.consume_selected_identifier_reference_expression_statement_use_site_body_all_reference_decimal_fallback(
+                    body_snapshot,
+                    boundary_entry,
+                    plain_so_far,
+                    SelectedFreeStandingIdentifierReferenceUseSite::Two { first, second },
+                )
             }
             SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::ResourceLimited => {
                 SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::ResourceLimited
@@ -4178,12 +4309,18 @@ impl<'source> Cursor<'source> {
     /// `consume_selected_identifier_reference_expression_statement_use_site_body_many_growth`
     /// for the unbounded fifth-and-later continuation.
     ///
-    /// `NotSelected` is the whole-body decline the primitive already rolled
-    /// `body_snapshot` back for -- deliberately never `Three { first,
-    /// second, third }`: once a third additive continuation has started it
-    /// must fully complete or the entire candidate declines, exactly
-    /// mirroring the third-operand continuation's own whole-body
-    /// transaction and intentionally not the initializer's staged
+    /// `NotSelected` is this settled primitive's own normal decline; while
+    /// `plain_so_far` remains eligible it is handed to
+    /// `..._all_reference_decimal_fallback` with the exact boundary offset
+    /// this call captured before probing the primitive, to try a plain
+    /// Decimal alternative under the heterogeneous theorem accepted by
+    /// #815/#816 (Issue #819 remediation) before finally declining --
+    /// deliberately never `Three { first, second, third }` either way: once
+    /// a third additive continuation has started it must fully complete (as
+    /// a plain-reference continuation, or -- only on that continuation's own
+    /// normal decline -- as a heterogeneous one) or the entire candidate
+    /// declines, exactly mirroring the third-operand continuation's own
+    /// whole-body transaction and intentionally not the initializer's staged
     /// partial-recovery model (Issue #803), which has no enclosing
     /// free-standing owner to hand a partial result to. `ResourceLimited`/
     /// `InternalFailure` from the primitive is propagated immediately and
@@ -4194,8 +4331,11 @@ impl<'source> Cursor<'source> {
         first: SelectedIdentifierReferenceFact,
         second: SelectedIdentifierReferenceFact,
         third: SelectedIdentifierReferenceFact,
+        plain_so_far: bool,
     ) -> SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition {
-        let fourth = match self
+        let boundary_entry = self.offset;
+
+        let (fourth, plain_so_far) = match self
             .consume_selected_identifier_reference_expression_statement_use_site_body_additive_continuation(body_snapshot)
         {
             SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::NoContinuation => {
@@ -4207,9 +4347,21 @@ impl<'source> Cursor<'source> {
                     },
                 );
             }
-            SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::Matched(fourth) => fourth,
+            SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::Matched {
+                fact: fourth,
+                plain,
+            } => (fourth, plain_so_far && plain),
             SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::NotSelected => {
-                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::NotSelected;
+                return self.consume_selected_identifier_reference_expression_statement_use_site_body_all_reference_decimal_fallback(
+                    body_snapshot,
+                    boundary_entry,
+                    plain_so_far,
+                    SelectedFreeStandingIdentifierReferenceUseSite::Three {
+                        first,
+                        second,
+                        third,
+                    },
+                );
             }
             SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::ResourceLimited => {
                 return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::ResourceLimited;
@@ -4233,6 +4385,7 @@ impl<'source> Cursor<'source> {
         self.consume_selected_identifier_reference_expression_statement_use_site_body_many_growth(
             body_snapshot,
             facts,
+            plain_so_far,
         )
     }
 
@@ -4250,24 +4403,34 @@ impl<'source> Cursor<'source> {
     ///
     /// Each iteration probes the same continuation primitive as the fourth
     /// transition. `NoContinuation` commits the current `Many(facts)`
-    /// immediately. `Matched(next)` skips that operand's own trailing
-    /// selected trivia and is retained only after `facts.try_reserve(1)`
-    /// succeeds -- a reservation failure is `ResourceLimited`, propagated
-    /// immediately. `NotSelected` is the whole-body decline the primitive
-    /// already rolled `body_snapshot` back for, never a shorter `Many`
-    /// prefix: once a later additive continuation has started it must
-    /// fully complete or the entire candidate declines, exactly like every
-    /// earlier operand boundary in this whole-body transaction.
-    /// `ResourceLimited`/`InternalFailure` from either the reservation or
-    /// the primitive itself is propagated immediately and never downgrades
-    /// the already-proven `Many` prefix. No fixed maximum cardinality
-    /// exists.
+    /// immediately. `Matched { fact: next, plain }` skips that operand's own
+    /// trailing selected trivia, narrows `plain_so_far` by AND-accumulation
+    /// with `plain` (Issue #819 remediation), and is retained only after
+    /// `facts.try_reserve(1)` succeeds -- a reservation failure is
+    /// `ResourceLimited`, propagated immediately. `NotSelected` is this
+    /// settled primitive's own normal decline; while `plain_so_far` remains
+    /// eligible it is handed to `..._all_reference_decimal_fallback` with
+    /// the exact boundary offset this iteration captured before probing the
+    /// primitive, to try a plain Decimal alternative under the heterogeneous
+    /// theorem accepted by #815/#816 (Issue #819 remediation) before finally
+    /// declining -- never a shorter `Many` prefix either way: once a later
+    /// additive continuation has started it must fully complete (as a
+    /// plain-reference continuation, or -- only on that continuation's own
+    /// normal decline -- as a heterogeneous one) or the entire candidate
+    /// declines, exactly like every earlier operand boundary in this
+    /// whole-body transaction. `ResourceLimited`/`InternalFailure` from
+    /// either the reservation or the primitive itself is propagated
+    /// immediately and never downgrades the already-proven `Many` prefix.
+    /// No fixed maximum cardinality exists.
     fn consume_selected_identifier_reference_expression_statement_use_site_body_many_growth(
         &mut self,
         body_snapshot: usize,
         mut facts: Vec<SelectedIdentifierReferenceFact>,
+        mut plain_so_far: bool,
     ) -> SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition {
         loop {
+            let boundary_entry = self.offset;
+
             match self
                 .consume_selected_identifier_reference_expression_statement_use_site_body_additive_continuation(body_snapshot)
             {
@@ -4276,7 +4439,11 @@ impl<'source> Cursor<'source> {
                         SelectedFreeStandingIdentifierReferenceUseSite::Many(facts),
                     );
                 }
-                SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::Matched(next) => {
+                SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::Matched {
+                    fact: next,
+                    plain,
+                } => {
+                    plain_so_far = plain_so_far && plain;
                     self.skip_selected_trivia();
                     if facts.try_reserve(1).is_err() {
                         return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::ResourceLimited;
@@ -4284,7 +4451,12 @@ impl<'source> Cursor<'source> {
                     facts.push(next);
                 }
                 SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::NotSelected => {
-                    return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::NotSelected;
+                    return self.consume_selected_identifier_reference_expression_statement_use_site_body_all_reference_decimal_fallback(
+                        body_snapshot,
+                        boundary_entry,
+                        plain_so_far,
+                        SelectedFreeStandingIdentifierReferenceUseSite::Many(facts),
+                    );
                 }
                 SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition::ResourceLimited => {
                     return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::ResourceLimited;
@@ -4299,13 +4471,13 @@ impl<'source> Cursor<'source> {
     /// Free-standing-owner-private heterogeneous `IdentifierReference`/
     /// plain-Decimal continuation primitive (Issue #819, composing the
     /// accepted candidate-independent theorem proven by #815/PR #816).
-    /// Applied only once a chain's first operand is already known to be
-    /// plain (never leading-unary-wrapped): from the reference-first entry's
-    /// own second-operand step in
-    /// `consume_selected_identifier_reference_expression_statement_use_site_body`,
-    /// and from every later operand boundary via
+    /// Applied only once a Decimal alternative has actually been proven
+    /// somewhere in the chain -- never merely because a chain's first
+    /// operand happens to be plain and a Decimal might later appear (Issue
+    /// #819 remediation): exclusively via
     /// `consume_selected_identifier_reference_expression_statement_use_site_body_heterogeneous_growth`
-    /// below. `decimal_seen` and `plain_so_far` are transient
+    /// below, which is itself reached only after a Decimal atom has matched.
+    /// `decimal_seen` and `plain_so_far` are transient
     /// recognition-control state the caller threads across the whole chain:
     /// `decimal_seen` is `true` once any plain Decimal atom has been proven
     /// anywhere earlier in the chain, and `plain_so_far` is `true` only
@@ -4440,17 +4612,28 @@ impl<'source> Cursor<'source> {
 
     /// Grows an already-proven free-standing carrier over any further plain
     /// Decimal (discarded) or plain-eligible `IdentifierReference` (appended)
-    /// operand, without bound (Issue #819). Called once heterogeneous entry
-    /// is possible: from the reference-first entry's second-operand step in
+    /// operand, without bound (Issue #819). Called only once a Decimal
+    /// alternative has actually been proven, so `decimal_seen: true` at
+    /// every call site (Issue #819 remediation -- the initial candidate also
+    /// called this unconditionally from the reference-first entry's own
+    /// second-operand step whenever both operands were plain, with
+    /// `decimal_seen: false`, before any Decimal was ever probed; that call
+    /// site is removed): from the reference-first entry's own
+    /// Decimal-fallback second-operand step in
     /// `consume_selected_identifier_reference_expression_statement_use_site_body`
-    /// (with `carrier` a `Two` and `decimal_seen: false`), from that same
-    /// entry's Decimal-fallback second-operand step (with `carrier` a `One`
-    /// and `decimal_seen: true`), and from
+    /// (with `carrier` a `One`, where no settled all-reference continuation
+    /// ever had ownership, since no second reference was ever proven there);
+    /// from
     /// `consume_selected_plain_decimal_atom_identifier_reference_free_standing_use_site_body`
     /// below once its own tentative Decimal-first scan proves a first
-    /// `IdentifierReference` (with `carrier` a `One` and `decimal_seen:
-    /// true`). `body_snapshot` is the exact offset the *whole* free-standing
-    /// body probe began from, never merely this call's own starting offset.
+    /// `IdentifierReference` (with `carrier` a `One`, likewise never settled
+    /// all-reference territory); and from
+    /// `consume_selected_identifier_reference_expression_statement_use_site_body_all_reference_decimal_fallback`
+    /// (with `carrier` a `Two`/`Three`/`Many` already proven by the settled
+    /// all-reference continuation before that continuation's own normal
+    /// decline made a Decimal alternative eligible). `body_snapshot` is the
+    /// exact offset the *whole* free-standing body probe began from, never
+    /// merely this call's own starting offset.
     ///
     /// Each iteration probes
     /// `consume_selected_identifier_reference_expression_statement_use_site_body_heterogeneous_continuation`.
