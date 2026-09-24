@@ -3527,9 +3527,6 @@ fn one_reference_one_plain_decimal_additive_use_site_firewalls_remain_unsupporte
         "1 + ;",
         "a + true;",
         "1 + true;",
-        // Cardinality / richer-tail rollback.
-        "a + 1 + b;",
-        "1 + a + 2;",
         // Zero-reference firewall.
         "1;",
         "1 + 2;",

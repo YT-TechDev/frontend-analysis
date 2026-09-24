@@ -1641,6 +1641,22 @@ enum SelectedIdentifierReferenceRecognition {
 /// never constructed from, converted to, or shared with that
 /// initializer-owned carrier -- a free-standing use-site has no containing
 /// binding.
+///
+/// Issue #819 (per #688 comment 5814566341) widens every variant to admit
+/// any number of interspersed plain-Decimal syntax operands, composing the
+/// accepted candidate-independent heterogeneous `IdentifierReference`/
+/// plain-Decimal additive-chain 2..N theorem proven by #815/PR #816 --
+/// mirroring the initializer-owned heterogeneous widening of Issue #817,
+/// but through this owner's own whole-body-transaction continuation (Issue
+/// #813/#814), never the initializer's staged partial-recovery one. Every
+/// variant's cardinality remains exactly the retained `IdentifierReference`
+/// fact count, never the syntax operand count; each interspersed Decimal
+/// atom is recognized and discarded without ever becoming a fact, a
+/// payload, a placeholder, an operator, or an orientation. This widening
+/// governs only the plain/plain theorem: a leading-unary-wrapped first
+/// operand, or any leading-/right-unary operand once a Decimal has been
+/// proven anywhere in the chain, remains outside it and is composed only
+/// by the existing #813/#814 optional-unary continuation, unchanged.
 #[derive(Debug)]
 pub(super) enum SelectedFreeStandingIdentifierReferenceUseSite {
     One(SelectedIdentifierReferenceFact),
@@ -1684,6 +1700,60 @@ impl SelectedFreeStandingIdentifierReferenceUseSite {
             ),
             Self::Many(facts) => {
                 SelectedFreeStandingIdentifierReferenceUseSiteFacts::Many(facts.iter())
+            }
+        }
+    }
+
+    /// Appends one further retained `IdentifierReference` fact (Issue #819),
+    /// driving the same `One -> Two -> Three -> Many` resource transition
+    /// the initializer's own
+    /// `SelectedIdentifierReferenceInitializer::append_heterogeneous_reference`
+    /// (Issue #817) uses, keyed only by retained-fact count -- never by how
+    /// many syntax operands (plain-reference or Decimal alike) were scanned
+    /// to reach it. This is a separate, free-standing-owned method rather
+    /// than a shared helper: this carrier's `Many` is a bare `Vec` with no
+    /// structural `first` field, unlike the initializer's `Many { first,
+    /// rest }`, so the two owners' resource transitions are not physically
+    /// interchangeable even though their shape is analogous. `One`, `Two`,
+    /// and `Three` grow without any allocation, moving the already-owned
+    /// facts rather than cloning them. Growing `Three` into `Many` allocates
+    /// for the first time, reserving exactly the four facts (`first`,
+    /// `second`, `third`, and the newly appended fourth) it must hold
+    /// immediately (`try_reserve(4)`); growing an existing `Many` reserves
+    /// exactly one further slot (`try_reserve(1)`). Either reservation
+    /// failure is reported as `Err(())` and never silently drops the fact or
+    /// downgrades to a shorter carrier.
+    fn append_heterogeneous_reference(
+        self,
+        fact: SelectedIdentifierReferenceFact,
+    ) -> Result<Self, ()> {
+        match self {
+            Self::One(first) => Ok(Self::Two {
+                first,
+                second: fact,
+            }),
+            Self::Two { first, second } => Ok(Self::Three {
+                first,
+                second,
+                third: fact,
+            }),
+            Self::Three {
+                first,
+                second,
+                third,
+            } => {
+                let mut facts = Vec::new();
+                facts.try_reserve(4).map_err(|_| ())?;
+                facts.push(first);
+                facts.push(second);
+                facts.push(third);
+                facts.push(fact);
+                Ok(Self::Many(facts))
+            }
+            Self::Many(mut facts) => {
+                facts.try_reserve(1).map_err(|_| ())?;
+                facts.push(fact);
+                Ok(Self::Many(facts))
             }
         }
     }
@@ -2215,6 +2285,64 @@ enum SelectedIdentifierReferenceInitializerContinuationRecognition {
 enum SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition {
     NoContinuation,
     Matched(SelectedIdentifierReferenceFact),
+    NotSelected,
+    ResourceLimited,
+    InternalFailure,
+}
+
+/// Result of the free-standing-owner-private heterogeneous
+/// `IdentifierReference`/plain-Decimal continuation primitive (Issue #819,
+/// composing the accepted candidate-independent theorem proven by
+/// #815/PR #816), applied repeatedly once a chain's first operand is known
+/// to be plain (never leading-unary-wrapped): the reference-first entry's
+/// own second-operand step, and every later selected free-standing operand
+/// boundary. Unlike
+/// `SelectedFreeStandingIdentifierReferenceAdditiveContinuationRecognition`
+/// above, which never recognizes a Decimal alternative, this primitive
+/// tries a plain Decimal atom (via the existing unmodified
+/// `consume_selected_plain_exponent_decimal_literal` /
+/// `consume_selected_plain_fractional_decimal_literal` /
+/// `consume_selected_decimal_integer` helpers, in that order) whenever the
+/// operand position is not itself attempting a unary sign.
+///
+/// `NoContinuation` covers no authored binary `+`/`-` at the entry position
+/// at all -- the caller commits its current carrier. `MatchedDecimal`
+/// covers an accepted, silently-discarded plain Decimal atom: the caller
+/// never allocates a fact for it. `MatchedReference` carries the exact
+/// existing `SelectedIdentifierReferenceFact` produced by the unmodified
+/// shared `consume_selected_identifier_reference` (plain alternative,
+/// `plain: true`) or `consume_selected_leading_plus_minus_identifier_reference_unary_expression`
+/// (unary alternative, `plain: false`); `plain` is transient
+/// recognition-control state, never retained on the fact or any carrier,
+/// threaded by the caller so a later boundary can tell whether every
+/// operand recognized so far remains eligible to compose the plain-only
+/// heterogeneous theorem.
+///
+/// `NotSelected` is the free-standing owner's existing stronger
+/// whole-body-transaction outcome (Issue #799/#807/#813): the primitive has
+/// already restored the cursor to the caller-supplied `body_snapshot`
+/// before returning it, and the caller must never degrade that result to a
+/// shorter prefix. Four distinct situations reach it, all by construction
+/// rather than by a separate terminal check: a same-sign zero-trivia
+/// adjacency the #777/#778 theorem excludes; a unary sign attempted while a
+/// Decimal has already been proven anywhere earlier in this chain (the
+/// heterogeneous theorem admits no unary operand at all, so mixing is
+/// rejected the instant it is detected, never composed and truncated
+/// later); a Decimal atom matched while some earlier operand in this chain
+/// was itself unary-wrapped (the symmetric rejection, keyed by the
+/// `plain_so_far` the caller threads in); or an escaped-ReservedWord/
+/// malformed/absent operand once both the Decimal and plain-reference
+/// alternatives have declined. `ResourceLimited`/`InternalFailure` preserve
+/// the shared recognizers' own processing-failure classes and are never
+/// collapsed into `NotSelected` or a completed shorter prefix.
+#[derive(Debug)]
+enum SelectedFreeStandingHeterogeneousIdentifierReferenceDecimalContinuationRecognition {
+    NoContinuation,
+    MatchedDecimal,
+    MatchedReference {
+        fact: SelectedIdentifierReferenceFact,
+        plain: bool,
+    },
     NotSelected,
     ResourceLimited,
     InternalFailure,
@@ -3648,6 +3776,28 @@ impl<'source> Cursor<'source> {
     /// `ResourceLimited`/`InternalFailure` classification from either
     /// route's `IdentifierReference` operand is propagated immediately,
     /// never downgraded to a completed `One` or to `NotSelected`.
+    ///
+    /// Issue #819 (per #688 comment 5814566341) widens both routes from a
+    /// bounded exactly-two-syntax-operand shape to the accepted
+    /// candidate-independent heterogeneous `IdentifierReference`/
+    /// plain-Decimal additive-chain 2..N theorem proven by #815/PR #816,
+    /// through
+    /// `consume_selected_identifier_reference_expression_statement_use_site_body_heterogeneous_growth`
+    /// -- never through the leading-unary-first route above, which stays
+    /// hard-zero for this widening exactly as it already does for #793, so
+    /// `+a + 1 + b;`/`-a + 1 + b;` remain outside. Reference-left: a
+    /// `Matched(second)` reference (plain or right-unary-wrapped) hands off
+    /// to that growth loop with `Two { first, second }` and `plain_so_far`
+    /// exactly `!right_unary_consumed`, never `decimal_seen` (no Decimal has
+    /// been proven yet at that point); the existing Decimal fallback (tried
+    /// only when no right-unary wrapper was consumed) hands off with `One
+    /// (first)`, `decimal_seen: true`, and `plain_so_far: true` instead of
+    /// unconditionally committing `One(first)`. Decimal-left is widened
+    /// inside `consume_selected_plain_decimal_atom_identifier_reference_free_standing_use_site_body`
+    /// itself. Both hand-offs preserve this leaf's existing whole-body
+    /// transaction: a subsequently declining continuation restores
+    /// `snapshot` and returns `NotSelected`, never a shorter `One`/`Two`
+    /// prefix.
     fn consume_selected_identifier_reference_expression_statement_use_site_body(
         &mut self,
     ) -> SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition {
@@ -3765,8 +3915,11 @@ impl<'source> Cursor<'source> {
             SelectedIdentifierReferenceRecognition::Matched(second) => {
                 self.skip_selected_trivia();
 
-                self.consume_selected_identifier_reference_expression_statement_use_site_body_third_operand(
-                    snapshot, first, second,
+                self.consume_selected_identifier_reference_expression_statement_use_site_body_heterogeneous_growth(
+                    snapshot,
+                    SelectedFreeStandingIdentifierReferenceUseSite::Two { first, second },
+                    false,
+                    !right_unary_consumed,
                 )
             }
             SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName { .. }
@@ -3778,9 +3931,13 @@ impl<'source> Cursor<'source> {
                         || self.consume_selected_decimal_integer())
                 {
                     self.skip_selected_trivia();
-                    return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::Matched(
-                        SelectedFreeStandingIdentifierReferenceUseSite::One(first),
-                    );
+                    return self
+                        .consume_selected_identifier_reference_expression_statement_use_site_body_heterogeneous_growth(
+                            snapshot,
+                            SelectedFreeStandingIdentifierReferenceUseSite::One(first),
+                            true,
+                            true,
+                        );
                 }
                 self.offset = snapshot;
                 SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::NotSelected
@@ -4139,6 +4296,224 @@ impl<'source> Cursor<'source> {
         }
     }
 
+    /// Free-standing-owner-private heterogeneous `IdentifierReference`/
+    /// plain-Decimal continuation primitive (Issue #819, composing the
+    /// accepted candidate-independent theorem proven by #815/PR #816).
+    /// Applied only once a chain's first operand is already known to be
+    /// plain (never leading-unary-wrapped): from the reference-first entry's
+    /// own second-operand step in
+    /// `consume_selected_identifier_reference_expression_statement_use_site_body`,
+    /// and from every later operand boundary via
+    /// `consume_selected_identifier_reference_expression_statement_use_site_body_heterogeneous_growth`
+    /// below. `decimal_seen` and `plain_so_far` are transient
+    /// recognition-control state the caller threads across the whole chain:
+    /// `decimal_seen` is `true` once any plain Decimal atom has been proven
+    /// anywhere earlier in the chain, and `plain_so_far` is `true` only
+    /// while every operand recognized so far has been plain (never
+    /// leading-/right-unary-wrapped).
+    ///
+    /// Entry contract matches
+    /// `consume_selected_identifier_reference_expression_statement_use_site_body_additive_continuation`
+    /// above: the cursor is positioned immediately after the current final
+    /// retained operand and its own trailing selected trivia (already
+    /// skipped by the caller).
+    ///
+    /// Absent an authored binary `+`/`-` at `entry`, this returns
+    /// `NoContinuation` with the cursor left unchanged at `entry`. Otherwise
+    /// exactly one authored binary `+`/`-` is consumed and its sign
+    /// remembered, selected trivia is skipped, and the existing #777/#778
+    /// binary/unary boundary decides the operand alternative: a same-sign
+    /// zero-trivia adjacency (`a+b++c`) restores `body_snapshot` and
+    /// declines exactly as the plain-only primitive does. When the next
+    /// authored character is a unary `+`/`-`, a `decimal_seen` chain rejects
+    /// immediately (the plain-only heterogeneous theorem admits no unary
+    /// operand once a Decimal has been proven, so mixing is rejected the
+    /// instant it is detected rather than composed and truncated later);
+    /// otherwise the cursor is delegated whole to the existing unmodified
+    /// `consume_selected_leading_plus_minus_identifier_reference_unary_expression`,
+    /// exactly as the plain-only primitive does, and a `Matched` result
+    /// carries `plain: false`. Absent a unary sign, a plain Decimal atom is
+    /// tried first (via the existing unmodified
+    /// `consume_selected_plain_exponent_decimal_literal` /
+    /// `consume_selected_plain_fractional_decimal_literal` /
+    /// `consume_selected_decimal_integer` helpers, in that order): a match
+    /// while `plain_so_far` is `false` is the symmetric rejection (some
+    /// earlier operand in this chain was unary-wrapped, so no further
+    /// Decimal may compose), restoring `body_snapshot`; a match while
+    /// `plain_so_far` is `true` is `MatchedDecimal`, silently discarded by
+    /// the caller. A declining Decimal falls through to the existing
+    /// unmodified `consume_selected_identifier_reference` (plain
+    /// alternative only, never a second attempt at the same position);
+    /// `Matched` carries `plain: true`, `EscapedReservedIdentifierName`/
+    /// `NotSelected` restores `body_snapshot` and declines.
+    ///
+    /// Neither the binary sign, any leading unary sign, any trivia, nor any
+    /// Decimal atom's own syntax is ever retained -- only the exact existing
+    /// inner `SelectedIdentifierReferenceFact` for a matched reference
+    /// operand. `ResourceLimited`/`InternalFailure` from any shared
+    /// recognizer is propagated immediately.
+    fn consume_selected_identifier_reference_expression_statement_use_site_body_heterogeneous_continuation(
+        &mut self,
+        body_snapshot: usize,
+        decimal_seen: bool,
+        plain_so_far: bool,
+    ) -> SelectedFreeStandingHeterogeneousIdentifierReferenceDecimalContinuationRecognition {
+        let entry = self.offset;
+
+        let binary_sign = if self.consume_ascii('+') {
+            '+'
+        } else if self.consume_ascii('-') {
+            '-'
+        } else {
+            self.offset = entry;
+            return SelectedFreeStandingHeterogeneousIdentifierReferenceDecimalContinuationRecognition::NoContinuation;
+        };
+
+        let before_inter_operator_trivia = self.offset;
+        self.skip_selected_trivia();
+
+        if let Some(unary_sign @ ('+' | '-')) = self.peek_char() {
+            if unary_sign == binary_sign && self.offset == before_inter_operator_trivia {
+                self.offset = body_snapshot;
+                return SelectedFreeStandingHeterogeneousIdentifierReferenceDecimalContinuationRecognition::NotSelected;
+            }
+
+            if decimal_seen {
+                self.offset = body_snapshot;
+                return SelectedFreeStandingHeterogeneousIdentifierReferenceDecimalContinuationRecognition::NotSelected;
+            }
+
+            return match self
+                .consume_selected_leading_plus_minus_identifier_reference_unary_expression()
+            {
+                SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::Matched(
+                    fact,
+                ) => SelectedFreeStandingHeterogeneousIdentifierReferenceDecimalContinuationRecognition::MatchedReference {
+                    fact,
+                    plain: false,
+                },
+                SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
+                    self.offset = body_snapshot;
+                    SelectedFreeStandingHeterogeneousIdentifierReferenceDecimalContinuationRecognition::NotSelected
+                }
+                SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
+                    SelectedFreeStandingHeterogeneousIdentifierReferenceDecimalContinuationRecognition::ResourceLimited
+                }
+                SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::InternalFailure => {
+                    SelectedFreeStandingHeterogeneousIdentifierReferenceDecimalContinuationRecognition::InternalFailure
+                }
+            };
+        }
+
+        if self.consume_selected_plain_exponent_decimal_literal()
+            || self.consume_selected_plain_fractional_decimal_literal()
+            || self.consume_selected_decimal_integer()
+        {
+            if !plain_so_far {
+                self.offset = body_snapshot;
+                return SelectedFreeStandingHeterogeneousIdentifierReferenceDecimalContinuationRecognition::NotSelected;
+            }
+
+            return SelectedFreeStandingHeterogeneousIdentifierReferenceDecimalContinuationRecognition::MatchedDecimal;
+        }
+
+        match self.consume_selected_identifier_reference() {
+            SelectedIdentifierReferenceRecognition::Matched(fact) => {
+                SelectedFreeStandingHeterogeneousIdentifierReferenceDecimalContinuationRecognition::MatchedReference {
+                    fact,
+                    plain: true,
+                }
+            }
+            SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName { .. }
+            | SelectedIdentifierReferenceRecognition::NotSelected => {
+                self.offset = body_snapshot;
+                SelectedFreeStandingHeterogeneousIdentifierReferenceDecimalContinuationRecognition::NotSelected
+            }
+            SelectedIdentifierReferenceRecognition::ResourceLimited => {
+                SelectedFreeStandingHeterogeneousIdentifierReferenceDecimalContinuationRecognition::ResourceLimited
+            }
+            SelectedIdentifierReferenceRecognition::InternalFailure => {
+                SelectedFreeStandingHeterogeneousIdentifierReferenceDecimalContinuationRecognition::InternalFailure
+            }
+        }
+    }
+
+    /// Grows an already-proven free-standing carrier over any further plain
+    /// Decimal (discarded) or plain-eligible `IdentifierReference` (appended)
+    /// operand, without bound (Issue #819). Called once heterogeneous entry
+    /// is possible: from the reference-first entry's second-operand step in
+    /// `consume_selected_identifier_reference_expression_statement_use_site_body`
+    /// (with `carrier` a `Two` and `decimal_seen: false`), from that same
+    /// entry's Decimal-fallback second-operand step (with `carrier` a `One`
+    /// and `decimal_seen: true`), and from
+    /// `consume_selected_plain_decimal_atom_identifier_reference_free_standing_use_site_body`
+    /// below once its own tentative Decimal-first scan proves a first
+    /// `IdentifierReference` (with `carrier` a `One` and `decimal_seen:
+    /// true`). `body_snapshot` is the exact offset the *whole* free-standing
+    /// body probe began from, never merely this call's own starting offset.
+    ///
+    /// Each iteration probes
+    /// `consume_selected_identifier_reference_expression_statement_use_site_body_heterogeneous_continuation`.
+    /// `NoContinuation` commits the current `carrier` immediately.
+    /// `MatchedDecimal` discards the operand and continues, recording
+    /// `decimal_seen = true`. `MatchedReference` appends its fact via
+    /// [`SelectedFreeStandingIdentifierReferenceUseSite::append_heterogeneous_reference`]
+    /// -- a reservation failure is `ResourceLimited`, propagated immediately
+    /// -- and narrows `plain_so_far` by AND-accumulation with this operand's
+    /// own `plain` bit. `NotSelected` is the whole-body decline the
+    /// continuation primitive already rolled `body_snapshot` back for, never
+    /// a shorter prefix of `carrier`: once a heterogeneous continuation has
+    /// started it must fully complete or the entire candidate declines,
+    /// exactly like the existing plain-only free-standing continuation
+    /// (Issue #799/#807/#813). `ResourceLimited`/`InternalFailure` is
+    /// propagated immediately and never downgrades the already-proven
+    /// prefix.
+    fn consume_selected_identifier_reference_expression_statement_use_site_body_heterogeneous_growth(
+        &mut self,
+        body_snapshot: usize,
+        mut carrier: SelectedFreeStandingIdentifierReferenceUseSite,
+        mut decimal_seen: bool,
+        mut plain_so_far: bool,
+    ) -> SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition {
+        loop {
+            match self.consume_selected_identifier_reference_expression_statement_use_site_body_heterogeneous_continuation(
+                body_snapshot,
+                decimal_seen,
+                plain_so_far,
+            ) {
+                SelectedFreeStandingHeterogeneousIdentifierReferenceDecimalContinuationRecognition::NoContinuation => {
+                    return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::Matched(carrier);
+                }
+                SelectedFreeStandingHeterogeneousIdentifierReferenceDecimalContinuationRecognition::MatchedDecimal => {
+                    decimal_seen = true;
+                }
+                SelectedFreeStandingHeterogeneousIdentifierReferenceDecimalContinuationRecognition::MatchedReference {
+                    fact,
+                    plain,
+                } => {
+                    plain_so_far = plain_so_far && plain;
+                    carrier = match carrier.append_heterogeneous_reference(fact) {
+                        Ok(carrier) => carrier,
+                        Err(()) => {
+                            return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::ResourceLimited;
+                        }
+                    };
+                }
+                SelectedFreeStandingHeterogeneousIdentifierReferenceDecimalContinuationRecognition::NotSelected => {
+                    return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::NotSelected;
+                }
+                SelectedFreeStandingHeterogeneousIdentifierReferenceDecimalContinuationRecognition::ResourceLimited => {
+                    return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::ResourceLimited;
+                }
+                SelectedFreeStandingHeterogeneousIdentifierReferenceDecimalContinuationRecognition::InternalFailure => {
+                    return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::InternalFailure;
+                }
+            }
+
+            self.skip_selected_trivia();
+        }
+    }
+
     /// Composes the Decimal-left orientation of the bounded one-reference /
     /// one-plain-decimal heterogeneous additive free-standing use-site
     /// theorem (Issue #793, per #688 comment 5764090454), reusing the
@@ -4157,8 +4532,8 @@ impl<'source> Cursor<'source> {
     /// `consume_selected_identifier_reference_expression_statement_use_site_body`,
     /// with `body_snapshot` the exact offset that whole body probe started
     /// from (never merely this route's own local starting offset, since none
-    /// exists separately) and the cursor already positioned there. The
-    /// Decimal atom is recognized exactly once, via the existing unmodified
+    /// exists separately) and the cursor already positioned there. Each
+    /// Decimal atom is recognized via the existing unmodified
     /// `consume_selected_plain_exponent_decimal_literal` /
     /// `consume_selected_plain_fractional_decimal_literal` /
     /// `consume_selected_decimal_integer` helpers in that exact order, never
@@ -4175,18 +4550,31 @@ impl<'source> Cursor<'source> {
     /// richer chain (`1 + a + 2;` up through `1`) as a complete free-standing
     /// use-site. Physical lexical similarity does not establish
     /// transaction-owner equivalence, so only the lower-level Decimal atom
-    /// recognizers are shared here; every decline in this route -- an absent
-    /// binary `+`/`-`, or a declining/escaped-ReservedWord/absent
-    /// `IdentifierReference` operand -- restores the cursor to exactly
-    /// `body_snapshot` and returns `NotSelected`, never a partial commit.
+    /// recognizers are shared here.
     ///
-    /// A matched `IdentifierReference` operand (via the same unmodified
-    /// shared `consume_selected_identifier_reference` recognizer, never a
-    /// second scanner/decoder) commits
-    /// `SelectedFreeStandingIdentifierReferenceUseSite::One` carrying only
-    /// that operand's existing `SelectedIdentifierReferenceFact`, with the
-    /// cursor left after its own trailing selected trivia; the Decimal atom,
-    /// the operator, and the orientation are never retained. A
+    /// Issue #819 (per #688 comment 5814566341) widens this route's single
+    /// bounded continuation into a tentative Decimal-first scan: after the
+    /// first Decimal atom, each further authored binary `+`/`-` is followed
+    /// by another attempted Decimal atom first, tried and discarded in a
+    /// `continue` loop with no `IdentifierReference` operand ever proven, so
+    /// an all-Decimal chain (`1+2`, `1+2+3`) never partially commits and
+    /// instead falls all the way through this loop to the final absent- or
+    /// declining-operand decline below. The moment a plain
+    /// `IdentifierReference` operand is proven anywhere in that tentative
+    /// chain -- via the same unmodified shared
+    /// `consume_selected_identifier_reference` recognizer, never a second
+    /// scanner/decoder -- heterogeneity is proven and this route hands off
+    /// to
+    /// `consume_selected_identifier_reference_expression_statement_use_site_body_heterogeneous_growth`
+    /// with a fresh `One` carrier, `decimal_seen: true`, and `plain_so_far:
+    /// true` (this route never recognizes a unary-wrapped operand for
+    /// itself), which alone decides whether the candidate completes as
+    /// `One` or extends further. Every decline in this route -- an absent
+    /// binary `+`/`-`, or a declining/escaped-ReservedWord/absent
+    /// `IdentifierReference` operand while no reference has yet been proven
+    /// -- restores the cursor to exactly `body_snapshot` and returns
+    /// `NotSelected`, never a partial commit; the Decimal atom, the
+    /// operator, and the orientation are never retained. A
     /// `ResourceLimited`/`InternalFailure` classification from that
     /// operand's recognition is propagated immediately and never downgraded
     /// to a completed `One` or to `NotSelected`.
@@ -4202,33 +4590,45 @@ impl<'source> Cursor<'source> {
             return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::NotSelected;
         }
 
-        self.skip_selected_trivia();
+        loop {
+            self.skip_selected_trivia();
 
-        if !(self.consume_ascii('+') || self.consume_ascii('-')) {
-            self.offset = body_snapshot;
-            return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::NotSelected;
-        }
-
-        self.skip_selected_trivia();
-
-        match self.consume_selected_identifier_reference() {
-            SelectedIdentifierReferenceRecognition::Matched(reference) => {
-                self.skip_selected_trivia();
-                SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::Matched(
-                    SelectedFreeStandingIdentifierReferenceUseSite::One(reference),
-                )
-            }
-            SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName { .. }
-            | SelectedIdentifierReferenceRecognition::NotSelected => {
+            if !(self.consume_ascii('+') || self.consume_ascii('-')) {
                 self.offset = body_snapshot;
-                SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::NotSelected
+                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::NotSelected;
             }
-            SelectedIdentifierReferenceRecognition::ResourceLimited => {
-                SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::ResourceLimited
+
+            self.skip_selected_trivia();
+
+            if self.consume_selected_plain_exponent_decimal_literal()
+                || self.consume_selected_plain_fractional_decimal_literal()
+                || self.consume_selected_decimal_integer()
+            {
+                continue;
             }
-            SelectedIdentifierReferenceRecognition::InternalFailure => {
-                SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::InternalFailure
-            }
+
+            return match self.consume_selected_identifier_reference() {
+                SelectedIdentifierReferenceRecognition::Matched(reference) => {
+                    self.skip_selected_trivia();
+                    self.consume_selected_identifier_reference_expression_statement_use_site_body_heterogeneous_growth(
+                        body_snapshot,
+                        SelectedFreeStandingIdentifierReferenceUseSite::One(reference),
+                        true,
+                        true,
+                    )
+                }
+                SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName { .. }
+                | SelectedIdentifierReferenceRecognition::NotSelected => {
+                    self.offset = body_snapshot;
+                    SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::NotSelected
+                }
+                SelectedIdentifierReferenceRecognition::ResourceLimited => {
+                    SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::ResourceLimited
+                }
+                SelectedIdentifierReferenceRecognition::InternalFailure => {
+                    SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::InternalFailure
+                }
+            };
         }
     }
 
