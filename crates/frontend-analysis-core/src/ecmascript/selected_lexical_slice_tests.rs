@@ -12249,12 +12249,12 @@ fn one_reference_one_plain_decimal_additive_use_site_decimal_left_unary_firewall
 /// prefix never authorizes a richer or differently-typed complete source.
 #[test]
 fn one_reference_one_plain_decimal_additive_use_site_firewalls_remain_unsupported() {
+    // `a + 1 + b;` / `1 + a + 2;` / `a - 1 - b;` / `1 - a - 2;` moved to
+    // selected-positive coverage by Issue #819 (per #815/#816), since a
+    // third syntax operand may now independently be a plain
+    // `IdentifierReference` or a separator-free plain Decimal atom -- see
+    // the "Issue #819" section below.
     for text in [
-        // Cardinality: 3+ operands are never truncated to a valid prefix.
-        "a + 1 + b;",
-        "1 + a + 2;",
-        "a - 1 - b;",
-        "1 - a - 2;",
         // Zero-reference: a bare or all-Decimal source stays outside.
         "1;",
         "1 + 2;",
@@ -12300,10 +12300,6 @@ fn one_reference_one_plain_decimal_additive_use_site_firewalls_remain_unsupporte
         assert_unsupported(text);
     }
 
-    for text in ["{ a + 1 + b; }", "{ 1 + a + 2; }"] {
-        assert_unsupported(text);
-    }
-
     // Escaped ReservedWord operand: never an accepted operand in either
     // orientation.
     let escaped_if = concat!("\\", "u0069", "f"); // decodes to the reserved word "if"
@@ -12323,17 +12319,20 @@ fn one_reference_one_plain_decimal_additive_use_site_body_level_decline_restores
     }
 }
 
-/// Placement-level richer-tail rollback: a locally complete bounded prefix
-/// must never authorize a longer additive chain -- the placement terminator
-/// rejects the remaining token and the entire use-site rolls back, never a
-/// truncated `One` publication.
+/// Placement-level richer-tail rollback: a locally complete prefix must
+/// never authorize a longer additive chain into richer syntax -- the
+/// placement terminator rejects the remaining token and the entire use-site
+/// rolls back, never a truncated publication. `a + 1 + b;` / `1 + a + 2;`
+/// moved to selected-positive coverage by Issue #819 (see the "Issue #819"
+/// section below); this now exercises a still-unsupported richer tail one
+/// operand further out.
 #[test]
 fn one_reference_one_plain_decimal_additive_use_site_richer_tail_rolls_back_whole_use_site() {
     for text in [
-        "a + 1 + b;",
-        "1 + a + 2;",
-        "{ a + 1 + b; }",
-        "{ 1 + a + 2; }",
+        "1 + a + b();",
+        "1 + a + b.c;",
+        "{ 1 + a + b(); }",
+        "{ 1 + a + b.c; }",
     ] {
         assert_unsupported(text);
     }
@@ -12541,10 +12540,11 @@ fn three_operand_use_site_escaped_reserved_third_operand_remains_unsupported() {
 
 /// Malformed third operand: a normal unsupported third-operand spelling
 /// restores the whole body snapshot and declines -- never a partial `Two`
-/// publication.
+/// publication. `a+b+0;` moved to selected-positive coverage by Issue #819
+/// (see the "Issue #819" section below).
 #[test]
 fn three_operand_use_site_malformed_third_operand_remains_unsupported() {
-    for text in [r"a+b+\u{};", "a+b+0;", "a+b+;"] {
+    for text in [r"a+b+\u{};", "a+b+;"] {
         assert_unsupported(text);
     }
 }
@@ -12567,19 +12567,15 @@ fn three_operand_use_site_punctuator_boundary_remains_unsupported() {
 }
 
 /// Heterogeneous three-syntax firewall: the accepted #793 Decimal fallback
-/// remains exactly two-syntax-operand; no new heterogeneous three-operand
-/// theorem is authorized by this Issue.
+/// remained exactly two-syntax-operand for this Issue (#799); a plain
+/// Decimal atom composing with a further reference (`a+b+1;`, `a+1+c;`,
+/// `1+a+b;`) moved to selected-positive coverage by Issue #819 (see the
+/// "Issue #819" section below). Other operand families (Boolean, `null`,
+/// `this`, string literal) remain outside the accepted Decimal/Reference
+/// alternation regardless.
 #[test]
 fn three_operand_use_site_heterogeneous_firewall_remains_unsupported() {
-    for text in [
-        "a+b+1;",
-        "a+1+c;",
-        "1+a+b;",
-        "a+b+true;",
-        "a+null+c;",
-        "this+b+c;",
-        "\"a\"+b+c;",
-    ] {
+    for text in ["a+b+true;", "a+null+c;", "this+b+c;", "\"a\"+b+c;"] {
         assert_unsupported(text);
     }
 }
@@ -12868,14 +12864,14 @@ fn many_operand_use_site_escaped_reserved_continuation_remains_unsupported() {
 /// publication. `a+b+c+-d;` / `a+b+c+d+-e;` moved to selected-positive
 /// coverage by Issue #813, since the fourth and fifth operands may now
 /// independently be optional-leading-`+`/`-` wrapped (see the "Issue #813"
-/// section below); the same-sign zero-trivia forms (`a+b+c++d;`,
-/// `a+b+c+d++e;`) remain outside this production regardless.
+/// section below); `a+b+c+0;` / `a+b+c+d+0;` moved to selected-positive
+/// coverage by Issue #819 (see the "Issue #819" section below); the
+/// same-sign zero-trivia forms (`a+b+c++d;`, `a+b+c+d++e;`) remain outside
+/// this production regardless.
 #[test]
 fn many_operand_use_site_malformed_and_non_reference_continuation_remains_unsupported() {
     for text in [
         r"a+b+c+\u{};",
-        "a+b+c+0;",
-        "a+b+c+d+0;",
         r"a+b+c+d+\u{};",
         "a+b+c+d+;",
         // Same-sign zero-trivia continuation.
@@ -13229,4 +13225,246 @@ fn additive_free_standing_use_site_whole_source_transactionality() {
     assert_unsupported("{ +a+b+c; ??? }");
     assert_unsupported("{ a+-b+c; }\n???");
     assert_unsupported("+a-b+ +c-d+-e+f- -g+h;\n???");
+}
+
+// --- Issue #819: composes the accepted candidate-independent heterogeneous
+// plain-`IdentifierReference`/separator-free plain-Decimal additive-chain
+// 2..N theorem (#815/PR #816) into the existing free-standing
+// `ExpressionStatement` use-site owner (#799/#800, #807/#808, #813/#814),
+// per #688 comment 5814566341. Retained-fact cardinality tracks only how
+// many `IdentifierReference` operands were proven, never how many syntax
+// operands (`IdentifierReference` or Decimal alike) were scanned to reach
+// them; every selected candidate remains plain-operand-only, composed
+// through this owner's own whole-body-transaction continuation, never the
+// initializer's staged partial-recovery one (Issue #817) -- a started
+// continuation that later declines restores the whole `body_snapshot` and
+// returns `NotSelected`, never a shorter `One`/`Two`/`Three`/`Many` prefix.
+// These production tests author expected facts/ranges independently of the
+// #815/#816 candidate under test. ---
+
+#[test]
+fn heterogeneous_reference_decimal_additive_free_standing_use_site_positive_matrix_is_recognized() {
+    for (text, expected) in [
+        // Bounded predecessors (#793), regression.
+        ("a+1;", vec!["a"]),
+        ("1+a;", vec!["a"]),
+        // Three syntax operands.
+        ("a+1+b;", vec!["a", "b"]),
+        ("1+a+2;", vec!["a"]),
+        ("a+b+1;", vec!["a", "b"]),
+        ("1+a+b;", vec!["a", "b"]),
+        // Consecutive Decimals before the first reference.
+        ("1+2+a;", vec!["a"]),
+        ("1+2+3+a;", vec!["a"]),
+        // Consecutive Decimals after a reference.
+        ("a+1+2+b;", vec!["a", "b"]),
+        // One retained reference, many syntax operands.
+        ("1+2+3+a+4+5;", vec!["a"]),
+        // Multiple retained references (Three).
+        ("a+1+b+2+c;", vec!["a", "b", "c"]),
+        // Mostly references (Many, via reference-append).
+        ("a+b+c+1+d+e;", vec!["a", "b", "c", "d", "e"]),
+        // 8-syntax-operand sentinels, each reaching `Many` through a
+        // different transition (Decimal-first vs reference-first),
+        // detecting accidental syntax-operand-keyed resource/cardinality
+        // logic.
+        ("1+a+2+b+3+c+4+d;", vec!["a", "b", "c", "d"]),
+        ("a+1+b+2+c+3+d+4;", vec!["a", "b", "c", "d"]),
+        // Exponent sign ownership: the exponent-internal sign stays owned
+        // by the Decimal atom and never leaks into a following binary
+        // operator.
+        ("a+1e-2+b;", vec!["a", "b"]),
+        ("1e+2+a+3;", vec!["a"]),
+        ("a+1e-2+b-3e+4+c;", vec!["a", "b", "c"]),
+        // `-` operator exercised too.
+        ("a-1-b;", vec!["a", "b"]),
+        ("1-2-a;", vec!["a"]),
+    ] {
+        let script = recognized_reference_use(text);
+        let use_site = only_top_level_use_site(&script);
+        let facts = use_site_facts(use_site.body());
+        assert_eq!(facts.len(), expected.len(), "{text:?}");
+        for (fact, name) in facts.iter().zip(expected.iter()) {
+            assert_eq!(fact.semantic_name(), *name, "{text:?}");
+        }
+        for window in facts.windows(2) {
+            assert!(
+                window[0].reference().range().start() < window[1].reference().range().start(),
+                "{text:?}"
+            );
+        }
+        assert_eq!(
+            use_site.terminator(),
+            SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AuthoredSemicolon
+        );
+    }
+
+    // Automatic-at-EOF termination composes identically.
+    let script = recognized_reference_use("a+1+b+2+c");
+    let use_site = only_top_level_use_site(&script);
+    assert_eq!(use_site_facts(use_site.body()).len(), 3);
+    assert_eq!(
+        use_site.terminator(),
+        SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticAtEof
+    );
+
+    // One-level Block placement, proportionate coverage of the same matrix.
+    for (text, expected) in [
+        ("{ a+1; }", vec!["a"]),
+        ("{ 1+a; }", vec!["a"]),
+        ("{ a+1+b; }", vec!["a", "b"]),
+        ("{ 1+2+a; }", vec!["a"]),
+        ("{ a+1+b+2+c; }", vec!["a", "b", "c"]),
+        ("{ a+b+c+1+d+e; }", vec!["a", "b", "c", "d", "e"]),
+        ("{ a+1+b+2+c+3+d+4; }", vec!["a", "b", "c", "d"]),
+        ("{ a+1+b+2+c }", vec!["a", "b", "c"]),
+    ] {
+        let script = recognized_block_reference_use(text);
+        let use_site = only_block_use_site(&script);
+        let facts = use_site_facts(use_site.body());
+        assert_eq!(facts.len(), expected.len(), "{text:?}");
+        for (fact, name) in facts.iter().zip(expected.iter()) {
+            assert_eq!(fact.semantic_name(), *name, "{text:?}");
+        }
+    }
+}
+
+/// Central architecture invariant: retained-fact cardinality tracks only how
+/// many `IdentifierReference` operands were proven, never how many syntax
+/// operands (`IdentifierReference` or Decimal alike) were scanned to reach
+/// them.
+#[test]
+fn heterogeneous_reference_decimal_additive_free_standing_use_site_retained_fact_count_diverges_from_syntax_operand_count()
+ {
+    let script = recognized_reference_use("1+2+a+3+4;");
+    let facts = use_site_facts(only_top_level_use_site(&script).body());
+    assert_eq!(facts.len(), 1);
+    assert_eq!(facts[0].semantic_name(), "a");
+
+    let script = recognized_reference_use("a+1+b+2+c;");
+    let facts = use_site_facts(only_top_level_use_site(&script).body());
+    assert_eq!(facts.len(), 3);
+    for (fact, name) in facts.iter().zip(["a", "b", "c"]) {
+        assert_eq!(fact.semantic_name(), name);
+    }
+}
+
+#[test]
+fn heterogeneous_reference_decimal_additive_free_standing_use_site_direct_escaped_and_duplicate_provenance()
+ {
+    let esc_61 = concat!("\\", "u0061"); // decodes to "a"
+    let esc_foo = concat!("f", "\\", "u006F", "o"); // mixed-part, decodes to "foo"
+
+    let text = format!("1 + {esc_61} + 2 + {esc_foo} + 3;");
+    let script = recognized_reference_use(&text);
+    let facts = use_site_facts(only_top_level_use_site(&script).body());
+    assert_eq!(facts.len(), 2);
+    assert_eq!(facts[0].reference().fragment(), esc_61);
+    assert_eq!(facts[0].semantic_name(), "a");
+    assert_eq!(facts[1].reference().fragment(), esc_foo);
+    assert_eq!(facts[1].semantic_name(), "foo");
+
+    // Duplicate references remain distinct, retained one-for-one in
+    // authored order, interleaved with silent Decimal operands.
+    let script = recognized_reference_use("a+1+a+2+a;");
+    let facts = use_site_facts(only_top_level_use_site(&script).body());
+    assert_eq!(facts.len(), 3);
+    assert!(facts.iter().all(|fact| fact.semantic_name() == "a"));
+    assert!(facts[0].reference().range().start() < facts[1].reference().range().start());
+    assert!(facts[1].reference().range().start() < facts[2].reference().range().start());
+}
+
+/// Unary and all-Decimal firewalls: a leading-unary-wrapped first operand
+/// never enters this widening; once a Decimal has been proven anywhere in
+/// the chain, no unary-wrapped operand is admitted (in either temporal
+/// order); and an all-Decimal chain never composes no matter how far the
+/// Decimal-first tentative scan grows.
+#[test]
+fn heterogeneous_reference_decimal_additive_free_standing_use_site_unary_and_all_decimal_firewalls_remain_unsupported()
+ {
+    for text in ["1+2;", "1+2+3;", "1e-2+3.5+4;", "{ 1+2+3; }"] {
+        assert_unsupported(text);
+    }
+
+    for text in ["+a+1+b;", "-a+1+b;", "{ +a+1+b; }"] {
+        assert_unsupported(text);
+    }
+
+    for text in [
+        "a+-b+1;",
+        "a-+b+1;",
+        "a+1+-b;",
+        "1+-a+2;",
+        "1-+a+2;",
+        "a+b+-c+1;",
+        "a+1+b+ +c;",
+        "{ a+-b+1; }",
+        "{ a+1+-b; }",
+    ] {
+        assert_unsupported(text);
+    }
+
+    // Regression: the predecessor all-reference optional-unary chain
+    // remains exactly as selected as before Issue #819, since no Decimal
+    // ever appears.
+    let script = recognized_reference_use("a+b+-c;");
+    let facts = use_site_facts(only_top_level_use_site(&script).body());
+    assert_eq!(facts.len(), 3);
+    for (fact, name) in facts.iter().zip(["a", "b", "c"]) {
+        assert_eq!(fact.semantic_name(), name);
+    }
+}
+
+/// Escaped-`ReservedWord`/malformed continuation firewall (mirroring the
+/// #818 review remediation's ownership constraint for this owner) and
+/// richer-unsupported-tail firewalls, both exercised only once a Decimal
+/// operand has already composed a heterogeneous prefix.
+#[test]
+fn heterogeneous_reference_decimal_additive_free_standing_use_site_escaped_reserved_and_richer_tail_firewalls_remain_unsupported()
+ {
+    let escaped_if = concat!("\\", "u0069", "f"); // decodes to the reserved word "if"
+
+    for text in [
+        format!("a+1+{escaped_if};"),
+        format!("1+a+{escaped_if};"),
+        format!("{{ a+1+{escaped_if}; }}"),
+    ] {
+        assert_unsupported(&text);
+    }
+
+    for text in [r"a+1+\u{};", r"1+a+\u{};"] {
+        assert_unsupported(text);
+    }
+
+    for text in [
+        "a+1+b.c;",
+        "a+1+b();",
+        "a+1+b*c;",
+        "a+1+(b);",
+        "a+1+b=c;",
+        "a+1+b?c:d;",
+        "a+1+b,c;",
+    ] {
+        assert_unsupported(text);
+    }
+
+    // Regression: a plain reference immediately following a Decimal-entered
+    // chain still composes correctly once these firewalls are checked.
+    let script = recognized_reference_use("a+1+b;");
+    let facts = use_site_facts(only_top_level_use_site(&script).body());
+    assert_eq!(facts.len(), 2);
+    assert_eq!(facts[0].semantic_name(), "a");
+    assert_eq!(facts[1].semantic_name(), "b");
+}
+
+/// Whole-source transactionality: a locally valid new heterogeneous
+/// `One`/`Two`/`Three` use-site must not leak selected success if later
+/// source fails, at TopLevel or inside a Block.
+#[test]
+fn heterogeneous_reference_decimal_additive_free_standing_use_site_whole_source_transactionality() {
+    assert_unsupported("a+1+b;\n???");
+    assert_unsupported("1+a+2;\nlet x = ;");
+    assert_unsupported("{ a+1+b; ??? }");
+    assert_unsupported("{ 1+a+2; }\n???");
+    assert_unsupported("a+1+b+2+c;\n???");
 }
