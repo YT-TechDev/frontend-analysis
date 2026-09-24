@@ -6,6 +6,7 @@ mod gold;
 mod inventory;
 mod model;
 mod selected_all_var_contributor_correspondence_frontier;
+mod selected_heterogeneous_reference_decimal_additive_chain_frontier;
 mod selected_one_level_block_name_correspondence_lifecycle_frontier;
 mod selected_one_level_block_slice_completion;
 mod selected_one_level_block_var_decimal_initializer_frontier;
