@@ -7967,7 +7967,9 @@ fn optional_unary_identifier_reference_additive_initializer_jointly_composes_acr
 /// later recursive-unary continuation, a later non-reference/heterogeneous
 /// operand, a later richer tail, a later declarator failure, and an invalid
 /// whole-source remainder are all covered, across all three initializer
-/// placements.
+/// placements. `let x = +a-b+ +c-d+-e+1;` (a later plain-Decimal operand)
+/// migrated to positive heterogeneous coverage by Issue #825 -- see
+/// `optional_unary_identifier_reference_additive_initializer_later_decimal_operand_is_recognized`.
 #[test]
 fn optional_unary_identifier_reference_additive_initializer_later_failure_remains_unsupported() {
     let escaped_if = concat!("\\", "u0069", "f"); // decodes to the reserved word "if"
@@ -7979,8 +7981,7 @@ fn optional_unary_identifier_reference_additive_initializer_later_failure_remain
         // Later recursive-unary continuation: exactly one wrapper only.
         "let x = +a-b+ +c-d+-e+-+f;",
         "let x = +a-b+ +c-d+-e++f;",
-        // Later non-reference/heterogeneous operand.
-        "let x = +a-b+ +c-d+-e+1;",
+        // Later non-reference/non-Decimal operand.
         "let x = +a-b+ +c-d+-e+true;",
         // Later richer expression tail.
         "let x = +a-b+ +c-d+-e+f.g;",
@@ -8001,6 +8002,23 @@ fn optional_unary_identifier_reference_additive_initializer_later_failure_remain
     assert_eq!(subject.fragment(), r"\u{}");
     let subject = grammar_rejection(r"{ var x = +a-b+ +c-d+-e, \u{} = 1; }");
     assert_eq!(subject.fragment(), r"\u{}");
+}
+
+/// Issue #825 (composing the accepted candidate-independent theorem proven
+/// by #821/PR #822): a later plain-Decimal operand, appended after a long
+/// already-proven all-reference `Many` chain, now composes the heterogeneous
+/// theorem at every later operand boundary -- not only the third -- since the
+/// Decimal fallback on `OperandDeclined` is no longer gated by whether every
+/// earlier operand in the chain was plain.
+#[test]
+fn optional_unary_identifier_reference_additive_initializer_later_decimal_operand_is_recognized() {
+    let script = recognized("let x = +a-b+ +c-d+-e+1;");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+    let names: Vec<_> = facts.iter().map(|fact| fact.semantic_name()).collect();
+    assert_eq!(names, ["a", "b", "c", "d", "e"]);
 }
 
 // --- Issue #791 (per #688 comment 5762579228): composes the
@@ -8157,21 +8175,26 @@ fn one_reference_one_plain_decimal_additive_initializer_right_unary_firewall_rem
     assert_eq!(facts[1].semantic_name(), "b");
 }
 
-/// Decimal-left unary firewall (per #688 comment 5762579228): neither the
-/// Decimal atom nor the `IdentifierReference` operand may be wrapped in a
-/// leading unary sign for this theorem -- `1 + +a`, `1 + -a`, `1 - +a`,
-/// `1 - -a`, `+1 + a`, and `-1 + a` remain outside. The exponent-internal
-/// sign in `1e-2` remains owned by the Decimal atom and stays in scope.
+/// Decimal-left leading-signed-Decimal firewall (per #688 comment
+/// 5762579228, narrowed by Issue #825 per #688 comment 5829607568): `+1 + a`
+/// and `-1 + a` remain outside, since the leading-signed-Decimal owner
+/// (`+1`/`-1`) is unchanged and distinct from this theorem. The Decimal-side
+/// optional-unary-`IdentifierReference` compositions (`1 + +a`, `1 + -a`,
+/// `1 - +a`, `1 - -a`) migrated to positive coverage by Issue #825 -- see
+/// `one_reference_one_plain_decimal_additive_initializer_decimal_first_optional_unary_positive_matrix_is_recognized`.
+/// The exponent-internal sign in `1e-2` remains owned by the Decimal atom and
+/// stays in scope.
 #[test]
 fn one_reference_one_plain_decimal_additive_initializer_decimal_left_unary_firewall_remains_unsupported()
  {
     for text in [
-        "let x = 1 + +a;",
-        "let x = 1 + -a;",
-        "let x = 1 - +a;",
-        "let x = 1 - -a;",
         "let x = +1 + a;",
         "let x = -1 + a;",
+        // Signed Decimal (the unary-wrapped operand is itself a Decimal atom,
+        // never an `IdentifierReference`) remains outside every theorem, even
+        // though the #777/#778 boundary is otherwise satisfied.
+        "let x = 1+-1;",
+        "let x = 1+ +1;",
     ] {
         assert_unsupported(text);
     }
@@ -8187,6 +8210,32 @@ fn one_reference_one_plain_decimal_additive_initializer_decimal_left_unary_firew
     assert_eq!(facts[0].semantic_name(), "a");
 }
 
+/// Issue #825 (composing the accepted candidate-independent theorem proven
+/// by #821/PR #822): the Decimal-first entry's #777/#778 binary/unary
+/// boundary now admits an optional-leading-`+`/`-`-wrapped
+/// `IdentifierReference` as the first-proving operand -- `1 + +a` and
+/// `1 - -a` require non-empty inter-operator trivia to disambiguate from
+/// authored `++`/`--` (never split), while `1 + -a` and `1 - +a` (opposite
+/// signs) compose regardless of trivia.
+#[test]
+fn one_reference_one_plain_decimal_additive_initializer_decimal_first_optional_unary_positive_matrix_is_recognized()
+ {
+    for text in [
+        "let x = 1 + +a;",
+        "let x = 1 + -a;",
+        "let x = 1 - +a;",
+        "let x = 1 - -a;",
+    ] {
+        let script = recognized(text);
+        let [binding] = script.declarations()[0].bindings() else {
+            panic!("expected one selected lexical binding for {text:?}");
+        };
+        let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+        assert_eq!(facts.len(), 1, "{text:?}");
+        assert_eq!(facts[0].semantic_name(), "a", "{text:?}");
+    }
+}
+
 /// Operand-family, richer-expression, numeric-frontier, and
 /// escaped-ReservedWord firewalls (per #688 comment 5762579228): a valid
 /// bounded `IdentifierReference`/plain-Decimal prefix never authorizes a
@@ -8195,14 +8244,17 @@ fn one_reference_one_plain_decimal_additive_initializer_decimal_left_unary_firew
 /// 2..N coverage by Issue #817 (per #815/#816) when every later operand is
 /// itself a plain `IdentifierReference` or plain Decimal atom -- see
 /// `heterogeneous_reference_decimal_additive_chain_initializer_positive_matrix_is_recognized`;
-/// a third or later *unary-wrapped* or richer-family operand remains outside
-/// every theorem and is covered below.
+/// the leading-unary-first two-operand orientation (`+a + 1`, `-a + 1`)
+/// migrated to positive coverage by Issue #825 -- see
+/// `heterogeneous_reference_decimal_additive_chain_initializer_optional_unary_positive_matrix_is_recognized`.
+/// A *signed Decimal* operand (`a + +1`, `a + -1`: the unary sign wraps the
+/// Decimal, not the `IdentifierReference`) remains outside every theorem, as
+/// does a third or later unary-wrapped or richer-family operand, and both
+/// are covered below.
 #[test]
 fn one_reference_one_plain_decimal_additive_initializer_firewalls_remain_unsupported() {
     for text in [
-        // Unary composition on either operand.
-        "let x = +a + 1;",
-        "let x = -a + 1;",
+        // Signed Decimal (never the theorem's operand family).
         "let x = a + +1;",
         "let x = a + -1;",
         // Richer-expression / precedence / grouping / member / call.
@@ -8452,26 +8504,17 @@ fn heterogeneous_reference_decimal_additive_chain_initializer_exact_retained_pro
     assert!(facts[1].reference().range().start() < facts[2].reference().range().start());
 }
 
-/// Unary firewalls (section 25 of Issue #817): before heterogeneous entry, a
-/// leading- or right-unary-wrapped reference permanently excludes any later
-/// Decimal continuation; after heterogeneous entry, no unary-wrapped
-/// operand of any kind is admitted.
+/// Signed-Decimal firewall (section 25 of Issue #817, narrowed by Issue #825
+/// per #688 comment 5829607568): the leading-signed-Decimal owner
+/// (`+1`/`-1`) remains its own unchanged owner, entirely outside the
+/// optional-leading-`+`/`-` `IdentifierReference` / plain-Decimal
+/// heterogeneous theorem. Every other leading-/right-unary-wrapped-reference
+/// composition with a Decimal operand migrated to positive coverage by Issue
+/// #825 -- see
+/// `heterogeneous_reference_decimal_additive_chain_initializer_optional_unary_positive_matrix_is_recognized`.
 #[test]
 fn heterogeneous_reference_decimal_additive_chain_initializer_unary_firewalls_remain_unsupported() {
-    for text in [
-        "let x = +a+1+b;",
-        "let x = -a+1+b;",
-        "let x = a+-b+1;",
-        "let x = a-+b+1;",
-        "let x = a+b+-c+1;",
-        "let x = a+1+-b;",
-        "let x = 1+a+-b;",
-        "let x = a+1+b+-c;",
-        "let x = +1+a;",
-        "let x = -1+a;",
-        "let x = 1+-a;",
-        "let x = 1-+a;",
-    ] {
+    for text in ["let x = +1+a;", "let x = -1+a;"] {
         assert_unsupported(text);
     }
 
@@ -8485,6 +8528,75 @@ fn heterogeneous_reference_decimal_additive_chain_initializer_unary_firewalls_re
     assert_eq!(facts.len(), 2);
     assert_eq!(facts[0].semantic_name(), "a");
     assert_eq!(facts[1].semantic_name(), "b");
+}
+
+/// Issue #825 (composing the accepted candidate-independent theorem proven
+/// by #821/PR #822): migrates the previously-stale-negative members of the
+/// section-25 unary firewall above to positive heterogeneous coverage --
+/// every optional-leading-`+`/`-`-wrapped `IdentifierReference` operand may
+/// now compose with a plain-Decimal operand at any position in the chain,
+/// not only a plain `IdentifierReference` operand.
+#[test]
+fn heterogeneous_reference_decimal_additive_chain_initializer_optional_unary_positive_matrix_is_recognized()
+ {
+    for (text, expected) in [
+        ("let x = +a + 1;", vec!["a"]),
+        ("let x = -a + 1;", vec!["a"]),
+        ("let x = +a+1+b;", vec!["a", "b"]),
+        ("let x = -a+1+b;", vec!["a", "b"]),
+        ("let x = a+-b+1;", vec!["a", "b"]),
+        ("let x = a-+b+1;", vec!["a", "b"]),
+        ("let x = a+b+-c+1;", vec!["a", "b", "c"]),
+        ("let x = a+1+-b;", vec!["a", "b"]),
+        ("let x = 1+a+-b;", vec!["a", "b"]),
+        ("let x = a+1+b+-c;", vec!["a", "b", "c"]),
+        ("let x = 1+-a;", vec!["a"]),
+        ("let x = 1-+a;", vec!["a"]),
+    ] {
+        let script = recognized(text);
+        let [binding] = script.declarations()[0].bindings() else {
+            panic!("expected one selected lexical binding for {text:?}");
+        };
+        let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+        assert_eq!(facts.len(), expected.len(), "{text:?}");
+        for (fact, name) in facts.iter().zip(expected.iter()) {
+            assert_eq!(fact.semantic_name(), *name, "{text:?}");
+        }
+    }
+}
+
+/// Issue #825 long arbitrary-N sentinel (per #688 comment 5829607568):
+/// exercises leading-unary-first entry, Decimal-first entry (via the
+/// interior `-3e-2` orientation), and post-Decimal growth in a single chain,
+/// interspersing plain, leading-unary, and right-unary `IdentifierReference`
+/// operands with plain Decimal operands (including one with an
+/// exponent-internal sign) at every position. Retained-fact cardinality
+/// tracks only the four `IdentifierReference` operands, in exact authored
+/// order, never the ten syntax operands scanned to reach them.
+#[test]
+fn heterogeneous_reference_decimal_additive_chain_initializer_optional_unary_long_arbitrary_n_sentinel_is_recognized()
+ {
+    let script = recognized("let x = +a+1+-b+2+ +c-3e-2+d+4;");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+    let names: Vec<_> = facts.iter().map(|fact| fact.semantic_name()).collect();
+    assert_eq!(names, ["a", "b", "c", "d"]);
+}
+
+/// Issue #825 staged-recovery adversarial tails (per #688 comment
+/// 5829607568): a locally complete combined heterogeneous prefix must never
+/// leak as whole-source success when a trailing operator is left
+/// unconsumed -- the initializer's own staged recovery (never #824's
+/// whole-body rollback) locally recovers to the latest complete prefix, and
+/// the enclosing declaration owner then rejects the unconsumed trailing `+`.
+#[test]
+fn heterogeneous_reference_decimal_additive_chain_initializer_optional_unary_staged_recovery_tails_remain_unsupported()
+ {
+    for text in ["let x = a+-b+1+;", "let x = a+1+-b+;", "let x = 1+-a+2+;"] {
+        assert_unsupported(text);
+    }
 }
 
 /// Zero-reference firewall (section 26 of Issue #817): a chain that never
@@ -8787,9 +8899,10 @@ fn left_unary_additive_initializer_incomplete_or_richer_continuation_firewalls_r
 {
     // `let x = +a + b + c;` / `let x = -a - b - c;` migrated to positive
     // optional-unary coverage by Issue #811 (per #688 comment 5791317234).
-    for text in ["let x = +a + ;", "let x = +a + 1;"] {
-        assert_unsupported(text);
-    }
+    // `let x = +a + 1;` migrated to positive heterogeneous coverage by Issue
+    // #825 -- see
+    // `heterogeneous_reference_decimal_additive_chain_initializer_optional_unary_positive_matrix_is_recognized`.
+    assert_unsupported("let x = +a + ;");
 
     // Escaped ReservedWord left operand: the unary helper's own decline
     // remains unchanged, so this stays outside regardless of a following
@@ -9234,7 +9347,9 @@ fn right_unary_additive_initializer_incomplete_or_richer_continuation_firewalls_
         "const x=a+-null;",
         "const x=a+-this;",
         "const x=a+-\"b\";",
-        "const x=1+-b;",
+        // `const x=1+-b;` migrated to positive Decimal-first heterogeneous
+        // coverage by Issue #825 -- see
+        // `heterogeneous_reference_decimal_additive_chain_initializer_optional_unary_positive_matrix_is_recognized`.
         // Recursive right unary: exactly one wrapper is admitted.
         "const x=a+-+b;",
         "const x=a-+-b;",
@@ -9745,6 +9860,7 @@ fn both_unary_additive_initializer_incomplete_or_richer_continuation_firewalls_r
         // Absent / non-`IdentifierReference` second operand.
         "const x=+a+-;",
         "const x=+a+-1;",
+        "const x=+a+ +1;",
         "const x=+a+-true;",
         "const x=+a+-null;",
         "const x=+a+-this;",

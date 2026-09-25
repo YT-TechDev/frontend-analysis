@@ -327,6 +327,68 @@ fn optional_unary_identifier_reference_additive_initializer_with_unrelated_stati
     }
 }
 
+/// Issue #825 (composing the accepted candidate-independent theorem proven
+/// by #821/PR #822): the newly composed optional-leading-`+`/`-`
+/// `IdentifierReference` / plain-Decimal heterogeneous additive-chain 2..N
+/// initializer reaches the same existing `SelectedAcceptedIncomplete`
+/// lifecycle as any other production-accepted, not-yet-Oracle-qualified
+/// source -- never `UnsupportedCoverage` and never `Qualified` -- for all
+/// three joint owners (`LexicalDeclaration`, top-level `var`, and Block
+/// `var`), across the leading-unary-first, right-unary-interior,
+/// Decimal-first, and post-Decimal orientations. #821/PR #822 remain the
+/// candidate-independent Oracle for the underlying theorem; this leaf adds
+/// no new qualification branch.
+#[test]
+fn optional_plus_minus_heterogeneous_reference_decimal_additive_chain_initializer_remains_selected_accepted_incomplete()
+ {
+    for text in [
+        "const x = +a+1+-b;",
+        "let x = a+-b+1;",
+        "let x = a+1+-b;",
+        "var x = 1+-a+2;",
+        "{ var x = a+1+-b; }",
+        "const x = +a+1+-b+2+ +c-3e-2+d+4;",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text}"
+        );
+    }
+}
+
+/// A valid combined optional-unary-Reference/plain-Decimal initializer does
+/// not bypass an existing unrelated static conflict: an escaped-ReservedWord
+/// binding identifier elsewhere in the same declaration/statement still
+/// reaches the existing `StaticSemanticsRejected` verdict unchanged, per the
+/// pre-existing EE-04-R08 rule this leaf adds no new branch for.
+#[test]
+fn optional_plus_minus_heterogeneous_reference_decimal_additive_chain_initializer_with_unrelated_static_conflict_reaches_existing_rejection()
+ {
+    let escaped_if = concat!("\\", "u0069", "f"); // decodes to the reserved word "if"
+    for text in [
+        format!("let x = +a+1+-b, {escaped_if};"),
+        format!("var x = 1+-a+2, {escaped_if};"),
+        format!("{{ var x = a+1+-b, {escaped_if}; }}"),
+    ] {
+        let outcome = qualification_outcome(&text);
+        assert_eq!(outcome.processing(), ProcessingStatus::Complete, "{text}");
+        assert_eq!(
+            outcome.verdict(),
+            Some(QualificationVerdictKind::StaticSemanticsRejected),
+            "{text}"
+        );
+        let evidence = outcome.rejection_evidence().expect("static evidence");
+        assert_eq!(
+            evidence.family(),
+            RejectionFamily::StaticSemantics,
+            "{text}"
+        );
+    }
+}
+
 #[test]
 fn escaped_identifier_reference_invalid_and_tail_families_remain_unsupported() {
     for text in [
