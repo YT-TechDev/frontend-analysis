@@ -8195,6 +8195,12 @@ fn one_reference_one_plain_decimal_additive_initializer_decimal_left_unary_firew
         // though the #777/#778 boundary is otherwise satisfied.
         "let x = 1+-1;",
         "let x = 1+ +1;",
+        // Same-sign zero-inter-operator-trivia adjacency directly exercises
+        // the Decimal-first entry's newly introduced #777/#778 branch:
+        // authored `++`/`--` is never split into a binary sign plus a unary
+        // sign at this boundary either.
+        "let x = 1++a;",
+        "let x = 1--a;",
     ] {
         assert_unsupported(text);
     }
@@ -8514,7 +8520,23 @@ fn heterogeneous_reference_decimal_additive_chain_initializer_exact_retained_pro
 /// `heterogeneous_reference_decimal_additive_chain_initializer_optional_unary_positive_matrix_is_recognized`.
 #[test]
 fn heterogeneous_reference_decimal_additive_chain_initializer_unary_firewalls_remain_unsupported() {
-    for text in ["let x = +1+a;", "let x = -1+a;"] {
+    for text in [
+        "let x = +1+a;",
+        "let x = -1+a;",
+        // Same-sign zero-inter-operator-trivia adjacency directly exercises
+        // the newly widened post-Decimal continuation's own #777/#778
+        // branch: authored `++`/`--` is never split into a binary sign plus
+        // a unary sign after a heterogeneous prefix either.
+        "let x = a+1++b;",
+        "let x = a+1--b;",
+        // Signed Decimal after a heterogeneous prefix: a valid binary/unary
+        // boundary does not authorize a signed Decimal operand -- the
+        // unary-Reference branch owns the sign, its inner Reference
+        // recognition declines, and the continuation stages back to the
+        // already-proven prefix rather than falling through to Decimal.
+        "let x = a+1+-1;",
+        "let x = a+1+ +1;",
+    ] {
         assert_unsupported(text);
     }
 
@@ -8565,14 +8587,73 @@ fn heterogeneous_reference_decimal_additive_chain_initializer_optional_unary_pos
     }
 }
 
+/// Issue #825 escaped provenance at newly combined unary-wrapped positions:
+/// an escaped non-`ReservedWord` `IdentifierReference` behind a right-unary
+/// sign, at both the Decimal-first entry (the escaped spelling of `a` behind
+/// `1+-`) and the post-Decimal continuation (the escaped spelling of `b`
+/// behind `a+1+-`), retains its exact inner authored fragment and decoded
+/// semantic name -- the unary `-` is never part of the retained
+/// `SourceAnchor`.
+#[test]
+fn heterogeneous_reference_decimal_additive_chain_initializer_optional_unary_escaped_provenance_is_exact()
+ {
+    let esc_61 = concat!("\\", "u0061"); // decodes to "a"
+    let esc_62 = concat!("\\", "u0062"); // decodes to "b"
+
+    let text = format!("let x = 1+-{esc_61};");
+    let script = recognized(&text);
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding, {text:?}");
+    };
+    let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+    assert_eq!(facts.len(), 1, "{text:?}");
+    assert_eq!(facts[0].reference().fragment(), esc_61, "{text:?}");
+    assert_eq!(facts[0].semantic_name(), "a", "{text:?}");
+
+    let text = format!("let x = a+1+-{esc_62};");
+    let script = recognized(&text);
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding, {text:?}");
+    };
+    let facts: Vec<_> = binding.identifier_reference_initializer_facts().collect();
+    assert_eq!(facts.len(), 2, "{text:?}");
+    assert_eq!(facts[0].semantic_name(), "a", "{text:?}");
+    assert_eq!(facts[1].reference().fragment(), esc_62, "{text:?}");
+    assert_eq!(facts[1].semantic_name(), "b", "{text:?}");
+}
+
+/// Issue #825 escaped/malformed decline regression at the newly combined
+/// unary-wrapped positions: an escaped `ReservedWord` operand (the escaped
+/// spelling of the reserved word `if` behind `1+-`) and a malformed escape
+/// (an empty escape behind `a+1+-`) never acquire a new semantic route --
+/// the unary helper's own single `IdentifierReference` attempt declines, the
+/// continuation stages back to its latest complete prefix (no retry, no
+/// Decimal fallthrough), and the enclosing declaration then rejects the
+/// unconsumed trailing source.
+#[test]
+fn heterogeneous_reference_decimal_additive_chain_initializer_optional_unary_escaped_decline_remains_unsupported()
+ {
+    let escaped_if = concat!("\\", "u0069", "f"); // decodes to the reserved word "if"
+    for text in [
+        format!("let x = 1+-{escaped_if};"),
+        r"let x = a+1+-\u{};".to_owned(),
+    ] {
+        assert_unsupported(&text);
+    }
+}
+
 /// Issue #825 long arbitrary-N sentinel (per #688 comment 5829607568):
-/// exercises leading-unary-first entry, Decimal-first entry (via the
-/// interior `-3e-2` orientation), and post-Decimal growth in a single chain,
-/// interspersing plain, leading-unary, and right-unary `IdentifierReference`
-/// operands with plain Decimal operands (including one with an
-/// exponent-internal sign) at every position. Retained-fact cardinality
-/// tracks only the four `IdentifierReference` operands, in exact authored
-/// order, never the ten syntax operands scanned to reach them.
+/// the source begins with `+a`, so this exercises leading-unary-first entry,
+/// the Decimal transition immediately after it, post-Decimal/interior
+/// heterogeneous growth (including a right-unary-wrapped operand and an
+/// operand preceded by non-empty inter-operator trivia), exponent-internal
+/// sign ownership (`-3e-2`), and `Many` retained-reference growth in a
+/// single chain -- it does not exercise the Decimal-first initializer entry,
+/// which separate tests such as `1+-a` and `1+2+-a` already cover. The eight
+/// syntax operands are `+a`, `1`, `-b`, `2`, `+c`, `3e-2` (preceded by a
+/// binary `-`), `d`, and `4`; retained-fact cardinality tracks only the four
+/// `IdentifierReference` operands, in exact authored order, never the eight
+/// syntax operands scanned to reach them.
 #[test]
 fn heterogeneous_reference_decimal_additive_chain_initializer_optional_unary_long_arbitrary_n_sentinel_is_recognized()
  {
