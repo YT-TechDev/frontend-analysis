@@ -11544,8 +11544,11 @@ fn left_unary_use_site_failed_second_operand_does_not_degrade_to_one() {
     // completed `One`. `+a+b+c;` / `-a-b-c;` / `+a+b-c;` / `-a-b+c;` moved
     // to selected-positive coverage by Issue #813 (a complete second
     // operand followed by a complete third operand is no longer a failing
-    // continuation -- see the "Issue #813" section below).
-    for text in ["+a+;", "+a+1;", "+a+\\u0069f;", "+a+\\u{};", "-a+;"] {
+    // continuation -- see the "Issue #813" section below). `+a+1;` moved to
+    // selected-positive coverage by Issue #823 (a plain Decimal second
+    // operand now composes with the leading-unary-first route's own
+    // Decimal-only fallback -- see the "Issue #823" section below).
+    for text in ["+a+;", "+a+\\u0069f;", "+a+\\u{};", "-a+;"] {
         assert_unsupported(text);
     }
 }
@@ -12207,12 +12210,19 @@ fn one_reference_one_plain_decimal_additive_use_site_right_unary_firewall_remain
     assert_eq!(facts[1].semantic_name(), "b");
 }
 
-/// Leading-unary branch hard-zero (per #688 comment 5764090454): the
-/// leading-unary-first route is never widened with a Decimal sibling.
+/// Leading-unary branch hard-zero (per #688 comment 5764090454): at the
+/// time, the leading-unary-first route was never widened with a Decimal
+/// sibling. Issue #823 (per #688 comment 5820755547) removes this
+/// hard-zero for the plain-Decimal second-operand case specifically -- see
+/// the "Issue #823" section below for the now-selected `+a + 1;`/`-a + 1;`
+/// coverage; this test keeps only what remains outside (a right-unary
+/// second operand still forecloses the Decimal fallback, per the
+/// leading-unary-first entry orientation's own `right_unary_consumed`
+/// guard).
 #[test]
 fn one_reference_one_plain_decimal_additive_use_site_leading_unary_branch_hard_zero_remains_unsupported()
  {
-    for text in ["+a + 1;", "-a + 1;"] {
+    for text in ["+a + -1;", "-a + -1;", "+a - +1;"] {
         assert_unsupported(text);
     }
 
@@ -12223,16 +12233,21 @@ fn one_reference_one_plain_decimal_additive_use_site_leading_unary_branch_hard_z
     assert_eq!(facts.len(), 2);
 }
 
-/// Decimal-left unary firewall (per #688 comment 5764090454): neither the
-/// Decimal atom nor the `IdentifierReference` operand may be wrapped in a
-/// leading unary sign for this theorem. The exponent-internal sign in
+/// Decimal-left unary firewall (per #688 comment 5764090454): at the time,
+/// neither the Decimal atom nor the `IdentifierReference` operand could be
+/// wrapped in a leading unary sign for this theorem. Issue #823 (per #688
+/// comment 5820755547) removes this hard-zero for the unary-wrapped
+/// `IdentifierReference` operand specifically -- see the "Issue #823"
+/// section below for the now-selected `1 + +a;`/`1 + -a;`/`1 - +a;`/
+/// `1 - -a;` coverage. The signed-Decimal firewall (`+1 + a;`/`-1 + a;`)
+/// remains outside unconditionally: the leading sign there wraps the
+/// Decimal atom itself, never an `IdentifierReference`, so no route in
+/// this leaf ever attempts to recognize it. The exponent-internal sign in
 /// `1e-2` remains owned by the Decimal atom and stays in scope.
 #[test]
 fn one_reference_one_plain_decimal_additive_use_site_decimal_left_unary_firewall_remains_unsupported()
  {
-    for text in [
-        "1 + +a;", "1 + -a;", "1 - +a;", "1 - -a;", "+1 + a;", "-1 + a;",
-    ] {
+    for text in ["+1 + a;", "-1 + a;"] {
         assert_unsupported(text);
     }
 
@@ -13374,33 +13389,16 @@ fn heterogeneous_reference_decimal_additive_free_standing_use_site_direct_escape
     assert!(facts[1].reference().range().start() < facts[2].reference().range().start());
 }
 
-/// Unary and all-Decimal firewalls: a leading-unary-wrapped first operand
-/// never enters this widening; once a Decimal has been proven anywhere in
-/// the chain, no unary-wrapped operand is admitted (in either temporal
-/// order); and an all-Decimal chain never composes no matter how far the
-/// Decimal-first tentative scan grows.
+/// All-Decimal firewall: an all-Decimal chain never composes no matter how
+/// far the Decimal-first tentative scan grows. At the time this test also
+/// sealed a leading-unary-wrapped-first-operand / any-unary-wrapped-operand
+/// firewall; Issue #823 (per #688 comment 5820755547) removes that
+/// firewall -- see the "Issue #823" section below for the now-selected
+/// `+a+1+b;`/`a+-b+1;`/`a+1+-b;`/`1+-a+2;` (and siblings) coverage.
 #[test]
 fn heterogeneous_reference_decimal_additive_free_standing_use_site_unary_and_all_decimal_firewalls_remain_unsupported()
  {
     for text in ["1+2;", "1+2+3;", "1e-2+3.5+4;", "{ 1+2+3; }"] {
-        assert_unsupported(text);
-    }
-
-    for text in ["+a+1+b;", "-a+1+b;", "{ +a+1+b; }"] {
-        assert_unsupported(text);
-    }
-
-    for text in [
-        "a+-b+1;",
-        "a-+b+1;",
-        "a+1+-b;",
-        "1+-a+2;",
-        "1-+a+2;",
-        "a+b+-c+1;",
-        "a+1+b+ +c;",
-        "{ a+-b+1; }",
-        "{ a+1+-b; }",
-    ] {
         assert_unsupported(text);
     }
 
@@ -13467,4 +13465,177 @@ fn heterogeneous_reference_decimal_additive_free_standing_use_site_whole_source_
     assert_unsupported("{ a+1+b; ??? }");
     assert_unsupported("{ 1+a+2; }\n???");
     assert_unsupported("a+1+b+2+c;\n???");
+}
+
+// --- Issue #823 (per #688 comment 5820755547): composes the accepted
+// candidate-independent optional-leading `+`/`-` `IdentifierReference` /
+// separator-free plain-Decimal heterogeneous additive-chain 2..N theorem
+// (#821/PR #822) into the existing free-standing `IdentifierReference`
+// `ExpressionStatement` use-site owner (#799/#800, #807/#808, #813/#814,
+// #819/#820). The settled all-reference continuation (#813) remains
+// authoritative first at every boundary; the Decimal-only fallback (#819)
+// now probes unconditionally on that continuation's own normal decline,
+// never re-attempting `IdentifierReference` recognition at the same
+// authored operand boundary; and the owner-private combined continuation
+// (#819) now admits an optionally-unary-wrapped `IdentifierReference`
+// operand in any position or combination with a Decimal operand, once
+// reached (once a Decimal is proven, or while the Decimal-first tentative
+// scan is still searching for its first Reference). Retained-fact
+// cardinality remains `IdentifierReference`-fact-driven only, never
+// syntax-operand-driven; signed Decimal, authored `++`/`--`, and an
+// all-Decimal chain all remain outside. ---
+
+#[test]
+fn optional_plus_minus_heterogeneous_reference_decimal_additive_free_standing_use_site_positive_matrix_is_recognized()
+ {
+    for (text, expected) in [
+        // Four required orientation classes.
+        ("+a+1;", vec!["a"]),
+        ("a+-b+1;", vec!["a", "b"]),
+        ("a+1+-b;", vec!["a", "b"]),
+        ("1+-a+2;", vec!["a"]),
+        // Three-way sign ownership: the exponent-internal sign stays
+        // Decimal-owned, distinct from the binary and unary signs.
+        ("1e-2+-a;", vec!["a"]),
+        ("a+-b+1e+2+c;", vec!["a", "b", "c"]),
+        // Binary/unary punctuator boundary at a Decimal-first-proven
+        // continuation (opposite signs, zero trivia; same signs,
+        // non-empty trivia); `1++a;`/`1--a;` are sealed outside below.
+        ("1+-a;", vec!["a"]),
+        ("1-+a;", vec!["a"]),
+        ("1+ +a;", vec!["a"]),
+        ("1- -a;", vec!["a"]),
+        // Stale-negative migrations (per Issue #823 / #688 comment
+        // 5820755547): previously sealed outside by the #819 eligibility
+        // firewalls this Issue removes.
+        ("+a+1+b;", vec!["a", "b"]),
+        ("-a+1+b;", vec!["a", "b"]),
+        ("a-+b+1;", vec!["a", "b"]),
+        ("1-+a+2;", vec!["a"]),
+        ("a+b+-c+1;", vec!["a", "b", "c"]),
+        ("a+1+b+ +c;", vec!["a", "b", "c"]),
+        // Decimal-left orientation with spaced trivia, both unary signs.
+        ("1 + +a;", vec!["a"]),
+        ("1 + -a;", vec!["a"]),
+        ("1 - +a;", vec!["a"]),
+        ("1 - -a;", vec!["a"]),
+        // Long arbitrary-N sentinel: exact retained order, syntax/reference
+        // cardinality divergence (9 syntax operands, 4 retained facts).
+        ("+a+1+-b+2+ +c-3e-2+d+4;", vec!["a", "b", "c", "d"]),
+    ] {
+        let script = recognized_reference_use(text);
+        let use_site = only_top_level_use_site(&script);
+        let facts = use_site_facts(use_site.body());
+        assert_eq!(facts.len(), expected.len(), "{text:?}");
+        for (fact, name) in facts.iter().zip(expected.iter()) {
+            assert_eq!(fact.semantic_name(), *name, "{text:?}");
+        }
+        for window in facts.windows(2) {
+            assert!(
+                window[0].reference().range().start() < window[1].reference().range().start(),
+                "{text:?}"
+            );
+        }
+    }
+}
+
+/// Carrier cardinality regression: four or more retained references trigger
+/// `Many` regardless of how many Decimal operands, or which orientation
+/// (leading-unary-first, plain-reference-first, or Decimal-first), produced
+/// them.
+#[test]
+fn optional_plus_minus_heterogeneous_reference_decimal_additive_free_standing_use_site_carrier_is_reference_fact_driven()
+ {
+    let script = recognized_reference_use("+a+1+-b+2+ +c-3e-2+d+4;");
+    let use_site = only_top_level_use_site(&script);
+    assert!(matches!(
+        use_site.body(),
+        SelectedFreeStandingIdentifierReferenceUseSite::Many(_)
+    ));
+    assert_eq!(use_site_facts(use_site.body()).len(), 4);
+
+    // Regression: one retained reference and many Decimal operands still
+    // retain `One`.
+    let script = recognized_reference_use("1+-a+2+3+4;");
+    let use_site = only_top_level_use_site(&script);
+    assert!(matches!(
+        use_site.body(),
+        SelectedFreeStandingIdentifierReferenceUseSite::One(_)
+    ));
+}
+
+#[test]
+fn optional_plus_minus_heterogeneous_reference_decimal_additive_free_standing_use_site_placement_and_termination_matrix_is_recognized()
+ {
+    let script = recognized_reference_use("+a+1;");
+    let use_site = only_top_level_use_site(&script);
+    assert_eq!(use_site_facts(use_site.body()).len(), 1);
+    assert_eq!(
+        use_site.terminator(),
+        SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AuthoredSemicolon
+    );
+
+    let script = recognized_reference_use("+a+1");
+    let use_site = only_top_level_use_site(&script);
+    assert_eq!(use_site_facts(use_site.body()).len(), 1);
+    assert_eq!(
+        use_site.terminator(),
+        SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticAtEof
+    );
+
+    let script = recognized_block_reference_use("{ 1+-a+2; }");
+    let use_site = only_block_use_site(&script);
+    assert_eq!(use_site_facts(use_site.body()).len(), 1);
+    assert_eq!(
+        use_site.terminator(),
+        SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator::AuthoredSemicolon
+    );
+
+    let script = recognized_block_reference_use("{ 1+-a+2 }");
+    let use_site = only_block_use_site(&script);
+    assert_eq!(use_site_facts(use_site.body()).len(), 1);
+    assert_eq!(
+        use_site.terminator(),
+        SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticBeforeBlockClose
+    );
+}
+
+#[test]
+fn optional_plus_minus_heterogeneous_reference_decimal_additive_free_standing_use_site_escaped_provenance_is_exact()
+ {
+    let script = recognized_reference_use("+\\u0061+1+-b;");
+    let facts = use_site_facts(only_top_level_use_site(&script).body());
+    assert_eq!(facts.len(), 2);
+    assert_eq!(facts[0].reference().fragment(), "\\u0061");
+    assert_eq!(facts[0].semantic_name(), "a");
+    assert_eq!(facts[1].reference().fragment(), "b");
+    assert_eq!(facts[1].semantic_name(), "b");
+    assert!(facts[0].reference().range().start() < facts[1].reference().range().start());
+
+    let script = recognized_reference_use("1e-2+-\\u0064;");
+    let fact = only_use_site_fact(&script);
+    assert_eq!(fact.reference().fragment(), "\\u0064");
+    assert_eq!(fact.semantic_name(), "d");
+}
+
+/// Signed-Decimal firewall: optional unary applies only to
+/// `IdentifierReference`, never to a Decimal operand, in either temporal
+/// order.
+#[test]
+fn optional_plus_minus_heterogeneous_reference_decimal_additive_free_standing_use_site_signed_decimal_firewall_remains_unsupported()
+ {
+    for text in ["a+-1;", "a-+1;", "a+ +1;", "a- -1;", "+1+a;", "-1+a;"] {
+        assert_unsupported(text);
+    }
+}
+
+/// Authored `++`/`--` must never be split into a binary sign plus a unary
+/// sign, at a Decimal-first-proven boundary exactly as at every other
+/// boundary this owner recognizes.
+#[test]
+fn optional_plus_minus_heterogeneous_reference_decimal_additive_free_standing_use_site_same_sign_zero_trivia_boundary_remains_unsupported()
+ {
+    for text in ["1++a;", "1--a;"] {
+        assert_unsupported(text);
+    }
 }

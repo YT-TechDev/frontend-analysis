@@ -3507,6 +3507,11 @@ fn one_reference_one_plain_decimal_additive_use_site_remains_selected_accepted_i
 
 #[test]
 fn one_reference_one_plain_decimal_additive_use_site_firewalls_remain_unsupported() {
+    // "+a + 1;"/"-a + 1;" (leading-unary branch) and "1 + +a;"/"1 + -a;"
+    // (Decimal-left unary) moved to selected-positive coverage by Issue
+    // #823 (per #688 comment 5820755547): see
+    // `optional_plus_minus_heterogeneous_reference_decimal_additive_free_standing_use_site_positive_matrix_is_recognized`
+    // in `selected_lexical_slice_tests.rs`.
     for text in [
         // Right-unary firewall (reference-left): a consumed right-unary
         // wrapper forecloses the Decimal fallback unconditionally.
@@ -3514,12 +3519,8 @@ fn one_reference_one_plain_decimal_additive_use_site_firewalls_remain_unsupporte
         "a-+1;",
         "a+ +1;",
         "a- -1;",
-        // Leading-unary branch hard-zero.
-        "+a + 1;",
-        "-a + 1;",
-        // Decimal-left unary firewall.
-        "1 + +a;",
-        "1 + -a;",
+        // Signed-Decimal firewall: the leading unary sign wraps the Decimal
+        // atom itself, never an `IdentifierReference`.
         "+1 + a;",
         "-1 + a;",
         // Body-level incomplete continuation.
@@ -3573,4 +3574,69 @@ fn one_reference_one_plain_decimal_additive_use_site_firewalls_remain_unsupporte
             "{text:?}"
         );
     }
+}
+
+// --- Issue #823 (per #688 comment 5820755547): composes the accepted
+// candidate-independent optional-leading `+`/`-` `IdentifierReference` /
+// separator-free plain-Decimal heterogeneous additive-chain 2..N theorem
+// proven by #821/PR #822 into the free-standing production, removing the
+// `plain_so_far`/`decimal_seen`-keyed eligibility firewalls that previously
+// kept the leading-unary-first Decimal fallback, the Decimal-only fallback
+// after any unary-wrapped settled-reference decline, and the owner-private
+// combined continuation's Decimal/unary composition all mutually
+// exclusive. `+a + 1;`, `1 + -a;`, `a+-b+1;`, `a+1+-b;`, and their
+// neighbors move from the firewall lists above into selected-positive
+// coverage; every newly selected complete source reaches exactly the
+// existing `SelectedAcceptedIncomplete` lifecycle, never a new
+// qualification branch or evidence family. ---
+
+#[test]
+fn optional_plus_minus_heterogeneous_reference_decimal_additive_use_site_remains_selected_accepted_incomplete()
+ {
+    for text in [
+        // Leading-unary-first Decimal fallback.
+        "+a + 1;",
+        "-a - 1;",
+        // Decimal-left unary fallback.
+        "1 + -a;",
+        "1 - +a;",
+        // Settled all-reference decline, unconditional Decimal-only
+        // fallback (both temporal orders).
+        "a+-b+1;",
+        "a+1+-b;",
+        // Owner-private combined continuation composing a Decimal and a
+        // unary-wrapped Reference together.
+        "1e-2+-a;",
+        "a+-b+1e+2+c;",
+        // One-level Block, authored semicolon.
+        "{ +a + 1; }",
+        "{ a+-b+1; }",
+        // Automatic termination: TopLevel EOF, Block before-close.
+        "+a + 1",
+        "{ a+1+-b }",
+        // Correspondence sealing source (Block-contained lexical + use-site).
+        "let a;\na+-b+1;",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+/// Issue #823 section: a source containing a valid free-standing
+/// optional-leading-`+`/`-`-Reference/plain-Decimal heterogeneous use-site
+/// still reaches an existing static rejection unchanged when another
+/// existing obligation fails -- no new rejection type and no changed
+/// rejection ordering. Reuses the smallest existing static conflict already
+/// proven above (a Block `var` duplicating an enclosing top-level lexical
+/// name), with the free-standing use-site replaced by a complete
+/// heterogeneous optional-unary/Decimal use-site.
+#[test]
+fn optional_plus_minus_heterogeneous_reference_decimal_additive_use_site_known_static_rejection_gates_qualification()
+ {
+    assert_static_semantics_rejected("let a;\n{ var a; +b+1+-c; }", "a", (13, 14));
 }
