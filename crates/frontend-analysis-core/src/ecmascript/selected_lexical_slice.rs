@@ -2183,6 +2183,30 @@ enum SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition {
     InternalFailure,
 }
 
+/// Result of the bounded exactly-one leading `!`/`~` `IdentifierReference`
+/// `UnaryExpression` recognizer below (Issue #829, composing the accepted
+/// candidate-independent theorem proven by #827/PR #828). `Matched` carries
+/// the exact existing `SelectedIdentifierReferenceFact` produced by the
+/// shared `consume_selected_identifier_reference()` recognizer for the
+/// operand, unchanged, for either a direct-authored or an escaped
+/// non-ReservedWord operand. `NotSelected` covers every decline: no leading
+/// `!`/`~`, an escaped `ReservedWord` operand, or no `IdentifierReference`
+/// operand at all. `ResourceLimited` and `InternalFailure` preserve the
+/// shared recognizer's own processing-failure classes without collapsing
+/// them into `NotSelected`. This carrier is deliberately distinct from
+/// `SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition`
+/// above: the accepted `+`/`-` route participates in settled additive
+/// continuation semantics that the `!`/`~` theorem explicitly does not (per
+/// #688 comment 5844920129), so the two operator families are not merged
+/// behind one generic recognition result.
+#[derive(Debug)]
+enum SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition {
+    Matched(SelectedIdentifierReferenceFact),
+    NotSelected,
+    ResourceLimited,
+    InternalFailure,
+}
+
 /// Result of the initializer-owner-private optional-leading-`+`/`-`
 /// continuation primitive (Issue #811, composing the accepted
 /// candidate-independent theorem proven by #809/PR #810 with the
@@ -2710,6 +2734,17 @@ impl<'source> Cursor<'source> {
                                 return Err(ParseFailure::InternalFailure);
                             }
                             SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
+                                match self.consume_selected_bang_tilde_identifier_reference_unary_expression() {
+                                    SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
+                                        (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
+                                    }
+                                    SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
+                                        return Err(ParseFailure::ResourceLimited);
+                                    }
+                                    SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition::InternalFailure => {
+                                        return Err(ParseFailure::InternalFailure);
+                                    }
+                                    SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
                                 match self.consume_selected_plain_decimal_atom_initializer() {
                                     SelectedPlainDecimalAtomInitializerRecognition::DecimalOnly => {
                                         (None, None)
@@ -2767,6 +2802,8 @@ impl<'source> Cursor<'source> {
                                                 }
                                             }
                                         }
+                                    }
+                                }
                                     }
                                 }
                             }
@@ -2901,6 +2938,17 @@ impl<'source> Cursor<'source> {
                                 return Err(ParseFailure::InternalFailure);
                             }
                             SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
+                                match self.consume_selected_bang_tilde_identifier_reference_unary_expression() {
+                                    SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
+                                        (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
+                                    }
+                                    SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
+                                        return Err(ParseFailure::ResourceLimited);
+                                    }
+                                    SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition::InternalFailure => {
+                                        return Err(ParseFailure::InternalFailure);
+                                    }
+                                    SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
                                 match self.consume_selected_plain_decimal_atom_initializer() {
                                     SelectedPlainDecimalAtomInitializerRecognition::DecimalOnly => {
                                         (None, None)
@@ -2958,6 +3006,8 @@ impl<'source> Cursor<'source> {
                                                 }
                                             }
                                         }
+                                    }
+                                }
                                     }
                                 }
                             }
@@ -3056,6 +3106,18 @@ impl<'source> Cursor<'source> {
                             return Err(ParseFailure::InternalFailure);
                         }
                         SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
+                            match self.consume_selected_bang_tilde_identifier_reference_unary_expression() {
+                                SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
+                                    identifier_reference_initializer =
+                                        Some(SelectedIdentifierReferenceInitializer::One(reference));
+                                }
+                                SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
+                                    return Err(ParseFailure::ResourceLimited);
+                                }
+                                SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition::InternalFailure => {
+                                    return Err(ParseFailure::InternalFailure);
+                                }
+                                SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
                             match self.consume_selected_plain_decimal_atom_initializer() {
                                 SelectedPlainDecimalAtomInitializerRecognition::DecimalOnly => {}
                                 SelectedPlainDecimalAtomInitializerRecognition::DecimalWithReferences(initializer) => {
@@ -3106,6 +3168,8 @@ impl<'source> Cursor<'source> {
                                             }
                                         }
                                     }
+                                }
+                            }
                                 }
                             }
                         }
@@ -3926,6 +3990,22 @@ impl<'source> Cursor<'source> {
                 return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::InternalFailure;
             }
             SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::NotSelected => {}
+        }
+
+        match self.consume_selected_bang_tilde_identifier_reference_unary_expression() {
+            SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
+                self.skip_selected_trivia();
+                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::Matched(
+                    SelectedFreeStandingIdentifierReferenceUseSite::One(reference),
+                );
+            }
+            SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
+                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::ResourceLimited;
+            }
+            SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition::InternalFailure => {
+                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::InternalFailure;
+            }
+            SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition::NotSelected => {}
         }
 
         let first = match self.consume_selected_identifier_reference() {
@@ -5964,6 +6044,72 @@ impl<'source> Cursor<'source> {
             }
             SelectedIdentifierReferenceRecognition::InternalFailure => {
                 SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::InternalFailure
+            }
+        }
+    }
+
+    /// Recognizes exactly one leading `!` or `~` `IdentifierReference`
+    /// `UnaryExpression` (`SelectedBangTilde SelectedUnaryOperandTrivia
+    /// SelectedAcceptedIdentifierReference`, where
+    /// `SelectedAcceptedIdentifierReference ::= SelectedDirectIdentifierReference
+    /// | SelectedEscapedNonReservedIdentifierReference`) in either the
+    /// selected initializer position or the selected free-standing
+    /// `ExpressionStatement` use-site body position (Issue #829, composing
+    /// the accepted candidate-independent theorem proven by #827/PR #828).
+    /// Modeled directly on
+    /// `consume_selected_leading_plus_minus_identifier_reference_unary_expression`
+    /// above, swapping only the recognized operator: on a match, the
+    /// existing inner `SelectedIdentifierReferenceFact` produced by the
+    /// unmodified shared `consume_selected_identifier_reference()`
+    /// recognizer is returned unchanged, for either operand spelling. The
+    /// operand is recognized and decoded exactly once by that unmodified
+    /// shared recognizer; no second escaped-operand scanner or decoder is
+    /// introduced.
+    ///
+    /// This bounded local scan commits `self.offset` only after a complete
+    /// direct-authored or escaped non-ReservedWord `IdentifierReference`
+    /// operand is recognized following the operator and any intervening
+    /// existing selected trivia (`skip_selected_trivia`, unchanged). An
+    /// escaped `ReservedWord` operand (e.g. `!\u{69}f`, decoding to `if`),
+    /// no `IdentifierReference` operand at all (e.g. `!=a`, where the shared
+    /// recognizer declines at the following `=`), or a second leading
+    /// `!`/`~` (e.g. `!!a`, `~~a`, `!~a`, `~!a`, since this helper never
+    /// calls itself recursively on its own operand) restores the cursor to
+    /// its starting offset and returns `NotSelected`. A processing failure
+    /// from the shared recognizer (`ResourceLimited` / `InternalFailure`) is
+    /// preserved unchanged and is never downgraded to `NotSelected`. A
+    /// locally complete unary-reference atom does not itself authorize any
+    /// broader source; the caller (an initializer owner or the
+    /// free-standing body owner) remains solely responsible for judging any
+    /// unowned trailing source (e.g. `!a.b`, `!a + b`), and this helper is
+    /// deliberately never routed into the `+`/`-` family's additive
+    /// continuation helpers, since the `!`/`~` theorem is atom-only (per
+    /// #688 comment 5844920129).
+    fn consume_selected_bang_tilde_identifier_reference_unary_expression(
+        &mut self,
+    ) -> SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition {
+        let start = self.offset;
+
+        if !self.consume_ascii('!') && !self.consume_ascii('~') {
+            return SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition::NotSelected;
+        }
+
+        self.skip_selected_trivia();
+
+        match self.consume_selected_identifier_reference() {
+            SelectedIdentifierReferenceRecognition::Matched(reference) => {
+                SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition::Matched(reference)
+            }
+            SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName { .. }
+            | SelectedIdentifierReferenceRecognition::NotSelected => {
+                self.offset = start;
+                SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition::NotSelected
+            }
+            SelectedIdentifierReferenceRecognition::ResourceLimited => {
+                SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition::ResourceLimited
+            }
+            SelectedIdentifierReferenceRecognition::InternalFailure => {
+                SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition::InternalFailure
             }
         }
     }
