@@ -16,6 +16,8 @@ mod qualification_grammar_evidence_validation_tests;
 #[cfg(test)]
 mod qualification_grammar_rejection_policy_validation_tests;
 #[cfg(test)]
+mod qualification_selected_bang_tilde_identifier_reference_unary_expression_initializer_validation_tests;
+#[cfg(test)]
 mod qualification_selected_boolean_literal_initializer_validation_tests;
 #[cfg(test)]
 mod qualification_selected_eof_asi_validation_tests;
