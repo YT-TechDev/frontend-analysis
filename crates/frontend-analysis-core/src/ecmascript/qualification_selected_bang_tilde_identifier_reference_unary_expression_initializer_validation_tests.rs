@@ -49,11 +49,13 @@
 //! `SelectedDirectIdentifierReference` independently restates only the
 //! already-accepted Issue #237 direct escape-free `IdentifierName` code-point
 //! shape. `SelectedEscapedNonReservedIdentifierReference` independently
-//! restates only the fixed-form `\uXXXX` subset of the already-accepted
-//! Issue #241 escaped `IdentifierReference` decode/position/ReservedWord
-//! boundary that every representative witness in this Issue needs; it is not
-//! a re-test of the full Issue #241 theorem (braced `\u{...}` composition
-//! remains that Oracle's own concern, never rebuilt here).
+//! restates both the fixed-form `\uXXXX` and braced `\u{HexDigits}`
+//! `UnicodeEscapeSequence` forms of the already-accepted Issue #241 escaped
+//! `IdentifierReference` decode/position/ReservedWord boundary. Issue #241
+//! owns the escaped-`IdentifierReference` premise in full; this Oracle
+//! independently composes representative accepted fixed and braced
+//! `EscapedNonReserved` operands through the new exactly-one `!`/`~` wrapper
+//! without re-proving the entire Issue #241 theorem.
 //!
 //! This is a validation-only leaf: production supports leading `!`/`~` over
 //! no operand family at the #827 baseline, so every positive fixture below
@@ -170,6 +172,7 @@ enum IdentifierReferenceProvenance {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DecodeFailure {
     MalformedEscape,
+    NonCodePoint,
     InvalidStart,
     InvalidPart,
     DecodedReserved,
@@ -232,18 +235,62 @@ fn ascii_hex_value(byte: u8) -> Option<u32> {
     }
 }
 
-/// Decodes exactly one fixed-form `\uXXXX` `UnicodeEscapeSequence` starting
-/// at `start`, returning its code point and the byte offset immediately
-/// after it. The braced `\u{...}` form remains Issue #241's own concern and
-/// is never rebuilt here: every representative witness this Issue needs uses
-/// only the fixed form.
-fn decode_fixed_escape_at(bytes: &[u8], start: usize) -> Result<(u32, usize), DecodeFailure> {
+/// Parses the hex digits inside a braced `\u{HexDigits}` escape, independently
+/// restating only the already-accepted Issue #241 braced-form boundary:
+/// leading zeros are permitted without limit, but at most six significant hex
+/// digits are, and the resulting value must be a valid Unicode code point
+/// (`<= 0x10FFFF`).
+fn parse_braced_code_point(digits: &[u8]) -> Result<u32, DecodeFailure> {
+    if digits.is_empty() || digits.iter().any(|byte| ascii_hex_value(*byte).is_none()) {
+        return Err(DecodeFailure::MalformedEscape);
+    }
+
+    let significant = match digits.iter().position(|byte| *byte != b'0') {
+        Some(index) => &digits[index..],
+        None => return Ok(0),
+    };
+
+    if significant.len() > 6 {
+        return Err(DecodeFailure::NonCodePoint);
+    }
+
+    let mut value = 0_u32;
+    for byte in significant {
+        value = value * 16 + ascii_hex_value(*byte).ok_or(DecodeFailure::MalformedEscape)?;
+    }
+
+    (value <= 0x10_FFFF)
+        .then_some(value)
+        .ok_or(DecodeFailure::NonCodePoint)
+}
+
+/// Decodes exactly one `UnicodeEscapeSequence` starting at `start` -- either
+/// the fixed-form `\uXXXX` or the braced `\u{HexDigits}` form -- returning
+/// its code point and the byte offset immediately after it. Both forms are
+/// part of the single already-accepted Issue #241 escaped-`IdentifierReference`
+/// premise this Oracle composes, never re-derives, through the new
+/// exactly-one `!`/`~` wrapper.
+fn decode_unicode_escape_at(bytes: &[u8], start: usize) -> Result<(u32, usize), DecodeFailure> {
     if bytes.get(start) != Some(&b'\\') || bytes.get(start + 1) != Some(&b'u') {
         return Err(DecodeFailure::MalformedEscape);
     }
-    let digits_start = start + 2;
+    let payload = start + 2;
+
+    if bytes.get(payload) == Some(&b'{') {
+        let digits_start = payload + 1;
+        let mut end = digits_start;
+        while bytes.get(end).is_some_and(u8::is_ascii_hexdigit) {
+            end += 1;
+        }
+        if end == digits_start || bytes.get(end) != Some(&b'}') {
+            return Err(DecodeFailure::MalformedEscape);
+        }
+        let code_point = parse_braced_code_point(&bytes[digits_start..end])?;
+        return Ok((code_point, end + 1));
+    }
+
     let digits = bytes
-        .get(digits_start..digits_start + 4)
+        .get(payload..payload + 4)
         .ok_or(DecodeFailure::MalformedEscape)?;
     if !digits.iter().all(u8::is_ascii_hexdigit) {
         return Err(DecodeFailure::MalformedEscape);
@@ -252,7 +299,7 @@ fn decode_fixed_escape_at(bytes: &[u8], start: usize) -> Result<(u32, usize), De
     for byte in digits {
         value = value * 16 + ascii_hex_value(*byte).ok_or(DecodeFailure::MalformedEscape)?;
     }
-    Ok((value, digits_start + 4))
+    Ok((value, payload + 4))
 }
 
 fn is_selected_identifier_start_code_point(code_point: u32) -> bool {
@@ -264,9 +311,10 @@ fn is_selected_identifier_part_code_point(code_point: u32) -> bool {
 }
 
 /// `SelectedEscapedNonReservedIdentifierReference`: independently restates
-/// only the fixed-form `\uXXXX` subset of the already-accepted Issue #241
-/// escaped `IdentifierReference` decode/position/ReservedWord boundary.
-/// Returns the decoded semantic name, never the authored spelling.
+/// the fixed-form `\uXXXX` and braced `\u{HexDigits}` subset of the
+/// already-accepted Issue #241 escaped `IdentifierReference`
+/// decode/position/ReservedWord boundary. Returns the decoded semantic name,
+/// never the authored spelling.
 fn decode_selected_escaped_identifier(spelling: &str) -> Result<String, DecodeFailure> {
     let bytes = spelling.as_bytes();
     let mut offset = 0_usize;
@@ -275,7 +323,7 @@ fn decode_selected_escaped_identifier(spelling: &str) -> Result<String, DecodeFa
 
     while offset < bytes.len() {
         let (code_point, end) = if bytes[offset] == b'\\' {
-            decode_fixed_escape_at(bytes, offset)?
+            decode_unicode_escape_at(bytes, offset)?
         } else {
             let scalar = spelling[offset..]
                 .chars()
@@ -568,6 +616,36 @@ fn exact_positive_matrix_pins_fixture_owned_operator_and_reference_ranges() {
             expected_name: "foo",
             expected_provenance: IdentifierReferenceProvenance::EscapedNonReserved,
         },
+        PositiveRow {
+            source: "const x = !\\u{66}oo;",
+            operator: Range(10, 11),
+            reference: Range(11, 19),
+            whole: Range(10, 19),
+            expected_operator: "!",
+            expected_reference: "\\u{66}oo",
+            expected_name: "foo",
+            expected_provenance: IdentifierReferenceProvenance::EscapedNonReserved,
+        },
+        PositiveRow {
+            source: "const x = ~\\u{66}oo;",
+            operator: Range(10, 11),
+            reference: Range(11, 19),
+            whole: Range(10, 19),
+            expected_operator: "~",
+            expected_reference: "\\u{66}oo",
+            expected_name: "foo",
+            expected_provenance: IdentifierReferenceProvenance::EscapedNonReserved,
+        },
+        PositiveRow {
+            source: "const x = ~\\u{1D49C};",
+            operator: Range(10, 11),
+            reference: Range(11, 20),
+            whole: Range(10, 20),
+            expected_operator: "~",
+            expected_reference: "\\u{1D49C}",
+            expected_name: "\u{1D49C}",
+            expected_provenance: IdentifierReferenceProvenance::EscapedNonReserved,
+        },
     ];
 
     for (index, row) in rows.iter().enumerate() {
@@ -720,8 +798,13 @@ fn identifier_reference_policy_composition_matrix() {
         }
     }
 
-    const ACCEPTED_ESCAPED_OPERANDS: &[(&str, &str)] =
-        &[("\\u0061", "a"), ("f\\u006Fo", "foo"), ("\\u0024", "$")];
+    const ACCEPTED_ESCAPED_OPERANDS: &[(&str, &str)] = &[
+        ("\\u0061", "a"),
+        ("f\\u006Fo", "foo"),
+        ("\\u0024", "$"),
+        ("\\u{66}oo", "foo"),
+        ("\\u{1D49C}", "\u{1D49C}"),
+    ];
     for (rhs, decoded) in ACCEPTED_ESCAPED_OPERANDS {
         assert_eq!(
             classify_selected_accepted_identifier_reference(rhs),
@@ -754,8 +837,9 @@ fn identifier_reference_policy_composition_matrix() {
         }
     }
 
-    // Malformed escapes remain outside (short/invalid hex digits).
-    for malformed in [r"\u006", r"\u0G61"] {
+    // Malformed escapes remain outside (short/invalid hex digits), for both
+    // the fixed and braced forms.
+    for malformed in [r"\u006", r"\u0G61", r"\u{}", r"\u{G}"] {
         assert_eq!(
             decode_selected_escaped_identifier(malformed),
             Err(DecodeFailure::MalformedEscape),
@@ -770,22 +854,51 @@ fn identifier_reference_policy_composition_matrix() {
         );
     }
 
-    // A decoded-reserved escaped spelling remains outside (`if`
-    // decodes to the reserved word "if").
+    // A braced escape past the Unicode code-point ceiling remains outside
+    // (`NonCodePoint`), inherited from the already-accepted Issue #241
+    // braced-form boundary.
     assert_eq!(
-        decode_selected_escaped_identifier("\\u0069f"),
-        Err(DecodeFailure::DecodedReserved)
+        decode_selected_escaped_identifier(r"\u{110000}"),
+        Err(DecodeFailure::NonCodePoint)
     );
     assert_eq!(
-        classify_selected_accepted_identifier_reference("\\u0069f"),
+        classify_selected_accepted_identifier_reference(r"\u{110000}"),
         None
     );
-    assert!(!is_selected_bang_tilde_identifier_reference_unary_expression("!\\u0069f"));
+    assert!(
+        !is_selected_bang_tilde_identifier_reference_unary_expression(concat!("!", r"\u{110000}"))
+    );
 
-    // Invalid decoded start/part positions remain outside (`0` decodes
-    // to a leading digit; `a-` decodes to a trailing hyphen).
+    // A decoded-reserved escaped spelling remains outside for both forms
+    // (`\\u0069f` / `\u{69}f` both decode to the reserved word "if").
+    for reserved_escape in ["\\u0069f", "\\u{69}f"] {
+        assert_eq!(
+            decode_selected_escaped_identifier(reserved_escape),
+            Err(DecodeFailure::DecodedReserved),
+            "{reserved_escape:?}"
+        );
+        assert_eq!(
+            classify_selected_accepted_identifier_reference(reserved_escape),
+            None,
+            "{reserved_escape:?}"
+        );
+        assert!(
+            !is_selected_bang_tilde_identifier_reference_unary_expression(&format!(
+                "!{reserved_escape}"
+            )),
+            "{reserved_escape:?}"
+        );
+    }
+
+    // Invalid decoded start/part positions remain outside for both forms
+    // (`\\u0030` / `\u{30}` decode to a leading digit; `a\\u002D` decodes to
+    // a trailing hyphen).
     assert_eq!(
         decode_selected_escaped_identifier("\\u0030"),
+        Err(DecodeFailure::InvalidStart)
+    );
+    assert_eq!(
+        decode_selected_escaped_identifier("\\u{30}"),
         Err(DecodeFailure::InvalidStart)
     );
     assert_eq!(
