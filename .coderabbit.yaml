@@ -1,0 +1,100 @@
+language: en-US
+tone_instructions: >-
+  Be concise, evidence-first, and architecture-aware. Prioritize actionable
+  correctness, contract, provenance, and validation findings over style.
+
+reviews:
+  profile: assertive
+  request_changes_workflow: false
+  high_level_summary: false
+  review_status: true
+  review_details: true
+  review_progress: true
+  collapse_walkthrough: true
+  changed_files_summary: true
+  sequence_diagrams: false
+  estimate_code_review_effort: false
+  assess_linked_issues: true
+  related_issues: false
+  related_prs: false
+  suggested_labels: false
+  suggested_reviewers: false
+  in_progress_fortune: false
+  enable_prompt_for_ai_agents: false
+
+  slop_detection:
+    enabled: false
+
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    auto_pause_after_reviewed_commits: 0
+
+  finishing_touches:
+    docstrings:
+      enabled: false
+    unit_tests:
+      enabled: false
+    simplify:
+      enabled: false
+    autofix:
+      enabled: false
+    fix_ci:
+      enabled: false
+    resolve_merge_conflict:
+      enabled: false
+
+  pre_merge_checks:
+    docstrings:
+      mode: "off"
+
+  path_instructions:
+    - path: "crates/frontend-analysis-core/**/*.rs"
+      instructions: |
+        - Treat the linked Issue/task and repository authority as the scope boundary.
+        - Prioritize semantic, architectural, provenance, determinism, and evidence defects over style.
+        - Protect the browser-independent Core. Flag browser protocols, browser-engine lifecycles, UI/framework types, or adapter-specific behavior entering Core.
+        - Flag new public API, serialization, dependencies, async/concurrency/shared mutation, unsafe Rust, or runtime coupling unless explicit maintainer authorization for that exact contract change is durably recorded under repository authority. A linked Issue defines scope but is not approval by itself.
+        - Check ownership, lifecycle, mutation, invalidation, error responsibility, ordering, and determinism. Do not recommend speculative abstraction or generic shared infrastructure without a demonstrated consumer.
+        - Preserve evidence at authoritative recognition. Flag later source search, rescan, reparse, retokenization, endpoint reconstruction, or decoded-length inference used to manufacture source-backed evidence.
+        - Keep authored source, interpreted value, semantic identity, semantic placement, and runtime identity distinct unless the repository has explicitly proven equivalence.
+        - Do not let higher layers upgrade incomplete, unsupported, or partial lower-layer evidence into a stronger result.
+
+    - path: "crates/frontend-analysis-core/src/ecmascript/**/*.rs"
+      instructions: |
+        - For selected parser work, verify exact owner transaction semantics, rollback position, whole-source versus local-prefix ownership, and richer-neighbor firewalls.
+        - ResourceLimited and InternalFailure must remain distinct from syntax decline, unsupported coverage, recovery, or partial success.
+        - Candidate-independent validation must not derive expected output from production recognition, production semantic consumers, or later source reconstruction.
+        - Exact SourceAnchor evidence must come from owned recognition and retain only the source fact the accepted theorem authorizes.
+        - Flag accidental widening into recursive grouping, generic Expression/AST/token infrastructure, richer operators, or browser/runtime semantics when the linked Issue is bounded more narrowly.
+        - Historical Oracles, frozen completion evidence, and inventory files are authority surfaces. Flag changes unless explicit maintainer authorization for that exact authority update is durably recorded under repository authority. A linked Issue may define requested scope but does not approve authority mutation by itself.
+        - When an unsupported fixture becomes supported, require truthful positive/regression evidence rather than merely deleting the old negative fixture.
+
+    - path: "docs/**/*.md"
+      instructions: |
+        - Preserve documentation classification, source-of-truth ownership, authority, and supersession rules.
+        - Flag contradictions with stronger normative documents and claims that implementation, CI, or a PR merge creates architecture approval.
+        - Durable evidence must not depend on private AI conversations, private session URLs, credentials, or unverifiable external state.
+        - When a document records an exact candidate, verify base/head/tree identities are current for the claim being made.
+
+    - path: ".github/**"
+      instructions: |
+        - Treat workflow, governance, permissions, and repository-automation changes as operational contract changes, not routine cleanup.
+        - Check least privilege, untrusted-input handling, secret exposure, action/script trust, determinism, and rollback or recognition evidence when live remote behavior is claimed.
+        - Flag unrelated CI, branch-policy, permission, or automation widening outside the linked Issue.
+
+    - path: "Cargo.toml"
+      instructions: |
+        - Treat dependency, feature, workspace, publication, and build-contract changes as explicit contract changes.
+        - Require linked-Issue scope, demonstrated need, and explicit maintainer authorization whenever repository contracts require approval. Do not treat Issue text alone as approval. Flag convenience dependencies, accidental public surface, and unrelated resolution churn.
+
+    - path: "rust-toolchain.toml"
+      instructions: |
+        - Treat toolchain changes as reproducibility and compatibility contract changes.
+        - Require linked-Issue scope, evidence for the exact version/change, and explicit maintainer authorization when required by repository authority. Do not treat Issue text alone as approval. Do not infer an MSRV promise from the pinned development toolchain.
+
+    - path: ".coderabbit.yaml"
+      instructions: |
+        - Validate keys against the current official CodeRabbit schema.
+        - This file supplements AGENTS.md and repository authority; it must not duplicate, weaken, or override normative project contracts.
+        - Keep CodeRabbit review-only and advisory: no automatic approval/merge authority, agentic finishing touches, post-merge mutations, or maintainer-owned PR-description rewriting without explicit repository authority.
