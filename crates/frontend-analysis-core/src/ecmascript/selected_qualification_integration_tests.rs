@@ -2953,6 +2953,49 @@ fn parenthesized_identifier_reference_reaches_selected_accepted_incomplete() {
     }
 }
 
+/// Issue #837: the newly production-selected exactly-one direct `typeof`/
+/// `void` `IdentifierReference` `UnaryExpression` reaches the same existing
+/// `SelectedAcceptedIncomplete` lifecycle as any other production-accepted,
+/// not-yet-Oracle-qualified source -- never `UnsupportedCoverage` and never
+/// `Qualified`. Representative sources cover each newly admitted owner/
+/// placement class (per Issue #837's own required positive sealing): the
+/// three initializer owners (plus one Block-contained `LexicalDeclaration`
+/// representative), and both free-standing placements under both
+/// terminator forms, with a Direct and an escaped (fixed or braced/
+/// supplementary) operand each, and both `typeof` and `void` keywords.
+/// This is regression sealing only; the accepted #688 comment 5854981613
+/// authority is unaffected and remains the sole candidate-independent
+/// authority for the wrapped-reference fact itself.
+#[test]
+fn typeof_void_identifier_reference_unary_expression_reaches_selected_accepted_incomplete() {
+    for text in [
+        // LexicalDeclaration initializer.
+        "const x = typeof a;",
+        // Escaped initializer (fixed-form escape).
+        r"let x = void \u0061;",
+        // Top-level var.
+        "var x = typeof a;",
+        // Block var / Block-contained initializer owner (braced escape).
+        r"{ var x = void \u{66}oo; }",
+        // TopLevel free-standing authored terminator.
+        "typeof a;",
+        // TopLevel free-standing EOF ASI (fixed-form escape).
+        r"void \u0061",
+        // Block free-standing authored terminator.
+        "{ typeof a; }",
+        // Block free-standing before-`}` ASI (supplementary braced escape).
+        r"{ void \u{1D49C} }",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+}
+
 #[test]
 fn top_level_identifier_reference_expression_statement_use_site_dispatch_reaches_accepted_incomplete_while_declaration_grammar_stays_owned()
  {
@@ -3023,8 +3066,9 @@ fn top_level_identifier_reference_expression_statement_use_site_asi_general_expr
         // Other unary operators remain outside this leaf (Issue #771).
         // `!a;` / `~a;` moved to selected-positive coverage by Issue #829
         // (see the "Issue #829" section in `selected_lexical_slice_tests.rs`)
-        // and are no longer listed here.
-        "typeof a;",
+        // and are no longer listed here. `typeof a;` / `void a;` moved to
+        // selected-positive coverage by Issue #837 (see the "Issue #837"
+        // section below) and are no longer listed here.
         "++a;",
         "+-a;",
         // Parenthesized firewall (Issue #771).
