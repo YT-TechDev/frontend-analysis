@@ -2207,6 +2207,34 @@ enum SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition {
     InternalFailure,
 }
 
+/// Result of the bounded exactly-one direct `typeof`/`void`
+/// `IdentifierReference` `UnaryExpression` recognizer below (Issue #837, per
+/// #688 comment 5854981613). `Matched` carries the exact existing
+/// `SelectedIdentifierReferenceFact` produced by the shared
+/// `consume_selected_identifier_reference()` recognizer for the operand,
+/// unchanged, for either a direct-authored or an escaped non-ReservedWord
+/// operand. `NotSelected` covers every decline: no direct `typeof`/`void`
+/// keyword match (reusing the unmodified `consume_keyword()` boundary, which
+/// already declines a maximal `IdentifierName` such as `typeofa` or
+/// `typeof\u0061` so that the existing bare-reference route can own the
+/// complete fragment), no selected trivia between the keyword and the
+/// operand, an escaped `ReservedWord` operand, or no `IdentifierReference`
+/// operand at all. `ResourceLimited` and `InternalFailure` preserve the
+/// shared recognizer's own processing-failure classes without collapsing
+/// them into `NotSelected`. This carrier is deliberately distinct from
+/// `SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition` above:
+/// the keyword boundary reuses `consume_keyword()` rather than a single
+/// authored punctuator, and requires a non-empty separator between the
+/// keyword and the operand, so the two operator families are not merged
+/// behind one generic recognition result.
+#[derive(Debug)]
+enum SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition {
+    Matched(SelectedIdentifierReferenceFact),
+    NotSelected,
+    ResourceLimited,
+    InternalFailure,
+}
+
 /// Result of the placement-neutral bounded exactly-one parenthesized
 /// `IdentifierReference` recognizer below (Issue #833, composing the
 /// accepted candidate-independent theorem proven by #831/PR #832 per #688
@@ -2771,6 +2799,17 @@ impl<'source> Cursor<'source> {
                                         return Err(ParseFailure::InternalFailure);
                                     }
                                     SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
+                                match self.consume_selected_typeof_void_identifier_reference_unary_expression() {
+                                    SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
+                                    (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
+                                    }
+                                    SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
+                                        return Err(ParseFailure::ResourceLimited);
+                                    }
+                                    SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition::InternalFailure => {
+                                        return Err(ParseFailure::InternalFailure);
+                                    }
+                                        SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
                                 match self.consume_selected_parenthesized_identifier_reference() {
                                     SelectedParenthesizedIdentifierReferenceRecognition::Matched(reference) => {
                                         (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
@@ -2841,6 +2880,8 @@ impl<'source> Cursor<'source> {
                                         }
                                     }
                                 }
+                                }
+                                        }
                                     }
                                 }
                                     }
@@ -2988,6 +3029,17 @@ impl<'source> Cursor<'source> {
                                         return Err(ParseFailure::InternalFailure);
                                     }
                                     SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
+                                match self.consume_selected_typeof_void_identifier_reference_unary_expression() {
+                                    SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
+                                    (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
+                                    }
+                                    SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
+                                        return Err(ParseFailure::ResourceLimited);
+                                    }
+                                    SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition::InternalFailure => {
+                                        return Err(ParseFailure::InternalFailure);
+                                    }
+                                        SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
                                 match self.consume_selected_parenthesized_identifier_reference() {
                                     SelectedParenthesizedIdentifierReferenceRecognition::Matched(reference) => {
                                         (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
@@ -3058,6 +3110,8 @@ impl<'source> Cursor<'source> {
                                         }
                                     }
                                 }
+                                }
+                                        }
                                     }
                                 }
                                     }
@@ -3170,6 +3224,18 @@ impl<'source> Cursor<'source> {
                                     return Err(ParseFailure::InternalFailure);
                                 }
                                 SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
+                            match self.consume_selected_typeof_void_identifier_reference_unary_expression() {
+                                SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
+                                identifier_reference_initializer =
+                                    Some(SelectedIdentifierReferenceInitializer::One(reference));
+                                }
+                                SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
+                                    return Err(ParseFailure::ResourceLimited);
+                                }
+                                SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition::InternalFailure => {
+                                    return Err(ParseFailure::InternalFailure);
+                                }
+                                    SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
                             match self.consume_selected_parenthesized_identifier_reference() {
                                 SelectedParenthesizedIdentifierReferenceRecognition::Matched(reference) => {
                                     identifier_reference_initializer =
@@ -3234,6 +3300,8 @@ impl<'source> Cursor<'source> {
                                     }
                                 }
                             }
+                            }
+                                    }
                                 }
                             }
                                 }
@@ -4072,6 +4140,22 @@ impl<'source> Cursor<'source> {
                 return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::InternalFailure;
             }
             SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition::NotSelected => {}
+        }
+
+        match self.consume_selected_typeof_void_identifier_reference_unary_expression() {
+            SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
+                self.skip_selected_trivia();
+                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::Matched(
+                    SelectedFreeStandingIdentifierReferenceUseSite::One(reference),
+                );
+            }
+            SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
+                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::ResourceLimited;
+            }
+            SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition::InternalFailure => {
+                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::InternalFailure;
+            }
+            SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition::NotSelected => {}
         }
 
         match self.consume_selected_parenthesized_identifier_reference() {
@@ -6192,6 +6276,92 @@ impl<'source> Cursor<'source> {
             }
             SelectedIdentifierReferenceRecognition::InternalFailure => {
                 SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition::InternalFailure
+            }
+        }
+    }
+
+    /// Recognizes exactly one direct `typeof` or `void` `IdentifierReference`
+    /// `UnaryExpression` (`SelectedTypeofVoidKeyword SelectedRequiredKeywordOperandTrivia
+    /// SelectedAcceptedIdentifierReference`, where
+    /// `SelectedAcceptedIdentifierReference ::= SelectedDirectIdentifierReference
+    /// | SelectedEscapedNonReservedIdentifierReference`) in either the
+    /// selected initializer position or the selected free-standing
+    /// `ExpressionStatement` use-site body position (Issue #837, composing
+    /// the accepted candidate-independent authority proven by #688 comment
+    /// 5854981613). Modeled directly on
+    /// `consume_selected_bang_tilde_identifier_reference_unary_expression`
+    /// above, swapping the recognized operator for the unmodified shared
+    /// `consume_keyword()` boundary and requiring a non-empty selected-trivia
+    /// separator between the keyword and the operand: on a match, the
+    /// existing inner `SelectedIdentifierReferenceFact` produced by the
+    /// unmodified shared `consume_selected_identifier_reference()`
+    /// recognizer is returned unchanged, for either operand spelling. The
+    /// operand is recognized and decoded exactly once by that unmodified
+    /// shared recognizer; no second keyword scanner or Identifier scanner is
+    /// introduced.
+    ///
+    /// `consume_keyword()` already declines a direct `typeof`/`void` match
+    /// when the next authored element continues the same maximal
+    /// `IdentifierName` (an `IdentifierPart` or a formed Unicode escape), so
+    /// `typeofa`, `typeof\u{61}`, `voida`, `void_foo`, and `void\u0061`
+    /// remain one maximal authored `IdentifierReference` owned entirely by
+    /// the existing bare-reference route, never split into keyword plus
+    /// operand here. An explicit non-empty-trivia check is still applied
+    /// after a successful keyword match even though that maximality boundary
+    /// already prevents a zero-trivia `IdentifierReference` success: this
+    /// keeps the bounded theorem local (e.g. `typeof/*c*/a` remains outside,
+    /// since comments are not selected trivia) and independent of any future
+    /// widening of the inner recognizer's own boundary.
+    ///
+    /// This bounded local scan commits `self.offset` only after a complete
+    /// direct-authored or escaped non-ReservedWord `IdentifierReference`
+    /// operand is recognized following the keyword and non-empty
+    /// intervening existing selected trivia (`skip_selected_trivia`,
+    /// unchanged). An escaped `ReservedWord` operand (e.g. `typeof \u{69}f`,
+    /// decoding to `if`), no `IdentifierReference` operand at all, or no
+    /// selected trivia between the keyword and the operand restores the
+    /// cursor to its starting offset and returns `NotSelected`. A processing
+    /// failure from the shared recognizer (`ResourceLimited` /
+    /// `InternalFailure`) is preserved unchanged and is never downgraded to
+    /// `NotSelected`. A locally complete keyword-unary atom does not itself
+    /// authorize any broader source; the caller (an initializer owner or the
+    /// free-standing body owner) remains solely responsible for judging any
+    /// unowned trailing source (e.g. `typeof a+b`, `typeof a.b`), and this
+    /// helper is deliberately never routed into the `+`/`-` family's
+    /// additive continuation helpers, is never invoked recursively on its
+    /// own operand (`typeof typeof a`, `typeof void a` remain outside), and
+    /// never treats an existing parenthesized `IdentifierReference` as its
+    /// operand (`typeof (a)` remains outside).
+    fn consume_selected_typeof_void_identifier_reference_unary_expression(
+        &mut self,
+    ) -> SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition {
+        let start = self.offset;
+
+        if !self.consume_keyword("typeof") && !self.consume_keyword("void") {
+            return SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition::NotSelected;
+        }
+
+        let before_trivia = self.offset;
+        self.skip_selected_trivia();
+        if self.offset == before_trivia {
+            self.offset = start;
+            return SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition::NotSelected;
+        }
+
+        match self.consume_selected_identifier_reference() {
+            SelectedIdentifierReferenceRecognition::Matched(reference) => {
+                SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition::Matched(reference)
+            }
+            SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName { .. }
+            | SelectedIdentifierReferenceRecognition::NotSelected => {
+                self.offset = start;
+                SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition::NotSelected
+            }
+            SelectedIdentifierReferenceRecognition::ResourceLimited => {
+                SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition::ResourceLimited
+            }
+            SelectedIdentifierReferenceRecognition::InternalFailure => {
+                SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition::InternalFailure
             }
         }
     }

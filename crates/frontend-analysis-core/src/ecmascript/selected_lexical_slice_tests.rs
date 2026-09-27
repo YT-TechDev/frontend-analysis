@@ -7021,10 +7021,13 @@ fn bang_tilde_identifier_reference_unary_expression_free_standing_placement_matr
 }
 
 /// Issue #829 firewalls: exactly-one recursive/mixed unary, the `!=`/`!==`
-/// punctuator boundary, keyword unary, non-`IdentifierReference` operands,
-/// richer expression tails, and a comment between operator and operand all
-/// remain outside the accepted theorem, in both the initializer and the
-/// free-standing position, without becoming a shorter selected success.
+/// punctuator boundary, the `delete` keyword unary, non-`IdentifierReference`
+/// operands, richer expression tails, and a comment between operator and
+/// operand all remain outside the accepted theorem, in both the initializer
+/// and the free-standing position, without becoming a shorter selected
+/// success. `typeof a;` / `void a;` moved to selected-positive coverage by
+/// Issue #837 (see the "Issue #837" section below) and are no longer listed
+/// here; `delete a;` remains outside every accepted keyword-unary theorem.
 #[test]
 fn bang_tilde_identifier_reference_unary_expression_required_firewalls_remain_unsupported() {
     for text in [
@@ -7033,9 +7036,7 @@ fn bang_tilde_identifier_reference_unary_expression_required_firewalls_remain_un
         "const x = ~~a;",
         "const x = !~a;",
         "const x = ~!a;",
-        // Keyword unary remains unsupported everywhere.
-        "const x = typeof a;",
-        "const x = void a;",
+        // `delete` keyword unary remains unsupported everywhere.
         "const x = delete a;",
         // `!=` / `!==` punctuator boundary: no special-casing, the shared
         // recognizer simply declines at `=`.
@@ -7069,8 +7070,6 @@ fn bang_tilde_identifier_reference_unary_expression_required_firewalls_remain_un
         "~~a;",
         "!~a;",
         "~!a;",
-        "typeof a;",
-        "void a;",
         "delete a;",
         "!=a;",
         "!==a;",
@@ -7528,6 +7527,387 @@ fn parenthesized_identifier_reference_transactionality_commits_no_earlier_fact()
     assert_eq!(subject.fragment(), r"\u{}");
 
     for text in ["(a)\nb;", "{ (a)\nb; }"] {
+        assert_unsupported(text);
+    }
+}
+
+// Issue #837: bounded exactly-one direct `typeof`/`void`
+// `IdentifierReference` `UnaryExpression`
+// (`SelectedTypeofVoidIdentifierReferenceUnaryExpression`), composing the
+// accepted candidate-independent authority proven by #688 comment
+// 5854981613 into all three mature initializer owners
+// (`parse_declaration`/`parse_variable_statement`/
+// `parse_selected_block_var_statement`) and the shared free-standing body
+// owner (`consume_selected_identifier_reference_expression_statement_use_site_body`).
+// Modeled directly on the #829 (`!`/`~`) precedent: deliberately distinct
+// from, and never routed through, the settled leading `+`/`-`
+// `IdentifierReference` family's additive-continuation machinery above -- a
+// matched `typeof`/`void` atom is atom-only and maps directly to the
+// existing `One(reference)` carrier on either owner family. Unlike `!`/`~`,
+// the keyword boundary reuses the unmodified `consume_keyword()` maximality
+// primitive, so a zero-trivia continuation of the same `IdentifierName`
+// (`typeofa`, `typeof\u0061`) remains one maximal bare `IdentifierReference`
+// owned by the existing bare-reference route, never split into keyword plus
+// operand.
+
+#[test]
+fn typeof_void_identifier_reference_unary_expression_initializer_positive_matrix_is_recognized_across_all_three_owners()
+ {
+    let script = recognized("const x = typeof a;");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding
+        .identifier_reference_initializer()
+        .expect("typeof-wrapped LexicalDeclaration RHS reference fact");
+    assert_eq!(reference.reference().fragment(), "a");
+    assert_eq!(reference.semantic_name(), "a");
+
+    let script = recognized("let x = void a;");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding
+        .identifier_reference_initializer()
+        .expect("void-wrapped LexicalDeclaration RHS reference fact");
+    assert_eq!(reference.reference().fragment(), "a");
+    assert_eq!(reference.semantic_name(), "a");
+
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+    let script = recognized_block("{ const x = typeof a; }");
+    let [SelectedTopLevelItem::Block(block)] = script.items() else {
+        panic!("expected exactly one Block item");
+    };
+    let [SelectedBlockItem::LexicalDeclaration(declaration)] = block.items() else {
+        panic!("expected exactly one Block-contained LexicalDeclaration item");
+    };
+    let [binding] = declaration.bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding
+        .identifier_reference_initializer()
+        .expect("typeof-wrapped Block-contained LexicalDeclaration RHS reference fact");
+    assert_eq!(reference.reference().fragment(), "a");
+    assert_eq!(reference.semantic_name(), "a");
+
+    let script = recognized_variable("var x = typeof a;");
+    let statement = only_variable_statement(&script);
+    let [binding] = statement.bindings() else {
+        panic!("expected one selected top-level var binding");
+    };
+    let reference = binding
+        .identifier_reference_initializer()
+        .expect("typeof-wrapped top-level var RHS reference fact");
+    assert_eq!(reference.reference().fragment(), "a");
+    assert_eq!(reference.semantic_name(), "a");
+
+    let script = recognized_block("{ var x = void a; }");
+    let [SelectedTopLevelItem::Block(block)] = script.items() else {
+        panic!("expected exactly one Block item");
+    };
+    let [SelectedBlockItem::Var(statement)] = block.items() else {
+        panic!("expected exactly one Block var statement");
+    };
+    let [binding] = statement.bindings() else {
+        panic!("expected one selected Block var binding");
+    };
+    let reference = binding
+        .identifier_reference_initializer()
+        .expect("void-wrapped Block var RHS reference fact");
+    assert_eq!(reference.reference().fragment(), "a");
+    assert_eq!(reference.semantic_name(), "a");
+}
+
+/// Issue #837 provenance: the retained inner `SelectedIdentifierReferenceFact`
+/// excludes the keyword and any intervening trivia from its authored
+/// `SourceAnchor`, across Direct, fixed-escaped, mixed fixed-escaped, and
+/// both accepted braced-escaped forms (including a supplementary code
+/// point), and across trivia witnesses beyond ASCII space.
+#[test]
+fn typeof_void_identifier_reference_unary_expression_provenance_matrix_is_exact() {
+    let script = recognized("const x = typeof a;");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding.identifier_reference_initializer().unwrap();
+    assert_eq!(reference.reference().fragment(), "a");
+    assert_eq!(reference.semantic_name(), "a");
+
+    let script = recognized(r"const x = void \u0061;");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding.identifier_reference_initializer().unwrap();
+    assert_eq!(reference.reference().fragment(), r"\u0061");
+    assert_eq!(reference.semantic_name(), "a");
+
+    let script = recognized(r"const x = typeof f\u006Fo;");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding.identifier_reference_initializer().unwrap();
+    assert_eq!(reference.reference().fragment(), r"f\u006Fo");
+    assert_eq!(reference.semantic_name(), "foo");
+
+    let script = recognized(r"const x = void \u{66}oo;");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding.identifier_reference_initializer().unwrap();
+    assert_eq!(reference.reference().fragment(), r"\u{66}oo");
+    assert_eq!(reference.semantic_name(), "foo");
+
+    let script = recognized(r"const x = typeof \u{1D49C};");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding.identifier_reference_initializer().unwrap();
+    assert_eq!(reference.reference().fragment(), r"\u{1D49C}");
+    assert_eq!(reference.semantic_name(), "\u{1D49C}");
+
+    // Trivia witnesses beyond ASCII space (tab and NBSP).
+    let script = recognized("const x = typeof\ta;");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding.identifier_reference_initializer().unwrap();
+    assert_eq!(reference.reference().fragment(), "a");
+
+    let script = recognized("const x = void a;");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding.identifier_reference_initializer().unwrap();
+    assert_eq!(reference.reference().fragment(), "a");
+}
+
+/// Issue #837 free-standing placement matrix: TopLevel authored-semicolon
+/// and EOF-ASI, and Block authored-semicolon and before-`}` ASI, composed
+/// through the unchanged placement-owned terminator owners.
+#[test]
+fn typeof_void_identifier_reference_unary_expression_free_standing_placement_matrix_is_recognized()
+{
+    let script = recognized_reference_use("typeof a;");
+    let use_site = only_top_level_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), "a");
+    assert!(matches!(
+        use_site.terminator(),
+        SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AuthoredSemicolon
+    ));
+
+    let script = recognized_reference_use(r"void \u0061;");
+    let use_site = only_top_level_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), r"\u0061");
+    assert_eq!(fact.semantic_name(), "a");
+
+    let script = recognized_reference_use("void a");
+    let use_site = only_top_level_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), "a");
+    assert!(matches!(
+        use_site.terminator(),
+        SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticAtEof
+    ));
+
+    let script = recognized_reference_use(r"typeof \u{66}oo");
+    let use_site = only_top_level_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), r"\u{66}oo");
+    assert_eq!(fact.semantic_name(), "foo");
+
+    let script = recognized_block_reference_use("{ typeof a; }");
+    let use_site = only_block_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), "a");
+    assert!(matches!(
+        use_site.terminator(),
+        SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator::AuthoredSemicolon
+    ));
+
+    let script = recognized_block_reference_use(r"{ void \u0061; }");
+    let use_site = only_block_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), r"\u0061");
+    assert_eq!(fact.semantic_name(), "a");
+
+    let script = recognized_block_reference_use("{ typeof a }");
+    let use_site = only_block_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), "a");
+    assert!(matches!(
+        use_site.terminator(),
+        SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticBeforeBlockClose
+    ));
+
+    let script = recognized_block_reference_use(r"{ void \u{1D49C} }");
+    let use_site = only_block_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), r"\u{1D49C}");
+    assert_eq!(fact.semantic_name(), "\u{1D49C}");
+}
+
+/// Issue #837 maximal `IdentifierName` prefix-fallback matrix: this is the
+/// load-bearing boundary. Where the existing bare-`IdentifierReference`
+/// route already accepts them, plain-spelled and escaped-spelled keyword-
+/// prefixed identifiers alike must remain one maximal authored
+/// `IdentifierReference` -- never split into a `typeof`/`void` keyword plus
+/// a shorter operand -- proving correct owner fallback after the new
+/// keyword-unary helper's own maximality probe declines (reusing the
+/// unmodified `consume_keyword()` boundary, unchanged).
+#[test]
+fn typeof_void_identifier_reference_unary_expression_maximal_identifier_name_prefix_fallback_matrix_is_preserved()
+ {
+    for (text, fragment, semantic_name) in [
+        ("const x = typeofa;", "typeofa", "typeofa"),
+        ("const x = typeofπ;", "typeofπ", "typeofπ"),
+        (r"const x = typeof\u0061;", r"typeof\u0061", "typeofa"),
+        ("const x = voida;", "voida", "voida"),
+        ("const x = void_foo;", "void_foo", "void_foo"),
+        (r"const x = void\u0061;", r"void\u0061", "voida"),
+    ] {
+        let script = recognized(text);
+        let [binding] = script.declarations()[0].bindings() else {
+            panic!("expected one selected lexical binding");
+        };
+        let reference = binding
+            .identifier_reference_initializer()
+            .expect("maximal bare IdentifierReference fact");
+        assert_eq!(reference.reference().fragment(), fragment, "{text}");
+        assert_eq!(reference.semantic_name(), semantic_name, "{text}");
+    }
+
+    for (text, fragment, semantic_name) in [
+        ("typeofa;", "typeofa", "typeofa"),
+        ("typeofπ;", "typeofπ", "typeofπ"),
+        (r"typeof\u0061;", r"typeof\u0061", "typeofa"),
+        ("voida;", "voida", "voida"),
+        ("void_foo;", "void_foo", "void_foo"),
+        (r"void\u0061;", r"void\u0061", "voida"),
+    ] {
+        let script = recognized_reference_use(text);
+        let use_site = only_top_level_use_site(&script);
+        let fact = only_fact(use_site.body());
+        assert_eq!(fact.reference().fragment(), fragment, "{text}");
+        assert_eq!(fact.semantic_name(), semantic_name, "{text}");
+    }
+}
+
+/// Issue #837 firewalls: exactly-one recursive/mixed unary (including a
+/// keyword-unary operand and the settled `!`/`~`/`+`/`-` families composing
+/// as the operand), escaped keyword spelling, missing/unsupported
+/// separator, invalid/escaped-ReservedWord operands, richer expression
+/// tails, and additive composition all remain outside the accepted theorem,
+/// in both the initializer and the free-standing position, without becoming
+/// a shorter selected success.
+#[test]
+fn typeof_void_identifier_reference_unary_expression_required_firewalls_remain_unsupported() {
+    for text in [
+        // Exactly-one / recursive / mixed unary.
+        "const x = typeof typeof a;",
+        "const x = void void a;",
+        "const x = typeof void a;",
+        "const x = void typeof a;",
+        "const x = typeof !a;",
+        "const x = void ~a;",
+        "const x = typeof +a;",
+        "const x = void -a;",
+        "const x = typeof (a);",
+        "const x = void (a);",
+        // Escaped keyword spelling is not a direct operator token.
+        "const x = \\u0074ypeof a;",
+        "const x = \\u0076oid a;",
+        // Comments are not selected trivia between keyword and operand.
+        "const x = typeof/*c*/a;",
+        "const x = void/*c*/a;",
+        // Invalid / escaped-ReservedWord operands.
+        "const x = typeof if;",
+        "const x = void class;",
+        "const x = typeof \\u0069f;",
+        r"const x = void \u{69}f;",
+        r"const x = typeof \u{};",
+        r"const x = void \u{G};",
+        r"const x = typeof \u{110000};",
+        "const x = void \\u0030;",
+        // Richer expression tails: a locally matched `typeof a`/`void a`
+        // prefix must not commit despite a richer trailing expression.
+        "const x = typeof a+b;",
+        "const x = void a-b;",
+        "const x = typeof a*b;",
+        "const x = void a.b;",
+        "const x = typeof a();",
+        "const x = void a=b;",
+        "const x = typeof a?b:c;",
+        // Additive composition remains outside for this leaf.
+        "const x = a+typeof b;",
+        "const x = a+void b;",
+    ] {
+        assert_unsupported(text);
+    }
+
+    for text in [
+        "typeof typeof a;",
+        "void void a;",
+        "typeof void a;",
+        "void typeof a;",
+        "typeof !a;",
+        "void ~a;",
+        "typeof +a;",
+        "void -a;",
+        "typeof (a);",
+        "void (a);",
+        "\\u0074ypeof a;",
+        "\\u0076oid a;",
+        "typeof/*c*/a;",
+        "void/*c*/a;",
+        "typeof if;",
+        "void class;",
+        "typeof \\u0069f;",
+        r"void \u{69}f;",
+        r"typeof \u{};",
+        r"void \u{G};",
+        r"typeof \u{110000};",
+        "void \\u0030;",
+        "typeof a+b;",
+        "void a-b;",
+        "typeof a*b;",
+        "void a.b;",
+        "typeof a();",
+        "void a=b;",
+        "typeof a?b:c;",
+        "a+typeof b;",
+        "a+void b;",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+/// Issue #837 transactionality: a locally complete `typeof`/`void`-wrapped
+/// fact must not escape as committed selected state when a later declarator
+/// prevents the enclosing owner from completing, across all three
+/// initializer owners, and a locally recognized free-standing body must not
+/// authorize a richer neighbor across either placement.
+#[test]
+fn typeof_void_identifier_reference_unary_expression_transactionality_commits_no_earlier_fact() {
+    for text in [
+        "let x=typeof a,y=;",
+        "var x=void a,y=;",
+        "{ var x=typeof a,y= }",
+    ] {
+        assert_unsupported(text);
+    }
+
+    let subject = grammar_rejection(r"let x=typeof a, \u{}=1;");
+    assert_eq!(subject.fragment(), r"\u{}");
+
+    let subject = grammar_rejection(r"var x=void a, \u{}=1;");
+    assert_eq!(subject.fragment(), r"\u{}");
+
+    let subject = grammar_rejection(r"{ var x=typeof a, \u{}=1; }");
+    assert_eq!(subject.fragment(), r"\u{}");
+
+    for text in ["typeof a\nb;", "{ void a\nb; }"] {
         assert_unsupported(text);
     }
 }
@@ -12235,18 +12615,13 @@ fn unary_use_site_does_not_authorize_richer_expression_neighbors() {
 fn unary_use_site_other_unary_operators_remain_unsupported() {
     // `!a;`/`~a;` were unsupported here before Issue #829 moved them into
     // selected-positive coverage (see
-    // `bang_tilde_identifier_reference_unary_expression_*` above); every
+    // `bang_tilde_identifier_reference_unary_expression_*` above); `typeof
+    // a;`/`void a;` were unsupported here before Issue #837 moved them into
+    // selected-positive coverage (see
+    // `typeof_void_identifier_reference_unary_expression_*` below); every
     // other sibling unary family below remains outside this new theorem and
     // outside the existing leading `+`/`-` family, exactly as before.
-    for text in [
-        "typeof a;",
-        "void a;",
-        "delete a;",
-        "++a;",
-        "--a;",
-        "+-a;",
-        "-+a;",
-    ] {
+    for text in ["delete a;", "++a;", "--a;", "+-a;", "-+a;"] {
         assert_unsupported(text);
     }
 }
