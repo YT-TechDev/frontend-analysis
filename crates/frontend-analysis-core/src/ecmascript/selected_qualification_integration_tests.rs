@@ -728,12 +728,14 @@ fn candidate_independent_primary_ranges_survive_aggregate_handoff() {
 
 #[test]
 fn unsupported_rhs_and_broader_grammar_remain_unsupported_without_source_verdict() {
+    // "const x=(foo);" is deliberately not listed here: Issue #833 makes a
+    // selected exactly-one parenthesized `IdentifierReference` initializer a
+    // selected accepted form (see the "Issue #833" section below).
     for text in [
         gold_source("JS-GOLD-LEXDECL-CONST-MALFORMED-INIT-001").expect("malformed init gold"),
         "const x=if;",
         "const x=foo.bar;",
         "const x=foo();",
-        "const x=(foo);",
         "const x=foo = bar;",
         "const x=foo ? bar : baz;",
         "const x=foo/*comment*/;",
@@ -2908,6 +2910,49 @@ fn bang_tilde_identifier_reference_unary_expression_reaches_selected_accepted_in
     }
 }
 
+/// Issue #833: the newly production-selected exactly-one parenthesized
+/// `IdentifierReference` reaches the same existing
+/// `SelectedAcceptedIncomplete` lifecycle as any other production-accepted,
+/// not-yet-Oracle-qualified source -- never `UnsupportedCoverage` and never
+/// `Qualified`. Representative sources cover each newly admitted owner/
+/// placement class (per Issue #833's own required positive sealing): the
+/// three initializer owners (plus one Block-contained `LexicalDeclaration`
+/// representative), and both free-standing placements under both
+/// terminator forms, with a Direct and an escaped (fixed or braced/
+/// supplementary) operand each. This is regression sealing only; the
+/// accepted #831/#832 Oracle's own bounded theorem is unaffected and
+/// remains the sole candidate-independent authority for the grouped-
+/// reference fact itself.
+#[test]
+fn parenthesized_identifier_reference_reaches_selected_accepted_incomplete() {
+    for text in [
+        // LexicalDeclaration initializer.
+        "const x = (a);",
+        // Escaped initializer (fixed-form escape).
+        "let x = (\\u0061);",
+        // Top-level var.
+        "var x = (a);",
+        // Block var / Block-contained initializer owner (braced escape).
+        r"{ var x = (\u{66}oo); }",
+        // TopLevel free-standing authored terminator.
+        "(a);",
+        // TopLevel free-standing EOF ASI (fixed-form escape).
+        "(\\u0061)",
+        // Block free-standing authored terminator.
+        "{ (a); }",
+        // Block free-standing before-`}` ASI (supplementary braced escape).
+        r"{ (\u{1D49C}) }",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+}
+
 #[test]
 fn top_level_identifier_reference_expression_statement_use_site_dispatch_reaches_accepted_incomplete_while_declaration_grammar_stays_owned()
  {
@@ -2957,8 +3002,9 @@ fn top_level_identifier_reference_expression_statement_use_site_asi_general_expr
         // "Issue #766" section below) and `+a;` / `-a;` moved to
         // selected-positive (`SelectedAcceptedIncomplete`) coverage by Issue
         // #771 (see the "Issue #771" section above); neither is listed here
-        // any longer.
-        "(a);",
+        // any longer. `(a);` moved to selected-positive
+        // (`SelectedAcceptedIncomplete`) coverage by Issue #833 (see the
+        // "Issue #833" section below) and is no longer listed here.
         "a.b;",
         "a[b];",
         "a();",
@@ -3131,8 +3177,10 @@ fn block_identifier_reference_expression_statement_use_site_asi_general_expressi
         // by Issue #766 (see the "Issue #766" section below) and `{ +a; }` /
         // `{ -a; }` moved to selected-positive (`SelectedAcceptedIncomplete`)
         // coverage by Issue #771 (see the "Issue #771" section above);
-        // neither is listed here any longer.
-        "{ (a); }",
+        // neither is listed here any longer. `{ (a); }` moved to
+        // selected-positive (`SelectedAcceptedIncomplete`) coverage by Issue
+        // #833 (see the "Issue #833" section below) and is no longer listed
+        // here.
         "{ a.b; }",
         "{ a[b]; }",
         "{ a(); }",

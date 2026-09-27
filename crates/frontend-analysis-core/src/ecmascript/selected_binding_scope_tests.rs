@@ -430,12 +430,23 @@ fn leading_plus_minus_identifier_reference_unary_expression_composes_unchanged_w
 }
 
 #[test]
-fn unsupported_parenthesized_initializer_never_enters_binding_scope_analysis() {
-    let source = SourceText::new(SourceId::new(274), "let x=(y);".to_owned());
-    assert!(matches!(
-        recognize_selected_lexical_slice(&source),
-        SelectedLexicalSliceOutcome::UnsupportedCoverage
-    ));
+fn parenthesized_initializer_reaches_binding_scope_analysis_with_only_the_inner_anchor() {
+    // Issue #833 makes a selected exactly-one parenthesized
+    // `IdentifierReference` initializer a selected accepted production form,
+    // so `let x=(y);` reaches Binding/Scope analysis with exactly the same
+    // relation as its unwrapped `let x=y;` counterpart -- same containing
+    // binding, same semantic name, same (absent) target -- differing only in
+    // the reference anchor's position, which is the inner authored `y` only
+    // and never the whole `(y)` span.
+    assert_eq!(
+        relation_snapshots("let x=(y);"),
+        vec![RelationSnapshot {
+            containing_binding: (4, 5, "x".to_owned()),
+            reference: (7, 8, "y".to_owned()),
+            semantic_name: "y".to_owned(),
+            target: None,
+        }]
+    );
 }
 
 // Issue #754: the two-`IdentifierReference` additive initializer widens this

@@ -802,10 +802,12 @@ fn identifier_reference_eof_asi_preserves_significant_end_before_selected_trivia
 
 #[test]
 fn identifier_reference_prefixes_do_not_widen_richer_expression_or_escape_coverage() {
+    // "const x = (foo);" is deliberately not listed here: Issue #833 makes a
+    // selected exactly-one parenthesized `IdentifierReference` initializer a
+    // selected accepted form (see the "Issue #833" test section below).
     for text in [
         "const x = foo.bar;",
         "const x = foo();",
-        "const x = (foo);",
         "const x = foo = bar;",
         "const x = foo ? bar : baz;",
         "const x = foo/*comment*/;",
@@ -3542,6 +3544,9 @@ fn variable_statement_frontier_keeps_non_eof_and_broader_var_grammar_unsupported
     // `selected_lexical_slice.rs`'s `SelectedBlockVarStatement` recognition
     // and the Block-item coverage tests in
     // `selected_qualification_integration_tests.rs`).
+    // "var x=(foo);" is deliberately not listed here: Issue #833 makes a
+    // selected exactly-one parenthesized `IdentifierReference` initializer a
+    // selected accepted form (see the "Issue #833" test section below).
     for text in [
         "var x\nvar y;",
         "var {x} = y;",
@@ -3550,7 +3555,6 @@ fn variable_statement_frontier_keeps_non_eof_and_broader_var_grammar_unsupported
         r"var\u{};",
         "var x=foo.bar;",
         "var x=foo();",
-        "var x=(foo);",
     ] {
         assert_unsupported(text);
     }
@@ -3867,11 +3871,13 @@ fn var_identifier_reference_boundary_keeps_richer_expression_and_literal_neighbo
     // accepted form (see the "Issue #723" test section below). "var
     // x="foo";" is also deliberately not listed here: Issue #725 makes a
     // direct-authored, escape-free `StringLiteral` initializer a selected
-    // accepted form (see the "Issue #725" test section below).
+    // accepted form (see the "Issue #725" test section below). "var
+    // x=(foo);" is also deliberately not listed here: Issue #833 makes a
+    // selected exactly-one parenthesized `IdentifierReference` initializer a
+    // selected accepted form (see the "Issue #833" test section below).
     for text in [
         "var x=foo.bar;",
         "var x=foo();",
-        "var x=(foo);",
         "var x=foo=bar;",
         "var x=foo?bar:baz;",
         "var x=foo/*comment*/;",
@@ -7138,6 +7144,390 @@ fn bang_tilde_identifier_reference_unary_expression_transactionality_commits_no_
     assert_eq!(subject.fragment(), r"\u{}");
 
     for text in ["!a\nb;", "{ !a\nb; }"] {
+        assert_unsupported(text);
+    }
+}
+
+// Issue #833: bounded exactly-one parenthesized `IdentifierReference`
+// (`SelectedParenthesizedIdentifierReference`), composing the accepted
+// candidate-independent theorem proven by #831/PR #832 into all three
+// mature initializer owners
+// (`parse_declaration`/`parse_variable_statement`/
+// `parse_selected_block_var_statement`) and the shared free-standing body
+// owner (`consume_selected_identifier_reference_expression_statement_use_site_body`),
+// per #688 comment 5853240184. The new placement-neutral grouping recognizer
+// owns only the paired `(`/`)` delimiters and the inner selected trivia; the
+// retained evidence remains exactly the existing inner
+// `SelectedIdentifierReferenceFact`, never a whole grouped span or a
+// ParenthesizedExpression/PrimaryExpression/Expression node.
+
+#[test]
+fn parenthesized_identifier_reference_initializer_positive_matrix_is_recognized_across_all_three_owners()
+ {
+    let script = recognized("const x = (a);");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding
+        .identifier_reference_initializer()
+        .expect("parenthesized LexicalDeclaration RHS reference fact");
+    assert_eq!(reference.reference().fragment(), "a");
+    assert_eq!(reference.semantic_name(), "a");
+
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+    let script = recognized_block("{ const x = (a); }");
+    let [SelectedTopLevelItem::Block(block)] = script.items() else {
+        panic!("expected exactly one Block item");
+    };
+    let [SelectedBlockItem::LexicalDeclaration(declaration)] = block.items() else {
+        panic!("expected exactly one Block-contained LexicalDeclaration item");
+    };
+    let [binding] = declaration.bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding
+        .identifier_reference_initializer()
+        .expect("parenthesized Block-contained LexicalDeclaration RHS reference fact");
+    assert_eq!(reference.reference().fragment(), "a");
+    assert_eq!(reference.semantic_name(), "a");
+
+    let script = recognized_variable("var x = (a);");
+    let statement = only_variable_statement(&script);
+    let [binding] = statement.bindings() else {
+        panic!("expected one selected top-level var binding");
+    };
+    let reference = binding
+        .identifier_reference_initializer()
+        .expect("parenthesized top-level var RHS reference fact");
+    assert_eq!(reference.reference().fragment(), "a");
+    assert_eq!(reference.semantic_name(), "a");
+
+    let script = recognized_block("{ var x = (a); }");
+    let [SelectedTopLevelItem::Block(block)] = script.items() else {
+        panic!("expected exactly one Block item");
+    };
+    let [SelectedBlockItem::Var(statement)] = block.items() else {
+        panic!("expected exactly one Block var statement");
+    };
+    let [binding] = statement.bindings() else {
+        panic!("expected one selected Block var binding");
+    };
+    let reference = binding
+        .identifier_reference_initializer()
+        .expect("parenthesized Block var RHS reference fact");
+    assert_eq!(reference.reference().fragment(), "a");
+    assert_eq!(reference.semantic_name(), "a");
+}
+
+/// Issue #833 provenance: the retained inner `SelectedIdentifierReferenceFact`
+/// excludes the parentheses and any inner selected trivia from its authored
+/// `SourceAnchor`, across Direct (ASCII and Unicode), fixed-escaped, mixed
+/// fixed-escaped, and both accepted braced-escaped forms (including a
+/// supplementary code point), exactly as the #831/#832 Oracle establishes
+/// candidate-independently.
+#[test]
+fn parenthesized_identifier_reference_provenance_matrix_is_exact() {
+    let script = recognized("const x = (a);");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding.identifier_reference_initializer().unwrap();
+    assert_eq!(reference.reference().fragment(), "a");
+    assert_eq!(reference.semantic_name(), "a");
+
+    // Direct Unicode (non-ASCII IdentifierStart), not merely direct ASCII.
+    let script = recognized("const x = (π);");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding.identifier_reference_initializer().unwrap();
+    assert_eq!(reference.reference().fragment(), "π");
+    assert_eq!(reference.semantic_name(), "π");
+
+    let script = recognized("const x = (\\u0061);");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding.identifier_reference_initializer().unwrap();
+    assert_eq!(reference.reference().fragment(), "\\u0061");
+    assert_eq!(reference.semantic_name(), "a");
+
+    let script = recognized("const x = (f\\u006Fo);");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding.identifier_reference_initializer().unwrap();
+    assert_eq!(reference.reference().fragment(), "f\\u006Fo");
+    assert_eq!(reference.semantic_name(), "foo");
+
+    let script = recognized(r"const x = (\u{66}oo);");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding.identifier_reference_initializer().unwrap();
+    assert_eq!(reference.reference().fragment(), r"\u{66}oo");
+    assert_eq!(reference.semantic_name(), "foo");
+
+    let script = recognized(r"const x = (\u{1D49C});");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding.identifier_reference_initializer().unwrap();
+    assert_eq!(reference.reference().fragment(), r"\u{1D49C}");
+    assert_eq!(reference.semantic_name(), "\u{1D49C}");
+
+    // Selected inner-leading and inner-trailing trivia are skipped without
+    // being retained as part of the reference's authored `SourceAnchor`.
+    let script = recognized("const x = ( a );");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding.identifier_reference_initializer().unwrap();
+    assert_eq!(reference.reference().fragment(), "a");
+}
+
+/// Issue #833 free-standing placement matrix: TopLevel authored-semicolon
+/// and EOF-ASI, and Block authored-semicolon and before-`}` ASI, composed
+/// through the unchanged placement-owned terminator owners.
+#[test]
+fn parenthesized_identifier_reference_free_standing_placement_matrix_is_recognized() {
+    let script = recognized_reference_use("(a);");
+    let use_site = only_top_level_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), "a");
+    assert!(matches!(
+        use_site.terminator(),
+        SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AuthoredSemicolon
+    ));
+
+    let script = recognized_reference_use("(\\u0061);");
+    let use_site = only_top_level_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), "\\u0061");
+    assert_eq!(fact.semantic_name(), "a");
+
+    let script = recognized_reference_use("(a)");
+    let use_site = only_top_level_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), "a");
+    assert!(matches!(
+        use_site.terminator(),
+        SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticAtEof
+    ));
+
+    let script = recognized_reference_use(r"(\u{66}oo)");
+    let use_site = only_top_level_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), r"\u{66}oo");
+    assert_eq!(fact.semantic_name(), "foo");
+
+    let script = recognized_block_reference_use("{ (a); }");
+    let use_site = only_block_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), "a");
+    assert!(matches!(
+        use_site.terminator(),
+        SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator::AuthoredSemicolon
+    ));
+
+    let script = recognized_block_reference_use("{ (\\u0061); }");
+    let use_site = only_block_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), "\\u0061");
+    assert_eq!(fact.semantic_name(), "a");
+
+    let script = recognized_block_reference_use("{ (a) }");
+    let use_site = only_block_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), "a");
+    assert!(matches!(
+        use_site.terminator(),
+        SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticBeforeBlockClose
+    ));
+
+    let script = recognized_block_reference_use(r"{ (\u{1D49C}) }");
+    let use_site = only_block_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), r"\u{1D49C}");
+    assert_eq!(fact.semantic_name(), "\u{1D49C}");
+}
+
+/// Issue #833 cover/arrow and recursive-grouping firewalls: the empty cover,
+/// trailing comma, multiple expressions, rest elements, arrow continuations,
+/// and recursive grouping all remain outside the accepted theorem, in both
+/// the initializer and the free-standing position.
+#[test]
+fn parenthesized_identifier_reference_cover_arrow_and_recursive_grouping_firewalls_remain_unsupported()
+ {
+    for text in [
+        "const x = ();",
+        "const x = (a,);",
+        "const x = (a,b);",
+        "const x = (...a);",
+        "const x = (a,...b);",
+        "const x = (a)=>a;",
+        "const x = (a,b)=>a;",
+        "const x = (...a)=>a;",
+        "const x = ((a));",
+        "const x = (((a)));",
+    ] {
+        assert_unsupported(text);
+    }
+
+    for text in [
+        "();",
+        "(a,);",
+        "(a,b);",
+        "(...a);",
+        "(a,...b);",
+        "(a)=>a;",
+        "(a,b)=>a;",
+        "(...a)=>a;",
+        "((a));",
+        "(((a)));",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+/// Issue #833 richer inner and richer outer expression firewalls: a locally
+/// matched inner `IdentifierReference` prefix must not authorize a richer
+/// inner continuation before the closing `)`, and a locally matched grouped
+/// atom must not authorize a richer outer continuation after the closing
+/// `)`, in both the initializer and the free-standing position.
+#[test]
+fn parenthesized_identifier_reference_richer_inner_and_outer_expression_firewalls_remain_unsupported()
+ {
+    for text in [
+        // Richer inner expressions.
+        "const x = (a+b);",
+        "const x = (a*b);",
+        "const x = (a=b);",
+        "const x = (a?b:c);",
+        "const x = (a,b);",
+        "const x = (a());",
+        "const x = (a.b);",
+        "const x = (new a);",
+        "const x = (!a);",
+        "const x = (~a);",
+        "const x = (+a);",
+        "const x = (-a);",
+        "const x = (typeof a);",
+        "const x = (void a);",
+        "const x = (delete a);",
+        // Richer outer expressions.
+        "const x = (a)+b;",
+        "const x = (a)*b;",
+        "const x = (a).b;",
+        "const x = (a)();",
+        "const x = (a)=b;",
+        "const x = (a)?b:c;",
+        // Note: "const x = (a),b;" is deliberately not listed here: in
+        // initializer position `,` is the existing declarator separator, so
+        // this is already selected two-declarator coverage (`x = (a)`, `b`
+        // with an absent initializer) rather than an outer-comma firewall
+        // case; the free-standing `(a),b;` below exercises that firewall
+        // instead, where `,` cannot be a declarator separator.
+    ] {
+        assert_unsupported(text);
+    }
+
+    for text in [
+        "(a+b);",
+        "(a*b);",
+        "(a=b);",
+        "(a?b:c);",
+        "(a,b);",
+        "(a());",
+        "(a.b);",
+        "(new a);",
+        "(!a);",
+        "(~a);",
+        "(+a);",
+        "(-a);",
+        "(typeof a);",
+        "(void a);",
+        "(delete a);",
+        "(a)+b;",
+        "(a)*b;",
+        "(a).b;",
+        "(a)();",
+        "(a)=b;",
+        "(a)?b:c;",
+        "(a),b;",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+/// Issue #833 comment firewall: no comment scanning is authorized inside or
+/// around the grouping delimiters.
+#[test]
+fn parenthesized_identifier_reference_comment_firewall_remains_unsupported() {
+    for text in [
+        "const x = (/*c*/a);",
+        "const x = (a/*c*/);",
+        "const x = /*c*/(a);",
+    ] {
+        assert_unsupported(text);
+    }
+
+    for text in ["(/*c*/a);", "(a/*c*/);", "/*c*/(a);"] {
+        assert_unsupported(text);
+    }
+}
+
+/// Issue #833 escaped-boundary firewalls: an escaped-`ReservedWord` inner
+/// operand, a malformed or non-`CodePoint` escape, and a decoded
+/// non-identifier-start character all preserve the existing lower-level
+/// `IdentifierReference` boundaries -- never re-decoded or reclassified by
+/// this grouping recognizer.
+#[test]
+fn parenthesized_identifier_reference_escaped_boundary_firewalls_remain_unowned() {
+    for text in [
+        "const x = (\\u0069f);",
+        r"const x = (\u{69}f);",
+        r"const x = (\u{});",
+        r"const x = (\u{G});",
+        r"const x = (\u{110000});",
+        "const x = (\\u0030);",
+    ] {
+        assert_unsupported(text);
+    }
+
+    for text in [
+        "(\\u0069f);",
+        r"(\u{69}f);",
+        r"(\u{});",
+        r"(\u{G});",
+        r"(\u{110000});",
+        "(\\u0030);",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+/// Issue #833 transactionality: a locally complete parenthesized fact must
+/// not escape as committed selected state when a later declarator prevents
+/// the enclosing owner from completing, across all three initializer
+/// owners, and a locally recognized free-standing body must not authorize a
+/// richer neighbor across either placement.
+#[test]
+fn parenthesized_identifier_reference_transactionality_commits_no_earlier_fact() {
+    for text in ["let x=(a),y=;", "var x=(a),y=;", "{ var x=(a),y= }"] {
+        assert_unsupported(text);
+    }
+
+    let subject = grammar_rejection(r"let x=(a), \u{}=1;");
+    assert_eq!(subject.fragment(), r"\u{}");
+
+    let subject = grammar_rejection(r"var x=(a), \u{}=1;");
+    assert_eq!(subject.fragment(), r"\u{}");
+
+    let subject = grammar_rejection(r"{ var x=(a), \u{}=1; }");
+    assert_eq!(subject.fragment(), r"\u{}");
+
+    for text in ["(a)\nb;", "{ (a)\nb; }"] {
         assert_unsupported(text);
     }
 }
@@ -10585,9 +10975,10 @@ fn general_expression_neighbors_remain_unsupported_without_valid_prefix_leakage(
     // use-site for the leading `a`. `a+b;` moved to selected-positive
     // coverage by Issue #766 (see the "Issue #766" section below) and `+a;`
     // / `-a;` moved to selected-positive coverage by Issue #771 (see the
-    // "Issue #771" section below); neither is listed here any longer.
+    // "Issue #771" section below); neither is listed here any longer. `(a);`
+    // moved to selected-positive coverage by Issue #833 (see the "Issue
+    // #833" test section below) and is no longer listed here.
     for text in [
-        "(a);",
         "a.b;",
         "a[b];",
         "a();",
@@ -10873,9 +11264,10 @@ fn block_use_site_general_expression_neighbors_remain_unsupported_without_valid_
     // `{ a+b; }` moved to selected-positive coverage by Issue #766 (see the
     // "Issue #766" section below) and `{ +a; }` / `{ -a; }` moved to
     // selected-positive coverage by Issue #771 (see the "Issue #771" section
-    // below); neither is listed here any longer.
+    // below); neither is listed here any longer. `{ (a); }` moved to
+    // selected-positive coverage by Issue #833 (see the "Issue #833" test
+    // section below) and is no longer listed here.
     for text in [
-        "{ (a); }",
         "{ a.b; }",
         "{ a[b]; }",
         "{ a(); }",
@@ -11861,7 +12253,13 @@ fn unary_use_site_other_unary_operators_remain_unsupported() {
 
 #[test]
 fn unary_use_site_parenthesized_forms_remain_unsupported() {
-    for text in ["(a);", "+(a);", "-(a);"] {
+    // "(a);" is deliberately not listed here: Issue #833 makes a selected
+    // exactly-one parenthesized `IdentifierReference` free-standing use-site
+    // a selected accepted form (see the "Issue #833" test section below).
+    // `+(a);` / `-(a);` remain outside: the grouping helper only probes
+    // after a leading `+`/`-`/`!`/`~` unary route has already declined, so a
+    // parenthesized operand is never reachable from those unary prefixes.
+    for text in ["+(a);", "-(a);"] {
         assert_unsupported(text);
     }
 }
