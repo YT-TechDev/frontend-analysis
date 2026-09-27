@@ -50,6 +50,8 @@ mod qualification_selected_one_level_block_validation_tests;
 #[cfg(test)]
 mod qualification_selected_one_reference_one_plain_decimal_additive_initializer_validation_tests;
 #[cfg(test)]
+mod qualification_selected_parenthesized_identifier_reference_validation_tests;
+#[cfg(test)]
 mod qualification_selected_plain_exponent_decimal_literal_initializer_validation_tests;
 #[cfg(test)]
 mod qualification_selected_plain_fractional_decimal_literal_initializer_validation_tests;
