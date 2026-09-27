@@ -434,7 +434,13 @@ fn identifier_reference_direct_code_point_family_is_recognized_without_normaliza
         let _ = recognized(text);
     }
 
-    for text in ["const x = 0a;", "const x = !foo;", "const x = foo💥;"] {
+    // Issue #829 stale fixture migration: `!foo` was `UnsupportedCoverage`
+    // (an incidental non-identifier-start-character control, alongside `0a`
+    // and `foo💥`) before the selected exactly-one leading `!`/`~`
+    // `IdentifierReference` `UnaryExpression` landed; it is now a selected
+    // positive (see `bang_tilde_identifier_reference_unary_expression_*`
+    // below), so `%foo` replaces it as the non-identifier-start control.
+    for text in ["const x = 0a;", "const x = %foo;", "const x = foo💥;"] {
         assert_unsupported(text);
     }
 
@@ -6813,6 +6819,329 @@ fn leading_plus_minus_identifier_reference_unary_expression_escaped_operand_tran
     assert_eq!(subject.fragment(), r"\u{}");
 }
 
+// Issue #829: bounded exactly-one leading `!`/`~` `IdentifierReference`
+// `UnaryExpression` (`SelectedBangTildeIdentifierReferenceUnaryExpression`),
+// composing the accepted candidate-independent theorem proven by #827/PR
+// #828 into all three mature initializer owners
+// (`parse_declaration`/`parse_variable_statement`/
+// `parse_selected_block_var_statement`) and the shared free-standing body
+// owner (`consume_selected_identifier_reference_expression_statement_use_site_body`),
+// per #688 comment 5844920129. Deliberately distinct from, and never routed
+// through, the settled leading `+`/`-` `IdentifierReference` family's
+// additive-continuation machinery above: a matched `!`/`~` atom is atom-only
+// and maps directly to the existing `One(reference)` carrier on either
+// owner family.
+
+#[test]
+fn bang_tilde_identifier_reference_unary_expression_initializer_positive_matrix_is_recognized_across_all_three_owners()
+ {
+    let script = recognized("const x = !a;");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding
+        .identifier_reference_initializer()
+        .expect("!-wrapped LexicalDeclaration RHS reference fact");
+    assert_eq!(reference.reference().fragment(), "a");
+    assert_eq!(reference.semantic_name(), "a");
+
+    let script = recognized("let x = ~a;");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding
+        .identifier_reference_initializer()
+        .expect("~-wrapped LexicalDeclaration RHS reference fact");
+    assert_eq!(reference.reference().fragment(), "a");
+    assert_eq!(reference.semantic_name(), "a");
+
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+    let script = recognized_block("{ const x = !a; }");
+    let [SelectedTopLevelItem::Block(block)] = script.items() else {
+        panic!("expected exactly one Block item");
+    };
+    let [SelectedBlockItem::LexicalDeclaration(declaration)] = block.items() else {
+        panic!("expected exactly one Block-contained LexicalDeclaration item");
+    };
+    let [binding] = declaration.bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding
+        .identifier_reference_initializer()
+        .expect("!-wrapped Block-contained LexicalDeclaration RHS reference fact");
+    assert_eq!(reference.reference().fragment(), "a");
+    assert_eq!(reference.semantic_name(), "a");
+
+    let script = recognized_variable("var x = !a;");
+    let statement = only_variable_statement(&script);
+    let [binding] = statement.bindings() else {
+        panic!("expected one selected top-level var binding");
+    };
+    let reference = binding
+        .identifier_reference_initializer()
+        .expect("!-wrapped top-level var RHS reference fact");
+    assert_eq!(reference.reference().fragment(), "a");
+    assert_eq!(reference.semantic_name(), "a");
+
+    let script = recognized_block("{ var x = !a; }");
+    let [SelectedTopLevelItem::Block(block)] = script.items() else {
+        panic!("expected exactly one Block item");
+    };
+    let [SelectedBlockItem::Var(statement)] = block.items() else {
+        panic!("expected exactly one Block var statement");
+    };
+    let [binding] = statement.bindings() else {
+        panic!("expected one selected Block var binding");
+    };
+    let reference = binding
+        .identifier_reference_initializer()
+        .expect("!-wrapped Block var RHS reference fact");
+    assert_eq!(reference.reference().fragment(), "a");
+    assert_eq!(reference.semantic_name(), "a");
+}
+
+/// Issue #829 provenance: the retained inner `SelectedIdentifierReferenceFact`
+/// excludes the operator and any intervening trivia from its authored
+/// `SourceAnchor`, across Direct, fixed-escaped, mixed fixed-escaped, and
+/// both accepted braced-escaped forms (including a supplementary code
+/// point), exactly as the #827/#828 Oracle establishes candidate-independently.
+#[test]
+fn bang_tilde_identifier_reference_unary_expression_provenance_matrix_is_exact() {
+    let script = recognized("const x = !a;");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding.identifier_reference_initializer().unwrap();
+    assert_eq!(reference.reference().fragment(), "a");
+    assert_eq!(reference.semantic_name(), "a");
+
+    let script = recognized(r"const x = ~\u0061;");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding.identifier_reference_initializer().unwrap();
+    assert_eq!(reference.reference().fragment(), r"\u0061");
+    assert_eq!(reference.semantic_name(), "a");
+
+    let script = recognized(r"const x = !f\u006Fo;");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding.identifier_reference_initializer().unwrap();
+    assert_eq!(reference.reference().fragment(), r"f\u006Fo");
+    assert_eq!(reference.semantic_name(), "foo");
+
+    let script = recognized(r"const x = !\u{66}oo;");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding.identifier_reference_initializer().unwrap();
+    assert_eq!(reference.reference().fragment(), r"\u{66}oo");
+    assert_eq!(reference.semantic_name(), "foo");
+
+    let script = recognized(r"const x = ~\u{1D49C};");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding.identifier_reference_initializer().unwrap();
+    assert_eq!(reference.reference().fragment(), r"\u{1D49C}");
+    assert_eq!(reference.semantic_name(), "\u{1D49C}");
+}
+
+/// Issue #829 free-standing placement matrix: TopLevel authored-semicolon
+/// and EOF-ASI, and Block authored-semicolon and before-`}` ASI, composed
+/// through the unchanged placement-owned terminator owners.
+#[test]
+fn bang_tilde_identifier_reference_unary_expression_free_standing_placement_matrix_is_recognized() {
+    let script = recognized_reference_use("!a;");
+    let use_site = only_top_level_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), "a");
+    assert!(matches!(
+        use_site.terminator(),
+        SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AuthoredSemicolon
+    ));
+
+    let script = recognized_reference_use(r"~\u0061;");
+    let use_site = only_top_level_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), r"\u0061");
+    assert_eq!(fact.semantic_name(), "a");
+
+    let script = recognized_reference_use("!a");
+    let use_site = only_top_level_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), "a");
+    assert!(matches!(
+        use_site.terminator(),
+        SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticAtEof
+    ));
+
+    let script = recognized_reference_use(r"~\u{66}oo");
+    let use_site = only_top_level_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), r"\u{66}oo");
+    assert_eq!(fact.semantic_name(), "foo");
+
+    let script = recognized_block_reference_use("{ !a; }");
+    let use_site = only_block_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), "a");
+    assert!(matches!(
+        use_site.terminator(),
+        SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator::AuthoredSemicolon
+    ));
+
+    let script = recognized_block_reference_use(r"{ ~\u0061; }");
+    let use_site = only_block_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), r"\u0061");
+    assert_eq!(fact.semantic_name(), "a");
+
+    let script = recognized_block_reference_use("{ !a }");
+    let use_site = only_block_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), "a");
+    assert!(matches!(
+        use_site.terminator(),
+        SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticBeforeBlockClose
+    ));
+
+    let script = recognized_block_reference_use(r"{ ~\u{1D49C} }");
+    let use_site = only_block_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), r"\u{1D49C}");
+    assert_eq!(fact.semantic_name(), "\u{1D49C}");
+}
+
+/// Issue #829 firewalls: exactly-one recursive/mixed unary, the `!=`/`!==`
+/// punctuator boundary, keyword unary, non-`IdentifierReference` operands,
+/// richer expression tails, and a comment between operator and operand all
+/// remain outside the accepted theorem, in both the initializer and the
+/// free-standing position, without becoming a shorter selected success.
+#[test]
+fn bang_tilde_identifier_reference_unary_expression_required_firewalls_remain_unsupported() {
+    for text in [
+        // Exactly-one / recursive / mixed unary.
+        "const x = !!a;",
+        "const x = ~~a;",
+        "const x = !~a;",
+        "const x = ~!a;",
+        // Keyword unary remains unsupported everywhere.
+        "const x = typeof a;",
+        "const x = void a;",
+        "const x = delete a;",
+        // `!=` / `!==` punctuator boundary: no special-casing, the shared
+        // recognizer simply declines at `=`.
+        "const x = !=a;",
+        "const x = !==a;",
+        // Non-`IdentifierReference` operands.
+        "const x = !1;",
+        "const x = ~1;",
+        "const x = !true;",
+        "const x = ~null;",
+        "const x = !this;",
+        r#"const x = !"x";"#,
+        "const x = !(a);",
+        // Richer expression tails: a locally matched `!a`/`~a` prefix must
+        // not commit despite a richer trailing expression.
+        "const x = !a+b;",
+        "const x = ~a-b;",
+        "const x = !a*b;",
+        "const x = !a.b;",
+        "const x = ~a();",
+        "const x = !a=b;",
+        "const x = !a?b:c;",
+        // Comments remain unsupported between operator and operand.
+        "const x = !/*c*/a;",
+    ] {
+        assert_unsupported(text);
+    }
+
+    for text in [
+        "!!a;",
+        "~~a;",
+        "!~a;",
+        "~!a;",
+        "typeof a;",
+        "void a;",
+        "delete a;",
+        "!=a;",
+        "!==a;",
+        "!1;",
+        "~1;",
+        "!true;",
+        "~null;",
+        "!this;",
+        r#"!"x";"#,
+        "!(a);",
+        "!a+b;",
+        "~a-b;",
+        "!a*b;",
+        "!a.b;",
+        "~a();",
+        "!a=b;",
+        "!a?b:c;",
+        "!/*c*/a;",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+/// Issue #829 escaped-boundary firewalls: an escaped-`ReservedWord` operand,
+/// a malformed or non-`CodePoint` escape, and a decoded non-identifier-start
+/// character all preserve the existing lower-level `IdentifierReference`
+/// boundaries -- never re-decoded or reclassified by this wrapper.
+#[test]
+fn bang_tilde_identifier_reference_unary_expression_escaped_boundary_firewalls_remain_unowned() {
+    for text in [
+        r"const x = !\u0069f;",
+        r"const x = ~\u{69}f;",
+        r"const x = !\u{};",
+        r"const x = ~\u{G};",
+        r"const x = !\u{110000};",
+        r"const x = !\u0030;",
+    ] {
+        assert_unsupported(text);
+    }
+
+    for text in [
+        r"!\u0069f;",
+        r"~\u{69}f;",
+        r"!\u{};",
+        r"~\u{G};",
+        r"!\u{110000};",
+        r"!\u0030;",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+/// Issue #829 transactionality: a locally complete `!`/`~`-wrapped fact must
+/// not escape as committed selected state when a later declarator prevents
+/// the enclosing owner from completing, across all three initializer
+/// owners, and a locally recognized free-standing body must not authorize a
+/// richer neighbor across either placement.
+#[test]
+fn bang_tilde_identifier_reference_unary_expression_transactionality_commits_no_earlier_fact() {
+    for text in ["let x=!a,y=;", "var x=!a,y=;", "{ var x=!a,y= }"] {
+        assert_unsupported(text);
+    }
+
+    let subject = grammar_rejection(r"let x=!a, \u{}=1;");
+    assert_eq!(subject.fragment(), r"\u{}");
+
+    let subject = grammar_rejection(r"var x=!a, \u{}=1;");
+    assert_eq!(subject.fragment(), r"\u{}");
+
+    let subject = grammar_rejection(r"{ var x=!a, \u{}=1; }");
+    assert_eq!(subject.fragment(), r"\u{}");
+
+    for text in ["!a\nb;", "{ !a\nb; }"] {
+        assert_unsupported(text);
+    }
+}
+
 // Issue #754: bounded ordered two-`IdentifierReference` additive
 // initializer. #752/PR #753 already independently prove the exact bounded
 // theorem (exactly two accepted `IdentifierReference` operands, exactly one
@@ -11512,9 +11841,12 @@ fn unary_use_site_does_not_authorize_richer_expression_neighbors() {
 
 #[test]
 fn unary_use_site_other_unary_operators_remain_unsupported() {
+    // `!a;`/`~a;` were unsupported here before Issue #829 moved them into
+    // selected-positive coverage (see
+    // `bang_tilde_identifier_reference_unary_expression_*` above); every
+    // other sibling unary family below remains outside this new theorem and
+    // outside the existing leading `+`/`-` family, exactly as before.
     for text in [
-        "!a;",
-        "~a;",
         "typeof a;",
         "void a;",
         "delete a;",

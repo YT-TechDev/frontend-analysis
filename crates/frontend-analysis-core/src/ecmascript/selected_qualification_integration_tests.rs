@@ -2866,6 +2866,48 @@ fn top_level_identifier_reference_expression_statement_use_site_remains_selected
     }
 }
 
+/// Issue #829: the newly production-selected exactly-one leading `!`/`~`
+/// `IdentifierReference` `UnaryExpression` reaches the same existing
+/// `SelectedAcceptedIncomplete` lifecycle as any other production-accepted,
+/// not-yet-Oracle-qualified source -- never `UnsupportedCoverage` and never
+/// `Qualified`. Representative sources cover each newly admitted owner/
+/// placement class (per Issue #829's own required positive sealing): the
+/// three initializer owners (plus one Block-contained `LexicalDeclaration`
+/// representative), and both free-standing placements under both
+/// terminator forms, with a Direct and an escaped (fixed or braced)
+/// operand each. This is regression sealing only; the accepted #827/#828
+/// Oracle's own bounded theorem is unaffected and remains the sole
+/// candidate-independent authority for the wrapped-reference fact itself.
+#[test]
+fn bang_tilde_identifier_reference_unary_expression_reaches_selected_accepted_incomplete() {
+    for text in [
+        // LexicalDeclaration initializer.
+        "const x = !a;",
+        // Escaped initializer (fixed-form escape).
+        r"let x = ~\u0061;",
+        // Top-level var.
+        "var x = !a;",
+        // Block var / Block-contained initializer owner (braced escape).
+        r"{ var x = ~\u{66}oo; }",
+        // TopLevel free-standing authored terminator.
+        "!a;",
+        // TopLevel free-standing EOF ASI (fixed-form escape).
+        r"~\u0061",
+        // Block free-standing authored terminator.
+        "{ !a; }",
+        // Block free-standing before-`}` ASI (supplementary braced escape).
+        r"{ ~\u{1D49C} }",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+}
+
 #[test]
 fn top_level_identifier_reference_expression_statement_use_site_dispatch_reaches_accepted_incomplete_while_declaration_grammar_stays_owned()
  {
@@ -2933,8 +2975,9 @@ fn top_level_identifier_reference_expression_statement_use_site_asi_general_expr
         "+a();",
         "+a=b;",
         // Other unary operators remain outside this leaf (Issue #771).
-        "!a;",
-        "~a;",
+        // `!a;` / `~a;` moved to selected-positive coverage by Issue #829
+        // (see the "Issue #829" section in `selected_lexical_slice_tests.rs`)
+        // and are no longer listed here.
         "typeof a;",
         "++a;",
         "+-a;",
@@ -3107,9 +3150,9 @@ fn block_identifier_reference_expression_statement_use_site_asi_general_expressi
         "{ +a.b; }",
         "{ -a[b]; }",
         // Other unary operators and parenthesized forms remain outside this
-        // leaf (Issue #771).
-        "{ !a; }",
-        "{ ~a; }",
+        // leaf (Issue #771). `{ !a; }` / `{ ~a; }` moved to selected-positive
+        // coverage by Issue #829 (see the "Issue #829" section in
+        // `selected_lexical_slice_tests.rs`) and are no longer listed here.
         "{ +(a); }",
         "{ -(a); }",
         // Empty-Block and deeper-nesting firewalls (issue section "Empty
