@@ -53,9 +53,9 @@
 //! maximal-`IdentifierName` principle: if the code point (direct or escaped)
 //! immediately following the six-byte ASCII `"delete"` prefix would itself
 //! continue an `IdentifierName`, the whole candidate remains one longer
-//! `IdentifierReference` (`deletea`, `deleteπ`, `deletea`,
+//! `IdentifierReference` (`deletea`, `deleteπ`, `delete\u0061`,
 //! `delete\u{61}`) and is never split into keyword + operand. An escaped
-//! keyword spelling (`delete a`) is never a direct `delete` token: the
+//! keyword spelling (`\u0064elete a`) is never a direct `delete` token: the
 //! ASCII-literal-prefix test at the very start of recognition excludes it
 //! structurally, without a second production keyword scanner. Because the
 //! bounded operand is exactly one `IdentifierReference`, selected trivia
@@ -118,7 +118,7 @@
 //! reaches a forbidden strict `IdentifierReference`). Neither Direct nor
 //! EscapedNonReserved provenance changes `EE-11-R01` applicability once both
 //! form an `IdentifierReference` (falsification result 2): `delete a` and
-//! `delete a` are equivalent `EE-11-R01` controls. Grouping itself
+//! `delete \u0061` are equivalent `EE-11-R01` controls. Grouping itself
 //! remains entirely outside this bounded theorem's admitted operand shape --
 //! `ParenthesizedIdentifierReferenceControl` fixtures exist only to prove the
 //! semantic distinction, never as an admitted `delete` operand.
@@ -532,7 +532,7 @@ fn continues_as_identifier_part(text: &str) -> bool {
 /// following the six-byte prefix would itself continue an `IdentifierName`,
 /// the whole candidate remains one longer `IdentifierReference` and this is
 /// not a `delete` keyword boundary at all (Issue #839 section 11). An
-/// escaped keyword spelling such as `delete` is excluded structurally
+/// escaped keyword spelling such as `\u0064elete` is excluded structurally
 /// by the literal-ASCII-prefix test, never by normalizing an escape into a
 /// keyword.
 fn selected_direct_delete_keyword_boundary(candidate: &str) -> Option<usize> {
@@ -579,6 +579,22 @@ fn is_selected_delete_identifier_reference_unary_expression(candidate: &str) -> 
     }
     let operand = &after_keyword[operand_start..];
     is_selected_accepted_identifier_reference(operand)
+}
+
+/// Connects the independently computed Oracle recognition result to a
+/// `FrontierOutcome`, so a fixture-owned expected outcome is checked against
+/// actual recognition of that exact candidate rather than asserted as a
+/// standalone constant. A recognized bounded candidate is
+/// `SelectedAcceptedIncomplete`; a bounded recognizer decline for a
+/// broader-valid/outside or lower-layer unsupported candidate is
+/// `UnsupportedCoverage` -- this Oracle never invents `SyntaxRejected`
+/// merely because recognition declined.
+fn classify_frontier_outcome(candidate: &str) -> FrontierOutcome {
+    if is_selected_delete_identifier_reference_unary_expression(candidate) {
+        FrontierOutcome::SelectedAcceptedIncomplete
+    } else {
+        FrontierOutcome::UnsupportedCoverage
+    }
 }
 
 /// Independently restates only the already-accepted premise that a
@@ -661,6 +677,95 @@ fn expected_ee11_outcome(context: DeleteContext, operand: DeleteOperandClass) ->
         },
     }
 }
+
+/// One fixture-authored row connecting a concrete candidate to its
+/// `DeleteContext`, its `DeleteOperandClass`, whether the bounded
+/// source-composition recognizer independently admits that exact candidate
+/// text, and the expected `EE-11` outcome for that context/class pairing.
+/// `source_selected` is proven directly against
+/// `is_selected_delete_identifier_reference_unary_expression` -- never
+/// assumed -- so a candidate's own recognition result backs its row, rather
+/// than a constant shared across unrelated candidates.
+struct Ee11Fixture {
+    candidate: &'static str,
+    context: DeleteContext,
+    operand_class: DeleteOperandClass,
+    source_selected: bool,
+    expected_ee11: Ee11Outcome,
+}
+
+/// The connected candidate/context/operand-class/outcome matrix (Issue #839
+/// review remediation, finding 3). `StrictControl` rows never feed a whole
+/// `"use strict"`-prefixed source through the non-strict-envelope
+/// recognizer -- `candidate` stays the bare `delete` + operand fragment, and
+/// `context` is independent fixture authority layered on top, exactly as
+/// `DeleteContext`'s own contract requires; `"use strict"` is never scanned
+/// to derive it.
+const EE11_SEMANTIC_MATRIX: &[Ee11Fixture] = &[
+    Ee11Fixture {
+        candidate: "delete a",
+        context: DeleteContext::NonStrictSelectedScript,
+        operand_class: DeleteOperandClass::IdentifierReference,
+        source_selected: true,
+        expected_ee11: Ee11Outcome::NoRejection,
+    },
+    Ee11Fixture {
+        candidate: "delete \\u0061",
+        context: DeleteContext::NonStrictSelectedScript,
+        operand_class: DeleteOperandClass::IdentifierReference,
+        source_selected: true,
+        expected_ee11: Ee11Outcome::NoRejection,
+    },
+    Ee11Fixture {
+        candidate: "delete a",
+        context: DeleteContext::StrictControl,
+        operand_class: DeleteOperandClass::IdentifierReference,
+        source_selected: true,
+        expected_ee11: Ee11Outcome::R01Rejection,
+    },
+    Ee11Fixture {
+        candidate: "delete \\u0061",
+        context: DeleteContext::StrictControl,
+        operand_class: DeleteOperandClass::IdentifierReference,
+        source_selected: true,
+        expected_ee11: Ee11Outcome::R01Rejection,
+    },
+    Ee11Fixture {
+        candidate: "delete ((a))",
+        context: DeleteContext::NonStrictSelectedScript,
+        operand_class: DeleteOperandClass::ParenthesizedIdentifierReferenceControl,
+        source_selected: false,
+        expected_ee11: Ee11Outcome::NoRejection,
+    },
+    Ee11Fixture {
+        candidate: "delete ((a))",
+        context: DeleteContext::StrictControl,
+        operand_class: DeleteOperandClass::ParenthesizedIdentifierReferenceControl,
+        source_selected: false,
+        expected_ee11: Ee11Outcome::R02RecursivelyReachesR01Rejection,
+    },
+    Ee11Fixture {
+        candidate: "delete obj.#x",
+        context: DeleteContext::NonStrictSelectedScript,
+        operand_class: DeleteOperandClass::PrivateReferenceControl,
+        source_selected: false,
+        expected_ee11: Ee11Outcome::StructurallyOutsideTheorem,
+    },
+    Ee11Fixture {
+        candidate: "delete obj.#x",
+        context: DeleteContext::StrictControl,
+        operand_class: DeleteOperandClass::PrivateReferenceControl,
+        source_selected: false,
+        expected_ee11: Ee11Outcome::StructurallyOutsideTheorem,
+    },
+    Ee11Fixture {
+        candidate: "delete(a)",
+        context: DeleteContext::NonStrictSelectedScript,
+        operand_class: DeleteOperandClass::OutsideSelectedTheorem,
+        source_selected: false,
+        expected_ee11: Ee11Outcome::StructurallyOutsideTheorem,
+    },
+];
 
 // ---------------------------------------------------------------------------
 // Tests.
@@ -761,6 +866,7 @@ fn exact_positive_matrix_pins_fixture_owned_keyword_and_reference_ranges() {
         expected_reference: &'static str,
         expected_name: &'static str,
         expected_provenance: IdentifierReferenceProvenance,
+        expected_outcome: FrontierOutcome,
     }
 
     let rows = [
@@ -772,6 +878,7 @@ fn exact_positive_matrix_pins_fixture_owned_keyword_and_reference_ranges() {
             expected_reference: "a",
             expected_name: "a",
             expected_provenance: IdentifierReferenceProvenance::Direct,
+            expected_outcome: FrontierOutcome::SelectedAcceptedIncomplete,
         },
         PositiveRow {
             source: "const x = delete \u{03C0};",
@@ -781,6 +888,7 @@ fn exact_positive_matrix_pins_fixture_owned_keyword_and_reference_ranges() {
             expected_reference: "\u{03C0}",
             expected_name: "\u{03C0}",
             expected_provenance: IdentifierReferenceProvenance::Direct,
+            expected_outcome: FrontierOutcome::SelectedAcceptedIncomplete,
         },
         PositiveRow {
             source: "const x = delete \u{1D49C};",
@@ -790,6 +898,7 @@ fn exact_positive_matrix_pins_fixture_owned_keyword_and_reference_ranges() {
             expected_reference: "\u{1D49C}",
             expected_name: "\u{1D49C}",
             expected_provenance: IdentifierReferenceProvenance::Direct,
+            expected_outcome: FrontierOutcome::SelectedAcceptedIncomplete,
         },
         PositiveRow {
             source: "const x = delete \\u0061;",
@@ -799,6 +908,7 @@ fn exact_positive_matrix_pins_fixture_owned_keyword_and_reference_ranges() {
             expected_reference: "\\u0061",
             expected_name: "a",
             expected_provenance: IdentifierReferenceProvenance::EscapedNonReserved,
+            expected_outcome: FrontierOutcome::SelectedAcceptedIncomplete,
         },
         PositiveRow {
             source: "const x = delete f\\u006Fo;",
@@ -808,6 +918,7 @@ fn exact_positive_matrix_pins_fixture_owned_keyword_and_reference_ranges() {
             expected_reference: "f\\u006Fo",
             expected_name: "foo",
             expected_provenance: IdentifierReferenceProvenance::EscapedNonReserved,
+            expected_outcome: FrontierOutcome::SelectedAcceptedIncomplete,
         },
         PositiveRow {
             source: "const x = delete \\u{66}oo;",
@@ -817,6 +928,7 @@ fn exact_positive_matrix_pins_fixture_owned_keyword_and_reference_ranges() {
             expected_reference: "\\u{66}oo",
             expected_name: "foo",
             expected_provenance: IdentifierReferenceProvenance::EscapedNonReserved,
+            expected_outcome: FrontierOutcome::SelectedAcceptedIncomplete,
         },
         PositiveRow {
             source: "const x = delete \\u{1D49C};",
@@ -826,6 +938,7 @@ fn exact_positive_matrix_pins_fixture_owned_keyword_and_reference_ranges() {
             expected_reference: "\\u{1D49C}",
             expected_name: "\u{1D49C}",
             expected_provenance: IdentifierReferenceProvenance::EscapedNonReserved,
+            expected_outcome: FrontierOutcome::SelectedAcceptedIncomplete,
         },
     ];
 
@@ -865,11 +978,7 @@ fn exact_positive_matrix_pins_fixture_owned_keyword_and_reference_ranges() {
             row.expected_reference
         );
 
-        let expected = FrontierOutcome::SelectedAcceptedIncomplete;
-        assert!(matches!(
-            expected,
-            FrontierOutcome::SelectedAcceptedIncomplete
-        ));
+        assert_eq!(classify_frontier_outcome(whole_text), row.expected_outcome);
     }
 }
 
@@ -926,6 +1035,12 @@ fn selected_trivia_matrix_between_keyword_and_operand() {
             "{:?}",
             row.candidate
         );
+        assert_eq!(
+            classify_frontier_outcome(row.candidate),
+            FrontierOutcome::SelectedAcceptedIncomplete,
+            "{:?}",
+            row.candidate
+        );
     }
 
     // Comments never compose as required operand trivia, even though they
@@ -936,10 +1051,12 @@ fn selected_trivia_matrix_between_keyword_and_operand() {
             !is_selected_delete_identifier_reference_unary_expression(comment_control),
             "{comment_control:?}"
         );
+        assert_eq!(
+            classify_frontier_outcome(comment_control),
+            FrontierOutcome::UnsupportedCoverage,
+            "{comment_control:?}"
+        );
     }
-
-    let expected = FrontierOutcome::UnsupportedCoverage;
-    assert!(matches!(expected, FrontierOutcome::UnsupportedCoverage));
 }
 
 /// Non-strict `IdentifierReference` policy composition (representative
@@ -1056,6 +1173,12 @@ fn maximal_identifier_name_firewall_never_splits_keyword_and_operand() {
             "{:?}",
             row.candidate
         );
+        assert_eq!(
+            classify_frontier_outcome(row.candidate),
+            FrontierOutcome::UnsupportedCoverage,
+            "{:?}",
+            row.candidate
+        );
     }
 
     // An escaped keyword spelling is never a direct `delete` token: the
@@ -1065,9 +1188,10 @@ fn maximal_identifier_name_firewall_never_splits_keyword_and_operand() {
     assert!(!is_selected_delete_identifier_reference_unary_expression(
         "\\u0064elete a"
     ));
-
-    let expected = FrontierOutcome::UnsupportedCoverage;
-    assert!(matches!(expected, FrontierOutcome::UnsupportedCoverage));
+    assert_eq!(
+        classify_frontier_outcome("\\u0064elete a"),
+        FrontierOutcome::UnsupportedCoverage
+    );
 }
 
 /// Broader-valid-but-outside controls (Issue #839 section 12): these remain
@@ -1092,6 +1216,11 @@ fn broader_valid_but_outside_controls_are_not_syntax_rejected() {
             !is_selected_delete_identifier_reference_unary_expression(control),
             "{control:?}"
         );
+        assert_eq!(
+            classify_frontier_outcome(control),
+            FrontierOutcome::UnsupportedCoverage,
+            "{control:?}"
+        );
     }
 
     // The keyword boundary itself still holds for the punctuator-adjacent
@@ -1104,9 +1233,6 @@ fn broader_valid_but_outside_controls_are_not_syntax_rejected() {
             "{control:?}"
         );
     }
-
-    let expected = FrontierOutcome::UnsupportedCoverage;
-    assert!(matches!(expected, FrontierOutcome::UnsupportedCoverage));
 }
 
 /// Malformed / invalid operand controls (Issue #839 section 13): already-owned
@@ -1165,14 +1291,17 @@ fn malformed_invalid_operand_controls_reuse_owned_decode_failures() {
             !is_selected_delete_identifier_reference_unary_expression(&candidate),
             "{candidate:?}"
         );
+        // These remain UnsupportedCoverage (processing declines the
+        // candidate), never a stronger SyntaxRejected claim invented by
+        // this Oracle -- the whole `delete UnaryExpression` production does
+        // not exist yet to reject anything.
+        assert_eq!(
+            classify_frontier_outcome(&candidate),
+            FrontierOutcome::UnsupportedCoverage,
+            "{candidate:?}"
+        );
     }
 
-    // These remain UnsupportedCoverage (processing declines the candidate),
-    // never a stronger SyntaxRejected claim invented by this Oracle -- the
-    // whole `delete UnaryExpression` production does not exist yet to
-    // reject anything.
-    let expected = FrontierOutcome::UnsupportedCoverage;
-    assert!(matches!(expected, FrontierOutcome::UnsupportedCoverage));
     assert_eq!(PROCESSING_FAILURES, &["ResourceLimited", "InternalFailure"]);
 }
 
@@ -1243,27 +1372,22 @@ fn ee11_context_model_matrix_proves_non_triggering_and_strict_controls() {
         Ee11Outcome::StructurallyOutsideTheorem
     );
 
-    // Every candidate admitted by the bounded source-composition theorem
-    // (the positive matrix, the trivia matrix, the non-strict policy
-    // composition matrix) is, by construction of the fixed selected
-    // envelope, a `NonStrictSelectedScript` + `IdentifierReference` pairing
-    // -- `NoRejection` -- never `StrictControl`.
-    for accepted in [
-        "delete a",
-        "delete \\u0061",
-        "delete let",
-        "delete \\u0079ield",
-    ] {
-        assert!(is_selected_delete_identifier_reference_unary_expression(
-            accepted
-        ));
+    // Every row of the connected candidate/context/operand-class/outcome
+    // matrix independently proves its own recognition result and its own
+    // EE-11 outcome, rather than a shared candidate loop reusing constant
+    // context/operand-class arguments.
+    for row in EE11_SEMANTIC_MATRIX {
         assert_eq!(
-            expected_ee11_outcome(
-                DeleteContext::NonStrictSelectedScript,
-                DeleteOperandClass::IdentifierReference
-            ),
-            Ee11Outcome::NoRejection,
-            "{accepted:?}"
+            is_selected_delete_identifier_reference_unary_expression(row.candidate),
+            row.source_selected,
+            "{:?}",
+            row.candidate
+        );
+        assert_eq!(
+            expected_ee11_outcome(row.context, row.operand_class),
+            row.expected_ee11,
+            "{:?}",
+            row.candidate
         );
     }
 }
@@ -1281,34 +1405,40 @@ fn ee11_context_model_matrix_proves_non_triggering_and_strict_controls() {
 fn clean_ee11_r01_strict_attribution_controls_are_provenance_independent() {
     const STRICT_PREFIX: &str = "\"use strict\";\n";
 
-    for operand in ["a", "\\u0061"] {
-        let non_strict_candidate = format!("delete {operand}");
-        assert!(is_selected_delete_identifier_reference_unary_expression(
-            &non_strict_candidate
-        ));
+    // Pull exactly the IdentifierReference-class rows of the connected
+    // matrix -- both Direct and EscapedNonReserved, both contexts -- so
+    // each candidate's own recognition and own EE-11 outcome are checked
+    // against that same candidate's own row, never a constant shared across
+    // unrelated candidates.
+    let clean_r01_rows = EE11_SEMANTIC_MATRIX
+        .iter()
+        .filter(|row| row.operand_class == DeleteOperandClass::IdentifierReference);
+
+    for row in clean_r01_rows {
         assert_eq!(
-            expected_ee11_outcome(
-                DeleteContext::NonStrictSelectedScript,
-                DeleteOperandClass::IdentifierReference
-            ),
-            Ee11Outcome::NoRejection,
-            "{operand:?}"
+            is_selected_delete_identifier_reference_unary_expression(row.candidate),
+            row.source_selected,
+            "{:?}",
+            row.candidate
+        );
+        assert_eq!(
+            expected_ee11_outcome(row.context, row.operand_class),
+            row.expected_ee11,
+            "{:?}",
+            row.candidate
         );
 
-        // The strict-control fixture pairs the same accepted operand with
-        // an explicit fixture-authored `StrictControl` context; it is never
-        // fed through the (non-strict-envelope-scoped) recognizer above as
-        // a claim about production strict-mode source.
-        let strict_control_fixture = format!("{STRICT_PREFIX}delete {operand};");
-        assert!(strict_control_fixture.starts_with(STRICT_PREFIX));
-        assert_eq!(
-            expected_ee11_outcome(
-                DeleteContext::StrictControl,
-                DeleteOperandClass::IdentifierReference
-            ),
-            Ee11Outcome::R01Rejection,
-            "{operand:?}"
-        );
+        if row.context == DeleteContext::StrictControl {
+            // The strict-control fixture pairs this exact accepted
+            // candidate with an explicit fixture-authored `StrictControl`
+            // context; it is never fed through the (non-strict-envelope-
+            // scoped) recognizer above as a claim about production
+            // strict-mode source, and `"use strict"` is never scanned to
+            // derive the context.
+            let strict_control_fixture = format!("{STRICT_PREFIX}{};", row.candidate);
+            assert!(strict_control_fixture.starts_with(STRICT_PREFIX));
+            assert!(strict_control_fixture.contains(row.candidate));
+        }
     }
 
     // Strict-sensitive Identifier-policy names (e.g. `let`) are deliberately
@@ -1316,7 +1446,12 @@ fn clean_ee11_r01_strict_attribution_controls_are_provenance_independent() {
     // rejection would not cleanly attribute to EE-11-R01 itself
     // (falsification result 4). This test uses only ordinary, strictness-
     // stable names (`a`, its escaped spelling) as the clean control pair.
-    assert_eq!(STRICT_PREFIX, "\"use strict\";\n");
+    for row in EE11_SEMANTIC_MATRIX
+        .iter()
+        .filter(|row| row.operand_class == DeleteOperandClass::IdentifierReference)
+    {
+        assert!(row.candidate == "delete a" || row.candidate == "delete \\u0061");
+    }
 }
 
 /// `EE-11-R02` recursive attribution controls (Issue #688 comment
@@ -1371,6 +1506,8 @@ fn downstream_source_name_correspondence_is_independently_frozen_without_runtime
         containing_binding_range: Range,
         keyword_range: Range,
         reference_range: Range,
+        expected_name: &'static str,
+        expected_provenance: IdentifierReferenceProvenance,
         target_binding_range: Option<Range>,
         expected: ExpectedBindingScopeTarget,
     }
@@ -1384,6 +1521,8 @@ fn downstream_source_name_correspondence_is_independently_frozen_without_runtime
             containing_binding_range: Range(13, 14),
             keyword_range: Range(17, 23),
             reference_range: Range(24, 25),
+            expected_name: "a",
+            expected_provenance: IdentifierReferenceProvenance::Direct,
             target_binding_range: Some(Range(4, 5)),
             expected: ExpectedBindingScopeTarget::SameSourceSelectedLexicalBinding(
                 ExpectedLexicalBindingOrder::Before,
@@ -1397,12 +1536,29 @@ fn downstream_source_name_correspondence_is_independently_frozen_without_runtime
             containing_binding_range: Range(6, 7),
             keyword_range: Range(10, 16),
             reference_range: Range(17, 18),
+            expected_name: "z",
+            expected_provenance: IdentifierReferenceProvenance::Direct,
             target_binding_range: None,
             expected: ExpectedBindingScopeTarget::NoSameSourceSelectedLexicalBinding,
         },
+        CorrespondenceFixture {
+            id: "DELETE-CORRESPONDENCE-ESCAPED-BEFORE-001",
+            source: "let a;\nconst x = delete \\u0061;",
+            binding_inventory: &["a", "x"],
+            containing_binding_name: "x",
+            containing_binding_range: Range(13, 14),
+            keyword_range: Range(17, 23),
+            reference_range: Range(24, 30),
+            expected_name: "a",
+            expected_provenance: IdentifierReferenceProvenance::EscapedNonReserved,
+            target_binding_range: Some(Range(4, 5)),
+            expected: ExpectedBindingScopeTarget::SameSourceSelectedLexicalBinding(
+                ExpectedLexicalBindingOrder::Before,
+            ),
+        },
     ];
 
-    for fixture in &fixtures {
+    for (index, fixture) in fixtures.iter().enumerate() {
         assert_eq!(slice(fixture.source, fixture.keyword_range), "delete");
         let whole = Range(fixture.keyword_range.0, fixture.reference_range.1);
         let whole_text = slice(fixture.source, whole);
@@ -1418,14 +1574,42 @@ fn downstream_source_name_correspondence_is_independently_frozen_without_runtime
             "{}",
             fixture.id
         );
-        let reference_semantic_name = slice(fixture.source, fixture.reference_range);
-        assert!(
-            is_selected_accepted_identifier_reference(reference_semantic_name),
+
+        // `reference_authored` is the raw authored source fragment (which,
+        // for an escaped operand, is the escape spelling itself, e.g.
+        // `\u0061`, never the decoded name). `reference_semantic_name` is
+        // the independently decoded semantic name (Finding 4): these two
+        // are never conflated -- the authored fragment backs
+        // SourceAnchor/source-fragment assertions, the decoded name backs
+        // binding/correspondence identity.
+        let reference_authored = slice(fixture.source, fixture.reference_range);
+        let (decoded_name, provenance) = classify_selected_accepted_identifier_reference(
+            reference_authored,
+        )
+        .unwrap_or_else(|| {
+            panic!(
+                "{}: authored reference must be an accepted IdentifierReference",
+                fixture.id
+            )
+        });
+        assert_eq!(decoded_name, fixture.expected_name, "{}", fixture.id);
+        assert_eq!(provenance, fixture.expected_provenance, "{}", fixture.id);
+        let reference_semantic_name = decoded_name.as_str();
+
+        // The inner reference anchor never includes the delete keyword, and
+        // exactly reproduces the raw authored fragment -- never the decoded
+        // name, never derived by byte-length inference or source searching.
+        assert!(fixture.reference_range.0 > fixture.keyword_range.1);
+        assert_eq!(
+            authored_anchor(
+                839_150 + index as u64,
+                fixture.source,
+                fixture.reference_range
+            ),
+            reference_authored,
             "{}",
             fixture.id
         );
-        // The inner reference anchor never includes the delete keyword.
-        assert!(fixture.reference_range.0 > fixture.keyword_range.1);
 
         let computed = expected_binding_scope_target(
             fixture.binding_inventory,
@@ -1446,11 +1630,7 @@ fn downstream_source_name_correspondence_is_independently_frozen_without_runtime
                     fixture.id
                 );
                 assert_eq!(
-                    authored_anchor(
-                        839_200 + fixture.id.len() as u64,
-                        fixture.source,
-                        target_range
-                    ),
+                    authored_anchor(839_200 + index as u64, fixture.source, target_range),
                     reference_semantic_name,
                     "{}",
                     fixture.id
@@ -1478,11 +1658,53 @@ fn downstream_source_name_correspondence_is_independently_frozen_without_runtime
 /// `BindingIdentifier` bindings.
 #[test]
 fn static_semantics_composition_remains_driven_by_authored_bindings() {
+    /// Independently restates only the minimal duplicate-`BoundNames`
+    /// premise these existing accepted gold controls exercise -- a pure
+    /// authored-name-multiset check, never a call into
+    /// `selected_static_semantics.rs`.
+    fn has_duplicate_authored_binding_name(binding_names: &[&str]) -> bool {
+        for (index, name) in binding_names.iter().enumerate() {
+            if binding_names[..index].contains(name) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Independently models, from fixture-owned authored evidence only,
+    /// exactly the three narrow ECMA-262 `LexicalDeclaration`/`Script`
+    /// static-semantics rules the four fixtures below exercise: a `let`
+    /// declaration must not bind the name `let`; a declaration's
+    /// `BoundNames` must contain no duplicate; every `const` `LexicalBinding`
+    /// must have an `Initializer`. This is a minimal per-rule predicate over
+    /// authored fixture data, never a generic static-semantics engine, and
+    /// never a call into production.
+    fn independently_modeled_lexical_static_rejection(
+        bound_names: &[&str],
+        const_declarator_has_initializer: Option<&[bool]>,
+    ) -> bool {
+        if bound_names.contains(&"let") {
+            return true;
+        }
+        if has_duplicate_authored_binding_name(bound_names) {
+            return true;
+        }
+        if let Some(has_initializer) = const_declarator_has_initializer
+            && has_initializer.contains(&false)
+        {
+            return true;
+        }
+        false
+    }
+
     struct StaticCompositionFixture {
         source: &'static str,
         subject: Range,
         subject_fragment: &'static str,
         control_gold_id: &'static str,
+        bound_names: &'static [&'static str],
+        const_declarator_has_initializer: Option<&'static [bool]>,
+        expected_outcome: FrontierOutcome,
     }
 
     const FIXTURES: &[StaticCompositionFixture] = &[
@@ -1491,24 +1713,36 @@ fn static_semantics_composition_remains_driven_by_authored_bindings() {
             subject: Range(4, 7),
             subject_fragment: "let",
             control_gold_id: "JS-GOLD-LEXDECL-LET-BINDING-001",
+            bound_names: &["let"],
+            const_declarator_has_initializer: None,
+            expected_outcome: FrontierOutcome::StaticSemanticsRejected,
         },
         StaticCompositionFixture {
             source: "let x = delete a, x = foo;",
             subject: Range(18, 19),
             subject_fragment: "x",
             control_gold_id: "JS-GOLD-LEXDECL-DUPBOUNDNAMES-001",
+            bound_names: &["x", "x"],
+            const_declarator_has_initializer: None,
+            expected_outcome: FrontierOutcome::StaticSemanticsRejected,
         },
         StaticCompositionFixture {
             source: "const x = delete a, y;",
             subject: Range(20, 21),
             subject_fragment: "y",
             control_gold_id: "JS-GOLD-LEXDECL-CONST-MISSING-INIT-001",
+            bound_names: &["x", "y"],
+            const_declarator_has_initializer: Some(&[true, false]),
+            expected_outcome: FrontierOutcome::StaticSemanticsRejected,
         },
         StaticCompositionFixture {
             source: "let x = delete a; let x = foo;",
             subject: Range(22, 23),
             subject_fragment: "x",
             control_gold_id: "JS-GOLD-SCRIPT-DUPLEXICAL-001",
+            bound_names: &["x", "x"],
+            const_declarator_has_initializer: None,
+            expected_outcome: FrontierOutcome::StaticSemanticsRejected,
         },
     ];
 
@@ -1519,6 +1753,21 @@ fn static_semantics_composition_remains_driven_by_authored_bindings() {
         );
         assert!(
             gold_source(fixture.control_gold_id).is_some(),
+            "{}",
+            fixture.control_gold_id
+        );
+        // Connect the fixture-owned expected outcome to the actual
+        // independently modeled static condition, rather than asserting a
+        // standalone constant.
+        assert_eq!(
+            independently_modeled_lexical_static_rejection(
+                fixture.bound_names,
+                fixture.const_declarator_has_initializer
+            ),
+            matches!(
+                fixture.expected_outcome,
+                FrontierOutcome::StaticSemanticsRejected
+            ),
             "{}",
             fixture.control_gold_id
         );
@@ -1539,9 +1788,13 @@ fn static_semantics_composition_remains_driven_by_authored_bindings() {
     assert!(is_selected_delete_identifier_reference_unary_expression(
         slice(rhs_not_a_new_bound_name, Range(17, 25))
     ));
-
-    let expected = FrontierOutcome::StaticSemanticsRejected;
-    assert!(matches!(expected, FrontierOutcome::StaticSemanticsRejected));
+    // Sanity control: this ordinary, non-colliding, fully initialized
+    // binding inventory is independently modeled as NOT rejected, proving
+    // the predicate above is not vacuously true.
+    assert!(!independently_modeled_lexical_static_rejection(
+        &binding_inventory,
+        None
+    ));
 }
 
 /// Completion hypothesis (Issue #839 section 18): the frozen partition
@@ -1562,21 +1815,44 @@ fn completion_hypothesis_is_unchanged_pending_independent_proof() {
     assert_eq!(TOTAL_RULE_IDENTITIES, REQUIRED_REACHABLE + COMPLEMENT);
     assert!(NEWLY_REACHABLE.is_empty());
 
-    // Every admitted candidate satisfies the five preconditions of the
-    // replacement completion theorem: owning delete syntax present, current
-    // selected carrier guarantees non-strict context, operand exactly
-    // IdentifierReference, no private target, no CoverParenthesized operand.
-    for accepted in ["delete a", "delete \\u0061", "delete \u{03C0}"] {
+    // Evidence-backed replacement completion theorem: for every row of the
+    // connected candidate/context/operand-class/outcome matrix that is (a)
+    // an admitted first-leaf candidate (`source_selected`), (b) under the
+    // current selected `NonStrictSelectedScript` context, and (c) exactly
+    // the `IdentifierReference` operand class (structurally distinct from,
+    // and therefore never coinciding with, `PrivateReferenceControl` or
+    // `ParenthesizedIdentifierReferenceControl` -- i.e. no private target
+    // and no `CoverParenthesizedExpressionAndArrowParameterList` operand) --
+    // the independently modeled EE-11 outcome is `NoRejection`. This backs
+    // the unchanged completion hypothesis with the matrix itself, rather
+    // than asserting it alongside unrelated constants.
+    let admitted_first_leaf_rows: Vec<_> = EE11_SEMANTIC_MATRIX
+        .iter()
+        .filter(|row| {
+            row.source_selected
+                && row.context == DeleteContext::NonStrictSelectedScript
+                && row.operand_class == DeleteOperandClass::IdentifierReference
+        })
+        .collect();
+    assert!(
+        !admitted_first_leaf_rows.is_empty(),
+        "at least one admitted first-leaf candidate row is required"
+    );
+    for row in &admitted_first_leaf_rows {
         assert!(is_selected_delete_identifier_reference_unary_expression(
-            accepted
+            row.candidate
         ));
         assert_eq!(
-            expected_ee11_outcome(
-                DeleteContext::NonStrictSelectedScript,
-                DeleteOperandClass::IdentifierReference
-            ),
+            expected_ee11_outcome(row.context, row.operand_class),
             Ee11Outcome::NoRejection,
-            "{accepted:?}"
+            "{:?}",
+            row.candidate
+        );
+        assert_eq!(
+            row.expected_ee11,
+            Ee11Outcome::NoRejection,
+            "{:?}",
+            row.candidate
         );
     }
 }
