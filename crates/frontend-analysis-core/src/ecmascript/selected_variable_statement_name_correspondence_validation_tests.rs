@@ -314,6 +314,24 @@ const F14_RELATIONS: &[ExpectedRelation] = &[ExpectedRelation {
     correspondence: ExpectedCorrespondence::NoSelectedSameSourceContributor,
 }];
 
+// Issue #833 makes a selected exactly-one parenthesized `IdentifierReference`
+// initializer a selected accepted production form, so `var a; let
+// x=(a);` acquires the same relation as its unwrapped `var a; let x=a;`
+// counterpart (`F1_RELATIONS` above). The reference anchor is the inner
+// authored `a` only -- never the whole `(a)` span -- exactly mirroring the
+// production-retained inner `SelectedIdentifierReferenceFact`.
+const F15_VARS: &[ExpectedAnchor] = &[ExpectedAnchor::new(4, 5, "a")];
+const F15_RELATIONS: &[ExpectedRelation] = &[ExpectedRelation {
+    containing_binding: ExpectedAnchor::new(11, 12, "x"),
+    current_region: ExpectedRegion::TopLevel,
+    reference: ExpectedAnchor::new(14, 15, "a"),
+    semantic_name: "a",
+    semantic_code_points: A,
+    correspondence: ExpectedCorrespondence::SameSourceSelectedVarNameContributors {
+        contributors: F15_VARS,
+    },
+}];
+
 const FIXTURES: &[RelationFixture] = &[
     RelationFixture {
         id: "top-level-var-before-reference",
@@ -483,17 +501,11 @@ const FIXTURES: &[RelationFixture] = &[
         ),
     },
     RelationFixture {
-        id: "grouped-reference-remains-unsupported",
+        id: "grouped-reference-matches-unwrapped-reference",
         source: "var a; let x=(a);",
         blocks: &[],
-        controls: &[
-            ExpectedAnchor::new(4, 5, "a"),
-            ExpectedAnchor::new(11, 12, "x"),
-            ExpectedAnchor::new(13, 16, "(a)"),
-        ],
-        processing: ExpectedProcessing::UpstreamPrerequisiteUnavailable(
-            UpstreamPrerequisite::UnsupportedCoverage,
-        ),
+        controls: F15_VARS,
+        processing: ExpectedProcessing::Complete(F15_RELATIONS),
     },
     RelationFixture {
         id: "var-eof-asi-remains-unsupported",
@@ -715,6 +727,43 @@ fn repeated_var_contributors_are_many_source_anchors_not_one_runtime_target() {
 }
 
 #[test]
+fn grouped_reference_relation_retains_only_the_inner_anchor() {
+    // Issue #833: `var a; let x=(a);` must acquire exactly the same relation
+    // as its unwrapped `var a; let x=a;` counterpart (`top-level-var-before-
+    // reference`) -- same containing binding, same contributor, same
+    // semantic name -- differing only in the reference anchor's position,
+    // which is the inner authored `a` (index 14) and never the whole `(a)`
+    // span (index 13..16).
+    let grouped = fixture("grouped-reference-matches-unwrapped-reference");
+    let unwrapped = fixture("top-level-var-before-reference");
+    let ExpectedProcessing::Complete([grouped_relation]) = grouped.processing else {
+        panic!("grouped-reference fixture must contain exactly one relation");
+    };
+    let ExpectedProcessing::Complete([unwrapped_relation]) = unwrapped.processing else {
+        panic!("top-level-var-before-reference fixture must contain exactly one relation");
+    };
+
+    assert_eq!(grouped_relation.reference, ExpectedAnchor::new(14, 15, "a"));
+    assert_ne!(
+        grouped_relation.reference,
+        ExpectedAnchor::new(13, 16, "(a)"),
+        "the reference anchor must be the inner `a`, never the whole grouped span"
+    );
+    assert_eq!(
+        grouped_relation.containing_binding,
+        unwrapped_relation.containing_binding
+    );
+    assert_eq!(
+        grouped_relation.correspondence,
+        unwrapped_relation.correspondence
+    );
+    assert_eq!(
+        grouped_relation.semantic_name,
+        unwrapped_relation.semantic_name
+    );
+}
+
+#[test]
 fn authored_source_order_does_not_gate_var_name_correspondence() {
     let later_var = fixture("top-level-var-after-reference");
     let ExpectedProcessing::Complete([relation]) = later_var.processing else {
@@ -885,7 +934,6 @@ fn invalid_and_unsupported_prerequisites_never_acquire_correspondence_results() 
 
     for id in [
         "var-initializer-remains-unsupported",
-        "grouped-reference-remains-unsupported",
         "var-eof-asi-remains-unsupported",
         "incomplete-block-prevents-tentative-relation",
     ] {

@@ -2207,6 +2207,32 @@ enum SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition {
     InternalFailure,
 }
 
+/// Result of the placement-neutral bounded exactly-one parenthesized
+/// `IdentifierReference` recognizer below (Issue #833, composing the
+/// accepted candidate-independent theorem proven by #831/PR #832 per #688
+/// comment 5853240184). `Matched` carries the exact existing
+/// `SelectedIdentifierReferenceFact` produced by the shared
+/// `consume_selected_identifier_reference()` recognizer for the sole inner
+/// operand, unchanged, for either a direct-authored or an escaped
+/// non-ReservedWord operand. `NotSelected` covers every decline: no leading
+/// authored `(`, an escaped `ReservedWord` inner operand, no inner
+/// `IdentifierReference` at all, or a recognized inner operand not
+/// immediately followed (after selected inner-trailing trivia) by an
+/// authored `)`. `ResourceLimited` and `InternalFailure` preserve the shared
+/// recognizer's own processing-failure classes without collapsing them into
+/// `NotSelected`. This carrier is deliberately distinct from
+/// `SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition` above:
+/// grouping owns paired delimiters plus inner trivia, not a single leading
+/// operator, so the two families are not merged behind one generic
+/// recognition result.
+#[derive(Debug)]
+enum SelectedParenthesizedIdentifierReferenceRecognition {
+    Matched(SelectedIdentifierReferenceFact),
+    NotSelected,
+    ResourceLimited,
+    InternalFailure,
+}
+
 /// Result of the initializer-owner-private optional-leading-`+`/`-`
 /// continuation primitive (Issue #811, composing the accepted
 /// candidate-independent theorem proven by #809/PR #810 with the
@@ -2745,6 +2771,17 @@ impl<'source> Cursor<'source> {
                                         return Err(ParseFailure::InternalFailure);
                                     }
                                     SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
+                                match self.consume_selected_parenthesized_identifier_reference() {
+                                    SelectedParenthesizedIdentifierReferenceRecognition::Matched(reference) => {
+                                        (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
+                                    }
+                                    SelectedParenthesizedIdentifierReferenceRecognition::ResourceLimited => {
+                                        return Err(ParseFailure::ResourceLimited);
+                                    }
+                                    SelectedParenthesizedIdentifierReferenceRecognition::InternalFailure => {
+                                        return Err(ParseFailure::InternalFailure);
+                                    }
+                                    SelectedParenthesizedIdentifierReferenceRecognition::NotSelected => {
                                 match self.consume_selected_plain_decimal_atom_initializer() {
                                     SelectedPlainDecimalAtomInitializerRecognition::DecimalOnly => {
                                         (None, None)
@@ -2802,6 +2839,8 @@ impl<'source> Cursor<'source> {
                                                 }
                                             }
                                         }
+                                    }
+                                }
                                     }
                                 }
                                     }
@@ -2949,6 +2988,17 @@ impl<'source> Cursor<'source> {
                                         return Err(ParseFailure::InternalFailure);
                                     }
                                     SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
+                                match self.consume_selected_parenthesized_identifier_reference() {
+                                    SelectedParenthesizedIdentifierReferenceRecognition::Matched(reference) => {
+                                        (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
+                                    }
+                                    SelectedParenthesizedIdentifierReferenceRecognition::ResourceLimited => {
+                                        return Err(ParseFailure::ResourceLimited);
+                                    }
+                                    SelectedParenthesizedIdentifierReferenceRecognition::InternalFailure => {
+                                        return Err(ParseFailure::InternalFailure);
+                                    }
+                                    SelectedParenthesizedIdentifierReferenceRecognition::NotSelected => {
                                 match self.consume_selected_plain_decimal_atom_initializer() {
                                     SelectedPlainDecimalAtomInitializerRecognition::DecimalOnly => {
                                         (None, None)
@@ -3006,6 +3056,8 @@ impl<'source> Cursor<'source> {
                                                 }
                                             }
                                         }
+                                    }
+                                }
                                     }
                                 }
                                     }
@@ -3118,6 +3170,18 @@ impl<'source> Cursor<'source> {
                                     return Err(ParseFailure::InternalFailure);
                                 }
                                 SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
+                            match self.consume_selected_parenthesized_identifier_reference() {
+                                SelectedParenthesizedIdentifierReferenceRecognition::Matched(reference) => {
+                                    identifier_reference_initializer =
+                                        Some(SelectedIdentifierReferenceInitializer::One(reference));
+                                }
+                                SelectedParenthesizedIdentifierReferenceRecognition::ResourceLimited => {
+                                    return Err(ParseFailure::ResourceLimited);
+                                }
+                                SelectedParenthesizedIdentifierReferenceRecognition::InternalFailure => {
+                                    return Err(ParseFailure::InternalFailure);
+                                }
+                                SelectedParenthesizedIdentifierReferenceRecognition::NotSelected => {
                             match self.consume_selected_plain_decimal_atom_initializer() {
                                 SelectedPlainDecimalAtomInitializerRecognition::DecimalOnly => {}
                                 SelectedPlainDecimalAtomInitializerRecognition::DecimalWithReferences(initializer) => {
@@ -3168,6 +3232,8 @@ impl<'source> Cursor<'source> {
                                             }
                                         }
                                     }
+                                }
+                            }
                                 }
                             }
                                 }
@@ -4006,6 +4072,22 @@ impl<'source> Cursor<'source> {
                 return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::InternalFailure;
             }
             SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition::NotSelected => {}
+        }
+
+        match self.consume_selected_parenthesized_identifier_reference() {
+            SelectedParenthesizedIdentifierReferenceRecognition::Matched(reference) => {
+                self.skip_selected_trivia();
+                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::Matched(
+                    SelectedFreeStandingIdentifierReferenceUseSite::One(reference),
+                );
+            }
+            SelectedParenthesizedIdentifierReferenceRecognition::ResourceLimited => {
+                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::ResourceLimited;
+            }
+            SelectedParenthesizedIdentifierReferenceRecognition::InternalFailure => {
+                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::InternalFailure;
+            }
+            SelectedParenthesizedIdentifierReferenceRecognition::NotSelected => {}
         }
 
         let first = match self.consume_selected_identifier_reference() {
@@ -6110,6 +6192,79 @@ impl<'source> Cursor<'source> {
             }
             SelectedIdentifierReferenceRecognition::InternalFailure => {
                 SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition::InternalFailure
+            }
+        }
+    }
+
+    /// Recognizes one placement-neutral bounded
+    /// `SelectedParenthesizedIdentifierReference` atom (Issue #833, per #688
+    /// comment 5853240184):
+    ///
+    /// ```text
+    /// SelectedParenthesizedIdentifierReference ::=
+    ///     "("
+    ///     SelectedGroupingTrivia
+    ///     SelectedAcceptedIdentifierReference
+    ///     SelectedGroupingTrivia
+    ///     ")"
+    /// ```
+    ///
+    /// composing the accepted candidate-independent theorem proven by
+    /// #831/PR #832. This helper owns only the paired delimiters and the
+    /// inner selected trivia, invoking the unmodified shared
+    /// `consume_selected_identifier_reference()` exactly once for the sole
+    /// accepted inner `IdentifierReference`. Only the existing inner
+    /// `SelectedIdentifierReferenceFact` is retained; no whole grouped span,
+    /// parenthesis anchor, grouping-trivia anchor, or
+    /// ParenthesizedExpression/PrimaryExpression/Expression node is ever
+    /// recorded.
+    ///
+    /// A recognized inner operand not immediately followed (after selected
+    /// inner-trailing trivia) by an authored `)` restores the full grouping
+    /// start and declines -- this is the exact firewall keeping recursive
+    /// grouping (`((a))`), richer inner expressions (`(a+b)`, `(a=b)`,
+    /// `(a,b)`, `(a())`, `(!a)`, ...), and the cover/arrow grammar (`()`,
+    /// `(a,b)`, `(a)=>a`, `(...a)`, ...) outside this bounded theorem, since
+    /// none of those inner continuations are ever consumed here. An escaped
+    /// inner operand that decodes to a ReservedWord is an ordinary decline,
+    /// exactly mirroring the shared recognizer's own boundary. This helper
+    /// never recurses into itself. Richer outer continuations (`(a)+b`,
+    /// `(a).b`, `(a)()`, `(a)=>a`, ...) are likewise never inspected here:
+    /// the helper commits only the local grouped atom, leaving the untouched
+    /// suffix to the enclosing initializer/declaration or free-standing
+    /// placement owner. Processing failures from the shared recognizer
+    /// propagate unchanged and never degrade to `NotSelected`.
+    fn consume_selected_parenthesized_identifier_reference(
+        &mut self,
+    ) -> SelectedParenthesizedIdentifierReferenceRecognition {
+        let start = self.offset;
+
+        if !self.consume_ascii('(') {
+            return SelectedParenthesizedIdentifierReferenceRecognition::NotSelected;
+        }
+
+        self.skip_selected_trivia();
+
+        match self.consume_selected_identifier_reference() {
+            SelectedIdentifierReferenceRecognition::Matched(reference) => {
+                self.skip_selected_trivia();
+                if self.consume_ascii(')') {
+                    SelectedParenthesizedIdentifierReferenceRecognition::Matched(reference)
+                } else {
+                    self.offset = start;
+                    SelectedParenthesizedIdentifierReferenceRecognition::NotSelected
+                }
+            }
+            SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName { .. }
+            | SelectedIdentifierReferenceRecognition::NotSelected => {
+                self.offset = start;
+                SelectedParenthesizedIdentifierReferenceRecognition::NotSelected
+            }
+            SelectedIdentifierReferenceRecognition::ResourceLimited => {
+                SelectedParenthesizedIdentifierReferenceRecognition::ResourceLimited
+            }
+            SelectedIdentifierReferenceRecognition::InternalFailure => {
+                SelectedParenthesizedIdentifierReferenceRecognition::InternalFailure
             }
         }
     }
