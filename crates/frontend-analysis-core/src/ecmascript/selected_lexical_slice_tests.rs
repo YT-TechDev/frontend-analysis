@@ -7681,6 +7681,63 @@ fn typeof_void_identifier_reference_unary_expression_provenance_matrix_is_exact(
     assert_eq!(reference.reference().fragment(), "a");
 }
 
+/// Issue #837's own required minimum positive matrix ("At minimum seal"),
+/// sealed as one small focused table exactly matching its listed
+/// operator/operand pairings -- `typeof a` / `void a` / `typeof π` /
+/// `void 𝒜` / `typeof \u0061` / `void f\u006Fo` / `typeof \u{66}oo` /
+/// `void \u{1D49C}` -- across representative initializer and
+/// free-standing placements, distinct from the broader provenance and
+/// placement matrices above (which independently cover additional
+/// operator/operand combinations beyond this exact required minimum).
+#[test]
+fn typeof_void_identifier_reference_unary_expression_issue_837_minimum_positive_matrix_is_sealed() {
+    for (operand, fragment, semantic_name) in [
+        ("a", "a", "a"),
+        ("π", "π", "π"),
+        (r"\u0061", r"\u0061", "a"),
+        (r"\u{66}oo", r"\u{66}oo", "foo"),
+    ] {
+        let text = format!("const x = typeof {operand};");
+        let script = recognized(&text);
+        let [binding] = script.declarations()[0].bindings() else {
+            panic!("expected one selected lexical binding");
+        };
+        let reference = binding.identifier_reference_initializer().unwrap();
+        assert_eq!(reference.reference().fragment(), fragment, "{text}");
+        assert_eq!(reference.semantic_name(), semantic_name, "{text}");
+
+        let use_text = format!("typeof {operand};");
+        let script = recognized_reference_use(&use_text);
+        let use_site = only_top_level_use_site(&script);
+        let fact = only_fact(use_site.body());
+        assert_eq!(fact.reference().fragment(), fragment, "{use_text}");
+        assert_eq!(fact.semantic_name(), semantic_name, "{use_text}");
+    }
+
+    for (operand, fragment, semantic_name) in [
+        ("a", "a", "a"),
+        ("𝒜", "𝒜", "𝒜"),
+        (r"f\u006Fo", r"f\u006Fo", "foo"),
+        (r"\u{1D49C}", r"\u{1D49C}", "𝒜"),
+    ] {
+        let text = format!("const x = void {operand};");
+        let script = recognized(&text);
+        let [binding] = script.declarations()[0].bindings() else {
+            panic!("expected one selected lexical binding");
+        };
+        let reference = binding.identifier_reference_initializer().unwrap();
+        assert_eq!(reference.reference().fragment(), fragment, "{text}");
+        assert_eq!(reference.semantic_name(), semantic_name, "{text}");
+
+        let use_text = format!("void {operand};");
+        let script = recognized_reference_use(&use_text);
+        let use_site = only_top_level_use_site(&script);
+        let fact = only_fact(use_site.body());
+        assert_eq!(fact.reference().fragment(), fragment, "{use_text}");
+        assert_eq!(fact.semantic_name(), semantic_name, "{use_text}");
+    }
+}
+
 /// Issue #837 free-standing placement matrix: TopLevel authored-semicolon
 /// and EOF-ASI, and Block authored-semicolon and before-`}` ASI, composed
 /// through the unchanged placement-owned terminator owners.
