@@ -3081,6 +3081,49 @@ fn bang_tilde_parenthesized_identifier_reference_unary_expression_reaches_select
     }
 }
 
+/// Issue #845: the newly production-selected exactly-one `+`/`-` composed
+/// over exactly-one existing `SelectedParenthesizedIdentifierReference`
+/// reaches the same existing `SelectedAcceptedIncomplete` lifecycle as any
+/// other production-accepted, not-yet-Oracle-qualified source -- never
+/// `UnsupportedCoverage` and never `Qualified`. Representative sources
+/// cover each newly admitted owner/placement class: the three initializer
+/// owners (plus one Block-contained `LexicalDeclaration` representative),
+/// and both free-standing placements under both terminator forms, with a
+/// Direct and an escaped (fixed or braced) operand each. This is
+/// production regression sealing only; the accepted #746/#747, #750/#751,
+/// and #831/#832 candidate-independent Oracle authority is unaffected and
+/// remains the sole authority for the composed facts.
+#[test]
+fn leading_plus_minus_parenthesized_identifier_reference_unary_expression_reaches_selected_accepted_incomplete()
+ {
+    for text in [
+        // LexicalDeclaration initializer.
+        "const x = +(a);",
+        // Escaped initializer (fixed-form escape).
+        r"let x = -(\u0061);",
+        // Top-level var.
+        "var x = +(a);",
+        // Block var / Block-contained initializer owner (braced escape).
+        r"{ var x = -(\u{66}oo); }",
+        // TopLevel free-standing authored terminator.
+        "+(a);",
+        // TopLevel free-standing EOF ASI (fixed-form escape).
+        r"-(\u0061)",
+        // Block free-standing authored terminator.
+        "{ +(a); }",
+        // Block free-standing before-`}` ASI (supplementary braced escape).
+        r"{ -(\u{1D49C}) }",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+}
+
 #[test]
 fn top_level_identifier_reference_expression_statement_use_site_dispatch_reaches_accepted_incomplete_while_declaration_grammar_stays_owned()
  {
@@ -3156,9 +3199,10 @@ fn top_level_identifier_reference_expression_statement_use_site_asi_general_expr
         // section below) and are no longer listed here.
         "++a;",
         "+-a;",
-        // Parenthesized firewall (Issue #771).
-        "+(a);",
-        "-(a);",
+        // Parenthesized firewall (Issue #771). `+(a);` / `-(a);` moved to
+        // selected-positive (`SelectedAcceptedIncomplete`) coverage by Issue
+        // #845 (see the "Issue #845" section in
+        // `selected_lexical_slice_tests.rs`) and are no longer listed here.
         // Deeper-nesting firewall (acceptance criterion 15). `{ a; }` itself
         // is now accepted as a Block-contained use-site by Issue #762 (see
         // the "Issue #762" section below); only recursion beyond one level
@@ -3330,8 +3374,10 @@ fn block_identifier_reference_expression_statement_use_site_asi_general_expressi
         // leaf (Issue #771). `{ !a; }` / `{ ~a; }` moved to selected-positive
         // coverage by Issue #829 (see the "Issue #829" section in
         // `selected_lexical_slice_tests.rs`) and are no longer listed here.
-        "{ +(a); }",
-        "{ -(a); }",
+        // `{ +(a); }` / `{ -(a); }` moved to selected-positive
+        // (`SelectedAcceptedIncomplete`) coverage by Issue #845 (see the
+        // "Issue #845" section in `selected_lexical_slice_tests.rs`) and are
+        // no longer listed here.
         // Empty-Block and deeper-nesting firewalls (issue section "Empty
         // Block / recursive Block boundaries" / W26/W27).
         "{}",

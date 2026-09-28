@@ -2331,6 +2331,39 @@ enum SelectedBangTildeParenthesizedIdentifierReferenceUnaryExpressionRecognition
     InternalFailure,
 }
 
+/// Result of the placement-neutral bounded exactly-one grouped `+`/`-`
+/// `SelectedParenthesizedIdentifierReference` `UnaryExpression` recognizer
+/// below (Issue #845, composing the accepted candidate-independent authority
+/// proven by #746/PR #747, #750/PR #751, and #831/PR #832, per #688 comment
+/// 5867735941). `Matched` carries the exact existing
+/// `SelectedIdentifierReferenceFact` produced by the unmodified existing
+/// `consume_selected_parenthesized_identifier_reference()` recognizer for the
+/// sole inner operand, unchanged, for either a direct-authored or an escaped
+/// non-ReservedWord operand. `NotSelected` covers every decline: no leading
+/// authored `+`/`-`, or any decline from the existing parenthesized
+/// recognizer itself (no leading `(`, an escaped `ReservedWord` inner
+/// operand, no inner `IdentifierReference` at all, a recognized inner
+/// operand not immediately followed by a matching `)`, recursive grouping, or
+/// richer inner content). `ResourceLimited` and `InternalFailure` preserve
+/// the existing parenthesized recognizer's own processing-failure classes
+/// without collapsing them into `NotSelected`. This carrier is deliberately
+/// distinct from both
+/// `SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition`
+/// (the existing direct, ungrouped `+`/`-` theorem, unchanged and unwidened,
+/// and still solely responsible for its own existing additive-continuation
+/// contract) and `SelectedParenthesizedIdentifierReferenceRecognition` (the
+/// existing grouping theorem this helper composes, unchanged and
+/// unwidened): the grouped `+`/`-` theorem is a new atom-only composition of
+/// the two, never routed into any additive-continuation helper (per #688
+/// comment 5867735941).
+#[derive(Debug)]
+enum SelectedLeadingPlusMinusParenthesizedIdentifierReferenceUnaryExpressionRecognition {
+    Matched(SelectedIdentifierReferenceFact),
+    NotSelected,
+    ResourceLimited,
+    InternalFailure,
+}
+
 /// Result of the initializer-owner-private optional-leading-`+`/`-`
 /// continuation primitive (Issue #811, composing the accepted
 /// candidate-independent theorem proven by #809/PR #810 with the
@@ -2858,6 +2891,18 @@ impl<'source> Cursor<'source> {
                                 return Err(ParseFailure::InternalFailure);
                             }
                             SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
+                                match self.consume_selected_leading_plus_minus_parenthesized_identifier_reference_unary_expression() {
+                                    SelectedLeadingPlusMinusParenthesizedIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
+                                        (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
+                                    }
+                                    SelectedLeadingPlusMinusParenthesizedIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
+                                        return Err(ParseFailure::ResourceLimited);
+                                    }
+                                    SelectedLeadingPlusMinusParenthesizedIdentifierReferenceUnaryExpressionRecognition::InternalFailure => {
+                                        return Err(ParseFailure::InternalFailure);
+                                    }
+                                    SelectedLeadingPlusMinusParenthesizedIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
+
                                 match self.consume_selected_bang_tilde_identifier_reference_unary_expression() {
                                     SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
                                         (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
@@ -2983,6 +3028,8 @@ impl<'source> Cursor<'source> {
                             }
                         }
                     }
+}
+}
                     }
                     };
                     self.skip_selected_trivia();
@@ -3114,6 +3161,18 @@ impl<'source> Cursor<'source> {
                                 return Err(ParseFailure::InternalFailure);
                             }
                             SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
+                                match self.consume_selected_leading_plus_minus_parenthesized_identifier_reference_unary_expression() {
+                                    SelectedLeadingPlusMinusParenthesizedIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
+                                        (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
+                                    }
+                                    SelectedLeadingPlusMinusParenthesizedIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
+                                        return Err(ParseFailure::ResourceLimited);
+                                    }
+                                    SelectedLeadingPlusMinusParenthesizedIdentifierReferenceUnaryExpressionRecognition::InternalFailure => {
+                                        return Err(ParseFailure::InternalFailure);
+                                    }
+                                    SelectedLeadingPlusMinusParenthesizedIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
+
                                 match self.consume_selected_bang_tilde_identifier_reference_unary_expression() {
                                     SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
                                         (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
@@ -3239,6 +3298,8 @@ impl<'source> Cursor<'source> {
                             }
                         }
                     }
+}
+}
                     }
                     };
                     self.skip_selected_trivia();
@@ -3334,6 +3395,19 @@ impl<'source> Cursor<'source> {
                             return Err(ParseFailure::InternalFailure);
                         }
                         SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
+                                match self.consume_selected_leading_plus_minus_parenthesized_identifier_reference_unary_expression() {
+                                SelectedLeadingPlusMinusParenthesizedIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
+                                    identifier_reference_initializer =
+                                        Some(SelectedIdentifierReferenceInitializer::One(reference));
+                                }
+                                SelectedLeadingPlusMinusParenthesizedIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
+                                    return Err(ParseFailure::ResourceLimited);
+                                }
+                                SelectedLeadingPlusMinusParenthesizedIdentifierReferenceUnaryExpressionRecognition::InternalFailure => {
+                                    return Err(ParseFailure::InternalFailure);
+                                }
+                                SelectedLeadingPlusMinusParenthesizedIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
+
                             match self.consume_selected_bang_tilde_identifier_reference_unary_expression() {
                                 SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
                                     identifier_reference_initializer =
@@ -3457,6 +3531,8 @@ impl<'source> Cursor<'source> {
                         }
                     }
                     }
+}
+}
                     }
                 }
                 let initializer_end = self.offset;
@@ -4274,6 +4350,22 @@ impl<'source> Cursor<'source> {
                 return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::InternalFailure;
             }
             SelectedLeadingPlusMinusIdentifierReferenceUnaryExpressionRecognition::NotSelected => {}
+        }
+
+        match self.consume_selected_leading_plus_minus_parenthesized_identifier_reference_unary_expression() {
+            SelectedLeadingPlusMinusParenthesizedIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
+                self.skip_selected_trivia();
+                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::Matched(
+                    SelectedFreeStandingIdentifierReferenceUseSite::One(reference),
+                );
+            }
+            SelectedLeadingPlusMinusParenthesizedIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
+                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::ResourceLimited;
+            }
+            SelectedLeadingPlusMinusParenthesizedIdentifierReferenceUnaryExpressionRecognition::InternalFailure => {
+                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::InternalFailure;
+            }
+            SelectedLeadingPlusMinusParenthesizedIdentifierReferenceUnaryExpressionRecognition::NotSelected => {}
         }
 
         match self.consume_selected_bang_tilde_identifier_reference_unary_expression() {
@@ -6792,6 +6884,83 @@ impl<'source> Cursor<'source> {
             }
             SelectedParenthesizedIdentifierReferenceRecognition::InternalFailure => {
                 SelectedBangTildeParenthesizedIdentifierReferenceUnaryExpressionRecognition::InternalFailure
+            }
+        }
+    }
+
+    /// Recognizes exactly one leading `+` or `-` wrapped around exactly one
+    /// existing `SelectedParenthesizedIdentifierReference`
+    /// (`SelectedUnaryPlusMinus SelectedUnaryOperandTrivia
+    /// SelectedParenthesizedIdentifierReference`) in either the selected
+    /// initializer position or the selected free-standing `ExpressionStatement`
+    /// use-site body position (Issue #845, composing the accepted
+    /// candidate-independent authority proven by #746/PR #747, #750/PR #751,
+    /// and #831/PR #832, per #688 comment 5867735941). Modeled directly on
+    /// `consume_selected_bang_tilde_parenthesized_identifier_reference_unary_expression`
+    /// above, swapping only the recognized operator: on a match, the existing
+    /// inner `SelectedIdentifierReferenceFact` produced by the unmodified
+    /// existing `consume_selected_parenthesized_identifier_reference()`
+    /// recognizer is returned unchanged. The inner `IdentifierReference` is
+    /// recognized and decoded exactly once, entirely inside that unmodified
+    /// existing recognizer; this helper never calls
+    /// `consume_selected_identifier_reference()` itself and never duplicates
+    /// or inlines the paired-delimiter/inner-trivia grammar the existing
+    /// parenthesized recognizer already owns.
+    ///
+    /// This bounded local scan commits `self.offset` only after a complete
+    /// `SelectedParenthesizedIdentifierReference` is recognized following the
+    /// operator and any intervening existing selected trivia
+    /// (`skip_selected_trivia`, unchanged). No leading `+`/`-` at all (e.g.
+    /// `(a)`, owned by the existing bare-parenthesized route), a second
+    /// leading `+`/`-` or a repeated/mixed sign (e.g. `++(a)`, `--(a)`,
+    /// `+-(a)`, `-+(a)`, since this helper never calls itself recursively on
+    /// its own operand and never itself inspects the character following the
+    /// operator, so the existing parenthesized recognizer's own requirement
+    /// of a leading `(` declines at the second sign and restores this
+    /// helper's own start), or any decline from the existing parenthesized
+    /// recognizer itself (no leading `(`, an escaped `ReservedWord` inner
+    /// operand, no inner `IdentifierReference` at all, a recognized inner
+    /// operand not followed by a matching `)`, recursive grouping such as
+    /// `+((a))`, or richer inner content such as `+(a+b)`) restores the
+    /// cursor to its starting offset and returns `NotSelected`. A processing
+    /// failure from the existing parenthesized recognizer (`ResourceLimited`
+    /// / `InternalFailure`) is preserved unchanged and is never downgraded to
+    /// `NotSelected`. A locally complete grouped-unary-reference atom does
+    /// not itself authorize any broader source (e.g. `+(a)+b`, `-(a)-b`,
+    /// `+(a)+1`, `-(a).b`, `+(a)()`); the caller (an initializer owner or the
+    /// free-standing body owner) remains solely responsible for judging any
+    /// unowned trailing source, and this helper is deliberately never routed
+    /// into the existing direct `+`/`-` route's additive-continuation helper
+    /// (`consume_selected_leading_plus_minus_identifier_reference_left_additive_initializer`)
+    /// or into any other additive/heterogeneous continuation or growth
+    /// helper: the grouped `+`/`-` theorem is atom-only (per #688 comment
+    /// 5867735941), unlike the existing direct, ungrouped `+`/`-` route this
+    /// helper is dispatched after, which keeps its own existing
+    /// additive-continuation contract entirely unchanged.
+    fn consume_selected_leading_plus_minus_parenthesized_identifier_reference_unary_expression(
+        &mut self,
+    ) -> SelectedLeadingPlusMinusParenthesizedIdentifierReferenceUnaryExpressionRecognition {
+        let start = self.offset;
+
+        if !self.consume_ascii('+') && !self.consume_ascii('-') {
+            return SelectedLeadingPlusMinusParenthesizedIdentifierReferenceUnaryExpressionRecognition::NotSelected;
+        }
+
+        self.skip_selected_trivia();
+
+        match self.consume_selected_parenthesized_identifier_reference() {
+            SelectedParenthesizedIdentifierReferenceRecognition::Matched(reference) => {
+                SelectedLeadingPlusMinusParenthesizedIdentifierReferenceUnaryExpressionRecognition::Matched(reference)
+            }
+            SelectedParenthesizedIdentifierReferenceRecognition::NotSelected => {
+                self.offset = start;
+                SelectedLeadingPlusMinusParenthesizedIdentifierReferenceUnaryExpressionRecognition::NotSelected
+            }
+            SelectedParenthesizedIdentifierReferenceRecognition::ResourceLimited => {
+                SelectedLeadingPlusMinusParenthesizedIdentifierReferenceUnaryExpressionRecognition::ResourceLimited
+            }
+            SelectedParenthesizedIdentifierReferenceRecognition::InternalFailure => {
+                SelectedLeadingPlusMinusParenthesizedIdentifierReferenceUnaryExpressionRecognition::InternalFailure
             }
         }
     }
