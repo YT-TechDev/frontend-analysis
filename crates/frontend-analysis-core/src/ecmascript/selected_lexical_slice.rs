@@ -2235,6 +2235,45 @@ enum SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition {
     InternalFailure,
 }
 
+/// Result of the placement-neutral bounded exactly-one grouped `typeof`/`void`
+/// `SelectedParenthesizedIdentifierReference` `UnaryExpression` recognizer
+/// below (Issue #847, composing the accepted candidate-independent authority
+/// proven by #837/PR #838 and #831/PR #832, per #688 comment 5870616099).
+/// `Matched` carries the exact existing `SelectedIdentifierReferenceFact`
+/// produced by the unmodified existing
+/// `consume_selected_parenthesized_identifier_reference()` recognizer for the
+/// sole inner operand, unchanged, for either a direct-authored or an escaped
+/// non-ReservedWord operand. `NotSelected` covers every decline: no direct
+/// `typeof`/`void` keyword match (reusing the unmodified `consume_keyword()`
+/// boundary, which already declines a maximal `IdentifierName` such as
+/// `typeofa` or `typeof\u0061`), or any decline from the existing
+/// parenthesized recognizer itself (no leading `(`, an escaped `ReservedWord`
+/// inner operand, no inner `IdentifierReference` at all, a recognized inner
+/// operand not immediately followed by a matching `)`, recursive grouping, or
+/// richer inner content). `ResourceLimited` and `InternalFailure` preserve
+/// the existing parenthesized recognizer's own processing-failure classes
+/// without collapsing them into `NotSelected`. Unlike
+/// `SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition` above
+/// (the existing direct, ungrouped `typeof`/`void` theorem, unchanged and
+/// unwidened, which still requires non-empty trivia before its
+/// `IdentifierReference` operand because of maximal-`IdentifierName`
+/// ownership), this grouped theorem does not require non-empty trivia
+/// between the keyword and the opening `(`, since `(` already terminates the
+/// keyword token (`typeof(a)`, `void(a)`). This carrier is deliberately
+/// distinct from both that existing direct theorem and
+/// `SelectedParenthesizedIdentifierReferenceRecognition` (the existing
+/// grouping theorem this helper composes, unchanged and unwidened): the
+/// grouped `typeof`/`void` theorem is a new atom-only composition of the
+/// two, never routed into any additive continuation (per #688 comment
+/// 5870616099).
+#[derive(Debug)]
+enum SelectedTypeofVoidParenthesizedIdentifierReferenceUnaryExpressionRecognition {
+    Matched(SelectedIdentifierReferenceFact),
+    NotSelected,
+    ResourceLimited,
+    InternalFailure,
+}
+
 /// Result of the bounded exactly-one direct `delete` `IdentifierReference`
 /// `UnaryExpression` recognizer below (Issue #841, composing the accepted
 /// candidate-independent authority proven by #839/PR #840 per #688 comments
@@ -2936,6 +2975,17 @@ impl<'source> Cursor<'source> {
                                         return Err(ParseFailure::InternalFailure);
                                     }
                                         SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
+                                match self.consume_selected_typeof_void_parenthesized_identifier_reference_unary_expression() {
+                                    SelectedTypeofVoidParenthesizedIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
+                                        (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
+                                    }
+                                    SelectedTypeofVoidParenthesizedIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
+                                        return Err(ParseFailure::ResourceLimited);
+                                    }
+                                    SelectedTypeofVoidParenthesizedIdentifierReferenceUnaryExpressionRecognition::InternalFailure => {
+                                        return Err(ParseFailure::InternalFailure);
+                                    }
+                                    SelectedTypeofVoidParenthesizedIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
                                 match self.consume_selected_delete_identifier_reference_unary_expression() {
                                     SelectedDeleteIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
                                         (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
@@ -3020,6 +3070,8 @@ impl<'source> Cursor<'source> {
                                 }
                                         }
                                     }
+                                }
+                                }
                                 }
                                 }
                                 }
@@ -3206,6 +3258,17 @@ impl<'source> Cursor<'source> {
                                         return Err(ParseFailure::InternalFailure);
                                     }
                                         SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
+                                match self.consume_selected_typeof_void_parenthesized_identifier_reference_unary_expression() {
+                                    SelectedTypeofVoidParenthesizedIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
+                                        (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
+                                    }
+                                    SelectedTypeofVoidParenthesizedIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
+                                        return Err(ParseFailure::ResourceLimited);
+                                    }
+                                    SelectedTypeofVoidParenthesizedIdentifierReferenceUnaryExpressionRecognition::InternalFailure => {
+                                        return Err(ParseFailure::InternalFailure);
+                                    }
+                                    SelectedTypeofVoidParenthesizedIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
                                 match self.consume_selected_delete_identifier_reference_unary_expression() {
                                     SelectedDeleteIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
                                         (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
@@ -3290,6 +3353,8 @@ impl<'source> Cursor<'source> {
                                 }
                                         }
                                     }
+                                }
+                                }
                                 }
                                 }
                                 }
@@ -3444,6 +3509,18 @@ impl<'source> Cursor<'source> {
                                     return Err(ParseFailure::InternalFailure);
                                 }
                                     SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
+                            match self.consume_selected_typeof_void_parenthesized_identifier_reference_unary_expression() {
+                                SelectedTypeofVoidParenthesizedIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
+                                    identifier_reference_initializer =
+                                        Some(SelectedIdentifierReferenceInitializer::One(reference));
+                                }
+                                SelectedTypeofVoidParenthesizedIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
+                                    return Err(ParseFailure::ResourceLimited);
+                                }
+                                SelectedTypeofVoidParenthesizedIdentifierReferenceUnaryExpressionRecognition::InternalFailure => {
+                                    return Err(ParseFailure::InternalFailure);
+                                }
+                                SelectedTypeofVoidParenthesizedIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
                             match self.consume_selected_delete_identifier_reference_unary_expression() {
                                 SelectedDeleteIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
                                     identifier_reference_initializer =
@@ -3522,6 +3599,8 @@ impl<'source> Cursor<'source> {
                             }
                             }
                                     }
+                            }
+                            }
                             }
                             }
                                 }
@@ -4414,6 +4493,22 @@ impl<'source> Cursor<'source> {
                 return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::InternalFailure;
             }
             SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition::NotSelected => {}
+        }
+
+        match self.consume_selected_typeof_void_parenthesized_identifier_reference_unary_expression() {
+            SelectedTypeofVoidParenthesizedIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
+                self.skip_selected_trivia();
+                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::Matched(
+                    SelectedFreeStandingIdentifierReferenceUseSite::One(reference),
+                );
+            }
+            SelectedTypeofVoidParenthesizedIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
+                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::ResourceLimited;
+            }
+            SelectedTypeofVoidParenthesizedIdentifierReferenceUnaryExpressionRecognition::InternalFailure => {
+                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::InternalFailure;
+            }
+            SelectedTypeofVoidParenthesizedIdentifierReferenceUnaryExpressionRecognition::NotSelected => {}
         }
 
         match self.consume_selected_delete_identifier_reference_unary_expression() {
@@ -6636,6 +6731,81 @@ impl<'source> Cursor<'source> {
             }
             SelectedIdentifierReferenceRecognition::InternalFailure => {
                 SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition::InternalFailure
+            }
+        }
+    }
+
+    /// Recognizes one placement-neutral bounded exactly-one grouped
+    /// `typeof`/`void` `SelectedParenthesizedIdentifierReference`
+    /// `UnaryExpression` (Issue #847, composing the accepted
+    /// candidate-independent authority proven by #837/PR #838 and #831/PR
+    /// #832, per #688 comment 5870616099). Modeled directly on
+    /// `consume_selected_leading_plus_minus_parenthesized_identifier_reference_unary_expression`
+    /// above, swapping only the recognized keyword boundary for the
+    /// unmodified shared `consume_keyword()` boundary: on a match, the
+    /// existing inner `SelectedIdentifierReferenceFact` produced by the
+    /// unmodified existing
+    /// `consume_selected_parenthesized_identifier_reference()` recognizer is
+    /// returned unchanged. The inner `IdentifierReference` is recognized and
+    /// decoded exactly once, entirely inside that unmodified existing
+    /// recognizer; this helper never calls
+    /// `consume_selected_identifier_reference()` itself and never duplicates
+    /// or inlines the paired-delimiter/inner-trivia grammar the existing
+    /// parenthesized recognizer already owns.
+    ///
+    /// Unlike `consume_selected_typeof_void_identifier_reference_unary_expression`
+    /// above, this helper does not require non-empty selected trivia between
+    /// the keyword and its operand: `(` already terminates the keyword
+    /// token, so `typeof(a)` and `void(a)` are valid with zero intervening
+    /// trivia. This bounded local scan commits `self.offset` only after a
+    /// complete `SelectedParenthesizedIdentifierReference` is recognized
+    /// following the keyword and any intervening existing selected trivia
+    /// (`skip_selected_trivia`, unchanged, zero-or-more). No direct
+    /// `typeof`/`void` keyword match at all, or any decline from the
+    /// existing parenthesized recognizer itself (no leading `(`, an escaped
+    /// `ReservedWord` inner operand, no inner `IdentifierReference` at all,
+    /// a recognized inner operand not followed by a matching `)`, recursive
+    /// grouping such as `typeof((a))`, or richer inner content such as
+    /// `typeof(a+b)`) restores the cursor to its starting offset and returns
+    /// `NotSelected`. A processing failure from the existing parenthesized
+    /// recognizer (`ResourceLimited` / `InternalFailure`) is preserved
+    /// unchanged and is never downgraded to `NotSelected`. A locally
+    /// complete grouped keyword-unary-reference atom does not itself
+    /// authorize any broader source (e.g. `typeof(a)+b`, `void(a).b`,
+    /// `typeof(a)()`); the caller (an initializer owner or the free-standing
+    /// body owner) remains solely responsible for judging any unowned
+    /// trailing source, and this helper is deliberately never routed into
+    /// any additive/heterogeneous continuation or growth helper, and never
+    /// invoked recursively on its own operand (`typeof typeof(a)`,
+    /// `void void(a)` remain outside): the grouped `typeof`/`void` theorem is
+    /// atom-only (per #688 comment 5870616099), unlike the existing direct,
+    /// ungrouped `typeof`/`void` route this helper is dispatched after,
+    /// which keeps its own existing non-empty-trivia contract entirely
+    /// unchanged. `delete(a)` / `delete (a)` remain outside this Issue.
+    fn consume_selected_typeof_void_parenthesized_identifier_reference_unary_expression(
+        &mut self,
+    ) -> SelectedTypeofVoidParenthesizedIdentifierReferenceUnaryExpressionRecognition {
+        let start = self.offset;
+
+        if !self.consume_keyword("typeof") && !self.consume_keyword("void") {
+            return SelectedTypeofVoidParenthesizedIdentifierReferenceUnaryExpressionRecognition::NotSelected;
+        }
+
+        self.skip_selected_trivia();
+
+        match self.consume_selected_parenthesized_identifier_reference() {
+            SelectedParenthesizedIdentifierReferenceRecognition::Matched(reference) => {
+                SelectedTypeofVoidParenthesizedIdentifierReferenceUnaryExpressionRecognition::Matched(reference)
+            }
+            SelectedParenthesizedIdentifierReferenceRecognition::NotSelected => {
+                self.offset = start;
+                SelectedTypeofVoidParenthesizedIdentifierReferenceUnaryExpressionRecognition::NotSelected
+            }
+            SelectedParenthesizedIdentifierReferenceRecognition::ResourceLimited => {
+                SelectedTypeofVoidParenthesizedIdentifierReferenceUnaryExpressionRecognition::ResourceLimited
+            }
+            SelectedParenthesizedIdentifierReferenceRecognition::InternalFailure => {
+                SelectedTypeofVoidParenthesizedIdentifierReferenceUnaryExpressionRecognition::InternalFailure
             }
         }
     }

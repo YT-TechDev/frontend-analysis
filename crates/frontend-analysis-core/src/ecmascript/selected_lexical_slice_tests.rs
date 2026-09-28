@@ -7851,8 +7851,6 @@ fn typeof_void_identifier_reference_unary_expression_required_firewalls_remain_u
         "const x = void ~a;",
         "const x = typeof +a;",
         "const x = void -a;",
-        "const x = typeof (a);",
-        "const x = void (a);",
         // Escaped keyword spelling is not a direct operator token.
         "const x = \\u0074ypeof a;",
         "const x = \\u0076oid a;",
@@ -7893,8 +7891,6 @@ fn typeof_void_identifier_reference_unary_expression_required_firewalls_remain_u
         "void ~a;",
         "typeof +a;",
         "void -a;",
-        "typeof (a);",
-        "void (a);",
         "\\u0074ypeof a;",
         "\\u0076oid a;",
         "typeof/*c*/a;",
@@ -8698,26 +8694,22 @@ fn bang_tilde_parenthesized_identifier_reference_unary_expression_dispatch_and_r
     }
 }
 
-/// Issue #843 deferred-neighbor-family firewalls: keyword-unary
-/// (`typeof`/`void`/`delete`) grouping is explicitly deferred by this Issue
-/// (see #688 comment 5866606836) and remains unsupported, including
-/// `delete (a)` with intervening trivia. `+`/`-` grouping was also deferred
-/// at the time of #843 but has since moved to selected-positive coverage by
-/// Issue #845 (see the "Issue #845" section below); it is no longer listed
-/// here.
+/// Issue #843 deferred-neighbor-family firewalls: `delete` grouping is
+/// explicitly deferred by this Issue (see #688 comment 5866606836) and
+/// remains unsupported, including `delete (a)` with intervening trivia.
+/// `+`/`-` grouping was also deferred at the time of #843 but has since
+/// moved to selected-positive coverage by Issue #845 (see the "Issue #845"
+/// section below), and `typeof`/`void` grouping was likewise deferred at the
+/// time of #843 but has since moved to selected-positive coverage by Issue
+/// #847 (see #688 comment 5870616099); neither family is listed here.
 #[test]
 fn bang_tilde_parenthesized_identifier_reference_unary_expression_deferred_neighbor_families_remain_unsupported()
  {
-    for text in [
-        "const x = typeof(a);",
-        "const x = void(a);",
-        "const x = delete(a);",
-        "const x = delete (a);",
-    ] {
+    for text in ["const x = delete(a);", "const x = delete (a);"] {
         assert_unsupported(text);
     }
 
-    for text in ["typeof(a);", "void(a);", "delete(a);", "delete (a);"] {
+    for text in ["delete(a);", "delete (a);"] {
         assert_unsupported(text);
     }
 }
@@ -9113,23 +9105,20 @@ fn leading_plus_minus_parenthesized_identifier_reference_unary_expression_dispat
     }
 }
 
-/// Issue #845 deferred-neighbor-family firewalls: `typeof`/`void`/`delete`
-/// grouping remain explicitly deferred by this Issue (see #688 comment
-/// 5867735941) and remain unsupported, including `delete (a)` with
-/// intervening trivia.
+/// Issue #845 deferred-neighbor-family firewalls: `delete` grouping remains
+/// explicitly deferred by this Issue (see #688 comment 5867735941) and
+/// remains unsupported, including `delete (a)` with intervening trivia.
+/// `typeof`/`void` grouping was also deferred at the time of #845 but has
+/// since moved to selected-positive coverage by Issue #847 (see #688 comment
+/// 5870616099); it is no longer listed here.
 #[test]
 fn leading_plus_minus_parenthesized_identifier_reference_unary_expression_deferred_neighbor_families_remain_unsupported()
  {
-    for text in [
-        "const x = typeof(a);",
-        "const x = void(a);",
-        "const x = delete(a);",
-        "const x = delete (a);",
-    ] {
+    for text in ["const x = delete(a);", "const x = delete (a);"] {
         assert_unsupported(text);
     }
 
-    for text in ["typeof(a);", "void(a);", "delete(a);", "delete (a);"] {
+    for text in ["delete(a);", "delete (a);"] {
         assert_unsupported(text);
     }
 }
@@ -9265,6 +9254,456 @@ fn leading_plus_minus_parenthesized_identifier_reference_unary_expression_transa
     assert_eq!(subject.fragment(), r"\u{}");
 
     for text in ["+(a)\nb;", "{ +(a)\nb; }"] {
+        assert_unsupported(text);
+    }
+}
+
+// Issue #847: bounded exactly-one `typeof`/`void` composed over exactly-one
+// existing `SelectedParenthesizedIdentifierReference`
+// (`SelectedTypeofVoidParenthesizedIdentifierReferenceUnaryExpression`),
+// composing the accepted candidate-independent authority proven by #837/PR
+// #838 and #831/PR #832 into all three mature initializer owners
+// (`parse_declaration`/`parse_variable_statement`/
+// `parse_selected_block_var_statement`) and the shared free-standing body
+// owner (`consume_selected_identifier_reference_expression_statement_use_site_body`),
+// per #688 comment 5870616099. The new grouped-keyword helper owns only the
+// `typeof`/`void` keyword and delegates the sole inner operand entirely to
+// the unmodified existing `consume_selected_parenthesized_identifier_reference`;
+// the retained evidence remains exactly the existing inner
+// `SelectedIdentifierReferenceFact`, never the keyword identity, either
+// delimiter, any grouping/operand trivia, or a whole grouped-unary span.
+// Unlike the existing direct `typeof`/`void` `IdentifierReference` route,
+// this grouped route does not require non-empty trivia between the keyword
+// and the opening `(`, since `(` already terminates the keyword token. The
+// new route is dispatched immediately after the existing direct
+// `typeof`/`void` `IdentifierReference` route and before the existing direct
+// `delete` route, and is never itself routed into any additive/
+// heterogeneous continuation helper.
+
+#[test]
+fn typeof_void_parenthesized_identifier_reference_unary_expression_initializer_positive_matrix_is_recognized_across_all_three_owners()
+ {
+    let script = recognized("const x = typeof(a);");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding
+        .identifier_reference_initializer()
+        .expect("typeof-wrapped grouped LexicalDeclaration RHS reference fact");
+    assert_eq!(reference.reference().fragment(), "a");
+    assert_eq!(reference.semantic_name(), "a");
+
+    let script = recognized("let x = void(a);");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding
+        .identifier_reference_initializer()
+        .expect("void-wrapped grouped LexicalDeclaration RHS reference fact");
+    assert_eq!(reference.reference().fragment(), "a");
+    assert_eq!(reference.semantic_name(), "a");
+
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+    let script = recognized_block("{ const x = typeof(a); }");
+    let [SelectedTopLevelItem::Block(block)] = script.items() else {
+        panic!("expected exactly one Block item");
+    };
+    let [SelectedBlockItem::LexicalDeclaration(declaration)] = block.items() else {
+        panic!("expected exactly one Block-contained LexicalDeclaration item");
+    };
+    let [binding] = declaration.bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding
+        .identifier_reference_initializer()
+        .expect("typeof-wrapped grouped Block-contained LexicalDeclaration RHS reference fact");
+    assert_eq!(reference.reference().fragment(), "a");
+    assert_eq!(reference.semantic_name(), "a");
+
+    let script = recognized_variable("var x = typeof(a);");
+    let statement = only_variable_statement(&script);
+    let [binding] = statement.bindings() else {
+        panic!("expected one selected top-level var binding");
+    };
+    let reference = binding
+        .identifier_reference_initializer()
+        .expect("typeof-wrapped grouped top-level var RHS reference fact");
+    assert_eq!(reference.reference().fragment(), "a");
+    assert_eq!(reference.semantic_name(), "a");
+
+    let script = recognized_block("{ var x = void(a); }");
+    let [SelectedTopLevelItem::Block(block)] = script.items() else {
+        panic!("expected exactly one Block item");
+    };
+    let [SelectedBlockItem::Var(statement)] = block.items() else {
+        panic!("expected exactly one Block var statement");
+    };
+    let [binding] = statement.bindings() else {
+        panic!("expected one selected Block var binding");
+    };
+    let reference = binding
+        .identifier_reference_initializer()
+        .expect("void-wrapped grouped Block var RHS reference fact");
+    assert_eq!(reference.reference().fragment(), "a");
+    assert_eq!(reference.semantic_name(), "a");
+}
+
+/// Issue #847's own required minimum positive matrix ("At minimum seal") --
+/// `typeof(a)` / `void(a)` / `typeof (a)` / `void (a)` / `typeof(π)` /
+/// `void(𝒜)` / `typeof(\u0061)` / `void(f\u006Fo)` / `typeof(\u{66}oo)` /
+/// `void(\u{1D49C})` / `typeof ( a )` / `void ( \u0061 )` -- sealed across
+/// representative initializer and free-standing placements, exercising
+/// Direct and `EscapedNonReserved` inner provenance, zero and non-zero outer
+/// trivia, and inner trivia together.
+#[test]
+fn typeof_void_parenthesized_identifier_reference_unary_expression_issue_847_minimum_positive_matrix_is_sealed()
+ {
+    for (operand_source, fragment, semantic_name) in [
+        ("typeof(a)", "a", "a"),
+        ("void(a)", "a", "a"),
+        ("typeof (a)", "a", "a"),
+        ("void (a)", "a", "a"),
+        ("typeof(π)", "π", "π"),
+        ("void(𝒜)", "𝒜", "𝒜"),
+        (r"typeof(\u0061)", r"\u0061", "a"),
+        (r"void(f\u006Fo)", r"f\u006Fo", "foo"),
+        (r"typeof(\u{66}oo)", r"\u{66}oo", "foo"),
+        (r"void(\u{1D49C})", r"\u{1D49C}", "\u{1D49C}"),
+        ("typeof ( a )", "a", "a"),
+        (r"void ( \u0061 )", r"\u0061", "a"),
+    ] {
+        let text = format!("const x = {operand_source};");
+        let script = recognized(&text);
+        let [binding] = script.declarations()[0].bindings() else {
+            panic!("expected one selected lexical binding");
+        };
+        let reference = binding.identifier_reference_initializer().unwrap();
+        assert_eq!(reference.reference().fragment(), fragment, "{text}");
+        assert_eq!(reference.semantic_name(), semantic_name, "{text}");
+
+        let use_text = format!("{operand_source};");
+        let script = recognized_reference_use(&use_text);
+        let use_site = only_top_level_use_site(&script);
+        let fact = only_fact(use_site.body());
+        assert_eq!(fact.reference().fragment(), fragment, "{use_text}");
+        assert_eq!(fact.semantic_name(), semantic_name, "{use_text}");
+    }
+}
+
+/// Issue #847 zero-trivia and outer/inner selected-trivia matrix: unlike the
+/// existing direct `typeof`/`void` route, zero trivia between the keyword
+/// and the grouping opener is itself a positive case (`(` already terminates
+/// the keyword token), and at least one existing selected-trivia code point
+/// (tab, LF, NBSP) between the keyword and the grouping opener, and
+/// independently inside the grouping delimiters, is recognized without any
+/// new trivia contract.
+#[test]
+fn typeof_void_parenthesized_identifier_reference_unary_expression_trivia_matrix_is_recognized() {
+    // Zero outer trivia is itself positive (load-bearing difference from the
+    // existing direct route's non-empty-trivia requirement).
+    for text in ["typeof(a);", "void(a);"] {
+        let script = recognized_reference_use(text);
+        let use_site = only_top_level_use_site(&script);
+        let fact = only_fact(use_site.body());
+        assert_eq!(fact.reference().fragment(), "a", "{text}");
+        assert_eq!(fact.semantic_name(), "a", "{text}");
+    }
+
+    // Non-empty outer selected trivia between the keyword and the grouping
+    // opener.
+    for text in ["typeof\t(a);", "void\n(a);", "typeof\u{A0}(a);"] {
+        let script = recognized_reference_use(text);
+        let use_site = only_top_level_use_site(&script);
+        let fact = only_fact(use_site.body());
+        assert_eq!(fact.reference().fragment(), "a", "{text}");
+        assert_eq!(fact.semantic_name(), "a", "{text}");
+    }
+
+    // Inner grouping trivia, independently, reusing the existing
+    // parenthesized helper's own inner-trivia semantics unchanged.
+    let script = recognized_reference_use("typeof(\ta);");
+    let use_site = only_top_level_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), "a");
+
+    let script = recognized_reference_use("void(a\n);");
+    let use_site = only_top_level_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), "a");
+
+    let script = recognized_reference_use("typeof(\u{A0}\\u0061\u{A0});");
+    let use_site = only_top_level_use_site(&script);
+    let fact = only_fact(use_site.body());
+    let expected_escaped_fragment = "\\u0061";
+    assert_eq!(fact.reference().fragment(), expected_escaped_fragment);
+    assert_eq!(fact.semantic_name(), "a");
+}
+
+/// Issue #847 free-standing placement matrix: TopLevel authored-semicolon
+/// and EOF-ASI, and Block authored-semicolon and before-`}` ASI, composed
+/// through the unchanged placement-owned terminator owners.
+#[test]
+fn typeof_void_parenthesized_identifier_reference_unary_expression_free_standing_placement_matrix_is_recognized()
+ {
+    let script = recognized_reference_use("typeof(a);");
+    let use_site = only_top_level_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), "a");
+    assert!(matches!(
+        use_site.terminator(),
+        SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AuthoredSemicolon
+    ));
+
+    let script = recognized_reference_use(r"void(a)");
+    let use_site = only_top_level_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), r"a");
+    assert_eq!(fact.semantic_name(), "a");
+    assert!(matches!(
+        use_site.terminator(),
+        SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticAtEof
+    ));
+
+    let script = recognized_block_reference_use("{ typeof(a); }");
+    let use_site = only_block_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), "a");
+    assert!(matches!(
+        use_site.terminator(),
+        SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator::AuthoredSemicolon
+    ));
+
+    let script = recognized_block_reference_use(r"{ void(\u{1D49C}) }");
+    let use_site = only_block_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), r"\u{1D49C}");
+    assert_eq!(fact.semantic_name(), "\u{1D49C}");
+    assert!(matches!(
+        use_site.terminator(),
+        SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticBeforeBlockClose
+    ));
+}
+
+/// Issue #847 direct-helper-first-refusal transactionality (issue section
+/// "Direct-helper first refusal"): `typeof a` remains owned entirely by the
+/// existing direct route, while `typeof(a)` (zero trivia) and `typeof (a)`
+/// (non-empty trivia, but the direct route's own `IdentifierReference` probe
+/// declines at `(`) both restore to the original start and are owned by the
+/// new grouped route instead.
+#[test]
+fn typeof_void_parenthesized_identifier_reference_unary_expression_direct_helper_first_refusal_is_preserved()
+ {
+    for (text, fragment) in [
+        ("typeof a;", "a"),
+        ("typeof(a);", "a"),
+        ("typeof (a);", "a"),
+        ("void a;", "a"),
+        ("void(a);", "a"),
+        ("void (a);", "a"),
+    ] {
+        let script = recognized_reference_use(text);
+        let use_site = only_top_level_use_site(&script);
+        let fact = only_fact(use_site.body());
+        assert_eq!(fact.reference().fragment(), fragment, "{text}");
+    }
+}
+
+/// Issue #847 maximal-`IdentifierName` and escaped-keyword firewalls: the
+/// textual prefix `typeof`/`void` must never become a keyword token when it
+/// continues the same maximal authored `IdentifierName` -- including a
+/// richer suffix such as `typeofa(a)`, where keyword ownership must still
+/// decline at the prefix and the whole fragment remains one maximal bare
+/// `IdentifierReference` -- and an escaped keyword spelling is never a
+/// direct keyword token for this grouped route, exactly mirroring the
+/// existing direct route's own boundary.
+#[test]
+fn typeof_void_parenthesized_identifier_reference_unary_expression_maximal_identifier_name_and_escaped_keyword_firewalls_remain_unsupported()
+ {
+    for text in [
+        "typeofa(a);",
+        "typeofπ(a);",
+        r"typeof\u0061(a);",
+        "voida(a);",
+        "void_foo(a);",
+        r"void\u0061(a);",
+        r"\u0074ypeof(a);",
+        r"\u0076oid(a);",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+/// Issue #847 recursive-grouping and mixed/recursive-unary firewalls: the
+/// existing parenthesized helper's own exactly-one-grouping boundary is
+/// never widened to admit recursive grouping, and no generic
+/// `UnaryExpression` recursion is authorized around the new grouped route.
+#[test]
+fn typeof_void_parenthesized_identifier_reference_unary_expression_recursive_and_mixed_unary_firewalls_remain_unsupported()
+ {
+    for text in [
+        "const x = typeof((a));",
+        "const x = void((a));",
+        "const x = typeof !(a);",
+        "const x = void -(a);",
+        "const x = typeof typeof(a);",
+        "const x = void void(a);",
+        "const x = typeof +(a);",
+        "const x = void ~(a);",
+    ] {
+        assert_unsupported(text);
+    }
+
+    for text in [
+        "typeof((a));",
+        "void((a));",
+        "typeof !(a);",
+        "void -(a);",
+        "typeof typeof(a);",
+        "void void(a);",
+        "typeof +(a);",
+        "void ~(a);",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+/// Issue #847 richer inner and richer outer expression firewalls: a locally
+/// matched grouped inner `IdentifierReference` prefix must not authorize a
+/// richer inner continuation before the closing `)` (reusing the existing
+/// parenthesized helper's own firewall), and a locally matched grouped
+/// keyword-unary atom must not authorize a richer outer continuation after
+/// the closing `)`, in both the initializer and the free-standing position.
+#[test]
+fn typeof_void_parenthesized_identifier_reference_unary_expression_richer_inner_and_outer_expression_firewalls_remain_unsupported()
+ {
+    for text in [
+        "const x = typeof(a+b);",
+        "const x = void(a*b);",
+        "const x = typeof(a());",
+        "const x = void(a.b);",
+        "const x = typeof(a=b);",
+        "const x = void(a=b);",
+        "const x = typeof(a?b:c);",
+        "const x = void(a?b:c);",
+        "const x = typeof(a)+b;",
+        "const x = void(a)-b;",
+        "const x = typeof(a)*b;",
+        "const x = void(a).b;",
+        "const x = typeof(a)();",
+        "const x = void(a)();",
+        "const x = typeof(a)=b;",
+        "const x = void(a)=b;",
+        "const x = typeof(a)?b:c;",
+        "const x = void(a)?b:c;",
+    ] {
+        assert_unsupported(text);
+    }
+
+    for text in [
+        "typeof(a+b);",
+        "void(a*b);",
+        "typeof(a());",
+        "void(a.b);",
+        "typeof(a=b);",
+        "void(a=b);",
+        "typeof(a?b:c);",
+        "void(a?b:c);",
+        "typeof(a)+b;",
+        "void(a)-b;",
+        "typeof(a)*b;",
+        "void(a).b;",
+        "typeof(a)();",
+        "void(a)();",
+        "typeof(a)=b;",
+        "void(a)=b;",
+        "typeof(a)?b:c;",
+        "void(a)?b:c;",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+/// Issue #847 comment firewall: no comment scanning is authorized between
+/// the keyword and the grouping opener, or inside the grouping delimiters.
+#[test]
+fn typeof_void_parenthesized_identifier_reference_unary_expression_comment_firewall_remains_unsupported()
+ {
+    for text in [
+        "const x = typeof/*c*/(a);",
+        "const x = void/*c*/(a);",
+        "const x = typeof(/*c*/a);",
+        "const x = void(a/*c*/);",
+    ] {
+        assert_unsupported(text);
+    }
+
+    for text in [
+        "typeof/*c*/(a);",
+        "void/*c*/(a);",
+        "typeof(/*c*/a);",
+        "void(a/*c*/);",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+/// Issue #847 escaped-boundary firewalls: an escaped-`ReservedWord` inner
+/// operand, a malformed or non-`CodePoint` escape, and a decoded
+/// non-identifier-start character all preserve the existing lower-level
+/// parenthesized `IdentifierReference` boundaries -- never re-decoded or
+/// reclassified by this grouped-keyword composition.
+#[test]
+fn typeof_void_parenthesized_identifier_reference_unary_expression_escaped_boundary_firewalls_remain_unowned()
+ {
+    for text in [
+        r"const x = typeof(\u0069f);",
+        r"const x = void(\u{69}f);",
+        r"const x = typeof(\u{});",
+        r"const x = void(\u{G});",
+        r"const x = typeof(\u{110000});",
+        r"const x = void(\u0030);",
+    ] {
+        assert_unsupported(text);
+    }
+
+    for text in [
+        r"typeof(\u0069f);",
+        r"void(\u{69}f);",
+        r"typeof(\u{});",
+        r"void(\u{G});",
+        r"typeof(\u{110000});",
+        r"void(\u0030);",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+/// Issue #847 transactionality: a locally complete grouped keyword-unary
+/// fact must not escape as committed selected state when a later declarator
+/// prevents the enclosing owner from completing, across all three
+/// initializer owners, and a locally recognized free-standing body must not
+/// authorize a richer neighbor across either placement.
+#[test]
+fn typeof_void_parenthesized_identifier_reference_unary_expression_transactionality_commits_no_earlier_fact()
+ {
+    for text in [
+        "let x=typeof(a),y=;",
+        "var x=void(a),y=;",
+        "{ var x=typeof(a),y= }",
+    ] {
+        assert_unsupported(text);
+    }
+
+    let subject = grammar_rejection(r"let x=typeof(a), \u{}=1;");
+    assert_eq!(subject.fragment(), r"\u{}");
+
+    let subject = grammar_rejection(r"var x=void(a), \u{}=1;");
+    assert_eq!(subject.fragment(), r"\u{}");
+
+    let subject = grammar_rejection(r"{ var x=typeof(a), \u{}=1; }");
+    assert_eq!(subject.fragment(), r"\u{}");
+
+    for text in ["typeof(a)\nb;", "{ void(a)\nb; }"] {
         assert_unsupported(text);
     }
 }
