@@ -2300,6 +2300,37 @@ enum SelectedParenthesizedIdentifierReferenceRecognition {
     InternalFailure,
 }
 
+/// Result of the placement-neutral bounded exactly-one grouped `!`/`~`
+/// `SelectedParenthesizedIdentifierReference` `UnaryExpression` recognizer
+/// below (Issue #843, composing the accepted candidate-independent authority
+/// proven by #827/PR #828 and #831/PR #832, per #688 comment 5866606836).
+/// `Matched` carries the exact existing `SelectedIdentifierReferenceFact`
+/// produced by the unmodified existing
+/// `consume_selected_parenthesized_identifier_reference()` recognizer for the
+/// sole inner operand, unchanged, for either a direct-authored or an escaped
+/// non-ReservedWord operand. `NotSelected` covers every decline: no leading
+/// authored `!`/`~`, or any decline from the existing parenthesized
+/// recognizer itself (no leading `(`, an escaped `ReservedWord` inner
+/// operand, no inner `IdentifierReference` at all, a recognized inner
+/// operand not immediately followed by a matching `)`, recursive grouping, or
+/// richer inner content). `ResourceLimited` and `InternalFailure` preserve
+/// the existing parenthesized recognizer's own processing-failure classes
+/// without collapsing them into `NotSelected`. This carrier is deliberately
+/// distinct from both
+/// `SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition` (the
+/// existing direct, ungrouped `!`/`~` theorem, unchanged and unwidened) and
+/// `SelectedParenthesizedIdentifierReferenceRecognition` (the existing
+/// grouping theorem this helper composes, unchanged and unwidened): the
+/// grouped `!`/`~` theorem is a new composition of the two, not a widening of
+/// either.
+#[derive(Debug)]
+enum SelectedBangTildeParenthesizedIdentifierReferenceUnaryExpressionRecognition {
+    Matched(SelectedIdentifierReferenceFact),
+    NotSelected,
+    ResourceLimited,
+    InternalFailure,
+}
+
 /// Result of the initializer-owner-private optional-leading-`+`/`-`
 /// continuation primitive (Issue #811, composing the accepted
 /// candidate-independent theorem proven by #809/PR #810 with the
@@ -2838,6 +2869,17 @@ impl<'source> Cursor<'source> {
                                         return Err(ParseFailure::InternalFailure);
                                     }
                                     SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
+                                match self.consume_selected_bang_tilde_parenthesized_identifier_reference_unary_expression() {
+                                    SelectedBangTildeParenthesizedIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
+                                        (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
+                                    }
+                                    SelectedBangTildeParenthesizedIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
+                                        return Err(ParseFailure::ResourceLimited);
+                                    }
+                                    SelectedBangTildeParenthesizedIdentifierReferenceUnaryExpressionRecognition::InternalFailure => {
+                                        return Err(ParseFailure::InternalFailure);
+                                    }
+                                    SelectedBangTildeParenthesizedIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
                                 match self.consume_selected_typeof_void_identifier_reference_unary_expression() {
                                     SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
                                     (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
@@ -2940,6 +2982,8 @@ impl<'source> Cursor<'source> {
                                 }
                             }
                         }
+                    }
+                    }
                     };
                     self.skip_selected_trivia();
                     facts
@@ -3081,6 +3125,17 @@ impl<'source> Cursor<'source> {
                                         return Err(ParseFailure::InternalFailure);
                                     }
                                     SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
+                                match self.consume_selected_bang_tilde_parenthesized_identifier_reference_unary_expression() {
+                                    SelectedBangTildeParenthesizedIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
+                                        (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
+                                    }
+                                    SelectedBangTildeParenthesizedIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
+                                        return Err(ParseFailure::ResourceLimited);
+                                    }
+                                    SelectedBangTildeParenthesizedIdentifierReferenceUnaryExpressionRecognition::InternalFailure => {
+                                        return Err(ParseFailure::InternalFailure);
+                                    }
+                                    SelectedBangTildeParenthesizedIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
                                 match self.consume_selected_typeof_void_identifier_reference_unary_expression() {
                                     SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
                                     (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
@@ -3183,6 +3238,8 @@ impl<'source> Cursor<'source> {
                                 }
                             }
                         }
+                    }
+                    }
                     };
                     self.skip_selected_trivia();
                     facts
@@ -3289,6 +3346,18 @@ impl<'source> Cursor<'source> {
                                     return Err(ParseFailure::InternalFailure);
                                 }
                                 SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
+                            match self.consume_selected_bang_tilde_parenthesized_identifier_reference_unary_expression() {
+                                SelectedBangTildeParenthesizedIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
+                                    identifier_reference_initializer =
+                                        Some(SelectedIdentifierReferenceInitializer::One(reference));
+                                }
+                                SelectedBangTildeParenthesizedIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
+                                    return Err(ParseFailure::ResourceLimited);
+                                }
+                                SelectedBangTildeParenthesizedIdentifierReferenceUnaryExpressionRecognition::InternalFailure => {
+                                    return Err(ParseFailure::InternalFailure);
+                                }
+                                SelectedBangTildeParenthesizedIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
                             match self.consume_selected_typeof_void_identifier_reference_unary_expression() {
                                 SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
                                 identifier_reference_initializer =
@@ -3386,6 +3455,8 @@ impl<'source> Cursor<'source> {
                                 }
                             }
                         }
+                    }
+                    }
                     }
                 }
                 let initializer_end = self.offset;
@@ -4219,6 +4290,22 @@ impl<'source> Cursor<'source> {
                 return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::InternalFailure;
             }
             SelectedBangTildeIdentifierReferenceUnaryExpressionRecognition::NotSelected => {}
+        }
+
+        match self.consume_selected_bang_tilde_parenthesized_identifier_reference_unary_expression() {
+            SelectedBangTildeParenthesizedIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
+                self.skip_selected_trivia();
+                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::Matched(
+                    SelectedFreeStandingIdentifierReferenceUseSite::One(reference),
+                );
+            }
+            SelectedBangTildeParenthesizedIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
+                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::ResourceLimited;
+            }
+            SelectedBangTildeParenthesizedIdentifierReferenceUnaryExpressionRecognition::InternalFailure => {
+                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::InternalFailure;
+            }
+            SelectedBangTildeParenthesizedIdentifierReferenceUnaryExpressionRecognition::NotSelected => {}
         }
 
         match self.consume_selected_typeof_void_identifier_reference_unary_expression() {
@@ -6630,6 +6717,81 @@ impl<'source> Cursor<'source> {
             }
             SelectedIdentifierReferenceRecognition::InternalFailure => {
                 SelectedParenthesizedIdentifierReferenceRecognition::InternalFailure
+            }
+        }
+    }
+
+    /// Recognizes exactly one leading `!` or `~` wrapped around exactly one
+    /// existing `SelectedParenthesizedIdentifierReference`
+    /// (`SelectedBangTilde SelectedUnaryOperandTrivia
+    /// SelectedParenthesizedIdentifierReference`) in either the selected
+    /// initializer position or the selected free-standing `ExpressionStatement`
+    /// use-site body position (Issue #843, composing the accepted
+    /// candidate-independent authority proven by #827/PR #828 and #831/PR
+    /// #832, per #688 comment 5866606836). Modeled directly on
+    /// `consume_selected_bang_tilde_identifier_reference_unary_expression`
+    /// above, swapping only the operand recognizer: on a match, the existing
+    /// inner `SelectedIdentifierReferenceFact` produced by the unmodified
+    /// existing `consume_selected_parenthesized_identifier_reference()`
+    /// recognizer is returned unchanged. The inner `IdentifierReference` is
+    /// recognized and decoded exactly once, entirely inside that unmodified
+    /// existing recognizer; this helper never calls
+    /// `consume_selected_identifier_reference()` itself and never duplicates
+    /// or inlines the paired-delimiter/inner-trivia grammar the existing
+    /// parenthesized recognizer already owns.
+    ///
+    /// This bounded local scan commits `self.offset` only after a complete
+    /// `SelectedParenthesizedIdentifierReference` is recognized following the
+    /// operator and any intervening existing selected trivia
+    /// (`skip_selected_trivia`, unchanged). No leading `!`/`~` at all (e.g.
+    /// `(a)`, owned by the existing bare-parenthesized route), a second
+    /// leading `!`/`~` (e.g. `!!(a)`, `~~(a)`, `!~(a)`, `~!(a)`, since this
+    /// helper never calls itself recursively on its own operand), an
+    /// equality punctuator (e.g. `!=(a)`, `!==(a)`: this helper, like the
+    /// existing direct `!`/`~` helper it is modeled on, never itself
+    /// inspects the character following the operator, so the existing
+    /// parenthesized recognizer's own requirement of a leading `(` declines
+    /// at the following `=` and restores this helper's own start), or any
+    /// decline from the existing parenthesized recognizer itself (no leading
+    /// `(`, an escaped `ReservedWord` inner operand, no inner
+    /// `IdentifierReference` at all, a recognized inner operand not followed
+    /// by a matching `)`, recursive grouping such as `!((a))`, or richer
+    /// inner content such as `!(a+b)`) restores the cursor to its starting
+    /// offset and returns `NotSelected`. A processing failure from the
+    /// existing parenthesized recognizer (`ResourceLimited` /
+    /// `InternalFailure`) is preserved unchanged and is never downgraded to
+    /// `NotSelected`. A locally complete grouped-unary-reference atom does
+    /// not itself authorize any broader source (e.g. `!(a)+b`, `!(a).b`,
+    /// `!(a)()`); the caller (an initializer owner or the free-standing body
+    /// owner) remains solely responsible for judging any unowned trailing
+    /// source, and this helper is deliberately never routed into the `+`/`-`
+    /// family's additive continuation helpers, since the `!`/`~` theorem
+    /// remains atom-only (per #688 comment 5844920129) even when composed
+    /// with grouping.
+    fn consume_selected_bang_tilde_parenthesized_identifier_reference_unary_expression(
+        &mut self,
+    ) -> SelectedBangTildeParenthesizedIdentifierReferenceUnaryExpressionRecognition {
+        let start = self.offset;
+
+        if !self.consume_ascii('!') && !self.consume_ascii('~') {
+            return SelectedBangTildeParenthesizedIdentifierReferenceUnaryExpressionRecognition::NotSelected;
+        }
+
+        self.skip_selected_trivia();
+
+        match self.consume_selected_parenthesized_identifier_reference() {
+            SelectedParenthesizedIdentifierReferenceRecognition::Matched(reference) => {
+                SelectedBangTildeParenthesizedIdentifierReferenceUnaryExpressionRecognition::Matched(reference)
+            }
+            SelectedParenthesizedIdentifierReferenceRecognition::NotSelected => {
+                self.offset = start;
+                SelectedBangTildeParenthesizedIdentifierReferenceUnaryExpressionRecognition::NotSelected
+            }
+            SelectedParenthesizedIdentifierReferenceRecognition::ResourceLimited => {
+                SelectedBangTildeParenthesizedIdentifierReferenceUnaryExpressionRecognition::ResourceLimited
+            }
+            SelectedParenthesizedIdentifierReferenceRecognition::InternalFailure => {
+                SelectedBangTildeParenthesizedIdentifierReferenceUnaryExpressionRecognition::InternalFailure
             }
         }
     }
