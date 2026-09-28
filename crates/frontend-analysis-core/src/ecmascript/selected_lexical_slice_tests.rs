@@ -8426,6 +8426,24 @@ fn delete_identifier_reference_unary_expression_transactionality_commits_no_earl
     }
 }
 
+/// Issue #841 private-reference firewall: a private-name `delete` target
+/// (`delete obj.#x`, `delete obj?.#x`) remains structurally outside this
+/// bounded leaf, whose operand is exactly one `IdentifierReference`. This
+/// does not implement private-name production or classify these as a new
+/// static error; it only proves the existing lexical layer continues to
+/// decline the whole source, in both the initializer and free-standing
+/// position.
+#[test]
+fn delete_identifier_reference_unary_expression_private_reference_firewalls_remain_unsupported() {
+    for text in ["const x = delete obj.#x;", "const x = delete obj?.#x;"] {
+        assert_unsupported(text);
+    }
+
+    for text in ["delete obj.#x;", "delete obj?.#x;"] {
+        assert_unsupported(text);
+    }
+}
+
 // Issue #754: bounded ordered two-`IdentifierReference` additive
 // initializer. #752/PR #753 already independently prove the exact bounded
 // theorem (exactly two accepted `IdentifierReference` operands, exactly one
