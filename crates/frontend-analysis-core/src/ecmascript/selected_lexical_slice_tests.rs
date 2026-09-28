@@ -8698,16 +8698,17 @@ fn bang_tilde_parenthesized_identifier_reference_unary_expression_dispatch_and_r
     }
 }
 
-/// Issue #843 deferred-neighbor-family firewalls: `+`/`-` grouping and
-/// keyword-unary (`typeof`/`void`/`delete`) grouping are explicitly deferred
-/// by this Issue (see #688 comment 5866606836) and remain unsupported,
-/// including `delete (a)` with intervening trivia.
+/// Issue #843 deferred-neighbor-family firewalls: keyword-unary
+/// (`typeof`/`void`/`delete`) grouping is explicitly deferred by this Issue
+/// (see #688 comment 5866606836) and remains unsupported, including
+/// `delete (a)` with intervening trivia. `+`/`-` grouping was also deferred
+/// at the time of #843 but has since moved to selected-positive coverage by
+/// Issue #845 (see the "Issue #845" section below); it is no longer listed
+/// here.
 #[test]
 fn bang_tilde_parenthesized_identifier_reference_unary_expression_deferred_neighbor_families_remain_unsupported()
  {
     for text in [
-        "const x = +(a);",
-        "const x = -(a);",
         "const x = typeof(a);",
         "const x = void(a);",
         "const x = delete(a);",
@@ -8716,14 +8717,7 @@ fn bang_tilde_parenthesized_identifier_reference_unary_expression_deferred_neigh
         assert_unsupported(text);
     }
 
-    for text in [
-        "+(a);",
-        "-(a);",
-        "typeof(a);",
-        "void(a);",
-        "delete(a);",
-        "delete (a);",
-    ] {
+    for text in ["typeof(a);", "void(a);", "delete(a);", "delete (a);"] {
         assert_unsupported(text);
     }
 }
@@ -8851,6 +8845,426 @@ fn bang_tilde_parenthesized_identifier_reference_unary_expression_transactionali
     assert_eq!(subject.fragment(), r"\u{}");
 
     for text in ["!(a)\nb;", "{ !(a)\nb; }"] {
+        assert_unsupported(text);
+    }
+}
+
+// Issue #845: bounded exactly-one `+`/`-` composed over exactly-one
+// existing `SelectedParenthesizedIdentifierReference`
+// (`SelectedLeadingPlusMinusParenthesizedIdentifierReferenceUnaryExpression`),
+// composing the accepted candidate-independent theorem proven by #746/PR
+// #747, #750/PR #751, and #831/PR #832 into all three mature initializer
+// owners (`parse_declaration`/`parse_variable_statement`/
+// `parse_selected_block_var_statement`) and the shared free-standing body
+// owner (`consume_selected_identifier_reference_expression_statement_use_site_body`),
+// per #688 comment 5867735941. The new grouped-unary helper owns only the
+// leading operator and delegates the sole inner operand entirely to the
+// unmodified existing `consume_selected_parenthesized_identifier_reference`;
+// the retained evidence remains exactly the existing inner
+// `SelectedIdentifierReferenceFact`, never the operator identity, either
+// delimiter, any grouping/operand trivia, or a whole grouped-unary span. The
+// new route is dispatched immediately after the existing direct `+`/`-`
+// `IdentifierReference` route (which keeps its own existing
+// additive-continuation contract entirely unchanged) and before the direct
+// `!`/`~` route, and is never itself routed into any additive/heterogeneous
+// continuation helper.
+
+#[test]
+fn leading_plus_minus_parenthesized_identifier_reference_unary_expression_initializer_positive_matrix_is_recognized_across_all_three_owners()
+ {
+    let script = recognized("const x = +(a);");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding
+        .identifier_reference_initializer()
+        .expect("+-wrapped grouped LexicalDeclaration RHS reference fact");
+    assert_eq!(reference.reference().fragment(), "a");
+    assert_eq!(reference.semantic_name(), "a");
+
+    let script = recognized("let x = -(a);");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding
+        .identifier_reference_initializer()
+        .expect("--wrapped grouped LexicalDeclaration RHS reference fact");
+    assert_eq!(reference.reference().fragment(), "a");
+    assert_eq!(reference.semantic_name(), "a");
+
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+    let script = recognized_block("{ const x = +(a); }");
+    let [SelectedTopLevelItem::Block(block)] = script.items() else {
+        panic!("expected exactly one Block item");
+    };
+    let [SelectedBlockItem::LexicalDeclaration(declaration)] = block.items() else {
+        panic!("expected exactly one Block-contained LexicalDeclaration item");
+    };
+    let [binding] = declaration.bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding
+        .identifier_reference_initializer()
+        .expect("+-wrapped grouped Block-contained LexicalDeclaration RHS reference fact");
+    assert_eq!(reference.reference().fragment(), "a");
+    assert_eq!(reference.semantic_name(), "a");
+
+    let script = recognized_variable("var x = +(a);");
+    let statement = only_variable_statement(&script);
+    let [binding] = statement.bindings() else {
+        panic!("expected one selected top-level var binding");
+    };
+    let reference = binding
+        .identifier_reference_initializer()
+        .expect("+-wrapped grouped top-level var RHS reference fact");
+    assert_eq!(reference.reference().fragment(), "a");
+    assert_eq!(reference.semantic_name(), "a");
+
+    let script = recognized_block("{ var x = -(a); }");
+    let [SelectedTopLevelItem::Block(block)] = script.items() else {
+        panic!("expected exactly one Block item");
+    };
+    let [SelectedBlockItem::Var(statement)] = block.items() else {
+        panic!("expected exactly one Block var statement");
+    };
+    let [binding] = statement.bindings() else {
+        panic!("expected one selected Block var binding");
+    };
+    let reference = binding
+        .identifier_reference_initializer()
+        .expect("--wrapped grouped Block var RHS reference fact");
+    assert_eq!(reference.reference().fragment(), "a");
+    assert_eq!(reference.semantic_name(), "a");
+}
+
+/// Issue #845's own required minimum positive matrix ("At minimum seal"),
+/// sealed exactly matching its listed forms -- `+(a)` / `-(a)` / `+ (a)` /
+/// `- (a)` / `+(a)` / `-(foo)` / `+( a )` / `-( a )` -- across
+/// representative initializer and free-standing placements, exercising
+/// Direct and `EscapedNonReserved` inner provenance and both outer and
+/// inner selected trivia together.
+#[test]
+fn leading_plus_minus_parenthesized_identifier_reference_unary_expression_issue_845_minimum_positive_matrix_is_sealed()
+ {
+    for (operand_source, fragment, semantic_name) in [
+        ("+(a)", "a", "a"),
+        ("-(a)", "a", "a"),
+        ("+ (a)", "a", "a"),
+        ("- (a)", "a", "a"),
+        ("+(π)", "π", "π"),
+        ("-(𝒜)", "𝒜", "𝒜"),
+        (r"+(\u0061)", r"\u0061", "a"),
+        (r"-(f\u006Fo)", r"f\u006Fo", "foo"),
+        (r"+(\u{66}oo)", r"\u{66}oo", "foo"),
+        (r"-(\u{1D49C})", r"\u{1D49C}", "\u{1D49C}"),
+        ("+( a )", "a", "a"),
+        (r"-( \u0061 )", r"\u0061", "a"),
+    ] {
+        let text = format!("const x = {operand_source};");
+        let script = recognized(&text);
+        let [binding] = script.declarations()[0].bindings() else {
+            panic!("expected one selected lexical binding");
+        };
+        let reference = binding.identifier_reference_initializer().unwrap();
+        assert_eq!(reference.reference().fragment(), fragment, "{text}");
+        assert_eq!(reference.semantic_name(), semantic_name, "{text}");
+
+        let use_text = format!("{operand_source};");
+        let script = recognized_reference_use(&use_text);
+        let use_site = only_top_level_use_site(&script);
+        let fact = only_fact(use_site.body());
+        assert_eq!(fact.reference().fragment(), fragment, "{use_text}");
+        assert_eq!(fact.semantic_name(), semantic_name, "{use_text}");
+    }
+}
+
+/// Issue #845 outer and inner selected-trivia matrix: at least one existing
+/// selected-trivia code point (tab, LF, NBSP) between the operator and the
+/// grouping opener, and independently inside the grouping delimiters, is
+/// recognized without any new trivia contract.
+#[test]
+fn leading_plus_minus_parenthesized_identifier_reference_unary_expression_trivia_matrix_is_recognized()
+ {
+    // Outer selected trivia between the operator and the grouping opener.
+    for text in ["+\t(a);", "-\n(a);", "+\u{A0}(a);"] {
+        let script = recognized_reference_use(text);
+        let use_site = only_top_level_use_site(&script);
+        let fact = only_fact(use_site.body());
+        assert_eq!(fact.reference().fragment(), "a", "{text}");
+        assert_eq!(fact.semantic_name(), "a", "{text}");
+    }
+
+    // Inner grouping trivia, independently, reusing the existing
+    // parenthesized helper's own inner-trivia semantics unchanged.
+    let script = recognized_reference_use("+(\ta);");
+    let use_site = only_top_level_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), "a");
+
+    let script = recognized_reference_use("-(a\n);");
+    let use_site = only_top_level_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), "a");
+
+    let script = recognized_reference_use("+(\u{A0}\\u0061\u{A0});");
+    let use_site = only_top_level_use_site(&script);
+    let fact = only_fact(use_site.body());
+    let expected_escaped_fragment = "\\u0061";
+    assert_eq!(fact.reference().fragment(), expected_escaped_fragment);
+    assert_eq!(fact.semantic_name(), "a");
+}
+
+/// Issue #845 free-standing placement matrix: TopLevel authored-semicolon
+/// and EOF-ASI, and Block authored-semicolon and before-`}` ASI, composed
+/// through the unchanged placement-owned terminator owners.
+#[test]
+fn leading_plus_minus_parenthesized_identifier_reference_unary_expression_free_standing_placement_matrix_is_recognized()
+ {
+    let script = recognized_reference_use("+(a);");
+    let use_site = only_top_level_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), "a");
+    assert!(matches!(
+        use_site.terminator(),
+        SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AuthoredSemicolon
+    ));
+
+    let script = recognized_reference_use(r"-(a)");
+    let use_site = only_top_level_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), r"a");
+    assert_eq!(fact.semantic_name(), "a");
+    assert!(matches!(
+        use_site.terminator(),
+        SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticAtEof
+    ));
+
+    let script = recognized_block_reference_use("{ +(a); }");
+    let use_site = only_block_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), "a");
+    assert!(matches!(
+        use_site.terminator(),
+        SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator::AuthoredSemicolon
+    ));
+
+    let script = recognized_block_reference_use(r"{ -(\u{1D49C}) }");
+    let use_site = only_block_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), r"\u{1D49C}");
+    assert_eq!(fact.semantic_name(), "\u{1D49C}");
+    assert!(matches!(
+        use_site.terminator(),
+        SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticBeforeBlockClose
+    ));
+}
+
+/// Issue #845 dispatch-ordering and repeated/mixed-sign, ++/--, and
+/// recursive/mixed-unary firewalls: the existing direct `+`/`-`
+/// `IdentifierReference` helper gets first refusal so a plain `+a`/`-a`
+/// operand is never reinterpreted here, a second leading `+`/`-` (including
+/// `++`/`--`/`+-`/`-+`, and mixed with `!`/`~`/`typeof`/`void`/`delete`) is
+/// never recursed into, and the existing parenthesized helper's own
+/// exactly-one-grouping boundary is never widened to admit recursive
+/// grouping.
+#[test]
+fn leading_plus_minus_parenthesized_identifier_reference_unary_expression_dispatch_and_recursive_firewalls_remain_unsupported()
+ {
+    for text in [
+        "const x = ++(a);",
+        "const x = --(a);",
+        "const x = ++ (a);",
+        "const x = -- (a);",
+        "const x = +-(a);",
+        "const x = -+(a);",
+        "const x = +!(a);",
+        "const x = -~(a);",
+        "const x = +~(a);",
+        "const x = -!(a);",
+        "const x = typeof +(a);",
+        "const x = void -(a);",
+        "const x = delete +(a);",
+        "const x = delete -(a);",
+        "const x = +((a));",
+        "const x = -((a));",
+    ] {
+        assert_unsupported(text);
+    }
+
+    for text in [
+        "++(a);",
+        "--(a);",
+        "++ (a);",
+        "-- (a);",
+        "+-(a);",
+        "-+(a);",
+        "+!(a);",
+        "-~(a);",
+        "+~(a);",
+        "-!(a);",
+        "typeof +(a);",
+        "void -(a);",
+        "delete +(a);",
+        "delete -(a);",
+        "+((a));",
+        "-((a));",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+/// Issue #845 deferred-neighbor-family firewalls: `typeof`/`void`/`delete`
+/// grouping remain explicitly deferred by this Issue (see #688 comment
+/// 5867735941) and remain unsupported, including `delete (a)` with
+/// intervening trivia.
+#[test]
+fn leading_plus_minus_parenthesized_identifier_reference_unary_expression_deferred_neighbor_families_remain_unsupported()
+ {
+    for text in [
+        "const x = typeof(a);",
+        "const x = void(a);",
+        "const x = delete(a);",
+        "const x = delete (a);",
+    ] {
+        assert_unsupported(text);
+    }
+
+    for text in ["typeof(a);", "void(a);", "delete(a);", "delete (a);"] {
+        assert_unsupported(text);
+    }
+}
+
+/// Issue #845 richer inner, richer outer, and additive-leak expression
+/// firewalls: a locally matched grouped inner `IdentifierReference` prefix
+/// must not authorize a richer inner continuation before the closing `)`
+/// (reusing the existing parenthesized helper's own firewall), and a
+/// locally matched grouped-unary atom must not authorize a richer outer
+/// continuation -- including additive continuation -- after the closing
+/// `)`, in both the initializer and the free-standing position. This is
+/// load-bearing: a locally complete grouped `+`/`-` atom must never
+/// automatically enter the existing direct route's additive-continuation
+/// machinery.
+#[test]
+fn leading_plus_minus_parenthesized_identifier_reference_unary_expression_richer_inner_and_outer_expression_firewalls_remain_unsupported()
+ {
+    for text in [
+        "const x = +(a+b);",
+        "const x = -(a-b);",
+        "const x = +(a*b);",
+        "const x = -(a.b);",
+        "const x = +(a());",
+        "const x = -(a=b);",
+        "const x = +(a?b:c);",
+        "const x = +(a,b);",
+        "const x = +(a)+b;",
+        "const x = -(a)-b;",
+        "const x = +(a)+1;",
+        r"const x = -(a)+b;",
+        "const x = +(a)*b;",
+        "const x = -(a).b;",
+        "const x = +(a)();",
+        "const x = -(a)=b;",
+        "const x = +(a)?b:c;",
+    ] {
+        assert_unsupported(text);
+    }
+
+    for text in [
+        "+(a+b);",
+        "-(a-b);",
+        "+(a*b);",
+        "-(a.b);",
+        "+(a());",
+        "-(a=b);",
+        "+(a?b:c);",
+        "+(a,b);",
+        "+(a)+b;",
+        "-(a)-b;",
+        "+(a)+1;",
+        r"-(a)+b;",
+        "+(a)*b;",
+        "-(a).b;",
+        "+(a)();",
+        "-(a)=b;",
+        "+(a)?b:c;",
+        "+(a),b;",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+/// Issue #845 comment firewall: no comment scanning is authorized between
+/// the operator and the grouping opener, or inside the grouping delimiters.
+#[test]
+fn leading_plus_minus_parenthesized_identifier_reference_unary_expression_comment_firewall_remains_unsupported()
+ {
+    for text in [
+        "const x = +/*c*/(a);",
+        "const x = -/*c*/(a);",
+        "const x = +(/*c*/a);",
+        "const x = -(a/*c*/);",
+    ] {
+        assert_unsupported(text);
+    }
+
+    for text in ["+/*c*/(a);", "-/*c*/(a);", "+(/*c*/a);", "-(a/*c*/);"] {
+        assert_unsupported(text);
+    }
+}
+
+/// Issue #845 escaped-boundary firewalls: an escaped-`ReservedWord` inner
+/// operand, a malformed or non-`CodePoint` escape, and a decoded
+/// non-identifier-start character all preserve the existing lower-level
+/// parenthesized `IdentifierReference` boundaries -- never re-decoded or
+/// reclassified by this grouped-unary composition.
+#[test]
+fn leading_plus_minus_parenthesized_identifier_reference_unary_expression_escaped_boundary_firewalls_remain_unowned()
+ {
+    for text in [
+        r"const x = +(\u0069f);",
+        r"const x = -(\u{69}f);",
+        r"const x = +(\u{});",
+        r"const x = -(\u{G});",
+        r"const x = +(\u{110000});",
+        r"const x = -(\u0030);",
+    ] {
+        assert_unsupported(text);
+    }
+
+    for text in [
+        r"+(\u0069f);",
+        r"-(\u{69}f);",
+        r"+(\u{});",
+        r"-(\u{G});",
+        r"+(\u{110000});",
+        r"-(\u0030);",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+/// Issue #845 transactionality: a locally complete grouped-unary fact must
+/// not escape as committed selected state when a later declarator prevents
+/// the enclosing owner from completing, across all three initializer
+/// owners, and a locally recognized free-standing body must not authorize a
+/// richer neighbor across either placement.
+#[test]
+fn leading_plus_minus_parenthesized_identifier_reference_unary_expression_transactionality_commits_no_earlier_fact()
+ {
+    for text in ["let x=+(a),y=;", "var x=+(a),y=;", "{ var x=+(a),y= }"] {
+        assert_unsupported(text);
+    }
+
+    let subject = grammar_rejection(r"let x=+(a), \u{}=1;");
+    assert_eq!(subject.fragment(), r"\u{}");
+
+    let subject = grammar_rejection(r"var x=+(a), \u{}=1;");
+    assert_eq!(subject.fragment(), r"\u{}");
+
+    let subject = grammar_rejection(r"{ var x=+(a), \u{}=1; }");
+    assert_eq!(subject.fragment(), r"\u{}");
+
+    for text in ["+(a)\nb;", "{ +(a)\nb; }"] {
         assert_unsupported(text);
     }
 }
@@ -13572,18 +13986,13 @@ fn unary_use_site_other_unary_operators_remain_unsupported() {
     }
 }
 
-#[test]
-fn unary_use_site_parenthesized_forms_remain_unsupported() {
-    // "(a);" is deliberately not listed here: Issue #833 makes a selected
-    // exactly-one parenthesized `IdentifierReference` free-standing use-site
-    // a selected accepted form (see the "Issue #833" test section below).
-    // `+(a);` / `-(a);` remain outside: the grouping helper only probes
-    // after a leading `+`/`-`/`!`/`~` unary route has already declined, so a
-    // parenthesized operand is never reachable from those unary prefixes.
-    for text in ["+(a);", "-(a);"] {
-        assert_unsupported(text);
-    }
-}
+// `unary_use_site_parenthesized_forms_remain_unsupported` previously
+// asserted "+(a);" / "-(a);" stayed outside selected coverage here (before
+// #845 moved exactly-one `+`/`-` composed over exactly-one existing
+// `SelectedParenthesizedIdentifierReference` into selected-positive
+// coverage; see the "Issue #845" test section above). "(a);" was already
+// excluded from this firewall by Issue #833 (see the "Issue #833" test
+// section below).
 
 #[test]
 fn unary_use_site_comments_remain_unsupported() {
