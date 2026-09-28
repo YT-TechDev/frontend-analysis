@@ -1389,6 +1389,23 @@ fn ee11_context_model_matrix_proves_non_triggering_and_strict_controls() {
             "{:?}",
             row.candidate
         );
+        // Fixture-class consistency invariant: for this exact bounded
+        // matrix, `source_selected` and `operand_class` are never authored
+        // independently of each other. Only the `IdentifierReference`
+        // operand class is admitted by the bounded source-composition
+        // theorem; `ParenthesizedIdentifierReferenceControl`,
+        // `PrivateReferenceControl`, and `OutsideSelectedTheorem` are all
+        // structurally declined. Without this, a row could accidentally
+        // pair `source_selected = false` with `operand_class =
+        // IdentifierReference` (or vice versa) and still pass the checks
+        // above, since more than one operand class yields `NoRejection` in
+        // the non-strict context.
+        assert_eq!(
+            row.source_selected,
+            row.operand_class == DeleteOperandClass::IdentifierReference,
+            "{:?}",
+            row.candidate
+        );
     }
 }
 
