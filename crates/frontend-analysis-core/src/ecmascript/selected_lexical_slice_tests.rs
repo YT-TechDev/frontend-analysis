@@ -7021,13 +7021,14 @@ fn bang_tilde_identifier_reference_unary_expression_free_standing_placement_matr
 }
 
 /// Issue #829 firewalls: exactly-one recursive/mixed unary, the `!=`/`!==`
-/// punctuator boundary, the `delete` keyword unary, non-`IdentifierReference`
+/// punctuator boundary, non-`IdentifierReference`
 /// operands, richer expression tails, and a comment between operator and
 /// operand all remain outside the accepted theorem, in both the initializer
 /// and the free-standing position, without becoming a shorter selected
 /// success. `typeof a;` / `void a;` moved to selected-positive coverage by
-/// Issue #837 (see the "Issue #837" section below) and are no longer listed
-/// here; `delete a;` remains outside every accepted keyword-unary theorem.
+/// Issue #837 (see the "Issue #837" section below) and `delete a;` moved to
+/// selected-positive coverage by Issue #841 (see the "Issue #841" section
+/// below); neither is listed here anymore.
 #[test]
 fn bang_tilde_identifier_reference_unary_expression_required_firewalls_remain_unsupported() {
     for text in [
@@ -7036,8 +7037,6 @@ fn bang_tilde_identifier_reference_unary_expression_required_firewalls_remain_un
         "const x = ~~a;",
         "const x = !~a;",
         "const x = ~!a;",
-        // `delete` keyword unary remains unsupported everywhere.
-        "const x = delete a;",
         // `!=` / `!==` punctuator boundary: no special-casing, the shared
         // recognizer simply declines at `=`.
         "const x = !=a;",
@@ -7066,28 +7065,9 @@ fn bang_tilde_identifier_reference_unary_expression_required_firewalls_remain_un
     }
 
     for text in [
-        "!!a;",
-        "~~a;",
-        "!~a;",
-        "~!a;",
-        "delete a;",
-        "!=a;",
-        "!==a;",
-        "!1;",
-        "~1;",
-        "!true;",
-        "~null;",
-        "!this;",
-        r#"!"x";"#,
-        "!(a);",
-        "!a+b;",
-        "~a-b;",
-        "!a*b;",
-        "!a.b;",
-        "~a();",
-        "!a=b;",
-        "!a?b:c;",
-        "!/*c*/a;",
+        "!!a;", "~~a;", "!~a;", "~!a;", "!=a;", "!==a;", "!1;", "~1;", "!true;", "~null;",
+        "!this;", r#"!"x";"#, "!(a);", "!a+b;", "~a-b;", "!a*b;", "!a.b;", "~a();", "!a=b;",
+        "!a?b:c;", "!/*c*/a;",
     ] {
         assert_unsupported(text);
     }
@@ -7965,6 +7945,501 @@ fn typeof_void_identifier_reference_unary_expression_transactionality_commits_no
     assert_eq!(subject.fragment(), r"\u{}");
 
     for text in ["typeof a\nb;", "{ void a\nb; }"] {
+        assert_unsupported(text);
+    }
+}
+
+// Issue #841: bounded exactly-one direct `delete` `IdentifierReference`
+// `UnaryExpression` (`SelectedDeleteIdentifierReferenceUnaryExpression`),
+// composing the accepted candidate-independent authority proven by #839/PR
+// #840 (per #688 comments 5857601911, 5857970069, and 5858046424) into all
+// three mature initializer owners
+// (`parse_declaration`/`parse_variable_statement`/
+// `parse_selected_block_var_statement`) and the shared free-standing body
+// owner (`consume_selected_identifier_reference_expression_statement_use_site_body`).
+// Modeled directly on the #837 (`typeof`/`void`) precedent: the keyword
+// boundary reuses the unmodified `consume_keyword("delete")` maximality
+// primitive (so `deletea`/`delete\u0061` remain one maximal bare
+// `IdentifierReference`, never split), and a non-empty selected-trivia
+// separator is required between the keyword and the operand. `delete` owns
+// its own dedicated accepted EE-11 theorem distinct from `typeof`/`void`:
+// #839/#840 independently proved EE-11-R01/EE-11-R02 non-triggering for
+// every candidate this bounded theorem admits, so this production slice
+// makes no change to `selected_static_semantics.rs`.
+
+#[test]
+fn delete_identifier_reference_unary_expression_initializer_positive_matrix_is_recognized_across_all_three_owners()
+ {
+    let script = recognized("const x = delete a;");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding
+        .identifier_reference_initializer()
+        .expect("delete-wrapped LexicalDeclaration RHS reference fact");
+    assert_eq!(reference.reference().fragment(), "a");
+    assert_eq!(reference.semantic_name(), "a");
+
+    let script = recognized("let x = delete a;");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding
+        .identifier_reference_initializer()
+        .expect("delete-wrapped LexicalDeclaration RHS reference fact");
+    assert_eq!(reference.reference().fragment(), "a");
+    assert_eq!(reference.semantic_name(), "a");
+
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+    let script = recognized_block("{ const x = delete a; }");
+    let [SelectedTopLevelItem::Block(block)] = script.items() else {
+        panic!("expected exactly one Block item");
+    };
+    let [SelectedBlockItem::LexicalDeclaration(declaration)] = block.items() else {
+        panic!("expected exactly one Block-contained LexicalDeclaration item");
+    };
+    let [binding] = declaration.bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding
+        .identifier_reference_initializer()
+        .expect("delete-wrapped Block-contained LexicalDeclaration RHS reference fact");
+    assert_eq!(reference.reference().fragment(), "a");
+    assert_eq!(reference.semantic_name(), "a");
+
+    let script = recognized_variable("var x = delete a;");
+    let statement = only_variable_statement(&script);
+    let [binding] = statement.bindings() else {
+        panic!("expected one selected top-level var binding");
+    };
+    let reference = binding
+        .identifier_reference_initializer()
+        .expect("delete-wrapped top-level var RHS reference fact");
+    assert_eq!(reference.reference().fragment(), "a");
+    assert_eq!(reference.semantic_name(), "a");
+
+    let script = recognized_block("{ var x = delete a; }");
+    let [SelectedTopLevelItem::Block(block)] = script.items() else {
+        panic!("expected exactly one Block item");
+    };
+    let [SelectedBlockItem::Var(statement)] = block.items() else {
+        panic!("expected exactly one Block var statement");
+    };
+    let [binding] = statement.bindings() else {
+        panic!("expected one selected Block var binding");
+    };
+    let reference = binding
+        .identifier_reference_initializer()
+        .expect("delete-wrapped Block var RHS reference fact");
+    assert_eq!(reference.reference().fragment(), "a");
+    assert_eq!(reference.semantic_name(), "a");
+}
+
+/// Issue #841 provenance: the retained inner `SelectedIdentifierReferenceFact`
+/// excludes the `delete` keyword and any intervening trivia from its
+/// authored `SourceAnchor`, across Direct, fixed-escaped, mixed
+/// fixed-escaped, and both accepted braced-escaped forms (including a
+/// supplementary code point), and across trivia witnesses beyond ASCII space
+/// (tab, LF, and NBSP).
+#[test]
+fn delete_identifier_reference_unary_expression_provenance_matrix_is_exact() {
+    let script = recognized("const x = delete a;");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding.identifier_reference_initializer().unwrap();
+    assert_eq!(reference.reference().fragment(), "a");
+    assert_eq!(reference.semantic_name(), "a");
+
+    let script = recognized(r"const x = delete \u0061;");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding.identifier_reference_initializer().unwrap();
+    assert_eq!(reference.reference().fragment(), r"\u0061");
+    assert_eq!(reference.semantic_name(), "a");
+
+    let script = recognized(r"const x = delete f\u006Fo;");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding.identifier_reference_initializer().unwrap();
+    assert_eq!(reference.reference().fragment(), r"f\u006Fo");
+    assert_eq!(reference.semantic_name(), "foo");
+
+    let script = recognized(r"const x = delete \u{66}oo;");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding.identifier_reference_initializer().unwrap();
+    assert_eq!(reference.reference().fragment(), r"\u{66}oo");
+    assert_eq!(reference.semantic_name(), "foo");
+
+    let script = recognized(r"const x = delete \u{1D49C};");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding.identifier_reference_initializer().unwrap();
+    assert_eq!(reference.reference().fragment(), r"\u{1D49C}");
+    assert_eq!(reference.semantic_name(), "\u{1D49C}");
+
+    // Trivia witnesses beyond ASCII space (tab, LF, and NBSP).
+    let script = recognized("const x = delete\ta;");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding.identifier_reference_initializer().unwrap();
+    assert_eq!(reference.reference().fragment(), "a");
+
+    let script = recognized("const x = delete\na;");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding.identifier_reference_initializer().unwrap();
+    assert_eq!(reference.reference().fragment(), "a");
+
+    let script = recognized("const x = delete\u{A0}a;");
+    let [binding] = script.declarations()[0].bindings() else {
+        panic!("expected one selected lexical binding");
+    };
+    let reference = binding.identifier_reference_initializer().unwrap();
+    assert_eq!(reference.reference().fragment(), "a");
+}
+
+/// Issue #841's own required minimum positive matrix ("At minimum seal"),
+/// sealed as one small focused table exactly matching its listed operand
+/// spellings -- `delete a` / `delete π` / `delete 𝒜` / `delete \u0061` /
+/// `delete f\u006Fo` / `delete \u{66}oo` / `delete \u{1D49C}` -- across
+/// representative initializer and free-standing placements, distinct from
+/// the broader provenance and placement matrices above (which independently
+/// cover additional trivia and operand combinations beyond this exact
+/// required minimum).
+#[test]
+fn delete_identifier_reference_unary_expression_issue_841_minimum_positive_matrix_is_sealed() {
+    for (operand, fragment, semantic_name) in [
+        ("a", "a", "a"),
+        ("π", "π", "π"),
+        ("𝒜", "𝒜", "𝒜"),
+        (r"\u0061", r"\u0061", "a"),
+        (r"f\u006Fo", r"f\u006Fo", "foo"),
+        (r"\u{66}oo", r"\u{66}oo", "foo"),
+        (r"\u{1D49C}", r"\u{1D49C}", "\u{1D49C}"),
+    ] {
+        let text = format!("const x = delete {operand};");
+        let script = recognized(&text);
+        let [binding] = script.declarations()[0].bindings() else {
+            panic!("expected one selected lexical binding");
+        };
+        let reference = binding.identifier_reference_initializer().unwrap();
+        assert_eq!(reference.reference().fragment(), fragment, "{text}");
+        assert_eq!(reference.semantic_name(), semantic_name, "{text}");
+
+        let use_text = format!("delete {operand};");
+        let script = recognized_reference_use(&use_text);
+        let use_site = only_top_level_use_site(&script);
+        let fact = only_fact(use_site.body());
+        assert_eq!(fact.reference().fragment(), fragment, "{use_text}");
+        assert_eq!(fact.semantic_name(), semantic_name, "{use_text}");
+    }
+}
+
+/// Issue #841 required-trivia matrix: at least one existing selected-trivia
+/// code point (space, tab, LF, and NBSP) is required between the direct
+/// `delete` keyword and the `IdentifierReference` operand.
+#[test]
+fn delete_identifier_reference_unary_expression_selected_trivia_matrix() {
+    for text in ["delete a;", "delete\ta;", "delete\na;", "delete\u{A0}a;"] {
+        let script = recognized_reference_use(text);
+        let use_site = only_top_level_use_site(&script);
+        let fact = only_fact(use_site.body());
+        assert_eq!(fact.reference().fragment(), "a", "{text}");
+        assert_eq!(fact.semantic_name(), "a", "{text}");
+    }
+}
+
+/// Issue #841 free-standing placement matrix: TopLevel authored-semicolon
+/// and EOF-ASI, and Block authored-semicolon and before-`}` ASI, composed
+/// through the unchanged placement-owned terminator owners.
+#[test]
+fn delete_identifier_reference_unary_expression_free_standing_placement_matrix_is_recognized() {
+    let script = recognized_reference_use("delete a;");
+    let use_site = only_top_level_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), "a");
+    assert!(matches!(
+        use_site.terminator(),
+        SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AuthoredSemicolon
+    ));
+
+    let script = recognized_reference_use(r"delete \u0061;");
+    let use_site = only_top_level_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), r"\u0061");
+    assert_eq!(fact.semantic_name(), "a");
+
+    let script = recognized_reference_use("delete a");
+    let use_site = only_top_level_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), "a");
+    assert!(matches!(
+        use_site.terminator(),
+        SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticAtEof
+    ));
+
+    let script = recognized_reference_use(r"delete \u{66}oo");
+    let use_site = only_top_level_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), r"\u{66}oo");
+    assert_eq!(fact.semantic_name(), "foo");
+
+    let script = recognized_block_reference_use("{ delete a; }");
+    let use_site = only_block_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), "a");
+    assert!(matches!(
+        use_site.terminator(),
+        SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator::AuthoredSemicolon
+    ));
+
+    let script = recognized_block_reference_use(r"{ delete \u0061; }");
+    let use_site = only_block_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), r"\u0061");
+    assert_eq!(fact.semantic_name(), "a");
+
+    let script = recognized_block_reference_use("{ delete a }");
+    let use_site = only_block_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), "a");
+    assert!(matches!(
+        use_site.terminator(),
+        SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticBeforeBlockClose
+    ));
+
+    let script = recognized_block_reference_use(r"{ delete \u{1D49C} }");
+    let use_site = only_block_use_site(&script);
+    let fact = only_fact(use_site.body());
+    assert_eq!(fact.reference().fragment(), r"\u{1D49C}");
+    assert_eq!(fact.semantic_name(), "\u{1D49C}");
+}
+
+/// Issue #841 maximal `IdentifierName` prefix-fallback matrix: this is the
+/// load-bearing boundary. Where the existing bare-`IdentifierReference`
+/// route already accepts them, plain-spelled and escaped-spelled
+/// `delete`-prefixed identifiers alike must remain one maximal authored
+/// `IdentifierReference` -- never split into a `delete` keyword plus a
+/// shorter operand -- proving correct owner fallback after the new
+/// keyword-unary helper's own maximality probe declines (reusing the
+/// unmodified `consume_keyword()` boundary, unchanged).
+#[test]
+fn delete_identifier_reference_unary_expression_maximal_identifier_name_prefix_fallback_matrix_is_preserved()
+ {
+    for (text, fragment, semantic_name) in [
+        ("const x = deletea;", "deletea", "deletea"),
+        ("const x = deleteπ;", "deleteπ", "deleteπ"),
+        (r"const x = delete\u0061;", r"delete\u0061", "deletea"),
+        (r"const x = delete\u{61};", r"delete\u{61}", "deletea"),
+    ] {
+        let script = recognized(text);
+        let [binding] = script.declarations()[0].bindings() else {
+            panic!("expected one selected lexical binding");
+        };
+        let reference = binding
+            .identifier_reference_initializer()
+            .expect("maximal bare IdentifierReference fact");
+        assert_eq!(reference.reference().fragment(), fragment, "{text}");
+        assert_eq!(reference.semantic_name(), semantic_name, "{text}");
+    }
+
+    for (text, fragment, semantic_name) in [
+        ("deletea;", "deletea", "deletea"),
+        ("deleteπ;", "deleteπ", "deleteπ"),
+        (r"delete\u0061;", r"delete\u0061", "deletea"),
+        (r"delete\u{61};", r"delete\u{61}", "deletea"),
+    ] {
+        let script = recognized_reference_use(text);
+        let use_site = only_top_level_use_site(&script);
+        let fact = only_fact(use_site.body());
+        assert_eq!(fact.reference().fragment(), fragment, "{text}");
+        assert_eq!(fact.semantic_name(), semantic_name, "{text}");
+    }
+}
+
+/// Issue #841 non-strict `IdentifierReference` policy composition: the
+/// accepted #839/#840 Oracle additionally proved representative
+/// current-non-strict-profile operand names compose correctly through the
+/// new `delete` wrapper, for both Direct and EscapedNonReserved provenance.
+/// These are current non-strict selected-profile positives only; they are
+/// not evidence for any future strict-mode `delete` capability.
+#[test]
+fn delete_identifier_reference_unary_expression_non_strict_identifier_reference_policy_composition_matrix()
+ {
+    for name in ["let", "static", "yield", "await", "eval", "arguments"] {
+        let text = format!("const x = delete {name};");
+        let script = recognized(&text);
+        let [binding] = script.declarations()[0].bindings() else {
+            panic!("expected one selected lexical binding");
+        };
+        let reference = binding.identifier_reference_initializer().unwrap();
+        assert_eq!(reference.reference().fragment(), name, "{text}");
+        assert_eq!(reference.semantic_name(), name, "{text}");
+    }
+
+    for (escaped, semantic_name) in [
+        (r"\u006Cet", "let"),
+        (r"\u0079ield", "yield"),
+        (r"a\u0077ait", "await"),
+        (r"\u0065val", "eval"),
+        (r"\u0061rguments", "arguments"),
+    ] {
+        let text = format!("const x = delete {escaped};");
+        let script = recognized(&text);
+        let [binding] = script.declarations()[0].bindings() else {
+            panic!("expected one selected lexical binding");
+        };
+        let reference = binding.identifier_reference_initializer().unwrap();
+        assert_eq!(reference.reference().fragment(), escaped, "{text}");
+        assert_eq!(reference.semantic_name(), semantic_name, "{text}");
+    }
+}
+
+/// Issue #841 firewalls: exactly-one recursive/mixed unary (including a
+/// keyword-unary operand and the settled `!`/`~`/`+`/`-` families composing
+/// as the operand), escaped keyword spelling, missing/unsupported
+/// separator, invalid/escaped-ReservedWord operands, grouping as the `delete`
+/// operand, richer expression tails, and additive composition all remain
+/// outside the accepted theorem, in both the initializer and the
+/// free-standing position, without becoming a shorter selected success.
+/// Grouping is deliberately not classified as globally invalid ECMAScript
+/// here -- it is simply outside this exact bounded first leaf, per the
+/// accepted #839/#840 Oracle.
+#[test]
+fn delete_identifier_reference_unary_expression_required_firewalls_remain_unsupported() {
+    for text in [
+        // Exactly-one / recursive / mixed unary.
+        "const x = delete delete a;",
+        "const x = delete !a;",
+        "const x = delete ~a;",
+        "const x = delete +a;",
+        "const x = delete -a;",
+        "const x = delete typeof a;",
+        "const x = delete void a;",
+        // Grouping as the `delete` operand remains outside this leaf.
+        "const x = delete (a);",
+        "const x = delete ((a));",
+        // Escaped keyword spelling is not a direct operator token.
+        "const x = \\u0064elete a;",
+        // Comments are not selected trivia between keyword and operand.
+        "const x = delete/*c*/a;",
+        // Missing separator: a zero-trivia continuation is one maximal
+        // bare IdentifierReference, not a split keyword-unary atom, and
+        // punctuation directly after the keyword has no operand at all.
+        "const x = delete!a;",
+        "const x = delete(a);",
+        // Invalid / escaped-ReservedWord operands.
+        "const x = delete if;",
+        "const x = delete class;",
+        "const x = delete \\u0069f;",
+        r"const x = delete \u{69}f;",
+        r"const x = delete \u{};",
+        r"const x = delete \u{G};",
+        r"const x = delete \u{110000};",
+        "const x = delete \\u0030;",
+        // Richer expression tails: a locally matched `delete a` prefix must
+        // not commit despite a richer trailing expression.
+        "const x = delete a+b;",
+        "const x = delete a-b;",
+        "const x = delete a*b;",
+        "const x = delete a.b;",
+        "const x = delete a();",
+        "const x = delete a=b;",
+        "const x = delete a?b:c;",
+        // Additive composition remains outside for this leaf.
+        "const x = a+delete b;",
+        "const x = a-delete b;",
+    ] {
+        assert_unsupported(text);
+    }
+
+    for text in [
+        "delete delete a;",
+        "delete !a;",
+        "delete ~a;",
+        "delete +a;",
+        "delete -a;",
+        "delete typeof a;",
+        "delete void a;",
+        "delete (a);",
+        "delete ((a));",
+        "\\u0064elete a;",
+        "delete/*c*/a;",
+        "delete!a;",
+        "delete(a);",
+        "delete if;",
+        "delete class;",
+        "delete \\u0069f;",
+        r"delete \u{69}f;",
+        r"delete \u{};",
+        r"delete \u{G};",
+        r"delete \u{110000};",
+        "delete \\u0030;",
+        "delete a+b;",
+        "delete a-b;",
+        "delete a*b;",
+        "delete a.b;",
+        "delete a();",
+        "delete a=b;",
+        "delete a?b:c;",
+        "a+delete b;",
+        "a-delete b;",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+/// Issue #841 transactionality: a locally complete `delete`-wrapped fact
+/// must not escape as committed selected state when a later declarator
+/// prevents the enclosing owner from completing, across all three
+/// initializer owners, and a locally recognized free-standing body must not
+/// authorize a richer neighbor across either placement.
+#[test]
+fn delete_identifier_reference_unary_expression_transactionality_commits_no_earlier_fact() {
+    for text in [
+        "let x=delete a,y=;",
+        "var x=delete a,y=;",
+        "{ var x=delete a,y= }",
+    ] {
+        assert_unsupported(text);
+    }
+
+    let subject = grammar_rejection(r"let x=delete a, \u{}=1;");
+    assert_eq!(subject.fragment(), r"\u{}");
+
+    let subject = grammar_rejection(r"var x=delete a, \u{}=1;");
+    assert_eq!(subject.fragment(), r"\u{}");
+
+    let subject = grammar_rejection(r"{ var x=delete a, \u{}=1; }");
+    assert_eq!(subject.fragment(), r"\u{}");
+
+    for text in ["delete a\nb;", "{ delete a\nb; }"] {
+        assert_unsupported(text);
+    }
+}
+
+/// Issue #841 private-reference firewall: a private-name `delete` target
+/// (`delete obj.#x`, `delete obj?.#x`) remains structurally outside this
+/// bounded leaf, whose operand is exactly one `IdentifierReference`. This
+/// does not implement private-name production or classify these as a new
+/// static error; it only proves the existing lexical layer continues to
+/// decline the whole source, in both the initializer and free-standing
+/// position.
+#[test]
+fn delete_identifier_reference_unary_expression_private_reference_firewalls_remain_unsupported() {
+    for text in ["const x = delete obj.#x;", "const x = delete obj?.#x;"] {
+        assert_unsupported(text);
+    }
+
+    for text in ["delete obj.#x;", "delete obj?.#x;"] {
         assert_unsupported(text);
     }
 }
@@ -12675,10 +13150,13 @@ fn unary_use_site_other_unary_operators_remain_unsupported() {
     // `bang_tilde_identifier_reference_unary_expression_*` above); `typeof
     // a;`/`void a;` were unsupported here before Issue #837 moved them into
     // selected-positive coverage (see
-    // `typeof_void_identifier_reference_unary_expression_*` below); every
-    // other sibling unary family below remains outside this new theorem and
+    // `typeof_void_identifier_reference_unary_expression_*` below); `delete
+    // a;` was unsupported here before Issue #841 moved it into
+    // selected-positive coverage (see
+    // `delete_identifier_reference_unary_expression_*` below); every other
+    // sibling unary family below remains outside this new theorem and
     // outside the existing leading `+`/`-` family, exactly as before.
-    for text in ["delete a;", "++a;", "--a;", "+-a;", "-+a;"] {
+    for text in ["++a;", "--a;", "+-a;", "-+a;"] {
         assert_unsupported(text);
     }
 }

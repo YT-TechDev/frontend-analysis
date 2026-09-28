@@ -2235,6 +2235,45 @@ enum SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition {
     InternalFailure,
 }
 
+/// Result of the bounded exactly-one direct `delete` `IdentifierReference`
+/// `UnaryExpression` recognizer below (Issue #841, composing the accepted
+/// candidate-independent authority proven by #839/PR #840 per #688 comments
+/// 5857601911, 5857970069, and 5858046424). `Matched` carries the exact
+/// existing `SelectedIdentifierReferenceFact` produced by the shared
+/// `consume_selected_identifier_reference()` recognizer for the operand,
+/// unchanged, for either a direct-authored or an escaped non-ReservedWord
+/// operand. `NotSelected` covers every decline: no direct `delete` keyword
+/// match (reusing the unmodified `consume_keyword()` boundary, which already
+/// declines a maximal `IdentifierName` such as `deletea` or `delete\u0061`
+/// so that the existing bare-reference route can own the complete
+/// fragment), no selected trivia between the keyword and the operand, an
+/// escaped `ReservedWord` operand, or no `IdentifierReference` operand at
+/// all. `ResourceLimited` and `InternalFailure` preserve the shared
+/// recognizer's own processing-failure classes without collapsing them into
+/// `NotSelected`. This carrier is deliberately distinct from
+/// `SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition` above:
+/// `delete` owns a dedicated accepted EE-11 theorem rather than sharing the
+/// `typeof`/`void` theorem. #839/#840 independently proved EE-11-R01 and
+/// EE-11-R02 non-triggering for every candidate this bounded theorem admits,
+/// because the current selected carrier is provably non-strict (no
+/// selected Directive Prologue, Module, Function, Class, or direct-eval
+/// context can arise from currently admitted source), the operand is
+/// exactly one `IdentifierReference`, and no private-reference or
+/// `CoverParenthesizedExpressionAndArrowParameterList` operand is admitted.
+/// This retained-fact representation is authoritative only for that exact
+/// non-strict selected carrier; it is never reusable authority for a future
+/// strict-capable `delete` frontier, which must reopen
+/// representation/static-semantics design before composition. The two
+/// keyword-unary families are therefore not merged behind one generic
+/// recognition result.
+#[derive(Debug)]
+enum SelectedDeleteIdentifierReferenceUnaryExpressionRecognition {
+    Matched(SelectedIdentifierReferenceFact),
+    NotSelected,
+    ResourceLimited,
+    InternalFailure,
+}
+
 /// Result of the placement-neutral bounded exactly-one parenthesized
 /// `IdentifierReference` recognizer below (Issue #833, composing the
 /// accepted candidate-independent theorem proven by #831/PR #832 per #688
@@ -2810,6 +2849,17 @@ impl<'source> Cursor<'source> {
                                         return Err(ParseFailure::InternalFailure);
                                     }
                                         SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
+                                match self.consume_selected_delete_identifier_reference_unary_expression() {
+                                    SelectedDeleteIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
+                                        (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
+                                    }
+                                    SelectedDeleteIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
+                                        return Err(ParseFailure::ResourceLimited);
+                                    }
+                                    SelectedDeleteIdentifierReferenceUnaryExpressionRecognition::InternalFailure => {
+                                        return Err(ParseFailure::InternalFailure);
+                                    }
+                                    SelectedDeleteIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
                                 match self.consume_selected_parenthesized_identifier_reference() {
                                     SelectedParenthesizedIdentifierReferenceRecognition::Matched(reference) => {
                                         (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
@@ -2883,6 +2933,8 @@ impl<'source> Cursor<'source> {
                                 }
                                         }
                                     }
+                                }
+                                }
                                 }
                                     }
                                 }
@@ -3040,6 +3092,17 @@ impl<'source> Cursor<'source> {
                                         return Err(ParseFailure::InternalFailure);
                                     }
                                         SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
+                                match self.consume_selected_delete_identifier_reference_unary_expression() {
+                                    SelectedDeleteIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
+                                        (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
+                                    }
+                                    SelectedDeleteIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
+                                        return Err(ParseFailure::ResourceLimited);
+                                    }
+                                    SelectedDeleteIdentifierReferenceUnaryExpressionRecognition::InternalFailure => {
+                                        return Err(ParseFailure::InternalFailure);
+                                    }
+                                    SelectedDeleteIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
                                 match self.consume_selected_parenthesized_identifier_reference() {
                                     SelectedParenthesizedIdentifierReferenceRecognition::Matched(reference) => {
                                         (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
@@ -3113,6 +3176,8 @@ impl<'source> Cursor<'source> {
                                 }
                                         }
                                     }
+                                }
+                                }
                                 }
                                     }
                                 }
@@ -3236,6 +3301,18 @@ impl<'source> Cursor<'source> {
                                     return Err(ParseFailure::InternalFailure);
                                 }
                                     SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
+                            match self.consume_selected_delete_identifier_reference_unary_expression() {
+                                SelectedDeleteIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
+                                    identifier_reference_initializer =
+                                        Some(SelectedIdentifierReferenceInitializer::One(reference));
+                                }
+                                SelectedDeleteIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
+                                    return Err(ParseFailure::ResourceLimited);
+                                }
+                                SelectedDeleteIdentifierReferenceUnaryExpressionRecognition::InternalFailure => {
+                                    return Err(ParseFailure::InternalFailure);
+                                }
+                                SelectedDeleteIdentifierReferenceUnaryExpressionRecognition::NotSelected => {
                             match self.consume_selected_parenthesized_identifier_reference() {
                                 SelectedParenthesizedIdentifierReferenceRecognition::Matched(reference) => {
                                     identifier_reference_initializer =
@@ -3302,6 +3379,8 @@ impl<'source> Cursor<'source> {
                             }
                             }
                                     }
+                            }
+                            }
                                 }
                             }
                                 }
@@ -4156,6 +4235,22 @@ impl<'source> Cursor<'source> {
                 return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::InternalFailure;
             }
             SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition::NotSelected => {}
+        }
+
+        match self.consume_selected_delete_identifier_reference_unary_expression() {
+            SelectedDeleteIdentifierReferenceUnaryExpressionRecognition::Matched(reference) => {
+                self.skip_selected_trivia();
+                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::Matched(
+                    SelectedFreeStandingIdentifierReferenceUseSite::One(reference),
+                );
+            }
+            SelectedDeleteIdentifierReferenceUnaryExpressionRecognition::ResourceLimited => {
+                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::ResourceLimited;
+            }
+            SelectedDeleteIdentifierReferenceUnaryExpressionRecognition::InternalFailure => {
+                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::InternalFailure;
+            }
+            SelectedDeleteIdentifierReferenceUnaryExpressionRecognition::NotSelected => {}
         }
 
         match self.consume_selected_parenthesized_identifier_reference() {
@@ -6362,6 +6457,106 @@ impl<'source> Cursor<'source> {
             }
             SelectedIdentifierReferenceRecognition::InternalFailure => {
                 SelectedTypeofVoidIdentifierReferenceUnaryExpressionRecognition::InternalFailure
+            }
+        }
+    }
+
+    /// Recognizes exactly one direct `delete` `IdentifierReference`
+    /// `UnaryExpression` (`"delete" SelectedRequiredDeleteOperandTrivia
+    /// SelectedAcceptedIdentifierReference`, where
+    /// `SelectedAcceptedIdentifierReference ::= SelectedDirectIdentifierReference
+    /// | SelectedEscapedNonReservedIdentifierReference`) in either the
+    /// selected initializer position or the selected free-standing
+    /// `ExpressionStatement` use-site body position (Issue #841, composing
+    /// the accepted candidate-independent authority proven by #839/PR #840
+    /// per #688 comments 5857601911, 5857970069, and 5858046424). Modeled
+    /// directly on
+    /// `consume_selected_typeof_void_identifier_reference_unary_expression`
+    /// above, swapping the recognized keyword for the unmodified shared
+    /// `consume_keyword("delete")` boundary: on a match, the existing inner
+    /// `SelectedIdentifierReferenceFact` produced by the unmodified shared
+    /// `consume_selected_identifier_reference()` recognizer is returned
+    /// unchanged, for either operand spelling. The operand is recognized and
+    /// decoded exactly once by that unmodified shared recognizer; no second
+    /// keyword scanner or Identifier scanner is introduced.
+    ///
+    /// `consume_keyword()` already declines a direct `delete` match when the
+    /// next authored element continues the same maximal `IdentifierName` (an
+    /// `IdentifierPart` or a formed Unicode escape), so `deletea`,
+    /// `delete\u{61}`, and `delete\u0061` remain one maximal authored
+    /// `IdentifierReference` owned entirely by the existing bare-reference
+    /// route, never split into keyword plus operand here. An explicit
+    /// non-empty-trivia check is still applied after a successful keyword
+    /// match even though that maximality boundary already prevents a
+    /// zero-trivia `IdentifierReference` success: this keeps the bounded
+    /// theorem local (e.g. `delete/*c*/a` remains outside, since comments
+    /// are not selected trivia) and independent of any future widening of
+    /// the inner recognizer's own boundary.
+    ///
+    /// This bounded local scan commits `self.offset` only after a complete
+    /// direct-authored or escaped non-ReservedWord `IdentifierReference`
+    /// operand is recognized following the keyword and non-empty
+    /// intervening existing selected trivia (`skip_selected_trivia`,
+    /// unchanged). An escaped `ReservedWord` operand (e.g. `delete \u{69}f`,
+    /// decoding to `if`), no `IdentifierReference` operand at all, or no
+    /// selected trivia between the keyword and the operand restores the
+    /// cursor to its starting offset and returns `NotSelected`. A processing
+    /// failure from the shared recognizer (`ResourceLimited` /
+    /// `InternalFailure`) is preserved unchanged and is never downgraded to
+    /// `NotSelected`. A locally complete keyword-unary atom does not itself
+    /// authorize any broader source; the caller (an initializer owner or the
+    /// free-standing body owner) remains solely responsible for judging any
+    /// unowned trailing source (e.g. `delete a+b`, `delete a.b`,
+    /// `delete a()`), and this helper is deliberately never routed into the
+    /// `+`/`-` family's additive continuation helpers, is never invoked
+    /// recursively on its own operand (`delete delete a`, `delete typeof a`,
+    /// `delete void a` remain outside), and never treats an existing
+    /// parenthesized `IdentifierReference` as its operand (`delete (a)`
+    /// remains outside, per the accepted #839/#840 Oracle: grouping is valid
+    /// broader `delete` syntax, not globally invalid ECMAScript, but is
+    /// structurally outside this first bounded leaf).
+    ///
+    /// Only the exact inner `SelectedIdentifierReferenceFact` is retained on
+    /// a match; no `delete` operator identity, keyword `SourceAnchor`, or
+    /// whole `UnaryExpression` `SourceAnchor` is kept, and no runtime
+    /// `Reference`/`ResolveBinding`/`GetValue`/`DeleteBinding` state is
+    /// modeled. Per #688 comment 5858046424, this erased-identity
+    /// representation is authoritative only because the current selected
+    /// carrier is provably non-strict Script (no selected Directive
+    /// Prologue, Module, Function, Class, or direct-eval context is
+    /// currently reachable); it is not reusable authority for a future
+    /// strict-capable `delete` frontier, which must reopen
+    /// representation/static-semantics design before composition.
+    fn consume_selected_delete_identifier_reference_unary_expression(
+        &mut self,
+    ) -> SelectedDeleteIdentifierReferenceUnaryExpressionRecognition {
+        let start = self.offset;
+
+        if !self.consume_keyword("delete") {
+            return SelectedDeleteIdentifierReferenceUnaryExpressionRecognition::NotSelected;
+        }
+
+        let before_trivia = self.offset;
+        self.skip_selected_trivia();
+        if self.offset == before_trivia {
+            self.offset = start;
+            return SelectedDeleteIdentifierReferenceUnaryExpressionRecognition::NotSelected;
+        }
+
+        match self.consume_selected_identifier_reference() {
+            SelectedIdentifierReferenceRecognition::Matched(reference) => {
+                SelectedDeleteIdentifierReferenceUnaryExpressionRecognition::Matched(reference)
+            }
+            SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName { .. }
+            | SelectedIdentifierReferenceRecognition::NotSelected => {
+                self.offset = start;
+                SelectedDeleteIdentifierReferenceUnaryExpressionRecognition::NotSelected
+            }
+            SelectedIdentifierReferenceRecognition::ResourceLimited => {
+                SelectedDeleteIdentifierReferenceUnaryExpressionRecognition::ResourceLimited
+            }
+            SelectedIdentifierReferenceRecognition::InternalFailure => {
+                SelectedDeleteIdentifierReferenceUnaryExpressionRecognition::InternalFailure
             }
         }
     }

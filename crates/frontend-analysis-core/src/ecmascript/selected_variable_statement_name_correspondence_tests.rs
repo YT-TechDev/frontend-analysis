@@ -653,6 +653,65 @@ fn leading_plus_minus_direct_identifier_reference_unary_expression_composes_unch
 }
 
 #[test]
+fn delete_identifier_reference_unary_expression_composes_unchanged_with_top_level_var_correspondence()
+ {
+    // Issue #841: `delete` retains no delete/trivia/whole-UnaryExpression
+    // identity, so the retained inner `SelectedIdentifierReferenceFact` must
+    // compose through existing source-name correspondence exactly like an
+    // unwrapped bare reference, for both Direct and EscapedNonReserved
+    // operand spellings, and against both a lexical target and an authored
+    // `var` contributor. This is source-name correspondence only: no
+    // ResolveBinding, GetValue, DeleteBinding, runtime delete
+    // success/failure, or ReferenceError claim is made or tested here.
+    let (_, script) = recognized_variable("let a; var x=delete a;");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(range(relation.containing_binding()), (11, 12));
+    assert_eq!(range(relation.reference()), (20, 21));
+    assert_eq!(relation.reference().fragment(), "a");
+    assert_eq!(relation.semantic_name(), "a");
+    let (binding, region) = relation
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("existing top-level lexical target meaning for direct delete operand");
+    assert_eq!(range(binding), (4, 5));
+    assert!(matches!(
+        region,
+        SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+    ));
+
+    let (_, script) = recognized_variable(r"let a; var x=delete \u0061;");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(range(relation.containing_binding()), (11, 12));
+    assert_eq!(range(relation.reference()), (20, 26));
+    assert_eq!(relation.reference().fragment(), r"\u0061");
+    assert_eq!(relation.semantic_name(), "a");
+    let (binding, region) = relation
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("existing top-level lexical target meaning for escaped delete operand");
+    assert_eq!(range(binding), (4, 5));
+    assert!(matches!(
+        region,
+        SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+    ));
+
+    let (_, script) = recognized_variable("var a; var x=delete a;");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(range(relation.containing_binding()), (11, 12));
+    assert_eq!(range(relation.reference()), (20, 21));
+    assert_eq!(relation.semantic_name(), "a");
+    let contributors = relation
+        .correspondence()
+        .var_contributors()
+        .expect("existing same-source var contributor meaning for delete operand");
+    assert_eq!(contributors.len(), 1);
+    assert_eq!(range(contributors[0]), (4, 5));
+}
+
+#[test]
 fn leading_plus_minus_identifier_reference_unary_expression_composes_unchanged_with_escaped_operand_and_top_level_var_correspondence()
  {
     let (_, script) = recognized_variable(r"let a; var x=-\u{61};");

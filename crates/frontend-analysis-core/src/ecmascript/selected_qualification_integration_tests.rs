@@ -2996,6 +2996,48 @@ fn typeof_void_identifier_reference_unary_expression_reaches_selected_accepted_i
     }
 }
 
+/// Issue #841: the newly production-selected exactly-one direct `delete`
+/// `IdentifierReference` `UnaryExpression` reaches the same existing
+/// `SelectedAcceptedIncomplete` lifecycle as any other production-accepted,
+/// not-yet-Oracle-qualified source -- never `UnsupportedCoverage` and never
+/// `Qualified`. Representative sources cover each newly admitted owner/
+/// placement class: the three initializer owners (plus one Block-contained
+/// `LexicalDeclaration` representative), and both free-standing placements
+/// under both terminator forms, with a Direct and an escaped (fixed or
+/// braced/supplementary) operand each. This is production regression
+/// sealing only; the accepted #839/PR #840 candidate-independent Oracle
+/// authority is unaffected and remains the sole authority for the wrapped-
+/// reference fact and EE-11-R01/EE-11-R02 non-triggering theorem.
+#[test]
+fn delete_identifier_reference_unary_expression_reaches_selected_accepted_incomplete() {
+    for text in [
+        // LexicalDeclaration initializer.
+        "const x = delete a;",
+        // Escaped initializer (fixed-form escape).
+        r"let x = delete \u0061;",
+        // Top-level var.
+        "var x = delete a;",
+        // Block var / Block-contained initializer owner (braced escape).
+        r"{ var x = delete \u{66}oo; }",
+        // TopLevel free-standing authored terminator.
+        "delete a;",
+        // TopLevel free-standing EOF ASI (fixed-form escape).
+        r"delete \u0061",
+        // Block free-standing authored terminator.
+        "{ delete a; }",
+        // Block free-standing before-`}` ASI (supplementary braced escape).
+        r"{ delete \u{1D49C} }",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+}
+
 #[test]
 fn top_level_identifier_reference_expression_statement_use_site_dispatch_reaches_accepted_incomplete_while_declaration_grammar_stays_owned()
  {
