@@ -180,13 +180,16 @@ fn bang_tilde_grouped_reference_initializer_reaches_var_correspondence_with_only
     assert_eq!(contributors.len(), 1);
     assert_eq!(range(contributors[0]), (4, 5));
 
-    // Escaped inner operand: authored `a` decodes to semantic name `a`
-    // and still corresponds to the same existing `var a` contributor.
-    let (_, script) = recognized_variable(r"var a; let x=~(a);");
+    // Escaped inner operand: authored `\u0061` decodes to semantic
+    // name `a` and still corresponds to the same existing `var a`
+    // contributor. The authored inner SourceAnchor excludes the operator,
+    // both delimiters, and the whole grouped-unary span.
+    let (_, script) = recognized_variable(r"var a; let x=~(\u0061);");
     let analysis = accepted_analysis(&script);
     let relation = one_relation(&analysis);
     assert_eq!(relation.semantic_name(), "a");
-    assert_eq!(relation.reference().fragment(), r"a");
+    assert_eq!(relation.reference().fragment(), r"\u0061");
+    assert_eq!(range(relation.reference()), (15, 21));
     let contributors = relation
         .correspondence()
         .var_contributors()

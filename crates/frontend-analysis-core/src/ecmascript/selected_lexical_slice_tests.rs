@@ -8530,8 +8530,8 @@ fn bang_tilde_parenthesized_identifier_reference_unary_expression_initializer_po
 
 /// Issue #843's own required minimum positive matrix ("At minimum seal"),
 /// sealed exactly matching its listed forms -- `!(a)` / `~(a)` / `! (a)` /
-/// `~ (a)` / `!(π)` / `~(𝒜)` / `!(a)` / `~(foo)` / `!(\u{66}oo)` /
-/// `~(\u{1D49C})` / `!( a )` / `~( a )` -- across representative
+/// `~ (a)` / `!(π)` / `~(𝒜)` / `!(\u0061)` / `~(f\u006Fo)` / `!(\u{66}oo)` /
+/// `~(\u{1D49C})` / `!( a )` / `~( \u0061 )` -- across representative
 /// initializer and free-standing placements, exercising Direct and
 /// `EscapedNonReserved` inner provenance and both outer and inner selected
 /// trivia together.
@@ -8545,12 +8545,12 @@ fn bang_tilde_parenthesized_identifier_reference_unary_expression_issue_843_mini
         ("~ (a)", "a", "a"),
         ("!(π)", "π", "π"),
         ("~(𝒜)", "𝒜", "𝒜"),
-        (r"!(a)", r"a", "a"),
-        (r"~(foo)", r"foo", "foo"),
+        (r"!(\u0061)", r"\u0061", "a"),
+        (r"~(f\u006Fo)", r"f\u006Fo", "foo"),
         (r"!(\u{66}oo)", r"\u{66}oo", "foo"),
         (r"~(\u{1D49C})", r"\u{1D49C}", "\u{1D49C}"),
         ("!( a )", "a", "a"),
-        (r"~( a )", r"a", "a"),
+        (r"~( \u0061 )", r"\u0061", "a"),
     ] {
         let text = format!("const x = {operand_source};");
         let script = recognized(&text);
@@ -8807,23 +8807,23 @@ fn bang_tilde_parenthesized_identifier_reference_unary_expression_comment_firewa
 fn bang_tilde_parenthesized_identifier_reference_unary_expression_escaped_boundary_firewalls_remain_unowned()
  {
     for text in [
-        r"const x = !(if);",
+        r"const x = !(\u0069f);",
         r"const x = ~(\u{69}f);",
         r"const x = !(\u{});",
         r"const x = ~(\u{G});",
         r"const x = !(\u{110000});",
-        r"const x = ~(0);",
+        r"const x = ~(\u0030);",
     ] {
         assert_unsupported(text);
     }
 
     for text in [
-        r"!(if);",
+        r"!(\u0069f);",
         r"~(\u{69}f);",
         r"!(\u{});",
         r"~(\u{G});",
         r"!(\u{110000});",
-        r"~(0);",
+        r"~(\u0030);",
     ] {
         assert_unsupported(text);
     }
