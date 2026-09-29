@@ -3124,6 +3124,50 @@ fn leading_plus_minus_parenthesized_identifier_reference_unary_expression_reache
     }
 }
 
+/// Issue #847: the newly production-selected exactly-one `typeof`/`void`
+/// composed over exactly-one existing
+/// `SelectedParenthesizedIdentifierReference` reaches the same existing
+/// `SelectedAcceptedIncomplete` lifecycle as any other production-accepted,
+/// not-yet-Oracle-qualified source -- never `UnsupportedCoverage` and never
+/// `Qualified`. Representative sources cover each newly admitted
+/// owner/placement class: the three initializer owners (plus one
+/// Block-contained `LexicalDeclaration` representative), and both
+/// free-standing placements under both terminator forms, with a Direct and
+/// an escaped (fixed or braced) operand each, and a zero-outer-trivia form.
+/// This is production regression sealing only; the accepted #837/#838 and
+/// #831/#832 candidate-independent Oracle authority is unaffected and
+/// remains the sole authority for the composed facts.
+#[test]
+fn typeof_void_parenthesized_identifier_reference_unary_expression_reaches_selected_accepted_incomplete()
+ {
+    for text in [
+        // LexicalDeclaration initializer (zero outer trivia).
+        "const x = typeof(a);",
+        // Escaped initializer (fixed-form escape).
+        r"let x = void(\u0061);",
+        // Top-level var.
+        "var x = typeof(a);",
+        // Block var / Block-contained initializer owner (braced escape).
+        r"{ var x = void(\u{66}oo); }",
+        // TopLevel free-standing authored terminator.
+        "typeof(a);",
+        // TopLevel free-standing EOF ASI (fixed-form escape).
+        r"void(\u0061)",
+        // Block free-standing authored terminator.
+        "{ typeof(a); }",
+        // Block free-standing before-`}` ASI (supplementary braced escape).
+        r"{ void(\u{1D49C}) }",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+}
+
 #[test]
 fn top_level_identifier_reference_expression_statement_use_site_dispatch_reaches_accepted_incomplete_while_declaration_grammar_stays_owned()
  {

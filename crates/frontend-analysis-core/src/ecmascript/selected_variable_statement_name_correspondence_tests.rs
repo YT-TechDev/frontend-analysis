@@ -245,6 +245,53 @@ fn leading_plus_minus_grouped_reference_initializer_reaches_var_correspondence_w
 }
 
 #[test]
+fn typeof_void_grouped_reference_initializer_reaches_var_correspondence_with_only_the_inner_anchor()
+{
+    // Issue #847: `var a; let x=typeof(a);` must acquire exactly the same
+    // correspondence relation as its unwrapped `var a; let x=a;`, grouped
+    // `var a; let x=(a);` (#833), and grouped `+`/`-` `var a; let x=+(a);`
+    // (#845) counterparts -- same containing binding, same var contributor,
+    // same semantic name -- differing only in the reference anchor's
+    // position, which is the inner authored `a` (index 20) and never the
+    // keyword, either delimiter, or the whole `typeof(a)` span (index
+    // 13..22).
+    let (_, script) = recognized_variable("var a; let x=typeof(a);");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(relation.semantic_name(), "a");
+    assert_eq!(relation.reference().fragment(), "a");
+    assert_eq!(range(relation.reference()), (20, 21));
+    assert!(matches!(
+        relation.current_region(),
+        SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+    ));
+
+    let contributors = relation
+        .correspondence()
+        .var_contributors()
+        .expect("top-level var contributor relation");
+    assert_eq!(contributors.len(), 1);
+    assert_eq!(range(contributors[0]), (4, 5));
+
+    // Escaped inner operand: authored `\u0061` decodes to semantic
+    // name `a` and still corresponds to the same existing `var a`
+    // contributor. The authored inner SourceAnchor excludes the keyword,
+    // both delimiters, and the whole grouped-unary span.
+    let (_, script) = recognized_variable(r"var a; let x=void(\u0061);");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(relation.semantic_name(), "a");
+    assert_eq!(relation.reference().fragment(), r"\u0061");
+    assert_eq!(range(relation.reference()), (18, 24));
+    let contributors = relation
+        .correspondence()
+        .var_contributors()
+        .expect("top-level var contributor relation for the escaped operand");
+    assert_eq!(contributors.len(), 1);
+    assert_eq!(range(contributors[0]), (4, 5));
+}
+
+#[test]
 fn escaped_and_direct_spellings_share_exact_semantic_name_without_normalization() {
     for (text, expected_fragments) in [
         (r"var \u0061; let x=a;", &[r"\u0061"][..]),
