@@ -20,6 +20,8 @@ mod qualification_selected_bang_tilde_identifier_reference_unary_expression_init
 #[cfg(test)]
 mod qualification_selected_boolean_literal_initializer_validation_tests;
 #[cfg(test)]
+mod qualification_selected_call_headed_existing_additive_continuation_validation_tests;
+#[cfg(test)]
 mod qualification_selected_delete_identifier_reference_unary_expression_validation_tests;
 #[cfg(test)]
 mod qualification_selected_eof_asi_validation_tests;
