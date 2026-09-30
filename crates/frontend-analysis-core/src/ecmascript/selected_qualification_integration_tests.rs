@@ -2,9 +2,17 @@ use crate::{SourceId, SourceText};
 
 use super::qualification::{ProcessingStatus, QualificationVerdictKind, RejectionFamily};
 use super::qualification_validation_tests::{gold_source, gold_subject_range};
+use super::selected_lexical_slice::{
+    SelectedLexicalSliceOutcome, recognize_selected_lexical_slice,
+};
 use super::selected_qualification_integration::{
     SelectedQualificationAttempt, attempt_selected_qualification,
     selected_grammar_rejection_to_qualification,
+};
+use super::selected_static_semantics::{
+    SelectedIdentifierReferenceExpressionStatementStaticSemanticsOutcome,
+    SelectedStaticSemanticsRejection,
+    evaluate_selected_identifier_reference_expression_statement_static_semantics,
 };
 
 fn attempt(text: &str) -> SelectedQualificationAttempt {
@@ -1017,9 +1025,10 @@ fn grammar_primary_discards_tentative_static_evidence_and_is_terminal() {
 #[test]
 fn unowned_and_deferred_grammar_boundaries_remain_unsupported() {
     for text in [
-        // `let \u0030; foo();` moved to selected-positive coverage by Issue
-        // #851 (see the "Issue #851" section below); a richer tail stays
-        // unsupported.
+        // Issue #851 makes the trailing `foo();` of `let \u0030; foo();`
+        // selectable, so that source no longer stops at `UnsupportedCoverage`;
+        // its pre-existing EE-01 static-semantics rejection is pinned in the
+        // "Issue #851" section below. The richer call tail stays unsupported.
         r"let \u0030; foo()();",
         r"let\u002D\u{};",
         r"let\u0;",
@@ -4110,4 +4119,65 @@ fn zero_argument_identifier_reference_call_expression_richer_neighbors_remain_un
             "{text:?}"
         );
     }
+}
+
+/// Issue #851 makes the trailing `foo();` of `let \u0030; foo();` selectable,
+/// so this whole source no longer stops at `UnsupportedCoverage`. That does
+/// not make it semantically accepted: the earlier `let \u0030;` binding
+/// already owns the pre-existing EE-01 (`InvalidEscapedIdentifierStart`)
+/// static-semantics rejection with the authored subject `\u0030` at `4..10`,
+/// which must survive the newly reachable downstream syntax coverage. No new
+/// Early Error identity is involved. The richer `foo()()` neighbor of the
+/// same declaration stays `UnsupportedCoverage` (pinned separately in
+/// `unowned_and_deferred_grammar_boundaries_remain_unsupported`).
+#[test]
+fn zero_argument_identifier_reference_call_expression_preserves_existing_ee01_rejection_of_invalid_escaped_binding()
+ {
+    let text = r"let \u0030; foo();";
+
+    // Lower layer: recognition consumes the full source, and static
+    // semantics still rejects the original binding evidence.
+    let source = SourceText::new(SourceId::new(218), text.to_owned());
+    let script = match recognize_selected_lexical_slice(&source) {
+        SelectedLexicalSliceOutcome::RecognizedIdentifierReferenceExpressionStatementSlice(
+            script,
+        ) => script,
+        other => {
+            panic!("expected whole-source reference-use recognition for {text:?}, got {other:?}")
+        }
+    };
+    match evaluate_selected_identifier_reference_expression_statement_static_semantics(&script) {
+        SelectedIdentifierReferenceExpressionStatementStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::InvalidEscapedIdentifierStart { escape },
+        ) => {
+            assert_eq!(escape.fragment(), r"\u0030");
+            assert_eq!((escape.range().start(), escape.range().end()), (4, 10));
+        }
+        other => panic!("expected EE-01 InvalidEscapedIdentifierStart for {text:?}, got {other:?}"),
+    }
+
+    // Qualification entrypoint: the exact existing static-semantics
+    // rejection, never `UnsupportedCoverage` and never
+    // `SelectedAcceptedIncomplete`.
+    let outcome = qualification_outcome(text);
+    assert_eq!(outcome.processing(), ProcessingStatus::Complete);
+    assert_eq!(
+        outcome.verdict(),
+        Some(QualificationVerdictKind::StaticSemanticsRejected)
+    );
+    let evidence = outcome.rejection_evidence().expect("static evidence");
+    assert_eq!(evidence.family(), RejectionFamily::StaticSemantics);
+    let anchor = evidence
+        .subject()
+        .authored_anchor()
+        .expect("authored static subject");
+    assert_eq!(anchor.fragment(), r"\u0030");
+    assert_eq!((anchor.range().start(), anchor.range().end()), (4, 10));
+
+    // The richer call tail of the same declaration stays outside selected
+    // production.
+    assert!(matches!(
+        attempt(r"let \u0030; foo()();"),
+        SelectedQualificationAttempt::UnsupportedCoverage
+    ));
 }

@@ -1040,9 +1040,14 @@ fn adjacent_malformed_classes_remain_unsupported() {
 
 #[test]
 fn escaped_binding_whole_source_transaction_distinguishes_unsupported_tail_from_owned_grammar() {
-    // `let \u0030; foo();` moved to selected-positive coverage by Issue #851
-    // (see the "Issue #851" test section below); a richer tail still declines
-    // the whole source.
+    // Issue #851 makes the trailing `foo();` selectable, so `let \u0030;
+    // foo();` no longer stops at `UnsupportedCoverage`: recognition consumes
+    // the whole source. That is recognition coverage only -- the pre-existing
+    // InvalidEscapedIdentifierStart / EE-01 static-semantics rejection of the
+    // earlier `\u0030` binding remains authoritative and is pinned in the
+    // "Issue #851" qualification regression. A richer call tail still
+    // declines the whole source.
+    let _ = recognized_reference_use(r"let \u0030; foo();");
     assert_unsupported(r"let \u0030; foo()();");
 
     let script = recognized(r"let \u0030 = foo;");
@@ -16761,26 +16766,28 @@ fn optional_plus_minus_heterogeneous_reference_decimal_additive_free_standing_us
 // and before the bare-reference fallback, and never routed into any
 // additive/heterogeneous continuation. ---
 
-/// Asserts that `fact` is exactly the callee of `call` inside `text`: the
-/// authored anchor covers the callee only (never `(`, `)`, or any trivia),
-/// the decoded semantic name matches, and the provenance is `Direct` or
-/// `Escaped` as expected.
+/// Asserts that `fact` is exactly the authored callee: the anchor covers the
+/// callee only (never `(`, `)`, or any trivia) and starts at
+/// `expected_callee_start`, the offset owned by the fixture that built `text`
+/// (its authored prefix length), never recovered by searching the finished
+/// source. The expected end is the fixture-owned authored `callee` length
+/// (never the decoded name length). The decoded semantic name and the
+/// `Direct` / `Escaped` provenance must match as well.
 fn assert_call_callee(
     fact: &super::selected_lexical_slice::SelectedIdentifierReferenceFact,
     text: &str,
-    call: &str,
+    expected_callee_start: usize,
     callee: &str,
     name: &str,
     escaped: bool,
 ) {
-    let start = text.find(call).expect("call source must appear in text");
     assert_eq!(fact.reference().fragment(), callee, "{text:?}");
     assert_eq!(
         (
             fact.reference().range().start(),
             fact.reference().range().end()
         ),
-        (start, start + callee.len()),
+        (expected_callee_start, expected_callee_start + callee.len()),
         "{text:?}"
     );
     assert_eq!(fact.semantic_name(), name, "{text:?}");
@@ -16798,15 +16805,18 @@ fn assert_call_callee(
 /// owners (`parse_declaration` at TopLevel and inside a Block,
 /// `parse_variable_statement`, `parse_selected_block_var_statement`) and the
 /// free-standing use-site body under every accepted terminator (authored
-/// semicolon, EOF, Block-close).
+/// semicolon, EOF, Block-close). Every `call` passed here begins with its
+/// callee, so `check` receives the fixture-owned expected callee start: the
+/// length of the authored prefix this function places before `call`.
 fn for_each_call_placement(
     call: &str,
-    mut check: impl FnMut(&str, &super::selected_lexical_slice::SelectedIdentifierReferenceFact),
+    mut check: impl FnMut(&str, usize, &super::selected_lexical_slice::SelectedIdentifierReferenceFact),
 ) {
     use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
 
     for keyword in ["const", "let"] {
-        let text = format!("{keyword} x = {call};");
+        let prefix = format!("{keyword} x = ");
+        let text = format!("{prefix}{call};");
         let script = recognized(&text);
         let [binding] = script.declarations()[0].bindings() else {
             panic!("expected one selected lexical binding for {text:?}");
@@ -16814,10 +16824,11 @@ fn for_each_call_placement(
         let mut facts = binding.identifier_reference_initializer_facts();
         let fact = facts.next().expect("exactly one callee fact");
         assert!(facts.next().is_none(), "second retained fact for {text:?}");
-        check(&text, fact);
+        check(&text, prefix.len(), fact);
     }
 
-    let text = format!("var x = {call};");
+    let prefix = "var x = ";
+    let text = format!("{prefix}{call};");
     let script = recognized_variable(&text);
     let [binding] = only_variable_statement(&script).bindings() else {
         panic!("expected one selected var binding for {text:?}");
@@ -16825,9 +16836,10 @@ fn for_each_call_placement(
     let mut facts = binding.identifier_reference_initializer_facts();
     let fact = facts.next().expect("exactly one callee fact");
     assert!(facts.next().is_none(), "second retained fact for {text:?}");
-    check(&text, fact);
+    check(&text, prefix.len(), fact);
 
-    let text = format!("{{ var x = {call}; }}");
+    let prefix = "{ var x = ";
+    let text = format!("{prefix}{call}; }}");
     let script = recognized_block(&text);
     let [SelectedTopLevelItem::Block(block)] = script.items() else {
         panic!("expected exactly one Block item for {text:?}");
@@ -16841,9 +16853,10 @@ fn for_each_call_placement(
     let mut facts = binding.identifier_reference_initializer_facts();
     let fact = facts.next().expect("exactly one callee fact");
     assert!(facts.next().is_none(), "second retained fact for {text:?}");
-    check(&text, fact);
+    check(&text, prefix.len(), fact);
 
-    let text = format!("{{ let x = {call}; }}");
+    let prefix = "{ let x = ";
+    let text = format!("{prefix}{call}; }}");
     let script = recognized_block(&text);
     let [SelectedTopLevelItem::Block(block)] = script.items() else {
         panic!("expected exactly one Block item for {text:?}");
@@ -16857,16 +16870,19 @@ fn for_each_call_placement(
     let mut facts = binding.identifier_reference_initializer_facts();
     let fact = facts.next().expect("exactly one callee fact");
     assert!(facts.next().is_none(), "second retained fact for {text:?}");
-    check(&text, fact);
+    check(&text, prefix.len(), fact);
 
+    // Free-standing TopLevel: the call is the first thing in the source.
     for text in [format!("{call};"), call.to_owned()] {
         let script = recognized_reference_use(&text);
-        check(&text, only_use_site_fact(&script));
+        check(&text, 0, only_use_site_fact(&script));
     }
 
-    for text in [format!("{{ {call}; }}"), format!("{{ {call} }}")] {
+    // Free-standing Block: the call follows the authored `{ ` prefix.
+    let prefix = "{ ";
+    for text in [format!("{prefix}{call}; }}"), format!("{prefix}{call} }}")] {
         let script = recognized_block_reference_use(&text);
-        check(&text, only_block_use_site_fact(&script));
+        check(&text, prefix.len(), only_block_use_site_fact(&script));
     }
 }
 
@@ -16892,8 +16908,8 @@ fn assert_unsupported_in_every_call_placement(tail: &str) {
 #[test]
 fn zero_argument_identifier_reference_call_expression_minimum_positive_matrix_is_recognized_across_all_four_owners()
  {
-    for_each_call_placement("f()", |text, fact| {
-        assert_call_callee(fact, text, "f()", "f", "f", false);
+    for_each_call_placement("f()", |text, start, fact| {
+        assert_call_callee(fact, text, start, "f", "f", false);
     });
 
     // Repository-native spellings of the issue's minimum matrix.
@@ -16925,8 +16941,8 @@ fn zero_argument_identifier_reference_call_expression_direct_callees_retain_exac
         ("𝒜()", "𝒜"),
         ("foo_bar$1()", "foo_bar$1"),
     ] {
-        for_each_call_placement(call, |text, fact| {
-            assert_call_callee(fact, text, call, callee, callee, false);
+        for_each_call_placement(call, |text, start, fact| {
+            assert_call_callee(fact, text, start, callee, callee, false);
         });
     }
 }
@@ -16942,8 +16958,8 @@ fn zero_argument_identifier_reference_call_expression_escaped_non_reserved_calle
         (r"\u{1D49C}()", r"\u{1D49C}", "\u{1D49C}"),
         (r"a\u{62}c ( )", r"a\u{62}c", "abc"),
     ] {
-        for_each_call_placement(call, |text, fact| {
-            assert_call_callee(fact, text, call, callee, name, true);
+        for_each_call_placement(call, |text, start, fact| {
+            assert_call_callee(fact, text, start, callee, name, true);
         });
     }
 }
@@ -16968,8 +16984,8 @@ fn zero_argument_identifier_reference_call_expression_selected_trivia_matrix_is_
         "f\n(\n)",
         "f\t(\u{A0}\n)",
     ] {
-        for_each_call_placement(call, |text, fact| {
-            assert_call_callee(fact, text, call, "f", "f", false);
+        for_each_call_placement(call, |text, start, fact| {
+            assert_call_callee(fact, text, start, "f", "f", false);
         });
     }
 }
@@ -17043,8 +17059,10 @@ fn zero_argument_identifier_reference_call_expression_composes_with_existing_dec
     let second = second
         .identifier_reference_initializer()
         .expect("second callee");
-    assert_call_callee(first, "var a = f(), b = g();", "f()", "f", "f", false);
-    assert_call_callee(second, "var a = f(), b = g();", "g()", "g", "g", false);
+    // Fixture-owned offsets: `f` follows the 8-byte prefix `var a = `; `g`
+    // follows `var a = f(), b = ` (8 + 5 + 4 bytes).
+    assert_call_callee(first, "var a = f(), b = g();", 8, "f", "f", false);
+    assert_call_callee(second, "var a = f(), b = g();", 17, "g", "g", false);
 
     let script = recognized("let a = f, b = g();");
     let [first, second] = script.declarations()[0].bindings() else {
@@ -17058,7 +17076,8 @@ fn zero_argument_identifier_reference_call_expression_composes_with_existing_dec
         .expect("call second");
     assert_eq!(first.reference().fragment(), "f");
     assert_eq!(second.reference().fragment(), "g");
-    assert_call_callee(second, "let a = f, b = g();", "g()", "g", "g", false);
+    // Fixture-owned offset: `g` follows `let a = f, b = ` (8 + 3 + 4 bytes).
+    assert_call_callee(second, "let a = f, b = g();", 15, "g", "g", false);
 
     for text in [
         "let x=1; foo();",
@@ -17244,15 +17263,15 @@ fn zero_argument_identifier_reference_call_expression_async_arrow_and_cover_fire
     }
 
     // Plain `async()` (no `=>`) is an ordinary bounded call.
-    for_each_call_placement("async()", |text, fact| {
-        assert_call_callee(fact, text, "async()", "async", "async", false);
+    for_each_call_placement("async()", |text, start, fact| {
+        assert_call_callee(fact, text, start, "async", "async", false);
     });
 }
 
 #[test]
 fn zero_argument_identifier_reference_call_expression_eval_is_source_only() {
-    for_each_call_placement("eval()", |text, fact| {
-        assert_call_callee(fact, text, "eval()", "eval", "eval", false);
+    for_each_call_placement("eval()", |text, start, fact| {
+        assert_call_callee(fact, text, start, "eval", "eval", false);
     });
 }
 
@@ -17263,8 +17282,8 @@ fn zero_argument_identifier_reference_call_expression_contextual_and_reserved_ca
     // accepted as callees; unconditionally reserved words never become one.
     for call in ["yield()", "await()", "let()", "static()"] {
         let callee = call.trim_end_matches("()");
-        for_each_call_placement(call, |text, fact| {
-            assert_call_callee(fact, text, call, callee, callee, false);
+        for_each_call_placement(call, |text, start, fact| {
+            assert_call_callee(fact, text, start, callee, callee, false);
         });
     }
     for tail in [
@@ -17300,7 +17319,7 @@ fn zero_argument_identifier_reference_call_expression_identifier_reference_bound
 
     // Maximal IdentifierName ownership: the callee is the whole name, never
     // a prefix followed by a synthesized `(`.
-    for_each_call_placement("ab_c()", |text, fact| {
-        assert_call_callee(fact, text, "ab_c()", "ab_c", "ab_c", false);
+    for_each_call_placement("ab_c()", |text, start, fact| {
+        assert_call_callee(fact, text, start, "ab_c", "ab_c", false);
     });
 }
