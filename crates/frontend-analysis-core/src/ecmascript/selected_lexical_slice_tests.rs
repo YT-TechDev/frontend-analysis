@@ -9900,7 +9900,6 @@ fn two_identifier_reference_additive_initializer_firewalls_remain_unsupported() 
         "let x = a + (b);",
         "let x = a.b + c;",
         "let x = a + b.c;",
-        "let x = a() + b;",
         "let x = a + b();",
         // Malformed / position-invalid second operand must not leak the
         // first operand as a committed fact.
@@ -11177,7 +11176,6 @@ fn one_reference_one_plain_decimal_additive_initializer_firewalls_remain_unsuppo
         "let x = 1 + (a);",
         "let x = a.b + 1;",
         "let x = 1 + a.b;",
-        "let x = a() + 1;",
         "let x = 1 + a();",
         "let x = a + 1 * b;",
         "let x = a * 1 + b;",
@@ -13845,7 +13843,6 @@ fn two_operand_operand_firewall_remains_unsupported() {
         "a+(b);",
         "a.b+c;",
         "a+b.c;",
-        "a()+b;",
         "a+b();",
     ] {
         assert_unsupported(text);
@@ -15390,7 +15387,6 @@ fn one_reference_one_plain_decimal_additive_use_site_firewalls_remain_unsupporte
         "1 + (a);",
         "a.b + 1;",
         "1 + a.b;",
-        "a() + 1;",
         "1 + a();",
         "a + 1 * b;",
         "a * 1 + b;",
@@ -17195,8 +17191,8 @@ fn zero_argument_identifier_reference_call_expression_non_empty_arguments_remain
 fn zero_argument_identifier_reference_call_expression_richer_outer_continuations_remain_unsupported()
  {
     for tail in [
-        "f()()", "f().x", "f()[x]", "f()+g", "f()-g", "f()*g", "f()/g", "f()?g:h", "f()=g",
-        "f()+1", "1+f()", "a+f()", "f()+ +a", "f()\n()", "f()`x`", "f()++", "f()&&g",
+        "f()()", "f().x", "f()[x]", "f()*g", "f()/g", "f()?g:h", "f()=g", "1+f()", "a+f()",
+        "f()\n()", "f()`x`", "f()++", "f()&&g",
     ] {
         assert_unsupported_in_every_call_placement(tail);
     }
@@ -17322,4 +17318,583 @@ fn zero_argument_identifier_reference_call_expression_identifier_reference_bound
     for_each_call_placement("ab_c()", |text, start, fact| {
         assert_call_callee(fact, text, start, "ab_c", "ab_c", false);
     });
+}
+
+// --- Issue #855: one accepted zero-argument `IdentifierReference` call as the
+// first atom of one-or-more additive links already accepted by the specific
+// owner (composing the accepted candidate-independent theorem proven by
+// #853/PR #854). Expectations below are fixture-owned literals: each expected
+// retained fact is the authored byte offset of its `IdentifierReference`
+// inside the expression, its authored fragment, its decoded semantic name,
+// and its provenance. Nothing here is derived from recognition output. ---
+
+/// `(expression-relative authored start, authored fragment, semantic name,
+/// escaped)` for one expected retained `IdentifierReference` fact.
+type CallHeadedFact = (usize, &'static str, &'static str, bool);
+
+/// Runs `check` with the exact ordered retained facts of `expr` in every
+/// placement owned by the authorized owners: the three initializer owners
+/// (`parse_declaration` at TopLevel and inside a Block,
+/// `parse_variable_statement`, `parse_selected_block_var_statement`) and the
+/// free-standing use-site body under every accepted terminator. `check`
+/// receives the fixture-owned length of the authored prefix placed before
+/// `expr`.
+fn for_each_call_headed_placement(
+    expr: &str,
+    mut check: impl FnMut(
+        &str,
+        usize,
+        Vec<&super::selected_lexical_slice::SelectedIdentifierReferenceFact>,
+    ),
+) {
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+
+    for keyword in ["const", "let"] {
+        let prefix = format!("{keyword} x = ");
+        let text = format!("{prefix}{expr};");
+        let script = recognized(&text);
+        let [binding] = script.declarations()[0].bindings() else {
+            panic!("expected one selected lexical binding for {text:?}");
+        };
+        check(
+            &text,
+            prefix.len(),
+            binding.identifier_reference_initializer_facts().collect(),
+        );
+    }
+
+    let prefix = "var x = ";
+    let text = format!("{prefix}{expr};");
+    let script = recognized_variable(&text);
+    let [binding] = only_variable_statement(&script).bindings() else {
+        panic!("expected one selected var binding for {text:?}");
+    };
+    check(
+        &text,
+        prefix.len(),
+        binding.identifier_reference_initializer_facts().collect(),
+    );
+
+    let prefix = "{ var x = ";
+    let text = format!("{prefix}{expr}; }}");
+    let script = recognized_block(&text);
+    let [SelectedTopLevelItem::Block(block)] = script.items() else {
+        panic!("expected exactly one Block item for {text:?}");
+    };
+    let [SelectedBlockItem::Var(statement)] = block.items() else {
+        panic!("expected exactly one Block var statement for {text:?}");
+    };
+    let [binding] = statement.bindings() else {
+        panic!("expected one selected Block var binding for {text:?}");
+    };
+    check(
+        &text,
+        prefix.len(),
+        binding.identifier_reference_initializer_facts().collect(),
+    );
+
+    let prefix = "{ let x = ";
+    let text = format!("{prefix}{expr}; }}");
+    let script = recognized_block(&text);
+    let [SelectedTopLevelItem::Block(block)] = script.items() else {
+        panic!("expected exactly one Block item for {text:?}");
+    };
+    let [SelectedBlockItem::LexicalDeclaration(declaration)] = block.items() else {
+        panic!("expected exactly one Block lexical declaration for {text:?}");
+    };
+    let [binding] = declaration.bindings() else {
+        panic!("expected one selected Block lexical binding for {text:?}");
+    };
+    check(
+        &text,
+        prefix.len(),
+        binding.identifier_reference_initializer_facts().collect(),
+    );
+
+    for text in [format!("{expr};"), expr.to_owned()] {
+        let script = recognized_reference_use(&text);
+        check(
+            &text,
+            0,
+            only_top_level_use_site(&script).body().facts().collect(),
+        );
+    }
+
+    let prefix = "{ ";
+    for text in [format!("{prefix}{expr}; }}"), format!("{prefix}{expr} }}")] {
+        let script = recognized_block_reference_use(&text);
+        check(
+            &text,
+            prefix.len(),
+            only_block_use_site(&script).body().facts().collect(),
+        );
+    }
+}
+
+fn assert_call_headed_matrix(rows: &[(&str, &[CallHeadedFact])]) {
+    for (expr, expected) in rows {
+        for_each_call_headed_placement(expr, |text, prefix_len, facts| {
+            assert_eq!(facts.len(), expected.len(), "{text:?}");
+            for (fact, (offset, authored, name, escaped)) in facts.iter().zip(*expected) {
+                assert_call_callee(fact, text, prefix_len + offset, authored, name, *escaped);
+            }
+        });
+    }
+}
+
+#[test]
+fn call_headed_additive_direct_reference_continuation_is_recognized_across_all_owners() {
+    assert_call_headed_matrix(&[
+        ("f()+g", &[(0, "f", "f", false), (4, "g", "g", false)]),
+        ("f()-g", &[(0, "f", "f", false), (4, "g", "g", false)]),
+        (
+            "foo()+bar",
+            &[(0, "foo", "foo", false), (6, "bar", "bar", false)],
+        ),
+        ("π()+σ", &[(0, "π", "π", false), (5, "σ", "σ", false)]),
+        ("𝒜()-g", &[(0, "𝒜", "𝒜", false), (7, "g", "g", false)]),
+    ]);
+}
+
+#[test]
+fn call_headed_additive_escaped_head_and_escaped_tail_retain_exact_authored_anchors() {
+    assert_call_headed_matrix(&[
+        (
+            r"\u0066()+g",
+            &[(0, r"\u0066", "f", true), (9, "g", "g", false)],
+        ),
+        (
+            r"\u{66}()-g",
+            &[(0, r"\u{66}", "f", true), (9, "g", "g", false)],
+        ),
+        (
+            r"\u{1D49C}()+g",
+            &[(0, r"\u{1D49C}", "\u{1D49C}", true), (12, "g", "g", false)],
+        ),
+        (
+            r"f\u006Fo()+g",
+            &[(0, r"f\u006Fo", "foo", true), (11, "g", "g", false)],
+        ),
+        (
+            r"f()+\u0067",
+            &[(0, "f", "f", false), (4, r"\u0067", "g", true)],
+        ),
+        (
+            r"f()-\u{67}",
+            &[(0, "f", "f", false), (4, r"\u{67}", "g", true)],
+        ),
+        (
+            r"f()+g\u006F",
+            &[(0, "f", "f", false), (4, r"g\u006F", "go", true)],
+        ),
+        (
+            r"\u0066()+\u0067",
+            &[(0, r"\u0066", "f", true), (9, r"\u0067", "g", true)],
+        ),
+    ]);
+}
+
+#[test]
+fn call_headed_additive_longer_existing_chains_retain_every_reference_in_authored_order() {
+    assert_call_headed_matrix(&[
+        (
+            "f()-g+h",
+            &[
+                (0, "f", "f", false),
+                (4, "g", "g", false),
+                (6, "h", "h", false),
+            ],
+        ),
+        (
+            "f()+g-h+i-j",
+            &[
+                (0, "f", "f", false),
+                (4, "g", "g", false),
+                (6, "h", "h", false),
+                (8, "i", "i", false),
+                (10, "j", "j", false),
+            ],
+        ),
+        (
+            r"f()+g-\u0068+i",
+            &[
+                (0, "f", "f", false),
+                (4, "g", "g", false),
+                (6, r"\u0068", "h", true),
+                (13, "i", "i", false),
+            ],
+        ),
+    ]);
+}
+
+/// Decimal operands contribute no fact: only the retained callee and later
+/// `IdentifierReference` operands do.
+#[test]
+fn call_headed_additive_decimal_continuation_retains_only_reference_facts() {
+    assert_call_headed_matrix(&[
+        ("f()+1", &[(0, "f", "f", false)]),
+        ("f()-1", &[(0, "f", "f", false)]),
+        ("f()+1.5", &[(0, "f", "f", false)]),
+        ("f()+.5", &[(0, "f", "f", false)]),
+        ("f()+1e3", &[(0, "f", "f", false)]),
+        ("f()+1+2", &[(0, "f", "f", false)]),
+        ("f()+1+g", &[(0, "f", "f", false), (6, "g", "g", false)]),
+        ("f()+g+1", &[(0, "f", "f", false), (4, "g", "g", false)]),
+        (
+            "f()+1+g-2+h",
+            &[
+                (0, "f", "f", false),
+                (6, "g", "g", false),
+                (10, "h", "h", false),
+            ],
+        ),
+    ]);
+}
+
+/// The optional exactly-one right-unary `+`/`-` reference continuation the
+/// existing owners already accept composes unchanged; the unary sign is never
+/// part of the retained authored anchor.
+#[test]
+fn call_headed_additive_existing_right_unary_reference_continuation_composes_unchanged() {
+    assert_call_headed_matrix(&[
+        ("f()+ +g", &[(0, "f", "f", false), (6, "g", "g", false)]),
+        ("f()+-g", &[(0, "f", "f", false), (5, "g", "g", false)]),
+        ("f()-+g", &[(0, "f", "f", false), (5, "g", "g", false)]),
+        ("f()- -g", &[(0, "f", "f", false), (6, "g", "g", false)]),
+        (
+            "f()+g+-h",
+            &[
+                (0, "f", "f", false),
+                (4, "g", "g", false),
+                (7, "h", "h", false),
+            ],
+        ),
+        (
+            "f()-g+ +h",
+            &[
+                (0, "f", "f", false),
+                (4, "g", "g", false),
+                (8, "h", "h", false),
+            ],
+        ),
+    ]);
+}
+
+#[test]
+fn call_headed_additive_selected_trivia_matrix_is_recognized() {
+    assert_call_headed_matrix(&[
+        ("f ()+g", &[(0, "f", "f", false), (5, "g", "g", false)]),
+        ("f\n()+g", &[(0, "f", "f", false), (5, "g", "g", false)]),
+        ("f( )+g", &[(0, "f", "f", false), (5, "g", "g", false)]),
+        ("f(\n)+g", &[(0, "f", "f", false), (5, "g", "g", false)]),
+        ("f() +g", &[(0, "f", "f", false), (5, "g", "g", false)]),
+        ("f()\n+g", &[(0, "f", "f", false), (5, "g", "g", false)]),
+        ("f()+ g", &[(0, "f", "f", false), (5, "g", "g", false)]),
+        ("f()+\ng", &[(0, "f", "f", false), (5, "g", "g", false)]),
+        ("f ( ) + g", &[(0, "f", "f", false), (8, "g", "g", false)]),
+        ("f()\n+\ng", &[(0, "f", "f", false), (6, "g", "g", false)]),
+        (
+            "f\t(\u{A0})\r\n-\u{2028}g",
+            &[(0, "f", "f", false), (12, "g", "g", false)],
+        ),
+        ("f()+1\n+\ng", &[(0, "f", "f", false), (8, "g", "g", false)]),
+    ]);
+}
+
+#[test]
+fn call_headed_additive_special_and_contextual_heads_are_source_syntax_only() {
+    assert_call_headed_matrix(&[
+        (
+            "eval()+g",
+            &[(0, "eval", "eval", false), (7, "g", "g", false)],
+        ),
+        (
+            "async()+g",
+            &[(0, "async", "async", false), (8, "g", "g", false)],
+        ),
+        (
+            "yield()-g",
+            &[(0, "yield", "yield", false), (8, "g", "g", false)],
+        ),
+        (
+            "await()+g",
+            &[(0, "await", "await", false), (8, "g", "g", false)],
+        ),
+    ]);
+}
+
+/// The initializer owner keeps its declaration-list ownership: each
+/// declarator owns its own initializer facts in authored order, and the `,`
+/// after a complete additive prefix belongs to the declaration list.
+#[test]
+fn call_headed_additive_composes_with_existing_declarator_lists_and_mixed_items() {
+    let script = recognized_variable("var a = f()+g, b = h()-k;");
+    let [first, second] = only_variable_statement(&script).bindings() else {
+        panic!("expected two selected var declarators");
+    };
+    let text = "var a = f()+g, b = h()-k;";
+    let first: Vec<_> = first.identifier_reference_initializer_facts().collect();
+    let second: Vec<_> = second.identifier_reference_initializer_facts().collect();
+    assert_eq!(first.len(), 2);
+    assert_call_callee(first[0], text, 8, "f", "f", false);
+    assert_call_callee(first[1], text, 12, "g", "g", false);
+    assert_eq!(second.len(), 2);
+    assert_call_callee(second[0], text, 19, "h", "h", false);
+    assert_call_callee(second[1], text, 23, "k", "k", false);
+
+    let script = recognized("let a = f()+g, b = h();");
+    let text = "let a = f()+g, b = h();";
+    let [first, second] = script.declarations()[0].bindings() else {
+        panic!("expected two selected lexical declarators");
+    };
+    let first: Vec<_> = first.identifier_reference_initializer_facts().collect();
+    let second: Vec<_> = second.identifier_reference_initializer_facts().collect();
+    assert_eq!(first.len(), 2);
+    assert_call_callee(first[0], text, 8, "f", "f", false);
+    assert_call_callee(first[1], text, 12, "g", "g", false);
+    assert_eq!(second.len(), 1);
+    assert_call_callee(second[0], text, 19, "h", "h", false);
+
+    let text = "let a = 1; f()+g;";
+    let script = recognized_reference_use(text);
+    let Some(SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
+        use_site,
+    )) = script.items().last()
+    else {
+        panic!("expected a trailing free-standing use-site for {text:?}");
+    };
+    let facts: Vec<_> = use_site.body().facts().collect();
+    assert_eq!(facts.len(), 2);
+    assert_call_callee(facts[0], text, 11, "f", "f", false);
+    assert_call_callee(facts[1], text, 15, "g", "g", false);
+}
+
+/// Call-only stays call-only: with no additive link the existing #852
+/// theorem still owns the call head and retains exactly the callee fact.
+#[test]
+fn call_headed_additive_leaves_call_only_theorem_unchanged() {
+    for_each_call_headed_placement("f()", |text, prefix_len, facts| {
+        assert_eq!(facts.len(), 1, "{text:?}");
+        assert_call_callee(facts[0], text, prefix_len, "f", "f", false);
+    });
+    for_each_call_headed_placement("f ( )", |text, prefix_len, facts| {
+        assert_eq!(facts.len(), 1, "{text:?}");
+        assert_call_callee(facts[0], text, prefix_len, "f", "f", false);
+    });
+}
+
+/// Every source below either lacks the accepted call head, lacks a complete
+/// owner-accepted additive link, or carries a suffix no owner accepts. In
+/// every placement the whole source is declined, so no call-headed fact list
+/// and no call-only prefix escapes: the initializer's locally recovered
+/// prefix is rejected by the declaration/statement owner, and the
+/// free-standing body rolls back as a whole transaction.
+#[test]
+fn call_headed_additive_richer_neighbors_remain_unsupported() {
+    for tail in [
+        // Call / member neighbors of the head or of a link.
+        "f()()+g",
+        "f().x+g",
+        "f()[x]+g",
+        "f()+g()",
+        "f()+g().x",
+        "f()+g+h()",
+        "f()+g.h",
+        "f()+g[h]",
+        "f()+g?.h",
+        "f()+g`t`",
+        "a+f()",
+        "1+f()",
+        // Precedence families.
+        "f()*g",
+        "f()/g",
+        "f()%g",
+        "f()**g",
+        "f()+g*h",
+        "f()+g/h",
+        "f()+g%h",
+        "f()+g**h",
+        "f()+1*g",
+        "f()*g+h",
+        // Richer expression tails.
+        "f()+g?x:y",
+        "f()+g=h",
+        "f()+g+=h",
+        "f()+g++",
+        "f()+g--",
+        "f()+g==h",
+        "f()+g<h",
+        "f()+g&&h",
+        "f()+g||h",
+        "f()+g??h",
+        "f()+g in h",
+        "f()+g instanceof h",
+        "f()+g=>h",
+        // Other unary operator families at a link operand.
+        "f()+!g",
+        "f()+~g",
+        "f()+typeof g",
+        "f()+void g",
+        "f()+delete g",
+        // Grouping.
+        "(f())+g",
+        "f()+(g)",
+        "(f()+g)",
+        "f()+(g)+h",
+        // Non-empty Arguments and comments.
+        "f(a)+g",
+        "f(1)+g",
+        "f(...a)+g",
+        "f(/*c*/)+g",
+        "f/*c*/()+g",
+        "f()/*c*/+g",
+        "f()+/*c*/g",
+        "f()+g/*c*/",
+        // Other operand families.
+        "f()+true",
+        "f()+null",
+        "f()+this",
+        "f()+\"s\"",
+        "f()+true+g",
+    ] {
+        assert_unsupported_in_every_call_placement(tail);
+    }
+}
+
+#[test]
+fn call_headed_additive_incomplete_and_unselected_continuations_leak_no_fact_list() {
+    for tail in [
+        // Incomplete continuation.
+        "f()+",
+        "f()-",
+        "f()+ ",
+        "f()+\n",
+        "f()+g+",
+        "f()-g-",
+        "f()+1+",
+        "f()+g+1+",
+        // Same-sign adjacency is never split into a binary + unary sign.
+        "f()++g",
+        "f()--g",
+        "f()+g++h",
+        "f()+g--h",
+        "f()+1++g",
+        "f()+ ++g",
+        // At most one right-unary wrapper and never before a Decimal.
+        "f()+-+g",
+        "f()+ + +g",
+        "f()+ +1",
+        "f()+-1",
+        "f()-+1",
+        "f()+g+ +1",
+        "f()+g+-1",
+        // Decimal operands followed by a spelling no owner accepts.
+        "f()+1a",
+        "f()+1n",
+        "f()+0x1F",
+        "f()+1_0",
+        "f()+1e",
+        "f()+1.5.3",
+        "f()+01",
+        // Non-trivia separator look-alikes are not selected trivia.
+        "f()\u{0085}+g",
+        "f()\u{180E}+g",
+        "f()+\u{200B}g",
+        "f()+\u{2060}g",
+    ] {
+        assert_unsupported_in_every_call_placement(tail);
+    }
+}
+
+#[test]
+fn call_headed_additive_identifier_reference_boundaries_are_unchanged() {
+    for tail in [
+        // Escaped ReservedWord at head and at a link operand.
+        r"\u0069f()+g",
+        r"\u{69}f()+g",
+        r"f()+\u0069f",
+        r"f()+\u{69}f",
+        r"f()+g+\u0069f",
+        // Malformed / non-CodePoint / invalid-position escapes.
+        r"\u{}()+g",
+        r"\u{G}()+g",
+        r"\u{110000}()+g",
+        r"\u0030()+g",
+        r"f()+\u{}",
+        r"f()+\u{G}",
+        r"f()+\u{110000}",
+        r"f()+\u0031",
+        r"f()+g+\u{}",
+        // Maximal IdentifierName ownership: a bad escape never splits `g`.
+        r"f()+g\u{}",
+        r"f()+g\u0020",
+        r"f()+g\u{110000}",
+        r"f()+g\u002D",
+        // Invalid IdentifierStart.
+        "1a()+g",
+        "-()+g",
+        "f()+#g",
+        "f()+@g",
+        // Unconditionally reserved words are never a head or an operand.
+        "true()+g",
+        "this()+g",
+        "if()+g",
+        "f()+if",
+    ] {
+        assert_unsupported_in_every_call_placement(tail);
+    }
+}
+
+#[test]
+fn call_headed_additive_async_arrow_and_cover_firewall() {
+    for tail in [
+        "async()=>x",
+        "async() => x",
+        "async ( ) => x",
+        "async()+g=>x",
+        "async() + g => x",
+        "async()+g+h=>x",
+        "async()+1=>x",
+    ] {
+        assert_unsupported_in_every_call_placement(tail);
+    }
+    for text in [
+        "async()+g=>x;",
+        "const x = async()+g=>x;",
+        "{ async()+g=>x; }",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+/// Existing predecessor routes keep their precedence: bare-reference and
+/// additive chains without a call head, and the atom-only unary/grouped
+/// families that never enter an additive continuation, are unchanged.
+#[test]
+fn call_headed_additive_predecessor_routes_are_unchanged() {
+    assert_call_headed_matrix(&[
+        ("f+g", &[(0, "f", "f", false), (2, "g", "g", false)]),
+        (
+            "f+g+h",
+            &[
+                (0, "f", "f", false),
+                (2, "g", "g", false),
+                (4, "h", "h", false),
+            ],
+        ),
+        ("f+1", &[(0, "f", "f", false)]),
+        ("1+f", &[(2, "f", "f", false)]),
+        ("f", &[(0, "f", "f", false)]),
+    ]);
+    for tail in [
+        "+f()+g",
+        "-f()+g",
+        "typeof f()+g",
+        "delete f()+g",
+        "!f()+g",
+        "(f)()+g",
+        "typeof (f)+g",
+    ] {
+        assert_unsupported_in_every_call_placement(tail);
+    }
 }

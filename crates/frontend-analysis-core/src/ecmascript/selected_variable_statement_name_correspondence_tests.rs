@@ -5165,3 +5165,142 @@ fn zero_argument_call_block_use_site_reaches_var_correspondence_with_only_the_ca
     assert_eq!(relation.reference().fragment(), "f");
     assert_eq!(range(relation.reference()), (17, 18));
 }
+
+// --- Issue #855: call-headed additive continuation. The retained
+// `IdentifierReference` facts of `f()+g` (callee first, then each later
+// reference in authored order) are consumed by the existing consumer exactly
+// like any other retained fact: one same-source name relation per fact, in
+// authored order. No call-specific or arithmetic-specific relation is
+// introduced, and no callability, binding resolution, value, or execution
+// meaning is claimed. ---
+
+#[test]
+fn call_headed_additive_initializer_facts_compose_unchanged_with_top_level_var_correspondence() {
+    let (_, script) = recognized_variable("let f; let g; var x = f()+g;");
+    let analysis = accepted_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(
+        relations
+            .iter()
+            .map(|relation| relation.semantic_name())
+            .collect::<Vec<_>>(),
+        ["f", "g"]
+    );
+    // Fixture-owned offsets: `f` follows `let f; let g; var x = ` (22 bytes)
+    // and `g` follows `f()+` (4 bytes) after it.
+    assert_eq!(range(relations[0].reference()), (22, 23));
+    assert_eq!(range(relations[1].reference()), (26, 27));
+    for relation in relations {
+        assert!(
+            relation
+                .correspondence()
+                .selected_lexical_binding()
+                .is_some(),
+            "each fact resolves to its same-source lexical binding"
+        );
+    }
+}
+
+#[test]
+fn call_headed_additive_decimal_continuation_contributes_only_the_callee_relation() {
+    let (_, script) = recognized_variable("let f; var x = f()+1;");
+    let analysis = accepted_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(relations.len(), 1);
+    assert_eq!(relations[0].semantic_name(), "f");
+    // Fixture-owned offset: `f` follows `let f; var x = ` (15 bytes).
+    assert_eq!(range(relations[0].reference()), (15, 16));
+}
+
+#[test]
+fn call_headed_additive_initializer_composes_unchanged_with_one_level_block_var_correspondence() {
+    let (_, script) = recognized_one_level_block("let f; let g; { var x = f()-g; }");
+    let analysis = accepted_one_level_block_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(relations.len(), 2);
+    assert_eq!(relations[0].semantic_name(), "f");
+    assert_eq!(relations[1].semantic_name(), "g");
+    for relation in relations {
+        assert!(matches!(
+            relation.current_region(),
+            SelectedVariableStatementNameCorrespondenceRegion::Block(_)
+        ));
+        let (_, region) = relation
+            .correspondence()
+            .selected_lexical_binding()
+            .expect("each fact resolves to the top-level lexical binding");
+        assert!(matches!(
+            region,
+            SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+        ));
+    }
+}
+
+#[test]
+fn call_headed_additive_free_standing_top_level_facts_are_independent_per_fact_queries() {
+    // `f` resolves to the lexical binding and `g` to the Script-wide var
+    // contributor: two independent per-fact queries, never one shared result
+    // for the whole additive use-site.
+    let (_, script) = recognized_reference_use("let f;\nvar g;\nf()+g;");
+    let analysis = accepted_use_site_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(relations.len(), 2);
+    assert_eq!(relations[0].semantic_name(), "f");
+    let (binding, region) = relations[0]
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("callee fact must resolve to the lexical binding f");
+    assert_eq!(binding.fragment(), "f");
+    assert!(matches!(
+        region,
+        SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+    ));
+    assert_eq!(relations[1].semantic_name(), "g");
+    let contributors = relations[1]
+        .correspondence()
+        .var_contributors()
+        .expect("later fact must resolve to the Script-wide var contributor g");
+    assert_eq!(contributors.len(), 1);
+}
+
+#[test]
+fn call_headed_additive_free_standing_block_facts_resolve_in_authored_order() {
+    let (_, script) = recognized_block_reference_use("let g;\n{ let f;\nf()+g; }");
+    let analysis = accepted_block_use_site_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(relations.len(), 2);
+    assert_eq!(relations[0].semantic_name(), "f");
+    let (binding, region) = relations[0]
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("callee fact must resolve to the current-Block lexical binding f");
+    assert_eq!(binding.fragment(), "f");
+    assert!(matches!(
+        region,
+        SelectedVariableStatementNameCorrespondenceRegion::Block(_)
+    ));
+    assert_eq!(relations[1].semantic_name(), "g");
+    let (binding, region) = relations[1]
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("later fact must fall back to the TopLevel lexical binding g");
+    assert_eq!(binding.fragment(), "g");
+    assert!(matches!(
+        region,
+        SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+    ));
+}
+
+#[test]
+fn call_headed_additive_escaped_and_direct_spellings_share_the_exact_semantic_name() {
+    // The escaped callee keeps its exact authored anchor and decoded name;
+    // it is never normalized into the direct spelling.
+    let (_, script) = recognized_reference_use("var f; var g;\n\\u{66}()+g;");
+    let analysis = accepted_use_site_analysis(&script);
+    let relations = analysis.relations();
+    assert_eq!(relations.len(), 2);
+    assert_eq!(relations[0].reference().fragment(), "\\u{66}");
+    assert_eq!(relations[0].semantic_name(), "f");
+    assert_eq!(relations[1].reference().fragment(), "g");
+    assert_eq!(relations[1].semantic_name(), "g");
+}
