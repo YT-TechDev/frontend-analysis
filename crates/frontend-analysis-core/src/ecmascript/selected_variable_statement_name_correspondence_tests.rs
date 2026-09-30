@@ -5001,3 +5001,167 @@ fn optional_unary_many_operand_use_site_duplicate_operands_top_level() {
         }
     }
 }
+
+// --- Issue #851: zero-argument `IdentifierReference` `CallExpression`
+// correspondence. The composed call retains only the existing callee
+// `SelectedIdentifierReferenceFact`, so the existing name-correspondence
+// consumer receives exactly that callee occurrence -- the same same-source
+// name relation as for any other selected `IdentifierReference` -- and never
+// a call-specific relation, callee runtime binding, or return-value
+// relationship. ---
+
+#[test]
+fn zero_argument_call_initializer_reaches_var_correspondence_with_only_the_callee_anchor() {
+    // `var f; let x=f();` must acquire exactly the same relation as the bare
+    // `var f; let x=f;` -- same containing binding, same var contributor,
+    // same semantic name -- with the reference anchor covering only the
+    // callee `f` (index 13..14), never `(`, `)`, or the whole call span.
+    let bare = "var f; let x=f;";
+    let (_, script) = recognized_variable(bare);
+    let analysis = accepted_analysis(&script);
+    let bare_relation = one_relation(&analysis);
+    let bare_contributors = bare_relation
+        .correspondence()
+        .var_contributors()
+        .expect("bare top-level var contributor relation");
+    let bare_shape = (
+        bare_relation.semantic_name().to_owned(),
+        range(bare_relation.reference()),
+        bare_contributors
+            .iter()
+            .map(|anchor| range(anchor))
+            .collect::<Vec<_>>(),
+    );
+
+    let (_, script) = recognized_variable("var f; let x=f();");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(relation.semantic_name(), "f");
+    assert_eq!(relation.reference().fragment(), "f");
+    assert_eq!(range(relation.reference()), bare_shape.1);
+    assert!(matches!(
+        relation.current_region(),
+        SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+    ));
+    let contributors = relation
+        .correspondence()
+        .var_contributors()
+        .expect("top-level var contributor relation");
+    assert_eq!(
+        contributors
+            .iter()
+            .map(|anchor| range(anchor))
+            .collect::<Vec<_>>(),
+        bare_shape.2
+    );
+    assert_eq!(bare_shape.0, relation.semantic_name());
+
+    // Selected trivia around the call never enters the callee anchor.
+    let (_, script) = recognized_variable("var f; let x=f\n( );");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(relation.reference().fragment(), "f");
+    assert_eq!(range(relation.reference()), (13, 14));
+
+    // Escaped callee: authored `\u0066` decodes to `f` and corresponds to
+    // the same existing `var f` contributor; the anchor excludes both
+    // delimiters.
+    let (_, script) = recognized_variable(r"var f; let x=\u0066();");
+    let analysis = accepted_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(relation.semantic_name(), "f");
+    assert_eq!(relation.reference().fragment(), r"\u0066");
+    assert_eq!(range(relation.reference()), (13, 19));
+    let contributors = relation
+        .correspondence()
+        .var_contributors()
+        .expect("top-level var contributor relation for the escaped callee");
+    assert_eq!(contributors.len(), 1);
+    assert_eq!(range(contributors[0]), (4, 5));
+}
+
+#[test]
+fn zero_argument_call_free_standing_use_site_reaches_var_correspondence_with_only_the_callee_anchor()
+ {
+    // Top-level free-standing `f();` and `f()` (EOF ASI).
+    for (text, callee_range) in [("var f;\nf();", (7, 8)), ("var f;\nf ()", (7, 8))] {
+        let (_, script) = recognized_reference_use(text);
+        let analysis = accepted_use_site_analysis(&script);
+        let [relation] = analysis.relations() else {
+            panic!("expected exactly one use-site relation for {text:?}");
+        };
+        assert_eq!(relation.semantic_name(), "f", "{text:?}");
+        assert_eq!(relation.reference().fragment(), "f", "{text:?}");
+        assert_eq!(range(relation.reference()), callee_range, "{text:?}");
+        let contributors = relation
+            .correspondence()
+            .var_contributors()
+            .expect("one var contributor");
+        assert_eq!(contributors.len(), 1, "{text:?}");
+        assert_eq!(range(contributors[0]), (4, 5), "{text:?}");
+    }
+
+    // The relation is the same existing lexical-binding relation as for a
+    // bare reference: a same-name top-level lexical binding wins.
+    let (_, script) = recognized_reference_use("let f;\nf();");
+    let analysis = accepted_use_site_analysis(&script);
+    let [relation] = analysis.relations() else {
+        panic!("expected exactly one use-site relation");
+    };
+    let (binding, region) = relation
+        .correspondence()
+        .selected_lexical_binding()
+        .expect("must resolve to the top-level lexical binding f");
+    assert_eq!(binding.fragment(), "f");
+    assert!(matches!(
+        region,
+        SelectedVariableStatementNameCorrespondenceRegion::TopLevel
+    ));
+
+    // A lone call has no selected same-source contributor: correspondence is
+    // never a runtime binding-resolution claim.
+    let (_, script) = recognized_reference_use("f();");
+    let analysis = accepted_use_site_analysis(&script);
+    let [relation] = analysis.relations() else {
+        panic!("expected exactly one use-site relation");
+    };
+    assert!(
+        relation
+            .correspondence()
+            .is_no_selected_same_source_contributor()
+    );
+}
+
+#[test]
+fn zero_argument_call_block_use_site_reaches_var_correspondence_with_only_the_callee_anchor() {
+    let (_, script) = recognized_block_reference_use("{ var f; f(); }");
+    let analysis = accepted_block_use_site_analysis(&script);
+    let [relation] = analysis.relations() else {
+        panic!("expected exactly one Block use-site relation");
+    };
+    assert_eq!(relation.semantic_name(), "f");
+    assert_eq!(relation.reference().fragment(), "f");
+    assert_eq!(range(relation.reference()), (9, 10));
+    let contributors = relation
+        .correspondence()
+        .var_contributors()
+        .expect("same-Block var contributor");
+    assert_eq!(contributors.len(), 1);
+    assert_eq!(range(contributors[0]), (6, 7));
+
+    // Block-close ASI form.
+    let (_, script) = recognized_block_reference_use("{ var f; f() }");
+    let analysis = accepted_block_use_site_analysis(&script);
+    let [relation] = analysis.relations() else {
+        panic!("expected exactly one Block use-site relation");
+    };
+    assert_eq!(range(relation.reference()), (9, 10));
+
+    // Block-contained initializer owner.
+    let (_, script) = recognized_one_level_block("{ var f; var x = f(); }");
+    let analysis = accepted_one_level_block_analysis(&script);
+    let relation = one_relation(&analysis);
+    assert_eq!(relation.semantic_name(), "f");
+    assert_eq!(relation.reference().fragment(), "f");
+    assert_eq!(range(relation.reference()), (17, 18));
+}

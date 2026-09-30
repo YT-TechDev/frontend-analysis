@@ -711,9 +711,11 @@ fn escaped_identifier_reference_invalid_and_unowned_rhs_remain_unsupported() {
 
 #[test]
 fn escaped_identifier_reference_valid_atom_does_not_widen_expression_or_asi_coverage() {
+    // `const x = \u0066oo();` moved to selected-positive coverage by Issue
+    // #851 (see the "Issue #851" test section below) and is no longer listed
+    // here.
     for text in [
         r"const x = \u0066oo.bar;",
-        r"const x = \u0066oo();",
         r"const x = \u0066oo = bar;",
         r"const x = \u0066oo ? bar : baz;",
         r"const x = \u0066oo/*comment*/;",
@@ -805,14 +807,17 @@ fn identifier_reference_prefixes_do_not_widen_richer_expression_or_escape_covera
     // "const x = (foo);" is deliberately not listed here: Issue #833 makes a
     // selected exactly-one parenthesized `IdentifierReference` initializer a
     // selected accepted form (see the "Issue #833" test section below).
+    // "const x = foo();" and "const x = foo; foo()" are also deliberately not
+    // listed here: Issue #851 makes a selected zero-argument
+    // `IdentifierReference` `CallExpression` initializer and free-standing
+    // use-site a selected accepted form (see the "Issue #851" test section
+    // below).
     for text in [
         "const x = foo.bar;",
-        "const x = foo();",
         "const x = foo = bar;",
         "const x = foo ? bar : baz;",
         "const x = foo/*comment*/;",
         "const x = foo unexpected;",
-        "const x = foo; foo()",
         "const x = foo;;",
         "; const x = foo;",
     ] {
@@ -888,7 +893,9 @@ fn whole_source_transaction_prevents_prefix_success_and_truncated_facts() {
     // name `let`, now completes at actual EOF) and are no longer listed
     // here; "const" remains an unconditionally reserved word never accepted
     // by the free-standing recognizer, so it and its truncated neighbors
-    // stay unsupported.
+    // stay unsupported. "let x=1; foo();" and "const x=foo; foo();" moved to
+    // selected-positive coverage by Issue #851 (see the "Issue #851" test
+    // section below) and are no longer listed here.
     for text in [
         "",
         " ",
@@ -896,11 +903,9 @@ fn whole_source_transaction_prevents_prefix_success_and_truncated_facts() {
         "const ",
         "let x,",
         "const x=",
-        "let x=1; foo();",
         "let x=1\nfoo();",
         "let x=1;;",
         ";let x=1;",
-        "const x=foo; foo();",
         "const x=foo\nfoo();",
         "const x=foo;;",
         ";const x=foo;",
@@ -1035,7 +1040,15 @@ fn adjacent_malformed_classes_remain_unsupported() {
 
 #[test]
 fn escaped_binding_whole_source_transaction_distinguishes_unsupported_tail_from_owned_grammar() {
-    assert_unsupported(r"let \u0030; foo();");
+    // Issue #851 makes the trailing `foo();` selectable, so `let \u0030;
+    // foo();` no longer stops at `UnsupportedCoverage`: recognition consumes
+    // the whole source. That is recognition coverage only -- the pre-existing
+    // InvalidEscapedIdentifierStart / EE-01 static-semantics rejection of the
+    // earlier `\u0030` binding remains authoritative and is pinned in the
+    // "Issue #851" qualification regression. A richer call tail still
+    // declines the whole source.
+    let _ = recognized_reference_use(r"let \u0030; foo();");
+    assert_unsupported(r"let \u0030; foo()();");
 
     let script = recognized(r"let \u0030 = foo;");
     let binding = &script.declarations()[0].bindings()[0];
@@ -3554,7 +3567,6 @@ fn variable_statement_frontier_keeps_non_eof_and_broader_var_grammar_unsupported
         "var x/*comment*/",
         r"var\u{};",
         "var x=foo.bar;",
-        "var x=foo();",
     ] {
         assert_unsupported(text);
     }
@@ -3875,14 +3887,16 @@ fn var_identifier_reference_boundary_keeps_richer_expression_and_literal_neighbo
     // x=(foo);" is also deliberately not listed here: Issue #833 makes a
     // selected exactly-one parenthesized `IdentifierReference` initializer a
     // selected accepted form (see the "Issue #833" test section below).
+    // `var x=foo();` and `var x=\u0066oo();` are also deliberately not listed
+    // here: Issue #851 makes a selected zero-argument `IdentifierReference`
+    // `CallExpression` initializer a selected accepted form (see the "Issue
+    // #851" test section below).
     for text in [
         "var x=foo.bar;",
-        "var x=foo();",
         "var x=foo=bar;",
         "var x=foo?bar:baz;",
         "var x=foo/*comment*/;",
         r"var x=\u0066oo.bar;",
-        r"var x=\u0066oo();",
         r"var x=\u0066oo/*comment*/;",
     ] {
         assert_unsupported(text);
@@ -13154,10 +13168,11 @@ fn general_expression_neighbors_remain_unsupported_without_valid_prefix_leakage(
     // "Issue #771" section below); neither is listed here any longer. `(a);`
     // moved to selected-positive coverage by Issue #833 (see the "Issue
     // #833" test section below) and is no longer listed here.
+    // `a();` moved to selected-positive coverage by Issue #851 (see the "Issue
+    // #851" test section below) and is no longer listed here.
     for text in [
         "a.b;",
         "a[b];",
-        "a();",
         "a=b;",
         "a ? b : c;",
         "a && b;",
@@ -13443,10 +13458,11 @@ fn block_use_site_general_expression_neighbors_remain_unsupported_without_valid_
     // below); neither is listed here any longer. `{ (a); }` moved to
     // selected-positive coverage by Issue #833 (see the "Issue #833" test
     // section below) and is no longer listed here.
+    // `{ a(); }` moved to selected-positive coverage by Issue #851 (see the
+    // "Issue #851" test section below) and is no longer listed here.
     for text in [
         "{ a.b; }",
         "{ a[b]; }",
-        "{ a(); }",
         "{ a=b; }",
         "{ a ? b : c; }",
         "{ a && b; }",
@@ -16734,4 +16750,576 @@ fn optional_plus_minus_heterogeneous_reference_decimal_additive_free_standing_us
     for text in ["1++a;", "1--a;"] {
         assert_unsupported(text);
     }
+}
+
+// --- Issue #851: exactly-one zero-argument `IdentifierReference`
+// `CallExpression` (`SelectedAcceptedIdentifierReference SelectedCallTrivia
+// "(" SelectedCallTrivia ")"`), composing the accepted candidate-independent
+// theorem proven by #849/PR #850 per #688 comment 5896253950. The
+// placement-neutral helper invokes the unmodified
+// `consume_selected_identifier_reference` exactly once for the callee, owns
+// only the selected trivia before `(`, the paired `(`/`)`, and the selected
+// trivia inside them, and retains exactly the existing callee
+// `SelectedIdentifierReferenceFact` -- never a whole-call span, delimiter
+// anchor, Arguments identity, or call operator. It is dispatched in each of
+// the four existing owners after the specialized unary/grouped/literal routes
+// and before the bare-reference fallback, and never routed into any
+// additive/heterogeneous continuation. ---
+
+/// Asserts that `fact` is exactly the authored callee: the anchor covers the
+/// callee only (never `(`, `)`, or any trivia) and starts at
+/// `expected_callee_start`, the offset owned by the fixture that built `text`
+/// (its authored prefix length), never recovered by searching the finished
+/// source. The expected end is the fixture-owned authored `callee` length
+/// (never the decoded name length). The decoded semantic name and the
+/// `Direct` / `Escaped` provenance must match as well.
+fn assert_call_callee(
+    fact: &super::selected_lexical_slice::SelectedIdentifierReferenceFact,
+    text: &str,
+    expected_callee_start: usize,
+    callee: &str,
+    name: &str,
+    escaped: bool,
+) {
+    assert_eq!(fact.reference().fragment(), callee, "{text:?}");
+    assert_eq!(
+        (
+            fact.reference().range().start(),
+            fact.reference().range().end()
+        ),
+        (expected_callee_start, expected_callee_start + callee.len()),
+        "{text:?}"
+    );
+    assert_eq!(fact.semantic_name(), name, "{text:?}");
+    match (fact.name_state(), escaped) {
+        (SelectedIdentifierReferenceNameState::Direct, false) => {}
+        (SelectedIdentifierReferenceNameState::Escaped { decoded }, true) => {
+            assert_eq!(decoded, name, "{text:?}");
+        }
+        (other, _) => panic!("unexpected provenance {other:?} for {text:?}"),
+    }
+}
+
+/// Runs `check` over the exact single retained callee fact of `call` in
+/// every placement owned by the four authorized owners: the three initializer
+/// owners (`parse_declaration` at TopLevel and inside a Block,
+/// `parse_variable_statement`, `parse_selected_block_var_statement`) and the
+/// free-standing use-site body under every accepted terminator (authored
+/// semicolon, EOF, Block-close). Every `call` passed here begins with its
+/// callee, so `check` receives the fixture-owned expected callee start: the
+/// length of the authored prefix this function places before `call`.
+fn for_each_call_placement(
+    call: &str,
+    mut check: impl FnMut(&str, usize, &super::selected_lexical_slice::SelectedIdentifierReferenceFact),
+) {
+    use super::selected_lexical_slice::{SelectedBlockItem, SelectedTopLevelItem};
+
+    for keyword in ["const", "let"] {
+        let prefix = format!("{keyword} x = ");
+        let text = format!("{prefix}{call};");
+        let script = recognized(&text);
+        let [binding] = script.declarations()[0].bindings() else {
+            panic!("expected one selected lexical binding for {text:?}");
+        };
+        let mut facts = binding.identifier_reference_initializer_facts();
+        let fact = facts.next().expect("exactly one callee fact");
+        assert!(facts.next().is_none(), "second retained fact for {text:?}");
+        check(&text, prefix.len(), fact);
+    }
+
+    let prefix = "var x = ";
+    let text = format!("{prefix}{call};");
+    let script = recognized_variable(&text);
+    let [binding] = only_variable_statement(&script).bindings() else {
+        panic!("expected one selected var binding for {text:?}");
+    };
+    let mut facts = binding.identifier_reference_initializer_facts();
+    let fact = facts.next().expect("exactly one callee fact");
+    assert!(facts.next().is_none(), "second retained fact for {text:?}");
+    check(&text, prefix.len(), fact);
+
+    let prefix = "{ var x = ";
+    let text = format!("{prefix}{call}; }}");
+    let script = recognized_block(&text);
+    let [SelectedTopLevelItem::Block(block)] = script.items() else {
+        panic!("expected exactly one Block item for {text:?}");
+    };
+    let [SelectedBlockItem::Var(statement)] = block.items() else {
+        panic!("expected exactly one Block var statement for {text:?}");
+    };
+    let [binding] = statement.bindings() else {
+        panic!("expected one selected Block var binding for {text:?}");
+    };
+    let mut facts = binding.identifier_reference_initializer_facts();
+    let fact = facts.next().expect("exactly one callee fact");
+    assert!(facts.next().is_none(), "second retained fact for {text:?}");
+    check(&text, prefix.len(), fact);
+
+    let prefix = "{ let x = ";
+    let text = format!("{prefix}{call}; }}");
+    let script = recognized_block(&text);
+    let [SelectedTopLevelItem::Block(block)] = script.items() else {
+        panic!("expected exactly one Block item for {text:?}");
+    };
+    let [SelectedBlockItem::LexicalDeclaration(declaration)] = block.items() else {
+        panic!("expected exactly one Block lexical declaration for {text:?}");
+    };
+    let [binding] = declaration.bindings() else {
+        panic!("expected one selected Block lexical binding for {text:?}");
+    };
+    let mut facts = binding.identifier_reference_initializer_facts();
+    let fact = facts.next().expect("exactly one callee fact");
+    assert!(facts.next().is_none(), "second retained fact for {text:?}");
+    check(&text, prefix.len(), fact);
+
+    // Free-standing TopLevel: the call is the first thing in the source.
+    for text in [format!("{call};"), call.to_owned()] {
+        let script = recognized_reference_use(&text);
+        check(&text, 0, only_use_site_fact(&script));
+    }
+
+    // Free-standing Block: the call follows the authored `{ ` prefix.
+    let prefix = "{ ";
+    for text in [format!("{prefix}{call}; }}"), format!("{prefix}{call} }}")] {
+        let script = recognized_block_reference_use(&text);
+        check(&text, prefix.len(), only_block_use_site_fact(&script));
+    }
+}
+
+/// Every placement above, for a source that must remain outside the selected
+/// theorem: each initializer owner and both free-standing placements decline
+/// the whole source, so no local `IdentifierReference`-call prefix escapes.
+fn assert_unsupported_in_every_call_placement(tail: &str) {
+    for text in [
+        format!("const x = {tail};"),
+        format!("let x = {tail};"),
+        format!("var x = {tail};"),
+        format!("{{ var x = {tail}; }}"),
+        format!("{{ const x = {tail}; }}"),
+        format!("{tail};"),
+        tail.to_owned(),
+        format!("{{ {tail}; }}"),
+        format!("{{ {tail} }}"),
+    ] {
+        assert_unsupported(&text);
+    }
+}
+
+#[test]
+fn zero_argument_identifier_reference_call_expression_minimum_positive_matrix_is_recognized_across_all_four_owners()
+ {
+    for_each_call_placement("f()", |text, start, fact| {
+        assert_call_callee(fact, text, start, "f", "f", false);
+    });
+
+    // Repository-native spellings of the issue's minimum matrix.
+    for text in [
+        "let out = f();",
+        "var out = f();",
+        "{ var out = f(); }",
+        "f();",
+        "f()",
+        "{ f(); }",
+        "{ f() }",
+    ] {
+        assert!(
+            !matches!(
+                recognize_selected_lexical_slice(&source(text)),
+                SelectedLexicalSliceOutcome::UnsupportedCoverage
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn zero_argument_identifier_reference_call_expression_direct_callees_retain_exact_authored_anchor()
+{
+    for (call, callee) in [
+        ("a()", "a"),
+        ("π()", "π"),
+        ("𝒜()", "𝒜"),
+        ("foo_bar$1()", "foo_bar$1"),
+    ] {
+        for_each_call_placement(call, |text, start, fact| {
+            assert_call_callee(fact, text, start, callee, callee, false);
+        });
+    }
+}
+
+#[test]
+fn zero_argument_identifier_reference_call_expression_escaped_non_reserved_callees_retain_exact_authored_anchor()
+ {
+    for (call, callee, name) in [
+        (r"\u0061()", r"\u0061", "a"),
+        (r"f\u006Fo()", r"f\u006Fo", "foo"),
+        (r"\u{66}oo()", r"\u{66}oo", "foo"),
+        (r"\u{00000061}()", r"\u{00000061}", "a"),
+        (r"\u{1D49C}()", r"\u{1D49C}", "\u{1D49C}"),
+        (r"a\u{62}c ( )", r"a\u{62}c", "abc"),
+    ] {
+        for_each_call_placement(call, |text, start, fact| {
+            assert_call_callee(fact, text, start, callee, name, true);
+        });
+    }
+}
+
+#[test]
+fn zero_argument_identifier_reference_call_expression_selected_trivia_matrix_is_recognized() {
+    for call in [
+        "f()",
+        "f ()",
+        "f( )",
+        "f ( )",
+        "f\t()",
+        "f\n()",
+        "f\r\n()",
+        "f\u{A0}()",
+        "f\u{2028}()",
+        "f\u{FEFF}()",
+        "f\u{000B}()",
+        "f(\t)",
+        "f(\n)",
+        "f(\u{A0})",
+        "f\n(\n)",
+        "f\t(\u{A0}\n)",
+    ] {
+        for_each_call_placement(call, |text, start, fact| {
+            assert_call_callee(fact, text, start, "f", "f", false);
+        });
+    }
+}
+
+#[test]
+fn zero_argument_identifier_reference_call_expression_free_standing_terminators_are_owned_by_existing_owners()
+ {
+    let script = recognized_reference_use("f();");
+    assert!(matches!(
+        only_top_level_use_site(&script).terminator(),
+        SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AuthoredSemicolon
+    ));
+    for text in ["f()", "f() ", "f()\n", "f\n()\n"] {
+        let script = recognized_reference_use(text);
+        assert!(
+            matches!(
+                only_top_level_use_site(&script).terminator(),
+                SelectedTopLevelFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticAtEof
+            ),
+            "{text:?}"
+        );
+    }
+
+    let script = recognized_block_reference_use("{ f(); }");
+    assert!(matches!(
+        only_block_use_site(&script).terminator(),
+        SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator::AuthoredSemicolon
+    ));
+    for text in ["{ f() }", "{ f()}", "{ f\n() }"] {
+        let script = recognized_block_reference_use(text);
+        assert!(
+            matches!(
+                only_block_use_site(&script).terminator(),
+                SelectedBlockFreeStandingIdentifierReferenceUseSiteTerminator::AutomaticBeforeBlockClose
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+/// No new ASI theorem: a locally complete call followed by a further
+/// statement without an authored terminator declines exactly like the
+/// existing bare-reference forms.
+#[test]
+fn zero_argument_identifier_reference_call_expression_does_not_add_asi_ownership() {
+    for text in [
+        "f()\ng();",
+        "f() g;",
+        "f();;",
+        "const x = f()\nconst y = g;",
+        "{ f() g }",
+    ] {
+        assert_unsupported(text);
+    }
+    for text in ["f\ng;", "f g;", "a;;", "const x = a\nconst y = g;"] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn zero_argument_identifier_reference_call_expression_composes_with_existing_declarator_lists_and_mixed_items()
+ {
+    let script = recognized_variable("var a = f(), b = g();");
+    let statement = only_variable_statement(&script);
+    let [first, second] = statement.bindings() else {
+        panic!("expected two selected var declarators");
+    };
+    let first = first
+        .identifier_reference_initializer()
+        .expect("first callee");
+    let second = second
+        .identifier_reference_initializer()
+        .expect("second callee");
+    // Fixture-owned offsets: `f` follows the 8-byte prefix `var a = `; `g`
+    // follows `var a = f(), b = ` (8 + 5 + 4 bytes).
+    assert_call_callee(first, "var a = f(), b = g();", 8, "f", "f", false);
+    assert_call_callee(second, "var a = f(), b = g();", 17, "g", "g", false);
+
+    let script = recognized("let a = f, b = g();");
+    let [first, second] = script.declarations()[0].bindings() else {
+        panic!("expected two selected lexical declarators");
+    };
+    let first = first
+        .identifier_reference_initializer()
+        .expect("bare first");
+    let second = second
+        .identifier_reference_initializer()
+        .expect("call second");
+    assert_eq!(first.reference().fragment(), "f");
+    assert_eq!(second.reference().fragment(), "g");
+    // Fixture-owned offset: `g` follows `let a = f, b = ` (8 + 3 + 4 bytes).
+    assert_call_callee(second, "let a = f, b = g();", 15, "g", "g", false);
+
+    for text in [
+        "let x=1; foo();",
+        "const x=foo; foo();",
+        "let x = 1; f\n();",
+    ] {
+        let script = recognized_reference_use(text);
+        let Some(SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(
+            use_site,
+        )) = script.items().last()
+        else {
+            panic!("expected a trailing free-standing use-site for {text:?}");
+        };
+        let fact = only_fact(use_site.body());
+        assert!(
+            fact.reference().fragment() == "foo" || fact.reference().fragment() == "f",
+            "{text:?}"
+        );
+    }
+}
+
+/// The call probe must decline with the exact starting cursor restored, so
+/// the existing bare-reference and additive families receive unchanged
+/// input and keep their existing semantics.
+#[test]
+fn zero_argument_identifier_reference_call_expression_predecessor_bare_and_additive_routes_are_unchanged()
+ {
+    let script = recognized_reference_use("f;");
+    let fact = only_use_site_fact(&script);
+    assert_eq!(fact.reference().fragment(), "f");
+    assert_eq!(
+        (
+            fact.reference().range().start(),
+            fact.reference().range().end()
+        ),
+        (0, 1)
+    );
+
+    let script = recognized("let x = f;");
+    let binding = &script.declarations()[0].bindings()[0];
+    assert_eq!(binding.identifier_reference_initializer_facts().count(), 1);
+    assert_eq!(
+        binding
+            .identifier_reference_initializer()
+            .unwrap()
+            .reference()
+            .fragment(),
+        "f"
+    );
+
+    let script = recognized_variable("var x = f;");
+    let statement = only_variable_statement(&script);
+    assert_eq!(
+        statement.bindings()[0]
+            .identifier_reference_initializer_facts()
+            .count(),
+        1
+    );
+
+    // Existing additive chains keep their authored operand counts.
+    let script = recognized("const x = a + b + c;");
+    let binding = &script.declarations()[0].bindings()[0];
+    let fragments: Vec<&str> = binding
+        .identifier_reference_initializer_facts()
+        .map(|fact| fact.reference().fragment())
+        .collect();
+    assert_eq!(fragments, ["a", "b", "c"]);
+
+    let script = recognized_reference_use("a + b;");
+    let [SelectedReferenceUseEnabledTopLevelItem::IdentifierReferenceExpressionStatement(use_site)] =
+        script.items()
+    else {
+        panic!("expected exactly one selected use-site item");
+    };
+    let fragments: Vec<&str> = use_site
+        .body()
+        .facts()
+        .map(|fact| fact.reference().fragment())
+        .collect();
+    assert_eq!(fragments, ["a", "b"]);
+
+    // Existing keyword-unary / grouped routes still own their sources ahead
+    // of the call probe, and never become calls.
+    for text in ["typeof a;", "typeof(a);", "(a);", "!a;", "+a;", "delete a;"] {
+        let script = recognized_reference_use(text);
+        assert_eq!(
+            only_use_site_fact(&script).reference().fragment(),
+            "a",
+            "{text:?}"
+        );
+    }
+    for tail in [
+        "typeof a()",
+        "delete a()",
+        "!a()",
+        "+a()",
+        "(a)()",
+        "(a())",
+        "typeof (a)()",
+    ] {
+        assert_unsupported_in_every_call_placement(tail);
+    }
+}
+
+#[test]
+fn zero_argument_identifier_reference_call_expression_non_empty_arguments_remain_unsupported() {
+    for tail in [
+        "f(a)", "f(a,b)", "f(...a)", "f(a,)", "f(,)", "f(1)", "f(\na\n)",
+    ] {
+        assert_unsupported_in_every_call_placement(tail);
+    }
+}
+
+#[test]
+fn zero_argument_identifier_reference_call_expression_richer_outer_continuations_remain_unsupported()
+ {
+    for tail in [
+        "f()()", "f().x", "f()[x]", "f()+g", "f()-g", "f()*g", "f()/g", "f()?g:h", "f()=g",
+        "f()+1", "1+f()", "a+f()", "f()+ +a", "f()\n()", "f()`x`", "f()++", "f()&&g",
+    ] {
+        assert_unsupported_in_every_call_placement(tail);
+    }
+}
+
+#[test]
+fn zero_argument_identifier_reference_call_expression_other_call_families_remain_unsupported() {
+    for tail in [
+        "obj.f()", "f?.()", "new f()", "new f", "super()", "a.b.c()", "f()()", "this()",
+    ] {
+        assert_unsupported_in_every_call_placement(tail);
+    }
+}
+
+#[test]
+fn zero_argument_identifier_reference_call_expression_comments_are_not_selected_trivia() {
+    for tail in ["f/*c*/()", "f(/*c*/)", "f( /*c*/ )", "f()/*c*/", "f//c\n()"] {
+        assert_unsupported_in_every_call_placement(tail);
+    }
+}
+
+#[test]
+fn zero_argument_identifier_reference_call_expression_incomplete_suffixes_restore_and_never_commit_a_call()
+ {
+    for text in [
+        "f(",
+        "f (",
+        "f( ",
+        "f(\n",
+        "f)",
+        "f(;",
+        "f);",
+        "const x = f(;",
+        "var x = f(",
+        "{ f( }",
+        "{ var x = f(; }",
+        // A failed call probe must restore its start: were the cursor left
+        // after `(`, the following bare-reference route would commit `a`.
+        "f(a;",
+        "f (a",
+        "f(a\n",
+        "const x = f(a;",
+        "let x = f( a;",
+        "var x = f(a;",
+        "{ f(a; }",
+        "{ var x = f(a; }",
+        "{ f(a }",
+    ] {
+        assert_unsupported(text);
+    }
+}
+
+#[test]
+fn zero_argument_identifier_reference_call_expression_async_arrow_and_cover_firewall() {
+    for text in [
+        "async()=>x",
+        "async() => x",
+        "async ( ) => x",
+        "async()=>x;",
+        "const x = async()=>x;",
+        "{ async() => x; }",
+    ] {
+        assert_unsupported(text);
+    }
+
+    // Plain `async()` (no `=>`) is an ordinary bounded call.
+    for_each_call_placement("async()", |text, start, fact| {
+        assert_call_callee(fact, text, start, "async", "async", false);
+    });
+}
+
+#[test]
+fn zero_argument_identifier_reference_call_expression_eval_is_source_only() {
+    for_each_call_placement("eval()", |text, start, fact| {
+        assert_call_callee(fact, text, start, "eval", "eval", false);
+    });
+}
+
+#[test]
+fn zero_argument_identifier_reference_call_expression_contextual_and_reserved_callee_policy_is_unchanged()
+ {
+    // Names accepted by the existing `IdentifierReference` profile stay
+    // accepted as callees; unconditionally reserved words never become one.
+    for call in ["yield()", "await()", "let()", "static()"] {
+        let callee = call.trim_end_matches("()");
+        for_each_call_placement(call, |text, start, fact| {
+            assert_call_callee(fact, text, start, callee, callee, false);
+        });
+    }
+    for tail in [
+        "true()", "null()", "this()", "if()", "typeof()", "delete()", "const()",
+    ] {
+        assert_unsupported_in_every_call_placement(tail);
+    }
+}
+
+#[test]
+fn zero_argument_identifier_reference_call_expression_identifier_reference_boundaries_are_unchanged()
+ {
+    for tail in [
+        // Escaped ReservedWord.
+        r"\u0069f()",
+        r"\u{69}f()",
+        // Malformed / non-CodePoint / invalid-position escapes.
+        r"\u{}()",
+        r"\u{G}()",
+        r"\u00G0()",
+        r"\u{110000}()",
+        r"\uD800()",
+        r"\u0030()",
+        r"a\u002D()",
+        // Invalid IdentifierStart.
+        "1a()",
+        "-()",
+    ] {
+        for text in [format!("const x = {tail};"), format!("var x = {tail};")] {
+            assert_unsupported(&text);
+        }
+    }
+
+    // Maximal IdentifierName ownership: the callee is the whole name, never
+    // a prefix followed by a synthesized `(`.
+    for_each_call_placement("ab_c()", |text, start, fact| {
+        assert_call_callee(fact, text, start, "ab_c", "ab_c", false);
+    });
 }

@@ -2,9 +2,17 @@ use crate::{SourceId, SourceText};
 
 use super::qualification::{ProcessingStatus, QualificationVerdictKind, RejectionFamily};
 use super::qualification_validation_tests::{gold_source, gold_subject_range};
+use super::selected_lexical_slice::{
+    SelectedLexicalSliceOutcome, recognize_selected_lexical_slice,
+};
 use super::selected_qualification_integration::{
     SelectedQualificationAttempt, attempt_selected_qualification,
     selected_grammar_rejection_to_qualification,
+};
+use super::selected_static_semantics::{
+    SelectedIdentifierReferenceExpressionStatementStaticSemanticsOutcome,
+    SelectedStaticSemanticsRejection,
+    evaluate_selected_identifier_reference_expression_statement_static_semantics,
 };
 
 fn attempt(text: &str) -> SelectedQualificationAttempt {
@@ -409,7 +417,6 @@ fn escaped_identifier_reference_invalid_and_tail_families_remain_unsupported() {
         r"const x = \u200C;",
         r"const x = \u200D;",
         r"const x = \u0066oo.bar;",
-        r"const x = \u0066oo();",
         r"const x = \u0066oo = bar;",
         r"const x = \u0066oo ? bar : baz;",
         r"const x = \u0066oo/*comment*/;",
@@ -731,11 +738,13 @@ fn unsupported_rhs_and_broader_grammar_remain_unsupported_without_source_verdict
     // "const x=(foo);" is deliberately not listed here: Issue #833 makes a
     // selected exactly-one parenthesized `IdentifierReference` initializer a
     // selected accepted form (see the "Issue #833" section below).
+    // "const x=foo();" is likewise not listed: Issue #851 makes a selected
+    // zero-argument `IdentifierReference` `CallExpression` initializer a
+    // selected accepted form (see the "Issue #851" section below).
     for text in [
         gold_source("JS-GOLD-LEXDECL-CONST-MALFORMED-INIT-001").expect("malformed init gold"),
         "const x=if;",
         "const x=foo.bar;",
-        "const x=foo();",
         "const x=foo = bar;",
         "const x=foo ? bar : baz;",
         "const x=foo/*comment*/;",
@@ -1016,7 +1025,11 @@ fn grammar_primary_discards_tentative_static_evidence_and_is_terminal() {
 #[test]
 fn unowned_and_deferred_grammar_boundaries_remain_unsupported() {
     for text in [
-        r"let \u0030; foo();",
+        // Issue #851 makes the trailing `foo();` of `let \u0030; foo();`
+        // selectable, so that source no longer stops at `UnsupportedCoverage`;
+        // its pre-existing EE-01 static-semantics rejection is pinned in the
+        // "Issue #851" section below. The richer call tail stays unsupported.
+        r"let \u0030; foo()();",
         r"let\u002D\u{};",
         r"let\u0;",
         r"let\u{61",
@@ -1284,9 +1297,7 @@ fn top_level_variable_statement_grammar_and_deferred_boundaries_remain_distinct(
         r"var x=\u0030;",
         r"var x=a\u002Db;",
         r"var x=\u0066oo.bar;",
-        r"var x=\u0066oo();",
         "var x=foo.bar;",
-        "var x=foo();",
     ] {
         assert!(
             matches!(
@@ -3220,9 +3231,11 @@ fn top_level_identifier_reference_expression_statement_use_site_asi_general_expr
         // any longer. `(a);` moved to selected-positive
         // (`SelectedAcceptedIncomplete`) coverage by Issue #833 (see the
         // "Issue #833" section below) and is no longer listed here.
+        // `a();` moved to selected-positive (`SelectedAcceptedIncomplete`)
+        // coverage by Issue #851 (see the "Issue #851" section below) and is
+        // likewise no longer listed here.
         "a.b;",
         "a[b];",
-        "a();",
         "a=b;",
         // Richer-expression firewall composed with the unary body form
         // (Issue #771): a locally recognized `+a`/`-a` prefix must not
@@ -3398,9 +3411,11 @@ fn block_identifier_reference_expression_statement_use_site_asi_general_expressi
         // selected-positive (`SelectedAcceptedIncomplete`) coverage by Issue
         // #833 (see the "Issue #833" section below) and is no longer listed
         // here.
+        // `{ a(); }` moved to selected-positive
+        // (`SelectedAcceptedIncomplete`) coverage by Issue #851 (see the
+        // "Issue #851" section below) and is likewise no longer listed here.
         "{ a.b; }",
         "{ a[b]; }",
-        "{ a(); }",
         "{ a=b; }",
         "{ a ? b : c; }",
         "{ a && b; }",
@@ -4011,4 +4026,158 @@ fn optional_plus_minus_heterogeneous_reference_decimal_additive_use_site_remains
 fn optional_plus_minus_heterogeneous_reference_decimal_additive_use_site_known_static_rejection_gates_qualification()
  {
     assert_static_semantics_rejected("let a;\n{ var a; +b+1+-c; }", "a", (13, 14));
+}
+
+/// Issue #851: the newly production-selected exactly-one zero-argument
+/// `IdentifierReference` `CallExpression` reaches the same existing
+/// `SelectedAcceptedIncomplete` lifecycle as any other production-accepted,
+/// not-yet-Oracle-qualified source -- never `UnsupportedCoverage` and never
+/// `Qualified`. Accepted #849/#850 established that no new reachable frozen
+/// Early Error identity is introduced, so no qualification change is
+/// expected. Representative sources cover each authorized owner/placement
+/// class (three initializer owners plus a Block-contained `LexicalDeclaration`
+/// representative, and both free-standing placements under every accepted
+/// terminator), with Direct and escaped callees, selected trivia (including
+/// a LineTerminator before `(`), and `eval()` as source syntax only.
+#[test]
+fn zero_argument_identifier_reference_call_expression_reaches_selected_accepted_incomplete() {
+    for text in [
+        // LexicalDeclaration initializer.
+        "const x = f();",
+        "let out = f();",
+        // Escaped initializer callee (fixed-form escape).
+        r"let x = \u0061();",
+        // Top-level var.
+        "var out = f();",
+        // Block var / Block-contained initializer owners (braced escape).
+        "{ var out = f(); }",
+        r"{ let x = \u{66}oo(); }",
+        // TopLevel free-standing authored terminator and EOF ASI.
+        "f();",
+        "f()",
+        // LineTerminator between callee and `(` remains call continuation.
+        "f\n()",
+        "f( )",
+        "f\u{A0}(\n)",
+        // Block free-standing authored terminator and before-`}` ASI.
+        "{ f(); }",
+        r"{ \u{1D49C}() }",
+        // Contextual and special callee names are plain IdentifierReferences.
+        "async()",
+        "eval();",
+        // Mixed declaration and free-standing call.
+        "var f; f();",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+/// Issue #851: richer neighbors of a locally complete `f()` prefix never
+/// reach the selected lifecycle; the owner-level whole-source transaction
+/// declines every one of them.
+#[test]
+fn zero_argument_identifier_reference_call_expression_richer_neighbors_remain_unsupported() {
+    for text in [
+        "f(a);",
+        "f(a,b);",
+        "f(...a);",
+        "f(a,);",
+        "f()();",
+        "f().x;",
+        "f()[x];",
+        "f()+g;",
+        "f()-g;",
+        "f()*g;",
+        "f()/g;",
+        "f()?g:h;",
+        "f()=g;",
+        "obj.f();",
+        "f?.();",
+        "new f();",
+        "super();",
+        "f/*c*/();",
+        "f(/*c*/);",
+        "async()=>x",
+        "async() => x",
+        "async ( ) => x",
+        "const x = f()+g;",
+        "var x = f()=g;",
+        "{ f().x; }",
+        "{ var x = f()(); }",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::UnsupportedCoverage
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+/// Issue #851 makes the trailing `foo();` of `let \u0030; foo();` selectable,
+/// so this whole source no longer stops at `UnsupportedCoverage`. That does
+/// not make it semantically accepted: the earlier `let \u0030;` binding
+/// already owns the pre-existing EE-01 (`InvalidEscapedIdentifierStart`)
+/// static-semantics rejection with the authored subject `\u0030` at `4..10`,
+/// which must survive the newly reachable downstream syntax coverage. No new
+/// Early Error identity is involved. The richer `foo()()` neighbor of the
+/// same declaration stays `UnsupportedCoverage` (pinned separately in
+/// `unowned_and_deferred_grammar_boundaries_remain_unsupported`).
+#[test]
+fn zero_argument_identifier_reference_call_expression_preserves_existing_ee01_rejection_of_invalid_escaped_binding()
+ {
+    let text = r"let \u0030; foo();";
+
+    // Lower layer: recognition consumes the full source, and static
+    // semantics still rejects the original binding evidence.
+    let source = SourceText::new(SourceId::new(218), text.to_owned());
+    let script = match recognize_selected_lexical_slice(&source) {
+        SelectedLexicalSliceOutcome::RecognizedIdentifierReferenceExpressionStatementSlice(
+            script,
+        ) => script,
+        other => {
+            panic!("expected whole-source reference-use recognition for {text:?}, got {other:?}")
+        }
+    };
+    match evaluate_selected_identifier_reference_expression_statement_static_semantics(&script) {
+        SelectedIdentifierReferenceExpressionStatementStaticSemanticsOutcome::Rejected(
+            SelectedStaticSemanticsRejection::InvalidEscapedIdentifierStart { escape },
+        ) => {
+            assert_eq!(escape.fragment(), r"\u0030");
+            assert_eq!((escape.range().start(), escape.range().end()), (4, 10));
+        }
+        other => panic!("expected EE-01 InvalidEscapedIdentifierStart for {text:?}, got {other:?}"),
+    }
+
+    // Qualification entrypoint: the exact existing static-semantics
+    // rejection, never `UnsupportedCoverage` and never
+    // `SelectedAcceptedIncomplete`.
+    let outcome = qualification_outcome(text);
+    assert_eq!(outcome.processing(), ProcessingStatus::Complete);
+    assert_eq!(
+        outcome.verdict(),
+        Some(QualificationVerdictKind::StaticSemanticsRejected)
+    );
+    let evidence = outcome.rejection_evidence().expect("static evidence");
+    assert_eq!(evidence.family(), RejectionFamily::StaticSemantics);
+    let anchor = evidence
+        .subject()
+        .authored_anchor()
+        .expect("authored static subject");
+    assert_eq!(anchor.fragment(), r"\u0030");
+    assert_eq!((anchor.range().start(), anchor.range().end()), (4, 10));
+
+    // The richer call tail of the same declaration stays outside selected
+    // production.
+    assert!(matches!(
+        attempt(r"let \u0030; foo()();"),
+        SelectedQualificationAttempt::UnsupportedCoverage
+    ));
 }
