@@ -2427,6 +2427,31 @@ enum SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition {
     InternalFailure,
 }
 
+/// Result of the initializer-owner-private call-head probe below (Issue
+/// #855, composing the accepted candidate-independent theorem proven by
+/// #853/PR #854 with the #851/PR #852 zero-argument call head). The two
+/// theorems keep separate ownership in the type: `CallOnly` carries exactly
+/// the callee fact of the existing #852 call-only theorem, produced only when
+/// no additive link completed after the call head; `CallHeadedAdditive`
+/// carries the existing ordered `SelectedIdentifierReferenceInitializer`
+/// carrier and is produced only when at least one owner-accepted additive
+/// link completed (so its first retained fact is still the callee, and a
+/// Decimal-only link yields a `One` carrier). No call, additive, operator, or
+/// result identity is retained by either. `NotSelected` covers every case
+/// where the source does not begin with a selected zero-argument call head,
+/// leaving the existing bare-reference initializer route unperturbed.
+/// `ResourceLimited` and `InternalFailure` preserve the shared recognizers'
+/// own processing-failure classes without collapsing them into `NotSelected`
+/// or a shorter prefix.
+#[derive(Debug)]
+enum SelectedZeroArgumentIdentifierReferenceCallInitializerRecognition {
+    CallOnly(SelectedIdentifierReferenceFact),
+    CallHeadedAdditive(SelectedIdentifierReferenceInitializer),
+    NotSelected,
+    ResourceLimited,
+    InternalFailure,
+}
+
 /// Result of the initializer-owner-private optional-leading-`+`/`-`
 /// continuation primitive (Issue #811, composing the accepted
 /// candidate-independent theorem proven by #809/PR #810 with the
@@ -3053,17 +3078,20 @@ impl<'source> Cursor<'source> {
                                         {
                                             (None, None)
                                         } else {
-                                            match self.consume_selected_zero_argument_identifier_reference_call_expression() {
-                                                SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::Matched(reference) => {
+                                            match self.consume_selected_zero_argument_identifier_reference_call_initializer() {
+                                                SelectedZeroArgumentIdentifierReferenceCallInitializerRecognition::CallOnly(reference) => {
                                                     (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
                                                 }
-                                                SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::ResourceLimited => {
+                                                SelectedZeroArgumentIdentifierReferenceCallInitializerRecognition::CallHeadedAdditive(initializer) => {
+                                                    (Some(initializer), None)
+                                                }
+                                                SelectedZeroArgumentIdentifierReferenceCallInitializerRecognition::ResourceLimited => {
                                                     return Err(ParseFailure::ResourceLimited);
                                                 }
-                                                SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::InternalFailure => {
+                                                SelectedZeroArgumentIdentifierReferenceCallInitializerRecognition::InternalFailure => {
                                                     return Err(ParseFailure::InternalFailure);
                                                 }
-                                                SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::NotSelected => {
+                                                SelectedZeroArgumentIdentifierReferenceCallInitializerRecognition::NotSelected => {
                                             match self.consume_selected_identifier_reference_initializer() {
                                                 SelectedIdentifierReferenceInitializerRecognition::One(reference) => {
                                                     (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
@@ -3349,17 +3377,20 @@ impl<'source> Cursor<'source> {
                                         {
                                             (None, None)
                                         } else {
-                                            match self.consume_selected_zero_argument_identifier_reference_call_expression() {
-                                                SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::Matched(reference) => {
+                                            match self.consume_selected_zero_argument_identifier_reference_call_initializer() {
+                                                SelectedZeroArgumentIdentifierReferenceCallInitializerRecognition::CallOnly(reference) => {
                                                     (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
                                                 }
-                                                SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::ResourceLimited => {
+                                                SelectedZeroArgumentIdentifierReferenceCallInitializerRecognition::CallHeadedAdditive(initializer) => {
+                                                    (Some(initializer), None)
+                                                }
+                                                SelectedZeroArgumentIdentifierReferenceCallInitializerRecognition::ResourceLimited => {
                                                     return Err(ParseFailure::ResourceLimited);
                                                 }
-                                                SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::InternalFailure => {
+                                                SelectedZeroArgumentIdentifierReferenceCallInitializerRecognition::InternalFailure => {
                                                     return Err(ParseFailure::InternalFailure);
                                                 }
-                                                SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::NotSelected => {
+                                                SelectedZeroArgumentIdentifierReferenceCallInitializerRecognition::NotSelected => {
                                             match self.consume_selected_identifier_reference_initializer() {
                                                 SelectedIdentifierReferenceInitializerRecognition::One(reference) => {
                                                     (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
@@ -3612,18 +3643,22 @@ impl<'source> Cursor<'source> {
                                         && !self.consume_selected_this_expression()
                                         && !self.consume_selected_escape_free_string_literal()
                                     {
-                                        match self.consume_selected_zero_argument_identifier_reference_call_expression() {
-                                            SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::Matched(reference) => {
+                                        match self.consume_selected_zero_argument_identifier_reference_call_initializer() {
+                                            SelectedZeroArgumentIdentifierReferenceCallInitializerRecognition::CallOnly(reference) => {
                                                 identifier_reference_initializer =
                                                     Some(SelectedIdentifierReferenceInitializer::One(reference));
                                             }
-                                            SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::ResourceLimited => {
+                                            SelectedZeroArgumentIdentifierReferenceCallInitializerRecognition::CallHeadedAdditive(initializer) => {
+                                                identifier_reference_initializer =
+                                                    Some(initializer);
+                                            }
+                                            SelectedZeroArgumentIdentifierReferenceCallInitializerRecognition::ResourceLimited => {
                                                 return Err(ParseFailure::ResourceLimited);
                                             }
-                                            SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::InternalFailure => {
+                                            SelectedZeroArgumentIdentifierReferenceCallInitializerRecognition::InternalFailure => {
                                                 return Err(ParseFailure::InternalFailure);
                                             }
-                                            SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::NotSelected => {
+                                            SelectedZeroArgumentIdentifierReferenceCallInitializerRecognition::NotSelected => {
                                         match self.consume_selected_identifier_reference_initializer() {
                                             SelectedIdentifierReferenceInitializerRecognition::One(reference) => {
                                                 identifier_reference_initializer =
@@ -4612,9 +4647,24 @@ impl<'source> Cursor<'source> {
                 reference,
             ) => {
                 self.skip_selected_trivia();
-                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::Matched(
-                    SelectedFreeStandingIdentifierReferenceUseSite::One(reference),
-                );
+                if !matches!(self.peek_char(), Some('+' | '-')) {
+                    // #852 call-only theorem, unchanged: no authored additive
+                    // operator follows the call head, so this owner's
+                    // continuation is never entered.
+                    return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::Matched(
+                        SelectedFreeStandingIdentifierReferenceUseSite::One(reference),
+                    );
+                }
+                // Issue #855: an authored `+`/`-` follows the call head, so
+                // the callee is the first atom of this owner's existing
+                // whole-body additive continuation. Entered only with an
+                // operator present, that transaction either completes at
+                // least one link (`Matched`) or restores `snapshot` and
+                // declines (`NotSelected`) -- never a call-only fallback.
+                return self
+                    .consume_selected_identifier_reference_expression_statement_use_site_body_additive_after_first(
+                        snapshot, reference,
+                    );
             }
             SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::ResourceLimited => {
                 return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::ResourceLimited;
@@ -4644,6 +4694,27 @@ impl<'source> Cursor<'source> {
             }
         };
 
+        self.consume_selected_identifier_reference_expression_statement_use_site_body_additive_after_first(
+            snapshot, first,
+        )
+    }
+
+    /// Free-standing whole-body additive continuation after an already
+    /// recognized first operand, extracted unchanged from
+    /// `consume_selected_identifier_reference_expression_statement_use_site_body`
+    /// above (Issue #855) so the call-headed first atom delegates to exactly
+    /// this owner's existing transaction. The cursor must be positioned
+    /// immediately after `first`, before any trivia, and `snapshot` is the
+    /// exact offset the whole body probe began from. Absent an authored
+    /// binary `+`/`-` the body is `One(first)` with trailing selected trivia
+    /// consumed; once an authored `+`/`-` has been consumed, any later
+    /// failure restores `snapshot` and declines (`NotSelected`) -- never a
+    /// shorter prefix and never a call-only fallback.
+    fn consume_selected_identifier_reference_expression_statement_use_site_body_additive_after_first(
+        &mut self,
+        snapshot: usize,
+        first: SelectedIdentifierReferenceFact,
+    ) -> SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition {
         self.skip_selected_trivia();
 
         let binary_sign = if self.consume_ascii('+') {
@@ -5846,6 +5917,20 @@ impl<'source> Cursor<'source> {
             }
         };
 
+        self.consume_selected_identifier_reference_initializer_continuation_after_first(first)
+    }
+
+    /// Initializer-owned staged/local additive continuation after an already
+    /// recognized first operand, extracted unchanged from
+    /// `consume_selected_identifier_reference_initializer` above (Issue #855)
+    /// so the call-headed initializer probe can delegate to exactly this
+    /// machinery. The cursor must be positioned immediately after `first`,
+    /// before any trivia; every decline restores that position and returns
+    /// `One(first)`, exactly as documented on the caller.
+    fn consume_selected_identifier_reference_initializer_continuation_after_first(
+        &mut self,
+        first: SelectedIdentifierReferenceFact,
+    ) -> SelectedIdentifierReferenceInitializerRecognition {
         let after_first = self.offset;
         self.skip_selected_trivia();
 
@@ -7088,10 +7173,16 @@ impl<'source> Cursor<'source> {
     /// input. Callers must probe this route before the bare-reference
     /// fallback, otherwise `f()` would be committed as bare `f`. A locally
     /// complete `f()` prefix never authorizes a richer outer continuation
-    /// (`f()()`, `f().x`, `f()+g`, `f()=g`, ...): the helper inspects no
+    /// (`f()()`, `f().x`, `f()*g`, `f()=g`, ...): the helper inspects no
     /// suffix, and the enclosing initializer/declaration or free-standing
     /// placement owner remains solely responsible for the remainder of the
-    /// source. Processing failures from the shared recognizer propagate
+    /// source. Since Issue #855 those owners additionally offer the callee
+    /// as the first atom of their own existing additive continuation
+    /// (`f()+g`, see
+    /// `consume_selected_zero_argument_identifier_reference_call_initializer`
+    /// and the free-standing `..._additive_after_first`), each keeping the
+    /// call-only `f()` outcome under this theorem when no additive link
+    /// completes; this helper itself is unchanged. Processing failures from the shared recognizer propagate
     /// unchanged and never degrade to `NotSelected`.
     fn consume_selected_zero_argument_identifier_reference_call_expression(
         &mut self,
@@ -7122,6 +7213,116 @@ impl<'source> Cursor<'source> {
             }
             SelectedIdentifierReferenceRecognition::InternalFailure => {
                 SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::InternalFailure
+            }
+        }
+    }
+
+    /// Initializer-owner-private call-head probe (Issue #855, composing the
+    /// accepted candidate-independent theorem proven by #853/PR #854). It
+    /// separates the two theorems that share the #852 call head:
+    ///
+    /// ```text
+    /// CallOnly            ::= SelectedZeroArgumentIdentifierReferenceCall            (#852)
+    /// CallHeadedAdditive  ::= SelectedZeroArgumentIdentifierReferenceCall
+    ///                         ONE-OR-MORE ExistingSelectedInitializerAdditiveLink   (#855)
+    /// ```
+    ///
+    /// The call head is recognized exactly once by the unmodified
+    /// `consume_selected_zero_argument_identifier_reference_call_expression`
+    /// (#851/#852); its callee fact is the first retained fact of either
+    /// result and nothing is rescanned or recognized twice. The remainder is
+    /// delegated to the initializer's own existing staged/local recovery
+    /// continuation
+    /// (`consume_selected_identifier_reference_initializer_continuation_after_first`),
+    /// so the accepted link language, right-unary boundary, Decimal operands,
+    /// and processing-failure propagation are exactly those of a bare
+    /// `IdentifierReference` first operand.
+    ///
+    /// That continuation restores the cursor to exactly its entry position on
+    /// every decline (absent operator, same-sign adjacency, no accepted
+    /// operand), and only ever leaves the cursor further on after at least
+    /// one link -- a reference or a Decimal -- has completed. Cursor progress
+    /// past the position immediately after the call head is therefore the
+    /// transient control state that distinguishes the theorems (the retained
+    /// cardinality cannot: a Decimal-only link such as `f()+1` still yields a
+    /// `One` carrier). No progress means no link completed, so the #852
+    /// call-only theorem keeps ownership with the cursor immediately after
+    /// `)` and the untouched suffix stays with the declaration owner -- the
+    /// initializer's staged recovery for `f()+`, `f()+<unselected>`, and
+    /// `f()++g` is exactly that. Progress means the #855 theorem, whose
+    /// latest completed prefix has already been committed by the existing
+    /// recovery. A call is never accepted in a continuation operand, and no
+    /// call, additive, operator, or result identity is retained. Callers must
+    /// probe this route before the bare-reference initializer route,
+    /// otherwise `f()` would be committed as bare `f`.
+    fn consume_selected_zero_argument_identifier_reference_call_initializer(
+        &mut self,
+    ) -> SelectedZeroArgumentIdentifierReferenceCallInitializerRecognition {
+        let callee = match self
+            .consume_selected_zero_argument_identifier_reference_call_expression()
+        {
+            SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::Matched(callee) => {
+                callee
+            }
+            SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::NotSelected => {
+                return SelectedZeroArgumentIdentifierReferenceCallInitializerRecognition::NotSelected;
+            }
+            SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::ResourceLimited => {
+                return SelectedZeroArgumentIdentifierReferenceCallInitializerRecognition::ResourceLimited;
+            }
+            SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::InternalFailure => {
+                return SelectedZeroArgumentIdentifierReferenceCallInitializerRecognition::InternalFailure;
+            }
+        };
+
+        let after_call = self.offset;
+        let recognition =
+            self.consume_selected_identifier_reference_initializer_continuation_after_first(callee);
+        let link_completed = self.offset != after_call;
+
+        match recognition {
+            SelectedIdentifierReferenceInitializerRecognition::One(fact) if !link_completed => {
+                SelectedZeroArgumentIdentifierReferenceCallInitializerRecognition::CallOnly(fact)
+            }
+            SelectedIdentifierReferenceInitializerRecognition::One(fact) => {
+                SelectedZeroArgumentIdentifierReferenceCallInitializerRecognition::CallHeadedAdditive(SelectedIdentifierReferenceInitializer::One(fact))
+            }
+            SelectedIdentifierReferenceInitializerRecognition::Two { first, second } => {
+                SelectedZeroArgumentIdentifierReferenceCallInitializerRecognition::CallHeadedAdditive(SelectedIdentifierReferenceInitializer::Two {
+                    first,
+                    second,
+                })
+            }
+            SelectedIdentifierReferenceInitializerRecognition::Three {
+                first,
+                second,
+                third,
+            } => SelectedZeroArgumentIdentifierReferenceCallInitializerRecognition::CallHeadedAdditive(
+                SelectedIdentifierReferenceInitializer::Three {
+                    first,
+                    second,
+                    third,
+                },
+            ),
+            SelectedIdentifierReferenceInitializerRecognition::Many { first, rest } => {
+                SelectedZeroArgumentIdentifierReferenceCallInitializerRecognition::CallHeadedAdditive(SelectedIdentifierReferenceInitializer::Many {
+                    first,
+                    rest,
+                })
+            }
+            SelectedIdentifierReferenceInitializerRecognition::ResourceLimited => {
+                SelectedZeroArgumentIdentifierReferenceCallInitializerRecognition::ResourceLimited
+            }
+            SelectedIdentifierReferenceInitializerRecognition::InternalFailure => {
+                SelectedZeroArgumentIdentifierReferenceCallInitializerRecognition::InternalFailure
+            }
+            // The continuation never reports these for an already recognized
+            // first operand.
+            SelectedIdentifierReferenceInitializerRecognition::EscapedReservedIdentifierName {
+                ..
+            }
+            | SelectedIdentifierReferenceInitializerRecognition::NotSelected => {
+                SelectedZeroArgumentIdentifierReferenceCallInitializerRecognition::InternalFailure
             }
         }
     }
@@ -8012,4 +8213,177 @@ fn is_selected_trivia(code_point: char) -> bool {
         code_point,
         '\u{0009}' | '\u{000B}' | '\u{000C}' | '\u{FEFF}' | '\n' | '\r' | '\u{2028}' | '\u{2029}'
     ) || is_space_separator(code_point as u32)
+}
+
+/// Issue #855 theorem-ownership tests. The #852 call-only theorem
+/// (`SelectedZeroArgumentIdentifierReferenceCall`) and the #855
+/// call-headed-additive theorem (the same call head plus at least one
+/// owner-accepted additive link) are indistinguishable from whole-source
+/// recognition alone (`f()` retains the callee either way), so these tests
+/// exercise the two owner-private routes directly and pin, with fixture-owned
+/// literal expectations, which theorem owns each source and where each owner
+/// leaves the cursor: the initializer's staged/local recovery versus the
+/// free-standing owner's whole-body rollback. Kept in this file because
+/// `Cursor` and both owner-private routes are private to it.
+#[cfg(test)]
+mod call_head_theorem_ownership_tests {
+    use super::*;
+    use crate::{SourceId, SourceText};
+
+    #[derive(Debug, PartialEq, Eq)]
+    enum Owned {
+        /// #852 call-only: exactly the callee fact.
+        CallOnly,
+        /// #855: call head plus at least one completed link.
+        CallHeaded,
+        /// No accepted call head, or the free-standing whole-body rollback.
+        Declined,
+    }
+
+    fn source(text: &str) -> SourceText {
+        SourceText::new(SourceId::new(855), text.to_owned())
+    }
+
+    fn names<'a>(facts: impl Iterator<Item = &'a SelectedIdentifierReferenceFact>) -> Vec<String> {
+        facts.map(|fact| fact.semantic_name().to_owned()).collect()
+    }
+
+    /// Initializer-owned route: `(owning theorem, retained names in order,
+    /// cursor after the route)`.
+    fn initializer(text: &str) -> (Owned, Vec<String>, usize) {
+        let source = source(text);
+        let mut cursor = Cursor::new(&source);
+        match cursor.consume_selected_zero_argument_identifier_reference_call_initializer() {
+            SelectedZeroArgumentIdentifierReferenceCallInitializerRecognition::CallOnly(fact) => {
+                (Owned::CallOnly, names([&fact].into_iter()), cursor.offset)
+            }
+            SelectedZeroArgumentIdentifierReferenceCallInitializerRecognition::CallHeadedAdditive(
+                carrier,
+            ) => (Owned::CallHeaded, names(carrier.facts()), cursor.offset),
+            SelectedZeroArgumentIdentifierReferenceCallInitializerRecognition::NotSelected => {
+                (Owned::Declined, Vec::new(), cursor.offset)
+            }
+            other => panic!("unexpected processing failure for {text:?}: {other:?}"),
+        }
+    }
+
+    /// Free-standing whole-body route: same triple.
+    fn free_standing(text: &str) -> (Owned, Vec<String>, usize) {
+        let source = source(text);
+        let mut cursor = Cursor::new(&source);
+        match cursor.consume_selected_identifier_reference_expression_statement_use_site_body() {
+            SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::Matched(body) => {
+                let retained = names(body.facts());
+                // The free-standing carrier cannot itself tell the theorems
+                // apart (`f()` and `f()+1` both retain one fact), so the
+                // fixture classifies by whether the authored source contains
+                // an additive operator at all.
+                let owned = if text.contains(['+', '-']) {
+                    Owned::CallHeaded
+                } else {
+                    Owned::CallOnly
+                };
+                (owned, retained, cursor.offset)
+            }
+            SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::NotSelected => {
+                (Owned::Declined, Vec::new(), cursor.offset)
+            }
+            other => panic!("unexpected processing failure for {text:?}: {other:?}"),
+        }
+    }
+
+    fn v(names: &[&str]) -> Vec<String> {
+        names.iter().map(|name| (*name).to_owned()).collect()
+    }
+
+    /// Fixture-owned: `(source, owner, names, cursor)`. The cursor is the
+    /// authored byte length of the prefix the initializer route consumed.
+    #[test]
+    fn initializer_route_separates_call_only_from_call_headed_additive() {
+        use Owned::{CallHeaded, CallOnly, Declined};
+        for (text, owned, retained, cursor) in [
+            // #852 call-only: no additive link, cursor immediately after `)`.
+            ("f()", CallOnly, v(&["f"]), 3),
+            ("f() ", CallOnly, v(&["f"]), 3),
+            ("f ( )", CallOnly, v(&["f"]), 5),
+            // #855: at least one completed link.
+            ("f()+g", CallHeaded, v(&["f", "g"]), 5),
+            ("f()-g", CallHeaded, v(&["f", "g"]), 5),
+            ("f()-g+h", CallHeaded, v(&["f", "g", "h"]), 7),
+            ("f()+ +g", CallHeaded, v(&["f", "g"]), 7),
+            ("f()+-g", CallHeaded, v(&["f", "g"]), 6),
+            // A Decimal-only link retains a `One` carrier yet is #855.
+            ("f()+1", CallHeaded, v(&["f"]), 5),
+            ("f()+1.5-2", CallHeaded, v(&["f"]), 9),
+            (r"\u{66}()+g", CallHeaded, v(&["f", "g"]), 10),
+            (r"f()+\u{67}", CallHeaded, v(&["f", "g"]), 10),
+            // Staged/local recovery: a link that begins but never completes
+            // leaves the #852 call-only theorem with the cursor after `)`.
+            ("f()+", CallOnly, v(&["f"]), 3),
+            ("f()-", CallOnly, v(&["f"]), 3),
+            ("f()+*", CallOnly, v(&["f"]), 3),
+            ("f()++g", CallOnly, v(&["f"]), 3),
+            ("f()+ ", CallOnly, v(&["f"]), 3),
+            // ... and recovers to the latest completed link, never a rollback.
+            ("f()+g+", CallHeaded, v(&["f", "g"]), 5),
+            ("f()+g++h", CallHeaded, v(&["f", "g"]), 5),
+            ("f()+1+", CallHeaded, v(&["f"]), 5),
+            ("f()+g()", CallHeaded, v(&["f", "g"]), 5),
+            ("async()+g=>x", CallHeaded, v(&["async", "g"]), 9),
+            // No additive operator at all: the enclosing owner judges the rest.
+            ("f()*g", CallOnly, v(&["f"]), 3),
+            ("f()/g", CallOnly, v(&["f"]), 3),
+            ("f().x", CallOnly, v(&["f"]), 3),
+            ("f()[x]", CallOnly, v(&["f"]), 3),
+            ("f()()", CallOnly, v(&["f"]), 3),
+            ("async()=>x", CallOnly, v(&["async"]), 7),
+            // No accepted call head: the bare-reference route is unperturbed.
+            ("f", Declined, v(&[]), 0),
+            ("f(a)+g", Declined, v(&[]), 0),
+            ("f/*c*/()+g", Declined, v(&[]), 0),
+            ("a+f()", Declined, v(&[]), 0),
+            ("(f())+g", Declined, v(&[]), 0),
+        ] {
+            assert_eq!(initializer(text), (owned, retained, cursor), "{text:?}");
+        }
+    }
+
+    /// Free-standing: `NotSelected` after an authored additive operator has
+    /// begun is the whole-body rollback (cursor back at the body start), never
+    /// a call-only prefix or a partial fact list.
+    #[test]
+    fn free_standing_route_keeps_call_only_and_whole_body_rollback_distinct() {
+        use Owned::{CallHeaded, CallOnly, Declined};
+        for (text, owned, retained, cursor) in [
+            // #852 call-only: the existing body keeps trailing trivia.
+            ("f()", CallOnly, v(&["f"]), 3),
+            ("f() ", CallOnly, v(&["f"]), 4),
+            ("f\n()\n", CallOnly, v(&["f"]), 5),
+            ("f()*g", CallOnly, v(&["f"]), 3),
+            ("f().x", CallOnly, v(&["f"]), 3),
+            ("f()[x]", CallOnly, v(&["f"]), 3),
+            ("f()()", CallOnly, v(&["f"]), 3),
+            ("async()=>x", CallOnly, v(&["async"]), 7),
+            // #855: at least one completed link (trailing trivia is body-owned).
+            ("f()+g", CallHeaded, v(&["f", "g"]), 5),
+            ("f()-g ", CallHeaded, v(&["f", "g"]), 6),
+            ("f()-g+h", CallHeaded, v(&["f", "g", "h"]), 7),
+            ("f()+ +g", CallHeaded, v(&["f", "g"]), 7),
+            ("f()+1", CallHeaded, v(&["f"]), 5),
+            ("f()+1+g", CallHeaded, v(&["f", "g"]), 7),
+            (r"\u{66}()+g", CallHeaded, v(&["f", "g"]), 10),
+            // Whole-body rollback once an authored operator has started: no
+            // call-only fallback, no partial prefix, cursor at body start.
+            ("f()+", Declined, v(&[]), 0),
+            ("f()-", Declined, v(&[]), 0),
+            ("f()+*", Declined, v(&[]), 0),
+            ("f()++g", Declined, v(&[]), 0),
+            ("f()+g+", Declined, v(&[]), 0),
+            ("f()+g++h", Declined, v(&[]), 0),
+            ("f()+1+", Declined, v(&[]), 0),
+            ("f()+ +1", Declined, v(&[]), 0),
+        ] {
+            assert_eq!(free_standing(text), (owned, retained, cursor), "{text:?}");
+        }
+    }
 }

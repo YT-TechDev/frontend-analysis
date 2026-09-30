@@ -3617,7 +3617,6 @@ fn two_operand_cardinality_operand_and_richer_expression_firewalls_remain_unsupp
         "a+(b);",
         "a.b+c;",
         "a+b.c;",
-        "a()+b;",
         "a+b();",
         // Precedence / richer-expression firewall.
         "a*b;",
@@ -3923,7 +3922,6 @@ fn one_reference_one_plain_decimal_additive_use_site_firewalls_remain_unsupporte
         "1 + (a);",
         "a.b + 1;",
         "1 + a.b;",
-        "a() + 1;",
         "1 + a();",
         "a + 1 * b;",
         "a = 1 + b;",
@@ -4091,8 +4089,6 @@ fn zero_argument_identifier_reference_call_expression_richer_neighbors_remain_un
         "f()();",
         "f().x;",
         "f()[x];",
-        "f()+g;",
-        "f()-g;",
         "f()*g;",
         "f()/g;",
         "f()?g:h;",
@@ -4106,7 +4102,6 @@ fn zero_argument_identifier_reference_call_expression_richer_neighbors_remain_un
         "async()=>x",
         "async() => x",
         "async ( ) => x",
-        "const x = f()+g;",
         "var x = f()=g;",
         "{ f().x; }",
         "{ var x = f()(); }",
@@ -4180,4 +4175,131 @@ fn zero_argument_identifier_reference_call_expression_preserves_existing_ee01_re
         attempt(r"let \u0030; foo()();"),
         SelectedQualificationAttempt::UnsupportedCoverage
     ));
+}
+
+/// Issue #855: a source whose first atom is one accepted zero-argument
+/// `IdentifierReference` call followed by one-or-more additive links already
+/// accepted by the specific owner reaches the same existing
+/// `SelectedAcceptedIncomplete` lifecycle as any other production-accepted,
+/// not-yet-Oracle-qualified source -- never `UnsupportedCoverage` and never
+/// `Qualified`. Accepted #853/#854 established locally that no new reachable
+/// frozen Early Error identity is introduced, so no qualification change is
+/// expected. Representative sources cover each authorized owner/placement
+/// class, Direct and escaped call heads and operands, Decimal and right-unary
+/// links, selected trivia (including LineTerminators), and special heads as
+/// source syntax only.
+#[test]
+fn call_headed_additive_reaches_selected_accepted_incomplete() {
+    for text in [
+        // LexicalDeclaration initializer.
+        "const x = f()+g;",
+        "let out = f()-g;",
+        r"let x = \u{66}()+g;",
+        r"let x = f()-\u{67}+h;",
+        // Top-level var.
+        "var out = f()+g-h;",
+        "var out = f()+1;",
+        // Block var / Block-contained initializer owners.
+        "{ var out = f()+ +g; }",
+        "{ let x = f()-1+g; }",
+        // TopLevel free-standing authored terminator and EOF ASI.
+        "f()+g;",
+        "f()-g",
+        r"f()+\u{67}",
+        "f\n()\n+\ng",
+        "f ( ) + g",
+        "f()+1",
+        // Block free-standing authored terminator and before-`}` ASI.
+        "{ f()+g; }",
+        "{ f()-g+h }",
+        "{ f()+-g }",
+        // Special and contextual heads are plain IdentifierReferences.
+        "async()+g",
+        "eval()-g;",
+        // Mixed declaration and free-standing call-headed additive.
+        "var f; var g; f()+g;",
+        "let f; { let g; f()-g; }",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::SelectedAcceptedIncomplete
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+/// Issue #855: boundaries of the call-headed additive theorem stay outside
+/// selected production in every owner: call/member neighbors, new precedence
+/// families, a call in a continuation operand, richer tails, grouping,
+/// non-empty Arguments, comments, incomplete continuations, and the
+/// AsyncArrow / cover boundary.
+#[test]
+fn call_headed_additive_richer_neighbors_remain_unsupported() {
+    for text in [
+        "f()()+g;",
+        "f().x+g;",
+        "f()[x]+g;",
+        "f()*g;",
+        "f()/g;",
+        "f()%g;",
+        "f()+g*h;",
+        "f()+g()",
+        "a+f();",
+        "f()+g+h();",
+        "f()+g?x:y;",
+        "f()+g=h;",
+        "f()+g++;",
+        "(f())+g;",
+        "f()+(g);",
+        "f(a)+g;",
+        "f(/*c*/)+g;",
+        "f/*c*/()+g;",
+        "f()+;",
+        "f()+g+;",
+        "f()++g;",
+        "async()=>x",
+        "async() => x",
+        "async()+g=>x",
+        "const x = f()+g*h;",
+        "const x = f()+g();",
+        "var x = f()+;",
+        "var x = f()+g+;",
+        "{ var x = f()+g=h; }",
+        "{ f()+g.h; }",
+    ] {
+        assert!(
+            matches!(
+                attempt(text),
+                SelectedQualificationAttempt::UnsupportedCoverage
+            ),
+            "{text:?}"
+        );
+    }
+}
+
+/// Issue #855: newly reachable downstream syntax coverage never hides an
+/// earlier binding's pre-existing EE-01 rejection. The call-headed additive
+/// statement following `let \u{30};` is now recognized, yet the earlier
+/// binding still owns `InvalidEscapedIdentifierStart` with its authored
+/// subject at `4..10`. No new Early Error identity is involved.
+#[test]
+fn call_headed_additive_preserves_existing_ee01_rejection_of_invalid_escaped_binding() {
+    let text = r"let \u{30}; f()+g;";
+
+    let outcome = qualification_outcome(text);
+    assert_eq!(outcome.processing(), ProcessingStatus::Complete);
+    assert_eq!(
+        outcome.verdict(),
+        Some(QualificationVerdictKind::StaticSemanticsRejected)
+    );
+    let evidence = outcome.rejection_evidence().expect("static evidence");
+    assert_eq!(evidence.family(), RejectionFamily::StaticSemantics);
+    let anchor = evidence
+        .subject()
+        .authored_anchor()
+        .expect("authored static subject");
+    assert_eq!(anchor.fragment(), r"\u{30}");
+    assert_eq!((anchor.range().start(), anchor.range().end()), (4, 10));
 }
