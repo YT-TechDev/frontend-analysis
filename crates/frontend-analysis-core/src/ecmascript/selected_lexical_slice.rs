@@ -2403,6 +2403,30 @@ enum SelectedLeadingPlusMinusParenthesizedIdentifierReferenceUnaryExpressionReco
     InternalFailure,
 }
 
+/// Result of the placement-neutral bounded zero-argument
+/// `IdentifierReference` `CallExpression` recognizer below (Issue #851,
+/// composing the accepted candidate-independent theorem proven by #849/PR
+/// #850 per #688 comment 5896253950). `Matched` carries the exact existing
+/// `SelectedIdentifierReferenceFact` produced by the shared
+/// `consume_selected_identifier_reference()` recognizer for the sole callee,
+/// unchanged, for either a direct-authored or an escaped non-ReservedWord
+/// callee; nothing about the call itself (whole-call span, `(`/`)` anchors,
+/// Arguments, operator) is retained. `NotSelected` covers every decline: an
+/// escaped `ReservedWord` or absent callee, or a callee not followed (after
+/// selected trivia) by an authored `(` and (after selected trivia) `)`.
+/// `ResourceLimited` and `InternalFailure` preserve the shared recognizer's
+/// own processing-failure classes without collapsing them into
+/// `NotSelected`. This carrier is deliberately distinct from
+/// `SelectedParenthesizedIdentifierReferenceRecognition`: a call owns an
+/// empty-Arguments delimiter pair after the operand, not a grouping around it.
+#[derive(Debug)]
+enum SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition {
+    Matched(SelectedIdentifierReferenceFact),
+    NotSelected,
+    ResourceLimited,
+    InternalFailure,
+}
+
 /// Result of the initializer-owner-private optional-leading-`+`/`-`
 /// continuation primitive (Issue #811, composing the accepted
 /// candidate-independent theorem proven by #809/PR #810 with the
@@ -3029,6 +3053,17 @@ impl<'source> Cursor<'source> {
                                         {
                                             (None, None)
                                         } else {
+                                            match self.consume_selected_zero_argument_identifier_reference_call_expression() {
+                                                SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::Matched(reference) => {
+                                                    (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
+                                                }
+                                                SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::ResourceLimited => {
+                                                    return Err(ParseFailure::ResourceLimited);
+                                                }
+                                                SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::InternalFailure => {
+                                                    return Err(ParseFailure::InternalFailure);
+                                                }
+                                                SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::NotSelected => {
                                             match self.consume_selected_identifier_reference_initializer() {
                                                 SelectedIdentifierReferenceInitializerRecognition::One(reference) => {
                                                     (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
@@ -3064,6 +3099,8 @@ impl<'source> Cursor<'source> {
                                                     return Err(ParseFailure::InternalFailure);
                                                 }
                                             }
+                                            }
+                                        }
                                         }
                                     }
                                 }
@@ -3312,6 +3349,17 @@ impl<'source> Cursor<'source> {
                                         {
                                             (None, None)
                                         } else {
+                                            match self.consume_selected_zero_argument_identifier_reference_call_expression() {
+                                                SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::Matched(reference) => {
+                                                    (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
+                                                }
+                                                SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::ResourceLimited => {
+                                                    return Err(ParseFailure::ResourceLimited);
+                                                }
+                                                SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::InternalFailure => {
+                                                    return Err(ParseFailure::InternalFailure);
+                                                }
+                                                SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::NotSelected => {
                                             match self.consume_selected_identifier_reference_initializer() {
                                                 SelectedIdentifierReferenceInitializerRecognition::One(reference) => {
                                                     (Some(SelectedIdentifierReferenceInitializer::One(reference)), None)
@@ -3347,6 +3395,8 @@ impl<'source> Cursor<'source> {
                                                     return Err(ParseFailure::InternalFailure);
                                                 }
                                             }
+                                            }
+                                        }
                                         }
                                     }
                                 }
@@ -3562,6 +3612,18 @@ impl<'source> Cursor<'source> {
                                         && !self.consume_selected_this_expression()
                                         && !self.consume_selected_escape_free_string_literal()
                                     {
+                                        match self.consume_selected_zero_argument_identifier_reference_call_expression() {
+                                            SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::Matched(reference) => {
+                                                identifier_reference_initializer =
+                                                    Some(SelectedIdentifierReferenceInitializer::One(reference));
+                                            }
+                                            SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::ResourceLimited => {
+                                                return Err(ParseFailure::ResourceLimited);
+                                            }
+                                            SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::InternalFailure => {
+                                                return Err(ParseFailure::InternalFailure);
+                                            }
+                                            SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::NotSelected => {
                                         match self.consume_selected_identifier_reference_initializer() {
                                             SelectedIdentifierReferenceInitializerRecognition::One(reference) => {
                                                 identifier_reference_initializer =
@@ -3592,6 +3654,8 @@ impl<'source> Cursor<'source> {
                                             }
                                             SelectedIdentifierReferenceInitializerRecognition::InternalFailure => {
                                                 return Err(ParseFailure::InternalFailure);
+                                            }
+                                        }
                                             }
                                         }
                                     }
@@ -4543,6 +4607,23 @@ impl<'source> Cursor<'source> {
             SelectedParenthesizedIdentifierReferenceRecognition::NotSelected => {}
         }
 
+        match self.consume_selected_zero_argument_identifier_reference_call_expression() {
+            SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::Matched(
+                reference,
+            ) => {
+                self.skip_selected_trivia();
+                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::Matched(
+                    SelectedFreeStandingIdentifierReferenceUseSite::One(reference),
+                );
+            }
+            SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::ResourceLimited => {
+                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::ResourceLimited;
+            }
+            SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::InternalFailure => {
+                return SelectedIdentifierReferenceExpressionStatementUseSiteBodyRecognition::InternalFailure;
+            }
+            SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::NotSelected => {}
+        }
         let first = match self.consume_selected_identifier_reference() {
             SelectedIdentifierReferenceRecognition::Matched(fact) => fact,
             SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName { .. } => {
@@ -6979,6 +7060,68 @@ impl<'source> Cursor<'source> {
             }
             SelectedIdentifierReferenceRecognition::InternalFailure => {
                 SelectedParenthesizedIdentifierReferenceRecognition::InternalFailure
+            }
+        }
+    }
+
+    /// Recognizes exactly one selected zero-argument `IdentifierReference`
+    /// `CallExpression` (`SelectedAcceptedIdentifierReference
+    /// SelectedCallTrivia "(" SelectedCallTrivia ")"`) in either the selected
+    /// initializer position or the selected free-standing `ExpressionStatement`
+    /// use-site body position (Issue #851, composing the accepted
+    /// candidate-independent authority proven by #849/PR #850, per #688
+    /// comment 5896253950).
+    ///
+    /// This helper invokes the unmodified shared
+    /// `consume_selected_identifier_reference()` exactly once for the callee,
+    /// then owns only the selected trivia before `(`, the paired `(`/`)`
+    /// delimiters, and the selected trivia inside the empty `Arguments`.
+    /// Only the existing callee `SelectedIdentifierReferenceFact` is retained;
+    /// no CallExpression anchor, delimiter anchor, Arguments identity, call
+    /// operator, runtime callee, or value identity is ever recorded, and the
+    /// callee anchor is the one the shared recognizer already produced.
+    ///
+    /// Any decline -- an escaped `ReservedWord` or absent callee, a missing
+    /// `(`, or a missing `)` (non-empty Arguments, comments, or an incomplete
+    /// suffix) -- restores the exact starting cursor and returns
+    /// `NotSelected`, so the existing bare-reference route receives unchanged
+    /// input. Callers must probe this route before the bare-reference
+    /// fallback, otherwise `f()` would be committed as bare `f`. A locally
+    /// complete `f()` prefix never authorizes a richer outer continuation
+    /// (`f()()`, `f().x`, `f()+g`, `f()=g`, ...): the helper inspects no
+    /// suffix, and the enclosing initializer/declaration or free-standing
+    /// placement owner remains solely responsible for the remainder of the
+    /// source. Processing failures from the shared recognizer propagate
+    /// unchanged and never degrade to `NotSelected`.
+    fn consume_selected_zero_argument_identifier_reference_call_expression(
+        &mut self,
+    ) -> SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition {
+        let start = self.offset;
+
+        match self.consume_selected_identifier_reference() {
+            SelectedIdentifierReferenceRecognition::Matched(callee) => {
+                self.skip_selected_trivia();
+                if !self.consume_ascii('(') {
+                    self.offset = start;
+                    return SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::NotSelected;
+                }
+                self.skip_selected_trivia();
+                if !self.consume_ascii(')') {
+                    self.offset = start;
+                    return SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::NotSelected;
+                }
+                SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::Matched(callee)
+            }
+            SelectedIdentifierReferenceRecognition::EscapedReservedIdentifierName { .. }
+            | SelectedIdentifierReferenceRecognition::NotSelected => {
+                self.offset = start;
+                SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::NotSelected
+            }
+            SelectedIdentifierReferenceRecognition::ResourceLimited => {
+                SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::ResourceLimited
+            }
+            SelectedIdentifierReferenceRecognition::InternalFailure => {
+                SelectedZeroArgumentIdentifierReferenceCallExpressionRecognition::InternalFailure
             }
         }
     }
