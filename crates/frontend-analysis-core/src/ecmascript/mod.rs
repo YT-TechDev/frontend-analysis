@@ -72,6 +72,8 @@ mod qualification_selected_two_identifier_reference_additive_expression_statemen
 #[cfg(test)]
 mod qualification_selected_two_identifier_reference_additive_initializer_validation_tests;
 #[cfg(test)]
+mod qualification_selected_zero_argument_identifier_reference_call_expression_validation_tests;
+#[cfg(test)]
 mod qualification_static_semantics_validation_tests;
 #[cfg(test)]
 mod qualification_validation_tests;
