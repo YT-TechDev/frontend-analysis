@@ -207,6 +207,12 @@ impl CssSelectorQualificationObservation {
         self.context_id
     }
 
+    /// The retained parser-context header anchor this observation is bound
+    /// to, unchanged from the upstream context record.
+    pub(crate) const fn context_header(&self) -> &SourceAnchor {
+        &self.context_header
+    }
+
     pub(crate) const fn grammar_context(&self) -> CssSelectorGrammarContext {
         self.grammar_context
     }
