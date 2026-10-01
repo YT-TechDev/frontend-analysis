@@ -1,10 +1,11 @@
 //! `fa`: the Frontend Analysis command-line Product (Issue #857, ADR 0011).
 //!
-//! Phase 1 supports exactly two commands, each reading one source from stdin:
+//! Phase 1 supports exactly three commands, each reading one source from stdin:
 //!
 //! ```text
 //! fa css-selectors < style.css
 //! fa es-binding-refs < source.js
+//! fa html-tree < source.html
 //! ```
 //!
 //! The Product owns argv, bounded stdin acquisition, strict UTF-8 decoding,
@@ -17,6 +18,7 @@
 //! for a returned Core boundary failure.
 
 mod es_binding_refs;
+mod html_tree;
 
 use std::ffi::OsString;
 use std::fmt::{Display, Write as _};
@@ -32,6 +34,7 @@ use frontend_analysis_core::css::selectors::{
     CssStageCompletion, CssTokenizerResourceKind, CssTokenizerTermination, analyze_core_v1,
 };
 use frontend_analysis_core::ecmascript::binding_refs::analyze_selected_flat_lexical_binding_refs;
+use frontend_analysis_core::html::tree::analyze_selected_document_tree;
 use frontend_analysis_core::{SourceAnchor, SourceId, SourceText};
 
 /// Shared per-invocation Product stdin acquisition ceiling for every `fa`
@@ -43,12 +46,14 @@ const CLI_STDIN_MAX_BYTES: usize = 49_152;
 
 const CSS_SELECTORS_COMMAND: &str = "css-selectors";
 const ES_BINDING_REFS_COMMAND: &str = "es-binding-refs";
-const USAGE: &str = "usage: fa css-selectors < style.css\n       fa es-binding-refs < source.js";
+const HTML_TREE_COMMAND: &str = "html-tree";
+const USAGE: &str = "usage: fa css-selectors < style.css\n       fa es-binding-refs < source.js\n       fa html-tree < source.html";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Command {
     CssSelectors,
     EsBindingRefs,
+    HtmlTree,
 }
 
 const EXIT_REPORT: u8 = 0;
@@ -112,6 +117,9 @@ fn run(
         Command::EsBindingRefs => analyze_selected_flat_lexical_binding_refs(&source)
             .map(|report| es_binding_refs::render_report(source.as_str().len(), &report))
             .map_err(|failure| failure.to_string()),
+        Command::HtmlTree => analyze_selected_document_tree(&source)
+            .map(|report| html_tree::render_report(source.as_str().len(), &report))
+            .map_err(|failure| failure.to_string()),
     };
     match rendered {
         Ok(rendered) => emit_report(stdout, stderr, &rendered),
@@ -137,6 +145,7 @@ fn check_command(args: &[OsString]) -> Result<Command, &'static str> {
         None => return Err("missing command"),
         Some(command) if command.as_os_str() == CSS_SELECTORS_COMMAND => Command::CssSelectors,
         Some(command) if command.as_os_str() == ES_BINDING_REFS_COMMAND => Command::EsBindingRefs,
+        Some(command) if command.as_os_str() == HTML_TREE_COMMAND => Command::HtmlTree,
         Some(_) => return Err("unknown command"),
     };
     if args.len() > 1 {
@@ -452,6 +461,11 @@ mod tests {
         assert_eq!(
             check_command(&args(&["es-binding-refs"])),
             Ok(Command::EsBindingRefs)
+        );
+        assert_eq!(check_command(&args(&["html-tree"])), Ok(Command::HtmlTree));
+        assert_eq!(
+            check_command(&args(&["html-tree", "a.html"])),
+            Err("unexpected argument")
         );
         assert_eq!(
             check_command(&args(&["es-binding-refs", "a.js"])),

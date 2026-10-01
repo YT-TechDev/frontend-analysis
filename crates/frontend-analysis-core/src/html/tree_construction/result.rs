@@ -74,13 +74,21 @@ use super::super::tokenizer::result::{HtmlTokenizerCompletion, HtmlTokenizerRunR
 /// admits these identities advances only after a creation action has fully
 /// committed, so a refused or unsupported action consumes no identity.
 ///
-/// No raw-value accessor exists, and no encoding, cross-result, cross-run,
-/// cross-edit, cross-revision, public, serialized, or runtime-correlation
-/// stability is promised. [`Ord`] compares committed creation order, which is
+/// The only raw-value accessor is the crate-private
+/// [`Self::creation_ordinal`], used solely by the public `html::tree`
+/// projection (Issue #864). No encoding, cross-result, cross-run, cross-edit,
+/// cross-revision, serialized, or runtime-correlation stability is promised. [`Ord`] compares committed creation order, which is
 /// semantic; the `Debug` projection is a debugging aid only and is not a
 /// contract.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct HtmlConstructedNodeId(u32);
+
+impl HtmlConstructedNodeId {
+    /// The committed creation ordinal, for the public report projection only.
+    pub(crate) const fn creation_ordinal(self) -> u32 {
+        self.0
+    }
+}
 
 impl fmt::Debug for HtmlConstructedNodeId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -1114,6 +1122,15 @@ impl HtmlDocumentShellAnalysis {
         self.nodes.len()
     }
 
+    /// Iterates nodes in private storage order, which carries no meaning.
+    ///
+    /// Exists so the public `html::tree` projection can reserve and order its
+    /// own working storage fallibly (Issue #864) instead of relying on the
+    /// infallible allocation in [`Self::nodes_in_creation_order`].
+    pub(crate) fn nodes_in_storage_order(&self) -> impl Iterator<Item = &HtmlTreeNode> {
+        self.nodes.iter()
+    }
+
     pub(crate) fn nodes_in_creation_order(&self) -> Vec<&HtmlTreeNode> {
         let mut ordered: Vec<&HtmlTreeNode> = self.nodes.iter().collect();
         ordered.sort_by_key(|node| node.id());
@@ -1141,7 +1158,7 @@ impl HtmlDocumentShellAnalysis {
     }
 
     #[cfg(test)]
-    pub(super) fn with_reversed_storage(mut self) -> Self {
+    pub(in crate::html) fn with_reversed_storage(mut self) -> Self {
         self.nodes.reverse();
         self
     }
