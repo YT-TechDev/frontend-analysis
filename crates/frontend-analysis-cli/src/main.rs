@@ -1,9 +1,10 @@
 //! `fa`: the Frontend Analysis command-line Product (Issue #857, ADR 0011).
 //!
-//! Phase 1 supports exactly one command:
+//! Phase 1 supports exactly two commands, each reading one source from stdin:
 //!
 //! ```text
 //! fa css-selectors < style.css
+//! fa es-binding-refs < source.js
 //! ```
 //!
 //! The Product owns argv, bounded stdin acquisition, strict UTF-8 decoding,
@@ -14,6 +15,8 @@
 //! Exit status: `0` when a report was produced (whatever its analysis
 //! outcomes), `1` for a Product command or input acquisition failure, and `2`
 //! for a returned Core boundary failure.
+
+mod es_binding_refs;
 
 use std::ffi::OsString;
 use std::fmt::{Display, Write as _};
@@ -28,15 +31,25 @@ use frontend_analysis_core::css::selectors::{
     CssSelectorResourceKind, CssSelectorTermination, CssSelectorUnsupportedFeature,
     CssStageCompletion, CssTokenizerResourceKind, CssTokenizerTermination, analyze_core_v1,
 };
+use frontend_analysis_core::ecmascript::binding_refs::analyze_selected_flat_lexical_binding_refs;
 use frontend_analysis_core::{SourceAnchor, SourceId, SourceText};
 
-/// Product stdin acquisition ceiling approved in Issue #857. Deliberately
-/// larger than the Core tokenizer `SourceBytes` policy so Core source-size
-/// refusal stays observable as an analysis result.
+/// Shared per-invocation Product stdin acquisition ceiling for every `fa`
+/// command (approved in Issues #857 and #862). It is Product acquisition
+/// policy, not a Core limit: it is deliberately larger than the Core CSS
+/// tokenizer `SourceBytes` policy so Core source-size refusal stays observable
+/// as an analysis result.
 const CLI_STDIN_MAX_BYTES: usize = 49_152;
 
-const COMMAND: &str = "css-selectors";
-const USAGE: &str = "usage: fa css-selectors < style.css";
+const CSS_SELECTORS_COMMAND: &str = "css-selectors";
+const ES_BINDING_REFS_COMMAND: &str = "es-binding-refs";
+const USAGE: &str = "usage: fa css-selectors < style.css\n       fa es-binding-refs < source.js";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Command {
+    CssSelectors,
+    EsBindingRefs,
+}
 
 const EXIT_REPORT: u8 = 0;
 const EXIT_PRODUCT_FAILURE: u8 = 1;
@@ -59,9 +72,12 @@ fn run(
     stdout: &mut impl Write,
     stderr: &mut impl Write,
 ) -> u8 {
-    if let Err(message) = check_command(args) {
-        return product_failure(stderr, &format_args!("{message}\n{USAGE}"));
-    }
+    let command = match check_command(args) {
+        Ok(command) => command,
+        Err(message) => {
+            return product_failure(stderr, &format_args!("{message}\n{USAGE}"));
+        }
+    };
 
     let bytes = match read_bounded(stdin) {
         Ok(bytes) => bytes,
@@ -89,31 +105,44 @@ fn run(
     };
 
     let source = SourceText::new(SourceId::new(0), text);
-    match analyze_core_v1(&source) {
-        Ok(report) => {
-            let rendered = render_report(source.as_str().len(), &report);
-            match stdout
-                .write_all(rendered.as_bytes())
-                .and_then(|()| stdout.flush())
-            {
-                Ok(()) => EXIT_REPORT,
-                Err(error) => product_failure(
-                    stderr,
-                    &format_args!("failed to write stdout: {}", error.kind()),
-                ),
-            }
-        }
+    let rendered = match command {
+        Command::CssSelectors => analyze_core_v1(&source)
+            .map(|report| render_report(source.as_str().len(), &report))
+            .map_err(|failure| failure.to_string()),
+        Command::EsBindingRefs => analyze_selected_flat_lexical_binding_refs(&source)
+            .map(|report| es_binding_refs::render_report(source.as_str().len(), &report))
+            .map_err(|failure| failure.to_string()),
+    };
+    match rendered {
+        Ok(rendered) => emit_report(stdout, stderr, &rendered),
         Err(failure) => core_failure(stderr, &failure),
     }
 }
 
-fn check_command(args: &[OsString]) -> Result<(), &'static str> {
-    match args {
-        [] => Err("missing command"),
-        [command] if command.as_os_str() == COMMAND => Ok(()),
-        [command, ..] if command.as_os_str() != COMMAND => Err("unknown command"),
-        _ => Err("unexpected argument"),
+fn emit_report(stdout: &mut impl Write, stderr: &mut impl Write, rendered: &str) -> u8 {
+    match stdout
+        .write_all(rendered.as_bytes())
+        .and_then(|()| stdout.flush())
+    {
+        Ok(()) => EXIT_REPORT,
+        Err(error) => product_failure(
+            stderr,
+            &format_args!("failed to write stdout: {}", error.kind()),
+        ),
     }
+}
+
+fn check_command(args: &[OsString]) -> Result<Command, &'static str> {
+    let command = match args.first() {
+        None => return Err("missing command"),
+        Some(command) if command.as_os_str() == CSS_SELECTORS_COMMAND => Command::CssSelectors,
+        Some(command) if command.as_os_str() == ES_BINDING_REFS_COMMAND => Command::EsBindingRefs,
+        Some(_) => return Err("unknown command"),
+    };
+    if args.len() > 1 {
+        return Err("unexpected argument");
+    }
+    Ok(command)
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -335,7 +364,7 @@ fn render_refusal(refusal: &CssResourceRefusal) -> String {
 
 /// Renders retained source evidence as its byte range, one-based start line
 /// and byte column, and the exact retained fragment escaped onto one line.
-fn render_evidence(anchor: &SourceAnchor) -> String {
+pub(crate) fn render_evidence(anchor: &SourceAnchor) -> String {
     let range = anchor.range();
     let start = anchor.start_coordinate();
     format!(
@@ -415,8 +444,19 @@ mod tests {
     }
 
     #[test]
-    fn only_the_exact_css_selectors_command_is_accepted() {
-        assert_eq!(check_command(&args(&["css-selectors"])), Ok(()));
+    fn only_the_exact_commands_are_accepted() {
+        assert_eq!(
+            check_command(&args(&["css-selectors"])),
+            Ok(Command::CssSelectors)
+        );
+        assert_eq!(
+            check_command(&args(&["es-binding-refs"])),
+            Ok(Command::EsBindingRefs)
+        );
+        assert_eq!(
+            check_command(&args(&["es-binding-refs", "a.js"])),
+            Err("unexpected argument")
+        );
         assert_eq!(check_command(&args(&[])), Err("missing command"));
         assert_eq!(check_command(&args(&["css"])), Err("unknown command"));
         assert_eq!(check_command(&args(&["--help"])), Err("unknown command"));

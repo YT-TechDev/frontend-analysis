@@ -1,4 +1,5 @@
-//! Process-boundary tests for `fa css-selectors` (#857).
+//! Process-boundary tests for `fa css-selectors` (#857) and, in the
+//! `es_binding_refs` module, `fa es-binding-refs` (#862).
 //!
 //! Every expected stdout/stderr text below is authored by hand from the
 //! approved output contract and hand-counted source byte offsets. None of it
@@ -228,7 +229,10 @@ fn usage_failures_exit_one_with_usage_on_stderr() {
         assert_eq!(run.stdout, "", "{args:?}");
         assert_eq!(
             run.stderr,
-            format!("fa: {message}\nusage: fa css-selectors < style.css\n"),
+            format!(
+                "fa: {message}\nusage: fa css-selectors < style.css\n       \
+                 fa es-binding-refs < source.js\n"
+            ),
             "{args:?}"
         );
     }
@@ -495,4 +499,240 @@ fn resource_limited_parser_run_reports_only_committed_records_with_exit_zero() {
 "
     ));
     assert!(!run.stdout.contains("unsupported 65:"));
+}
+
+// ---- #862: `fa es-binding-refs` process tests ----
+//
+// The workspace-state validator pins this crate to exactly one integration
+// test target, so the ES process tests live in this module rather than a new
+// target. Every expected text is hand-authored from the approved output
+// contract and hand-counted offsets (accepted `selected_binding_scope`
+// fixtures for relation cases), never captured from the binary under test.
+mod es_binding_refs {
+    use super::{Run, fa, finish};
+    use std::process::{Command, Stdio};
+
+    fn es(name: &str, stdin: &[u8]) -> Run {
+        fa(&["es-binding-refs"], name, stdin)
+    }
+
+    fn head(bytes: usize) -> String {
+        format!(
+            "capability: es-binding-refs
+source: id 0; {bytes} bytes
+goal: Script
+scope: selected flat lexical binding initializers
+"
+        )
+    }
+
+    fn assert_report(run: &Run, expected: &str) {
+        assert_eq!(run.status, Some(0));
+        assert_eq!(run.stdout, expected);
+        assert_eq!(run.stderr, "");
+    }
+
+    #[test]
+    fn complete_positive_report() {
+        // "let a=1; " 0..9; "let " 9..13; x 13..14; "=" 14; a 15..16; ";" 16.
+        let run = es("positive", b"let a=1; let x=a;");
+        let expected = head(17)
+            + "analysis: complete
+relations: 1
+relation 1:
+  name: \"a\"
+  containing binding: bytes 13..14, line 1, byte column 14: \"x\"
+  reference: bytes 15..16, line 1, byte column 16: \"a\"
+  target: same-source selected lexical binding (before)
+    binding: bytes 4..5, line 1, byte column 5: \"a\"
+";
+        assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn absent_and_after_targets_render_distinctly() {
+        // "let x=y; let y=1;": x 4..5, y 6..7, second y 13..14.
+        let run = es("after", b"let x=y; let y=1;");
+        let expected = head(17)
+            + "analysis: complete
+relations: 1
+relation 1:
+  name: \"y\"
+  containing binding: bytes 4..5, line 1, byte column 5: \"x\"
+  reference: bytes 6..7, line 1, byte column 7: \"y\"
+  target: same-source selected lexical binding (after)
+    binding: bytes 13..14, line 1, byte column 14: \"y\"
+";
+        assert_report(&run, &expected);
+
+        let run = es("none", b"let x=y;");
+        let expected = head(8)
+            + "analysis: complete
+relations: 1
+relation 1:
+  name: \"y\"
+  containing binding: bytes 4..5, line 1, byte column 5: \"x\"
+  reference: bytes 6..7, line 1, byte column 7: \"y\"
+  target: no same-source selected lexical binding
+";
+        assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn complete_zero_relations_report() {
+        let run = es("zero", b"let x=1;");
+        let expected = head(8) + "analysis: complete\nrelations: 0\n";
+        assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn unsupported_coverage_is_not_a_complete_zero() {
+        let run = es("unsupported", b"x;");
+        let expected = head(2) + "analysis: unsupported coverage for selected scope\n";
+        assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn selected_grammar_rejection_reports_the_authored_subject() {
+        // "let " 0..4; "\u{}" 4..8; ";" 8.
+        let run = es("grammar", b"let \\u{};");
+        let expected = head(9)
+            + "analysis: selected grammar rejection
+  subject: bytes 4..8, line 1, byte column 5: \"\\\\u{}\"
+";
+        assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn selected_static_rejection_reports_its_evidence() {
+        let run = es("const", b"const x;");
+        let expected = head(8)
+            + "analysis: selected static rejection (const binding missing initializer)
+  binding: bytes 6..7, line 1, byte column 7: \"x\"
+";
+        assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn duplicate_static_rejection_shows_both_anchors() {
+        // "let a=1; " 0..9; "let " 9..13; second a 13..14.
+        let run = es("duplicate", b"let a=1; let a=2;");
+        let expected = head(17)
+            + "analysis: selected static rejection (duplicate lexical name)
+  first binding: bytes 4..5, line 1, byte column 5: \"a\"
+  duplicate binding: bytes 13..14, line 1, byte column 14: \"a\"
+";
+        assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn escaped_reference_shows_authored_fragment_and_decoded_name() {
+        // "let a=1; let x=" 0..15; "a" 15..21; ";" 21.
+        let run = es("escaped", b"let a=1; let x=\\u0061;");
+        let expected = head(22)
+            + "analysis: complete
+relations: 1
+relation 1:
+  name: \"a\"
+  containing binding: bytes 13..14, line 1, byte column 14: \"x\"
+  reference: bytes 15..21, line 1, byte column 16: \"\\\\u0061\"
+  target: same-source selected lexical binding (before)
+    binding: bytes 4..5, line 1, byte column 5: \"a\"
+";
+        assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn bom_and_crlf_are_preserved_exactly() {
+        // BOM 0..3; "let a=1;" 3..11; CRLF 11..13; "let " 13..17; x 17..18;
+        // "=" 18; a 19..20; ";" 20. Target a 7..8 on line 1 (BOM bytes count).
+        let run = es("bom-crlf", "\u{feff}let a=1;\r\nlet x=a;".as_bytes());
+        let expected = head(21)
+            + "analysis: complete
+relations: 1
+relation 1:
+  name: \"a\"
+  containing binding: bytes 17..18, line 2, byte column 5: \"x\"
+  reference: bytes 19..20, line 2, byte column 7: \"a\"
+  target: same-source selected lexical binding (before)
+    binding: bytes 7..8, line 1, byte column 8: \"a\"
+";
+        assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn input_exactly_at_product_cap_reaches_core() {
+        let mut input = b"let x=1;".to_vec();
+        input.resize(49_152, b' ');
+        let run = es("cap", &input);
+        let expected = head(49_152) + "analysis: complete\nrelations: 0\n";
+        assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn input_over_product_cap_is_rejected_before_core() {
+        let mut input = b"let x=1;".to_vec();
+        input.resize(49_153, b' ');
+        let run = es("over-cap", &input);
+        assert_eq!(run.status, Some(1));
+        assert_eq!(run.stdout, "");
+        assert_eq!(run.stderr, "fa: stdin exceeds 49152 bytes\n");
+    }
+
+    #[test]
+    fn invalid_utf8_is_rejected_before_core() {
+        let run = es("invalid-utf8", b"let a=1;\xff");
+        assert_eq!(run.status, Some(1));
+        assert_eq!(run.stdout, "");
+        assert_eq!(
+            run.stderr,
+            "fa: stdin is not valid UTF-8 (invalid sequence at byte 8)\n"
+        );
+    }
+
+    #[test]
+    fn usage_failures_exit_one_with_usage_on_stderr() {
+        for (args, message) in [
+            (&[][..], "missing command"),
+            (&["es"][..], "unknown command"),
+            (&["es-binding-refs", "a.js"][..], "unexpected argument"),
+            (&["es-binding-refs", "--goal"][..], "unexpected argument"),
+        ] {
+            let run = fa(args, "usage", b"let x=1;");
+            assert_eq!(run.status, Some(1), "{args:?}");
+            assert_eq!(run.stdout, "", "{args:?}");
+            assert_eq!(
+                run.stderr,
+                format!(
+                    "fa: {message}\nusage: fa css-selectors < style.css\n       \
+                 fa es-binding-refs < source.js\n"
+                ),
+                "{args:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn repeated_invocations_are_byte_identical() {
+        let input = b"let a=1,b=2; let x=a+b+c, y=x;";
+        let first = es("repeat-1", input);
+        let second = es("repeat-2", input);
+
+        assert_eq!(first.status, Some(0));
+        assert_eq!(first.status, second.status);
+        assert_eq!(first.stdout, second.stdout);
+        assert_eq!(first.stderr, second.stderr);
+    }
+
+    #[test]
+    fn empty_stdin_follows_the_core_recognizer() {
+        let output = Command::new(env!("CARGO_BIN_EXE_fa"))
+            .arg("es-binding-refs")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        let run = finish(output);
+        let expected = head(0) + "analysis: unsupported coverage for selected scope\n";
+        assert_report(&run, &expected);
+    }
 }
