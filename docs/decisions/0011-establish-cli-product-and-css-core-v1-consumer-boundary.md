@@ -6,7 +6,7 @@
 | Date | 2026-10-01 |
 | Decision owner / approver | YT-TechDev |
 | Linked Issue | [#857](https://github.com/YT-TechDev/frontend-analysis/issues/857) |
-| Related Pull Request | None at proposal creation |
+| Related Pull Request | [#858](https://github.com/YT-TechDev/frontend-analysis/pull/858) |
 | Supersedes | None |
 | Superseded by | None |
 | Affected normative contracts | None — the existing layer and Rust Core contracts already permit Product consumption of approved Core boundaries and prohibit Product concerns from entering Core. This ADR resolves previously deferred package placement and the first public analysis-consumer boundary without changing those rules. |
