@@ -21,7 +21,8 @@ use std::io::{self, Read, Write};
 use std::process::ExitCode;
 
 use frontend_analysis_core::css::selectors::{
-    CssParserCoverage, CssParserResourceKind, CssParserTermination, CssResourceKind,
+    CssParserCoverage, CssParserDiscardKind, CssParserRecoveryKind, CssParserRecoveryTermination,
+    CssParserResourceKind, CssParserTermination, CssParserUnsupportedRegionKind, CssResourceKind,
     CssResourceRefusal, CssSelectorGrammarContext, CssSelectorIndeterminateReason,
     CssSelectorInvalidReason, CssSelectorOutcome, CssSelectorProfile, CssSelectorReport,
     CssSelectorResourceKind, CssSelectorTermination, CssSelectorUnsupportedFeature,
@@ -193,6 +194,39 @@ fn render_report(source_bytes: usize, report: &CssSelectorReport) -> String {
         parser.unsupported_regions(),
         parser.discard_records()
     );
+    for (index, record) in parser.recovery().iter().enumerate() {
+        let kind = match record.kind() {
+            CssParserRecoveryKind::MalformedBlockItem => "malformed block item",
+        };
+        let termination = match record.termination() {
+            CssParserRecoveryTermination::AuthoredSemicolon => "authored semicolon",
+            CssParserRecoveryTermination::EnclosingBlockEnd => "enclosing block end",
+            CssParserRecoveryTermination::EndOfInput => "end of input",
+        };
+        let _ = writeln!(out, "recovery {}: {kind}; {termination}", index + 1);
+        let _ = writeln!(out, "  source: {}", render_evidence(record.region()));
+    }
+    for (index, record) in parser.unsupported().iter().enumerate() {
+        let kind = match record.kind() {
+            CssParserUnsupportedRegionKind::TopLevelAtRule => "top-level at-rule",
+            CssParserUnsupportedRegionKind::NestedContentRemainder => "nested content remainder",
+            CssParserUnsupportedRegionKind::NestedAtRule => "nested at-rule",
+            CssParserUnsupportedRegionKind::UnqualifiedKeyframeBlock => {
+                "unqualified keyframe block"
+            }
+        };
+        let _ = writeln!(out, "unsupported {}: {kind}", index + 1);
+        let _ = writeln!(out, "  source: {}", render_evidence(record.region()));
+    }
+    for (index, record) in parser.discard().iter().enumerate() {
+        let kind = match record.kind() {
+            CssParserDiscardKind::TopLevelCustomPropertyLikeQualifiedRule => {
+                "top-level custom-property-like qualified rule"
+            }
+        };
+        let _ = writeln!(out, "discard {}: {kind}", index + 1);
+        let _ = writeln!(out, "  source: {}", render_evidence(record.region()));
+    }
 
     let selector = report.selector();
     let termination = match selector.termination() {
