@@ -1,13 +1,15 @@
-//! Browser-independent validated source anchoring and raw coordinate primitives.
+//! Browser-independent validated source anchoring and raw coordinate
+//! primitives, plus the narrow CSS `CoreV1` selector-analysis consumer facade.
 
 // The approved HTML token contracts are intentionally internal until the first
 // tokenizer and Core integration consume them under Issues #113 and #116.
 #[allow(dead_code)]
 mod html;
-// The first CSS lexical contracts remain crate-private while Issues #133-#140
-// validate the project-owned CSS frontend before any public API commitment.
+// The CSS tokenizer, parser, selector, and resource contracts remain
+// crate-private; only the narrow `css::selectors` CoreV1 consumer facade is
+// public (Issue #857, ADR 0011).
 #[allow(dead_code)]
-mod css;
+pub mod css;
 #[allow(dead_code)]
 mod ecmascript;
 mod raw_source_coordinate;

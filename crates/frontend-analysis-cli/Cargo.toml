@@ -1,0 +1,15 @@
+[package]
+name = "frontend-analysis-cli"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+
+[[bin]]
+name = "fa"
+path = "src/main.rs"
+
+[dependencies]
+frontend-analysis-core = { path = "../frontend-analysis-core" }
+
+[lints]
+workspace = true

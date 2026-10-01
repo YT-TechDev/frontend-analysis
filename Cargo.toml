@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/frontend-analysis-core"]
+members = ["crates/frontend-analysis-core", "crates/frontend-analysis-cli"]
 resolver = "3"
 
 [workspace.package]

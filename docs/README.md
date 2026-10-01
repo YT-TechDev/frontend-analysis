@@ -57,14 +57,19 @@ record must still satisfy the
 ## Current Rust Core State
 
 This explanatory current-state guide has no independent normative authority.
-The root remains a virtual Cargo workspace using resolver 3. Exactly one
-production member exists: `crates/frontend-analysis-core`, whose private
-`frontend-analysis-core` package sets `publish = false` and uses Edition 2024.
-The root `Cargo.lock` is committed. The crate has zero third-party dependencies
-and currently owns Validated Source Anchors and Raw Source Line Coordinates; it
-is not a generic utility layer. Project-owned source parser architecture is
-approved; current HTML tokenizer/parser/Core slices remain crate-private and no
-public parser API is complete.
+The root remains a virtual Cargo workspace using resolver 3. Exactly two
+production members exist: `crates/frontend-analysis-core` and the
+`crates/frontend-analysis-cli` Product package, which depends only on Core.
+Both private packages set `publish = false` and use Edition 2024. The root
+`Cargo.lock` is committed. Neither package has third-party dependencies. Core
+currently owns Validated Source Anchors and Raw Source Line Coordinates; it is
+not a generic utility layer. Project-owned source parser architecture is
+approved; current HTML, CSS, and ECMAScript tokenizer/parser/Core slices remain
+crate-private and no public parser API is complete. The only public analysis
+boundary is the narrow CSS `CoreV1` selector facade
+`frontend_analysis_core::css::selectors`, consumed by the `fa css-selectors`
+command under accepted
+[ADR 0011](decisions/0011-establish-cli-product-and-css-core-v1-consumer-boundary.md).
 
 Accepted [ADR 0001](decisions/0001-repository-topology-and-workspace-ownership.md)
 owns topology and extraction review, [ADR 0002](decisions/0002-rust-bootstrap-toolchain-and-validation-policy.md)
@@ -81,7 +86,9 @@ JavaScript semantic architecture decision recorded by its specialized contract,
 and accepted [ADR 0010](decisions/0010-html-tree-construction-architecture.md)
 owns the HTML tree-construction architecture rationale recorded operationally by
 the specialized [HTML Tree-Construction Architecture](architecture/HTML_TREE_CONSTRUCTION.md)
-contract.
+contract, and accepted
+[ADR 0011](decisions/0011-establish-cli-product-and-css-core-v1-consumer-boundary.md)
+owns the CLI Product package and CSS `CoreV1` consumer boundary.
 
 ### Contributor Setup and Validation
 
@@ -109,7 +116,7 @@ status is owned by [Validation and Completion Evidence](development/VALIDATION.m
 | Category | Current status | Reason |
 | --- | --- | --- |
 | Toolchain identity | Applicable | Exact Rust `1.98.1` is pinned. |
-| Workspace policy and locked Cargo metadata | Applicable | One package, one member, zero dependencies, one library target, and the committed lockfile are validated. |
+| Workspace policy and locked Cargo metadata | Applicable | Two packages and members, the dependency-free Core library target, the CLI `fa` binary and its approved integration test with only the local Core dependency, and the committed lockfile are validated. |
 | Source formatting | Applicable | Production Rust source exists. |
 | Clippy source lint | Applicable | The production library and all targets are linted with warnings denied. |
 | Tests | Applicable | Implementation and public-contract tests validate the current domain. |
@@ -133,8 +140,8 @@ status is owned by [Validation and Completion Evidence](development/VALIDATION.m
 | Repository extraction | Future topology/placement ADR when ADR 0001 triggers are met |
 
 Current completion does not imply completion of a parser, Browser Adapter,
-analysis-result model, CLI, desktop, VS Code, web product, serialization, or
-release policy. Returning to the zero-member bootstrap is not accepted.
+analysis-result model, CLI capabilities beyond `fa css-selectors`, desktop,
+VS Code, web product, serialization, or release policy. Returning to the zero-member bootstrap is not accepted.
 
 ## Source-of-Truth Rules
 

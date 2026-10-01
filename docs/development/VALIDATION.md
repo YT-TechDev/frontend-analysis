@@ -174,11 +174,16 @@ cargo metadata --offline --format-version 1 --locked
 ```
 
 The validator MUST report `production`. Locked Cargo metadata MUST report
-exactly one package and exactly one workspace member, both identifying
-`frontend-analysis-core` at its approved manifest path. It MUST also report
-zero dependencies and only the approved library target. The root `Cargo.lock`
-is committed and validation MUST use `--locked`. Source formatting, Clippy, and
-tests are applicable to the current package.
+exactly two packages and exactly two workspace members, identifying
+`frontend-analysis-core` and `frontend-analysis-cli` at their approved manifest
+paths, as accepted by
+[ADR 0011](../decisions/0011-establish-cli-product-and-css-core-v1-consumer-boundary.md).
+`frontend-analysis-core` MUST report zero dependencies and only the approved
+library target. `frontend-analysis-cli` MUST report only the local
+`frontend-analysis-core` dependency, no features, and only the `fa` binary
+target plus its explicitly allowlisted `tests/css_selectors.rs` integration
+test. The root `Cargo.lock` is committed and validation MUST use `--locked`.
+Source formatting, Clippy, and tests are applicable to both packages.
 
 Public-API, rustdoc, platform, feature, security, performance, and specialized
 checks remain change-class dependent and require the evidence selected by the
