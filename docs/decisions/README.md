@@ -331,6 +331,7 @@ does not confer authority.
 | [0008](0008-browser-runtime-evidence-normalization-and-core-import.md) | Define Browser Runtime Evidence Normalization and Core Import Ownership | Accepted | 2026-08-09 | None |
 | [0009](0009-javascript-semantic-analysis-architecture.md) | Define JavaScript Semantic Analysis Architecture | Accepted | 2026-08-12 | None |
 | [0010](0010-html-tree-construction-architecture.md) | Define HTML Tree-Construction Architecture | Accepted | 2026-08-24 | None |
+| [0011](0011-establish-cli-product-and-css-core-v1-consumer-boundary.md) | Establish CLI Product and CSS CoreV1 Consumer Boundary | Accepted | 2026-10-01 | None |
 
 ## Representative Classifications
 
