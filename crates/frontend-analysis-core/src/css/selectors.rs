@@ -27,6 +27,7 @@ use std::fmt;
 use crate::{SourceAnchor, SourceId, SourceText};
 
 use super::analysis::CssAnalysisError;
+use super::parser::evidence as parser_evidence;
 use super::parser::resource as parser_resource;
 use super::parser::result as parser_result;
 use super::selector::analysis::{CssSelectorAnalysisError, analyze_css_selectors};
@@ -258,6 +259,9 @@ pub struct CssParserStage {
     recovery_records: usize,
     unsupported_regions: usize,
     discard_records: usize,
+    recovery: Vec<CssParserRecovery>,
+    unsupported: Vec<CssParserUnsupportedRegion>,
+    discard: Vec<CssParserDiscard>,
 }
 
 impl CssParserStage {
@@ -294,6 +298,21 @@ impl CssParserStage {
             recovery_records: result.recovery_records().len(),
             unsupported_regions: result.unsupported_regions().len(),
             discard_records: result.discard_records().len(),
+            recovery: result
+                .recovery_records()
+                .iter()
+                .map(CssParserRecovery::project)
+                .collect(),
+            unsupported: result
+                .unsupported_regions()
+                .iter()
+                .map(CssParserUnsupportedRegion::project)
+                .collect(),
+            discard: result
+                .discard_records()
+                .iter()
+                .map(CssParserDiscard::project)
+                .collect(),
         }
     }
 
@@ -328,6 +347,170 @@ impl CssParserStage {
     pub fn discard_records(&self) -> usize {
         self.discard_records
     }
+
+    /// Retained recovery records in the parser's source order. Only evidence
+    /// the parser committed before it stopped is present.
+    pub fn recovery(&self) -> &[CssParserRecovery] {
+        &self.recovery
+    }
+
+    /// Retained unsupported regions in the parser's source order. Only
+    /// evidence the parser committed before it stopped is present.
+    pub fn unsupported(&self) -> &[CssParserUnsupportedRegion] {
+        &self.unsupported
+    }
+
+    /// Retained discard records in the parser's source order. Only evidence
+    /// the parser committed before it stopped is present.
+    pub fn discard(&self) -> &[CssParserDiscard] {
+        &self.discard
+    }
+}
+
+/// One retained parser recovery record: the authored region of a malformed
+/// supported-context block item that was recovered from.
+#[derive(Debug, Clone)]
+pub struct CssParserRecovery {
+    region: SourceAnchor,
+    kind: CssParserRecoveryKind,
+    termination: CssParserRecoveryTermination,
+}
+
+impl CssParserRecovery {
+    fn project(evidence: &parser_evidence::CssParserRecoveryEvidence) -> Self {
+        use parser_evidence::CssParserRecoveryKind as InternalKind;
+        use parser_evidence::CssParserRecoveryTermination as InternalTermination;
+        Self {
+            region: evidence.region().clone(),
+            kind: match evidence.kind() {
+                InternalKind::MalformedBlockItem => CssParserRecoveryKind::MalformedBlockItem,
+            },
+            termination: match evidence.termination() {
+                InternalTermination::AuthoredSemicolon { .. } => {
+                    CssParserRecoveryTermination::AuthoredSemicolon
+                }
+                InternalTermination::EnclosingBlockEnd { .. } => {
+                    CssParserRecoveryTermination::EnclosingBlockEnd
+                }
+                InternalTermination::EndOfInput { .. } => CssParserRecoveryTermination::EndOfInput,
+            },
+        }
+    }
+
+    /// The retained authored region that was recovered over.
+    pub fn region(&self) -> &SourceAnchor {
+        &self.region
+    }
+
+    pub fn kind(&self) -> CssParserRecoveryKind {
+        self.kind
+    }
+
+    pub fn termination(&self) -> CssParserRecoveryTermination {
+        self.termination
+    }
+}
+
+/// Why the parser recovered over a region.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CssParserRecoveryKind {
+    /// A block item in a supported context that did not become a declaration
+    /// or an actual nested rule.
+    MalformedBlockItem,
+}
+
+/// How a recovery region ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CssParserRecoveryTermination {
+    /// At an authored semicolon, which is the last byte of the region.
+    AuthoredSemicolon,
+    /// Immediately before the authored right curly of the enclosing block.
+    EnclosingBlockEnd,
+    /// At true end of input, with no authored delimiter.
+    EndOfInput,
+}
+
+/// One retained structurally unsupported region.
+#[derive(Debug, Clone)]
+pub struct CssParserUnsupportedRegion {
+    region: SourceAnchor,
+    kind: CssParserUnsupportedRegionKind,
+}
+
+impl CssParserUnsupportedRegion {
+    fn project(region: &parser_evidence::CssParserUnsupportedRegion) -> Self {
+        use parser_evidence::CssParserUnsupportedRegion as Internal;
+        Self {
+            region: region.region().clone(),
+            kind: match region {
+                Internal::TopLevelAtRule { .. } => CssParserUnsupportedRegionKind::TopLevelAtRule,
+                Internal::NestedContentRemainder { .. } => {
+                    CssParserUnsupportedRegionKind::NestedContentRemainder
+                }
+                Internal::NestedAtRule { .. } => CssParserUnsupportedRegionKind::NestedAtRule,
+                Internal::UnqualifiedKeyframeBlock { .. } => {
+                    CssParserUnsupportedRegionKind::UnqualifiedKeyframeBlock
+                }
+            },
+        }
+    }
+
+    /// The canonical retained authored region of the unsupported structure.
+    pub fn region(&self) -> &SourceAnchor {
+        &self.region
+    }
+
+    pub fn kind(&self) -> CssParserUnsupportedRegionKind {
+        self.kind
+    }
+}
+
+/// The structural shape that was left unsupported.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CssParserUnsupportedRegionKind {
+    TopLevelAtRule,
+    NestedContentRemainder,
+    NestedAtRule,
+    UnqualifiedKeyframeBlock,
+}
+
+/// One retained parser discard record.
+#[derive(Debug, Clone)]
+pub struct CssParserDiscard {
+    region: SourceAnchor,
+    kind: CssParserDiscardKind,
+}
+
+impl CssParserDiscard {
+    fn project(evidence: &parser_evidence::CssParserDiscardEvidence) -> Self {
+        use parser_evidence::CssParserDiscardKind as Internal;
+        Self {
+            region: evidence.region().clone(),
+            kind: match evidence.kind() {
+                Internal::TopLevelCustomPropertyLikeQualifiedRule => {
+                    CssParserDiscardKind::TopLevelCustomPropertyLikeQualifiedRule
+                }
+            },
+        }
+    }
+
+    /// The retained authored region that was structurally discarded.
+    pub fn region(&self) -> &SourceAnchor {
+        &self.region
+    }
+
+    pub fn kind(&self) -> CssParserDiscardKind {
+        self.kind
+    }
+}
+
+/// Why a region was discarded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CssParserDiscardKind {
+    /// A top-level qualified rule whose prelude begins with a
+    /// custom-property-shaped identifier and a colon; its block is consumed
+    /// and the rule is not returned.
+    TopLevelCustomPropertyLikeQualifiedRule,
 }
 
 /// Parser coverage of the selected structural question.

@@ -492,3 +492,311 @@ fn core_failure_display_names_boundary_without_source_content() {
         "CSS CoreV1 selector analysis returned a Core failure at the execution policy boundary"
     );
 }
+
+// ---- #860: source-locatable parser partial-coverage evidence ----
+//
+// Expected ranges come from the independent parser gold fixtures
+// (CSS-PARSER-*, CSS-KEYFRAMES-*) or hand-counted offsets, never from facade
+// output.
+
+fn recoveries(
+    report: &CssSelectorReport,
+) -> Vec<((usize, usize), &str, CssParserRecoveryTermination)> {
+    report
+        .parser()
+        .recovery()
+        .iter()
+        .map(|record| {
+            assert_eq!(record.kind(), CssParserRecoveryKind::MalformedBlockItem);
+            (
+                range(record.region()),
+                record.region().fragment(),
+                record.termination(),
+            )
+        })
+        .collect()
+}
+
+fn unsupported(
+    report: &CssSelectorReport,
+) -> Vec<((usize, usize), &str, CssParserUnsupportedRegionKind)> {
+    report
+        .parser()
+        .unsupported()
+        .iter()
+        .map(|record| {
+            (
+                range(record.region()),
+                record.region().fragment(),
+                record.kind(),
+            )
+        })
+        .collect()
+}
+
+fn discards(report: &CssSelectorReport) -> Vec<((usize, usize), &str)> {
+    report
+        .parser()
+        .discard()
+        .iter()
+        .map(|record| {
+            assert_eq!(
+                record.kind(),
+                CssParserDiscardKind::TopLevelCustomPropertyLikeQualifiedRule
+            );
+            (range(record.region()), record.region().fragment())
+        })
+        .collect()
+}
+
+fn assert_counts_match_records(report: &CssSelectorReport) {
+    let parser = report.parser();
+    assert_eq!(parser.recovery_records(), parser.recovery().len());
+    assert_eq!(parser.unsupported_regions(), parser.unsupported().len());
+    assert_eq!(parser.discard_records(), parser.discard().len());
+}
+
+#[test]
+fn recovery_projects_region_kind_and_each_termination() {
+    // CSS-PARSER-MALFORMED-MISSING-COLON-THEN-VALID-001: region (2, 12).
+    let report = analyze("a{color red;background:blue;}");
+    assert_eq!(
+        recoveries(&report),
+        [(
+            (2, 12),
+            "color red;",
+            CssParserRecoveryTermination::AuthoredSemicolon
+        )]
+    );
+    // The diagnostic count is preserved; no diagnostic detail is exposed.
+    assert_eq!(report.parser().diagnostics(), 1);
+    assert_counts_match_records(&report);
+
+    // CSS-PARSER-MALFORMED-AT-TRUE-EOF-001: region (2, 11).
+    let report = analyze("a{color red");
+    assert_eq!(
+        recoveries(&report),
+        [(
+            (2, 11),
+            "color red",
+            CssParserRecoveryTermination::EndOfInput
+        )]
+    );
+    assert_counts_match_records(&report);
+
+    // Hand-counted: `a{` 0..2, `color red` 2..11, authored `}` 11..12.
+    let report = analyze("a{color red}");
+    assert_eq!(
+        recoveries(&report),
+        [(
+            (2, 11),
+            "color red",
+            CssParserRecoveryTermination::EnclosingBlockEnd
+        )]
+    );
+    assert_counts_match_records(&report);
+}
+
+#[test]
+fn recovery_records_keep_producer_source_order() {
+    // `a{` 0..2, `x;` 2..4, `y;` 4..6, `z` 6..7.
+    let report = analyze("a{x;y;z");
+    assert_eq!(
+        recoveries(&report),
+        [
+            (
+                (2, 4),
+                "x;",
+                CssParserRecoveryTermination::AuthoredSemicolon
+            ),
+            (
+                (4, 6),
+                "y;",
+                CssParserRecoveryTermination::AuthoredSemicolon
+            ),
+            ((6, 7), "z", CssParserRecoveryTermination::EndOfInput),
+        ]
+    );
+    assert_counts_match_records(&report);
+}
+
+#[test]
+fn unsupported_regions_project_canonical_region_and_kind() {
+    // CSS-PARSER-UNSUPPORTED-UNKNOWN-AT-RULE-001: complete (0, 47).
+    let text = "@futureabc spin{from{opacity:0;}to{opacity:1;}}";
+    let report = analyze(text);
+    assert_eq!(
+        unsupported(&report),
+        [(
+            (0, 47),
+            text,
+            CssParserUnsupportedRegionKind::TopLevelAtRule
+        )]
+    );
+    assert_eq!(
+        report.parser().coverage(),
+        CssParserCoverage::ContainsUnsupportedContexts
+    );
+    assert_counts_match_records(&report);
+
+    // Pinned by css::analysis::tests::unsupported_propagates_through_core:
+    // `a{color:red;` is 12 bytes, so the nested at-rule is (12, 38).
+    let report = analyze("a{color:red;@unknown-rule{color:blue;}}");
+    assert_eq!(
+        unsupported(&report),
+        [(
+            (12, 38),
+            "@unknown-rule{color:blue;}",
+            CssParserUnsupportedRegionKind::NestedAtRule
+        )]
+    );
+
+    // CSS-KEYFRAMES-INVALID-CHILD-001: complete (13, 24).
+    let report = analyze("@keyframes x{bogus{x:y;}from{a:b;}}");
+    assert_eq!(
+        unsupported(&report),
+        [(
+            (13, 24),
+            "bogus{x:y;}",
+            CssParserUnsupportedRegionKind::UnqualifiedKeyframeBlock
+        )]
+    );
+    assert_counts_match_records(&report);
+}
+
+#[test]
+fn unsupported_regions_keep_producer_source_order() {
+    // `@futureabc spin{}` 0..17 and `@other x;` 17..26.
+    let report = analyze("@futureabc spin{}@other x;");
+    assert_eq!(
+        unsupported(&report),
+        [
+            (
+                (0, 17),
+                "@futureabc spin{}",
+                CssParserUnsupportedRegionKind::TopLevelAtRule
+            ),
+            (
+                (17, 26),
+                "@other x;",
+                CssParserUnsupportedRegionKind::TopLevelAtRule
+            ),
+        ]
+    );
+    assert_counts_match_records(&report);
+}
+
+#[test]
+fn discard_projects_region_and_kind_in_producer_order() {
+    // CSS-PARSER-DISCARD-TOP-LEVEL-CUSTOM-PROPERTY-LIKE-001: region (0, 21).
+    let report = analyze("--foo:bar{color:red;}");
+    assert_eq!(discards(&report), [((0, 21), "--foo:bar{color:red;}")]);
+    assert_counts_match_records(&report);
+
+    // `--a:b{}` is 7 bytes.
+    let report = analyze("--a:b{}--c:d{}");
+    assert_eq!(
+        discards(&report),
+        [((0, 7), "--a:b{}"), ((7, 14), "--c:d{}")]
+    );
+    assert_counts_match_records(&report);
+}
+
+#[test]
+fn clean_source_has_no_partial_coverage_records() {
+    let report = analyze("a{color:red;}");
+    assert!(report.parser().recovery().is_empty());
+    assert!(report.parser().unsupported().is_empty());
+    assert!(report.parser().discard().is_empty());
+    assert_counts_match_records(&report);
+}
+
+#[test]
+fn nested_content_remainder_kind_is_projected_from_its_region() {
+    // The parser does not currently produce this variant, so its mapping is
+    // proven at the projection function with the internal constructor.
+    let source = SourceText::new(SourceId::new(0), "a{x}".to_owned());
+    let region = source.anchor(2, 3).expect("valid anchor");
+    let internal =
+        parser_evidence::CssParserUnsupportedRegion::new_nested_content_remainder(&source, region)
+            .unwrap();
+    let public = CssParserUnsupportedRegion::project(&internal);
+    assert_eq!(
+        public.kind(),
+        CssParserUnsupportedRegionKind::NestedContentRemainder
+    );
+    assert_eq!(range(public.region()), (2, 3));
+    assert_eq!(public.region().fragment(), "x");
+}
+
+#[test]
+fn partial_coverage_evidence_outlives_the_caller_source_handle() {
+    let source = SourceText::new(SourceId::new(0), "--a:b{}a{x;}@future{}".to_owned());
+    let report = analyze_core_v1(&source).unwrap();
+    drop(source);
+
+    assert_eq!(report.parser().discard()[0].region().fragment(), "--a:b{}");
+    assert_eq!(report.parser().recovery()[0].region().fragment(), "x;");
+    assert_eq!(
+        report.parser().unsupported()[0].region().fragment(),
+        "@future{}"
+    );
+    assert_eq!(
+        report.parser().discard()[0].region().source_id(),
+        SourceId::new(0)
+    );
+}
+
+#[test]
+fn authored_spelling_of_partial_coverage_regions_is_retained() {
+    // BOM `\u{feff}` is 3 bytes, so `a{` is 3..5 and `x\r\n;` 5..9.
+    let report = analyze("\u{feff}a{x\r\n;}");
+    let recovery = &report.parser().recovery()[0];
+    assert_eq!(range(recovery.region()), (5, 9));
+    assert_eq!(recovery.region().fragment(), "x\r\n;");
+
+    // Escaped at-keyword spelling is authored spelling: `@\66 oo{}` is 0..9.
+    let report = analyze(r"@\66 oo{}");
+    let region = report.parser().unsupported()[0].region();
+    assert_eq!(range(region), (0, 9));
+    assert_eq!(region.fragment(), r"@\66 oo{}");
+}
+
+#[test]
+fn parser_resource_refusal_exposes_only_committed_evidence() {
+    // 65 top-level unsupported `@x;` rules: the 65th exceeds the approved
+    // UnsupportedRegions = 64 after 64 committed regions of 3 bytes each.
+    let text = "@x;".repeat(65);
+    let report = analyze(&text);
+
+    assert_eq!(report.parser().completion(), CssStageCompletion::Incomplete);
+    let refusal = match report.parser().termination() {
+        CssParserTermination::ResourceLimit(refusal) => refusal,
+        other => panic!("expected parser refusal, got {other:?}"),
+    };
+    assert_eq!(
+        refusal.kind(),
+        CssResourceKind::Parser(CssParserResourceKind::UnsupportedRegions)
+    );
+    assert_eq!(report.parser().unsupported().len(), 64);
+    assert_counts_match_records(&report);
+    for (index, record) in report.parser().unsupported().iter().enumerate() {
+        assert_eq!(range(record.region()), (index * 3, index * 3 + 3));
+        assert!(record.region().range().end() <= refusal.location().range().start());
+    }
+    // Nothing is fabricated for the refused or unprocessed source.
+    assert!(report.parser().recovery().is_empty());
+    assert!(report.parser().discard().is_empty());
+}
+
+#[test]
+fn upstream_tokenizer_refusal_exposes_no_fabricated_records() {
+    let text = "@x;".repeat(11_000);
+    assert!(text.len() > TOKENIZER_SOURCE_BYTES);
+    let report = analyze(&text);
+
+    assert_eq!(report.parser().completion(), CssStageCompletion::Incomplete);
+    assert!(report.parser().recovery().is_empty());
+    assert!(report.parser().unsupported().is_empty());
+    assert!(report.parser().discard().is_empty());
+}
