@@ -1,3 +1,4 @@
+pub mod binding_refs;
 mod qualification;
 mod selected_binding_identifier;
 mod selected_binding_scope;

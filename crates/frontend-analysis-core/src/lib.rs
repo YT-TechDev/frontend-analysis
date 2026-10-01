@@ -10,8 +10,11 @@ mod html;
 // public (Issue #857, ADR 0011).
 #[allow(dead_code)]
 pub mod css;
+// The ECMAScript selected-slice implementation modules remain crate-private;
+// only the narrow `ecmascript::binding_refs` consumer facade is public
+// (Issue #862, ADR 0011).
 #[allow(dead_code)]
-mod ecmascript;
+pub mod ecmascript;
 mod raw_source_coordinate;
 mod source;
 
