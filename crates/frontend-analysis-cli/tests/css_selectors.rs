@@ -1,5 +1,6 @@
 //! Process-boundary tests for `fa css-selectors` (#857) and, in the
-//! `es_binding_refs` module, `fa es-binding-refs` (#862).
+//! `es_binding_refs` and `html_tree` modules, `fa es-binding-refs` (#862) and
+//! `fa html-tree` (#864).
 //!
 //! Every expected stdout/stderr text below is authored by hand from the
 //! approved output contract and hand-counted source byte offsets. None of it
@@ -231,7 +232,7 @@ fn usage_failures_exit_one_with_usage_on_stderr() {
             run.stderr,
             format!(
                 "fa: {message}\nusage: fa css-selectors < style.css\n       \
-                 fa es-binding-refs < source.js\n"
+                 fa es-binding-refs < source.js\n       fa html-tree < source.html\n"
             ),
             "{args:?}"
         );
@@ -705,7 +706,7 @@ relation 1:
                 run.stderr,
                 format!(
                     "fa: {message}\nusage: fa css-selectors < style.css\n       \
-                 fa es-binding-refs < source.js\n"
+                 fa es-binding-refs < source.js\n       fa html-tree < source.html\n"
                 ),
                 "{args:?}"
             );
@@ -734,5 +735,397 @@ relation 1:
         let run = finish(output);
         let expected = head(0) + "analysis: unsupported coverage for selected scope\n";
         assert_report(&run, &expected);
+    }
+}
+
+// ---- #864: `fa html-tree` ----
+//
+// The workspace-state validator pins this crate to exactly one integration
+// test target, so the HTML process tests live in this module. Every expected
+// text is hand-authored from the approved output contract, the accepted tree
+// and tokenizer golds, and hand-counted byte offsets; none is captured from
+// the binary under test.
+mod html_tree {
+    use super::{Run, fa, finish};
+    use std::process::{Command, Stdio};
+
+    const PROFILE: &str = "profile: selected document construction; scripting disabled\n";
+
+    const SYNTHESIZED_SHELL: &str = "\
+#0 document
+    authored evidence: none
+  #1 element html
+      authored evidence: none
+      synthesized: implied by document structure
+    #2 element head
+        authored evidence: none
+        synthesized: implied by document structure
+";
+
+    const SYNTHESIZED_BODY: &str = concat!(
+        "    #3 element body\n",
+        "        authored evidence: none\n",
+        "        synthesized: implied by document structure\n",
+    );
+
+    const AUTHORED_BODY: &str = concat!(
+        "    #3 element body\n",
+        "        authored start tag: bytes 0..6, line 1, byte column 1: \"<body>\"\n",
+        "        authored raw name: bytes 1..5, line 1, byte column 2: \"body\"\n",
+    );
+
+    const MISSING_DOCTYPE_AT_BODY: &str = "\
+tree diagnostic 1: missing doctype
+  recovery: continued in quirks document mode
+  trigger: bytes 0..6, line 1, byte column 1: \"<body>\"
+";
+
+    fn html(name: &str, stdin: &[u8]) -> Run {
+        fa(&["html-tree"], name, stdin)
+    }
+
+    fn head(bytes: usize) -> String {
+        format!("capability: html-tree\nsource: id 0; {bytes} bytes\n{PROFILE}")
+    }
+
+    fn assert_report(run: &Run, expected: &str) {
+        assert_eq!(run.status, Some(0));
+        assert_eq!(run.stdout, expected);
+        assert_eq!(run.stderr, "");
+    }
+
+    #[test]
+    fn empty_stdin_is_a_complete_synthesized_document() {
+        let output = Command::new(env!("CARGO_BIN_EXE_fa"))
+            .arg("html-tree")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        let run = finish(output);
+
+        let expected = head(0)
+            + "completion: complete
+coverage: committed authored prefix bytes 0..0; processed tokens 1
+tokenizer diagnostics: 0
+tree diagnostics: 1
+nodes: 4
+
+" + SYNTHESIZED_SHELL
+            + SYNTHESIZED_BODY
+            + "
+tree diagnostic 1: missing doctype
+  recovery: continued in quirks document mode
+  trigger: none (no authored boundary)
+";
+        assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn authored_and_synthesized_nodes_are_distinguished() {
+        // <body> 0..6, <div> 6..11, </div> 11..17.
+        let run = html("authored-synth", b"<body><div></div>");
+
+        let expected = head(17)
+            + "completion: complete
+coverage: committed authored prefix bytes 0..17; processed tokens 4
+tokenizer diagnostics: 0
+tree diagnostics: 1
+nodes: 5
+
+" + SYNTHESIZED_SHELL
+            + AUTHORED_BODY
+            + "      #4 element div
+          authored start tag: bytes 6..11, line 1, byte column 7: \"<div>\"
+          authored raw name: bytes 7..10, line 1, byte column 8: \"div\"
+
+" + MISSING_DOCTYPE_AT_BODY;
+        assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn nested_selected_elements_render_in_final_parent_child_order() {
+        // <body>0..6 <div>6..11 <section>11..20 <p>20..23 t23..24 </p>24..28
+        // </section>28..38 </div>38..44 </body>44..51.
+        let run = html(
+            "nested",
+            b"<body><div><section><p>t</p></section></div></body>",
+        );
+
+        let expected = head(51)
+            + "completion: complete
+coverage: committed authored prefix bytes 0..51; processed tokens 10
+tokenizer diagnostics: 0
+tree diagnostics: 1
+nodes: 8
+
+"
+            + SYNTHESIZED_SHELL
+            + AUTHORED_BODY
+            + "      #4 element div
+          authored start tag: bytes 6..11, line 1, byte column 7: \"<div>\"
+          authored raw name: bytes 7..10, line 1, byte column 8: \"div\"
+        #5 element section
+            authored start tag: bytes 11..20, line 1, byte column 12: \"<section>\"
+            authored raw name: bytes 12..19, line 1, byte column 13: \"section\"
+          #6 element p
+              authored start tag: bytes 20..23, line 1, byte column 21: \"<p>\"
+              authored raw name: bytes 21..22, line 1, byte column 22: \"p\"
+            #7 text \"t\"
+                contribution 1: source bytes 23..24, line 1, byte column 24: \"t\"; interpreted \"t\"
+
+"
+            + MISSING_DOCTYPE_AT_BODY;
+        assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn title_named_reference_separates_interpreted_text_from_authored_contributions() {
+        // Accepted TC-S10 gold: `<title>a&amp;b</title>` is one text "a&b"
+        // with contributions 7..8, 8..13 ("&amp;" -> "&"), 13..14.
+        let run = html("title-reference", b"<title>a&amp;b</title>");
+
+        let expected = head(22)
+            + "completion: complete
+coverage: committed authored prefix bytes 0..22; processed tokens 6
+tokenizer diagnostics: 0
+tree diagnostics: 1
+nodes: 6
+
+#0 document
+    authored evidence: none
+  #1 element html
+      authored evidence: none
+      synthesized: implied by document structure
+    #2 element head
+        authored evidence: none
+        synthesized: implied by document structure
+      #3 element title
+          authored start tag: bytes 0..7, line 1, byte column 1: \"<title>\"
+          authored raw name: bytes 1..6, line 1, byte column 2: \"title\"
+        #4 text \"a&b\"
+            contribution 1: source bytes 7..8, line 1, byte column 8: \"a\"; interpreted \"a\"
+            contribution 2: source bytes 8..13, line 1, byte column 9: \"&amp;\"; interpreted \"&\"
+            contribution 3: source bytes 13..14, line 1, byte column 14: \"b\"; interpreted \"b\"
+    #5 element body
+        authored evidence: none
+        synthesized: implied by document structure
+
+tree diagnostic 1: missing doctype
+  recovery: continued in quirks document mode
+  trigger: bytes 0..7, line 1, byte column 1: \"<title>\"
+";
+        assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn complete_report_with_a_tokenizer_diagnostic_exits_zero() {
+        // `<title>` 0..7, `a` 7..8, U+0001 8..9.
+        let run = html("complete-diagnostic", b"<title>a\x01b</title>");
+
+        assert_eq!(run.status, Some(0));
+        assert_eq!(run.stderr, "");
+        assert!(
+            run.stdout.contains("\ncompletion: complete\n"),
+            "{}",
+            run.stdout
+        );
+        assert!(run.stdout.contains("\ntokenizer diagnostics: 1\n"));
+        assert!(run.stdout.contains(
+            "tokenizer diagnostic 1: control character in input stream
+  location: bytes 8..9, line 1, byte column 9: \"\\u{1}\"
+"
+        ));
+    }
+
+    #[test]
+    fn recovery_synthesizes_a_paragraph_without_authored_evidence() {
+        // <body> 0..6, </p> 6..10.
+        let run = html("recovery", b"<body></p>");
+
+        let expected = head(10)
+            + "completion: complete
+coverage: committed authored prefix bytes 0..10; processed tokens 3
+tokenizer diagnostics: 0
+tree diagnostics: 2
+nodes: 5
+
+" + SYNTHESIZED_SHELL
+            + AUTHORED_BODY
+            + "      #4 element p
+          authored evidence: none
+          synthesized: unmatched paragraph end tag
+
+" + MISSING_DOCTYPE_AT_BODY
+            + "tree diagnostic 2: unmatched paragraph end tag
+  recovery: synthesized paragraph element and closed it
+  trigger: bytes 6..10, line 1, byte column 7: \"</p>\"
+";
+        assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn tree_unsupported_is_reported_with_its_trigger_and_exit_zero() {
+        // <body> 0..6, <span> 6..12.
+        let run = html("tree-unsupported", b"<body><span>");
+
+        let expected = head(12)
+            + "completion: incomplete; tree unsupported: non-shell element tag
+  trigger: bytes 6..12, line 1, byte column 7: \"<span>\"
+coverage: committed authored prefix bytes 0..6; processed tokens 1
+tokenizer diagnostics: 0
+tree diagnostics: 1
+nodes: 4
+
+" + SYNTHESIZED_SHELL
+            + AUTHORED_BODY
+            + "
+" + MISSING_DOCTYPE_AT_BODY;
+        assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn tokenizer_unsupported_is_distinct_from_tree_unsupported() {
+        // Accepted UNSUP-001: `&x` is a deferred Data character reference at
+        // 0..1; here it follows the 6-byte `<body>`.
+        let run = html("tokenizer-unsupported", b"<body>&x");
+
+        let expected = head(8)
+            + "completion: incomplete; tokenizer unsupported: character reference in data (deferred)
+  trigger: bytes 6..7, line 1, byte column 7: \"&\"
+coverage: committed authored prefix bytes 0..6; processed tokens 1
+tokenizer diagnostics: 0
+tree diagnostics: 1
+nodes: 4
+
+" + SYNTHESIZED_SHELL
+            + AUTHORED_BODY
+            + "
+" + MISSING_DOCTYPE_AT_BODY;
+        assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn resource_limited_is_distinct_and_reports_kind_limit_attempted_and_anchor() {
+        // Accepted RES-005 shifted by `<body>`: `y` of `<div x y>` is at 13.
+        let run = html("attributes", b"<body><div x y>");
+
+        assert_eq!(run.status, Some(0));
+        assert_eq!(run.stderr, "");
+        assert!(
+            run.stdout.contains(
+                "completion: incomplete; resource limited: attributes per tag (limit 1, attempted 2)
+  at: bytes 13..13, line 1, byte column 14: \"\"
+"
+            ),
+            "{}",
+            run.stdout
+        );
+    }
+
+    fn core_source_bytes_refusal(bytes: usize) -> String {
+        head(bytes)
+            + &format!(
+                "completion: incomplete; resource limited: source bytes (limit 36864, attempted {bytes})
+  at: bytes 0..0, line 1, byte column 1: \"\"
+coverage: committed authored prefix bytes 0..0; processed tokens 0
+tokenizer diagnostics: 0
+tree diagnostics: 0
+nodes: 1
+
+#0 document
+    authored evidence: none
+"
+            )
+    }
+
+    #[test]
+    fn core_source_bytes_refusal_is_an_analysis_report_not_input_failure() {
+        // The lower edge of the 36865..=49152 acquisition/Core window.
+        let run = html("core-window-low", &vec![b'a'; 36_865]);
+        assert_report(&run, &core_source_bytes_refusal(36_865));
+    }
+
+    #[test]
+    fn core_source_bytes_limit_admits_exactly_36864_bytes() {
+        let mut input = b"<body>".to_vec();
+        input.resize(36_864, b'x');
+        let run = html("core-exact", &input);
+
+        assert_eq!(run.status, Some(0));
+        assert_eq!(run.stderr, "");
+        assert!(run.stdout.starts_with(&head(36_864)));
+        assert!(run.stdout.contains("\ncompletion: complete\n"));
+        assert!(
+            run.stdout
+                .contains("coverage: committed authored prefix bytes 0..36864; ")
+        );
+    }
+
+    #[test]
+    fn input_exactly_at_product_cap_reaches_core() {
+        let run = html("product-cap", &vec![b'a'; 49_152]);
+        assert_report(&run, &core_source_bytes_refusal(49_152));
+    }
+
+    #[test]
+    fn input_over_product_cap_is_rejected_before_core() {
+        let run = html("over-product-cap", &vec![b'a'; 49_153]);
+        assert_eq!(run.status, Some(1));
+        assert_eq!(run.stdout, "");
+        assert_eq!(run.stderr, "fa: stdin exceeds 49152 bytes\n");
+    }
+
+    #[test]
+    fn invalid_utf8_is_rejected_before_core() {
+        let run = html("invalid-utf8", b"<body>\xff");
+        assert_eq!(run.status, Some(1));
+        assert_eq!(run.stdout, "");
+        assert_eq!(
+            run.stderr,
+            "fa: stdin is not valid UTF-8 (invalid sequence at byte 6)\n"
+        );
+    }
+
+    #[test]
+    fn usage_failures_exit_one_with_usage_on_stderr() {
+        for (args, message) in [
+            (&[][..], "missing command"),
+            (&["html"][..], "unknown command"),
+            (&["html-tree", "a.html"][..], "unexpected argument"),
+            (&["html-tree", "--fragment"][..], "unexpected argument"),
+        ] {
+            let run = fa(args, "usage", b"<body>");
+            assert_eq!(run.status, Some(1), "{args:?}");
+            assert_eq!(run.stdout, "", "{args:?}");
+            assert_eq!(
+                run.stderr,
+                format!(
+                    "fa: {message}\nusage: fa css-selectors < style.css\n       \
+                 fa es-binding-refs < source.js\n       fa html-tree < source.html\n"
+                ),
+                "{args:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn repeated_invocations_are_byte_identical() {
+        let input = b"<body><div><section><p>t</p></div></section></body><title>";
+        let first = html("repeat-1", input);
+        let second = html("repeat-2", input);
+
+        assert_eq!(first.status, Some(0));
+        assert_eq!(first.status, second.status);
+        assert_eq!(first.stdout, second.stdout);
+        assert_eq!(first.stderr, second.stderr);
+    }
+
+    #[test]
+    fn exact_source_is_not_normalized_by_the_product() {
+        // A leading BOM is preserved by the Product and owned by the HTML
+        // tokenizer's accepted preprocessing; the byte count is exact.
+        let run = html("bom", b"\xef\xbb\xbf<body>");
+        assert_eq!(run.status, Some(0));
+        assert!(run.stdout.starts_with(&head(9)), "{}", run.stdout);
     }
 }
