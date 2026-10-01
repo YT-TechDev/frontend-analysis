@@ -245,3 +245,254 @@ fn repeated_invocations_are_byte_identical() {
     assert_eq!(first.stdout, second.stdout);
     assert_eq!(first.stderr, second.stderr);
 }
+
+// ---- #860: source-locatable parser partial-coverage evidence ----
+
+fn report_head(bytes: usize) -> String {
+    format!(
+        "capability: css-selectors
+profile: CoreV1
+source: id 0; {bytes} bytes
+tokenizer: complete; end of input; diagnostics 0
+"
+    )
+}
+
+#[test]
+fn recovery_record_is_source_locatable() {
+    // `a{` 0..2; `color red;` 2..12; `background:blue;` 12..28; `}` 28..29.
+    let run = css_selectors("recovery", b"a{color red;background:blue;}");
+
+    let expected = format!(
+        "{}parser: complete; end of tokenizer input; coverage supported for selected question; \
+diagnostics 1; recovery records 1; unsupported regions 0; discard records 0
+recovery 1: malformed block item; authored semicolon
+  source: bytes 2..12, line 1, byte column 3: \"color red;\"
+selector: complete; all retained qualified contexts processed
+observations: 1
+observation 1: qualified by selected grammar
+  context: bytes 0..1, line 1, byte column 1: \"a\"
+  grammar: normal selector list
+",
+        report_head(29)
+    );
+    assert_eq!(run.status, Some(0));
+    assert_eq!(run.stdout, expected);
+    assert_eq!(run.stderr, "");
+}
+
+#[test]
+fn recovery_termination_kinds_are_distinguished() {
+    // `a{` 0..2; `color red` 2..11; authored `}` 11..12; 12 bytes.
+    let run = css_selectors("recovery-block-end", b"a{color red}");
+    let expected = format!(
+        "{}parser: complete; end of tokenizer input; coverage supported for selected question; \
+diagnostics 1; recovery records 1; unsupported regions 0; discard records 0
+recovery 1: malformed block item; enclosing block end
+  source: bytes 2..11, line 1, byte column 3: \"color red\"
+selector: complete; all retained qualified contexts processed
+observations: 1
+observation 1: qualified by selected grammar
+  context: bytes 0..1, line 1, byte column 1: \"a\"
+  grammar: normal selector list
+",
+        report_head(12)
+    );
+    assert_eq!(run.status, Some(0));
+    assert_eq!(run.stdout, expected);
+    assert_eq!(run.stderr, "");
+
+    // True end of input, no authored delimiter: `a{` 0..2; `color red`
+    // 2..11; 11 bytes.
+    let run = css_selectors("recovery-eof", b"a{color red");
+    let expected = format!(
+        "{}parser: complete; end of tokenizer input; coverage supported for selected question; \
+diagnostics 1; recovery records 1; unsupported regions 0; discard records 0
+recovery 1: malformed block item; end of input
+  source: bytes 2..11, line 1, byte column 3: \"color red\"
+selector: complete; all retained qualified contexts processed
+observations: 1
+observation 1: qualified by selected grammar
+  context: bytes 0..1, line 1, byte column 1: \"a\"
+  grammar: normal selector list
+",
+        report_head(11)
+    );
+    assert_eq!(run.status, Some(0));
+    assert_eq!(run.stdout, expected);
+    assert_eq!(run.stderr, "");
+}
+
+#[test]
+fn unsupported_region_is_source_locatable() {
+    // `a{color:red;` is 12 bytes; the nested at-rule is 12..38.
+    let run = css_selectors("unsupported", b"a{color:red;@unknown-rule{color:blue;}}");
+
+    let expected = format!(
+        "{}parser: complete; end of tokenizer input; coverage contains unsupported contexts; \
+diagnostics 0; recovery records 0; unsupported regions 1; discard records 0
+unsupported 1: nested at-rule
+  source: bytes 12..38, line 1, byte column 13: \"@unknown-rule{{color:blue;}}\"
+selector: complete; all retained qualified contexts processed
+observations: 1
+observation 1: qualified by selected grammar
+  context: bytes 0..1, line 1, byte column 1: \"a\"
+  grammar: normal selector list
+",
+        report_head(39)
+    );
+    assert_eq!(run.status, Some(0));
+    assert_eq!(run.stdout, expected);
+    assert_eq!(run.stderr, "");
+}
+
+#[test]
+fn unsupported_kinds_are_distinguished() {
+    // The whole 28-byte source is one structurally consumed top-level
+    // at-rule; no descendant context is extracted from its block.
+    let run = css_selectors("unsupported-top-level", b"@media screen{a{color:red;}}");
+    let expected = format!(
+        "{}parser: complete; end of tokenizer input; coverage contains unsupported contexts; \
+diagnostics 0; recovery records 0; unsupported regions 1; discard records 0
+unsupported 1: top-level at-rule
+  source: bytes 0..28, line 1, byte column 1: \"@media screen{{a{{color:red;}}}}\"
+selector: complete; all retained qualified contexts processed
+observations: 0
+",
+        report_head(28)
+    );
+    assert_eq!(run.status, Some(0));
+    assert_eq!(run.stdout, expected);
+    assert_eq!(run.stderr, "");
+
+    // CSS-KEYFRAMES-INVALID-CHILD-001: the invalid child block is 13..24;
+    // the source is 35 bytes and retains no qualified-rule context.
+    let run = css_selectors(
+        "unsupported-keyframe",
+        b"@keyframes x{bogus{x:y;}from{a:b;}}",
+    );
+    let expected = format!(
+        "{}parser: complete; end of tokenizer input; coverage contains unsupported contexts; \
+diagnostics 0; recovery records 0; unsupported regions 1; discard records 0
+unsupported 1: unqualified keyframe block
+  source: bytes 13..24, line 1, byte column 14: \"bogus{{x:y;}}\"
+selector: complete; all retained qualified contexts processed
+observations: 0
+",
+        report_head(35)
+    );
+    assert_eq!(run.status, Some(0));
+    assert_eq!(run.stdout, expected);
+    assert_eq!(run.stderr, "");
+}
+
+#[test]
+fn discard_record_is_source_locatable() {
+    let run = css_selectors("discard", b"--foo:bar{color:red;}");
+
+    let expected = format!(
+        "{}parser: complete; end of tokenizer input; coverage supported for selected question; \
+diagnostics 0; recovery records 0; unsupported regions 0; discard records 1
+discard 1: top-level custom-property-like qualified rule
+  source: bytes 0..21, line 1, byte column 1: \"--foo:bar{{color:red;}}\"
+selector: complete; all retained qualified contexts processed
+observations: 0
+",
+        report_head(21)
+    );
+    assert_eq!(run.status, Some(0));
+    assert_eq!(run.stdout, expected);
+    assert_eq!(run.stderr, "");
+}
+
+#[test]
+fn records_keep_family_local_order_in_separate_sections() {
+    // Lines start at bytes 0, 8, 14, 22, 28.
+    // `--a:b{}` 0..7; `@one;` 8..13; `--c:d{}` 14..21; `@two;` 22..27;
+    // `a{` 28..30; `x;` 30..32; `y` 32..33; `}` 33..34; LF 34; 35 bytes.
+    let run = css_selectors("family-order", b"--a:b{}\n@one;\n--c:d{}\n@two;\na{x;y}\n");
+
+    let expected = format!(
+        "{}parser: complete; end of tokenizer input; coverage contains unsupported contexts; \
+diagnostics 2; recovery records 2; unsupported regions 2; discard records 2
+recovery 1: malformed block item; authored semicolon
+  source: bytes 30..32, line 5, byte column 3: \"x;\"
+recovery 2: malformed block item; enclosing block end
+  source: bytes 32..33, line 5, byte column 5: \"y\"
+unsupported 1: top-level at-rule
+  source: bytes 8..13, line 2, byte column 1: \"@one;\"
+unsupported 2: top-level at-rule
+  source: bytes 22..27, line 4, byte column 1: \"@two;\"
+discard 1: top-level custom-property-like qualified rule
+  source: bytes 0..7, line 1, byte column 1: \"--a:b{{}}\"
+discard 2: top-level custom-property-like qualified rule
+  source: bytes 14..21, line 3, byte column 1: \"--c:d{{}}\"
+selector: complete; all retained qualified contexts processed
+observations: 1
+observation 1: qualified by selected grammar
+  context: bytes 28..29, line 5, byte column 1: \"a\"
+  grammar: normal selector list
+",
+        report_head(35)
+    );
+    assert_eq!(run.status, Some(0));
+    assert_eq!(run.stdout, expected);
+    assert_eq!(run.stderr, "");
+}
+
+#[test]
+fn exact_source_spelling_is_escaped_without_normalization_in_records() {
+    // BOM 0..3; `a{` 3..5; `x`, CRLF, `;` is 5..9; `}` 9..10; and the
+    // escaped-keyword at-rule `@\66 oo{}` is 10..19; 19 bytes. U+FEFF counts
+    // as bytes on line 1, so `a` is byte column 4 and the recovery starts at
+    // byte column 6; the CRLF ends at byte 8, so line 2 starts there and `@`
+    // is byte column 3.
+    let run = css_selectors(
+        "records-exact-source",
+        "\u{feff}a{x\r\n;}@\\66 oo{}".as_bytes(),
+    );
+
+    let expected = format!(
+        "{}parser: complete; end of tokenizer input; coverage contains unsupported contexts; \
+diagnostics 1; recovery records 1; unsupported regions 1; discard records 0
+recovery 1: malformed block item; authored semicolon
+  source: bytes 5..9, line 1, byte column 6: \"x\\u{{d}}\\u{{a}};\"
+unsupported 1: top-level at-rule
+  source: bytes 10..19, line 2, byte column 3: \"@\\\\66 oo{{}}\"
+selector: complete; all retained qualified contexts processed
+observations: 1
+observation 1: qualified by selected grammar
+  context: bytes 3..4, line 1, byte column 4: \"a\"
+  grammar: normal selector list
+",
+        report_head(19)
+    );
+    assert_eq!(run.status, Some(0));
+    assert_eq!(run.stdout, expected);
+    assert_eq!(run.stderr, "");
+}
+
+#[test]
+fn resource_limited_parser_run_reports_only_committed_records_with_exit_zero() {
+    // The 65th `@x;` exceeds the approved 64 unsupported-region limit.
+    let run = css_selectors("records-resource-limit", "@x;".repeat(65).as_bytes());
+
+    assert_eq!(run.status, Some(0));
+    assert_eq!(run.stderr, "");
+    assert!(run.stdout.contains(
+        "parser: incomplete; resource limit unsupported regions (limit 64, attempted 65) at byte"
+    ));
+    assert!(run.stdout.contains("unsupported regions 64;"));
+    let listed = run
+        .stdout
+        .lines()
+        .filter(|line| line.starts_with("unsupported "))
+        .count();
+    assert_eq!(listed, 64);
+    assert!(run.stdout.contains(
+        "unsupported 64: top-level at-rule
+  source: bytes 189..192, line 1, byte column 190: \"@x;\"
+"
+    ));
+    assert!(!run.stdout.contains("unsupported 65:"));
+}
