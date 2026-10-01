@@ -192,7 +192,9 @@ impl CssSelectorProfile {
 /// Whether one analysis stage processed all of its own input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CssStageCompletion {
+    /// The stage consumed all of its own input.
     Complete,
+    /// The stage stopped early; see its termination for the reason.
     Incomplete,
 }
 
@@ -415,33 +417,54 @@ impl CssResourceKind {
     }
 }
 
+/// A tokenizer-owned resource dimension.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CssTokenizerResourceKind {
+    /// Exact UTF-8 byte length of the source.
     SourceBytes,
+    /// Charged tokenizer work.
     AlgorithmSteps,
+    /// Retained lexical items.
     LexicalItems,
+    /// Retained tokenizer diagnostics.
     Diagnostics,
+    /// Bytes of retained interpreted (decoded) values.
     RetainedInterpretedBytes,
+    /// Peak temporary scratch-buffer bytes.
     TemporaryBufferBytes,
 }
 
+/// A parser-owned resource dimension.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CssParserResourceKind {
+    /// Charged parser work.
     AlgorithmSteps,
+    /// Peak component-value nesting depth.
     PeakComponentDepth,
+    /// Peak simultaneously active authored parser contexts.
     PeakContextDepth,
+    /// Retained declaration-shaped occurrences.
     DeclarationOccurrences,
+    /// Retained parser diagnostics.
     ParserDiagnostics,
+    /// Retained recovery records.
     RecoveryRecords,
+    /// Retained unsupported regions.
     UnsupportedRegions,
+    /// Retained discard records.
     DiscardRecords,
+    /// Retained parser-context records.
     ContextRecords,
 }
 
+/// A selector-qualification-owned resource dimension.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CssSelectorResourceKind {
+    /// Charged selector-qualification work.
     AlgorithmSteps,
+    /// Peak selector nesting depth.
     PeakSelectorDepth,
+    /// Committed observations.
     Observations,
 }
 

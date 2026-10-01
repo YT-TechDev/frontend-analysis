@@ -116,7 +116,7 @@ status is owned by [Validation and Completion Evidence](development/VALIDATION.m
 | Category | Current status | Reason |
 | --- | --- | --- |
 | Toolchain identity | Applicable | Exact Rust `1.98.1` is pinned. |
-| Workspace policy and locked Cargo metadata | Applicable | One package, one member, zero dependencies, one library target, and the committed lockfile are validated. |
+| Workspace policy and locked Cargo metadata | Applicable | Two packages and members, the dependency-free Core library target, the CLI `fa` binary and its approved integration test with only the local Core dependency, and the committed lockfile are validated. |
 | Source formatting | Applicable | Production Rust source exists. |
 | Clippy source lint | Applicable | The production library and all targets are linted with warnings denied. |
 | Tests | Applicable | Implementation and public-contract tests validate the current domain. |
@@ -140,8 +140,8 @@ status is owned by [Validation and Completion Evidence](development/VALIDATION.m
 | Repository extraction | Future topology/placement ADR when ADR 0001 triggers are met |
 
 Current completion does not imply completion of a parser, Browser Adapter,
-analysis-result model, CLI, desktop, VS Code, web product, serialization, or
-release policy. Returning to the zero-member bootstrap is not accepted.
+analysis-result model, CLI capabilities beyond `fa css-selectors`, desktop,
+VS Code, web product, serialization, or release policy. Returning to the zero-member bootstrap is not accepted.
 
 ## Source-of-Truth Rules
 

@@ -259,7 +259,10 @@ def validate_production(root: Path, metadata: dict) -> None:
     )
 
     sources = rust_sources(root)
-    fail(sources, f"production Rust source must exist under {CORE_MEMBER}/src")
+    fail(
+        sources,
+        f"production Rust source must exist under {CORE_MEMBER}/src and {CLI_MEMBER}/src",
+    )
     core_root = (root / CORE_MEMBER / "src").resolve()
     cli_root = (root / CLI_MEMBER / "src").resolve()
     cli_test = (root / CLI_MEMBER / CLI_INTEGRATION_TEST).resolve()
