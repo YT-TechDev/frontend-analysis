@@ -10,11 +10,12 @@ authoritative contracts, and source-of-truth rules.
 
 `YT-TechDev/frontend-analysis` is the initial Core-focused Rust workspace owner;
 this role does not establish a permanent monorepo. The root remains a virtual
-Cargo workspace and currently contains exactly one production member:
-`crates/frontend-analysis-core`. The private `frontend-analysis-core` package
-sets `publish = false`, has zero third-party Rust dependencies, and is validated
-with the committed root `Cargo.lock`. Its current production responsibility
-includes Validated Source Anchors and Raw Source Line Coordinates. Raw
+Cargo workspace and currently contains exactly two production members:
+`crates/frontend-analysis-core` and `crates/frontend-analysis-cli`. Both
+packages set `publish = false`, have zero third-party Rust dependencies, and are
+validated with the committed root `Cargo.lock`. The Core package's current
+production responsibility includes Validated Source Anchors and Raw Source Line
+Coordinates. Raw
 coordinates preserve authoritative UTF-8 byte offsets; they do not imply
 parser, browser-protocol, Unicode-display, or presentation position
 compatibility.
@@ -33,10 +34,28 @@ for contributor guidance. Accepted
 applicable topology, toolchain, crate-boundary, source-anchor, and raw
 source-coordinate decisions.
 
+The `frontend-analysis-cli` Product package provides one binary, `fa`, with one
+command that reads exactly one authored UTF-8 stylesheet from stdin and reports
+how the bounded CSS `CoreV1` selector profile classifies its retained
+selector-list contexts:
+
+```bash
+cargo run -q -p frontend-analysis-cli -- css-selectors < style.css
+```
+
+It consumes the narrow public `frontend_analysis_core::css::selectors` facade
+under a fixed Phase 1 execution envelope and prints deterministic
+human-readable text. Exit status `0` means a report was produced (including
+invalid, unsupported, indeterminate, incomplete, or resource-limited results),
+`1` means a command or stdin acquisition failure, and `2` means a returned Core
+failure. It is not a complete CSS parser, validator, or browser replacement.
+[ADR 0011](docs/decisions/0011-establish-cli-product-and-css-core-v1-consumer-boundary.md)
+owns this Product/Core boundary.
+
 This state does not imply completion or approval of parsers, Browser Adapters,
 browser protocols, analysis-result models, diagnostics or evidence graphs,
-desktop, CLI, VS Code, or web products, serialization, crates.io publication,
-or release automation.
+desktop, VS Code, or web products, CLI capabilities beyond `fa css-selectors`,
+serialization, crates.io publication, or release automation.
 
 ## Contributing
 
