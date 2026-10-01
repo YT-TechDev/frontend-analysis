@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Proposed |
+| Status | Accepted |
 | Date | 2026-10-01 |
 | Decision owner / approver | YT-TechDev |
 | Linked Issue | [#857](https://github.com/YT-TechDev/frontend-analysis/issues/857) |
@@ -535,16 +535,26 @@ authorized by this ADR.
 
 ## Approval
 
-Not yet approved.
+Approved by `YT-TechDev`, the current maintainer of record, on 2026-10-01.
 
-Status remains Proposed.
+Durable approval:
+[PR #858 maintainer architecture approval](https://github.com/YT-TechDev/frontend-analysis/pull/858#issuecomment-5924911080)
 
-Implementation governed by this ADR must not begin until explicit,
-decision-specific maintainer approval is recorded durably.
+The approval is decision-specific and accepts:
 
-When approval occurs, this section must record the approving maintainer,
-approval date, durable approval link, and the exact decision accepted. Changing
-Status to Accepted without that evidence is invalid.
+- the separate `frontend-analysis-cli` Product package;
+- the one-way `frontend-analysis-cli -> frontend-analysis-core` dependency;
+- the narrow CSS CoreV1 public consumer boundary;
+- the Product/Core ownership split;
+- the bounded Phase 1 scope defined by this ADR.
+
+The exact Phase 1 resource envelope remains the separately approved execution
+policy recorded in Issue #857 and is not promoted to durable CSS semantics or
+public caller configuration by this approval.
+
+Production implementation may proceed only within the approved scope of Issue
+#857. Any material change to the package boundary, dependency direction, public
+semantic boundary, or stated scope requires renewed focused architecture review.
 
 ## References
 
