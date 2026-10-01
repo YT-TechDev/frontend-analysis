@@ -283,23 +283,44 @@ observation 1: qualified by selected grammar
 
 #[test]
 fn recovery_termination_kinds_are_distinguished() {
-    // `a{` 0..2; `color red` 2..11; authored `}` 11..12.
+    // `a{` 0..2; `color red` 2..11; authored `}` 11..12; 12 bytes.
     let run = css_selectors("recovery-block-end", b"a{color red}");
-    assert_eq!(run.status, Some(0));
-    assert!(run.stdout.contains(
-        "recovery 1: malformed block item; enclosing block end
+    let expected = format!(
+        "{}parser: complete; end of tokenizer input; coverage supported for selected question; \
+diagnostics 1; recovery records 1; unsupported regions 0; discard records 0
+recovery 1: malformed block item; enclosing block end
   source: bytes 2..11, line 1, byte column 3: \"color red\"
-"
-    ));
+selector: complete; all retained qualified contexts processed
+observations: 1
+observation 1: qualified by selected grammar
+  context: bytes 0..1, line 1, byte column 1: \"a\"
+  grammar: normal selector list
+",
+        report_head(12)
+    );
+    assert_eq!(run.status, Some(0));
+    assert_eq!(run.stdout, expected);
+    assert_eq!(run.stderr, "");
 
-    // True end of input: no authored delimiter.
+    // True end of input, no authored delimiter: `a{` 0..2; `color red`
+    // 2..11; 11 bytes.
     let run = css_selectors("recovery-eof", b"a{color red");
-    assert_eq!(run.status, Some(0));
-    assert!(run.stdout.contains(
-        "recovery 1: malformed block item; end of input
+    let expected = format!(
+        "{}parser: complete; end of tokenizer input; coverage supported for selected question; \
+diagnostics 1; recovery records 1; unsupported regions 0; discard records 0
+recovery 1: malformed block item; end of input
   source: bytes 2..11, line 1, byte column 3: \"color red\"
-"
-    ));
+selector: complete; all retained qualified contexts processed
+observations: 1
+observation 1: qualified by selected grammar
+  context: bytes 0..1, line 1, byte column 1: \"a\"
+  grammar: normal selector list
+",
+        report_head(11)
+    );
+    assert_eq!(run.status, Some(0));
+    assert_eq!(run.stdout, expected);
+    assert_eq!(run.stderr, "");
 }
 
 #[test]
@@ -327,25 +348,42 @@ observation 1: qualified by selected grammar
 
 #[test]
 fn unsupported_kinds_are_distinguished() {
+    // The whole 28-byte source is one structurally consumed top-level
+    // at-rule; no descendant context is extracted from its block.
     let run = css_selectors("unsupported-top-level", b"@media screen{a{color:red;}}");
+    let expected = format!(
+        "{}parser: complete; end of tokenizer input; coverage contains unsupported contexts; \
+diagnostics 0; recovery records 0; unsupported regions 1; discard records 0
+unsupported 1: top-level at-rule
+  source: bytes 0..28, line 1, byte column 1: \"@media screen{{a{{color:red;}}}}\"
+selector: complete; all retained qualified contexts processed
+observations: 0
+",
+        report_head(28)
+    );
     assert_eq!(run.status, Some(0));
-    assert!(run.stdout.contains(
-        "unsupported 1: top-level at-rule
-  source: bytes 0..28, line 1, byte column 1: \"@media screen{a{color:red;}}\"
-"
-    ));
+    assert_eq!(run.stdout, expected);
+    assert_eq!(run.stderr, "");
 
-    // CSS-KEYFRAMES-INVALID-CHILD-001: the invalid child block is 13..24.
+    // CSS-KEYFRAMES-INVALID-CHILD-001: the invalid child block is 13..24;
+    // the source is 35 bytes and retains no qualified-rule context.
     let run = css_selectors(
         "unsupported-keyframe",
         b"@keyframes x{bogus{x:y;}from{a:b;}}",
     );
+    let expected = format!(
+        "{}parser: complete; end of tokenizer input; coverage contains unsupported contexts; \
+diagnostics 0; recovery records 0; unsupported regions 1; discard records 0
+unsupported 1: unqualified keyframe block
+  source: bytes 13..24, line 1, byte column 14: \"bogus{{x:y;}}\"
+selector: complete; all retained qualified contexts processed
+observations: 0
+",
+        report_head(35)
+    );
     assert_eq!(run.status, Some(0));
-    assert!(run.stdout.contains(
-        "unsupported 1: unqualified keyframe block
-  source: bytes 13..24, line 1, byte column 14: \"bogus{x:y;}\"
-"
-    ));
+    assert_eq!(run.stdout, expected);
+    assert_eq!(run.stderr, "");
 }
 
 #[test]
@@ -405,25 +443,33 @@ observation 1: qualified by selected grammar
 #[test]
 fn exact_source_spelling_is_escaped_without_normalization_in_records() {
     // BOM 0..3; `a{` 3..5; `x`, CRLF, `;` is 5..9; `}` 9..10; and the
-    // escaped-keyword at-rule `@\66 oo{}` is 10..19. U+FEFF counts as
-    // bytes on line 1, so the recovery starts at byte column 6; the CRLF
-    // ends at byte 8, so line 2 starts there and `@` is byte column 3.
+    // escaped-keyword at-rule `@\66 oo{}` is 10..19; 19 bytes. U+FEFF counts
+    // as bytes on line 1, so `a` is byte column 4 and the recovery starts at
+    // byte column 6; the CRLF ends at byte 8, so line 2 starts there and `@`
+    // is byte column 3.
     let run = css_selectors(
         "records-exact-source",
         "\u{feff}a{x\r\n;}@\\66 oo{}".as_bytes(),
     );
 
+    let expected = format!(
+        "{}parser: complete; end of tokenizer input; coverage contains unsupported contexts; \
+diagnostics 1; recovery records 1; unsupported regions 1; discard records 0
+recovery 1: malformed block item; authored semicolon
+  source: bytes 5..9, line 1, byte column 6: \"x\\u{{d}}\\u{{a}};\"
+unsupported 1: top-level at-rule
+  source: bytes 10..19, line 2, byte column 3: \"@\\\\66 oo{{}}\"
+selector: complete; all retained qualified contexts processed
+observations: 1
+observation 1: qualified by selected grammar
+  context: bytes 3..4, line 1, byte column 4: \"a\"
+  grammar: normal selector list
+",
+        report_head(19)
+    );
     assert_eq!(run.status, Some(0));
-    assert!(run.stdout.contains(
-        "recovery 1: malformed block item; authored semicolon
-  source: bytes 5..9, line 1, byte column 6: \"x\\u{d}\\u{a};\"
-"
-    ));
-    assert!(run.stdout.contains(
-        "unsupported 1: top-level at-rule
-  source: bytes 10..19, line 2, byte column 3: \"@\\\\66 oo{}\"
-"
-    ));
+    assert_eq!(run.stdout, expected);
+    assert_eq!(run.stderr, "");
 }
 
 #[test]
