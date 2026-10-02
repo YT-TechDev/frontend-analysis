@@ -802,7 +802,8 @@ impl<'a> Engine<'a> {
                 start,
                 end,
             } => {
-                // The Numeric branch is reached but not selected by TC-S10.
+                // The Numeric branch is reached but remains unselected in both
+                // currently supported Character Reference return contexts.
                 // The authored `&` stays committed; the `#` travels only as
                 // the trigger identifying the refused branch.
                 let capability = match self.character_reference_return {
@@ -825,8 +826,8 @@ impl<'a> Engine<'a> {
             }
             InputUnit::Scalar { .. } | InputUnit::Eof { .. } => {
                 // Nothing that can begin a reference follows: the authored
-                // `&` is ordinary RCDATA text and this unit is reconsumed
-                // there unchanged.
+                // `&` is ordinary character data and this unit is reconsumed
+                // unchanged in the selected return state.
                 if let Err(stop) = self.flush_character_reference_ampersand() {
                     return stop;
                 }
@@ -891,7 +892,7 @@ impl<'a> Engine<'a> {
         if let Err(stop) = self.try_reserve_retained(selected.value.len(), ampersand_start) {
             return stop;
         }
-        // Ordinary RCDATA text observed before the `&` is *prior* evidence,
+        // Ordinary character data observed before the `&` is *prior* evidence,
         // not part of this entity: it ends at the `&`, the stop path would
         // flush it anyway, and emitting it separately keeps every
         // `EmittedTokens` refusal a single one-token attempt.
@@ -958,10 +959,10 @@ impl<'a> Engine<'a> {
 
     /// Opens the unresolved Ambiguous Ampersand candidate as its own run.
     ///
-    /// The candidate is a distinct semantic unit, so any ordinary RCDATA text
-    /// observed before the `&` is flushed first and the candidate starts a
-    /// fresh run at the authored `&`. That is what lets the run close at its
-    /// own boundary, before the delimiter is reconsumed in RCDATA.
+    /// The candidate is a distinct semantic unit, so any ordinary character
+    /// data observed before the `&` is flushed first and the candidate starts
+    /// a fresh run at the authored `&`. That lets the run close at its own
+    /// boundary before the delimiter is reconsumed in the selected return state.
     fn begin_ambiguous_ampersand_run(&mut self, unit: InputUnit) -> Step {
         let InputUnit::Scalar { ch, start, end } = unit else {
             return internal_invariant_stop(HtmlTokenizerInvariantFailure::CursorState);
@@ -1014,7 +1015,7 @@ impl<'a> Engine<'a> {
     }
 
     /// Closes the unresolved candidate at its own boundary and reconsumes the
-    /// delimiter in RCDATA.
+    /// delimiter in the selected return state.
     ///
     /// The delimiter is never consumed as part of the candidate: it stays
     /// authored input and belongs to whatever contribution follows. A refused
@@ -1029,7 +1030,7 @@ impl<'a> Engine<'a> {
     }
 
     /// Flushes the authored `&` that entered the character reference state
-    /// into the pending RCDATA run as ordinary text.
+    /// into the pending character-data run as ordinary text.
     fn flush_character_reference_ampersand(&mut self) -> Result<(), Step> {
         let (start, end) = self.character_reference_start;
         self.push_data_char('&', start, end)
@@ -1048,7 +1049,7 @@ impl<'a> Engine<'a> {
             HtmlTokenizerCapabilityAvailability::Unsupported,
             HtmlTokenizerUnsupportedTrigger::Input(anchor),
         )
-        .expect("valid selected RCDATA unsupported evidence");
+        .expect("valid selected tokenizer unsupported evidence");
         Step::Stop(HtmlTokenizerIncompleteCause::UnsupportedCapability(
             unsupported,
         ))
