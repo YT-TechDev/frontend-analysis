@@ -22,10 +22,8 @@ fn input_file(name: &str, bytes: &[u8]) -> PathBuf {
     static NEXT_INPUT_ID: AtomicUsize = AtomicUsize::new(0);
 
     let unique = NEXT_INPUT_ID.fetch_add(1, Ordering::Relaxed);
-    let path = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!(
-        "fa-stdin-{name}-{}-{unique}",
-        std::process::id()
-    ));
+    let path = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("fa-stdin-{name}-{}-{unique}", std::process::id()));
     fs::write(&path, bytes).unwrap();
     path
 }
