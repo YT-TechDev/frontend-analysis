@@ -1052,8 +1052,10 @@ enum FreezeError {
     NonCompleteHasEndOfFile,
     ContributionOutOfOrderOrOverlapping,
     ContributionRawMismatch,
+    LiteralInterpretationMismatch,
     ContributionBeyondCoverage,
     NamedValueMismatch,
+    TreeContributionNotFromLexed,
     TextNodeDoesNotEqualContributions,
     FabricatedSubdivision,
 }
@@ -1081,6 +1083,13 @@ fn validate_freeze(observation: &Observation) -> Result<(), FreezeError> {
         if lexed.source_text[span.start..span.end] != span.raw {
             return Err(FreezeError::ContributionRawMismatch);
         }
+        if matches!(
+            contribution.origin,
+            Origin::Literal | Origin::UnresolvedAmpersandRun
+        ) && contribution.interpreted != span.raw
+        {
+            return Err(FreezeError::LiteralInterpretationMismatch);
+        }
         if let Origin::ResolvedNamed { name } = contribution.origin {
             let expected = NAMED_REFERENCES
                 .iter()
@@ -1094,6 +1103,31 @@ fn validate_freeze(observation: &Observation) -> Result<(), FreezeError> {
                 return Err(FreezeError::FabricatedSubdivision);
             }
         }
+    }
+
+    let lexed_contributions = lexed.contributions();
+    let placed_contributions: Vec<&Contribution> = observation
+        .tree
+        .body
+        .iter()
+        .flat_map(|body| body.text_nodes.iter())
+        .flat_map(|node| node.contributions.iter())
+        .collect();
+
+    let mut next_lexed = 0usize;
+    for placed in &placed_contributions {
+        while next_lexed < lexed_contributions.len()
+            && lexed_contributions[next_lexed] != *placed
+        {
+            next_lexed += 1;
+        }
+        if next_lexed == lexed_contributions.len() {
+            return Err(FreezeError::TreeContributionNotFromLexed);
+        }
+        next_lexed += 1;
+    }
+    if complete && placed_contributions.len() != lexed_contributions.len() {
+        return Err(FreezeError::TreeContributionNotFromLexed);
     }
 
     for node in observation
@@ -1999,6 +2033,16 @@ fn c4_freeze_rejects_impossible_observations() {
     }
     assert!(validate_freeze(&overlapping).is_err());
 
+    let mut wrong_literal = good.clone();
+    if let Token::Characters(contribution) = &mut wrong_literal.lexed.tokens[1] {
+        assert!(matches!(contribution.origin, Origin::Literal));
+        contribution.interpreted = "x".to_owned();
+    }
+    assert_eq!(
+        validate_freeze(&wrong_literal),
+        Err(FreezeError::LiteralInterpretationMismatch)
+    );
+
     let mut wrong_value = good.clone();
     for token in &mut wrong_value.lexed.tokens {
         if let Token::Characters(contribution) = token
@@ -2010,6 +2054,46 @@ fn c4_freeze_rejects_impossible_observations() {
     assert_eq!(
         validate_freeze(&wrong_value),
         Err(FreezeError::NamedValueMismatch)
+    );
+
+    let mut fabricated_tree = good.clone();
+    {
+        let node = &mut fabricated_tree
+            .tree
+            .body
+            .as_mut()
+            .expect("body")
+            .text_nodes[0];
+        node.contributions[0].interpreted = "x".to_owned();
+        node.text = node
+            .contributions
+            .iter()
+            .map(|c| c.interpreted.as_str())
+            .collect();
+    }
+    assert_eq!(
+        validate_freeze(&fabricated_tree),
+        Err(FreezeError::TreeContributionNotFromLexed)
+    );
+
+    let mut omitted_tree = good.clone();
+    {
+        let node = &mut omitted_tree
+            .tree
+            .body
+            .as_mut()
+            .expect("body")
+            .text_nodes[0];
+        node.contributions.remove(1);
+        node.text = node
+            .contributions
+            .iter()
+            .map(|c| c.interpreted.as_str())
+            .collect();
+    }
+    assert_eq!(
+        validate_freeze(&omitted_tree),
+        Err(FreezeError::TreeContributionNotFromLexed)
     );
 
     let mut divergent = good;
@@ -2066,17 +2150,36 @@ fn c6_gold_is_hand_authored_and_external_heads_are_markers_only() {
         assert_eq!(pin.len(), 40);
         assert!(pin.bytes().all(|b| b.is_ascii_hexdigit()));
     }
-    // This module's source does not reference the production tokenizer,
-    // driver, session, result, matcher, or CLI.
+    // This module's source admits exactly the two source-identity primitives
+    // and no production HTML path. Keep the guard independent of a particular
+    // import spelling by checking both the exact import surface and normalized
+    // fully-qualified paths.
     let this_file = include_str!("data_state_named_reference_successor_validation.rs");
+    let imports: Vec<&str> = this_file
+        .lines()
+        .map(str::trim_start)
+        .filter(|line| *line == "use" || line.starts_with("use "))
+        .collect();
+    assert_eq!(imports, ["use crate::{SourceId, SourceText};"]);
+
+    let normalized: String = this_file
+        .chars()
+        .filter(|ch| !ch.is_ascii_whitespace())
+        .collect();
     for forbidden in [
-        "crate::html::tokenizer",
-        "super::driver",
-        "super::session",
-        "super::result",
-        "frontend_analysis_cli",
+        ["html", "::tokenizer"].concat(),
+        ["tree_construction", "::driver"].concat(),
+        ["tree_construction", "::session"].concat(),
+        ["tree_construction", "::result"].concat(),
+        ["super", "::driver"].concat(),
+        ["super", "::session"].concat(),
+        ["super", "::result"].concat(),
+        ["super", "::super::tokenizer"].concat(),
+        ["frontend_analysis", "_cli"].concat(),
     ] {
-        let needle = format!("use {forbidden}");
-        assert!(!this_file.contains(&needle), "{forbidden}");
+        assert!(
+            !normalized.contains(&forbidden),
+            "production path escaped the oracle boundary: {forbidden}"
+        );
     }
 }
