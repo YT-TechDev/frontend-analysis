@@ -64,12 +64,17 @@ Both private packages set `publish = false` and use Edition 2024. The root
 `Cargo.lock` is committed. Neither package has third-party dependencies. Core
 currently owns Validated Source Anchors and Raw Source Line Coordinates; it is
 not a generic utility layer. Project-owned source parser architecture is
-approved; current HTML, CSS, and ECMAScript tokenizer/parser/Core slices remain
-crate-private and no public parser API is complete. The only public analysis
-boundary is the narrow CSS `CoreV1` selector facade
-`frontend_analysis_core::css::selectors`, consumed by the `fa css-selectors`
-command under accepted
-[ADR 0011](decisions/0011-establish-cli-product-and-css-core-v1-consumer-boundary.md).
+approved; current HTML, CSS, and ECMAScript tokenizer/parser implementation
+internals remain crate-private, and no complete public parser API exists. The
+current Product-facing Core consumer boundaries are the narrow CSS
+`frontend_analysis_core::css::selectors` facade under accepted
+[ADR 0011](decisions/0011-establish-cli-product-and-css-core-v1-consumer-boundary.md),
+the ECMAScript `frontend_analysis_core::ecmascript::binding_refs` facade defined
+for its selected slice in [Issue #862](https://github.com/YT-TechDev/frontend-analysis/issues/862),
+and the HTML `frontend_analysis_core::html::tree` facade defined for its
+selected slice in [Issue #864](https://github.com/YT-TechDev/frontend-analysis/issues/864).
+They are consumed by `fa css-selectors`, `fa es-binding-refs`, and `fa html-tree`,
+respectively.
 
 Accepted [ADR 0001](decisions/0001-repository-topology-and-workspace-ownership.md)
 owns topology and extraction review, [ADR 0002](decisions/0002-rust-bootstrap-toolchain-and-validation-policy.md)
@@ -139,9 +144,11 @@ status is owned by [Validation and Completion Evidence](development/VALIDATION.m
 | Release automation | Future release Issue |
 | Repository extraction | Future topology/placement ADR when ADR 0001 triggers are met |
 
-Current completion does not imply completion of a parser, Browser Adapter,
-analysis-result model, CLI capabilities beyond `fa css-selectors`, desktop,
-VS Code, web product, serialization, or release policy. Returning to the zero-member bootstrap is not accepted.
+Current completion does not imply complete HTML, CSS, or ECMAScript parser
+implementations, a Browser Adapter, analysis-result model, desktop, VS Code, web
+product, serialization, or release policy. Returning to the zero-member
+bootstrap is not accepted under the
+[Contributing policy](../.github/CONTRIBUTING.md).
 
 ## Source-of-Truth Rules
 
