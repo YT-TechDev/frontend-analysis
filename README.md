@@ -71,7 +71,7 @@ Both Rust packages remain `publish = false`. This state does not imply complete
 language implementations, Browser Adapters, browser protocols, analysis-result
 models, diagnostics or evidence graphs, desktop, VS Code, or web products,
 serialization, crates.io publication, or release automation. The Rust toolchain
-pin is not an MSRV guarantee. No v0.1.0 release or tag is implied.
+pin is not an MSRV guarantee. The v0.1.0 release and tag are published.
 
 ## Contributing
 
