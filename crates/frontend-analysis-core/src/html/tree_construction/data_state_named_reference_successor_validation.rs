@@ -1116,9 +1116,7 @@ fn validate_freeze(observation: &Observation) -> Result<(), FreezeError> {
 
     let mut next_lexed = 0usize;
     for placed in &placed_contributions {
-        while next_lexed < lexed_contributions.len()
-            && lexed_contributions[next_lexed] != *placed
-        {
+        while next_lexed < lexed_contributions.len() && lexed_contributions[next_lexed] != *placed {
             next_lexed += 1;
         }
         if next_lexed == lexed_contributions.len() {
@@ -2058,12 +2056,7 @@ fn c4_freeze_rejects_impossible_observations() {
 
     let mut fabricated_tree = good.clone();
     {
-        let node = &mut fabricated_tree
-            .tree
-            .body
-            .as_mut()
-            .expect("body")
-            .text_nodes[0];
+        let node = &mut fabricated_tree.tree.body.as_mut().expect("body").text_nodes[0];
         node.contributions[0].interpreted = "x".to_owned();
         node.text = node
             .contributions
@@ -2078,12 +2071,7 @@ fn c4_freeze_rejects_impossible_observations() {
 
     let mut omitted_tree = good.clone();
     {
-        let node = &mut omitted_tree
-            .tree
-            .body
-            .as_mut()
-            .expect("body")
-            .text_nodes[0];
+        let node = &mut omitted_tree.tree.body.as_mut().expect("body").text_nodes[0];
         node.contributions.remove(1);
         node.text = node
             .contributions
