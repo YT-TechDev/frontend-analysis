@@ -30,9 +30,10 @@ pub(super) enum State {
     RcdataLessThanSign,
     RcdataEndTagOpen,
     RcdataEndTagName,
-    /// Entered from RCDATA on an authored `&`, which has already been
-    /// consumed by the single forward cursor but not yet interpreted. This
-    /// state only chooses the branch; it discovers and consumes nothing.
+    /// Entered from Data or RCDATA on an authored `&`, which has already been
+    /// consumed by the single forward cursor but not yet interpreted. The
+    /// private return-state owner records which selected context resumes; this
+    /// state only chooses the branch and discovers or consumes nothing.
     CharacterReference,
     /// The whole selected Named operation: bounded non-committing discovery,
     /// preparation, evidence construction, matched-source consumption and
@@ -41,7 +42,7 @@ pub(super) enum State {
     /// transition per authored byte.
     NamedCharacterReference,
     /// The unresolved candidate run, which closes at its own boundary before
-    /// the authored delimiter is reconsumed in RCDATA.
+    /// the authored delimiter is reconsumed in the selected return state.
     AmbiguousAmpersand,
 }
 
