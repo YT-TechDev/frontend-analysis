@@ -241,4 +241,3 @@ fn indeterminate_reason(reason: CssSelectorIndeterminateReason) -> &'static str 
         }
     }
 }
-
