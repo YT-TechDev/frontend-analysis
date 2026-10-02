@@ -66,12 +66,15 @@ currently owns Validated Source Anchors and Raw Source Line Coordinates; it is
 not a generic utility layer. Project-owned source parser architecture is
 approved; current HTML, CSS, and ECMAScript tokenizer/parser implementation
 internals remain crate-private, and no complete public parser API exists. The
-current Product-facing Core consumer boundaries are the narrow
-`frontend_analysis_core::css::selectors`,
-`frontend_analysis_core::ecmascript::binding_refs`, and
-`frontend_analysis_core::html::tree` facades, consumed by `fa css-selectors`,
-`fa es-binding-refs`, and `fa html-tree`, respectively, under accepted
-[ADR 0011](decisions/0011-establish-cli-product-and-css-core-v1-consumer-boundary.md).
+current Product-facing Core consumer boundaries are the narrow CSS
+`frontend_analysis_core::css::selectors` facade under accepted
+[ADR 0011](decisions/0011-establish-cli-product-and-css-core-v1-consumer-boundary.md),
+the ECMAScript `frontend_analysis_core::ecmascript::binding_refs` facade defined
+for its selected slice in [Issue #862](https://github.com/YT-TechDev/frontend-analysis/issues/862),
+and the HTML `frontend_analysis_core::html::tree` facade defined for its
+selected slice in [Issue #864](https://github.com/YT-TechDev/frontend-analysis/issues/864).
+They are consumed by `fa css-selectors`, `fa es-binding-refs`, and `fa html-tree`,
+respectively.
 
 Accepted [ADR 0001](decisions/0001-repository-topology-and-workspace-ownership.md)
 owns topology and extraction review, [ADR 0002](decisions/0002-rust-bootstrap-toolchain-and-validation-policy.md)
@@ -144,7 +147,8 @@ status is owned by [Validation and Completion Evidence](development/VALIDATION.m
 Current completion does not imply complete HTML, CSS, or ECMAScript parser
 implementations, a Browser Adapter, analysis-result model, desktop, VS Code, web
 product, serialization, or release policy. Returning to the zero-member
-bootstrap is not accepted.
+bootstrap is not accepted under the
+[Contributing policy](../.github/CONTRIBUTING.md).
 
 ## Source-of-Truth Rules
 
