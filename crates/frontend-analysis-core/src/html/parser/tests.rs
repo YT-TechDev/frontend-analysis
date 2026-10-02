@@ -154,7 +154,7 @@ fn unsupported_after_occurrence_keeps_prior_occurrence_but_stays_incomplete() {
 // become clean absence.
 #[test]
 fn unsupported_before_any_occurrence_stays_incomplete_not_clean_absence() {
-    let source = src(7, "&x");
+    let source = src(7, "&#65;");
     let run = tokenize_source(&source);
     assert!(run.is_incomplete());
 

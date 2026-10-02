@@ -40,7 +40,7 @@ use super::super::result::{
 use super::builder::TagBuilder;
 use super::cursor::InputUnit;
 use super::named_character_reference;
-use super::state::State;
+use super::state::{CharacterReferenceReturnState, State};
 use super::{
     DataRun, Engine, Step, context_dependent_mode, internal_invariant_stop,
     invalid_configuration_result, source_bytes_limit_result,
@@ -668,6 +668,7 @@ impl<'a> Engine<'a> {
                 // pending Data run is deliberately left intact so the
                 // ordinary-text outcome costs no extra token.
                 self.character_reference_start = (start, end);
+                self.character_reference_return = CharacterReferenceReturnState::Rcdata;
                 self.state = State::CharacterReference;
                 Step::Continue
             }
@@ -787,7 +788,7 @@ impl<'a> Engine<'a> {
         }
     }
 
-    /// The character reference state, with the RCDATA return state.
+    /// The character reference state, with the private Data or RCDATA return state.
     ///
     /// `unit` is the already-materialized scalar following the authored `&`.
     /// This dispatch decides *which* branch the reference takes and costs one
@@ -801,13 +802,19 @@ impl<'a> Engine<'a> {
                 start,
                 end,
             } => {
-                // The Numeric branch is reached but not selected by TC-S10.
+                // The Numeric branch is reached but remains unselected in both
+                // currently supported Character Reference return contexts.
                 // The authored `&` stays committed; the `#` travels only as
                 // the trigger identifying the refused branch.
-                self.rcdata_unsupported_input_stop(
-                    HtmlTokenizerCapability::NumericCharacterReferenceInRcdata,
-                    (start, end),
-                )
+                let capability = match self.character_reference_return {
+                    CharacterReferenceReturnState::Data => {
+                        HtmlTokenizerCapability::NumericCharacterReferenceInData
+                    }
+                    CharacterReferenceReturnState::Rcdata => {
+                        HtmlTokenizerCapability::NumericCharacterReferenceInRcdata
+                    }
+                };
+                self.rcdata_unsupported_input_stop(capability, (start, end))
             }
             InputUnit::Scalar { ch, .. } if ch.is_ascii_alphanumeric() => {
                 // Reconsume the same scalar in the Named state, so discovery,
@@ -819,12 +826,12 @@ impl<'a> Engine<'a> {
             }
             InputUnit::Scalar { .. } | InputUnit::Eof { .. } => {
                 // Nothing that can begin a reference follows: the authored
-                // `&` is ordinary RCDATA text and this unit is reconsumed
-                // there unchanged.
+                // `&` is ordinary character data and this unit is reconsumed
+                // unchanged in the selected return state.
                 if let Err(stop) = self.flush_character_reference_ampersand() {
                     return stop;
                 }
-                self.state = State::Rcdata;
+                self.state = self.character_reference_return.state();
                 self.pending_reconsume = true;
                 Step::Continue
             }
@@ -885,7 +892,7 @@ impl<'a> Engine<'a> {
         if let Err(stop) = self.try_reserve_retained(selected.value.len(), ampersand_start) {
             return stop;
         }
-        // Ordinary RCDATA text observed before the `&` is *prior* evidence,
+        // Ordinary character data observed before the `&` is *prior* evidence,
         // not part of this entity: it ends at the `&`, the stop path would
         // flush it anyway, and emitting it separately keeps every
         // `EmittedTokens` refusal a single one-token attempt.
@@ -946,16 +953,16 @@ impl<'a> Engine<'a> {
         if let Some((diagnostic, location)) = missing_semicolon {
             self.commit_prepared_diagnostic(diagnostic, location);
         }
-        self.state = State::Rcdata;
+        self.state = self.character_reference_return.state();
         Step::Continue
     }
 
     /// Opens the unresolved Ambiguous Ampersand candidate as its own run.
     ///
-    /// The candidate is a distinct semantic unit, so any ordinary RCDATA text
-    /// observed before the `&` is flushed first and the candidate starts a
-    /// fresh run at the authored `&`. That is what lets the run close at its
-    /// own boundary, before the delimiter is reconsumed in RCDATA.
+    /// The candidate is a distinct semantic unit, so any ordinary character
+    /// data observed before the `&` is flushed first and the candidate starts
+    /// a fresh run at the authored `&`. That lets the run close at its own
+    /// boundary before the delimiter is reconsumed in the selected return state.
     fn begin_ambiguous_ampersand_run(&mut self, unit: InputUnit) -> Step {
         let InputUnit::Scalar { ch, start, end } = unit else {
             return internal_invariant_stop(HtmlTokenizerInvariantFailure::CursorState);
@@ -1008,7 +1015,7 @@ impl<'a> Engine<'a> {
     }
 
     /// Closes the unresolved candidate at its own boundary and reconsumes the
-    /// delimiter in RCDATA.
+    /// delimiter in the selected return state.
     ///
     /// The delimiter is never consumed as part of the candidate: it stays
     /// authored input and belongs to whatever contribution follows. A refused
@@ -1017,13 +1024,13 @@ impl<'a> Engine<'a> {
         if let Err(stop) = self.flush_data_run() {
             return stop;
         }
-        self.state = State::Rcdata;
+        self.state = self.character_reference_return.state();
         self.pending_reconsume = true;
         Step::Continue
     }
 
     /// Flushes the authored `&` that entered the character reference state
-    /// into the pending RCDATA run as ordinary text.
+    /// into the pending character-data run as ordinary text.
     fn flush_character_reference_ampersand(&mut self) -> Result<(), Step> {
         let (start, end) = self.character_reference_start;
         self.push_data_char('&', start, end)
@@ -1042,7 +1049,7 @@ impl<'a> Engine<'a> {
             HtmlTokenizerCapabilityAvailability::Unsupported,
             HtmlTokenizerUnsupportedTrigger::Input(anchor),
         )
-        .expect("valid selected RCDATA unsupported evidence");
+        .expect("valid selected tokenizer unsupported evidence");
         Step::Stop(HtmlTokenizerIncompleteCause::UnsupportedCapability(
             unsupported,
         ))

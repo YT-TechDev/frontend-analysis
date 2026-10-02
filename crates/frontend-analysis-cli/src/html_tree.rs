@@ -316,6 +316,9 @@ fn tokenizer_capability(capability: HtmlTokenizerUnsupportedCapability) -> Strin
         HtmlTokenizerUnsupportedCapability::ForeignContentControl => {
             "foreign content control".to_owned()
         }
+        HtmlTokenizerUnsupportedCapability::NumericCharacterReferenceInData => {
+            "numeric character reference in data".to_owned()
+        }
         HtmlTokenizerUnsupportedCapability::NumericCharacterReferenceInRcdata => {
             "numeric character reference in RCDATA".to_owned()
         }

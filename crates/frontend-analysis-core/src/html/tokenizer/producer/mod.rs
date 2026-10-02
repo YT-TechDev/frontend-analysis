@@ -26,7 +26,7 @@ use self::builder::{
     AttributeNameBuilder, AttributeValueBuilder, PendingEmissionDiagnostic, TagBuilder,
 };
 use self::cursor::{Cursor, InputUnit};
-use self::state::State;
+use self::state::{CharacterReferenceReturnState, State};
 
 use super::diagnostic::{
     HtmlTokenizerDiagnostic, HtmlTokenizerDiagnosticCode, HtmlTokenizerDiagnosticContext,
@@ -172,6 +172,10 @@ struct Engine<'a> {
     /// reference state. Retained only for the duration of one reference: it
     /// is authored evidence, never interpreted output or a matching buffer.
     character_reference_start: (usize, usize),
+    /// The private return owner of the active character reference: Data or
+    /// RCDATA, set at the authored `&` and consulted when the reference
+    /// resolves or its unresolved run closes.
+    character_reference_return: CharacterReferenceReturnState,
 }
 
 impl<'a> Engine<'a> {
@@ -202,6 +206,7 @@ impl<'a> Engine<'a> {
             rcdata_start_tag_index: None,
             rcdata_closing_tag: false,
             character_reference_start: (0, 0),
+            character_reference_return: CharacterReferenceReturnState::Data,
         }
     }
 
@@ -452,16 +457,13 @@ impl<'a> Engine<'a> {
                 start,
                 end,
             } => {
-                if let Err(stop) = self.flush_data_run() {
-                    return stop;
-                }
-                let trigger = self.discovery_trigger((start, end));
-                self.unsupported_input_stop(
-                    super::result::HtmlTokenizerCapability::CharacterReference {
-                        context: super::result::HtmlCharacterReferenceContext::Data,
-                    },
-                    trigger,
-                )
+                // Same entry discipline as RCDATA: the authored `&` is
+                // consumed by the ordinary run loop and interpreted by the
+                // next unit; the pending run stays intact.
+                self.character_reference_start = (start, end);
+                self.character_reference_return = CharacterReferenceReturnState::Data;
+                self.state = State::CharacterReference;
+                Step::Continue
             }
             InputUnit::Scalar {
                 ch: '\0',

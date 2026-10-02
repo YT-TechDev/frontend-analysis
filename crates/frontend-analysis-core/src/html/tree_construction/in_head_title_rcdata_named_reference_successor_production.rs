@@ -765,11 +765,22 @@ fn pf17_standalone_and_general_boundaries_remain_exactly_as_deferred_as_before()
             mode: HtmlTokenizerMode::Rcdata,
         },
     );
-    expect_deferred(
-        "&amp;",
-        HtmlTokenizerCapability::CharacterReference {
-            context: HtmlCharacterReferenceContext::Data,
-        },
+    // Data Named support is the explicit successor of the predecessor claim
+    // that standalone `&amp;` stops as Deferred in Data (#876). Data `&amp;`
+    // now resolves, while the Data Numeric branch is its own narrow refusal.
+    let data_named = SourceText::new(SourceId::new(1), "&amp;".to_owned());
+    assert!(
+        !tokenize(&data_named, limits()).is_incomplete(),
+        "standalone Data Named reference now resolves"
+    );
+    let data_numeric = SourceText::new(SourceId::new(1), "&#65;".to_owned());
+    assert_eq!(
+        tokenizer_unsupported(&tokenize(&data_numeric, limits()))
+            .map(|observed| (observed.capability, observed.availability)),
+        Some((
+            HtmlTokenizerCapability::NumericCharacterReferenceInData,
+            HtmlTokenizerCapabilityAvailability::Unsupported
+        ))
     );
     expect_deferred(
         "<p id=\"&amp;\">",

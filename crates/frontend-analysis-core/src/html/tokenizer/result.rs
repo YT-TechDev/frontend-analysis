@@ -112,6 +112,10 @@ pub(crate) enum HtmlTokenizerCapability {
     /// The Numeric branch is reached but deliberately not selected, so it is
     /// refused outright at the authored `#` rather than deferred.
     NumericCharacterReferenceInRcdata,
+    /// The Data-state Numeric branch is reached by the selected Named
+    /// successor but not selected itself, so it is refused outright at the
+    /// authored `#`; the authored `&` is already committed coverage.
+    NumericCharacterReferenceInData,
     /// The RCDATA NUL recovery branch is likewise reached but not selected.
     /// No scalar is committed and no replacement output is claimed.
     RcdataNullRecovery,

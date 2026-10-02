@@ -212,6 +212,7 @@ pub(super) enum Capability {
     ContextDependentTokenizerMode(TokenizerMode),
     TreeConstructionControlledState,
     ForeignContentControl,
+    NumericCharacterReferenceInData,
     NumericCharacterReferenceInRcdata,
     RcdataNullRecovery,
 }

@@ -6,16 +6,21 @@ use super::helpers::*;
 pub(super) fn add_unsupported(fixtures: &mut Vec<HtmlTokenizerFixture>) {
     fixtures.push(unsupported_input(
         "UNSUP-001",
-        "character reference in Data",
-        "&x",
-        0,
-        Capability::CharacterReference(CharacterReferenceContext::Data),
-        Availability::Deferred,
-        ByteSpan::new(0, 1),
-        // Data('&', discovers CharacterReference required) = 1.
-        // Coverage stays empty: the trigger byte is not fully consumed by
-        // an approved transition; coverage and step accounting are separate.
+        "numeric character reference in Data",
+        "&#65;",
         1,
+        Capability::NumericCharacterReferenceInData,
+        Availability::Unsupported,
+        ByteSpan::new(1, 2),
+        // Explicit supersession (#876): this fixture's predecessor meaning was
+        // `&x` -> CharacterReference(Data), Deferred, coverage 0..0, trigger
+        // 0..1, 1 step. Data Named references are now supported, so the
+        // honest Data refusal is the unselected Numeric branch at the authored
+        // `#`; the fixture ID is kept deliberately.
+        // Data('&', consumed, enters CharacterReference) = 1
+        // + CharacterReference('#', discovers Numeric-in-Data) = 2.
+        // The authored `&` is committed coverage; `#` is only the trigger.
+        2,
     ));
     fixtures.push(unsupported_input(
         "UNSUP-002",

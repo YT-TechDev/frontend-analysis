@@ -328,6 +328,9 @@ fn observe_completion(completion: &HtmlTokenizerCompletion) -> Completion {
                         HtmlTokenizerCapability::ForeignContentControl => {
                             Capability::ForeignContentControl
                         }
+                        HtmlTokenizerCapability::NumericCharacterReferenceInData => {
+                            Capability::NumericCharacterReferenceInData
+                        }
                         HtmlTokenizerCapability::NumericCharacterReferenceInRcdata => {
                             Capability::NumericCharacterReferenceInRcdata
                         }

@@ -1585,7 +1585,7 @@ fn body_and_html_end_advance_their_exact_mixed_selected_stack_cells() {
 fn ps18_lower_layer_incompleteness_is_never_upgraded() {
     check(&refusal_run(RefusalCase {
         id: "PS18",
-        source: "<body><section>&amp;",
+        source: "<body><section>&#65;",
         body_children: vec![section((6, 15), (7, 14), vec![])],
         tail: vec![(
             ExpectedAction::InsertedAuthoredSelectedOrdinary("section"),

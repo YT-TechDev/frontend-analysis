@@ -357,6 +357,7 @@ pub enum HtmlTokenizerUnsupportedCapability {
     },
     TreeConstructionControlledState,
     ForeignContentControl,
+    NumericCharacterReferenceInData,
     NumericCharacterReferenceInRcdata,
     RcdataNullRecovery,
 }
@@ -863,6 +864,7 @@ fn map_tokenizer_capability(
         },
         Internal::TreeConstructionControlledState => Public::TreeConstructionControlledState,
         Internal::ForeignContentControl => Public::ForeignContentControl,
+        Internal::NumericCharacterReferenceInData => Public::NumericCharacterReferenceInData,
         Internal::NumericCharacterReferenceInRcdata => Public::NumericCharacterReferenceInRcdata,
         Internal::RcdataNullRecovery => Public::RcdataNullRecovery,
     }

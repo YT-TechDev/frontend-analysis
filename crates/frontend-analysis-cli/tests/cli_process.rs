@@ -924,6 +924,28 @@ tree diagnostic 1: missing doctype
     }
 
     #[test]
+    fn data_named_reference_separates_interpreted_text_from_authored_contributions() {
+        let run = html("data-reference", b"<body>a&amp;b</body>");
+
+        let expected = head(20)
+            + "completion: complete
+coverage: committed authored prefix bytes 0..20; processed tokens 6
+tokenizer diagnostics: 0
+tree diagnostics: 1
+nodes: 5
+
+" + SYNTHESIZED_SHELL
+            + AUTHORED_BODY
+            + "      #4 text \"a&b\"
+          contribution 1: source bytes 6..7, line 1, byte column 7: \"a\"; interpreted \"a\"
+          contribution 2: source bytes 7..12, line 1, byte column 8: \"&amp;\"; interpreted \"&\"
+          contribution 3: source bytes 12..13, line 1, byte column 13: \"b\"; interpreted \"b\"
+
+" + MISSING_DOCTYPE_AT_BODY;
+        assert_report(&run, &expected);
+    }
+
+    #[test]
     fn complete_report_with_a_tokenizer_diagnostic_exits_zero() {
         // `<title>` 0..7, `a` 7..8, U+0001 8..9.
         let run = html("complete-diagnostic", b"<title>a\x01b</title>");
@@ -991,13 +1013,14 @@ nodes: 4
 
     #[test]
     fn tokenizer_unsupported_is_distinct_from_tree_unsupported() {
-        // Accepted UNSUP-001: `&x` is a deferred Data character reference at
-        // 0..1; here it follows the 6-byte `<body>`.
-        let run = html("tokenizer-unsupported", b"<body>&x");
+        // UNSUP-001 as superseded by #876: `&#65;` is the unsupported Numeric
+        // character reference in Data, triggered by the authored `#` at 1..2;
+        // here it follows the 6-byte `<body>`.
+        let run = html("tokenizer-unsupported", b"<body>&#65;");
 
-        let expected = head(8)
-            + "completion: incomplete; tokenizer unsupported: character reference in data (deferred)
-  trigger: bytes 6..7, line 1, byte column 7: \"&\"
+        let expected = head(11)
+            + "completion: incomplete; tokenizer unsupported: numeric character reference in data (unsupported)
+  trigger: bytes 7..8, line 1, byte column 8: \"#\"
 coverage: committed authored prefix bytes 0..6; processed tokens 1
 tokenizer diagnostics: 0
 tree diagnostics: 1

@@ -48,7 +48,7 @@ pub(super) const TRANSITION_STEP_AUDIT: &[(&str, usize)] = &[
     ("ERR-006", 2), ("ERR-007", 4), ("ERR-008", 4), ("ERR-009", 9),
     ("ERR-010", 11), ("ERR-011", 9), ("ERR-012", 13), ("ERR-013", 16),
     ("ERR-014", 12), ("ERR-015", 13), ("ERR-016", 10), ("ERR-017", 7),
-    ("UNSUP-001", 1), ("UNSUP-002", 9), ("UNSUP-003", 2), ("UNSUP-004", 2),
+    ("UNSUP-001", 2), ("UNSUP-002", 9), ("UNSUP-003", 2), ("UNSUP-004", 2),
     ("UNSUP-005", 8), ("UNSUP-006", 11), ("UNSUP-007", 8), ("UNSUP-008", 6),
     ("UNSUP-009", 9), ("UNSUP-010", 10), ("UNSUP-011", 11), ("UNSUP-012", 9),
     ("UNSUP-013", 11), ("UNSUP-014", 12),
