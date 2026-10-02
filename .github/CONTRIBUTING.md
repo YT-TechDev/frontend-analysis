@@ -177,7 +177,7 @@ packages and workspace members at their approved manifest paths:
 `frontend-analysis-core`, with zero dependencies and only its approved library
 target, and `frontend-analysis-cli`, whose only dependency is the local Core
 package and whose only targets are the `fa` binary and its approved
-`tests/css_selectors.rs` integration test. `Cargo.lock` is
+`tests/cli_process.rs` integration test. `Cargo.lock` is
 committed, and metadata validation uses `--locked`. Formatting, Clippy, and
 tests are applicable to the current source. Returning the workspace to zero
 members is a policy failure.
