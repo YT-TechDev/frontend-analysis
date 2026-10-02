@@ -40,7 +40,7 @@ use super::super::result::{
 use super::builder::TagBuilder;
 use super::cursor::InputUnit;
 use super::named_character_reference;
-use super::state::State;
+use super::state::{CharacterReferenceReturnState, State};
 use super::{
     DataRun, Engine, Step, context_dependent_mode, internal_invariant_stop,
     invalid_configuration_result, source_bytes_limit_result,
@@ -668,6 +668,7 @@ impl<'a> Engine<'a> {
                 // pending Data run is deliberately left intact so the
                 // ordinary-text outcome costs no extra token.
                 self.character_reference_start = (start, end);
+                self.character_reference_return = CharacterReferenceReturnState::Rcdata;
                 self.state = State::CharacterReference;
                 Step::Continue
             }
@@ -787,7 +788,7 @@ impl<'a> Engine<'a> {
         }
     }
 
-    /// The character reference state, with the RCDATA return state.
+    /// The character reference state, with the private Data or RCDATA return state.
     ///
     /// `unit` is the already-materialized scalar following the authored `&`.
     /// This dispatch decides *which* branch the reference takes and costs one
@@ -804,10 +805,15 @@ impl<'a> Engine<'a> {
                 // The Numeric branch is reached but not selected by TC-S10.
                 // The authored `&` stays committed; the `#` travels only as
                 // the trigger identifying the refused branch.
-                self.rcdata_unsupported_input_stop(
-                    HtmlTokenizerCapability::NumericCharacterReferenceInRcdata,
-                    (start, end),
-                )
+                let capability = match self.character_reference_return {
+                    CharacterReferenceReturnState::Data => {
+                        HtmlTokenizerCapability::NumericCharacterReferenceInData
+                    }
+                    CharacterReferenceReturnState::Rcdata => {
+                        HtmlTokenizerCapability::NumericCharacterReferenceInRcdata
+                    }
+                };
+                self.rcdata_unsupported_input_stop(capability, (start, end))
             }
             InputUnit::Scalar { ch, .. } if ch.is_ascii_alphanumeric() => {
                 // Reconsume the same scalar in the Named state, so discovery,
@@ -824,7 +830,7 @@ impl<'a> Engine<'a> {
                 if let Err(stop) = self.flush_character_reference_ampersand() {
                     return stop;
                 }
-                self.state = State::Rcdata;
+                self.state = self.character_reference_return.state();
                 self.pending_reconsume = true;
                 Step::Continue
             }
@@ -946,7 +952,7 @@ impl<'a> Engine<'a> {
         if let Some((diagnostic, location)) = missing_semicolon {
             self.commit_prepared_diagnostic(diagnostic, location);
         }
-        self.state = State::Rcdata;
+        self.state = self.character_reference_return.state();
         Step::Continue
     }
 
@@ -1017,7 +1023,7 @@ impl<'a> Engine<'a> {
         if let Err(stop) = self.flush_data_run() {
             return stop;
         }
-        self.state = State::Rcdata;
+        self.state = self.character_reference_return.state();
         self.pending_reconsume = true;
         Step::Continue
     }

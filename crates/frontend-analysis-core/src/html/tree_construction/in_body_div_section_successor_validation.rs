@@ -287,15 +287,15 @@ const CANDIDATE_FIXTURES: &[CandidateFixture] = &[
     },
     CandidateFixture {
         id: "HS17",
-        bytes: b"<body><section>&amp;",
+        bytes: b"<body><section>&#65;",
         length: 20,
-        sha256: "938f8f478d6e1b6eb46960f6762131ae5b3894d77b888b89d5e1f42044cd8001",
+        sha256: "fc80c2fbc8d493fd2f4e486ca98b7c76fc7dab73d936c3b0d39ab2f14d800ee7",
         required_ranges: &[
             ((0, 6), b"<body>"),
             ((1, 5), b"body"),
             ((6, 15), b"<section>"),
             ((7, 14), b"section"),
-            ((15, 20), b"&amp;"),
+            ((15, 20), b"&#65;"),
         ],
     },
     CandidateFixture {

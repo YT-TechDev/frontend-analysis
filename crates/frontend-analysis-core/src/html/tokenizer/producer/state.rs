@@ -44,3 +44,21 @@ pub(super) enum State {
     /// the authored delimiter is reconsumed in RCDATA.
     AmbiguousAmpersand,
 }
+
+/// The tokenizer-private return owner shared by the character reference
+/// states. Exactly the two selected contexts are representable: it is not a
+/// general return target, and tree construction never owns or imports it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum CharacterReferenceReturnState {
+    Data,
+    Rcdata,
+}
+
+impl CharacterReferenceReturnState {
+    pub(super) fn state(self) -> State {
+        match self {
+            Self::Data => State::Data,
+            Self::Rcdata => State::Rcdata,
+        }
+    }
+}

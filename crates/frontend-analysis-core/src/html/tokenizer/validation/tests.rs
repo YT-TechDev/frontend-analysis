@@ -231,7 +231,7 @@ fn malformed_unsupported_trigger_is_rejected_by_policy_validation() {
     let Completion::Unsupported { trigger, .. } = &mut fixture.expected.0.completion else {
         panic!("UNSUP-001 must remain unsupported");
     };
-    *trigger = UnsupportedTrigger::Input(ByteSpan::new(1, 2));
+    *trigger = UnsupportedTrigger::Input(ByteSpan::new(0, 1));
     let error = validate_policy(std::slice::from_ref(&fixture))
         .unwrap_err()
         .to_string();
