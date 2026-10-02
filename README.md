@@ -34,28 +34,44 @@ for contributor guidance. Accepted
 applicable topology, toolchain, crate-boundary, source-anchor, and raw
 source-coordinate decisions.
 
-The `frontend-analysis-cli` Product package provides one binary, `fa`, with one
-command that reads exactly one authored UTF-8 stylesheet from stdin and reports
-how the bounded CSS `CoreV1` selector profile classifies its retained
-selector-list contexts:
+The `frontend-analysis-cli` Product package provides one browser-independent
+binary, `fa`, with three capability-oriented commands. Each reads authored
+UTF-8 source from stdin and prints deterministic human-readable text:
 
 ```bash
-cargo run -q -p frontend-analysis-cli -- css-selectors < style.css
+fa css-selectors < style.css
+fa es-binding-refs < source.js
+fa html-tree < source.html
 ```
 
-It consumes the narrow public `frontend_analysis_core::css::selectors` facade
-under a fixed Phase 1 execution envelope and prints deterministic
-human-readable text. Exit status `0` means a report was produced (including
-invalid, unsupported, indeterminate, incomplete, or resource-limited results),
-`1` means a command or stdin acquisition failure, and `2` means a returned Core
-failure. It is not a complete CSS parser, validator, or browser replacement.
-[ADR 0011](docs/decisions/0011-establish-cli-product-and-css-core-v1-consumer-boundary.md)
-owns this Product/Core boundary.
+These are narrow Product capabilities, not complete language implementations:
 
-This state does not imply completion or approval of parsers, Browser Adapters,
-browser protocols, analysis-result models, diagnostics or evidence graphs,
-desktop, VS Code, or web products, CLI capabilities beyond `fa css-selectors`,
-serialization, crates.io publication, or release automation.
+- **CSS:** classifies retained selector-list contexts under the bounded CSS
+  `CoreV1` selected profile.
+- **ECMAScript:** reports selected same-source lexical binding-reference
+  relationships for the accepted flat top-level lexical-binding initializer
+  profile.
+- **HTML:** reports the constructed tree for the accepted bounded
+  document-construction profile, including retained authored/synthesis evidence
+  and completion boundaries.
+
+The shared Product shell owns command routing, bounded stdin acquisition,
+strict UTF-8 decoding, invocation-local `SourceId(0)`, text rendering, and
+process exit status. Language semantics remain owned by their narrow Core
+consumer capabilities. Results may be incomplete, unsupported, diagnostic, or
+resource-limited. Exit status `0` means a report was produced, not that the
+source is globally valid; `1` means Product command, input, acquisition, or
+output failure; `2` means a returned Core boundary or internal failure. These
+commands do not provide complete CSS parsing or browser CSS behavior, general
+JavaScript resolution or runtime semantics, or general HTML parsing, DOM
+equivalence, or browser runtime behavior. [ADR 0011](docs/decisions/0011-establish-cli-product-and-css-core-v1-consumer-boundary.md)
+owns the Product/Core boundary.
+
+Both Rust packages remain `publish = false`. This state does not imply complete
+language implementations, Browser Adapters, browser protocols, analysis-result
+models, diagnostics or evidence graphs, desktop, VS Code, or web products,
+serialization, crates.io publication, or release automation. The Rust toolchain
+pin is not an MSRV guarantee. No v0.1.0 release or tag is implied.
 
 ## Contributing
 
