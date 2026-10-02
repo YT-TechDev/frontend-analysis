@@ -181,7 +181,7 @@ paths, as accepted by
 `frontend-analysis-core` MUST report zero dependencies and only the approved
 library target. `frontend-analysis-cli` MUST report only the local
 `frontend-analysis-core` dependency, no features, and only the `fa` binary
-target plus its explicitly allowlisted `tests/css_selectors.rs` integration
+target plus its explicitly allowlisted `tests/cli_process.rs` integration
 test. The root `Cargo.lock` is committed and validation MUST use `--locked`.
 Source formatting, Clippy, and tests are applicable to both packages.
 

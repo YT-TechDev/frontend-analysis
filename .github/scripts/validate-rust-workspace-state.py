@@ -31,7 +31,7 @@ MEMBER_PACKAGE_KEYS = {"edition", "name", "publish", "version"}
 CLI_BIN = [{"name": "fa", "path": "src/main.rs"}]
 CLI_DEPENDENCIES = {CORE_PACKAGE: {"path": "../frontend-analysis-core"}}
 # The single approved CLI process-boundary integration test (ADR 0011).
-CLI_INTEGRATION_TEST = "tests/css_selectors.rs"
+CLI_INTEGRATION_TEST = "tests/cli_process.rs"
 
 
 class PolicyError(Exception):
@@ -246,13 +246,13 @@ def validate_production(root: Path, metadata: dict) -> None:
     )
     by_name = {target["name"]: target for target in targets}
     fail(
-        sorted(by_name) == ["css_selectors", "fa"],
-        f"{CLI_PACKAGE} targets must be exactly fa and css_selectors",
+        sorted(by_name) == ["cli_process", "fa"],
+        f"{CLI_PACKAGE} targets must be exactly fa and cli_process",
     )
     validate_target(by_name["fa"], "fa", ["bin"], ["bin"], root / CLI_MEMBER / "src" / "main.rs")
     validate_target(
-        by_name["css_selectors"],
-        "css_selectors",
+        by_name["cli_process"],
+        "cli_process",
         ["test"],
         ["bin"],
         root / CLI_MEMBER / CLI_INTEGRATION_TEST,

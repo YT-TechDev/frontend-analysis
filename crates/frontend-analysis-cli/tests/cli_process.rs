@@ -1,6 +1,7 @@
-//! Process-boundary tests for `fa css-selectors` (#857) and, in the
-//! `es_binding_refs` and `html_tree` modules, `fa es-binding-refs` (#862) and
-//! `fa html-tree` (#864).
+//! Process-boundary tests for the `fa` CLI Product.
+//!
+//! Covers `fa css-selectors` (#857), `fa es-binding-refs` (#862), and
+//! `fa html-tree` (#864) in one integration-test target.
 //!
 //! Every expected stdout/stderr text below is authored by hand from the
 //! approved output contract and hand-counted source byte offsets. None of it
