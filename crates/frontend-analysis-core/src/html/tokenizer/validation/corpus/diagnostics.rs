@@ -29,10 +29,10 @@ pub(super) fn add_diagnostics(fixtures: &mut Vec<HtmlTokenizerFixture>) {
     fixtures.push(complete_text(
         "ERR-003",
         FixtureCategory::Diagnostic,
-        "UnexpectedNullCharacter replacement",
+        "authored Data U+0000 is reported and continued without replacement",
         "\0",
-        "\u{fffd}",
-        vec![diagnostic(DiagnosticCode::UnexpectedNullCharacter, 0, 1, DiagnosticContext::Data, DiagnosticHandling::Recovered(RecoveryKind::ReplacedNullWithReplacementCharacter), DiagnosticSubject::InputLocation)],
+        "\0",
+        vec![diagnostic(DiagnosticCode::UnexpectedNullCharacter, 0, 1, DiagnosticContext::Data, DiagnosticHandling::Continued, DiagnosticSubject::InputLocation)],
         None,
         // Data(NUL) + Data(EOF) = 2
         2,

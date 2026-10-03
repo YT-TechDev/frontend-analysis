@@ -856,6 +856,7 @@ pub(crate) enum HtmlTreeActionKind {
     IgnoredUnmatchedSelectedOrdinaryEndTag {
         name: HtmlSelectedOrdinaryElementName,
     },
+    IgnoredNullCharacterToken,
     InsertedAuthoredParagraphElement {
         node: HtmlConstructedNodeId,
     },
@@ -926,6 +927,7 @@ impl HtmlTreeActionKind {
             | Self::PoppedTitleElementAtEndOfFile { node }
             | Self::ClosedShellElement { node, .. } => Some(*node),
             Self::IgnoredUnmatchedSelectedOrdinaryEndTag { .. }
+            | Self::IgnoredNullCharacterToken
             | Self::AcknowledgedShellEndTag { .. }
             | Self::DuplicateShellStartTagCreatedNoNode { .. }
             | Self::ReprocessedToken
@@ -973,6 +975,7 @@ pub(crate) enum HtmlTreeDiagnosticCode {
     DuplicateHeadStartTag,
     DuplicateBodyStartTag,
     AfterBodyCharacterData,
+    NullCharacterInBody,
     BodyEndTagWithOpenSelectedOrdinaryElements,
     HtmlEndTagWithOpenSelectedOrdinaryElements,
     UnmatchedSelectedOrdinaryEndTag,
@@ -1320,6 +1323,20 @@ pub(crate) enum HtmlTreeFreezeError {
     DuplicateSelectedOrdinaryEndTokenDecision {
         token_index: usize,
     },
+    IgnoredNullCharacterTriggerIsNotExactNull {
+        token_index: usize,
+    },
+    DuplicateIgnoredNullCharacterDecision {
+        token_index: usize,
+    },
+    IgnoredNullCharacterDiagnosticMismatch {
+        actions: Vec<usize>,
+        diagnostics: Vec<usize>,
+    },
+    IgnoredNullCharacterLeakedIntoText {
+        token_index: usize,
+        node: HtmlConstructedNodeId,
+    },
     UnmatchedSelectedOrdinaryEndTriggerIsNotTheMatchingEndTag {
         token_index: usize,
     },
@@ -1585,6 +1602,7 @@ pub(super) fn freeze(
     validate_structure(&nodes, root)?;
     validate_node_evidence(source, &nodes)?;
     validate_action_evidence(source, &nodes, &actions, tokenizer_run.tokens().len())?;
+    validate_ignored_null_characters(&nodes, &actions, &diagnostics, &tokenizer_run)?;
     validate_selected_ordinary_lifecycle(
         &nodes,
         &actions,
@@ -1883,6 +1901,84 @@ fn validate_action_evidence(
         {
             return Err(HtmlTreeFreezeError::UnresolvedActionSubject(subject));
         }
+    }
+    Ok(())
+}
+
+/// Durable replay of the InBody authored Data U+0000 ignore decision.
+///
+/// Every private `IgnoredNullCharacterToken` action must resolve to one exact
+/// source-backed U+0000 tokenizer Character token and pair one-to-one with a
+/// `NullCharacterInBody` / `IgnoredToken` diagnostic on the same trigger, and
+/// the ignored source must never reach a text contribution.
+fn validate_ignored_null_characters(
+    nodes: &[HtmlTreeNode],
+    actions: &[HtmlTreeAction],
+    diagnostics: &[HtmlTreeDiagnostic],
+    tokenizer_run: &HtmlTokenizerRunResult,
+) -> Result<(), HtmlTreeFreezeError> {
+    let mut action_tokens: Vec<usize> = Vec::new();
+    for action in actions {
+        if !matches!(action.kind(), HtmlTreeActionKind::IgnoredNullCharacterToken) {
+            continue;
+        }
+        let token_index = action.trigger().token_index();
+        let Some(HtmlToken::Character(character)) = tokenizer_run.tokens().get(token_index) else {
+            return Err(
+                HtmlTreeFreezeError::IgnoredNullCharacterTriggerIsNotExactNull { token_index },
+            );
+        };
+        if character.interpreted() != "\0"
+            || !exact_anchor(action.trigger().authored_boundary(), Some(character.source()))
+        {
+            return Err(
+                HtmlTreeFreezeError::IgnoredNullCharacterTriggerIsNotExactNull { token_index },
+            );
+        }
+        if action_tokens.contains(&token_index) {
+            return Err(HtmlTreeFreezeError::DuplicateIgnoredNullCharacterDecision {
+                token_index,
+            });
+        }
+        action_tokens.push(token_index);
+        for node in nodes {
+            let HtmlTreeNodeKind::Text(text) = node.kind() else {
+                continue;
+            };
+            let ignored = character.source().range();
+            if text.contributions().iter().any(|contribution| {
+                let range = contribution.source().range();
+                range.start() < ignored.end() && ignored.start() < range.end()
+            }) {
+                return Err(HtmlTreeFreezeError::IgnoredNullCharacterLeakedIntoText {
+                    token_index,
+                    node: node.id(),
+                });
+            }
+        }
+    }
+    let null_diagnostics: Vec<&HtmlTreeDiagnostic> = diagnostics
+        .iter()
+        .filter(|d| d.code() == HtmlTreeDiagnosticCode::NullCharacterInBody)
+        .collect();
+    let diagnostic_tokens: Vec<usize> = null_diagnostics
+        .iter()
+        .map(|d| d.trigger().token_index())
+        .collect();
+    let paired = action_tokens == diagnostic_tokens
+        && actions
+            .iter()
+            .filter(|a| matches!(a.kind(), HtmlTreeActionKind::IgnoredNullCharacterToken))
+            .zip(&null_diagnostics)
+            .all(|(action, diagnostic)| {
+                diagnostic.recovery() == HtmlTreeRecovery::IgnoredToken
+                    && same_trigger(action.trigger(), diagnostic.trigger())
+            });
+    if !paired {
+        return Err(HtmlTreeFreezeError::IgnoredNullCharacterDiagnosticMismatch {
+            actions: action_tokens,
+            diagnostics: diagnostic_tokens,
+        });
     }
     Ok(())
 }

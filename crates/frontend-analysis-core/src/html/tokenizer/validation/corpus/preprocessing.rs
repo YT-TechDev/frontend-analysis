@@ -108,12 +108,17 @@ pub(super) fn add_preprocessing(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         4,
     ));
     let pre10 = "\u{000c}\u{0001}\0\u{fdd0}";
-    fixtures.push(complete_text(
+    fixtures.push(complete(
         "PRE-010",
         FixtureCategory::Preprocessing,
         "FF NUL control and noncharacter locations are explicit",
         pre10,
-        "\u{000c}\u{0001}\u{fffd}\u{fdd0}",
+        vec![
+            character(pre10, 0, 2, "\u{000c}\u{0001}"),
+            character(pre10, 2, 3, "\0"),
+            character(pre10, 3, 6, "\u{fdd0}"),
+            eof(6),
+        ],
         vec![
             diagnostic(
                 DiagnosticCode::ControlCharacterInInputStream,
@@ -128,7 +133,7 @@ pub(super) fn add_preprocessing(fixtures: &mut Vec<HtmlTokenizerFixture>) {
                 2,
                 3,
                 DiagnosticContext::Data,
-                DiagnosticHandling::Recovered(RecoveryKind::ReplacedNullWithReplacementCharacter),
+                DiagnosticHandling::Continued,
                 DiagnosticSubject::InputLocation,
             ),
             diagnostic(
@@ -141,6 +146,7 @@ pub(super) fn add_preprocessing(fixtures: &mut Vec<HtmlTokenizerFixture>) {
             ),
         ],
         None,
+        0,
         // 4 Data-context scalar units (FF, U+0001, NUL, U+FDD0) + Data(EOF) = 5.
         // Preprocessing diagnostics (InputPreprocessing context) annotate
         // input-unit creation and add no extra transition step.
