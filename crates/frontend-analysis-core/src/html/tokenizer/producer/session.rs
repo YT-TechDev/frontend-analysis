@@ -806,6 +806,7 @@ impl<'a> Engine<'a> {
                 }
                 self.numeric_value = 0;
                 self.numeric_reference_end = end;
+                self.numeric_hex_marker = None;
                 self.numeric_semicolon = false;
                 self.state = State::NumericCharacterReference;
                 Step::Continue
@@ -954,10 +955,9 @@ impl<'a> Engine<'a> {
     /// Numeric Character Reference: selects the radix after `#`.
     pub(super) fn step_numeric_character_reference(&mut self, unit: InputUnit) -> Step {
         match unit {
-            InputUnit::Scalar {
-                ch: 'x' | 'X', end, ..
-            } => {
+            InputUnit::Scalar { ch, end, .. } if matches!(ch, 'x' | 'X') => {
                 self.numeric_reference_end = end;
+                self.numeric_hex_marker = Some(ch);
                 self.state = State::HexadecimalCharacterReferenceStart;
                 Step::Continue
             }
@@ -1116,7 +1116,13 @@ impl<'a> Engine<'a> {
     ) -> Step {
         let start = self.character_reference_start.0;
         let end = self.numeric_reference_end;
-        let prefix = self.source.as_str()[start..end].to_owned();
+        // Build interpreted recovery from units owned at recognition time.
+        // Source coordinates remain authored evidence only; they are never
+        // reread to manufacture the interpreted literal prefix.
+        let mut prefix = String::from("&#");
+        if let Some(marker) = self.numeric_hex_marker {
+            prefix.push(marker);
+        }
         let at = (self.processed_end, self.processed_end);
 
         if let Err(stop) = self.try_reserve_retained(prefix.len(), start) {
