@@ -311,6 +311,7 @@ enum Effect {
     AcknowledgeBodyEndTagWithOpenSelectedOrdinaryElements,
     RecordHtmlEndTagWithOpenSelectedOrdinaryElements,
     RecordAfterBodyCharacterData,
+    RecordIgnoredNullCharacter,
     InsertSelectedOrdinaryElement(HtmlSelectedOrdinaryElementName),
     CloseSelectedOrdinaryElement(HtmlSelectedOrdinaryElementName),
     RecoverInterveningSelectedOrdinaryElementsAndCloseTarget(HtmlSelectedOrdinaryElementName),
@@ -606,6 +607,14 @@ fn classify(
                 return Err(HtmlTreeCapability::ShellTagWithOpenSelectedOrdinaryElement);
             }
             match token {
+                // Exact U+0000 only: a mixed token is never scanned for an
+                // embedded NUL, because tokenizer recognition already split it.
+                AdmittedToken::Characters { interpreted, .. } if *interpreted == "\0" => {
+                    Ok(ModeStep::Consume {
+                        effect: Some(Effect::RecordIgnoredNullCharacter),
+                        next: None,
+                    })
+                }
                 AdmittedToken::Characters { .. } => Ok(selected_in_body_character_step()),
                 AdmittedToken::StartTag {
                     name: AdmittedElementName::Paragraph,
@@ -1166,6 +1175,15 @@ impl HtmlTreeSession {
                     trigger,
                     HtmlTreeRecovery::SwitchedToInBodyAndReprocessedSameToken,
                 );
+                Ok(())
+            }
+            Effect::RecordIgnoredNullCharacter => {
+                self.record_diagnostic(
+                    HtmlTreeDiagnosticCode::NullCharacterInBody,
+                    trigger,
+                    HtmlTreeRecovery::IgnoredToken,
+                );
+                self.record_action(HtmlTreeActionKind::IgnoredNullCharacterToken, trigger);
                 Ok(())
             }
             Effect::InsertSelectedOrdinaryElement(name) => {

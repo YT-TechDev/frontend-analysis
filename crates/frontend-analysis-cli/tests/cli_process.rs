@@ -946,6 +946,32 @@ nodes: 5
     }
 
     #[test]
+    fn authored_data_nul_is_ignored_in_body_with_tokenizer_and_tree_evidence() {
+        // `<body>` 0..6, authored U+0000 6..7: no text node, no U+FFFD.
+        let run = html("data-nul", b"<body>\0");
+
+        let expected = head(7)
+            + "completion: complete
+coverage: committed authored prefix bytes 0..7; processed tokens 3
+tokenizer diagnostics: 1
+tree diagnostics: 2
+nodes: 4
+
+" + SYNTHESIZED_SHELL
+            + AUTHORED_BODY
+            + "
+tokenizer diagnostic 1: unexpected null character
+  location: bytes 6..7, line 1, byte column 7: \"\\u{0}\"
+
+" + MISSING_DOCTYPE_AT_BODY
+            + "tree diagnostic 2: null character in in-body
+  recovery: ignored token
+  trigger: bytes 6..7, line 1, byte column 7: \"\\u{0}\"
+";
+        assert_report(&run, &expected);
+    }
+
+    #[test]
     fn complete_report_with_a_tokenizer_diagnostic_exits_zero() {
         // `<title>` 0..7, `a` 7..8, U+0001 8..9.
         let run = html("complete-diagnostic", b"<title>a\x01b</title>");

@@ -295,6 +295,11 @@ fn project_actions(analysis: &HtmlDocumentShellAnalysis) -> Vec<(ExpectedAction,
                 | HtmlTreeActionKind::PoppedTitleElementAtEndOfFile { .. } => {
                     panic!("TC-S3 predecessor fixtures must not record a TC-S10 Title action")
                 }
+                HtmlTreeActionKind::IgnoredNullCharacterToken => {
+                    panic!(
+                        "TC-S3 predecessor fixtures must not record a Data-NUL ignored-token action"
+                    )
+                }
                 HtmlTreeActionKind::ReprocessedToken => ExpectedAction::Reprocessed,
                 HtmlTreeActionKind::StoppedParsing => ExpectedAction::Stopped,
             };

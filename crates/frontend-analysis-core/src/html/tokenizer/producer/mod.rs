@@ -512,15 +512,7 @@ impl<'a> Engine<'a> {
                 start,
                 end,
             } => {
-                match self.recover_null_character(
-                    HtmlTokenizerDiagnosticContext::Data,
-                    (start, end),
-                    None,
-                ) {
-                    Ok(()) => {}
-                    Err(stop) => return stop,
-                }
-                if let Err(stop) = self.push_data_char('\u{fffd}', start, end) {
+                if let Err(stop) = self.emit_data_null(start, end) {
                     return stop;
                 }
                 Step::Continue
@@ -532,6 +524,31 @@ impl<'a> Engine<'a> {
                 Step::Continue
             }
         }
+    }
+
+    /// Authored Data-state U+0000: the pending ordinary run closes first, the
+    /// observation-conditioned `UnexpectedNullCharacter` / `Continued`
+    /// diagnostic commits next, and only then is the independent output
+    /// effect prepared (`EmittedTokens`, then one retained byte) and one exact
+    /// source-backed U+0000 Character token committed. No replacement is
+    /// claimed, and the NUL never joins an ordinary Data run.
+    fn emit_data_null(&mut self, start: usize, end: usize) -> Result<(), Step> {
+        self.flush_data_run()?;
+        self.append_diagnostic(
+            HtmlTokenizerDiagnosticCode::UnexpectedNullCharacter,
+            (start, end),
+            HtmlTokenizerDiagnosticContext::Data,
+            HtmlTokenizerDiagnosticHandling::Continued,
+            HtmlTokenizerDiagnosticSubject::InputLocation,
+        )?;
+        let committed = self.preflight_token_emission('\0'.len_utf8(), (start, start))?;
+        self.try_reserve_retained('\0'.len_utf8(), start)?;
+        let anchor = self.anchor(start, end);
+        let token = HtmlToken::Character(
+            HtmlCharacterToken::new(anchor, "\0".to_owned()).expect("valid character token"),
+        );
+        self.commit_token(token, committed);
+        Ok(())
     }
 
     fn push_data_char(&mut self, ch: char, start: usize, end: usize) -> Result<(), Step> {
