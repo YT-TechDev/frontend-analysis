@@ -44,6 +44,17 @@ pub(super) enum State {
     /// The unresolved candidate run, which closes at its own boundary before
     /// the authored delimiter is reconsumed in the selected return state.
     AmbiguousAmpersand,
+    /// Entered after the authored `#`; the next unit selects the radix or
+    /// recovers the literal `&#` prefix.
+    NumericCharacterReference,
+    /// Entered after `x`/`X`; the first hexadecimal digit is reconsumed in
+    /// [`State::HexadecimalCharacterReference`].
+    HexadecimalCharacterReferenceStart,
+    DecimalCharacterReference,
+    HexadecimalCharacterReference,
+    /// Input-free: consumes and examines no unit, yet costs one transition.
+    /// It is never dispatched with an input unit.
+    NumericCharacterReferenceEnd,
 }
 
 /// The tokenizer-private return owner shared by the character reference

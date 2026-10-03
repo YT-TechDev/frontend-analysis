@@ -280,27 +280,17 @@ fn ds6_decoded_output_is_never_authored_syntax() {
     assert_eq!(tag_count(&lex("</body>")), 1);
 }
 
-/// Falsifies: Numeric decoding, the broad Deferred Data capability, and a
-/// coverage that omits the authored `&`.
+/// Falsifies: the Named branch swallowing `#`, the retired Numeric-in-Data
+/// refusal returning, and the broad Deferred Data capability. Numeric
+/// references are supported by #880; the Named matcher is not consulted.
 #[test]
-fn ds7_numeric_in_data_is_the_narrow_unsupported_boundary() {
-    let run = lex("&#65;");
-    assert_eq!(
-        unsupported(&run),
-        Some((
-            HtmlTokenizerCapability::NumericCharacterReferenceInData,
-            HtmlTokenizerCapabilityAvailability::Unsupported,
-            Some((1, 2)),
-        ))
-    );
-    assert_ne!(
-        unsupported(&run).map(|observed| observed.0),
-        Some(HtmlTokenizerCapability::CharacterReference {
-            context: HtmlCharacterReferenceContext::Data,
-        })
-    );
-    assert_eq!(run.coverage().processed_end(), 1);
-    assert!(chars(&run).iter().all(|(_, text)| !text.contains('A')));
+fn ds7_numeric_in_data_is_supported_and_never_a_named_lookup() {
+    let run = expect_chars("&#65;", &[((0, 5), "A")]);
+    assert!(unsupported(&run).is_none());
+    assert!(diags(&run).is_empty());
+
+    // `amp;` after a Numeric reference is ordinary text, not a Named lookup.
+    expect_chars("&#65amp;", &[((0, 4), "A"), ((4, 8), "amp;")]);
 }
 
 /// Falsifies: lookahead that consumes or diagnoses scalars it only peeks at.
@@ -351,33 +341,19 @@ fn ds9_data_and_rcdata_return_to_their_own_states() {
     assert_eq!(texts(&analysis), vec!["&bogus<b>".to_owned()]);
 }
 
-/// Falsifies: merging the Data and RCDATA durable Numeric capabilities.
+/// Falsifies: the retired Numeric-in-Data/RCDATA refusals returning, and a
+/// return state collapsed so Numeric output lands in the wrong context.
 #[test]
-fn ds10_numeric_capabilities_stay_distinct_by_return_state() {
+fn ds10_numeric_returns_to_its_own_state_in_both_contexts() {
     let title = analyze("<title>&#65;</title>");
-    let (capability, availability, _) =
-        unsupported(title.tokenizer_run()).expect("RCDATA Numeric stop");
-    assert_eq!(
-        capability,
-        HtmlTokenizerCapability::NumericCharacterReferenceInRcdata
-    );
-    assert_eq!(
-        availability,
-        HtmlTokenizerCapabilityAvailability::Unsupported
-    );
+    assert!(title.is_complete());
+    assert!(unsupported(title.tokenizer_run()).is_none());
+    assert_eq!(texts(&title), vec!["A".to_owned()]);
 
     let body = analyze("<body>&#65;");
-    let (capability, availability, trigger) =
-        unsupported(body.tokenizer_run()).expect("Data Numeric stop");
-    assert_eq!(
-        capability,
-        HtmlTokenizerCapability::NumericCharacterReferenceInData
-    );
-    assert_eq!(
-        availability,
-        HtmlTokenizerCapabilityAvailability::Unsupported
-    );
-    assert_eq!(trigger, Some((7, 8)));
+    assert!(body.is_complete());
+    assert!(unsupported(body.tokenizer_run()).is_none());
+    assert_eq!(texts(&body), vec!["A".to_owned()]);
 }
 
 /// Falsifies: AttributeValue support or its historical exception arriving

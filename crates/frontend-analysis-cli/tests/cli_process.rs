@@ -966,6 +966,41 @@ nodes: 5
     }
 
     #[test]
+    fn numeric_character_reference_diagnostics_use_deterministic_wording() {
+        // `<body>` 0..6, then each reference anchors at its `;`, or at the
+        // offending unit for the no-digits recovery.
+        let run = html(
+            "numeric-diagnostics",
+            b"<body>&#0;&#xD800;&#x110000;&#xFDD0;&#x80;&#;",
+        );
+
+        assert_eq!(run.status, Some(0));
+        assert_eq!(run.stderr, "");
+        assert!(
+            run.stdout.contains("\ncompletion: complete\n"),
+            "{}",
+            run.stdout
+        );
+        assert!(run.stdout.contains("\ntokenizer diagnostics: 6\n"));
+        for (index, wording, location) in [
+            (1, "null character reference", "9..10"),
+            (2, "surrogate character reference", "17..18"),
+            (3, "character reference outside Unicode range", "27..28"),
+            (4, "noncharacter character reference", "35..36"),
+            (5, "control character reference", "41..42"),
+            (
+                6,
+                "absence of digits in numeric character reference",
+                "44..45",
+            ),
+        ] {
+            let expected =
+                format!("tokenizer diagnostic {index}: {wording}\n  location: bytes {location}, ");
+            assert!(run.stdout.contains(&expected), "{expected}\n{}", run.stdout);
+        }
+    }
+
+    #[test]
     fn recovery_synthesizes_a_paragraph_without_authored_evidence() {
         // <body> 0..6, </p> 6..10.
         let run = html("recovery", b"<body></p>");
@@ -1013,14 +1048,14 @@ nodes: 4
 
     #[test]
     fn tokenizer_unsupported_is_distinct_from_tree_unsupported() {
-        // UNSUP-001 as superseded by #876: `&#65;` is the unsupported Numeric
-        // character reference in Data, triggered by the authored `#` at 1..2;
-        // here it follows the 6-byte `<body>`.
-        let run = html("tokenizer-unsupported", b"<body>&#65;");
+        // `<!xx>` is the lower-layer MarkupDeclaration boundary (#880 sentinel
+        // migration; Numeric references are now supported). It follows the
+        // 6-byte `<body>`, and coverage rolls back to the authored `<`.
+        let run = html("tokenizer-unsupported", b"<body><!xx>");
 
         let expected = head(11)
-            + "completion: incomplete; tokenizer unsupported: numeric character reference in data (unsupported)
-  trigger: bytes 7..8, line 1, byte column 8: \"#\"
+            + "completion: incomplete; tokenizer unsupported: markup declaration (deferred)
+  trigger: bytes 6..8, line 1, byte column 7: \"<!\"
 coverage: committed authored prefix bytes 0..6; processed tokens 1
 tokenizer diagnostics: 0
 tree diagnostics: 1

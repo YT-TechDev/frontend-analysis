@@ -29,7 +29,7 @@
 //! Each entry below records the committed step count. The full reviewable
 //! derivation is distributed with the fixture that owns it: every PRE, TOK,
 //! ERR, and ADV fixture has an ordered state trace next to construction;
-//! UNSUP-001..004 have explicit traces and UNSUP-005..014 share the documented
+//! UNSUP-002..004 have explicit traces (UNSUP-001 is a retired historical ID) and UNSUP-005..014 share the documented
 //! context-changing-name formula; every RES fixture records preprocessing,
 //! attempted/committed steps, refusal operation, attempted value, and boundary.
 //! This table mechanically proves complete ID coverage and count agreement.
@@ -42,13 +42,14 @@ pub(super) const TRANSITION_STEP_AUDIT: &[(&str, usize)] = &[
     ("TOK-001", 4), ("TOK-002", 4), ("TOK-003", 5), ("TOK-004", 7),
     ("TOK-005", 6), ("TOK-006", 8), ("TOK-007", 7), ("TOK-008", 9),
     ("TOK-009", 11), ("TOK-010", 18), ("TOK-011", 18), ("TOK-012", 6),
+    ("TOK-013", 8),
     ("ERR-001", 2), ("ERR-002", 2), ("ERR-003", 2),
     ("ERR-004", 2), // Data('<') + TagOpen(EOF); both tokens emit in TagOpen.
     ("ERR-005", 4), // One reconsume instruction; authored '1' is examined twice.
     ("ERR-006", 2), ("ERR-007", 4), ("ERR-008", 4), ("ERR-009", 9),
     ("ERR-010", 11), ("ERR-011", 9), ("ERR-012", 13), ("ERR-013", 16),
     ("ERR-014", 12), ("ERR-015", 13), ("ERR-016", 10), ("ERR-017", 7),
-    ("UNSUP-001", 2), ("UNSUP-002", 9), ("UNSUP-003", 2), ("UNSUP-004", 2),
+    ("UNSUP-002", 9), ("UNSUP-003", 2), ("UNSUP-004", 2),
     ("UNSUP-005", 8), ("UNSUP-006", 11), ("UNSUP-007", 8), ("UNSUP-008", 6),
     ("UNSUP-009", 9), ("UNSUP-010", 10), ("UNSUP-011", 11), ("UNSUP-012", 9),
     ("UNSUP-013", 11), ("UNSUP-014", 12),

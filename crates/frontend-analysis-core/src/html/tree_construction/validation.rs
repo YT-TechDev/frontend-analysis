@@ -1456,11 +1456,10 @@ fn whitespace_sensitive_character_runs_remain_explicit_tree_unsupported() {
 
 #[test]
 fn lower_layer_unsupported_capabilities_are_never_upgraded() {
-    // Markup declarations and the Numeric character reference in Data are the
-    // tokenizer's own explicit unsupported capabilities (Data Named references
-    // are supported, so `&#65;` is the narrow lower-layer sentinel), so the
-    // tree never sees those tokens.
-    for source in ["<!DOCTYPE html>", "<!-- c -->", "&#65;", "<body>&#65;"] {
+    // Markup declarations are the tokenizer's own explicit unsupported
+    // capability (Data Named and Numeric references are supported, so `<!xx>`
+    // is the narrow lower-layer sentinel), so the tree never sees those tokens.
+    for source in ["<!DOCTYPE html>", "<!-- c -->", "<!xx>", "<body><!xx>"] {
         let analysis = analyze(source);
         assert!(
             !analysis.is_complete(),

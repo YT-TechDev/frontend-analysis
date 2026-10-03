@@ -2308,10 +2308,10 @@ fn lower_layer_incompleteness_is_never_upgraded() {
 
     // A tokenizer-owned unsupported capability, reached after the candidate's
     // own after-body cell would otherwise have succeeded.
-    let run = tokenize_text("<body></body>x&#65;", 1, generous_limits());
+    let run = tokenize_text("<body></body>x<!xx>", 1, generous_limits());
     assert!(
         run.is_incomplete(),
-        "numeric character references in data are the tokenizer's own capability"
+        "a markup declaration is the tokenizer's own deferred capability"
     );
     assert_ne!(
         observe(&run).checkpoint.completion,

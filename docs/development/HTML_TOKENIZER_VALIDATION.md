@@ -15,20 +15,30 @@ results.
 
 ## Initial Inventory
 
-The initial corpus contains exactly 72 fixtures:
+The authority-controlled initial inventory contains exactly 72 fixtures:
 
 | Prefix | Count | Responsibility |
 | --- | ---: | --- |
 | `PRE-` | 10 | UTF-8 input and preprocessing evidence |
-| `TOK-` | 12 | Clean supported token observations |
+| `TOK-` | 13 | Clean supported token observations |
 | `ERR-` | 17 | One primary case for every approved diagnostic code |
-| `UNSUP-` | 14 | Explicit unsupported or deferred capability boundaries |
+| `UNSUP-` | 13 | Explicit unsupported or deferred capability boundaries |
 | `RES-` | 9 | Resource and invalid-configuration states |
 | `ADV-` | 10 | Adversarial and cross-cutting invariants |
 
-The IDs are stable and contiguous within each initial category. Adding or
-removing an initial fixture requires an Issue update or explicit review that
-identifies the changed capability or risk. Corrected defects add a durable
+The IDs are stable and contiguous within each initial category, except that
+`UNSUP-001` is a retired historical ID that is never reused: the active
+`UNSUP-` IDs are `UNSUP-002` through `UNSUP-014`. Its meaning was first
+`&x` (Deferred Data character reference), then `&#65;` (unsupported Numeric
+character reference in Data); Numeric references are supported by #880 and
+the `&#65;` case is now `TOK-013` (character token authored `0..5`,
+interpreted `A`, complete, 8 transition steps, where the input-free Numeric
+Character Reference End state costs one step).
+
+The inventory is authority-controlled rather than literally immutable:
+capability- or risk-driven changes to the initial inventory require a focused
+Issue or review authority that identifies the changed capability or risk (#348
+placement authority for #880). Corrected defects add a durable
 `REG-<issue>-<slug>` fixture and do not renumber the initial inventory.
 
 ## Fixture Authority
@@ -220,12 +230,12 @@ distinction is added by the supplemental regression corpus below.
 
 ## Supplemental Regression Corpus
 
-The initial corpus (72 immutable specification-derived fixtures) and the
+The initial corpus (72 authority-controlled specification-derived fixtures) and the
 supplemental regression corpus are separate inventories:
 
 | Corpus | Count | ID prefix | Mutability |
 | --- | ---: | --- | --- |
-| Initial corpus | 72 | `PRE-`, `TOK-`, `ERR-`, `UNSUP-`, `RES-`, `ADV-` | Immutable; see [Initial Inventory](#initial-inventory) |
+| Initial corpus | 72 | `PRE-`, `TOK-`, `ERR-`, `UNSUP-`, `RES-`, `ADV-` | Authority-controlled; see [Initial Inventory](#initial-inventory) |
 | Supplemental regression corpus | 4 | `REG-<issue>-<slug>` | Grows by durable addition only |
 | Current candidate-independent total | 76 | initial corpus plus supplemental regression corpus | — |
 
@@ -289,7 +299,7 @@ future candidate validation. All three entry points remain test-only.
 
 Future corrected defects extend this supplemental corpus with additional
 durable `REG-<issue>-<slug>` fixtures. They do not renumber or inflate the
-historical 72-fixture initial inventory documented in [Initial
+authority-controlled 72-fixture initial inventory documented in [Initial
 Inventory](#initial-inventory).
 
 ## Actual Observation and Comparison

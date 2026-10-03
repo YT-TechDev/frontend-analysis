@@ -84,6 +84,8 @@ mod after_body_successor_production;
 #[cfg(test)]
 mod after_body_successor_validation;
 #[cfg(test)]
+mod data_rcdata_numeric_reference_successor_production;
+#[cfg(test)]
 mod data_rcdata_numeric_reference_successor_validation;
 #[cfg(test)]
 mod data_state_named_reference_successor_production;

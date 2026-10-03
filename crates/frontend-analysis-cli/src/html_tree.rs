@@ -365,6 +365,18 @@ fn tokenizer_diagnostic_code(code: HtmlTokenizerDiagnosticCode) -> &'static str 
         HtmlTokenizerDiagnosticCode::UnknownNamedCharacterReference => {
             "unknown named character reference"
         }
+        HtmlTokenizerDiagnosticCode::AbsenceOfDigitsInNumericCharacterReference => {
+            "absence of digits in numeric character reference"
+        }
+        HtmlTokenizerDiagnosticCode::NullCharacterReference => "null character reference",
+        HtmlTokenizerDiagnosticCode::CharacterReferenceOutsideUnicodeRange => {
+            "character reference outside Unicode range"
+        }
+        HtmlTokenizerDiagnosticCode::SurrogateCharacterReference => "surrogate character reference",
+        HtmlTokenizerDiagnosticCode::NoncharacterCharacterReference => {
+            "noncharacter character reference"
+        }
+        HtmlTokenizerDiagnosticCode::ControlCharacterReference => "control character reference",
     }
 }
 

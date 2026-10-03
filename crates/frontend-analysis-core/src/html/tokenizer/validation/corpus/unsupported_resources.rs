@@ -4,24 +4,10 @@ use super::helpers::*;
 
 #[rustfmt::skip]
 pub(super) fn add_unsupported(fixtures: &mut Vec<HtmlTokenizerFixture>) {
-    fixtures.push(unsupported_input(
-        "UNSUP-001",
-        "numeric character reference in Data",
-        "&#65;",
-        1,
-        Capability::NumericCharacterReferenceInData,
-        Availability::Unsupported,
-        ByteSpan::new(1, 2),
-        // Explicit supersession (#876): this fixture's predecessor meaning was
-        // `&x` -> CharacterReference(Data), Deferred, coverage 0..0, trigger
-        // 0..1, 1 step. Data Named references are now supported, so the
-        // honest Data refusal is the unselected Numeric branch at the authored
-        // `#`; the fixture ID is kept deliberately.
-        // Data('&', consumed, enters CharacterReference) = 1
-        // + CharacterReference('#', discovers Numeric-in-Data) = 2.
-        // The authored `&` is committed coverage; `#` is only the trigger.
-        2,
-    ));
+    // `UNSUP-001` is a retired historical ID: it first meant `&x` ->
+    // CharacterReference(Data) Deferred and then (#876) `&#65;` ->
+    // NumericCharacterReferenceInData Unsupported. Numeric references are now
+    // supported (TOK-013), and the ID is never reused. Active IDs are 002..014.
     fixtures.push(unsupported_input(
         "UNSUP-002",
         "character reference in an attribute value",

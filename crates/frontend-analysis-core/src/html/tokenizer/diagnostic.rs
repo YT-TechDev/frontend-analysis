@@ -49,6 +49,20 @@ pub(crate) enum HtmlTokenizerDiagnosticCode {
     /// `;` that ended a run completing no generated identifier. The same `;`
     /// is then processed normally, so this code claims no consumption of it.
     UnknownNamedCharacterReference,
+    /// A Numeric Character Reference prefix (`&#` or `&#x`/`&#X`) was followed
+    /// by no digit of its radix. Observation-conditioned: it is recorded
+    /// together with the literal-prefix recovery at the offending unit.
+    AbsenceOfDigitsInNumericCharacterReference,
+    /// Numeric Character Reference End observed code point zero.
+    NullCharacterReference,
+    /// Numeric Character Reference End observed a code point above U+10FFFF.
+    CharacterReferenceOutsideUnicodeRange,
+    /// Numeric Character Reference End observed a surrogate code point.
+    SurrogateCharacterReference,
+    /// Numeric Character Reference End observed a noncharacter code point.
+    NoncharacterCharacterReference,
+    /// Numeric Character Reference End observed CR or a control code point.
+    ControlCharacterReference,
 }
 
 impl HtmlTokenizerDiagnosticCode {
@@ -84,6 +98,16 @@ pub(crate) enum HtmlTokenizerDiagnosticContext {
     NamedCharacterReference,
     /// The TC-S10 selected Ambiguous Ampersand state.
     AmbiguousAmpersand,
+    /// The selected Numeric Character Reference state.
+    NumericCharacterReference,
+    /// The selected Hexadecimal Character Reference Start state.
+    HexadecimalCharacterReferenceStart,
+    /// The selected Decimal Character Reference state.
+    DecimalCharacterReference,
+    /// The selected Hexadecimal Character Reference state.
+    HexadecimalCharacterReference,
+    /// The input-free Numeric Character Reference End state.
+    NumericCharacterReferenceEnd,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,6 +140,15 @@ pub(crate) enum HtmlTokenizerRecoveryKind {
     /// evidence alone is not sufficient for those two codes.
     PreservedEndTagLexicalEvidence,
     AbandonedIncompleteTagAtEof,
+    /// The consumed Numeric Character Reference prefix was emitted literally
+    /// because no digit followed it; no numeric value was fabricated.
+    FlushedLiteralCharacterReferencePrefix,
+    /// A null, out-of-range, or surrogate Numeric Character Reference was
+    /// replaced by U+FFFD.
+    ReplacedNumericCharacterReferenceWithReplacementCharacter,
+    /// A C1 control Numeric Character Reference was remapped through the
+    /// pinned fixed override table.
+    RemappedNumericCharacterReferenceControl,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
