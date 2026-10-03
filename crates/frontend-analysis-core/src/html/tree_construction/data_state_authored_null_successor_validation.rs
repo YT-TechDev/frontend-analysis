@@ -100,27 +100,32 @@
 //!   model uses one token per NUL; tree-level assertions are written over
 //!   scalars and contributions so they do not depend on it. Absolute
 //!   emitted-token counts for dense NUL are model-specific.
-//! - **Diagnostic / emission grouping.** `UnexpectedNullCharacter` is
-//!   observation-conditioned in #111, so it does not become false when a later
-//!   token emission is refused. Three orderings of the NUL effect satisfy every
-//!   invariant here ([`Order`]); they differ **only** in whether a committed
-//!   diagnostic survives a refused U+0000 token or retained-byte reservation
-//!   ([`p1_the_orderings_differ_only_in_nonatomic_cells`]). The validator
-//!   selects none of them.
-//! - **Prior-run ordering.** A pending ordinary run is emitted before the NUL
-//!   observation can commit, as required by Issue #882; a refused prior-run
-//!   emission leaves no `UnexpectedNullCharacter`.
+//! - **Diagnostic survival is resolved by #111, not a placement choice.**
+//!   `UnexpectedNullCharacter` is observation-conditioned: only
+//!   `EndTagWithAttributes` and `EndTagWithTrailingSolidus` are
+//!   emission-conditioned. For corrected Data-state U+0000 the handling is
+//!   `Continued`; there is no replacement recovery sub-effect whose completion
+//!   must precede the truth of the parse-error fact (the old replacement path
+//!   reserved U+FFFD bytes first only so that `Recovered(Replaced…)` never
+//!   claimed a replacement that could not happen, a rationale that does not
+//!   transfer). The model lifecycle is therefore single:
+//!   observation (transition commits) -> `UnexpectedNullCharacter` /
+//!   `Continued` commits and its site becomes processed coverage -> the
+//!   independent source-backed U+0000 retained/token effect is attempted. A
+//!   later refusal leaves the diagnostic committed, commits no token and no
+//!   U+FFFD, reports the unemitted NUL as an explicit abandoned region, and
+//!   keeps the run incomplete. Accepted precedent: the
+//!   `MissingAttributeValue` survival-with-`AbandonedInput` regression in
+//!   `tokenizer/review_regression_tests.rs`.
+//! - **Prior run versus NUL effect.** These are different boundaries. A
+//!   pending ordinary run is emitted before the NUL semantic step begins, as
+//!   required by Issue #882; if that emission is refused the NUL was never
+//!   observed and no `UnexpectedNullCharacter` exists. Once the NUL has been
+//!   observed and its diagnostic committed, nothing later deletes it.
 //! - **Reference and tag step counts** are a model approximation (one
 //!   examined unit, one transition) and are never asserted in absolute terms;
 //!   absolute counts are asserted only for inputs without references or tags.
 //!
-//! - **Why all three orderings are admissible.** The accepted tokenizer
-//!   diagnostic contract treats every code except `EndTagWithAttributes` and
-//!   `EndTagWithTrailingSolidus` as observation-conditioned and offers an
-//!   `AbandonedInput` subject for an observation-conditioned diagnostic whose
-//!   token never emitted. No result-contract rule observed ties
-//!   `UnexpectedNullCharacter` to `Recovered`, to a replaced scalar, or to a
-//!   particular subject.
 //! - **Tree-side diagnostic capacity.** Each ignored NUL is a tree parse
 //!   error. The live tree session has no U+0000 rule at all today, so it
 //!   would insert whatever character token it receives. How tree-side
@@ -185,7 +190,10 @@
 //! [`Mutation`] lets the model be broken in each way the theorem claims to
 //! detect. [`s01_every_mutation_is_detected_by_its_declared_detector`] proves
 //! each mutation is caught by the named theorem group, while the sound model
-//! passes every group under every [`Order`].
+//! passes every group. The resource-lifecycle mutations (diagnostic suppressed on
+//! token or retained refusal, NUL effect prepared atomically before the
+//! diagnostic, diagnostic site left outside coverage) are killed by the hand
+//! authored resource cells.
 
 use crate::{SourceId, SourceText};
 use std::panic::{self, AssertUnwindSafe};
@@ -198,24 +206,6 @@ const HTML5LIB_CHALLENGE_HEAD: &str = "c777c408b61078ea2eb4acefc2535f54dbc8b28a"
 // ---------------------------------------------------------------------------
 // Model configuration and test-local mutations
 // ---------------------------------------------------------------------------
-
-/// The ways the U+0000 effect can be grouped. All three satisfy every
-/// invariant; they differ only in whether a committed diagnostic survives a
-/// refused token or retained-byte reservation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Order {
-    /// Diagnostic, token, and retained bytes are prepared together; refusal of
-    /// any leaves no diagnostic.
-    Atomic,
-    /// The diagnostic commits at the observation; token and retained bytes are
-    /// prepared afterwards.
-    DiagnosticFirst,
-    /// Retained bytes are reserved, then the diagnostic commits, then the
-    /// token is prepared (the old replacement path's ordering).
-    ReserveFirst,
-}
-
-const ORDERS: [Order; 3] = [Order::Atomic, Order::DiagnosticFirst, Order::ReserveFirst];
 
 /// Deliberate faults, used only to prove the validator detects them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -256,25 +246,27 @@ enum Mutation {
     AfterAfterBodyWidened,
     /// A resource-limited run is reported Complete.
     UpgradeIncompleteToComplete,
+    /// The diagnostic is erased when the U+0000 token emission is refused.
+    SuppressDiagnosticOnTokenRefusal,
+    /// The diagnostic is erased when U+0000 retention is refused.
+    SuppressDiagnosticOnRetainedRefusal,
+    /// Token and retained effects are prepared before the diagnostic commits,
+    /// so an observed NUL leaves no diagnostic when they refuse.
+    NulEffectPreparedBeforeDiagnostic,
+    /// The diagnostic commits but its site is not added to processed coverage.
+    DiagnosticSiteNotCovered,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Model {
-    order: Order,
     mutation: Option<Mutation>,
 }
 
 impl Model {
-    const fn sound(order: Order) -> Self {
-        Self {
-            order,
-            mutation: None,
-        }
-    }
+    const SOUND: Self = Self { mutation: None };
 
     const fn mutated(mutation: Mutation) -> Self {
         Self {
-            order: Order::Atomic,
             mutation: Some(mutation),
         }
     }
@@ -631,7 +623,7 @@ struct Machine {
 }
 
 fn lex(text: &str) -> Lexed {
-    lex_with(Model::sound(Order::Atomic), text, Limits::default())
+    lex_with(Model::SOUND, text, Limits::default())
 }
 
 fn lex_with(model: Model, text: &str, limits: Limits) -> Lexed {
@@ -719,7 +711,11 @@ impl Machine {
     /// A committed diagnostic is evidence that its authored site was observed
     /// and explained, so processed coverage reaches the end of that site.
     fn commit_diagnostic(&mut self, diagnostic: Diagnostic) {
-        self.coverage_end = self.coverage_end.max(diagnostic.at.end);
+        if !(self.model.is(Mutation::DiagnosticSiteNotCovered)
+            && diagnostic.context == Context::Data)
+        {
+            self.coverage_end = self.coverage_end.max(diagnostic.at.end);
+        }
         self.diagnostics.push(diagnostic);
         self.usage.diagnostics += 1;
     }
@@ -899,27 +895,35 @@ impl Machine {
         });
         let token_count = usize::from(token.is_some());
         let token_bytes = if token.is_some() { bytes } else { 0 };
-        match model.order {
-            Order::Atomic => {
-                self.preflight(1, token_count, token_bytes)?;
-                self.commit_diagnostic(diagnostic);
-            }
-            Order::DiagnosticFirst => {
-                self.preflight(1, 0, 0)?;
-                self.commit_diagnostic(diagnostic);
-                if let Err(stop) = self.preflight(0, token_count, token_bytes) {
+        if model.is(Mutation::NulEffectPreparedBeforeDiagnostic) {
+            // Fault: the independent effect is prepared first.
+            self.preflight(1, token_count, token_bytes)?;
+            self.commit_diagnostic(diagnostic);
+        } else {
+            // Observation -> diagnostic commit -> independent token effect.
+            self.preflight(1, 0, 0)?;
+            self.commit_diagnostic(diagnostic);
+            if let Err(stop) = self.preflight(0, token_count, token_bytes) {
+                let suppress = match stop {
+                    Stop::Resource(Refusal {
+                        resource: Resource::EmittedTokens,
+                        ..
+                    }) => model.is(Mutation::SuppressDiagnosticOnTokenRefusal),
+                    Stop::Resource(Refusal {
+                        resource: Resource::RetainedInterpretedBytes,
+                        ..
+                    }) => model.is(Mutation::SuppressDiagnosticOnRetainedRefusal),
+                    _ => false,
+                };
+                if suppress {
+                    self.diagnostics.pop();
+                    self.usage.diagnostics -= 1;
+                    self.coverage_end = self.consumed_end;
+                } else {
+                    // The observed NUL is explained but never emitted.
                     self.abandoned.push((unit.start, unit.end));
-                    return Err(stop);
                 }
-            }
-            Order::ReserveFirst => {
-                self.preflight(0, 0, token_bytes)?;
-                self.preflight(1, 0, 0)?;
-                self.commit_diagnostic(diagnostic);
-                if let Err(stop) = self.preflight(0, token_count, 0) {
-                    self.abandoned.push((unit.start, unit.end));
-                    return Err(stop);
-                }
+                return Err(stop);
             }
         }
         self.usage.retained += token_bytes;
@@ -1619,7 +1623,7 @@ impl Observation {
 // ---------------------------------------------------------------------------
 
 /// Properties every lexer observation must satisfy, whatever the limits.
-fn check_lexed(model: Model, text: &str, lexed: &Lexed) {
+fn check_lexed(text: &str, lexed: &Lexed) {
     let len = text.len();
     assert_eq!(lexed.source_len, len);
     assert!(lexed.coverage_end <= len, "coverage past source: {text:?}");
@@ -1658,7 +1662,6 @@ fn check_lexed(model: Model, text: &str, lexed: &Lexed) {
 
     // A Data-context diagnostic never claims replacement; it points at one
     // authored NUL byte; and each NUL token has its diagnostic.
-    let nul_tokens = lexed.count_origin(Origin::AuthoredDataNull);
     let data_nul_diagnostics: Vec<&Diagnostic> = lexed
         .diagnostics
         .iter()
@@ -1673,13 +1676,68 @@ fn check_lexed(model: Model, text: &str, lexed: &Lexed) {
         );
         assert_eq!(d.at.raw, "\0");
     }
-    assert!(
-        data_nul_diagnostics.len() >= nul_tokens && data_nul_diagnostics.len() <= nul_tokens + 1,
-        "diagnostic/token mismatch: {text:?}"
-    );
-    if model.order == Order::Atomic {
-        assert_eq!(data_nul_diagnostics.len(), nul_tokens);
+    // Single lifecycle: every NUL token has its diagnostic at the same site;
+    // at most one observed NUL lacks a token, and then the run was stopped by
+    // a token/retained refusal and the NUL is an explicit abandoned region.
+    for token in lexed.contributions() {
+        if token.origin == Origin::AuthoredDataNull {
+            assert!(
+                data_nul_diagnostics
+                    .iter()
+                    .any(|d| (d.at.start, d.at.end) == (token.authored.start, token.authored.end)),
+                "NUL token without its diagnostic: {text:?}"
+            );
+        }
     }
+    let unemitted: Vec<&&Diagnostic> = data_nul_diagnostics
+        .iter()
+        .filter(|d| {
+            !lexed
+                .contributions()
+                .iter()
+                .any(|t| t.origin == Origin::AuthoredDataNull && t.authored.start == d.at.start)
+        })
+        .collect();
+    assert!(unemitted.len() <= 1, "diagnostic/token mismatch: {text:?}");
+    for d in unemitted {
+        assert!(
+            lexed.abandoned.contains(&(d.at.start, d.at.end)),
+            "observed NUL not explained: {text:?}"
+        );
+        assert!(matches!(
+            lexed.stop,
+            Some(Stop::Resource(Refusal {
+                resource: Resource::EmittedTokens | Resource::RetainedInterpretedBytes,
+                ..
+            }))
+        ));
+    }
+    // An unemitted authored NUL is never silent: it carries its diagnostic.
+    for &(start, end) in &lexed.abandoned {
+        if end - start == 1 && text.as_bytes()[start] == 0 {
+            assert!(
+                data_nul_diagnostics.iter().any(|d| d.at.start == start),
+                "abandoned NUL lost its diagnostic: {text:?}"
+            );
+        }
+    }
+    // Every committed diagnostic is inside processed coverage.
+    for d in &lexed.diagnostics {
+        assert!(
+            d.at.end <= lexed.coverage_end,
+            "diagnostic outside coverage: {text:?}"
+        );
+    }
+    // No character token without retained evidence for its interpreted bytes.
+    let token_bytes: usize = lexed
+        .contributions()
+        .iter()
+        .map(|c| c.interpreted.len())
+        .sum();
+    assert!(
+        lexed.usage.retained >= token_bytes,
+        "token without retention: {text:?}"
+    );
 
     // Coverage never outruns evidence: every processed byte is inside an
     // emitted token, a committed diagnostic site, or an explicit abandoned
@@ -1718,8 +1776,8 @@ fn check_lexed(model: Model, text: &str, lexed: &Lexed) {
 }
 
 /// Properties every tree observation must satisfy.
-fn check_tree(model: Model, text: &str, obs: &Observation) {
-    check_lexed(model, text, &obs.lexed);
+fn check_tree(text: &str, obs: &Observation) {
+    check_lexed(text, &obs.lexed);
     let tokens = &obs.lexed.tokens;
 
     // The final tree has no U+0000 text and no NUL contribution.
@@ -1822,14 +1880,14 @@ fn g_tokenizer_nul(m: Model) {
     assert_eq!(l.count_origin(Origin::AuthoredDataNull), 1);
     assert!(l.reached_eof() && l.stop.is_none());
     assert_eq!(l.coverage_end, 1);
-    check_lexed(m, "\0", &l);
+    check_lexed("\0", &l);
 
     // `a\0b`: surviving ordinary data around exact U+0000 evidence.
     let l = lex_with(m, "a\0b", Limits::default());
     assert_eq!(l.projection(), vec![lit(0, 1, "a"), nul(1), lit(2, 3, "b")]);
     assert_eq!(l.diagnostic_view(), vec![unexpected(1)]);
     assert!(!l.interpreted().contains('\u{fffd}'));
-    check_lexed(m, "a\0b", &l);
+    check_lexed("a\0b", &l);
 
     // Dense NUL: one diagnostic and one separate token per authored scalar.
     let l = lex_with(m, "\0\0\0", Limits::default());
@@ -1838,7 +1896,7 @@ fn g_tokenizer_nul(m: Model) {
         l.diagnostic_view(),
         vec![unexpected(0), unexpected(1), unexpected(2)]
     );
-    check_lexed(m, "\0\0\0", &l);
+    check_lexed("\0\0\0", &l);
 
     // Leading and trailing ordinary data.
     let l = lex_with(m, "\0a", Limits::default());
@@ -1870,7 +1928,7 @@ fn g_references(m: Model) {
         ]
     );
     assert_eq!(l.diagnostic_view(), vec![unexpected(5)]);
-    check_lexed(m, "&amp;\0b", &l);
+    check_lexed("&amp;\0b", &l);
 
     // Numeric resolution likewise.
     let l = lex_with(m, "&#65;\0b", Limits::default());
@@ -1905,7 +1963,7 @@ fn g_references(m: Model) {
         );
         assert_eq!(l.count_origin(Origin::AuthoredDataNull), 0);
         assert!(!l.interpreted().contains('\0'));
-        check_lexed(m, text, &l);
+        check_lexed(text, &l);
     }
 
     // Numeric zero immediately followed by an authored NUL: two distinct
@@ -1928,7 +1986,7 @@ fn g_references(m: Model) {
             unexpected(4)
         ]
     );
-    check_lexed(m, "&#0;\0", &l);
+    check_lexed("&#0;\0", &l);
 }
 
 /// N-group: non-Data NUL contexts keep U+FFFD replacement.
@@ -1953,7 +2011,7 @@ fn g_non_data(m: Model) {
         other => panic!("expected a start tag, got {other:?}"),
     }
     assert_eq!(l.count_origin(Origin::AuthoredDataNull), 0);
-    check_lexed(m, "<a\0>", &l);
+    check_lexed("<a\0>", &l);
 
     let l = lex_with(m, "<a x=\"\0\">", Limits::default());
     assert_eq!(
@@ -1969,7 +2027,7 @@ fn g_non_data(m: Model) {
         }
         other => panic!("expected a start tag, got {other:?}"),
     }
-    check_lexed(m, "<a x=\"\0\">", &l);
+    check_lexed("<a x=\"\0\">", &l);
 
     let l = lex_with(m, "<a x=\0>", Limits::default());
     assert_eq!(
@@ -1985,7 +2043,7 @@ fn g_non_data(m: Model) {
         }
         other => panic!("expected a start tag, got {other:?}"),
     }
-    check_lexed(m, "<a x=\0>", &l);
+    check_lexed("<a x=\0>", &l);
 
     // Selected Title/RCDATA authored NUL stays at the existing boundary: the
     // title start tag is emitted, no NUL evidence, no replacement claim, and
@@ -1996,7 +2054,7 @@ fn g_non_data(m: Model) {
     assert!(matches!(&l.tokens[0], Token::Tag(t) if t.name == "title"));
     assert!(l.diagnostics.is_empty());
     assert_eq!(l.count_origin(Origin::AuthoredDataNull), 0);
-    check_lexed(m, "<title>\0</title>", &l);
+    check_lexed("<title>\0</title>", &l);
 
     // The Data rule applies again after the title closes.
     let l = lex_with(m, "<title>a</title>\0", Limits::default());
@@ -2027,7 +2085,7 @@ fn g_tree(m: Model) {
     assert_eq!(o.body_text_node_count(), 0);
     assert_eq!(o.ignored(), vec![ignored(0, 0)]);
     assert_eq!(o.mode, Mode::InBody);
-    check_tree(m, "\0", &o);
+    check_tree("\0", &o);
 
     // `<body>\0</body>`: no text node authored by the NUL.
     let text = "<body>\0</body>";
@@ -2046,7 +2104,7 @@ fn g_tree(m: Model) {
             .map(|e| (e.start, e.end)),
         Some((7, 14))
     );
-    check_tree(m, text, &o);
+    check_tree(text, &o);
 
     // `<body>a\0b</body>`: final text `ab`, honest ordered contributions.
     let text = "<body>a\0b</body>";
@@ -2056,7 +2114,7 @@ fn g_tree(m: Model) {
     assert_eq!(o.body_text_node_count(), 1);
     assert_eq!(o.body_contributions(), vec![lit(6, 7, "a"), lit(8, 9, "b")]);
     assert_eq!(o.ignored(), vec![ignored(2, 7)]);
-    check_tree(m, text, &o);
+    check_tree(text, &o);
 
     // `<body></body>\0`: AfterBody recovery, then In body ignores.
     let text = "<body></body>\0";
@@ -2076,7 +2134,7 @@ fn g_tree(m: Model) {
         ]
     );
     assert_eq!(o.mode, Mode::InBody);
-    check_tree(m, text, &o);
+    check_tree(text, &o);
 
     // After body: surrounding data recovers once; the NUL never re-triggers it.
     let text = "<body></body>a\0b";
@@ -2089,7 +2147,7 @@ fn g_tree(m: Model) {
     );
     assert_eq!(o.after_body_recoveries(), vec![2]);
     assert_eq!(o.ignored(), vec![ignored(3, 14)]);
-    check_tree(m, text, &o);
+    check_tree(text, &o);
 
     // CRLF before the NUL: authored and interpreted lengths differ.
     let text = "<body>a\r\n\0b</body>";
@@ -2100,7 +2158,7 @@ fn g_tree(m: Model) {
         vec![lit(6, 9, "a\n"), lit(10, 11, "b")]
     );
     assert_eq!(o.ignored(), vec![ignored(2, 9)]);
-    check_tree(m, text, &o);
+    check_tree(text, &o);
 
     // A resolved Named reference beside the NUL.
     let text = "<body>&amp;\0b</body>";
@@ -2111,14 +2169,14 @@ fn g_tree(m: Model) {
         vec![proj(Origin::ResolvedNamed, 6, 11, "&"), lit(12, 13, "b")]
     );
     assert_eq!(o.ignored(), vec![ignored(2, 11)]);
-    check_tree(m, text, &o);
+    check_tree(text, &o);
 
     // Dense NUL.
     let text = "<body>\0\0</body>";
     let o = observe(m, text);
     assert_eq!(o.body_text_node_count(), 0);
     assert_eq!(o.ignored(), vec![ignored(1, 6), ignored(2, 7)]);
-    check_tree(m, text, &o);
+    check_tree(text, &o);
 
     // Numeric zero is U+FFFD text: the tree ignores only an exact NUL token.
     let text = "<body>&#0;</body>";
@@ -2129,7 +2187,7 @@ fn g_tree(m: Model) {
         vec![proj(Origin::ResolvedNumeric, 6, 10, "\u{fffd}")]
     );
     assert!(o.ignored().is_empty());
-    check_tree(m, text, &o);
+    check_tree(text, &o);
 }
 
 impl Observation {
@@ -2158,7 +2216,7 @@ fn g_boundaries(m: Model) {
     assert_eq!(o.mode, Mode::AfterAfterBody);
     // The tokenizer still produced exact NUL evidence; only the tree refuses.
     assert_eq!(o.lexed.count_origin(Origin::AuthoredDataNull), 1);
-    check_lexed(m, text, &o.lexed);
+    check_lexed(text, &o.lexed);
 
     // Title RCDATA NUL stays Unsupported at the tokenizer boundary.
     let o = observe(m, "<title>\0</title>");
@@ -2239,7 +2297,7 @@ struct Cell {
 
 fn cell(m: Model, text: &str, limits: Limits) -> Cell {
     let l = lex_with(m, text, limits);
-    check_lexed(m, text, &l);
+    check_lexed(text, &l);
     Cell {
         stop: l.stop,
         tokens: l.tokens.len(),
@@ -2271,182 +2329,234 @@ fn expect_cell(
     );
 }
 
-/// Resource cells whose outcome is the same under every ordering.
-fn g_resources_common(m: Model) {
+type Row = (
+    &'static str,
+    Limits,
+    Option<Stop>,
+    usize,
+    usize,
+    usize,
+    &'static [(usize, usize)],
+);
+
+/// Hand-derived resource cells for the single lifecycle: the transition
+/// commits, `UnexpectedNullCharacter` / `Continued` commits and its site is
+/// processed coverage, and only then is the independent retained/token effect
+/// attempted. Columns: text, limits, stop, committed tokens, committed
+/// diagnostics, processed coverage, abandoned (observed or pending but
+/// unemitted) regions.
+fn g_resources(m: Model) {
     use Resource::{Diagnostics, EmittedTokens, RetainedInterpretedBytes, TransitionSteps};
-    // Transition refusal immediately before the NUL dispatch.
-    expect_cell(
-        m,
-        ("\0", steps(0)),
-        refusal(TransitionSteps, 0, 1),
-        0,
-        0,
-        0,
-        &[],
-    );
-    // The NUL is processed completely before the EOF dispatch is refused.
-    expect_cell(
-        m,
-        ("\0", steps(1)),
-        refusal(TransitionSteps, 1, 2),
-        1,
-        1,
-        1,
-        &[],
-    );
-    // Diagnostic refusal: the transition committed, nothing else did.
-    expect_cell(
-        m,
-        ("\0", diagnostics(0)),
-        refusal(Diagnostics, 0, 1),
-        0,
-        0,
-        0,
-        &[],
-    );
-    let l = lex_with(m, "\0", diagnostics(0));
-    assert_eq!(l.usage.steps, 1);
-    assert!(l.diagnostics.is_empty() && l.tokens.is_empty());
-    // The NUL token commits; EOF is the refused emission.
-    expect_cell(
-        m,
-        ("\0", tokens(1)),
-        refusal(EmittedTokens, 1, 2),
-        1,
-        1,
-        1,
-        &[],
-    );
-    // Prior ordinary run: its emission is refused before the NUL observation
-    // can commit, in every ordering.
-    expect_cell(
-        m,
-        ("a\0", tokens(0)),
-        refusal(EmittedTokens, 0, 1),
-        0,
-        0,
-        1,
-        &[(0, 1)],
-    );
-    // A transition refusal at the NUL dispatch leaves the pending run unemitted.
-    expect_cell(
-        m,
-        ("a\0", steps(1)),
-        refusal(TransitionSteps, 1, 2),
-        0,
-        0,
-        1,
-        &[(0, 1)],
-    );
-    // A refused diagnostic still lets the prior run stand.
-    expect_cell(
-        m,
-        ("a\0", diagnostics(0)),
-        refusal(Diagnostics, 0, 1),
-        1,
-        0,
-        1,
-        &[],
-    );
-    // Retained bytes count the NUL as one byte, cumulatively with the run.
-    expect_cell(
-        m,
-        ("a\0b", retained(2)),
-        refusal(RetainedInterpretedBytes, 2, 3),
-        2,
-        1,
-        2,
-        &[],
-    );
-    // Dense NUL under small limits.
-    expect_cell(
-        m,
-        ("\0\0\0", steps(3)),
-        refusal(TransitionSteps, 3, 4),
-        3,
-        3,
-        3,
-        &[],
-    );
-    expect_cell(
-        m,
-        ("\0\0\0", diagnostics(2)),
-        refusal(Diagnostics, 2, 3),
-        2,
-        2,
-        2,
-        &[],
-    );
+    let rows: [Row; 23] = [
+        // A transition refused before the NUL is observed: nothing exists.
+        ("\0", steps(0), refusal(TransitionSteps, 0, 1), 0, 0, 0, &[]),
+        // The NUL is fully processed before the EOF dispatch is refused.
+        ("\0", steps(1), refusal(TransitionSteps, 1, 2), 1, 1, 1, &[]),
+        // A refused required diagnostic: no U+0000 token is fabricated.
+        (
+            "\0",
+            diagnostics(0),
+            refusal(Diagnostics, 0, 1),
+            0,
+            0,
+            0,
+            &[],
+        ),
+        // After the observation: the diagnostic survives, the token does not.
+        (
+            "\0",
+            tokens(0),
+            refusal(EmittedTokens, 0, 1),
+            0,
+            1,
+            1,
+            &[(0, 1)],
+        ),
+        ("\0", tokens(1), refusal(EmittedTokens, 1, 2), 1, 1, 1, &[]),
+        // Attempted retained cost is one byte, never the three of U+FFFD.
+        (
+            "\0",
+            retained(0),
+            refusal(RetainedInterpretedBytes, 0, 1),
+            0,
+            1,
+            1,
+            &[(0, 1)],
+        ),
+        // Prior pending run versus the NUL effect: the run closes first.
+        (
+            "a\0",
+            steps(1),
+            refusal(TransitionSteps, 1, 2),
+            0,
+            0,
+            1,
+            &[(0, 1)],
+        ),
+        (
+            "a\0",
+            tokens(0),
+            refusal(EmittedTokens, 0, 1),
+            0,
+            0,
+            1,
+            &[(0, 1)],
+        ),
+        (
+            "a\0",
+            diagnostics(0),
+            refusal(Diagnostics, 0, 1),
+            1,
+            0,
+            1,
+            &[],
+        ),
+        // `a` committed, NUL observed, NUL output refused.
+        (
+            "a\0",
+            tokens(1),
+            refusal(EmittedTokens, 1, 2),
+            1,
+            1,
+            2,
+            &[(1, 2)],
+        ),
+        (
+            "a\0",
+            retained(1),
+            refusal(RetainedInterpretedBytes, 1, 2),
+            1,
+            1,
+            2,
+            &[(1, 2)],
+        ),
+        (
+            "a\0b",
+            tokens(1),
+            refusal(EmittedTokens, 1, 2),
+            1,
+            1,
+            2,
+            &[(1, 2)],
+        ),
+        (
+            "a\0b",
+            tokens(2),
+            refusal(EmittedTokens, 2, 3),
+            2,
+            1,
+            3,
+            &[(2, 3)],
+        ),
+        (
+            "a\0b",
+            retained(2),
+            refusal(RetainedInterpretedBytes, 2, 3),
+            2,
+            1,
+            2,
+            &[],
+        ),
+        // Dense NUL.
+        (
+            "\0\0\0",
+            steps(3),
+            refusal(TransitionSteps, 3, 4),
+            3,
+            3,
+            3,
+            &[],
+        ),
+        (
+            "\0\0\0",
+            diagnostics(2),
+            refusal(Diagnostics, 2, 3),
+            2,
+            2,
+            2,
+            &[],
+        ),
+        (
+            "\0\0\0",
+            tokens(2),
+            refusal(EmittedTokens, 2, 3),
+            2,
+            3,
+            3,
+            &[(2, 3)],
+        ),
+        (
+            "\0\0\0",
+            retained(2),
+            refusal(RetainedInterpretedBytes, 2, 3),
+            2,
+            3,
+            3,
+            &[(2, 3)],
+        ),
+        // A resolved reference beside the NUL.
+        (
+            "&amp;\0b",
+            diagnostics(0),
+            refusal(Diagnostics, 0, 1),
+            1,
+            0,
+            5,
+            &[],
+        ),
+        (
+            "&amp;\0b",
+            tokens(1),
+            refusal(EmittedTokens, 1, 2),
+            1,
+            1,
+            6,
+            &[(5, 6)],
+        ),
+        (
+            "&amp;\0b",
+            retained(1),
+            refusal(RetainedInterpretedBytes, 1, 2),
+            1,
+            1,
+            6,
+            &[(5, 6)],
+        ),
+        (
+            "&#65;\0b",
+            tokens(1),
+            refusal(EmittedTokens, 1, 2),
+            1,
+            1,
+            6,
+            &[(5, 6)],
+        ),
+        (
+            "&#65;\0b",
+            retained(1),
+            refusal(RetainedInterpretedBytes, 1, 2),
+            1,
+            1,
+            6,
+            &[(5, 6)],
+        ),
+    ];
+    for (text, limits, stop, committed_tokens, committed_diagnostics, coverage, abandoned) in rows {
+        expect_cell(
+            m,
+            (text, limits),
+            stop,
+            committed_tokens,
+            committed_diagnostics,
+            coverage,
+            abandoned,
+        );
+    }
+    // The transition of a diagnostic-refused NUL is committed.
+    assert_eq!(lex_with(m, "\0", diagnostics(0)).usage.steps, 1);
 }
 
-/// Resource cells whose outcome is the documented placement question.
-fn g_resources_ordering(m: Model) {
-    use Resource::{EmittedTokens, RetainedInterpretedBytes};
-    let kept = m.order != Order::Atomic;
-    let kept_after_retained = m.order == Order::DiagnosticFirst;
-    let n = |flag: bool| usize::from(flag);
-
-    // Retained refusal: attempted is one byte, never the three of U+FFFD.
-    expect_cell(
-        m,
-        ("\0", retained(0)),
-        refusal(RetainedInterpretedBytes, 0, 1),
-        0,
-        n(kept_after_retained),
-        n(kept_after_retained),
-        if kept_after_retained { &[(0, 1)] } else { &[] },
-    );
-    // Token refusal at the source-backed U+0000 emission boundary.
-    expect_cell(
-        m,
-        ("\0", tokens(0)),
-        refusal(EmittedTokens, 0, 1),
-        0,
-        n(kept),
-        n(kept),
-        if kept { &[(0, 1)] } else { &[] },
-    );
-    // After a committed prior run.
-    expect_cell(
-        m,
-        ("a\0", tokens(1)),
-        refusal(EmittedTokens, 1, 2),
-        1,
-        n(kept),
-        1 + n(kept),
-        if kept { &[(1, 2)] } else { &[] },
-    );
-    expect_cell(
-        m,
-        ("a\0", retained(1)),
-        refusal(RetainedInterpretedBytes, 1, 2),
-        1,
-        n(kept_after_retained),
-        1 + n(kept_after_retained),
-        if kept_after_retained { &[(1, 2)] } else { &[] },
-    );
-    // Dense NUL: the third NUL's token or retained byte is refused.
-    expect_cell(
-        m,
-        ("\0\0\0", tokens(2)),
-        refusal(EmittedTokens, 2, 3),
-        2,
-        2 + n(kept),
-        2 + n(kept),
-        if kept { &[(2, 3)] } else { &[] },
-    );
-    expect_cell(
-        m,
-        ("\0\0\0", retained(2)),
-        refusal(RetainedInterpretedBytes, 2, 3),
-        2,
-        2 + n(kept_after_retained),
-        2 + n(kept_after_retained),
-        if kept_after_retained { &[(2, 3)] } else { &[] },
-    );
-}
-
-/// Sweep: for every input and ordering, every limit of every resource keeps
+/// Sweep: for every input, every limit of every resource keeps
 /// the invariants, only ever truncates committed evidence, and reports a typed
 /// resource stop for exactly the limited resource.
 fn g_sweep(m: Model) {
@@ -2474,7 +2584,7 @@ fn g_sweep(m: Model) {
     ];
     for text in corpus {
         let full = lex_with(m, text, Limits::default());
-        check_lexed(m, text, &full);
+        check_lexed(text, &full);
         let sweeps: [(Resource, usize, LimitMaker); 4] = [
             (Resource::TransitionSteps, full.usage.steps, steps),
             (Resource::EmittedTokens, full.usage.tokens, tokens),
@@ -2488,7 +2598,7 @@ fn g_sweep(m: Model) {
         for (resource, used, make) in sweeps {
             for limit in 0..=used + 1 {
                 let limited = lex_with(m, text, make(limit));
-                check_lexed(m, text, &limited);
+                check_lexed(text, &limited);
                 // Committed evidence is a prefix of the unlimited evidence.
                 assert!(full.tokens.starts_with(&limited.tokens), "{text:?}");
                 assert!(
@@ -2505,11 +2615,58 @@ fn g_sweep(m: Model) {
                 }
                 // The tree never upgrades incomplete lexing to Complete.
                 let observation = construct(m, limited.clone());
-                check_tree(m, text, &observation);
+                check_tree(text, &observation);
                 if limited.stop.is_some() {
                     assert_ne!(observation.completion, Completion::Complete);
                 }
             }
+        }
+    }
+}
+
+/// Independent first-principles oracle for diagnostic survival, for plain
+/// Data text (no references or tags). A NUL is *observed* once every
+/// obligation before it has been met: all earlier tokens fit the token limit,
+/// or all earlier bytes fit the retained limit. An observed NUL has its
+/// `UnexpectedNullCharacter` / `Continued` diagnostic even when its own
+/// token or retained byte is then refused. The expectation is read from the
+/// unlimited run's token order only, never from the limited run under test.
+fn g_survival(m: Model) {
+    for text in ["\0", "a\0", "\0a", "a\0b", "\0\0\0", "\0a\0"] {
+        let full = lex_with(m, text, Limits::default());
+        let mut before_bytes = 0usize;
+        let mut nul_sites: Vec<(usize, usize)> = Vec::new(); // (token index, preceding bytes)
+        for (index, token) in full.tokens.iter().enumerate() {
+            if let Token::Characters(c) = token {
+                if c.origin == Origin::AuthoredDataNull {
+                    nul_sites.push((index, before_bytes));
+                }
+                before_bytes += c.interpreted.len();
+            }
+        }
+        for limit in 0..=full.tokens.len() + 1 {
+            let expected = nul_sites
+                .iter()
+                .filter(|(index, _)| *index <= limit)
+                .count();
+            let limited = lex_with(m, text, tokens(limit));
+            assert_eq!(
+                limited.diagnostics.len(),
+                expected,
+                "diagnostic survival under tokens({limit}) for {text:?}"
+            );
+        }
+        for limit in 0..=full.usage.retained + 1 {
+            let expected = nul_sites
+                .iter()
+                .filter(|(_, before)| *before <= limit)
+                .count();
+            let limited = lex_with(m, text, retained(limit));
+            assert_eq!(
+                limited.diagnostics.len(),
+                expected,
+                "diagnostic survival under retained({limit}) for {text:?}"
+            );
         }
     }
 }
@@ -2524,8 +2681,8 @@ const GROUPS: [Group; 9] = [
     ("tree", g_tree),
     ("boundaries", g_boundaries),
     ("steps", g_steps),
-    ("resources_common", g_resources_common),
-    ("resources_ordering", g_resources_ordering),
+    ("resources", g_resources),
+    ("survival", g_survival),
     ("sweep", g_sweep),
 ];
 
@@ -2537,7 +2694,7 @@ fn detects(group: fn(Model), model: Model) -> bool {
 // Tests
 // ---------------------------------------------------------------------------
 
-const SOUND: Model = Model::sound(Order::Atomic);
+const SOUND: Model = Model::SOUND;
 
 #[test]
 fn p0_pins_are_recorded() {
@@ -2548,15 +2705,9 @@ fn p0_pins_are_recorded() {
 }
 
 #[test]
-fn t1_the_sound_model_satisfies_every_theorem_group_under_every_order() {
-    for order in ORDERS {
-        for (name, group) in GROUPS {
-            let model = Model::sound(order);
-            assert!(
-                !detects(group, model),
-                "sound model fails group {name} under {order:?}"
-            );
-        }
+fn t1_the_sound_model_satisfies_every_theorem_group() {
+    for (name, group) in GROUPS {
+        assert!(!detects(group, SOUND), "sound model fails group {name}");
     }
 }
 
@@ -2976,44 +3127,85 @@ fn f17_final_tree_shape_alone_is_insufficient() {
 }
 
 #[test]
-fn p1_the_orderings_differ_only_in_nonatomic_cells() {
-    // Every ordering agrees on the stop, on committed tokens, and (but for the
-    // single trailing diagnostic of a refused NUL) on diagnostics: this is
-    // the underdetermined placement question, not a validator choice.
-    let corpus = ["\0", "a\0", "\0\0\0", "a\0b", "&amp;\0b"];
-    let mut differing = 0usize;
-    for text in corpus {
-        let full = lex(text);
-        for (make, used) in [
-            (steps as fn(usize) -> Limits, full.usage.steps),
-            (tokens, full.usage.tokens),
-            (diagnostics, full.usage.diagnostics),
-            (retained, full.usage.retained),
-        ] {
-            for limit in 0..=used + 1 {
-                let atomic = cell(Model::sound(Order::Atomic), text, make(limit));
-                for order in [Order::DiagnosticFirst, Order::ReserveFirst] {
-                    let other = cell(Model::sound(order), text, make(limit));
-                    assert_eq!(atomic.stop, other.stop);
-                    assert_eq!(atomic.tokens, other.tokens);
-                    let delta = other.diagnostics - atomic.diagnostics.min(other.diagnostics);
-                    assert!(delta <= 1 && atomic.diagnostics <= other.diagnostics);
-                    if delta == 1 {
-                        differing += 1;
-                        assert!(matches!(
-                            atomic.stop,
-                            Some(Stop::Resource(Refusal {
-                                resource: Resource::EmittedTokens
-                                    | Resource::RetainedInterpretedBytes,
-                                ..
-                            }))
-                        ));
-                    }
-                }
-            }
-        }
+fn r2_the_observed_nul_diagnostic_survives_later_token_and_retained_refusal() {
+    use Resource::{EmittedTokens, RetainedInterpretedBytes};
+    for (text, limits, resource, attempted) in [
+        ("\0", tokens(0), EmittedTokens, 1),
+        ("\0", retained(0), RetainedInterpretedBytes, 1),
+        ("a\0", tokens(1), EmittedTokens, 2),
+        ("a\0", retained(1), RetainedInterpretedBytes, 2),
+    ] {
+        let nul_at = text.find('\0').unwrap();
+        let l = lex_with(SOUND, text, limits);
+        assert_eq!(l.stop.map(stop_resource), Some(Some(resource)), "{text:?}");
+        let Some(Stop::Resource(r)) = l.stop else {
+            panic!("expected a resource stop for {text:?}");
+        };
+        assert_eq!(r.attempted, attempted);
+        // The diagnostic is committed evidence with Continued handling ...
+        assert_eq!(l.diagnostics.len(), 1, "{text:?}");
+        assert_eq!(l.diagnostics[0].handling, Handling::Continued);
+        assert_eq!(
+            (l.diagnostics[0].at.start, l.diagnostics[0].at.end),
+            (nul_at, nul_at + 1)
+        );
+        // ... its site is processed coverage ...
+        assert_eq!(l.coverage_end, nul_at + 1);
+        // ... but no U+0000 token and no replacement exist, and the NUL is
+        // explicitly unemitted.
+        assert_eq!(l.count_origin(Origin::AuthoredDataNull), 0);
+        assert!(!l.interpreted().contains('\0') && !l.interpreted().contains('\u{fffd}'));
+        assert_eq!(l.abandoned, vec![(nul_at, nul_at + 1)]);
+        assert!(!l.reached_eof());
     }
-    assert!(differing > 0, "the placement question must be observable");
+    // Each lifecycle fault is killed for the intended reason.
+    for fault in [
+        Mutation::SuppressDiagnosticOnTokenRefusal,
+        Mutation::SuppressDiagnosticOnRetainedRefusal,
+        Mutation::NulEffectPreparedBeforeDiagnostic,
+        Mutation::DiagnosticSiteNotCovered,
+    ] {
+        assert!(detects(g_resources, Model::mutated(fault)), "{fault:?}");
+    }
+    // Suppression is observable: the faulty model really drops the diagnostic.
+    let dropped = lex_with(
+        Model::mutated(Mutation::SuppressDiagnosticOnTokenRefusal),
+        "\0",
+        tokens(0),
+    );
+    assert!(dropped.diagnostics.is_empty());
+    let dropped = lex_with(
+        Model::mutated(Mutation::NulEffectPreparedBeforeDiagnostic),
+        "\0",
+        retained(0),
+    );
+    assert!(dropped.diagnostics.is_empty());
+    let uncovered = lex_with(
+        Model::mutated(Mutation::DiagnosticSiteNotCovered),
+        "\0",
+        tokens(0),
+    );
+    assert_eq!(uncovered.diagnostics.len(), 1);
+    assert_eq!(uncovered.coverage_end, 0);
+}
+
+#[test]
+fn r3_a_refused_prior_run_means_the_nul_was_never_observed() {
+    // The pending `a` cannot close, so the NUL step never begins.
+    let l = lex_with(SOUND, "a\0", tokens(0));
+    assert!(l.diagnostics.is_empty());
+    assert_eq!(l.usage.steps, 2);
+    // Once `a` has closed, the NUL is observed and its diagnostic is stable.
+    let l = lex_with(SOUND, "a\0", tokens(1));
+    assert_eq!(l.diagnostics.len(), 1);
+    assert_eq!(l.tokens.len(), 1);
+}
+
+fn stop_resource(stop: Stop) -> Option<Resource> {
+    match stop {
+        Stop::Resource(r) => Some(r.resource),
+        Stop::Outside(_) => None,
+    }
 }
 
 #[test]
@@ -3042,7 +3234,7 @@ fn r1_resource_exhaustion_is_typed_and_never_upgraded() {
 
 #[test]
 fn s01_every_mutation_is_detected_by_its_declared_detector() {
-    let table: [(Mutation, &[&str]); 17] = [
+    let table: [(Mutation, &[&str]); 21] = [
         (Mutation::NulBecomesReplacement, &["tokenizer_nul"]),
         (Mutation::NulClaimsReplacementRecovery, &["tokenizer_nul"]),
         (Mutation::DropNulToken, &["tokenizer_nul"]),
@@ -3063,6 +3255,16 @@ fn s01_every_mutation_is_detected_by_its_declared_detector() {
         (Mutation::AfterBodyNoReprocess, &["tree"]),
         (Mutation::AfterAfterBodyWidened, &["boundaries"]),
         (Mutation::UpgradeIncompleteToComplete, &["sweep"]),
+        (
+            Mutation::SuppressDiagnosticOnTokenRefusal,
+            &["resources", "survival"],
+        ),
+        (
+            Mutation::SuppressDiagnosticOnRetainedRefusal,
+            &["resources", "survival"],
+        ),
+        (Mutation::NulEffectPreparedBeforeDiagnostic, &["resources"]),
+        (Mutation::DiagnosticSiteNotCovered, &["resources", "sweep"]),
     ];
     for (mutation, detectors) in table {
         let model = Model::mutated(mutation);
