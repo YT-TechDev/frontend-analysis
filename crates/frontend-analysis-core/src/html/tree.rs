@@ -467,6 +467,12 @@ pub enum HtmlTokenizerDiagnosticCode {
     EndTagWithTrailingSolidus,
     MissingSemicolonAfterCharacterReference,
     UnknownNamedCharacterReference,
+    AbsenceOfDigitsInNumericCharacterReference,
+    NullCharacterReference,
+    CharacterReferenceOutsideUnicodeRange,
+    SurrogateCharacterReference,
+    NoncharacterCharacterReference,
+    ControlCharacterReference,
 }
 
 #[derive(Debug, Clone)]
@@ -903,6 +909,16 @@ fn map_tokenizer_diagnostic_code(
             Public::MissingSemicolonAfterCharacterReference
         }
         Internal::UnknownNamedCharacterReference => Public::UnknownNamedCharacterReference,
+        Internal::AbsenceOfDigitsInNumericCharacterReference => {
+            Public::AbsenceOfDigitsInNumericCharacterReference
+        }
+        Internal::NullCharacterReference => Public::NullCharacterReference,
+        Internal::CharacterReferenceOutsideUnicodeRange => {
+            Public::CharacterReferenceOutsideUnicodeRange
+        }
+        Internal::SurrogateCharacterReference => Public::SurrogateCharacterReference,
+        Internal::NoncharacterCharacterReference => Public::NoncharacterCharacterReference,
+        Internal::ControlCharacterReference => Public::ControlCharacterReference,
     }
 }
 

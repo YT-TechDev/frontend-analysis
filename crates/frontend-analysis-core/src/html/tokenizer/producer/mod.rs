@@ -176,6 +176,21 @@ struct Engine<'a> {
     /// RCDATA, set at the authored `&` and consulted when the reference
     /// resolves or its unresolved run closes.
     character_reference_return: CharacterReferenceReturnState,
+    /// The fixed-size Numeric accumulator: the exact value while it is at most
+    /// U+10FFFF, then a permanent outside-range sentinel. Never a digit string
+    /// and never derived from digit count.
+    numeric_value: u32,
+    /// The exact end of the last consumed Numeric prefix unit (`#`, `x`/`X`,
+    /// a digit, or an authored `;`). It owns the final reference span and is
+    /// never derived from `processed_end`, which a terminator diagnostic may
+    /// advance beyond the reference.
+    numeric_reference_end: usize,
+    /// The exact authored hexadecimal marker recognized while entering the
+    /// hexadecimal branch. Retained as interpreted recovery evidence so
+    /// absence-of-digits recovery never reconstructs meaning from source text.
+    numeric_hex_marker: Option<char>,
+    /// True only when the reference consumed its authored `;`.
+    numeric_semicolon: bool,
 }
 
 impl<'a> Engine<'a> {
@@ -207,32 +222,49 @@ impl<'a> Engine<'a> {
             rcdata_closing_tag: false,
             character_reference_start: (0, 0),
             character_reference_return: CharacterReferenceReturnState::Data,
+            numeric_value: 0,
+            numeric_reference_end: 0,
+            numeric_hex_marker: None,
+            numeric_semicolon: false,
         }
     }
 
     fn run(&mut self) -> HtmlTokenizerCompletion {
         loop {
-            let mut preprocessing_failure = None;
-            let unit = if self.pending_reconsume {
-                self.pending_reconsume = false;
-                self.current
-            } else {
-                let (unit, diagnostic_code) = self.cursor.advance();
-                self.current = unit;
-                if let Some(code) = diagnostic_code
-                    && let Err(stop) = self.append_preprocessing_diagnostic(code, unit)
-                {
-                    preprocessing_failure = Some(stop);
-                }
-                unit
-            };
-
-            let step = match preprocessing_failure {
-                Some(stop) => stop,
-                None => match self.commit_transition_step(unit.start()) {
-                    Ok(()) => self.dispatch(unit),
+            let (unit, step) = if self.state == State::NumericCharacterReferenceEnd {
+                // The one input-free state: it materializes and preprocesses
+                // no unit, examines none, and still costs one transition. The
+                // unit left in `current` is the consumed `;` or the
+                // not-yet-consumed terminator, never a new input unit.
+                let step = match self.commit_transition_step(self.processed_end) {
+                    Ok(()) => self.step_numeric_character_reference_end(),
                     Err(stop) => stop,
-                },
+                };
+                (self.current, step)
+            } else {
+                let mut preprocessing_failure = None;
+                let unit = if self.pending_reconsume {
+                    self.pending_reconsume = false;
+                    self.current
+                } else {
+                    let (unit, diagnostic_code) = self.cursor.advance();
+                    self.current = unit;
+                    if let Some(code) = diagnostic_code
+                        && let Err(stop) = self.append_preprocessing_diagnostic(code, unit)
+                    {
+                        preprocessing_failure = Some(stop);
+                    }
+                    unit
+                };
+
+                let step = match preprocessing_failure {
+                    Some(stop) => stop,
+                    None => match self.commit_transition_step(unit.start()) {
+                        Ok(()) => self.dispatch(unit),
+                        Err(stop) => stop,
+                    },
+                };
+                (unit, step)
             };
 
             match step {
@@ -425,6 +457,16 @@ impl<'a> Engine<'a> {
             State::CharacterReference => self.step_character_reference(unit),
             State::NamedCharacterReference => self.step_named_character_reference(unit),
             State::AmbiguousAmpersand => self.step_ambiguous_ampersand(unit),
+            State::NumericCharacterReference => self.step_numeric_character_reference(unit),
+            State::HexadecimalCharacterReferenceStart => {
+                self.step_hexadecimal_character_reference_start(unit)
+            }
+            State::DecimalCharacterReference => self.step_numeric_digits(unit, false),
+            State::HexadecimalCharacterReference => self.step_numeric_digits(unit, true),
+            // Input-free: `run` handles it before any unit is materialized.
+            State::NumericCharacterReferenceEnd => {
+                internal_invariant_stop(HtmlTokenizerInvariantFailure::CursorState)
+            }
         }
     }
 

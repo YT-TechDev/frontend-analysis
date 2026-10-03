@@ -690,24 +690,26 @@ fn pf14_an_ampersand_that_begins_no_reference_stays_ordinary_text() {
 // Retained unsupported boundaries
 // ---------------------------------------------------------------------------
 
-/// Falsifies: incidental Numeric Character Reference support, and a numeric
-/// refusal that reports the wrong availability or trigger.
+/// Falsifies: the retired Numeric-in-RCDATA refusal returning (#880 supports
+/// Numeric references in the selected Title/RCDATA context), and Numeric
+/// output resuming the wrong return state.
 #[test]
-fn pf15_numeric_character_references_are_refused_at_the_authored_hash() {
+fn pf15_numeric_character_references_resume_rcdata_in_the_selected_title() {
     let analysis = analyze("<title>&#38;</title>");
+    assert!(analysis.is_complete());
+    assert_eq!(tokenizer_unsupported(analysis.tokenizer_run()), None);
+    assert_eq!(title_text(&analysis), "&");
     assert_eq!(
-        tokenizer_unsupported(analysis.tokenizer_run()),
-        Some(ObservedUnsupported {
-            capability: HtmlTokenizerCapability::NumericCharacterReferenceInRcdata,
-            // `Unsupported`, not `Deferred`: no tree feedback can discharge it.
-            availability: HtmlTokenizerCapabilityAvailability::Unsupported,
-            trigger: Some((8, 9)),
-        })
+        title_contributions(&analysis),
+        vec![((7, 12), "&".to_owned())]
     );
-    // The authored `&` that caused entry is committed; nothing beyond it is.
-    assert_eq!(analysis.tokenizer_run().coverage().processed_end(), 8);
-    assert!(character_tokens(analysis.tokenizer_run()).is_empty());
     assert!(analysis.tokenizer_run().diagnostics().is_empty());
+
+    // RCDATA, not Data, resumes: the decoded `<` and a following authored `<b>`
+    // stay text, and only the appropriate `</title>` closes the element.
+    let analysis = analyze("<title>&#60;b>x</title>");
+    assert!(analysis.is_complete());
+    assert_eq!(title_text(&analysis), "<b>x");
 }
 
 /// Falsifies: incidental RCDATA NUL recovery, or a NUL replacement claimed
@@ -767,20 +769,16 @@ fn pf17_standalone_and_general_boundaries_remain_exactly_as_deferred_as_before()
     );
     // Data Named support is the explicit successor of the predecessor claim
     // that standalone `&amp;` stops as Deferred in Data (#876). Data `&amp;`
-    // now resolves, while the Data Numeric branch is its own narrow refusal.
+    // now resolves, and #880 supports the Data Numeric branch as well.
     let data_named = SourceText::new(SourceId::new(1), "&amp;".to_owned());
     assert!(
         !tokenize(&data_named, limits()).is_incomplete(),
         "standalone Data Named reference now resolves"
     );
     let data_numeric = SourceText::new(SourceId::new(1), "&#65;".to_owned());
-    assert_eq!(
-        tokenizer_unsupported(&tokenize(&data_numeric, limits()))
-            .map(|observed| (observed.capability, observed.availability)),
-        Some((
-            HtmlTokenizerCapability::NumericCharacterReferenceInData,
-            HtmlTokenizerCapabilityAvailability::Unsupported
-        ))
+    assert!(
+        !tokenize(&data_numeric, limits()).is_incomplete(),
+        "standalone Data Numeric reference now resolves"
     );
     expect_deferred(
         "<p id=\"&amp;\">",
@@ -1500,12 +1498,12 @@ fn pf31_freeze_rejects_replayed_lifecycle_corruption() {
     assert!(freeze_fixture(&fixture, chronology).is_err());
 
     // A Title whose episode never closed cannot be a Complete document. The
-    // Numeric boundary leaves exactly that state: the tokenizer refused while
-    // the tree still holds the Title open in Text.
-    let open_fixture = coordinated_parts("<title>&#38;");
+    // still-unselected RCDATA NUL boundary leaves exactly that state: the
+    // tokenizer refused while the tree still holds the Title open in Text.
+    let open_fixture = coordinated_parts("<title>\u{0}");
     assert!(open_fixture.parts.final_open_title.is_some());
     assert!(open_fixture.parts.final_text_mode_active);
-    let mut complete = coordinated_parts("<title>&#38;").parts;
+    let mut complete = coordinated_parts("<title>\u{0}").parts;
     complete.completion = HtmlTreeCompletion::Complete;
     assert!(matches!(
         freeze_fixture(&open_fixture, complete),

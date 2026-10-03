@@ -123,6 +123,12 @@ pub(super) enum DiagnosticCode {
     EndTagWithTrailingSolidus,
     MissingSemicolonAfterCharacterReference,
     UnknownNamedCharacterReference,
+    AbsenceOfDigitsInNumericCharacterReference,
+    NullCharacterReference,
+    CharacterReferenceOutsideUnicodeRange,
+    SurrogateCharacterReference,
+    NoncharacterCharacterReference,
+    ControlCharacterReference,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -143,6 +149,11 @@ pub(super) enum DiagnosticContext {
     SelfClosingStartTag,
     NamedCharacterReference,
     AmbiguousAmpersand,
+    NumericCharacterReference,
+    HexadecimalCharacterReferenceStart,
+    DecimalCharacterReference,
+    HexadecimalCharacterReference,
+    NumericCharacterReferenceEnd,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -157,6 +168,9 @@ pub(super) enum RecoveryKind {
     PreservedDuplicateAttributeOccurrence,
     PreservedEndTagLexicalEvidence,
     AbandonedIncompleteTagAtEof,
+    FlushedLiteralCharacterReferencePrefix,
+    ReplacedNumericCharacterReferenceWithReplacementCharacter,
+    RemappedNumericCharacterReferenceControl,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

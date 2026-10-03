@@ -36,9 +36,9 @@ fn initial_inventory_contains_exactly_72_unique_fixtures() {
             counts
         });
     assert_eq!(counts.get(&FixtureCategory::Preprocessing), Some(&10));
-    assert_eq!(counts.get(&FixtureCategory::SupportedToken), Some(&12));
+    assert_eq!(counts.get(&FixtureCategory::SupportedToken), Some(&13));
     assert_eq!(counts.get(&FixtureCategory::Diagnostic), Some(&17));
-    assert_eq!(counts.get(&FixtureCategory::Unsupported), Some(&14));
+    assert_eq!(counts.get(&FixtureCategory::Unsupported), Some(&13));
     assert_eq!(counts.get(&FixtureCategory::Resource), Some(&9));
     assert_eq!(counts.get(&FixtureCategory::Adversarial), Some(&10));
 }
@@ -46,20 +46,22 @@ fn initial_inventory_contains_exactly_72_unique_fixtures() {
 #[test]
 fn initial_ids_are_stable_and_contiguous_within_each_category() {
     let fixtures = initial_corpus();
-    for (prefix, count) in [
-        ("PRE", 10usize),
-        ("TOK", 12),
-        ("ERR", 17),
-        ("UNSUP", 14),
-        ("RES", 9),
-        ("ADV", 10),
+    // `UNSUP-001` is a retired historical ID that is never reused, so the
+    // active UNSUP range starts at 2.
+    for (prefix, first, last) in [
+        ("PRE", 1usize, 10usize),
+        ("TOK", 1, 13),
+        ("ERR", 1, 17),
+        ("UNSUP", 2, 14),
+        ("RES", 1, 9),
+        ("ADV", 1, 10),
     ] {
         let actual: Vec<&str> = fixtures
             .iter()
             .filter(|fixture| fixture.id.starts_with(prefix))
             .map(|fixture| fixture.id)
             .collect();
-        let expected: Vec<String> = (1..=count)
+        let expected: Vec<String> = (first..=last)
             .map(|index| format!("{prefix}-{index:03}"))
             .collect();
         assert_eq!(
@@ -67,6 +69,18 @@ fn initial_ids_are_stable_and_contiguous_within_each_category() {
             expected.iter().map(String::as_str).collect::<Vec<_>>()
         );
     }
+}
+
+#[test]
+fn unsup_001_is_a_retired_id_and_is_never_reused() {
+    let all = all_candidate_independent_corpus();
+    assert!(all.iter().all(|fixture| fixture.id != "UNSUP-001"));
+    let tok_013 = all.iter().find(|fixture| fixture.id == "TOK-013").unwrap();
+    assert_eq!(tok_013.expected.0.usage.transition_steps, 8);
+    assert!(matches!(
+        tok_013.expected.0.completion,
+        Completion::Complete
+    ));
 }
 
 #[test]
@@ -226,16 +240,16 @@ fn malformed_gold_fixture_is_rejected_before_candidate_execution() {
 fn malformed_unsupported_trigger_is_rejected_by_policy_validation() {
     let mut fixture = initial_corpus()
         .into_iter()
-        .find(|fixture| fixture.id == "UNSUP-001")
+        .find(|fixture| fixture.id == "UNSUP-002")
         .unwrap();
     let Completion::Unsupported { trigger, .. } = &mut fixture.expected.0.completion else {
-        panic!("UNSUP-001 must remain unsupported");
+        panic!("UNSUP-002 must remain unsupported");
     };
     *trigger = UnsupportedTrigger::Input(ByteSpan::new(0, 1));
     let error = validate_policy(std::slice::from_ref(&fixture))
         .unwrap_err()
         .to_string();
-    assert!(error.contains("UNSUP-001.completion.unsupported.input_boundary"));
+    assert!(error.contains("UNSUP-002.completion.unsupported.input_boundary"));
 }
 
 #[test]
@@ -474,8 +488,8 @@ fn supplemental_regression_corpus_contains_exactly_four_stable_reg_113_fixtures(
 
 #[test]
 fn initial_corpus_is_unaffected_by_the_supplemental_regression_layer() {
-    // The historical 72-fixture initial inventory must remain unchanged in
-    // both count and category composition after adding the REG- layer.
+    // The authority-controlled 72-fixture initial inventory must keep its
+    // count after adding the REG- layer.
     assert_eq!(initial_corpus().len(), 72);
 }
 

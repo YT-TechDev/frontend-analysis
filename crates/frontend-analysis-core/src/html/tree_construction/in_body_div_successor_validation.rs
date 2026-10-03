@@ -214,15 +214,15 @@ const CANDIDATE_FIXTURES: &[CandidateFixture] = &[
     },
     CandidateFixture {
         id: "DV12",
-        bytes: b"\x3c\x62\x6f\x64\x79\x3e\x3c\x64\x69\x76\x3e\x26\x23\x36\x35\x3b",
+        bytes: b"\x3c\x62\x6f\x64\x79\x3e\x3c\x64\x69\x76\x3e\x3c\x21\x78\x78\x3e",
         length: 16,
-        sha256: "db210b7f844eaba849c1dcf3c38498cab6554ab33b3b3ee54d6937f5d09cbf8b",
+        sha256: "14a133983570b18d88944cf16d77c742b5af0c30288f8093f160bfa079e4bae7",
         required_ranges: &[
             ((0, 6), b"<body>"),
             ((1, 5), b"body"),
             ((6, 11), b"<div>"),
             ((7, 10), b"div"),
-            ((11, 16), b"&#65;"),
+            ((11, 16), b"<!xx>"),
         ],
     },
     CandidateFixture {

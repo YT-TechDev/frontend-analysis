@@ -254,4 +254,18 @@ pub(super) fn add_supported_tokens(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         // Data<+TagOpen(a,reconsume)+TagName(reconsume a)+TagName(/)+SelfClosing(>,emit)+Data(EOF) = 6
         6,
      ));
+    fixtures.push(complete_text(
+        "TOK-013",
+        FixtureCategory::SupportedToken,
+        "decimal numeric character reference with an authored semicolon",
+        "&#65;",
+        "A",
+        Vec::new(),
+        None,
+        // Data('&')+CharacterReference('#')+NumericCharacterReference('6')
+        // +DecimalCharacterReference(reconsume '6')+DecimalCharacterReference('5')
+        // +DecimalCharacterReference(';')+NumericCharacterReferenceEnd (input-free, one step)
+        // +Data(EOF) = 8
+        8,
+    ));
 }

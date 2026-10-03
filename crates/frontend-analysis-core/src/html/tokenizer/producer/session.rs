@@ -29,7 +29,7 @@ use crate::html::token::{HtmlCharacterToken, HtmlTagKind, HtmlToken};
 
 use super::super::diagnostic::{
     HtmlTokenizerDiagnostic, HtmlTokenizerDiagnosticCode, HtmlTokenizerDiagnosticContext,
-    HtmlTokenizerDiagnosticHandling, HtmlTokenizerDiagnosticSubject,
+    HtmlTokenizerDiagnosticHandling, HtmlTokenizerDiagnosticSubject, HtmlTokenizerRecoveryKind,
 };
 use super::super::resource::{HtmlTokenizerInvariantFailure, HtmlTokenizerLimits};
 use super::super::result::{
@@ -797,24 +797,19 @@ impl<'a> Engine<'a> {
     /// transition of its own.
     pub(super) fn step_character_reference(&mut self, unit: InputUnit) -> Step {
         match unit {
-            InputUnit::Scalar {
-                ch: '#',
-                start,
-                end,
-            } => {
-                // The Numeric branch is reached but remains unselected in both
-                // currently supported Character Reference return contexts.
-                // The authored `&` stays committed; the `#` travels only as
-                // the trigger identifying the refused branch.
-                let capability = match self.character_reference_return {
-                    CharacterReferenceReturnState::Data => {
-                        HtmlTokenizerCapability::NumericCharacterReferenceInData
-                    }
-                    CharacterReferenceReturnState::Rcdata => {
-                        HtmlTokenizerCapability::NumericCharacterReferenceInRcdata
-                    }
-                };
-                self.rcdata_unsupported_input_stop(capability, (start, end))
+            InputUnit::Scalar { ch: '#', end, .. } => {
+                // Any ordinary run observed before the `&` is prior evidence and
+                // is flushed first, so every later Numeric effect is a single
+                // one-token attempt. A refused flush consumes nothing.
+                if let Err(stop) = self.flush_data_run() {
+                    return stop;
+                }
+                self.numeric_value = 0;
+                self.numeric_reference_end = end;
+                self.numeric_hex_marker = None;
+                self.numeric_semicolon = false;
+                self.state = State::NumericCharacterReference;
+                Step::Continue
             }
             InputUnit::Scalar { ch, .. } if ch.is_ascii_alphanumeric() => {
                 // Reconsume the same scalar in the Named state, so discovery,
@@ -957,6 +952,221 @@ impl<'a> Engine<'a> {
         Step::Continue
     }
 
+    /// Numeric Character Reference: selects the radix after `#`.
+    pub(super) fn step_numeric_character_reference(&mut self, unit: InputUnit) -> Step {
+        match unit {
+            InputUnit::Scalar { ch, end, .. } if matches!(ch, 'x' | 'X') => {
+                self.numeric_reference_end = end;
+                self.numeric_hex_marker = Some(ch);
+                self.state = State::HexadecimalCharacterReferenceStart;
+                Step::Continue
+            }
+            InputUnit::Scalar { ch, .. } if ch.is_ascii_digit() => {
+                // The digit is reconsumed, and accumulated, by the Decimal
+                // state; there is no separate Decimal start state.
+                self.state = State::DecimalCharacterReference;
+                self.pending_reconsume = true;
+                Step::Continue
+            }
+            InputUnit::Scalar { .. } | InputUnit::Eof { .. } => self.recover_absence_of_digits(
+                unit,
+                HtmlTokenizerDiagnosticContext::NumericCharacterReference,
+            ),
+        }
+    }
+
+    pub(super) fn step_hexadecimal_character_reference_start(&mut self, unit: InputUnit) -> Step {
+        match unit {
+            InputUnit::Scalar { ch, .. } if ch.is_ascii_hexdigit() => {
+                self.state = State::HexadecimalCharacterReference;
+                self.pending_reconsume = true;
+                Step::Continue
+            }
+            InputUnit::Scalar { .. } | InputUnit::Eof { .. } => self.recover_absence_of_digits(
+                unit,
+                HtmlTokenizerDiagnosticContext::HexadecimalCharacterReferenceStart,
+            ),
+        }
+    }
+
+    /// The Decimal and Hexadecimal Character Reference states.
+    ///
+    /// Every digit is one ordinary transition. The terminator is examined here
+    /// exactly once (it was preprocessed once when materialized); a
+    /// semicolonless terminator leaves the cursor untouched, records the
+    /// missing-semicolon observation at itself, and selects the input-free End.
+    pub(super) fn step_numeric_digits(&mut self, unit: InputUnit, hexadecimal: bool) -> Step {
+        let radix = if hexadecimal { 16 } else { 10 };
+        match unit {
+            InputUnit::Scalar { ch, end, .. } if ch.is_digit(radix) => {
+                let digit = ch.to_digit(radix).expect("guarded numeric digit");
+                // Exact while within range, then a permanent sentinel: a
+                // further non-negative digit can never return below U+10FFFF.
+                if self.numeric_value <= NUMERIC_MAXIMUM_CODE_POINT {
+                    self.numeric_value =
+                        (self.numeric_value * radix + digit).min(NUMERIC_OUTSIDE_RANGE_SENTINEL);
+                }
+                self.numeric_reference_end = end;
+                Step::Continue
+            }
+            InputUnit::Scalar { ch: ';', end, .. } => {
+                // The run loop commits coverage through this `;` before the
+                // End transition is attempted.
+                self.numeric_reference_end = end;
+                self.numeric_semicolon = true;
+                self.state = State::NumericCharacterReferenceEnd;
+                Step::Continue
+            }
+            InputUnit::Scalar { .. } | InputUnit::Eof { .. } => {
+                let context = if hexadecimal {
+                    HtmlTokenizerDiagnosticContext::HexadecimalCharacterReference
+                } else {
+                    HtmlTokenizerDiagnosticContext::DecimalCharacterReference
+                };
+                // A prior observation: it names no token, because the End
+                // output may still be refused and then never exists.
+                if let Err(stop) = self.append_diagnostic(
+                    HtmlTokenizerDiagnosticCode::MissingSemicolonAfterCharacterReference,
+                    (unit.start(), unit.end()),
+                    context,
+                    HtmlTokenizerDiagnosticHandling::Continued,
+                    HtmlTokenizerDiagnosticSubject::InputLocation,
+                ) {
+                    return stop;
+                }
+                self.numeric_semicolon = false;
+                self.state = State::NumericCharacterReferenceEnd;
+                Step::Continue
+            }
+        }
+    }
+
+    /// Numeric Character Reference End: one input-free transition.
+    ///
+    /// Every fallible effect is prepared before a non-refusing commit, so the
+    /// decoded character and its End diagnostic exist together or not at all.
+    /// The authored span ends at the last consumed prefix unit, never at the
+    /// semicolonless terminator that may already be inside coverage.
+    pub(super) fn step_numeric_character_reference_end(&mut self) -> Step {
+        let site = (self.current.start(), self.current.end());
+        let (scalar, recovery) = numeric_end_semantics(self.numeric_value);
+        let start = self.character_reference_start.0;
+        let end = self.numeric_reference_end;
+        let at = (self.processed_end, self.processed_end);
+
+        if let Err(stop) = self.try_reserve_retained(scalar.len_utf8(), start) {
+            return stop;
+        }
+        let committed = match self.preflight_token_emission(scalar.len_utf8(), at) {
+            Ok(committed) => committed,
+            Err(stop) => return stop,
+        };
+        if recovery.is_some()
+            && let Err(stop) = self.preflight_pending_emission_diagnostics(1, at)
+        {
+            return stop;
+        }
+
+        let anchor = self.anchor(start, end);
+        let Ok(character) = HtmlCharacterToken::new(anchor, scalar.to_string()) else {
+            return internal_invariant_stop(
+                HtmlTokenizerInvariantFailure::SourceEvidenceConstruction,
+            );
+        };
+        let diagnostic = match recovery {
+            None => None,
+            Some((code, handling)) => {
+                let Ok(diagnostic) = HtmlTokenizerDiagnostic::new(
+                    self.source,
+                    code,
+                    self.anchor(site.0, site.1),
+                    HtmlTokenizerDiagnosticContext::NumericCharacterReferenceEnd,
+                    handling,
+                    HtmlTokenizerDiagnosticSubject::EmittedToken {
+                        token_index: self.tokens.len(),
+                    },
+                ) else {
+                    return internal_invariant_stop(
+                        HtmlTokenizerInvariantFailure::SourceEvidenceConstruction,
+                    );
+                };
+                Some(diagnostic)
+            }
+        };
+
+        // Infallible semantic commit.
+        self.commit_token(HtmlToken::Character(character), committed);
+        if let Some(diagnostic) = diagnostic {
+            self.commit_prepared_diagnostic(diagnostic, site);
+        }
+        self.state = self.character_reference_return.state();
+        // A semicolonless terminator was never consumed: it is reconsumed in
+        // the return state without being preprocessed again.
+        self.pending_reconsume = !self.numeric_semicolon;
+        Step::Continue
+    }
+
+    /// Absence-of-digits recovery: the consumed `&#` / `&#x` prefix is emitted
+    /// literally together with its diagnostic, or neither is, and the current
+    /// unit is reconsumed in the return state. No numeric value is fabricated.
+    fn recover_absence_of_digits(
+        &mut self,
+        unit: InputUnit,
+        context: HtmlTokenizerDiagnosticContext,
+    ) -> Step {
+        let start = self.character_reference_start.0;
+        let end = self.numeric_reference_end;
+        // Build interpreted recovery from units owned at recognition time.
+        // Source coordinates remain authored evidence only; they are never
+        // reread to manufacture the interpreted literal prefix.
+        let mut prefix = String::from("&#");
+        if let Some(marker) = self.numeric_hex_marker {
+            prefix.push(marker);
+        }
+        let at = (self.processed_end, self.processed_end);
+
+        if let Err(stop) = self.try_reserve_retained(prefix.len(), start) {
+            return stop;
+        }
+        let committed = match self.preflight_token_emission(prefix.len(), at) {
+            Ok(committed) => committed,
+            Err(stop) => return stop,
+        };
+        if let Err(stop) = self.preflight_pending_emission_diagnostics(1, at) {
+            return stop;
+        }
+
+        let anchor = self.anchor(start, end);
+        let Ok(character) = HtmlCharacterToken::new(anchor, prefix) else {
+            return internal_invariant_stop(
+                HtmlTokenizerInvariantFailure::SourceEvidenceConstruction,
+            );
+        };
+        let site = (unit.start(), unit.end());
+        let Ok(diagnostic) = HtmlTokenizerDiagnostic::new(
+            self.source,
+            HtmlTokenizerDiagnosticCode::AbsenceOfDigitsInNumericCharacterReference,
+            self.anchor(site.0, site.1),
+            context,
+            HtmlTokenizerDiagnosticHandling::Recovered(
+                HtmlTokenizerRecoveryKind::FlushedLiteralCharacterReferencePrefix,
+            ),
+            HtmlTokenizerDiagnosticSubject::EmittedToken {
+                token_index: self.tokens.len(),
+            },
+        ) else {
+            return internal_invariant_stop(
+                HtmlTokenizerInvariantFailure::SourceEvidenceConstruction,
+            );
+        };
+
+        self.commit_token(HtmlToken::Character(character), committed);
+        self.commit_prepared_diagnostic(diagnostic, site);
+        self.state = self.character_reference_return.state();
+        self.pending_reconsume = true;
+        Step::Continue
+    }
+
     /// Opens the unresolved Ambiguous Ampersand candidate as its own run.
     ///
     /// The candidate is a distinct semantic unit, so any ordinary character
@@ -1071,4 +1281,97 @@ impl<'a> Engine<'a> {
             unsupported,
         ))
     }
+}
+
+const NUMERIC_MAXIMUM_CODE_POINT: u32 = 0x10_FFFF;
+/// The permanent outside-range value: any accumulation above U+10FFFF.
+const NUMERIC_OUTSIDE_RANGE_SENTINEL: u32 = NUMERIC_MAXIMUM_CODE_POINT + 1;
+
+/// Numeric Character Reference End, bullet by bullet from the pinned text:
+/// the resulting scalar and the single diagnostic it requires, if any. The
+/// pinned bullets can never fire more than one diagnostic for one value.
+fn numeric_end_semantics(
+    value: u32,
+) -> (
+    char,
+    Option<(HtmlTokenizerDiagnosticCode, HtmlTokenizerDiagnosticHandling)>,
+) {
+    use HtmlTokenizerDiagnosticCode as Code;
+    use HtmlTokenizerDiagnosticHandling::{Continued, Recovered};
+    let replaced = Recovered(
+        HtmlTokenizerRecoveryKind::ReplacedNumericCharacterReferenceWithReplacementCharacter,
+    );
+    if value == 0 {
+        return ('\u{fffd}', Some((Code::NullCharacterReference, replaced)));
+    }
+    if value > NUMERIC_MAXIMUM_CODE_POINT {
+        return (
+            '\u{fffd}',
+            Some((Code::CharacterReferenceOutsideUnicodeRange, replaced)),
+        );
+    }
+    let Some(scalar) = char::from_u32(value) else {
+        return (
+            '\u{fffd}',
+            Some((Code::SurrogateCharacterReference, replaced)),
+        );
+    };
+    if (0xFDD0..=0xFDEF).contains(&value) || matches!(value & 0xFFFF, 0xFFFE | 0xFFFF) {
+        return (
+            scalar,
+            Some((Code::NoncharacterCharacterReference, Continued)),
+        );
+    }
+    let control = value == 0x0D
+        || ((value <= 0x1F || (0x7F..=0x9F).contains(&value))
+            && !matches!(value, 0x09 | 0x0A | 0x0C));
+    if control {
+        return match c1_replacement(value) {
+            Some(mapped) => (
+                mapped,
+                Some((
+                    Code::ControlCharacterReference,
+                    Recovered(HtmlTokenizerRecoveryKind::RemappedNumericCharacterReferenceControl),
+                )),
+            ),
+            None => (scalar, Some((Code::ControlCharacterReference, Continued))),
+        };
+    }
+    (scalar, None)
+}
+
+/// The pinned fixed C1 override rows. 0x81, 0x8D, 0x8F, 0x90, and 0x9D have no
+/// row and keep their own scalar.
+fn c1_replacement(value: u32) -> Option<char> {
+    let mapped = match value {
+        0x80 => 0x20AC,
+        0x82 => 0x201A,
+        0x83 => 0x0192,
+        0x84 => 0x201E,
+        0x85 => 0x2026,
+        0x86 => 0x2020,
+        0x87 => 0x2021,
+        0x88 => 0x02C6,
+        0x89 => 0x2030,
+        0x8A => 0x0160,
+        0x8B => 0x2039,
+        0x8C => 0x0152,
+        0x8E => 0x017D,
+        0x91 => 0x2018,
+        0x92 => 0x2019,
+        0x93 => 0x201C,
+        0x94 => 0x201D,
+        0x95 => 0x2022,
+        0x96 => 0x2013,
+        0x97 => 0x2014,
+        0x98 => 0x02DC,
+        0x99 => 0x2122,
+        0x9A => 0x0161,
+        0x9B => 0x203A,
+        0x9C => 0x0153,
+        0x9E => 0x017E,
+        0x9F => 0x0178,
+        _ => return None,
+    };
+    char::from_u32(mapped)
 }

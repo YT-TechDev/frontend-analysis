@@ -16,7 +16,7 @@ pub(super) enum FixtureCategory {
     Adversarial,
     /// Supplemental candidate-independent regression coverage. Distinct from
     /// the six initial-corpus categories: `REG-` fixtures never count toward
-    /// the immutable 72-fixture initial inventory.
+    /// the authority-controlled 72-fixture initial inventory.
     Regression,
 }
 

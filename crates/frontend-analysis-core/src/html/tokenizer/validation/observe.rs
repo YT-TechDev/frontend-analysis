@@ -195,6 +195,12 @@ fn observe_diagnostic(diagnostic: &super::super::diagnostic::HtmlTokenizerDiagno
             HtmlTokenizerDiagnosticCode::UnknownNamedCharacterReference => {
                 DiagnosticCode::UnknownNamedCharacterReference
             }
+            HtmlTokenizerDiagnosticCode::AbsenceOfDigitsInNumericCharacterReference => DiagnosticCode::AbsenceOfDigitsInNumericCharacterReference,
+            HtmlTokenizerDiagnosticCode::NullCharacterReference => DiagnosticCode::NullCharacterReference,
+            HtmlTokenizerDiagnosticCode::CharacterReferenceOutsideUnicodeRange => DiagnosticCode::CharacterReferenceOutsideUnicodeRange,
+            HtmlTokenizerDiagnosticCode::SurrogateCharacterReference => DiagnosticCode::SurrogateCharacterReference,
+            HtmlTokenizerDiagnosticCode::NoncharacterCharacterReference => DiagnosticCode::NoncharacterCharacterReference,
+            HtmlTokenizerDiagnosticCode::ControlCharacterReference => DiagnosticCode::ControlCharacterReference,
         },
         location: anchor_span(diagnostic.location()),
         context: match diagnostic.context() {
@@ -236,6 +242,11 @@ fn observe_diagnostic(diagnostic: &super::super::diagnostic::HtmlTokenizerDiagno
             HtmlTokenizerDiagnosticContext::AmbiguousAmpersand => {
                 DiagnosticContext::AmbiguousAmpersand
             }
+            HtmlTokenizerDiagnosticContext::NumericCharacterReference => DiagnosticContext::NumericCharacterReference,
+            HtmlTokenizerDiagnosticContext::HexadecimalCharacterReferenceStart => DiagnosticContext::HexadecimalCharacterReferenceStart,
+            HtmlTokenizerDiagnosticContext::DecimalCharacterReference => DiagnosticContext::DecimalCharacterReference,
+            HtmlTokenizerDiagnosticContext::HexadecimalCharacterReference => DiagnosticContext::HexadecimalCharacterReference,
+            HtmlTokenizerDiagnosticContext::NumericCharacterReferenceEnd => DiagnosticContext::NumericCharacterReferenceEnd,
         },
         handling: match diagnostic.handling() {
             HtmlTokenizerDiagnosticHandling::Continued => DiagnosticHandling::Continued,
@@ -286,6 +297,9 @@ fn observe_recovery(kind: HtmlTokenizerRecoveryKind) -> RecoveryKind {
         HtmlTokenizerRecoveryKind::AbandonedIncompleteTagAtEof => {
             RecoveryKind::AbandonedIncompleteTagAtEof
         }
+        HtmlTokenizerRecoveryKind::FlushedLiteralCharacterReferencePrefix => RecoveryKind::FlushedLiteralCharacterReferencePrefix,
+        HtmlTokenizerRecoveryKind::ReplacedNumericCharacterReferenceWithReplacementCharacter => RecoveryKind::ReplacedNumericCharacterReferenceWithReplacementCharacter,
+        HtmlTokenizerRecoveryKind::RemappedNumericCharacterReferenceControl => RecoveryKind::RemappedNumericCharacterReferenceControl,
     }
 }
 

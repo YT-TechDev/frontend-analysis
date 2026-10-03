@@ -1177,14 +1177,14 @@ fn dv11_historical_p_boundary_is_now_owned_by_tc_s5_without_widening_selected_do
 
 #[test]
 fn dv12_lower_layer_incompleteness_is_never_upgraded() {
-    // `<body><div>&#65;` — the tokenizer refuses the Numeric character
-    // reference in Data after consuming the authored `&`, so the tree layer
-    // simply runs out of tokens with the `div` still open.
+    // `<body><div><!xx>` — the tokenizer reaches the MarkupDeclaration
+    // Deferred boundary and rolls coverage back to the authored `<`, so the
+    // tree layer simply runs out of tokens with the `div` still open.
     let mut actions = shell_prelude_actions();
     actions.push((ExpectedAction::InsertedAuthoredSelectedOrdinary("div"), 1));
     check(&ExpectedRun {
         id: "DV12",
-        source: "<body><div>&#65;",
+        source: "<body><div><!xx>",
         tree: shell_with_authored_body(vec![div((6, 11), (7, 10), vec![])]),
         actions,
         diagnostics: vec![missing_doctype_at(0, (0, 6))],
@@ -1195,7 +1195,7 @@ fn dv12_lower_layer_incompleteness_is_never_upgraded() {
         completion: ExpectedCompletion::LowerLayerIncomplete,
     });
 
-    let analysis = analyze("<body><div>&#65;");
+    let analysis = analyze("<body><div><!xx>");
     assert!(
         analysis.tokenizer_run().is_incomplete(),
         "the lower layer is the incomplete one"
@@ -1656,7 +1656,7 @@ fn dv_sources() -> [&'static str; 15] {
         "<body></body><div>",
         "<body><div></body>",
         "<body><p>",
-        "<body><div>&#65;",
+        "<body><div><!xx>",
         "x<div></div>",
         "<body><div></div></body>",
     ]

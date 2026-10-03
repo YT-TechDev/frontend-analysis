@@ -114,7 +114,7 @@ fn complete_with_diagnostics_propagates_through_core_operation() {
 
 #[test]
 fn unsupported_before_any_occurrence_remains_incomplete() {
-    let source = src(4, "&#65;");
+    let source = src(4, "<!xx>");
     let analysis = analyze_html_explicit_start_tags(&source, generous_limits()).unwrap();
     assert!(analysis.tokenizer_run().is_incomplete());
     assert!(analysis.occurrences().is_empty());

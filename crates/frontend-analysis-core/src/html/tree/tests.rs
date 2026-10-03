@@ -437,38 +437,27 @@ fn tree_unsupported_capability_retains_its_authored_trigger() {
 
 #[test]
 fn tokenizer_unsupported_capability_retains_availability_and_trigger() {
-    // UNSUP-001 (superseded by #876: `&#65;`, Numeric character reference in
-    // Data, Unsupported, trigger `#` at 1..2 with the authored `&` committed)
-    // and UNSUP-003 (`<!x>`: markup declaration at 0..2, Deferred), shifted by
-    // the 6-byte `<body>` prefix.
-    for (tail, capability, availability, trigger) in [
-        (
-            "&#65;",
-            HtmlTokenizerUnsupportedCapability::NumericCharacterReferenceInData,
-            HtmlTokenizerCapabilityAvailability::Unsupported,
-            at(7, 8, "#"),
-        ),
-        (
-            "<!x>",
-            HtmlTokenizerUnsupportedCapability::MarkupDeclaration,
-            HtmlTokenizerCapabilityAvailability::Deferred,
-            at(6, 8, "<!"),
-        ),
-    ] {
-        let report = analyze_text(&format!("<body>{tail}"));
-        let HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::TokenizerUnsupported(
-            unsupported,
-        )) = report.completion()
-        else {
-            panic!(
-                "expected tokenizer unsupported, got {:?}",
-                report.completion()
-            );
-        };
-        assert_eq!(unsupported.capability(), capability);
-        assert_eq!(unsupported.availability(), availability);
-        assert_eq!(span(unsupported.trigger()), trigger);
-    }
+    // UNSUP-003 (`<!x>`: markup declaration at 0..2, Deferred), shifted by
+    // the 6-byte `<body>` prefix. UNSUP-001 is a retired historical ID: Numeric
+    // character references are supported (TOK-013).
+    let report = analyze_text("<body><!x>");
+    let HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::TokenizerUnsupported(unsupported)) =
+        report.completion()
+    else {
+        panic!(
+            "expected tokenizer unsupported, got {:?}",
+            report.completion()
+        );
+    };
+    assert_eq!(
+        unsupported.capability(),
+        HtmlTokenizerUnsupportedCapability::MarkupDeclaration
+    );
+    assert_eq!(
+        unsupported.availability(),
+        HtmlTokenizerCapabilityAvailability::Deferred
+    );
+    assert_eq!(span(unsupported.trigger()), at(6, 8, "<!"));
 }
 
 #[test]
@@ -494,18 +483,43 @@ fn data_named_reference_keeps_interpreted_text_and_ordered_contributions() {
 }
 
 #[test]
-fn data_numeric_reference_is_the_narrow_unsupported_capability_not_the_broad_deferred_one() {
+fn data_numeric_reference_keeps_interpreted_text_and_authored_source() {
+    let report = analyze_text("<body>a&#38;b&#65;</body>");
+
+    assert_complete(&report);
+    let body_text = text(&report, 4);
+    assert_eq!(body_text.interpreted(), "a&bA");
+    let contributions: Vec<_> = body_text
+        .contributions()
+        .iter()
+        .map(|contribution| (span(contribution.source()), contribution.interpreted()))
+        .collect();
+    assert_eq!(
+        contributions,
+        [
+            (at(6, 7, "a"), "a"),
+            (at(7, 12, "&#38;"), "&"),
+            (at(12, 13, "b"), "b"),
+            (at(13, 18, "&#65;"), "A"),
+        ]
+    );
+}
+
+#[test]
+fn numeric_reference_is_no_longer_the_unsupported_capability() {
+    // The unsupported variants remain public API, but the selected paths stop
+    // emitting them; a lower-layer sentinel is `<!xx>`.
     let report = analyze_text("<body>&#65;");
+    assert_complete(&report);
+    let report = analyze_text("<body><!xx>");
     let HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::TokenizerUnsupported(unsupported)) =
         report.completion()
     else {
         panic!("expected tokenizer unsupported");
     };
-    assert_ne!(
+    assert_eq!(
         unsupported.capability(),
-        HtmlTokenizerUnsupportedCapability::CharacterReference {
-            context: HtmlCharacterReferenceContext::Data,
-        }
+        HtmlTokenizerUnsupportedCapability::MarkupDeclaration
     );
 }
 
