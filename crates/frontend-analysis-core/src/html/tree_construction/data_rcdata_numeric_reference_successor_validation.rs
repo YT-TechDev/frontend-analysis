@@ -660,6 +660,11 @@ struct Machine {
     return_override: Option<Ctx>,
     limits: Limits,
     usage: Usage,
+    /// End of the last consumed unit. Reference spans are cut here and never
+    /// from `coverage_end`, which a diagnostic site can lead.
+    consumed_end: usize,
+    /// Processed coverage: the consumed prefix, and through the site of every
+    /// successfully committed diagnostic.
     coverage_end: usize,
     last: At,
     run_start: Option<usize>,
@@ -704,6 +709,7 @@ fn lex_with(source: &SourceText, ctx: Ctx, limits: Limits, return_override: Opti
         return_override,
         limits,
         usage: Usage::default(),
+        consumed_end: 0,
         coverage_end: 0,
         last: At::Eof,
         run_start: None,
@@ -783,7 +789,15 @@ impl Machine {
         )
     }
 
+    /// A committed diagnostic is evidence that its authored site was observed
+    /// and explained, so processed coverage reaches the end of that site. A
+    /// refused diagnostic never reaches this function.
     fn commit_diagnostic(&mut self, kind: DiagnosticKind, reference: Option<usize>, at: Pos) {
+        let site_end = match &at {
+            Pos::Unit(evidence) => evidence.end,
+            Pos::Eof(offset) => *offset,
+        };
+        self.coverage_end = self.coverage_end.max(site_end);
         self.diagnostics.push(Diagnostic {
             kind,
             source_id: self.source.id(),
@@ -836,20 +850,17 @@ impl Machine {
         }
     }
 
-    /// One transition: examine the current unit (or EOF) under `state`. Input
-    /// preprocessing diagnostics are raised before dispatch, once per authored
-    /// unit; a reconsume examination never repeats them. An attempted
-    /// transition rejected by the limit changes nothing.
+    /// One transition: examine the current unit (or EOF) under `state`.
+    ///
+    /// Lifecycle, in order: a newly materialized authored unit is input
+    /// preprocessed (once; a reconsume of the same unit never repeats it), and
+    /// its diagnostic, if any, is prepared and committed; only then is the
+    /// transition attempted against `TransitionSteps`. A step refusal can
+    /// therefore follow an already-committed preprocessing diagnostic, while a
+    /// refused preprocessing diagnostic stops before any transition is
+    /// attempted. An attempted transition rejected by the limit does not
+    /// increment committed usage.
     fn dispatch(&mut self, state: St) -> Result<Option<Unit>, Stop> {
-        if let Some(limit) = self.limits.steps
-            && self.usage.steps >= limit
-        {
-            return Err(Stop::Resource(Refusal {
-                resource: Resource::TransitionSteps,
-                limit,
-                attempted: self.usage.steps + 1,
-            }));
-        }
         let unit = self.units.get(self.idx).copied();
         if let Some(unit) = unit
             && self.idx >= self.preprocessed
@@ -859,6 +870,15 @@ impl Machine {
                 self.push_diagnostic(INPUT_CONTROL, None, site)?;
             }
             self.preprocessed = self.idx + 1;
+        }
+        if let Some(limit) = self.limits.steps
+            && self.usage.steps >= limit
+        {
+            return Err(Stop::Resource(Refusal {
+                resource: Resource::TransitionSteps,
+                limit,
+                attempted: self.usage.steps + 1,
+            }));
         }
         self.usage.steps += 1;
         self.trace.push((state, unit.map(|u| u.start)));
@@ -871,7 +891,8 @@ impl Machine {
 
     fn consume(&mut self, unit: Unit) {
         self.idx += 1;
-        self.coverage_end = unit.end;
+        self.consumed_end = unit.end;
+        self.coverage_end = self.coverage_end.max(unit.end);
     }
 
     fn matches_after_lt(&self, pattern: &str) -> bool {
@@ -1048,7 +1069,7 @@ impl Machine {
         diagnostic: Option<(DiagnosticKind, usize)>,
     ) -> Result<(), Stop> {
         let start = self.units[amp_idx].start;
-        let end = self.coverage_end;
+        let end = self.consumed_end;
         let raw = self.source.as_str()[start..end].to_owned();
         let contribution = self.contribution(Origin::FlushedReferencePrefix, start, end, raw);
         self.preflight(
@@ -1077,7 +1098,7 @@ impl Machine {
         self.events.push(Event::EndEntered(entry));
         let (scalar, kinds) = end_semantics(accumulator.code);
         let start = self.units[amp_idx].start;
-        let end = self.coverage_end;
+        let end = self.consumed_end;
         let contribution = self.contribution(
             Origin::ResolvedNumeric {
                 radix: accumulator.radix,
@@ -1385,6 +1406,8 @@ enum FreezeError {
     NumericOutputWithoutFinalization,
     DiagnosticOrderRegression,
     DiagnosticReferenceOutOfRange,
+    DiagnosticSourceIdentityMismatch,
+    DiagnosticBeyondCoverage,
     TreeContributionNotFromLexed,
     TextNodeDoesNotEqualContributions,
 }
@@ -1400,6 +1423,14 @@ fn numeric_shape(raw: &str, radix: Radix) -> bool {
     };
     let digits = rest.strip_suffix(';').unwrap_or(rest);
     marker_ok && !digits.is_empty() && digits.chars().all(|c| radix.digit(c).is_some())
+}
+
+/// End of a diagnostic's authored site; a zero-width EOF site ends at EOF.
+fn diagnostic_site_end(diagnostic: &Diagnostic) -> usize {
+    match &diagnostic.at {
+        Pos::Unit(evidence) => evidence.end,
+        Pos::Eof(offset) => *offset,
+    }
 }
 
 fn validate_freeze(observation: &Observation) -> Result<(), FreezeError> {
@@ -1457,6 +1488,16 @@ fn validate_freeze(observation: &Observation) -> Result<(), FreezeError> {
             return Err(FreezeError::DiagnosticOrderRegression);
         }
         previous_start = diagnostic.at.start();
+        let site_source_id = match &diagnostic.at {
+            Pos::Unit(evidence) => evidence.source_id,
+            Pos::Eof(_) => diagnostic.source_id,
+        };
+        if diagnostic.source_id != lexed.source_id || site_source_id != lexed.source_id {
+            return Err(FreezeError::DiagnosticSourceIdentityMismatch);
+        }
+        if diagnostic_site_end(diagnostic) > lexed.coverage_end {
+            return Err(FreezeError::DiagnosticBeyondCoverage);
+        }
         if diagnostic
             .reference
             .is_some_and(|reference| reference >= lexed.entries.len())
@@ -2816,6 +2857,329 @@ fn a5_no_copied_digit_buffer_and_no_new_resource_dimension() {
     // TemporaryBufferBytes = 0 is semantically viable for every recovery too.
     for text in ["&#;", "&#x;", "&#0", "&#xZ"] {
         assert_eq!(lex(text).usage.peak_temporary_buffer_bytes, 0, "{text}");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Preprocessing x TransitionSteps x diagnostic commitment x processed coverage
+// ---------------------------------------------------------------------------
+//
+// Accepted lifecycle for a newly materialized authored unit:
+// preprocess (once) -> prepare and commit its diagnostic -> attempt the
+// `TransitionSteps` transition -> dispatch. A reconsume of the same unit
+// repeats none of the preprocessing. A committed diagnostic makes processed
+// coverage reach its site; a refused one changes nothing.
+
+fn diagnostics_limit(limit: usize) -> Limits {
+    Limits {
+        diagnostics: Some(limit),
+        ..Limits::default()
+    }
+}
+
+fn step_refusal(limit: usize) -> Option<Stop> {
+    Some(Stop::Resource(Refusal {
+        resource: Resource::TransitionSteps,
+        limit,
+        attempted: limit + 1,
+    }))
+}
+
+#[test]
+fn b1_preprocessing_commits_before_a_transition_step_refusal() {
+    // &0 #1 6@2 5@3 U+0001@4. Five committed transitions precede the
+    // examination of U+0001: Data, CharacterReference, Numeric, Decimal
+    // (reconsume), Decimal('5').
+    for ctx in [Ctx::Data, Ctx::Rcdata] {
+        let lexed = lex_limited("&#65\u{1}", ctx, steps(5));
+        assert_eq!(lexed.stop, step_refusal(5), "{ctx:?}");
+        assert_eq!(lexed.usage.steps, 5, "the rejected attempt is not counted");
+        // The newly materialized U+0001 was preprocessed first and that
+        // diagnostic stays committed, at its exact authored site.
+        assert_eq!(lexed.diagnostic_view(), vec![(INPUT_CONTROL, None, 4)]);
+        match &lexed.diagnostics[0].at {
+            Pos::Unit(span) => {
+                assert_eq!((span.start, span.end, span.raw.as_str()), (4, 5, "\u{1}"))
+            }
+            other => panic!("expected the authored unit site, got {other:?}"),
+        }
+        assert_eq!(lexed.coverage_end, 5, "processed coverage reaches 0..5");
+        // Decimal never successfully examined the terminator.
+        assert!(!lexed.diagnostic_kinds().contains(&MISSING));
+        assert!(lexed.end_entered.is_empty() && lexed.finalized.is_empty());
+        assert!(!lexed.has_numeric_output() && lexed.tokens.is_empty());
+        assert!(!lexed.reached_eof());
+        assert!(
+            lexed.trace.iter().all(|(_, start)| *start != Some(4)),
+            "U+0001 was never examined under any state"
+        );
+        let observation = construct(lexed);
+        assert!(matches!(
+            observation.completion,
+            Completion::ResourceLimit(_)
+        ));
+        assert_valid(&observation);
+    }
+    // The same lifecycle through the document tree: `<body>` is 7 dispatches.
+    let observation = run_limited("<body>&#65\u{1}", steps(12));
+    assert!(matches!(
+        observation.completion,
+        Completion::ResourceLimit(Refusal {
+            resource: Resource::TransitionSteps,
+            limit: 12,
+            attempted: 13,
+        })
+    ));
+    assert_eq!(
+        observation.lexed.diagnostic_view(),
+        vec![(INPUT_CONTROL, None, 10)]
+    );
+    assert_eq!(observation.lexed.coverage_end, 11);
+    assert_eq!(observation.body_text(), "", "no decoded character yet");
+    assert_valid(&observation);
+}
+
+#[test]
+fn b2_a_refused_preprocessing_diagnostic_stops_before_any_transition() {
+    for ctx in [Ctx::Data, Ctx::Rcdata] {
+        let lexed = lex_limited("&#65\u{1}", ctx, diagnostics_limit(0));
+        assert_eq!(
+            lexed.stop,
+            Some(Stop::Resource(Refusal {
+                resource: Resource::Diagnostics,
+                limit: 0,
+                attempted: 1,
+            })),
+            "{ctx:?}"
+        );
+        // Five transitions committed; the Decimal(U+0001) transition was not
+        // attempted, so it is neither counted nor in the trace.
+        assert_eq!(lexed.usage.steps, 5);
+        assert_eq!(lexed.trace.len(), 5);
+        assert!(lexed.trace.iter().all(|(_, start)| *start != Some(4)));
+        assert!(lexed.diagnostics.is_empty());
+        assert_eq!(lexed.usage.diagnostics, 0, "a refusal advances no usage");
+        // The refused site is not claimed as processed: coverage is only the
+        // consumed digits.
+        assert_eq!(lexed.coverage_end, 4);
+        assert!(!lexed.diagnostic_kinds().contains(&MISSING));
+        assert!(lexed.end_entered.is_empty() && lexed.finalized.is_empty());
+        assert!(!lexed.has_numeric_output() && lexed.tokens.is_empty());
+        assert_valid(&construct(lexed));
+    }
+    // The same distinction on the recovery path: the control diagnostic fits,
+    // the absence diagnostic and its flush are one effect and refuse together.
+    let lexed = lex_limited("&#\u{1}", Ctx::Data, diagnostics_limit(1));
+    assert_eq!(lexed.diagnostic_view(), vec![(INPUT_CONTROL, None, 2)]);
+    assert!(matches!(
+        lexed.stop,
+        Some(Stop::Resource(Refusal {
+            resource: Resource::Diagnostics,
+            limit: 1,
+            attempted: 2,
+        }))
+    ));
+    assert!(lexed.tokens.is_empty());
+    assert_eq!(
+        lexed.coverage_end, 3,
+        "only the committed site is processed"
+    );
+    let lexed = lex_limited("&#\u{1}", Ctx::Data, diagnostics_limit(0));
+    assert!(lexed.diagnostics.is_empty());
+    assert_eq!(lexed.coverage_end, 2, "the refused site is not processed");
+    assert_valid(&construct(lexed));
+}
+
+#[test]
+fn b3_end_diagnostic_refusal_keeps_earlier_commits_and_fabricates_nothing() {
+    // `&#0` + U+0001. Control (1) and missing-semicolon (2) fit a limit of 2;
+    // the Numeric End null-character-reference (3) does not.
+    for ctx in [Ctx::Data, Ctx::Rcdata] {
+        let lexed = lex_limited("&#0\u{1}", ctx, diagnostics_limit(2));
+        assert_eq!(
+            lexed.diagnostic_kinds(),
+            vec![INPUT_CONTROL, MISSING],
+            "{ctx:?}"
+        );
+        assert_eq!(lexed.diagnostic_view()[1], (MISSING, Some(0), 3));
+        assert_eq!(
+            lexed.stop,
+            Some(Stop::Resource(Refusal {
+                resource: Resource::Diagnostics,
+                limit: 2,
+                attempted: 3,
+            }))
+        );
+        assert!(!lexed.diagnostic_kinds().contains(&NULL));
+        assert!(!lexed.has_numeric_output() && lexed.tokens.is_empty());
+        assert!(lexed.finalized.is_empty());
+        assert_eq!(lexed.end_entered, vec![0], "End ran and refused its output");
+        assert_eq!(lexed.usage.diagnostics, 2);
+        // The committed U+0001 site is processed even though the unit itself
+        // was not consumed.
+        assert_eq!(lexed.coverage_end, 4);
+        // Data, CharacterReference, Numeric, Decimal(reconsume), Decimal(U+0001);
+        // the Numeric End charge is the open placement question.
+        assert!((5..=6).contains(&lexed.usage.steps));
+        let observation = construct(lexed);
+        assert!(matches!(
+            observation.completion,
+            Completion::ResourceLimit(Refusal {
+                resource: Resource::Diagnostics,
+                ..
+            })
+        ));
+        assert_valid(&observation);
+    }
+}
+
+#[test]
+fn b4_preprocessing_happens_exactly_once_across_every_step_boundary() {
+    // Terminators that preprocess to a diagnostic, and ones that do not.
+    let controlled = ["\u{1}", "\u{7f}", "\u{85}"];
+    let plain = ["\r", "\r\n", " "];
+    for ctx in [Ctx::Data, Ctx::Rcdata] {
+        for terminator in controlled.into_iter().chain(plain) {
+            let text = format!("&#65{terminator}");
+            let expected_controls = usize::from(controlled.contains(&terminator));
+            for limit in 1usize..=10 {
+                let lexed = lex_limited(&text, ctx, steps(limit));
+                let controls = lexed
+                    .diagnostic_kinds()
+                    .iter()
+                    .filter(|kind| **kind == INPUT_CONTROL)
+                    .count();
+                // The terminator is materialized by the sixth dispatch attempt,
+                // whether or not that transition is then refused.
+                let expected = if limit >= 5 { expected_controls } else { 0 };
+                assert_eq!(controls, expected, "{text:?} limit {limit} {ctx:?}");
+                if limit < 5 {
+                    assert!(lexed.diagnostics.is_empty(), "{text:?} limit {limit}");
+                } else if expected_controls == 1 {
+                    assert_eq!(lexed.diagnostics[0].kind, INPUT_CONTROL);
+                    assert_eq!(lexed.diagnostics[0].at.start(), 4);
+                }
+                // The missing-semicolon diagnostic follows the terminator's
+                // committed transition and never precedes its preprocessing.
+                let missing = lexed.diagnostic_kinds().contains(&MISSING);
+                assert_eq!(missing, limit >= 6, "{text:?} limit {limit}");
+                if missing && expected_controls == 1 {
+                    assert_eq!(lexed.diagnostic_kinds()[..2], [INPUT_CONTROL, MISSING]);
+                }
+                // Decoded output exists only if Numeric End committed it.
+                assert_eq!(lexed.has_numeric_output(), !lexed.finalized.is_empty());
+                if limit <= 5 {
+                    assert!(lexed.end_entered.is_empty(), "{text:?} limit {limit}");
+                }
+                if limit <= 7 {
+                    assert!(lexed.stop.is_some(), "{text:?} limit {limit}");
+                    assert!(!lexed.reached_eof());
+                }
+                assert_valid(&construct(lexed));
+            }
+            // Enough budget under either End-charge reading: the unit was
+            // examined by Decimal and again by the return state, with one
+            // preprocessing diagnostic at most.
+            let lexed = lex_limited(&text, ctx, steps(9));
+            assert!(lexed.stop.is_none() && lexed.reached_eof(), "{text:?}");
+            assert_eq!(lexed.projection()[0], dec(0, 4, "A"));
+            let examinations = lexed
+                .trace
+                .iter()
+                .filter(|(_, start)| *start == Some(4))
+                .count();
+            assert_eq!(examinations, 2, "one unit, two transitions");
+            let controls = lexed
+                .diagnostic_kinds()
+                .iter()
+                .filter(|kind| **kind == INPUT_CONTROL)
+                .count();
+            assert_eq!(controls, expected_controls, "{text:?}");
+        }
+    }
+}
+
+#[test]
+fn b5_freeze_rejects_a_diagnostic_site_outside_processed_coverage() {
+    // A resource-limited candidate with no contributions, so no other error
+    // can mask the diagnostic-coverage theorem. The committed diagnostic's
+    // site ends exactly at processed coverage.
+    let good = construct(lex_limited("&#65\u{1}", Ctx::Data, steps(5)));
+    assert_valid(&good);
+    assert!(matches!(good.completion, Completion::ResourceLimit(_)));
+    assert!(good.lexed.contributions().is_empty());
+    assert_eq!(diagnostic_site_end(&good.lexed.diagnostics[0]), 5);
+    assert_eq!(good.lexed.coverage_end, 5);
+
+    let mut bad = good.clone();
+    bad.lexed.coverage_end = 4;
+    assert_eq!(
+        validate_freeze(&bad),
+        Err(FreezeError::DiagnosticBeyondCoverage)
+    );
+    let mut bad = good.clone();
+    bad.lexed.coverage_end = 0;
+    assert_eq!(
+        validate_freeze(&bad),
+        Err(FreezeError::DiagnosticBeyondCoverage)
+    );
+    // Source identity of the diagnostic and of its site are both checked.
+    let mut bad = good.clone();
+    bad.lexed.diagnostics[0].source_id = SourceId::new(9);
+    assert_eq!(
+        validate_freeze(&bad),
+        Err(FreezeError::DiagnosticSourceIdentityMismatch)
+    );
+    let mut bad = good;
+    if let Pos::Unit(evidence) = &mut bad.lexed.diagnostics[0].at {
+        evidence.source_id = SourceId::new(9);
+    }
+    assert_eq!(
+        validate_freeze(&bad),
+        Err(FreezeError::DiagnosticSourceIdentityMismatch)
+    );
+
+    // A zero-width EOF site ends at EOF, which processed coverage has reached.
+    let eof = lex("&#65");
+    assert!(matches!(eof.diagnostics[0].at, Pos::Eof(4)));
+    assert_eq!(diagnostic_site_end(&eof.diagnostics[0]), 4);
+    assert_eq!(eof.coverage_end, 4);
+    assert_valid(&construct(eof));
+}
+
+#[test]
+fn b6_committed_diagnostics_are_always_inside_coverage_across_resource_sweeps() {
+    let corpus = [
+        "&#65\u{1}",
+        "&#0\u{1}",
+        "&#x41\u{85}",
+        "&#\u{1}",
+        "&#x\u{7f}",
+        "&#0;\u{1}",
+        "&#128\r\n",
+        "a&#xD800\u{1}b",
+        "&#1114112\u{1}&#65\u{1}",
+    ];
+    for ctx in [Ctx::Data, Ctx::Rcdata] {
+        for text in corpus {
+            for limit in 1usize..=16 {
+                let lexed = lex_limited(text, ctx, steps(limit));
+                assert_valid(&construct(lexed));
+            }
+            for limit in 0usize..=4 {
+                let lexed = lex_limited(text, ctx, diagnostics_limit(limit));
+                assert!(lexed.usage.diagnostics <= limit, "{text:?} {limit}");
+                assert_eq!(lexed.diagnostics.len(), lexed.usage.diagnostics);
+                let furthest = lexed
+                    .diagnostics
+                    .iter()
+                    .map(diagnostic_site_end)
+                    .max()
+                    .unwrap_or(0);
+                assert!(furthest <= lexed.coverage_end, "{text:?} {limit}");
+                assert_valid(&construct(lexed));
+            }
+        }
     }
 }
 
