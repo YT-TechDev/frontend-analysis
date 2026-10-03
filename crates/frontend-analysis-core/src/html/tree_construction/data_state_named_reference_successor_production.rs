@@ -373,28 +373,23 @@ fn ds11_attribute_value_character_references_remain_deferred() {
     }
 }
 
-/// Falsifies: the Data NUL contradiction being silently altered here. The
-/// existing separate defect is unchanged: Data NUL still takes the
-/// pre-existing recovery path, and a NUL after a reference behaves the same.
+/// Falsifies: Data NUL still taking the generic U+FFFD replacement path, and a
+/// NUL after a reference losing its own authored-Data semantics. Authored Data
+/// U+0000 is one exact source-backed token; the selected tree ignores it.
 #[test]
-fn ds12_data_nul_behavior_is_unchanged() {
-    let plain = lex("a\0b");
-    let after_reference = lex("&amp;\0b");
+fn ds12_data_nul_is_exact_authored_evidence_and_never_enters_final_text() {
+    let plain = expect_chars("a\0b", &[((0, 1), "a"), ((1, 2), "\0"), ((2, 3), "b")]);
+    let after_reference = expect_chars("&amp;\0b", &[((0, 5), "&"), ((5, 6), "\0"), ((6, 7), "b")]);
+    assert_eq!(diags(&plain), vec![(Diag::UnexpectedNullCharacter, (1, 2))]);
     assert_eq!(
-        chars(&plain)
-            .into_iter()
-            .map(|(_, text)| text)
-            .collect::<String>(),
-        "a\u{fffd}b"
+        diags(&after_reference),
+        vec![(Diag::UnexpectedNullCharacter, (5, 6))]
     );
-    assert_eq!(
-        chars(&after_reference)
-            .into_iter()
-            .map(|(_, text)| text)
-            .collect::<String>(),
-        "&\u{fffd}b"
-    );
-    assert_eq!(diags(&plain).len(), diags(&after_reference).len());
+
+    let analysis = analyze("<body>a\0b");
+    assert_eq!(texts(&analysis), vec!["ab".to_owned()]);
+    let analysis = analyze("<body>&amp;\0b");
+    assert_eq!(texts(&analysis), vec!["&b".to_owned()]);
 }
 
 // ---------------------------------------------------------------------------

@@ -12,8 +12,8 @@ use super::corpus::{
     all_candidate_independent_corpus, initial_corpus, supplemental_regression_corpus,
 };
 use super::expected::{
-    ByteSpan, Completion, DiagnosticCode, DiagnosticHandling, DiagnosticSubject, ObservedRun,
-    Resource, Token, UnsupportedTrigger,
+    ByteSpan, Completion, DiagnosticCode, DiagnosticContext, DiagnosticHandling, DiagnosticSubject,
+    ObservedRun, Resource, Token, UnsupportedTrigger,
 };
 use super::fixture::{FixtureCategory, validate_corpus};
 use super::generated::{
@@ -323,6 +323,91 @@ fn transition_steps_are_not_derivable_from_diagnostic_count_alone() {
     assert_ne!(noncharacter.source_bytes.len(), control.source_bytes.len());
     assert_eq!(noncharacter.expected.0.usage.transition_steps, 2);
     assert_eq!(control.expected.0.usage.transition_steps, 2);
+}
+
+#[test]
+fn authored_data_null_gold_supersession_keeps_identity_and_corrects_evidence() {
+    let nul_diagnostic = |start, end| {
+        (
+            DiagnosticCode::UnexpectedNullCharacter,
+            ByteSpan::new(start, end),
+            DiagnosticContext::Data,
+            DiagnosticHandling::Continued,
+            DiagnosticSubject::InputLocation,
+        )
+    };
+    let project = |fixture: &super::fixture::HtmlTokenizerFixture| {
+        fixture
+            .expected
+            .0
+            .diagnostics
+            .iter()
+            .map(|d| (d.code, d.location, d.context, d.handling, d.subject.clone()))
+            .collect::<Vec<_>>()
+    };
+    let characters = |fixture: &super::fixture::HtmlTokenizerFixture| {
+        fixture
+            .expected
+            .0
+            .tokens
+            .iter()
+            .filter_map(|token| match token {
+                Token::Character {
+                    source,
+                    interpreted,
+                } => Some((source.span, interpreted.clone())),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+
+    // ERR-003: one exact source-backed U+0000, continued, retained cost 1.
+    let err = find("ERR-003");
+    assert_eq!(err.expected.0.usage.transition_steps, 2);
+    assert_eq!(
+        characters(&err),
+        vec![(ByteSpan::new(0, 1), "\0".to_owned())]
+    );
+    assert_eq!(project(&err), vec![nul_diagnostic(0, 1)]);
+    assert_eq!(err.expected.0.usage.retained_interpreted_bytes, 1);
+
+    // PRE-010: three source-backed Character tokens plus EOF, six bytes.
+    let pre = find("PRE-010");
+    assert_eq!(pre.expected.0.usage.transition_steps, 5);
+    assert_eq!(pre.expected.0.usage.emitted_tokens, 4);
+    assert_eq!(pre.expected.0.usage.retained_interpreted_bytes, 6);
+    assert_eq!(
+        characters(&pre),
+        vec![
+            (ByteSpan::new(0, 2), "\u{c}\u{1}".to_owned()),
+            (ByteSpan::new(2, 3), "\0".to_owned()),
+            (ByteSpan::new(3, 6), "\u{fdd0}".to_owned()),
+        ]
+    );
+    assert!(matches!(
+        pre.expected.0.tokens.last(),
+        Some(Token::EndOfFile { at }) if *at == ByteSpan::new(6, 6)
+    ));
+    assert_eq!(
+        pre.expected.0.diagnostics[1].handling,
+        nul_diagnostic(2, 3).3
+    );
+
+    // RES-004: numeric resource facts are unchanged; no token is fabricated.
+    let res = find("RES-004");
+    assert_eq!(res.expected.0.usage.transition_steps, 1);
+    assert_eq!(res.expected.0.limits.diagnostics, 0);
+    assert_eq!(res.expected.0.usage.emitted_tokens, 0);
+    assert_eq!(res.expected.0.usage.diagnostics, 0);
+    assert!(res.expected.0.tokens.is_empty());
+    assert!(matches!(
+        &res.expected.0.completion,
+        Completion::ResourceLimit {
+            resource: Resource::Diagnostics,
+            attempted: 1,
+            ..
+        }
+    ));
 }
 
 #[test]

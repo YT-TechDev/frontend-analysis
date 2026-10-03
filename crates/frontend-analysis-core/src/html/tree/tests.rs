@@ -601,6 +601,83 @@ fn tokenizer_diagnostic_limit_refuses_the_257th_diagnostic() {
     assert_eq!(limit.attempted(), 257);
     assert_eq!(span(limit.at()), at(262, 263, "\0"));
     assert_eq!(report.tokenizer_diagnostics().len(), 256);
+    // The 256 admitted NULs are each ignored by the tree: one projected
+    // diagnostic per NUL, no text node, and lower-layer incompleteness is not
+    // upgraded.
+    let ignored = report
+        .tree_diagnostics()
+        .iter()
+        .filter(|d| d.code() == HtmlTreeDiagnosticCode::NullCharacterInBody)
+        .count();
+    assert_eq!(ignored, 256);
+    assert!(
+        report
+            .nodes()
+            .iter()
+            .all(|node| !matches!(node.kind(), HtmlTreeNodeKind::Text(_)))
+    );
+}
+
+#[test]
+fn authored_data_nul_projects_an_ignored_token_tree_diagnostic() {
+    // <body>0..6 NUL 6..7 : the NUL is exact tokenizer evidence, the tree
+    // ignores it, and no text node or U+FFFD exists.
+    let report = analyze_text("<body>\0");
+    assert!(matches!(report.completion(), HtmlTreeCompletion::Complete));
+    let [tokenizer_diagnostic] = report.tokenizer_diagnostics() else {
+        panic!("expected exactly the tokenizer NUL diagnostic");
+    };
+    assert_eq!(
+        tokenizer_diagnostic.code(),
+        HtmlTokenizerDiagnosticCode::UnexpectedNullCharacter
+    );
+    assert_eq!(span(tokenizer_diagnostic.location()), at(6, 7, "\0"));
+    let null = report
+        .tree_diagnostics()
+        .iter()
+        .find(|d| d.code() == HtmlTreeDiagnosticCode::NullCharacterInBody)
+        .expect("tree NUL diagnostic");
+    assert_eq!(null.recovery(), HtmlTreeRecovery::IgnoredToken);
+    assert_eq!(
+        span(null.trigger().expect("authored trigger")),
+        at(6, 7, "\0")
+    );
+    assert!(
+        report
+            .nodes()
+            .iter()
+            .all(|node| !matches!(node.kind(), HtmlTreeNodeKind::Text(_)))
+    );
+}
+
+#[test]
+fn text_around_an_ignored_data_nul_keeps_exact_contributions() {
+    // <body>0..6 a6..7 NUL7..8 b8..9
+    let report = analyze_text("<body>a\0b</body>");
+    let texts: Vec<&HtmlTreeText> = report
+        .nodes()
+        .iter()
+        .filter_map(|node| match node.kind() {
+            HtmlTreeNodeKind::Text(text) => Some(text),
+            _ => None,
+        })
+        .collect();
+    let [text] = texts.as_slice() else {
+        panic!("one text node");
+    };
+    assert_eq!(text.interpreted(), "ab");
+    let spans: Vec<_> = text
+        .contributions()
+        .iter()
+        .map(|c| (span(c.source()), c.interpreted().to_owned()))
+        .collect();
+    assert_eq!(
+        spans,
+        vec![
+            (at(6, 7, "a"), "a".to_owned()),
+            (at(8, 9, "b"), "b".to_owned()),
+        ]
+    );
 }
 
 #[test]
