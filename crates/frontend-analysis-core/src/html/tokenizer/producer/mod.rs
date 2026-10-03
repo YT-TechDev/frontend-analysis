@@ -185,6 +185,10 @@ struct Engine<'a> {
     /// never derived from `processed_end`, which a terminator diagnostic may
     /// advance beyond the reference.
     numeric_reference_end: usize,
+    /// The exact authored hexadecimal marker recognized while entering the
+    /// hexadecimal branch. Retained as interpreted recovery evidence so
+    /// absence-of-digits recovery never reconstructs meaning from source text.
+    numeric_hex_marker: Option<char>,
     /// True only when the reference consumed its authored `;`.
     numeric_semicolon: bool,
 }
@@ -220,6 +224,7 @@ impl<'a> Engine<'a> {
             character_reference_return: CharacterReferenceReturnState::Data,
             numeric_value: 0,
             numeric_reference_end: 0,
+            numeric_hex_marker: None,
             numeric_semicolon: false,
         }
     }
