@@ -651,6 +651,98 @@ fn authored_data_nul_projects_an_ignored_token_tree_diagnostic() {
 }
 
 #[test]
+fn after_after_body_character_recovery_projects_its_own_diagnostic() {
+    // <body>0..6 </body>6..13 </html>13..20 x20..21. The recovery diagnostic
+    // is the distinct after-after-body code, never the after-body one.
+    let report = analyze_text("<body></body></html>x");
+    assert!(matches!(report.completion(), HtmlTreeCompletion::Complete));
+    assert!(
+        report
+            .tree_diagnostics()
+            .iter()
+            .all(|d| d.code() != HtmlTreeDiagnosticCode::AfterBodyCharacterData)
+    );
+    let recoveries: Vec<_> = report
+        .tree_diagnostics()
+        .iter()
+        .filter(|d| d.code() == HtmlTreeDiagnosticCode::AfterAfterBodyCharacterData)
+        .collect();
+    let [recovery] = recoveries.as_slice() else {
+        panic!("exactly one after-after-body recovery diagnostic");
+    };
+    assert_eq!(
+        recovery.recovery(),
+        HtmlTreeRecovery::SwitchedToInBodyAndReprocessedSameToken
+    );
+    assert_eq!(
+        span(recovery.trigger().expect("authored trigger")),
+        at(20, 21, "x")
+    );
+    let texts: Vec<&HtmlTreeText> = report
+        .nodes()
+        .iter()
+        .filter_map(|node| match node.kind() {
+            HtmlTreeNodeKind::Text(text) => Some(text),
+            _ => None,
+        })
+        .collect();
+    let [text] = texts.as_slice() else {
+        panic!("one text node");
+    };
+    assert_eq!(text.interpreted(), "x");
+}
+
+#[test]
+fn after_after_body_nul_projects_distinct_recovery_and_ignore_diagnostics() {
+    // </html> ends at 20; the authored U+0000 is 20..21.
+    let report = analyze_text("<body></body></html>\0");
+    assert!(matches!(report.completion(), HtmlTreeCompletion::Complete));
+    let [tokenizer_diagnostic] = report.tokenizer_diagnostics() else {
+        panic!("expected exactly the tokenizer NUL diagnostic");
+    };
+    assert_eq!(
+        tokenizer_diagnostic.code(),
+        HtmlTokenizerDiagnosticCode::UnexpectedNullCharacter
+    );
+    assert_eq!(span(tokenizer_diagnostic.location()), at(20, 21, "\0"));
+
+    let codes: Vec<_> = report
+        .tree_diagnostics()
+        .iter()
+        .map(|d| (d.code(), d.recovery()))
+        .collect();
+    assert_eq!(
+        codes,
+        vec![
+            (
+                HtmlTreeDiagnosticCode::MissingDoctype,
+                HtmlTreeRecovery::ContinuedInQuirksDocumentMode
+            ),
+            (
+                HtmlTreeDiagnosticCode::AfterAfterBodyCharacterData,
+                HtmlTreeRecovery::SwitchedToInBodyAndReprocessedSameToken
+            ),
+            (
+                HtmlTreeDiagnosticCode::NullCharacterInBody,
+                HtmlTreeRecovery::IgnoredToken
+            ),
+        ]
+    );
+    for diagnostic in &report.tree_diagnostics()[1..] {
+        assert_eq!(
+            span(diagnostic.trigger().expect("authored trigger")),
+            at(20, 21, "\0")
+        );
+    }
+    assert!(
+        report
+            .nodes()
+            .iter()
+            .all(|node| !matches!(node.kind(), HtmlTreeNodeKind::Text(_)))
+    );
+}
+
+#[test]
 fn text_around_an_ignored_data_nul_keeps_exact_contributions() {
     // <body>0..6 a6..7 NUL7..8 b8..9
     let report = analyze_text("<body>a\0b</body>");

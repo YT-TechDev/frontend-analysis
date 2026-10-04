@@ -488,6 +488,9 @@ fn project_diagnostics(analysis: &HtmlDocumentShellAnalysis) -> Vec<GoldDiagnost
             HtmlTreeDiagnosticCode::AfterBodyCharacterData => {
                 panic!("the TC-S1 predecessor GOLD never produces the TC-S2 after-body diagnostic")
             }
+            HtmlTreeDiagnosticCode::AfterAfterBodyCharacterData => {
+                panic!("the TC-S1 predecessor GOLD never produces the after-after-body diagnostic")
+            }
             HtmlTreeDiagnosticCode::NullCharacterInBody => {
                 panic!(
                     "the TC-S1 predecessor GOLD never produces the Data-NUL successor diagnostic"
@@ -1430,10 +1433,6 @@ fn unproved_shell_positions_remain_explicit_tree_unsupported() {
         (
             "<head></head></head>",
             HtmlTreeCapability::UnprovedShellEndTagPosition,
-        ),
-        (
-            "<body></body></html>x",
-            HtmlTreeCapability::UnprovedCharacterDataPosition,
         ),
     ] {
         assert_eq!(

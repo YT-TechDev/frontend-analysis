@@ -972,6 +972,64 @@ tokenizer diagnostic 1: unexpected null character
     }
 
     #[test]
+    fn after_after_body_character_data_reports_a_distinct_recovery_diagnostic() {
+        // `<body>` 0..6, `</body>` 6..13, `</html>` 13..20, `x` 20..21. The
+        // character is reached in after-after-body, recovers into in-body, and
+        // is inserted as text; five tokens are processed exactly once each.
+        let run = html("after-after-body", b"<body></body></html>x");
+
+        let expected = head(21)
+            + "completion: complete
+coverage: committed authored prefix bytes 0..21; processed tokens 5
+tokenizer diagnostics: 0
+tree diagnostics: 2
+nodes: 5
+
+" + SYNTHESIZED_SHELL
+            + AUTHORED_BODY
+            + "      #4 text \"x\"
+          contribution 1: source bytes 20..21, line 1, byte column 21: \"x\"; interpreted \"x\"
+
+" + MISSING_DOCTYPE_AT_BODY
+            + "tree diagnostic 2: after-after-body character data
+  recovery: switched to in-body and reprocessed same token
+  trigger: bytes 20..21, line 1, byte column 21: \"x\"
+";
+        assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn authored_nul_after_html_end_keeps_tokenizer_recovery_and_ignore_diagnostics_distinct() {
+        // `</html>` ends at byte 20; the authored U+0000 is 20..21. The tree
+        // reports the after-after-body recovery first, then the in-body NUL
+        // ignore, for the same trigger; no text node and no U+FFFD exist.
+        let run = html("after-after-body-nul", b"<body></body></html>\0");
+
+        let expected = head(21)
+            + "completion: complete
+coverage: committed authored prefix bytes 0..21; processed tokens 5
+tokenizer diagnostics: 1
+tree diagnostics: 3
+nodes: 4
+
+" + SYNTHESIZED_SHELL
+            + AUTHORED_BODY
+            + "
+tokenizer diagnostic 1: unexpected null character
+  location: bytes 20..21, line 1, byte column 21: \"\\u{0}\"
+
+" + MISSING_DOCTYPE_AT_BODY
+            + "tree diagnostic 2: after-after-body character data
+  recovery: switched to in-body and reprocessed same token
+  trigger: bytes 20..21, line 1, byte column 21: \"\\u{0}\"
+tree diagnostic 3: null character in in-body
+  recovery: ignored token
+  trigger: bytes 20..21, line 1, byte column 21: \"\\u{0}\"
+";
+        assert_report(&run, &expected);
+    }
+
+    #[test]
     fn complete_report_with_a_tokenizer_diagnostic_exits_zero() {
         // `<title>` 0..7, `a` 7..8, U+0001 8..9.
         let run = html("complete-diagnostic", b"<title>a\x01b</title>");

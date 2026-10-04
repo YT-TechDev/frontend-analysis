@@ -386,6 +386,7 @@ fn tree_diagnostic_code(code: HtmlTreeDiagnosticCode) -> &'static str {
         HtmlTreeDiagnosticCode::DuplicateHeadStartTag => "duplicate head start tag",
         HtmlTreeDiagnosticCode::DuplicateBodyStartTag => "duplicate body start tag",
         HtmlTreeDiagnosticCode::AfterBodyCharacterData => "after-body character data",
+        HtmlTreeDiagnosticCode::AfterAfterBodyCharacterData => "after-after-body character data",
         HtmlTreeDiagnosticCode::NullCharacterInBody => "null character in in-body",
         HtmlTreeDiagnosticCode::BodyEndTagWithOpenSelectedOrdinaryElements => {
             "body end tag with open selected ordinary elements"
