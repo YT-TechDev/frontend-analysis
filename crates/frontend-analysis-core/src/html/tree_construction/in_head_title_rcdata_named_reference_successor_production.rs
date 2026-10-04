@@ -202,6 +202,7 @@ fn semantic_signature(analysis: &HtmlDocumentShellAnalysis) -> String {
         let kind = match node.kind() {
             HtmlTreeNodeKind::Document => "#document".to_owned(),
             HtmlTreeNodeKind::Element(element) => format!("{:?}", element.name()),
+            HtmlTreeNodeKind::DocumentType(_) => "#doctype".to_owned(),
             HtmlTreeNodeKind::Text(text) => format!("#text{:?}", text.interpreted()),
         };
         let authored = match node.authored_source() {
@@ -218,6 +219,9 @@ fn semantic_signature(analysis: &HtmlDocumentShellAnalysis) -> String {
                     )
                 })
                 .collect(),
+            Some(super::result::HtmlAuthoredSource::Doctype { complete, raw_name }) => {
+                format!("{:?}{:?}", complete.range(), raw_name.range())
+            }
             None => "-".to_owned(),
         };
         rendered.push_str(&format!("{:?}:{kind}:{authored};", node.id()));

@@ -504,6 +504,9 @@ fn token_interpreted_bytes(token: &Token) -> usize {
                     })
                     .sum::<usize>()
         }
+        Token::Doctype {
+            interpreted_name, ..
+        } => interpreted_name.len(),
         Token::EndOfFile { .. } => 0,
     }
 }

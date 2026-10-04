@@ -117,6 +117,11 @@ fn render_node(
     };
     match node.kind() {
         HtmlTreeNodeKind::Document => rendered.push_str("#document"),
+        HtmlTreeNodeKind::DocumentType(doctype) => rendered.push_str(&format!(
+            "#doctype[{:?},{:?}]",
+            doctype.complete().range(),
+            doctype.authored_name().range()
+        )),
         HtmlTreeNodeKind::Element(element) => {
             rendered.push_str(match element {
                 HtmlElement::Shell(shell) => match shell.name() {
@@ -236,7 +241,10 @@ fn check_source_binding(
 ) {
     match node.authored_source() {
         None => {}
-        Some(HtmlAuthoredSource::StartTag { complete, raw_name }) => {
+        Some(
+            HtmlAuthoredSource::StartTag { complete, raw_name }
+            | HtmlAuthoredSource::Doctype { complete, raw_name },
+        ) => {
             for anchor in [complete, raw_name] {
                 if anchor.source_id() != source.id() {
                     failures.push(format!(
@@ -510,6 +518,12 @@ fn tree_construction_holds_its_contract_over_the_candidate_independent_corpus() 
                         }
                     }
                 }
+                // The generic corpus contains no selected DOCTYPE source, so a
+                // DocumentType here is outside this corpus theorem.
+                Some(HtmlAuthoredSource::Doctype { .. }) => failures.push(format!(
+                    "{}: a DocumentType is outside the generic tokenizer corpus theorem",
+                    fixture.id
+                )),
                 None => {}
             }
         }

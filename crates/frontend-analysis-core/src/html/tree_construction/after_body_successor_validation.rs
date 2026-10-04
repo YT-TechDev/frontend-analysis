@@ -981,6 +981,7 @@ fn candidate_shape(token: &HtmlToken) -> Result<CandidateTokenShape<'_>, Candida
                 HtmlTagKind::End => Ok(CandidateTokenShape::EndTag { name, range }),
             }
         }
+        HtmlToken::Doctype(_) => Err(CandidateUnsupported::OutsideModelledCandidateCells),
         HtmlToken::EndOfFile(end_of_file) => Ok(CandidateTokenShape::EndOfFile {
             at: end_of_file.source().range().start(),
         }),
@@ -1000,6 +1001,10 @@ fn candidate_trigger(token: &HtmlToken, index: usize) -> CandidateTrigger {
         HtmlToken::Tag(tag) => CandidateTrigger::Authored {
             index,
             range: span(tag.complete()),
+        },
+        HtmlToken::Doctype(doctype) => CandidateTrigger::Authored {
+            index,
+            range: span(doctype.complete()),
         },
         HtmlToken::EndOfFile(_) => CandidateTrigger::EndOfFile { index },
     }

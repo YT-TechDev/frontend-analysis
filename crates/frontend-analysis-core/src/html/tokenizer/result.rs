@@ -1011,6 +1011,7 @@ fn validate_resource_limit(
 fn token_anchor(token: &HtmlToken) -> &SourceAnchor {
     match token {
         HtmlToken::Character(token) => token.source(),
+        HtmlToken::Doctype(token) => token.complete(),
         HtmlToken::Tag(token) => token.complete(),
         HtmlToken::EndOfFile(token) => token.source(),
     }
@@ -1019,6 +1020,7 @@ fn token_anchor(token: &HtmlToken) -> &SourceAnchor {
 fn token_interpreted_bytes(token: &HtmlToken) -> Result<usize, HtmlTokenizerRunContractError> {
     match token {
         HtmlToken::Character(token) => Ok(token.interpreted().len()),
+        HtmlToken::Doctype(token) => Ok(token.name().interpreted().len()),
         HtmlToken::Tag(token) => token.attributes().iter().try_fold(
             token.name().interpreted().len(),
             |total, attribute| {

@@ -1214,6 +1214,7 @@ fn candidate_shape(token: &HtmlToken) -> Result<CandidateTokenShape<'_>, Candida
                 HtmlTagKind::End => Ok(CandidateTokenShape::EndTag { name, range }),
             }
         }
+        HtmlToken::Doctype(_) => Err(CandidateUnsupported::OutsideModelledCandidateCells),
         HtmlToken::EndOfFile(end_of_file) => Ok(CandidateTokenShape::EndOfFile {
             at: end_of_file.source().range().start(),
         }),
@@ -1233,6 +1234,10 @@ fn candidate_trigger(token: &HtmlToken, index: usize) -> CandidateTrigger {
         HtmlToken::Tag(tag) => CandidateTrigger::Authored {
             index,
             range: span(tag.complete()),
+        },
+        HtmlToken::Doctype(doctype) => CandidateTrigger::Authored {
+            index,
+            range: span(doctype.complete()),
         },
         HtmlToken::EndOfFile(_) => CandidateTrigger::EndOfFile { index },
     }
@@ -2894,7 +2899,7 @@ fn incomplete_scenarios() -> Vec<(&'static str, HtmlTokenizerRunResult, &'static
         ),
         (
             "DOCTYPE after the selected tail",
-            tokenize_text("<body></body></html><!DOCTYPE html>", 1, generous_limits()),
+            tokenize_text("<body></body></html><!DOCTYPE svg>", 1, generous_limits()),
             "unsupported",
         ),
         (
@@ -2977,7 +2982,7 @@ fn lower_layer_incompleteness_is_never_upgraded() {
 fn lower_layer_markup_capabilities_are_not_absorbed_by_the_successor() {
     for source in [
         "<body></body></html><!xx>",
-        "<body></body></html><!DOCTYPE html>",
+        "<body></body></html><!DOCTYPE svg>",
         "<body></body></html><!--x-->",
         "<body></body></html><?x>",
     ] {

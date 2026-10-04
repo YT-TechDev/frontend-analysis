@@ -120,6 +120,7 @@ fn semantic_signature(analysis: &HtmlDocumentShellAnalysis) -> Vec<String> {
         let kind = match node.kind() {
             HtmlTreeNodeKind::Document => "document".to_owned(),
             HtmlTreeNodeKind::Element(element) => format!("element:{:?}", element.name()),
+            HtmlTreeNodeKind::DocumentType(_) => "documenttype".to_owned(),
             HtmlTreeNodeKind::Text(text) => format!("text:{}", text.interpreted()),
         };
         signature.push(format!(

@@ -348,6 +348,9 @@ fn node_signatures(analysis: &HtmlDocumentShellAnalysis) -> Vec<NodeSignature> {
                 HtmlTreeNodeKind::Element(HtmlElement::Title(_)) => {
                     panic!("TC-S5 predecessor fixtures must not construct a TC-S10 Title")
                 }
+                HtmlTreeNodeKind::DocumentType(_) => {
+                    panic!("TC-S5 predecessor fixtures must not construct a DocumentType")
+                }
                 HtmlTreeNodeKind::Text(text) => NodeMeaning::Text(
                     text.interpreted().to_owned(),
                     text.contributions()

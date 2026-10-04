@@ -6,6 +6,7 @@ use crate::{SourceAnchor, SourceId, SourceText};
 #[derive(Debug, Clone)]
 pub(crate) enum HtmlToken {
     Character(HtmlCharacterToken),
+    Doctype(HtmlDoctypeToken),
     Tag(HtmlTagToken),
     EndOfFile(HtmlEndOfFileToken),
 }
@@ -334,6 +335,82 @@ impl fmt::Debug for HtmlTagToken {
     }
 }
 
+/// The one selected canonical DOCTYPE token: `<!` + ASCII-CI `DOCTYPE` +
+/// ASCII whitespace+ + ASCII-CI `html` + ASCII whitespace* + `>`.
+///
+/// The type itself carries the selected closed meaning: interpreted name
+/// `html`, public identifier Missing, system identifier Missing, force-quirks
+/// Off. Missing identifiers are semantic absence, so no source anchor exists
+/// for them and none is fabricated. Only the exact authored complete range
+/// and the exact authored name spelling are retained as evidence.
+#[derive(Clone)]
+pub(crate) struct HtmlDoctypeToken {
+    complete: SourceAnchor,
+    name: HtmlNameEvidence,
+}
+
+impl HtmlDoctypeToken {
+    const KEYWORD_PREFIX: &'static str = "<!doctype";
+    const SELECTED_NAME: &'static str = "html";
+
+    pub(crate) fn new(
+        complete: SourceAnchor,
+        name: HtmlNameEvidence,
+    ) -> Result<Self, HtmlTokenContractError> {
+        non_empty(&complete, HtmlEvidenceRole::Doctype)?;
+        validate_nested(&complete, name.source(), HtmlEvidenceRole::DoctypeName)?;
+        if name.interpreted() != Self::SELECTED_NAME
+            || !name
+                .source()
+                .fragment()
+                .eq_ignore_ascii_case(Self::SELECTED_NAME)
+        {
+            return Err(HtmlTokenContractError::InvalidDoctypeName);
+        }
+        let fragment = complete.fragment();
+        let prefix_len = Self::KEYWORD_PREFIX.len();
+        let authored_prefix_matches = fragment
+            .as_bytes()
+            .get(..prefix_len)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(Self::KEYWORD_PREFIX.as_bytes()));
+        if !authored_prefix_matches || !fragment.ends_with('>') {
+            return Err(HtmlTokenContractError::WrongAuthoredFragment {
+                role: HtmlEvidenceRole::Doctype,
+                expected: "<!DOCTYPE ... >",
+            });
+        }
+        let after_keyword = complete.range().start() + prefix_len;
+        let before_close = complete.range().end() - 1;
+        if name.source().range().start() < after_keyword
+            || name.source().range().end() > before_close
+        {
+            return Err(HtmlTokenContractError::InvalidOrder {
+                role: HtmlEvidenceRole::DoctypeName,
+            });
+        }
+        Ok(Self { complete, name })
+    }
+
+    pub(crate) fn complete(&self) -> &SourceAnchor {
+        &self.complete
+    }
+
+    pub(crate) fn name(&self) -> &HtmlNameEvidence {
+        &self.name
+    }
+}
+
+impl fmt::Debug for HtmlDoctypeToken {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("HtmlDoctypeToken")
+            .field("source_id", &self.complete.source_id())
+            .field("range", &self.complete.range())
+            .field("name", &self.name)
+            .finish()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct HtmlEndOfFileToken {
     source: SourceAnchor,
@@ -403,6 +480,8 @@ pub(crate) enum HtmlEvidenceRole {
     Character,
     Name,
     Tag,
+    Doctype,
+    DoctypeName,
     OpenDelimiter,
     TagName,
     Attribute,
@@ -467,6 +546,7 @@ pub(crate) enum HtmlTokenContractError {
     EndOfFileMustBeEmpty,
     EndOfFileNotAtSourceEnd,
     LeadingBomNotAtStart,
+    InvalidDoctypeName,
 }
 
 impl fmt::Display for HtmlTokenContractError {

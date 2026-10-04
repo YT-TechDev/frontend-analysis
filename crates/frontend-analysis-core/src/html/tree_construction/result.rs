@@ -605,12 +605,58 @@ impl fmt::Debug for HtmlTextNode {
     }
 }
 
+/// The one selected canonical constructed DocumentType.
+///
+/// The type itself is the closed selected meaning: interpreted name `html`,
+/// public identifier Missing, system identifier Missing, force-quirks Off. No
+/// speculative identifier or flag fields exist, and no source anchor is
+/// fabricated for the Missing identifiers. Only the exact authored complete
+/// DOCTYPE range and the exact authored name spelling are retained, cloned
+/// from the tokenizer-owned evidence of the consumed DOCTYPE token.
+#[derive(Clone)]
+pub(crate) struct HtmlDocumentType {
+    complete: SourceAnchor,
+    authored_name: SourceAnchor,
+}
+
+impl HtmlDocumentType {
+    pub(super) fn new(complete: SourceAnchor, authored_name: SourceAnchor) -> Self {
+        Self {
+            complete,
+            authored_name,
+        }
+    }
+
+    pub(crate) fn complete(&self) -> &SourceAnchor {
+        &self.complete
+    }
+
+    pub(crate) fn authored_name(&self) -> &SourceAnchor {
+        &self.authored_name
+    }
+}
+
+impl fmt::Debug for HtmlDocumentType {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("HtmlDocumentType")
+            .field("source_id", &self.complete.source_id())
+            .field("range", &self.complete.range())
+            .field("name_range", &self.authored_name.range())
+            .finish()
+    }
+}
+
 /// What kind of observation a constructed node is.
 #[derive(Debug, Clone)]
 pub(crate) enum HtmlTreeNodeKind {
     /// The document root. It has no authored source and no synthesis cause:
     /// the root is the parse result's container, not an implied element.
     Document,
+    /// The distinct constructed DocumentType child of the Document. It is not
+    /// an element, not text, not a diagnostic or action-only record, and not
+    /// document mode.
+    DocumentType(HtmlDocumentType),
     Element(HtmlElement),
     Text(HtmlTextNode),
 }
@@ -626,6 +672,10 @@ pub(crate) enum HtmlAuthoredSource<'node> {
         raw_name: &'node SourceAnchor,
     },
     Characters(&'node [HtmlTextContribution]),
+    Doctype {
+        complete: &'node SourceAnchor,
+        raw_name: &'node SourceAnchor,
+    },
 }
 
 /// One immutable constructed node.
@@ -679,6 +729,10 @@ impl HtmlTreeNode {
     pub(crate) fn authored_source(&self) -> Option<HtmlAuthoredSource<'_>> {
         match &self.kind {
             HtmlTreeNodeKind::Document => None,
+            HtmlTreeNodeKind::DocumentType(doctype) => Some(HtmlAuthoredSource::Doctype {
+                complete: doctype.complete(),
+                raw_name: doctype.authored_name(),
+            }),
             HtmlTreeNodeKind::Element(HtmlElement::Shell(shell)) => match shell.origin() {
                 HtmlShellElementOrigin::Authored { complete, raw_name } => {
                     Some(HtmlAuthoredSource::StartTag { complete, raw_name })
@@ -724,7 +778,9 @@ impl HtmlTreeNode {
     pub(super) fn text_mut(&mut self) -> Option<&mut HtmlTextNode> {
         match &mut self.kind {
             HtmlTreeNodeKind::Text(text) => Some(text),
-            HtmlTreeNodeKind::Document | HtmlTreeNodeKind::Element(_) => None,
+            HtmlTreeNodeKind::Document
+            | HtmlTreeNodeKind::DocumentType(_)
+            | HtmlTreeNodeKind::Element(_) => None,
         }
     }
 }
@@ -826,6 +882,9 @@ impl HtmlTreeAction {
 
 #[derive(Debug, Clone)]
 pub(crate) enum HtmlTreeActionKind {
+    InsertedAuthoredDocumentType {
+        node: HtmlConstructedNodeId,
+    },
     InsertedAuthoredShellElement {
         node: HtmlConstructedNodeId,
         name: HtmlShellElementName,
@@ -908,7 +967,8 @@ pub(crate) enum HtmlTreeActionKind {
 impl HtmlTreeActionKind {
     pub(crate) fn subject(&self) -> Option<HtmlConstructedNodeId> {
         match self {
-            Self::InsertedAuthoredShellElement { node, .. }
+            Self::InsertedAuthoredDocumentType { node }
+            | Self::InsertedAuthoredShellElement { node, .. }
             | Self::InsertedSynthesizedShellElement { node, .. }
             | Self::InsertedTextNode { node }
             | Self::AppendedToTextNode { node }
@@ -1024,6 +1084,10 @@ pub(crate) enum HtmlTreeCapability {
     TitleTagAttribute,
     SelfClosingTitleTag,
     TitleTagOutsideSelectedLifecycle,
+    /// A valid selected DOCTYPE token reached tree construction outside
+    /// Initial. No second DocumentType is constructed and no general HTML
+    /// recovery is implemented.
+    DoctypeOutsideInitial,
 }
 
 #[derive(Debug, Clone)]
@@ -1212,6 +1276,8 @@ pub(super) struct HtmlDocumentShellParts {
 pub(crate) enum HtmlTreeEvidenceRole {
     AuthoredCompleteTag,
     AuthoredRawName,
+    AuthoredCompleteDoctype,
+    AuthoredDoctypeName,
     TextContribution,
     ActionTrigger,
     DiagnosticTrigger,
@@ -1564,6 +1630,36 @@ pub(crate) enum HtmlTreeFreezeError {
     /// insertion mode with one retained original insertion mode.
     ConcurrentTextModeElements,
     FinalTextModeStateMismatch,
+    AuthoredDoctypeNameOutsideCompleteDoctype(HtmlConstructedNodeId),
+    DocumentTypeParentIsNotDocument(HtmlConstructedNodeId),
+    DocumentTypeHasChildren(HtmlConstructedNodeId),
+    DocumentTypeIsNotFirstDocumentChild(HtmlConstructedNodeId),
+    MultipleDocumentTypes(HtmlConstructedNodeId),
+    DoctypeActionSubjectIsNotDocumentType(HtmlConstructedNodeId),
+    DuplicateDoctypeInsertion(HtmlConstructedNodeId),
+    DoctypeInsertionInventoryMismatch(HtmlConstructedNodeId),
+    DoctypeInsertionTriggerMismatch {
+        node: HtmlConstructedNodeId,
+        token_index: usize,
+    },
+    DoctypeEvidenceMismatch(HtmlConstructedNodeId),
+    DoctypeConstructedOutsideInitial {
+        node: HtmlConstructedNodeId,
+        token_index: usize,
+    },
+    DuplicateDoctypeTokenDecision {
+        token_index: usize,
+    },
+    DoctypeTokenWithoutInsertion {
+        token_index: usize,
+    },
+    DoctypeTokenPairedWithMissingDoctype {
+        token_index: usize,
+    },
+    DoctypeTokenReprocessed {
+        token_index: usize,
+    },
+    DoctypeCoexistsWithMissingDoctype(HtmlConstructedNodeId),
 }
 
 impl fmt::Display for HtmlTreeFreezeError {
@@ -1613,6 +1709,14 @@ pub(super) fn freeze(
     validate_node_evidence(source, &nodes)?;
     validate_action_evidence(source, &nodes, &actions, tokenizer_run.tokens().len())?;
     validate_ignored_null_characters(&nodes, &actions, &diagnostics, &tokenizer_run)?;
+    validate_document_type(
+        &nodes,
+        root,
+        &actions,
+        &diagnostics,
+        &tokenizer_run,
+        processed_tokens,
+    )?;
     validate_selected_ordinary_lifecycle(
         &nodes,
         &actions,
@@ -1825,6 +1929,26 @@ fn validate_node_evidence(
     for node in nodes {
         match node.kind() {
             HtmlTreeNodeKind::Document => {}
+            HtmlTreeNodeKind::DocumentType(doctype) => {
+                validate_evidence(
+                    source,
+                    HtmlTreeEvidenceRole::AuthoredCompleteDoctype,
+                    doctype.complete(),
+                )?;
+                validate_evidence(
+                    source,
+                    HtmlTreeEvidenceRole::AuthoredDoctypeName,
+                    doctype.authored_name(),
+                )?;
+                let (complete, name) =
+                    (doctype.complete().range(), doctype.authored_name().range());
+                if name.is_empty() || complete.start() > name.start() || name.end() > complete.end()
+                {
+                    return Err(
+                        HtmlTreeFreezeError::AuthoredDoctypeNameOutsideCompleteDoctype(node.id()),
+                    );
+                }
+            }
             HtmlTreeNodeKind::Element(element) => {
                 let authored = match element {
                     HtmlElement::Shell(shell) => match shell.origin() {
@@ -1992,6 +2116,144 @@ fn validate_ignored_null_characters(
                 diagnostics: diagnostic_tokens,
             },
         );
+    }
+    Ok(())
+}
+
+/// Durable replay of the selected canonical DOCTYPE / Initial No-Quirks
+/// successor.
+///
+/// Independently of the session, this proves that every DocumentType node, its
+/// single insertion action, and its exact tokenizer DOCTYPE token correspond
+/// one-to-one; that the node is the Document's first and only DocumentType
+/// child; that Initial consumed the token exactly once (index 0, no
+/// MissingDoctype, no reprocess); and that no committed DOCTYPE token lacks a
+/// node.
+fn validate_document_type(
+    nodes: &[HtmlTreeNode],
+    root: HtmlConstructedNodeId,
+    actions: &[HtmlTreeAction],
+    diagnostics: &[HtmlTreeDiagnostic],
+    tokenizer_run: &HtmlTokenizerRunResult,
+    processed_tokens: usize,
+) -> Result<(), HtmlTreeFreezeError> {
+    let root_node = find(nodes, root).ok_or(HtmlTreeFreezeError::MissingRootNode(root))?;
+    let mut seen_document_type: Option<HtmlConstructedNodeId> = None;
+    for node in nodes {
+        let HtmlTreeNodeKind::DocumentType(_) = node.kind() else {
+            continue;
+        };
+        if let Some(first) = seen_document_type {
+            return Err(HtmlTreeFreezeError::MultipleDocumentTypes(
+                first.max(node.id()),
+            ));
+        }
+        seen_document_type = Some(node.id());
+        if node.parent() != Some(root) {
+            return Err(HtmlTreeFreezeError::DocumentTypeParentIsNotDocument(
+                node.id(),
+            ));
+        }
+        if !node.children().is_empty() {
+            return Err(HtmlTreeFreezeError::DocumentTypeHasChildren(node.id()));
+        }
+        // Construction in Initial precedes every later Document child, so the
+        // DocumentType is the first explicit child and has the lowest creation
+        // identity among the Document's children.
+        if root_node.children().first() != Some(&node.id())
+            || root_node.children().iter().any(|child| *child < node.id())
+        {
+            return Err(HtmlTreeFreezeError::DocumentTypeIsNotFirstDocumentChild(
+                node.id(),
+            ));
+        }
+    }
+
+    let mut inserted_nodes: Vec<HtmlConstructedNodeId> = Vec::new();
+    let mut spent_tokens: Vec<usize> = Vec::new();
+    for action in actions {
+        let HtmlTreeActionKind::InsertedAuthoredDocumentType { node: subject } = action.kind()
+        else {
+            continue;
+        };
+        let subject = *subject;
+        let token_index = action.trigger().token_index();
+        let Some(node) = find(nodes, subject) else {
+            return Err(HtmlTreeFreezeError::UnresolvedActionSubject(subject));
+        };
+        let HtmlTreeNodeKind::DocumentType(doctype) = node.kind() else {
+            return Err(HtmlTreeFreezeError::DoctypeActionSubjectIsNotDocumentType(
+                subject,
+            ));
+        };
+        if inserted_nodes.contains(&subject) {
+            return Err(HtmlTreeFreezeError::DuplicateDoctypeInsertion(subject));
+        }
+        inserted_nodes.push(subject);
+        if spent_tokens.contains(&token_index) {
+            return Err(HtmlTreeFreezeError::DuplicateDoctypeTokenDecision { token_index });
+        }
+        spent_tokens.push(token_index);
+        let Some(HtmlToken::Doctype(token)) = tokenizer_run.tokens().get(token_index) else {
+            return Err(HtmlTreeFreezeError::DoctypeInsertionTriggerMismatch {
+                node: subject,
+                token_index,
+            });
+        };
+        if !exact_anchor(action.trigger().authored_boundary(), Some(token.complete())) {
+            return Err(HtmlTreeFreezeError::DoctypeInsertionTriggerMismatch {
+                node: subject,
+                token_index,
+            });
+        }
+        if !exact_anchor(Some(doctype.complete()), Some(token.complete()))
+            || !exact_anchor(Some(doctype.authored_name()), Some(token.name().source()))
+        {
+            return Err(HtmlTreeFreezeError::DoctypeEvidenceMismatch(subject));
+        }
+        // Initial consumes nothing but the DOCTYPE or the first token it
+        // reprocesses, so a DocumentType can only come from the first token.
+        if token_index != 0 {
+            return Err(HtmlTreeFreezeError::DoctypeConstructedOutsideInitial {
+                node: subject,
+                token_index,
+            });
+        }
+        if diagnostics.iter().any(|diagnostic| {
+            diagnostic.code() == HtmlTreeDiagnosticCode::MissingDoctype
+                && diagnostic.trigger().token_index() == token_index
+        }) {
+            return Err(HtmlTreeFreezeError::DoctypeTokenPairedWithMissingDoctype { token_index });
+        }
+        if actions.iter().any(|other| {
+            matches!(other.kind(), HtmlTreeActionKind::ReprocessedToken)
+                && other.trigger().token_index() == token_index
+        }) {
+            return Err(HtmlTreeFreezeError::DoctypeTokenReprocessed { token_index });
+        }
+        if diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code() == HtmlTreeDiagnosticCode::MissingDoctype)
+        {
+            return Err(HtmlTreeFreezeError::DoctypeCoexistsWithMissingDoctype(
+                subject,
+            ));
+        }
+    }
+    if let Some(node) = seen_document_type
+        && !inserted_nodes.contains(&node)
+    {
+        return Err(HtmlTreeFreezeError::DoctypeInsertionInventoryMismatch(node));
+    }
+    for (token_index, token) in tokenizer_run
+        .tokens()
+        .iter()
+        .enumerate()
+        .take(processed_tokens)
+    {
+        if matches!(token, HtmlToken::Doctype(_)) && !spent_tokens.contains(&token_index) {
+            return Err(HtmlTreeFreezeError::DoctypeTokenWithoutInsertion { token_index });
+        }
     }
     Ok(())
 }
@@ -4396,7 +4658,10 @@ fn validate_completion(
                 return Ok(());
             };
             for node in nodes {
-                if let Some(HtmlAuthoredSource::StartTag { complete, .. }) = node.authored_source()
+                if let Some(
+                    HtmlAuthoredSource::StartTag { complete, .. }
+                    | HtmlAuthoredSource::Doctype { complete, .. },
+                ) = node.authored_source()
                     && complete.range() == boundary.range()
                 {
                     return Err(
@@ -4413,8 +4678,16 @@ fn is_complete_document_shell(nodes: &[HtmlTreeNode], root: HtmlConstructedNodeI
     let Some(root_node) = find(nodes, root) else {
         return false;
     };
-    let [html_id] = root_node.children() else {
-        return false;
+    // An optional leading DocumentType precedes the single `html` element.
+    let html_id = match root_node.children() {
+        [html_id] => html_id,
+        [doctype_id, html_id]
+            if find(nodes, *doctype_id)
+                .is_some_and(|node| matches!(node.kind(), HtmlTreeNodeKind::DocumentType(_))) =>
+        {
+            html_id
+        }
+        _ => return false,
     };
     let Some(html) = find(nodes, *html_id) else {
         return false;

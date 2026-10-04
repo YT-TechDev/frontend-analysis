@@ -383,6 +383,9 @@ fn project_tree(analysis: &HtmlDocumentShellAnalysis, id: HtmlConstructedNodeId)
             ),
             children,
         },
+        HtmlTreeNodeKind::DocumentType(_) => {
+            unreachable!("no TC-S1 GOLD case constructs a DocumentType")
+        }
         HtmlTreeNodeKind::Text(text) => GoldNode::Text {
             // Leaked back as a `&'static str` is impossible, so the comparison
             // below uses the owned projection instead; this arm exists only so
@@ -451,6 +454,9 @@ fn own_observed(analysis: &HtmlDocumentShellAnalysis, id: HtmlConstructedNodeId)
         .collect();
     match node.kind() {
         HtmlTreeNodeKind::Document => OwnedNode::Document(children),
+        HtmlTreeNodeKind::DocumentType(_) => {
+            unreachable!("no TC-S1 GOLD case constructs a DocumentType")
+        }
         HtmlTreeNodeKind::Element(_) => {
             let GoldNode::Element { name, origin, .. } = project_tree(analysis, id) else {
                 unreachable!("element projects to element")
@@ -820,6 +826,9 @@ fn synthesized_and_root_nodes_carry_no_authored_source() {
                     "{}: the document root has no authored source",
                     case.id
                 ),
+                HtmlTreeNodeKind::DocumentType(_) => {
+                    unreachable!("no TC-S1 GOLD case constructs a DocumentType")
+                }
                 HtmlTreeNodeKind::Element(HtmlElement::SelectedOrdinary(_)) => {
                     unreachable!("no TC-S1 GOLD case constructs a selected ordinary element")
                 }
@@ -878,6 +887,10 @@ fn retained_evidence_is_exactly_the_originating_token_evidence() {
                 HtmlToken::Tag(tag) => {
                     (tag.complete().range().start(), tag.complete().range().end())
                 }
+                HtmlToken::Doctype(doctype) => (
+                    doctype.complete().range().start(),
+                    doctype.complete().range().end(),
+                ),
                 HtmlToken::EndOfFile(end_of_file) => (
                     end_of_file.source().range().start(),
                     end_of_file.source().range().end(),
@@ -911,6 +924,9 @@ fn retained_evidence_is_exactly_the_originating_token_evidence() {
                         "{}: authored name evidence is a retained token range",
                         case.id
                     );
+                }
+                Some(HtmlAuthoredSource::Doctype { .. }) => {
+                    unreachable!("no TC-S1 GOLD case constructs a DocumentType")
                 }
                 Some(HtmlAuthoredSource::Characters(contributions)) => {
                     for contribution in contributions {
@@ -1463,7 +1479,7 @@ fn lower_layer_unsupported_capabilities_are_never_upgraded() {
     // Markup declarations are the tokenizer's own explicit unsupported
     // capability (Data Named and Numeric references are supported, so `<!xx>`
     // is the narrow lower-layer sentinel), so the tree never sees those tokens.
-    for source in ["<!DOCTYPE html>", "<!-- c -->", "<!xx>", "<body><!xx>"] {
+    for source in ["<!DOCTYPE svg>", "<!-- c -->", "<!xx>", "<body><!xx>"] {
         let analysis = analyze(source);
         assert!(
             !analysis.is_complete(),

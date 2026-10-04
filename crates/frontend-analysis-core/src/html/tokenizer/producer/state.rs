@@ -1,5 +1,8 @@
 //! The exhaustive private tokenizer state enum.
 //!
+//! The five Doctype* states implement only the selected canonical
+//! `<!DOCTYPE html>` family; they are not a general DOCTYPE grammar.
+//!
 //! TC-S9 extends the established Data-context subset with only the four
 //! RAWTEXT states required by the selected InHead `<style>` lifecycle, and
 //! TC-S10 adds only the four RCDATA states plus the three character-reference
@@ -55,6 +58,19 @@ pub(super) enum State {
     /// Input-free: consumes and examines no unit, yet costs one transition.
     /// It is never dispatched with an input unit.
     NumericCharacterReferenceEnd,
+    /// Entered from TagOpen only after bounded non-committing recognition
+    /// proved the next seven unconsumed bytes are ASCII-CI `DOCTYPE`. Each
+    /// letter is still consumed by the single forward cursor, one unit per
+    /// transition.
+    DoctypeKeyword,
+    /// Requires at least one ASCII whitespace unit after the keyword.
+    DoctypeAfterKeyword,
+    /// Skips further ASCII whitespace; only the selected name may follow.
+    DoctypeBeforeName,
+    /// Consumes exactly the four ASCII-CI letters of the selected name `html`.
+    DoctypeName,
+    /// Skips optional ASCII whitespace and accepts only the closing `>`.
+    DoctypeAfterName,
 }
 
 /// The tokenizer-private return owner shared by the character reference

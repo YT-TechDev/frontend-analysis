@@ -88,6 +88,8 @@ mod after_body_successor_production;
 #[cfg(test)]
 mod after_body_successor_validation;
 #[cfg(test)]
+mod canonical_doctype_successor_production;
+#[cfg(test)]
 mod canonical_doctype_successor_validation;
 #[cfg(test)]
 mod data_rcdata_numeric_reference_successor_production;

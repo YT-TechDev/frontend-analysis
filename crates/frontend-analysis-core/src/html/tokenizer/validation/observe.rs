@@ -98,6 +98,11 @@ fn observe_token(source: &SourceText, token: &HtmlToken) -> Token {
                 .map(|anchor| lexeme(source, anchor)),
             close_delimiter: lexeme(source, tag.close_delimiter()),
         },
+        HtmlToken::Doctype(doctype) => Token::Doctype {
+            complete: lexeme(source, doctype.complete()),
+            name: lexeme(source, doctype.name().source()),
+            interpreted_name: doctype.name().interpreted().to_owned(),
+        },
         HtmlToken::EndOfFile(eof) => Token::EndOfFile {
             at: anchor_span(eof.source()),
         },

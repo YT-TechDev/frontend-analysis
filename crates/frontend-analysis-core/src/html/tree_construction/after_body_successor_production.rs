@@ -206,6 +206,7 @@ fn creation_signature(analysis: &HtmlDocumentShellAnalysis) -> Vec<String> {
         .map(|node| match node.kind() {
             HtmlTreeNodeKind::Document => "Document".to_owned(),
             HtmlTreeNodeKind::Element(element) => format!("Element({:?})", element.name()),
+            HtmlTreeNodeKind::DocumentType(_) => "DocumentType".to_owned(),
             HtmlTreeNodeKind::Text(text) => format!("Text({:?})", text.interpreted()),
         })
         .collect()

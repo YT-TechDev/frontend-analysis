@@ -228,6 +228,9 @@ fn project_tree(
         HtmlTreeNodeKind::Element(HtmlElement::Title(_)) => {
             panic!("TC-S3 predecessor fixtures must not construct a TC-S10 Title")
         }
+        HtmlTreeNodeKind::DocumentType(_) => {
+            panic!("TC-S3 predecessor fixtures must not construct a DocumentType")
+        }
         HtmlTreeNodeKind::Text(text) => ExpectedNode::Text {
             interpreted: text.interpreted().to_owned(),
             contributions: text
@@ -250,6 +253,9 @@ fn project_actions(analysis: &HtmlDocumentShellAnalysis) -> Vec<(ExpectedAction,
                 }
                 HtmlTreeActionKind::InsertedSynthesizedShellElement { name, .. } => {
                     ExpectedAction::InsertedSynthesizedShell(shell_name(*name))
+                }
+                HtmlTreeActionKind::InsertedAuthoredDocumentType { .. } => {
+                    panic!("TC-S3 predecessor fixtures must not construct a DocumentType")
                 }
                 HtmlTreeActionKind::InsertedTextNode { .. } => ExpectedAction::InsertedText,
                 HtmlTreeActionKind::AppendedToTextNode { .. } => ExpectedAction::AppendedText,

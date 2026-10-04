@@ -628,6 +628,7 @@ impl Machine {
                     Err(Unsupported::OtherShellEnd)
                 }
                 HtmlToken::Tag(_) => Err(Unsupported::OutsideClosedCandidate),
+                HtmlToken::Doctype(_) => Err(Unsupported::OutsideClosedCandidate),
                 HtmlToken::EndOfFile(_) => Err(Unsupported::OutsideClosedCandidate),
             },
             Phase::AfterBody => match token {
@@ -656,6 +657,7 @@ impl Machine {
                 _ => Err(Unsupported::OutsideClosedCandidate),
             },
             Phase::AfterAfterBody => match token {
+                HtmlToken::Doctype(_) => Err(Unsupported::OutsideClosedCandidate),
                 HtmlToken::EndOfFile(_) => {
                     self.actions.push(Action::StopAtEof {
                         phase: Phase::AfterAfterBody,
@@ -680,6 +682,7 @@ fn token_end(token: &HtmlToken) -> usize {
     match token {
         HtmlToken::Character(character) => character.source().range().end(),
         HtmlToken::Tag(tag) => tag.complete().range().end(),
+        HtmlToken::Doctype(doctype) => doctype.complete().range().end(),
         HtmlToken::EndOfFile(eof) => eof.source().range().start(),
     }
 }
@@ -688,6 +691,7 @@ fn token_evidence(token: &HtmlToken) -> Evidence {
     match token {
         HtmlToken::Character(character) => evidence(character.source()),
         HtmlToken::Tag(tag) => evidence(tag.complete()),
+        HtmlToken::Doctype(doctype) => evidence(doctype.complete()),
         HtmlToken::EndOfFile(eof) => evidence(eof.source()),
     }
 }

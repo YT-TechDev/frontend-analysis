@@ -37,13 +37,14 @@ use crate::SourceAnchor;
 
 use super::super::token::{HtmlTagKind, HtmlToken};
 use super::result::{
-    HtmlConstructedIdentityCounter, HtmlConstructedNodeId, HtmlDocumentShellParts, HtmlElement,
-    HtmlParagraphClosure, HtmlParagraphElement, HtmlParagraphElementOrigin,
-    HtmlParagraphSynthesisCause, HtmlSelectedOrdinaryElement, HtmlSelectedOrdinaryElementName,
-    HtmlShellClosure, HtmlShellElement, HtmlShellElementName, HtmlShellElementOrigin,
-    HtmlStyleElement, HtmlSynthesisCause, HtmlTextContribution, HtmlTextNode, HtmlTitleElement,
-    HtmlTreeAction, HtmlTreeActionKind, HtmlTreeCapability, HtmlTreeCompletion, HtmlTreeDiagnostic,
-    HtmlTreeDiagnosticCode, HtmlTreeNode, HtmlTreeNodeKind, HtmlTreeRecovery, HtmlTreeTokenTrigger,
+    HtmlConstructedIdentityCounter, HtmlConstructedNodeId, HtmlDocumentShellParts,
+    HtmlDocumentType, HtmlElement, HtmlParagraphClosure, HtmlParagraphElement,
+    HtmlParagraphElementOrigin, HtmlParagraphSynthesisCause, HtmlSelectedOrdinaryElement,
+    HtmlSelectedOrdinaryElementName, HtmlShellClosure, HtmlShellElement, HtmlShellElementName,
+    HtmlShellElementOrigin, HtmlStyleElement, HtmlSynthesisCause, HtmlTextContribution,
+    HtmlTextNode, HtmlTitleElement, HtmlTreeAction, HtmlTreeActionKind, HtmlTreeCapability,
+    HtmlTreeCompletion, HtmlTreeDiagnostic, HtmlTreeDiagnosticCode, HtmlTreeNode, HtmlTreeNodeKind,
+    HtmlTreeRecovery, HtmlTreeTokenTrigger,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,12 +105,21 @@ pub(super) enum AdmittedToken<'run> {
     EndOfFile {
         at: usize,
     },
+    /// The selected canonical DOCTYPE, carrying direct references to the
+    /// tokenizer-owned exact complete and authored-name evidence.
+    Doctype {
+        complete: &'run SourceAnchor,
+        raw_name: &'run SourceAnchor,
+    },
 }
 
 pub(super) fn token_trigger(token: &HtmlToken, token_index: usize) -> HtmlTreeTokenTrigger {
     match token {
         HtmlToken::Character(character) => {
             HtmlTreeTokenTrigger::authored(token_index, character.source().clone())
+        }
+        HtmlToken::Doctype(doctype) => {
+            HtmlTreeTokenTrigger::authored(token_index, doctype.complete().clone())
         }
         HtmlToken::Tag(tag) => HtmlTreeTokenTrigger::authored(token_index, tag.complete().clone()),
         HtmlToken::EndOfFile(_) => HtmlTreeTokenTrigger::end_of_file(token_index),
@@ -189,6 +199,7 @@ impl AdmittedToken<'_> {
                 complete.range().end()
             }
             Self::EndOfFile { at } => *at,
+            Self::Doctype { complete, .. } => complete.range().end(),
         }
     }
 }
@@ -237,6 +248,10 @@ pub(super) fn admit(token: &HtmlToken) -> Result<AdmittedToken<'_>, HtmlTreeCapa
                 }),
             }
         }
+        HtmlToken::Doctype(doctype) => Ok(AdmittedToken::Doctype {
+            complete: doctype.complete(),
+            raw_name: doctype.name().source(),
+        }),
         HtmlToken::EndOfFile(end_of_file) => Ok(AdmittedToken::EndOfFile {
             at: end_of_file.source().range().start(),
         }),
@@ -300,6 +315,7 @@ enum ElementProvenance {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Effect {
     RecordMissingDoctype,
+    InsertDocumentType,
     InsertHtmlElement(ElementProvenance),
     InsertHeadElement(ElementProvenance),
     InsertBodyElement(ElementProvenance),
@@ -371,6 +387,12 @@ fn classify(
     open_text_element: Option<AdmittedElementName>,
     token: &AdmittedToken<'_>,
 ) -> Result<ModeStep, HtmlTreeCapability> {
+    // A selected DOCTYPE token is only meaningful in Initial. Elsewhere it is
+    // refused before any mutation; no second DocumentType is constructed and
+    // no general recovery is implemented.
+    if matches!(token, AdmittedToken::Doctype { .. }) && mode != InsertionMode::Initial {
+        return Err(HtmlTreeCapability::DoctypeOutsideInitial);
+    }
     if token.is_style_tag() {
         match (mode, token) {
             (
@@ -424,6 +446,12 @@ fn classify(
 
     match mode {
         InsertionMode::Initial => {
+            if matches!(token, AdmittedToken::Doctype { .. }) {
+                return Ok(ModeStep::Consume {
+                    effect: Some(Effect::InsertDocumentType),
+                    next: Some(InsertionMode::BeforeHtml),
+                });
+            }
             reject_whitespace_sensitive_characters(token)?;
             Ok(ModeStep::Reprocess {
                 effect: Some(Effect::RecordMissingDoctype),
@@ -541,6 +569,7 @@ fn classify(
                 Err(HtmlTreeCapability::UnprovedShellStartTagPosition)
             }
             AdmittedToken::EndTag { .. } => Err(HtmlTreeCapability::UnprovedShellEndTagPosition),
+            AdmittedToken::Doctype { .. } => Err(HtmlTreeCapability::DoctypeOutsideInitial),
         },
         InsertionMode::AfterHead => {
             reject_whitespace_sensitive_characters(token)?;
@@ -707,6 +736,7 @@ fn classify(
                     effect: (!open_selected_ordinary.is_empty())
                         .then_some(Effect::RecordOpenSelectedOrdinaryElementAtEndOfFile),
                 }),
+                AdmittedToken::Doctype { .. } => Err(HtmlTreeCapability::DoctypeOutsideInitial),
             }
         }
         InsertionMode::AfterBody => match token {
@@ -734,6 +764,7 @@ fn classify(
                 Err(HtmlTreeCapability::UnprovedShellStartTagPosition)
             }
             AdmittedToken::EndTag { .. } => Err(HtmlTreeCapability::UnprovedShellEndTagPosition),
+            AdmittedToken::Doctype { .. } => Err(HtmlTreeCapability::DoctypeOutsideInitial),
         },
         InsertionMode::AfterAfterBody => match token {
             AdmittedToken::EndOfFile { .. } => Ok(ModeStep::Stop { effect: None }),
@@ -753,6 +784,7 @@ fn classify(
                 Err(HtmlTreeCapability::UnprovedShellStartTagPosition)
             }
             AdmittedToken::EndTag { .. } => Err(HtmlTreeCapability::UnprovedShellEndTagPosition),
+            AdmittedToken::Doctype { .. } => Err(HtmlTreeCapability::DoctypeOutsideInitial),
         },
     }
 }
@@ -859,6 +891,8 @@ pub(crate) enum HtmlTreeSessionError {
     TitleElementAlreadyOpen,
     TitleElementIsNotCurrent,
     StyleElementIsNotCurrent,
+    DocumentTypeInsertionWithoutDoctypeToken,
+    DocumentTypeAlreadyConstructed,
 }
 
 impl std::fmt::Display for HtmlTreeSessionError {
@@ -1094,6 +1128,7 @@ impl HtmlTreeSession {
                 );
                 Ok(())
             }
+            Effect::InsertDocumentType => self.insert_document_type(trigger, token),
             Effect::InsertHtmlElement(provenance) => {
                 self.insert_shell_element(HtmlShellElementName::Html, provenance, trigger, token)?;
                 Ok(())
@@ -1266,6 +1301,53 @@ impl HtmlTreeSession {
             Effect::CloseStyleElement => self.close_style_element(trigger),
             Effect::PopStyleElementAtEndOfFile => self.pop_style_element_at_eof(trigger),
         }
+    }
+
+    /// Constructs the one selected DocumentType as a child of the Document
+    /// root. It is a constructed node, not an element: it is never pushed onto
+    /// the open-elements stack and leaves the private document mode untouched.
+    fn insert_document_type(
+        &mut self,
+        trigger: &HtmlTreeTokenTrigger,
+        token: &AdmittedToken<'_>,
+    ) -> Result<(), HtmlTreeSessionError> {
+        let AdmittedToken::Doctype { complete, raw_name } = token else {
+            return Err(HtmlTreeSessionError::DocumentTypeInsertionWithoutDoctypeToken);
+        };
+        if self
+            .nodes
+            .iter()
+            .any(|node| matches!(node.kind(), HtmlTreeNodeKind::DocumentType(_)))
+        {
+            return Err(HtmlTreeSessionError::DocumentTypeAlreadyConstructed);
+        }
+        let parent = self.root;
+        let parent_storage_index = self
+            .nodes
+            .iter()
+            .position(|node| node.id() == parent)
+            .ok_or(HtmlTreeSessionError::UnknownConstructedNode(parent))?;
+        let reserved = self
+            .identities
+            .reserve()
+            .ok_or(HtmlTreeSessionError::ConstructedIdentityExhausted)?;
+        let node = HtmlTreeNode::new(
+            reserved,
+            Some(parent),
+            Vec::new(),
+            HtmlTreeNodeKind::DocumentType(HtmlDocumentType::new(
+                (*complete).clone(),
+                (*raw_name).clone(),
+            )),
+        );
+        self.nodes[parent_storage_index].push_child(reserved);
+        self.nodes.push(node);
+        self.identities.commit(reserved);
+        self.record_action(
+            HtmlTreeActionKind::InsertedAuthoredDocumentType { node: reserved },
+            trigger,
+        );
+        Ok(())
     }
 
     fn insert_shell_element(

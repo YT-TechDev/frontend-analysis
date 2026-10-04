@@ -784,6 +784,7 @@ impl Frozen {
         let boundary = match &self.analysis.tokenizer_run().tokens()[index] {
             HtmlToken::Character(c) => c.source().clone(),
             HtmlToken::Tag(t) => t.complete().clone(),
+            HtmlToken::Doctype(d) => d.complete().clone(),
             HtmlToken::EndOfFile(_) => panic!("end-of-file has no authored boundary"),
         };
         HtmlTreeTokenTrigger::authored(index, boundary)

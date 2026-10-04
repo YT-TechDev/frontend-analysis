@@ -34,6 +34,7 @@ fn outline(report: &HtmlTreeReport) -> Vec<String> {
         let label = match node.kind() {
             HtmlTreeNodeKind::Document => "document".to_owned(),
             HtmlTreeNodeKind::Element(element) => format!("{:?}", element.name()).to_lowercase(),
+            HtmlTreeNodeKind::DocumentType(_) => "doctype".to_owned(),
             HtmlTreeNodeKind::Text(text) => format!("text {:?}", text.interpreted()),
         };
         out.push(format!("{depth}:{}:{label}", id.value()));
@@ -903,6 +904,7 @@ fn node_count_stays_within_emitted_tokens_plus_four() {
     for text_source in [
         "",
         "<body>",
+        "<!DOCTYPE html>",
         "<body><div></div>",
         "<body><div><section><p>t</p></section></div></body>",
         "<body></p></p></p>",
@@ -1037,4 +1039,261 @@ fn core_failure_display_names_no_source_content() {
         HtmlTreeCoreFailure::ProjectionResourceExhausted.to_string(),
         "HTML tree analysis returned a Core failure: report projection resources exhausted"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Selected canonical DocumentType (Issue #892)
+// ---------------------------------------------------------------------------
+
+fn document_type(report: &HtmlTreeReport, id: u32) -> &HtmlTreeDocumentType {
+    let node = element_node(report, id);
+    match node.kind() {
+        HtmlTreeNodeKind::DocumentType(doctype) => doctype,
+        other => panic!("node {id} is not a DocumentType: {other:?}"),
+    }
+}
+
+#[test]
+fn canonical_doctype_is_a_distinct_node_kind_under_the_document() {
+    // `<!DOCTYPE html>` is 0..15; `html` is 10..14.
+    let report = analyze_text("<!DOCTYPE html>");
+
+    assert_complete(&report);
+    assert_eq!(
+        outline(&report),
+        [
+            "0:0:document",
+            "1:1:doctype",
+            "1:2:html",
+            "2:3:head",
+            "2:4:body"
+        ]
+    );
+    let node = element_node(&report, 1);
+    // Distinct from Document, Element and Text.
+    assert!(matches!(node.kind(), HtmlTreeNodeKind::DocumentType(_)));
+    assert!(node.children().is_empty());
+    assert_eq!(node.parent(), Some(report.root()));
+    // Normal identity lookup finds it.
+    assert!(std::ptr::eq(report.node(HtmlTreeNodeId(1)).unwrap(), node));
+    // The Document's explicit child order places it before `html`.
+    assert_eq!(
+        element_node(&report, 0).children(),
+        [HtmlTreeNodeId(1), HtmlTreeNodeId(2)]
+    );
+    let doctype = document_type(&report, 1);
+    assert_eq!(span(doctype.complete()), at(0, 15, "<!DOCTYPE html>"));
+    assert_eq!(span(doctype.authored_name()), at(10, 14, "html"));
+    // MissingDoctype is absent and nothing else is diagnosed.
+    assert!(report.tree_diagnostics().is_empty());
+    assert!(report.tokenizer_diagnostics().is_empty());
+    assert_eq!(report.coverage().processed_tokens(), 2);
+    assert_eq!(span(report.coverage().committed_prefix()).1, 15);
+}
+
+#[test]
+fn canonical_doctype_before_an_explicit_shell_keeps_its_place_and_the_shell_evidence() {
+    // `<!DOCTYPE html>` 0..15 `<html>` 15..21 `<head>` 21..27 `</head>` 27..34
+    // `<body>` 34..40 `</body>` 40..47 `</html>` 47..54.
+    let report = analyze_text("<!DOCTYPE html><html><head></head><body></body></html>");
+
+    assert_complete(&report);
+    assert_eq!(
+        outline(&report),
+        [
+            "0:0:document",
+            "1:1:doctype",
+            "1:2:html",
+            "2:3:head",
+            "2:4:body"
+        ]
+    );
+    assert_eq!(authored_spans(element(&report, 2)).0, at(15, 21, "<html>"));
+    assert!(report.tree_diagnostics().is_empty());
+}
+
+#[test]
+fn canonical_doctype_authored_case_survives_in_the_exact_anchors() {
+    let report = analyze_text("<!DoCtYpE HTML>");
+    let doctype = document_type(&report, 1);
+    assert_eq!(span(doctype.complete()), at(0, 15, "<!DoCtYpE HTML>"));
+    assert_eq!(span(doctype.authored_name()), at(10, 14, "HTML"));
+
+    let report = analyze_text("<!doctype html>");
+    assert_eq!(
+        span(document_type(&report, 1).complete()),
+        at(0, 15, "<!doctype html>")
+    );
+}
+
+#[test]
+fn canonical_doctype_evidence_survives_dropping_the_caller_source() {
+    let report = {
+        let caller = source("<!DOCTYPE\r\n  HTML  >");
+        analyze_text_from(&caller)
+    };
+    // `<!DOCTYPE` 0..9, CRLF 9..11, two spaces 11..13, `HTML` 13..17, two
+    // spaces 17..19, `>` 19..20.
+    let doctype = document_type(&report, 1);
+    assert_eq!(
+        span(doctype.complete()),
+        at(0, 20, "<!DOCTYPE\r\n  HTML  >")
+    );
+    assert_eq!(span(doctype.authored_name()), at(13, 17, "HTML"));
+}
+
+#[test]
+fn canonical_doctype_identity_and_placement_do_not_depend_on_storage_order() {
+    for text_source in ["<!DOCTYPE html>", "<!DOCTYPE html><html></html>"] {
+        let src = source(text_source);
+        let normal = construct_html_document_shell(&src, fixed_limits()).unwrap();
+        let reversed = construct_html_document_shell(&src, fixed_limits())
+            .unwrap()
+            .with_reversed_storage();
+        let a = project(src.id(), &normal).unwrap();
+        let b = project(src.id(), &reversed).unwrap();
+
+        assert_eq!(outline(&a), outline(&b), "{text_source}");
+        let summary = |report: &HtmlTreeReport| {
+            report
+                .nodes()
+                .iter()
+                .map(|node| (node.id().value(), node.parent().map(|p| p.value())))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(summary(&a), summary(&b), "{text_source}");
+        assert_eq!(
+            span(document_type(&b, 1).complete()),
+            at(0, 15, "<!DOCTYPE html>")
+        );
+        assert_eq!(
+            element_node(&b, 0).children().first(),
+            Some(&HtmlTreeNodeId(1))
+        );
+    }
+}
+
+#[test]
+fn canonical_doctype_identity_is_independent_of_the_source_identity() {
+    for id in [0_u64, 5, 4_000_000_000] {
+        let src = SourceText::new(SourceId::new(id), "<!DOCTYPE html>".to_owned());
+        let report = analyze_selected_document_tree(&src).expect("report");
+        assert_eq!(outline(&report), outline(&analyze_text("<!DOCTYPE html>")));
+        assert_eq!(report.source_id(), SourceId::new(id));
+    }
+}
+
+#[test]
+fn doctype_outside_initial_projects_its_own_unsupported_capability() {
+    // The second DOCTYPE is 15..30.
+    let report = analyze_text("<!DOCTYPE html><!DOCTYPE html>");
+
+    let HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::TreeUnsupported(unsupported)) =
+        report.completion()
+    else {
+        panic!("expected tree unsupported, got {:?}", report.completion());
+    };
+    assert_eq!(
+        unsupported.capability(),
+        HtmlTreeUnsupportedCapability::DoctypeOutsideInitial
+    );
+    assert_eq!(
+        span(unsupported.trigger().unwrap()),
+        at(15, 30, "<!DOCTYPE html>")
+    );
+    // No second DocumentType was constructed and the refused token is not
+    // committed.
+    assert_eq!(
+        report
+            .nodes()
+            .iter()
+            .filter(|node| matches!(node.kind(), HtmlTreeNodeKind::DocumentType(_)))
+            .count(),
+        1
+    );
+    assert_eq!(span(report.coverage().committed_prefix()).1, 15);
+    assert_eq!(report.coverage().processed_tokens(), 1);
+}
+
+#[test]
+fn non_selected_markup_declarations_remain_tokenizer_unsupported() {
+    for (text_source, trigger) in [
+        ("<!xx>", at(0, 2, "<!")),
+        ("<!DOCTYPE svg>", at(0, 2, "<!")),
+        ("<!DOCTYPEhtml>", at(0, 2, "<!")),
+        ("<!DOCTYPE html PUBLIC \"x\">", at(0, 2, "<!")),
+        ("<body><!DOCTYPE>", at(6, 8, "<!")),
+    ] {
+        let report = analyze_text(text_source);
+        let HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::TokenizerUnsupported(
+            unsupported,
+        )) = report.completion()
+        else {
+            panic!("{text_source}: got {:?}", report.completion());
+        };
+        assert_eq!(
+            unsupported.capability(),
+            HtmlTokenizerUnsupportedCapability::MarkupDeclaration,
+            "{text_source}"
+        );
+        assert_eq!(span(unsupported.trigger()), trigger, "{text_source}");
+        assert!(
+            !report
+                .nodes()
+                .iter()
+                .any(|node| matches!(node.kind(), HtmlTreeNodeKind::DocumentType(_))),
+            "{text_source}"
+        );
+    }
+}
+
+#[test]
+fn canonical_doctype_resource_refusals_stay_resource_limited() {
+    use crate::html::tokenizer::resource::HtmlTokenizerLimits;
+    let analyze_with = |text_source: &str, limits: HtmlTokenizerLimits| {
+        let src = source(text_source);
+        let analysis = construct_html_document_shell(&src, limits).unwrap();
+        project(src.id(), &analysis).unwrap()
+    };
+
+    // Retained interpreted bytes: the selected name needs four.
+    let tight = HtmlTokenizerLimits::new(1_024, 8_192, 1_024, 1_024, 1, 3, 0);
+    let report = analyze_with("<!DOCTYPE html>", tight);
+    let HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::ResourceLimited(limit)) =
+        report.completion()
+    else {
+        panic!("expected resource limited, got {:?}", report.completion());
+    };
+    assert_eq!(limit.kind(), HtmlTreeResourceKind::RetainedInterpretedBytes);
+    assert_eq!(limit.limit(), 3);
+    assert_eq!(limit.attempted(), 4);
+    assert_eq!(outline(&report), ["0:0:document"]);
+
+    // Emitted tokens: `x` fits, the DOCTYPE would be the second token.
+    let one = HtmlTokenizerLimits::new(1_024, 8_192, 1, 1_024, 1, 4_096, 0);
+    let report = analyze_with("x<!DOCTYPE html>", one);
+    let HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::ResourceLimited(limit)) =
+        report.completion()
+    else {
+        panic!("expected resource limited, got {:?}", report.completion());
+    };
+    assert_eq!(limit.kind(), HtmlTreeResourceKind::EmittedTokens);
+    assert_eq!((limit.limit(), limit.attempted()), (1, 2));
+    assert!(
+        !report
+            .nodes()
+            .iter()
+            .any(|node| matches!(node.kind(), HtmlTreeNodeKind::DocumentType(_)))
+    );
+
+    // Transition steps: one short of the seventeen the source needs.
+    let short = HtmlTokenizerLimits::new(1_024, 16, 1_024, 1_024, 1, 4_096, 0);
+    let report = analyze_with("<!DOCTYPE html>", short);
+    let HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::ResourceLimited(limit)) =
+        report.completion()
+    else {
+        panic!("expected resource limited, got {:?}", report.completion());
+    };
+    assert_eq!(limit.kind(), HtmlTreeResourceKind::TransitionSteps);
+    assert_eq!((limit.limit(), limit.attempted()), (16, 17));
 }
