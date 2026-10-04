@@ -2836,24 +2836,28 @@ fn cd7_placement_and_identity_are_separate_facts() {
 /// values across them, and such ids are explicitly not comparable.
 #[test]
 fn cd7_cross_result_identity_is_not_comparable_and_not_required() {
-    let fixture = accepted("A01");
-    let observed = observe_plain(fixture.bytes);
-    let first = answers_a(&repr_a(&observed, SCOPE_1));
-    let second = answers_a(&repr_a(&observed, SCOPE_2));
-    assert!(verdict(&first, fixture).is_empty());
-    assert!(verdict(&second, fixture).is_empty());
-    let (one, two) = (
-        first.constructed_identity.unwrap(),
-        second.constructed_identity.unwrap(),
+    // Two independent parse results, each in its own result scope.
+    let (fixture_a, scope_a) = (accepted("A01"), SCOPE_1);
+    let (fixture_b, scope_b) = (accepted("W05"), SCOPE_2);
+    let observed_a = observe_plain(fixture_a.bytes);
+    let observed_b = observe_plain(fixture_b.bytes);
+    let result_a = answers_a(&repr_a(&observed_a, scope_a));
+    let result_b = answers_a(&repr_a(&observed_b, scope_b));
+    assert!(verdict(&result_a, fixture_a).is_empty());
+    assert!(verdict(&result_b, fixture_b).is_empty());
+    assert_ne!(result_a.scope, result_b.scope);
+    let (id_a, id_b) = (
+        result_a.constructed_identity.unwrap(),
+        result_b.constructed_identity.unwrap(),
     );
-    assert_eq!(one.same_observation(two), None);
-    assert_eq!(two.same_observation(one), None);
-    // Within one scope a result is deterministic: rebuilding it is equal.
-    assert_eq!(repr_a(&observed, SCOPE_1), repr_a(&observed, SCOPE_1));
-    // A different parse result in the same scope is a different result; no
-    // meaning is attached to its ids relative to this one's.
-    let other = observe_plain(accepted("W05").bytes);
-    assert!(verdict(&answers_a(&repr_a(&other, SCOPE_1)), accepted("W05")).is_empty());
+    // No same-observation comparison is defined across result scopes. The
+    // theorem is the scope separation, not any inequality of internal values.
+    assert_eq!(id_a.same_observation(id_b), None);
+    assert_eq!(id_b.same_observation(id_a), None);
+    // Within one result scope the test-private rebuild is deterministic. This
+    // is a model sanity check, not a cross-run stability promise.
+    assert_eq!(repr_a(&observed_a, scope_a), repr_a(&observed_a, scope_a));
+    assert_eq!(repr_a(&observed_b, scope_b), repr_a(&observed_b, scope_b));
 }
 
 /// CD7 (I3) — the identity module exposes no conversion to or from another
