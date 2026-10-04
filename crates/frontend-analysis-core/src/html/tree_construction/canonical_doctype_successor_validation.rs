@@ -59,6 +59,18 @@
 //! as `ModelBoundary`, a property of this oracle and not of production. This
 //! module is not a second HTML parser, and the abstract [`Budget`] is a
 //! semantic atomicity device, not a proposed production resource dimension.
+//!
+//! # Constructed identity (test-private)
+//!
+//! The representation comparison uses an opaque, result-scoped identity (see
+//! the `identity` module). It is not derived from source identity, authored
+//! range, final placement or document mode, and nothing here claims that an
+//! identity is comparable, equal or stable across independent results; ids
+//! from different result scopes are explicitly not comparable. The selected
+//! slice has no placement-changing recovery, so the model does not exercise
+//! the architecture's "identity survives recovery" invariant. It only avoids
+//! precluding it, because identity never reads placement. This is a validation
+//! vocabulary, not a production encoding or placement.
 
 use std::collections::BTreeSet;
 
@@ -1695,8 +1707,95 @@ fn dims(expected: &Observation, got: &Observation) -> BTreeSet<Dim> {
 /// Document for the selected canonical DOCTYPE (Initial insertion mode).
 const WHATWG_CONSTRUCTS_DOCUMENT_TYPE_CHILD: bool = true;
 
+/// Test-private, result-scoped, opaque constructed identity.
+///
+/// Architecture (HTML_TREE_CONSTRUCTION.md): identity is scoped to one parse
+/// result; distinct from `SourceId`, ranges, token indexes, browser identity,
+/// private storage identity and final placement; and gives no cross-result
+/// stability promise. The fields are private to this module, so nothing else in
+/// this file can do arithmetic on them or convert them to or from another
+/// domain. `==` is representation equality only; whether two ids denote the
+/// same constructed observation can only be asked through `same_observation`,
+/// which refuses to compare ids from different result scopes.
+///
+/// This is a validation vocabulary, not a production encoding or placement.
+mod identity {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(super) struct ResultScope(pub(super) u32);
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(super) struct ConstructedId {
+        scope: ResultScope,
+        mint: u32,
+    }
+
+    impl ConstructedId {
+        pub(super) fn scope(self) -> ResultScope {
+            self.scope
+        }
+
+        /// `None` when the ids belong to independent result scopes: they are
+        /// not comparable as the same durable observation.
+        pub(super) fn same_observation(self, other: Self) -> Option<bool> {
+            (self.scope == other.scope).then_some(self.mint == other.mint)
+        }
+
+        /// Deliberately wrong: derives an id from another domain's value. Used
+        /// only to prove the independence checks can fail.
+        pub(super) fn derived_by_countermodel(scope: ResultScope, from: u64) -> Self {
+            Self {
+                scope,
+                mint: u32::try_from(from).expect("small countermodel value"),
+            }
+        }
+    }
+
+    /// Mints ids for one result scope, deterministically and opaquely.
+    pub(super) struct Minter {
+        scope: ResultScope,
+        next: u32,
+    }
+
+    impl Minter {
+        pub(super) fn new(scope: ResultScope) -> Self {
+            Self { scope, next: 0 }
+        }
+
+        pub(super) fn mint(&mut self) -> ConstructedId {
+            let id = ConstructedId {
+                scope: self.scope,
+                mint: self.next,
+            };
+            self.next += 1;
+            id
+        }
+    }
+}
+
+use identity::{ConstructedId, Minter, ResultScope};
+
+const SCOPE_1: ResultScope = ResultScope(1);
+const SCOPE_2: ResultScope = ResultScope(2);
+
+/// How constructed identities are assigned. Only `Opaque` is the validated
+/// model; the others are countermodels, each deriving identity from exactly one
+/// domain the architecture forbids as the sole definition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct NodeId(u32);
+enum IdentityScheme {
+    Opaque,
+    FromPlacement,
+    FromRange,
+    FromSourceId,
+    FromDocumentMode,
+}
+
+/// Structural perturbation of the Document child list. It is not a recovery
+/// claim: the selected slice has no placement-changing recovery.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Placement {
+    Final,
+    Reversed,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NodeKind {
@@ -1719,6 +1818,89 @@ enum ChildKind {
     Element(TagName),
 }
 
+/// Identities of one result's constructed nodes, minted when the nodes are
+/// created (one per constructed child of `Observation::children`, in creation
+/// order). Placement is a separate fact and never an input of the opaque
+/// scheme.
+struct Minted {
+    scope: ResultScope,
+    document: ConstructedId,
+    children: Vec<ConstructedId>,
+}
+
+fn final_index(placement: Placement, index: usize, total: usize) -> usize {
+    match placement {
+        Placement::Final => index,
+        Placement::Reversed => total - 1 - index,
+    }
+}
+
+fn mint(
+    observation: &Observation,
+    scope: ResultScope,
+    scheme: IdentityScheme,
+    placement: Placement,
+) -> Minted {
+    let total = observation.children.len();
+    if scheme == IdentityScheme::Opaque {
+        let mut minter = Minter::new(scope);
+        let document = minter.mint();
+        let children = observation.children.iter().map(|_| minter.mint()).collect();
+        return Minted {
+            scope,
+            document,
+            children,
+        };
+    }
+    let derived = |value: u64| ConstructedId::derived_by_countermodel(scope, value);
+    let children = observation
+        .children
+        .iter()
+        .enumerate()
+        .map(|(index, child)| {
+            // The offset keeps ids distinct inside one result so lookups work.
+            let unique = 10_000 * (u64::try_from(index).expect("small") + 1);
+            let value = match scheme {
+                IdentityScheme::Opaque => unreachable!("handled above"),
+                IdentityScheme::FromPlacement => {
+                    u64::try_from(final_index(placement, index, total)).expect("small") + 1
+                }
+                IdentityScheme::FromRange => {
+                    let end = match child {
+                        Child::DocumentType(token) => token.complete.range.1,
+                        Child::Html(ElementOrigin::Authored(span)) => span.range.1,
+                        Child::Html(ElementOrigin::SynthesizedByBeforeHtml) => 0,
+                    };
+                    unique + u64::try_from(end).expect("small")
+                }
+                IdentityScheme::FromSourceId => {
+                    let source = match child {
+                        Child::DocumentType(token) => {
+                            token.complete.source + token.name_source.source
+                        }
+                        Child::Html(ElementOrigin::Authored(span)) => span.source,
+                        Child::Html(ElementOrigin::SynthesizedByBeforeHtml) => 0,
+                    };
+                    unique + source
+                }
+                IdentityScheme::FromDocumentMode => {
+                    unique
+                        + match observation.doc_mode {
+                            DocMode::NoQuirks => 1,
+                            DocMode::Quirks => 2,
+                        }
+                }
+            };
+            derived(value)
+        })
+        .collect();
+    Minted {
+        scope,
+        document: derived(0),
+        children,
+    }
+}
+
 /// Document-level fact, distinct from both authored identity and node identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DoctypeMeaning {
@@ -1739,99 +1921,108 @@ fn meaning_of(token: &DoctypeToken) -> DoctypeMeaning {
     }
 }
 
-/// Option A: a distinct constructed DocumentType node domain.
+/// Option A: a distinct constructed DocumentType node domain. Identity,
+/// authored evidence (`DoctypeMeaning`), placement (`children`) and document
+/// mode are four separately stated facts.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ReprA {
+    scope: ResultScope,
     nodes: Vec<NodeA>,
     document_mode: DocMode,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct NodeA {
-    id: NodeId,
+    id: ConstructedId,
     kind: NodeKind,
     element: Option<ElementOrigin>,
     doctype: Option<DoctypeMeaning>,
-    children: Vec<NodeId>,
+    children: Vec<ConstructedId>,
 }
 
 /// Option B: a distinct source-backed evidence relation outside the node
 /// domains. It carries no constructed identity and no placement.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ReprB {
+    scope: ResultScope,
+    document: ConstructedId,
     elements: Vec<ElementB>,
-    document_children: Vec<NodeId>,
+    document_children: Vec<ConstructedId>,
     evidence: Option<DoctypeMeaning>,
     document_mode: DocMode,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ElementB {
-    id: NodeId,
+    id: ConstructedId,
     origin: ElementOrigin,
 }
 
-/// Option B made to answer the placement and identity questions: the relation
-/// is given a constructed identity and a Document placement.
+/// Option B given the two facts it lacks: a constructed identity (minted like
+/// any other constructed node, not derived from the placement) and an explicit
+/// Document placement.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ReprBPlus {
     relation: ReprB,
-    relation_identity: NodeId,
+    relation_identity: ConstructedId,
     relation_placement: usize,
 }
 
-fn project_a(observation: &Observation) -> ReprA {
+fn project_a(observation: &Observation, minted: &Minted, placement: Placement) -> ReprA {
+    let total = observation.children.len();
     let mut nodes = vec![NodeA {
-        id: NodeId(0),
+        id: minted.document,
         kind: NodeKind::Document,
         element: None,
         doctype: None,
         children: Vec::new(),
     }];
-    for (offset, child) in observation.children.iter().enumerate() {
-        let id = NodeId(u32::try_from(offset + 1).expect("small fixture"));
-        let node = match child {
+    for (child, id) in observation.children.iter().zip(&minted.children) {
+        nodes.push(match child {
             Child::DocumentType(token) => NodeA {
-                id,
+                id: *id,
                 kind: NodeKind::DocumentType,
                 element: None,
                 doctype: Some(meaning_of(token)),
                 children: Vec::new(),
             },
             Child::Html(origin) => NodeA {
-                id,
+                id: *id,
                 kind: NodeKind::Element,
                 element: Some(origin.clone()),
                 doctype: None,
                 children: Vec::new(),
             },
-        };
-        nodes[0].children.push(id);
-        nodes.push(node);
+        });
     }
+    let mut ordered = vec![None; total];
+    for (index, id) in minted.children.iter().enumerate() {
+        ordered[final_index(placement, index, total)] = Some(*id);
+    }
+    nodes[0].children = ordered.into_iter().flatten().collect();
     ReprA {
+        scope: minted.scope,
         nodes,
         document_mode: observation.doc_mode,
     }
 }
 
-fn project_b(observation: &Observation) -> ReprB {
+fn project_b(observation: &Observation, minted: &Minted) -> ReprB {
     let mut elements = Vec::new();
     let mut evidence = None;
-    for child in &observation.children {
+    for (child, id) in observation.children.iter().zip(&minted.children) {
         match child {
             Child::DocumentType(token) => evidence = Some(meaning_of(token)),
-            Child::Html(origin) => {
-                let id = NodeId(u32::try_from(elements.len() + 1).expect("small fixture"));
-                elements.push(ElementB {
-                    id,
-                    origin: origin.clone(),
-                });
-            }
+            Child::Html(origin) => elements.push(ElementB {
+                id: *id,
+                origin: origin.clone(),
+            }),
         }
     }
     let document_children = elements.iter().map(|element| element.id).collect();
     ReprB {
+        scope: minted.scope,
+        document: minted.document,
         elements,
         document_children,
         evidence,
@@ -1839,47 +2030,50 @@ fn project_b(observation: &Observation) -> ReprB {
     }
 }
 
-/// Gives B an identity and placement so it can answer the same questions.
-fn extend_b(observation: &Observation) -> ReprBPlus {
-    let relation = project_b(observation);
-    let placement = observation
+fn doctype_child_index(observation: &Observation) -> usize {
+    observation
         .children
         .iter()
         .position(|child| matches!(child, Child::DocumentType(_)))
-        .expect("accepted fixtures own a DocumentType child");
-    // Identity is allocated in Document-child order, exactly as constructed
-    // nodes are, so it is result-scoped and independent of source evidence.
+        .expect("accepted fixtures own a DocumentType child")
+}
+
+/// Gives B its missing identity and placement. The identity is the one minted
+/// for that constructed observation; the placement is stated beside it.
+fn extend_b(observation: &Observation, minted: &Minted, placement: Placement) -> ReprBPlus {
+    let index = doctype_child_index(observation);
     ReprBPlus {
-        relation,
-        relation_identity: NodeId(u32::try_from(placement + 1).expect("small fixture")),
-        relation_placement: placement,
+        relation: project_b(observation, minted),
+        relation_identity: minted.children[index],
+        relation_placement: final_index(placement, index, observation.children.len()),
     }
 }
 
 /// The extended relation, read back as a constructed node.
 fn b_plus_as_a(extended: &ReprBPlus) -> ReprA {
+    let relation = &extended.relation;
     let mut nodes = vec![NodeA {
-        id: NodeId(0),
+        id: relation.document,
         kind: NodeKind::Document,
         element: None,
         doctype: None,
         children: Vec::new(),
     }];
-    let total = extended.relation.elements.len() + 1;
-    let mut elements = extended.relation.elements.iter();
+    let total = relation.elements.len() + 1;
+    let mut elements = relation.elements.iter();
     for position in 0..total {
         let node = if position == extended.relation_placement {
             NodeA {
                 id: extended.relation_identity,
                 kind: NodeKind::DocumentType,
                 element: None,
-                doctype: extended.relation.evidence.clone(),
+                doctype: relation.evidence.clone(),
                 children: Vec::new(),
             }
         } else {
             let element = elements.next().expect("one element per remaining position");
             NodeA {
-                id: NodeId(u32::try_from(position + 1).expect("small fixture")),
+                id: element.id,
                 kind: NodeKind::Element,
                 element: Some(element.origin.clone()),
                 doctype: None,
@@ -1890,20 +2084,34 @@ fn b_plus_as_a(extended: &ReprBPlus) -> ReprA {
         nodes.push(node);
     }
     ReprA {
+        scope: relation.scope,
         nodes,
-        document_mode: extended.relation.document_mode,
+        document_mode: relation.document_mode,
     }
 }
 
-/// What a consumer can state from a representation, read from its structure.
+/// Option A and B as built for one result scope, with the validated identity
+/// model and the final placement.
+fn repr_a(observation: &Observation, scope: ResultScope) -> ReprA {
+    let minted = mint(observation, scope, IdentityScheme::Opaque, Placement::Final);
+    project_a(observation, &minted, Placement::Final)
+}
+
+fn repr_b(observation: &Observation, scope: ResultScope) -> ReprB {
+    let minted = mint(observation, scope, IdentityScheme::Opaque, Placement::Final);
+    project_b(observation, &minted)
+}
+
+/// What a consumer can state from one representation, read from its structure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Answers {
+    scope: ResultScope,
     authored_complete: Option<Span>,
     authored_name: Option<Span>,
     identifiers_explicitly_missing: bool,
     fabricated_identifier_evidence: bool,
     document_child_sequence: Vec<ChildKind>,
-    constructed_identity: Option<NodeId>,
+    constructed_identity: Option<ConstructedId>,
     document_mode: DocMode,
 }
 
@@ -1949,6 +2157,7 @@ fn answers_a(repr: &ReprA) -> Answers {
         })
         .collect();
     Answers {
+        scope: repr.scope,
         authored_complete: complete,
         authored_name: name,
         identifiers_explicitly_missing: missing,
@@ -1962,6 +2171,7 @@ fn answers_a(repr: &ReprA) -> Answers {
 fn answers_b(repr: &ReprB) -> Answers {
     let (complete, name, missing, fabricated) = answers_from_meaning(repr.evidence.as_ref());
     Answers {
+        scope: repr.scope,
         authored_complete: complete,
         authored_name: name,
         identifiers_explicitly_missing: missing,
@@ -1984,7 +2194,7 @@ enum Question {
     Q3ThreeWayDistinction,
     Q4NoFabrication,
     Q5NoSilentOmission,
-    Q6NoRuntimeIdentity,
+    Q6ResultScopedOpaqueIdentity,
     Q7ArchitectureCompatible,
 }
 
@@ -1994,7 +2204,7 @@ const ALL_QUESTIONS: [Question; 7] = [
     Question::Q3ThreeWayDistinction,
     Question::Q4NoFabrication,
     Question::Q5NoSilentOmission,
-    Question::Q6NoRuntimeIdentity,
+    Question::Q6ResultScopedOpaqueIdentity,
     Question::Q7ArchitectureCompatible,
 ];
 
@@ -2004,9 +2214,9 @@ fn normative_child_sequence() -> Vec<ChildKind> {
     vec![ChildKind::DocumentType, ChildKind::Element(TagName::Html)]
 }
 
-/// Answers each question from the representation's own structure. A question
-/// passes only when the structure can state the normative fact.
-fn verdict(answers: &Answers, fixture: &Accepted, second_source: &Answers) -> BTreeSet<Question> {
+/// Judges one representation of one result against the selected theorem. No
+/// second result takes part: nothing here compares identities across results.
+fn verdict(answers: &Answers, fixture: &Accepted) -> BTreeSet<Question> {
     let mut failed = BTreeSet::new();
     // Q1: exact authored complete and name evidence.
     if answers.authored_complete != Some(sp(fixture.complete))
@@ -2041,10 +2251,15 @@ fn verdict(answers: &Answers, fixture: &Accepted, second_source: &Answers) -> BT
     {
         failed.insert(Question::Q5NoSilentOmission);
     }
-    // Q6: constructed identity, where stated, is result-scoped: it must not
-    // vary with source identity or authored range.
-    if answers.constructed_identity != second_source.constructed_identity {
-        failed.insert(Question::Q6NoRuntimeIdentity);
+    // Q6: the DocumentType owns an opaque constructed identity that belongs to
+    // this result's scope. The identity's independence from source, range,
+    // placement and mode is proved separately by the scheme tests, and no
+    // equality with an identity from another result is asked for.
+    if !answers
+        .constructed_identity
+        .is_some_and(|id| id.scope() == answers.scope)
+    {
+        failed.insert(Question::Q6ResultScopedOpaqueIdentity);
     }
     // Q7: ADR 0010 requires every supported constructed node to own a
     // constructed identity and constructed placement; the result stays
@@ -2056,6 +2271,56 @@ fn verdict(answers: &Answers, fixture: &Accepted, second_source: &Answers) -> BT
         failed.insert(Question::Q7ArchitectureCompatible);
     }
     failed
+}
+
+/// Domains an identity must not be defined by, as perturbations of one result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Perturbation {
+    FinalPlacement,
+    AuthoredRange,
+    SourceIdentity,
+    DocumentMode,
+}
+
+const ALL_PERTURBATIONS: [Perturbation; 4] = [
+    Perturbation::FinalPlacement,
+    Perturbation::AuthoredRange,
+    Perturbation::SourceIdentity,
+    Perturbation::DocumentMode,
+];
+
+fn doctype_identity(
+    observation: &Observation,
+    scheme: IdentityScheme,
+    placement: Placement,
+) -> ConstructedId {
+    let minted = mint(observation, SCOPE_1, scheme, placement);
+    minted.children[doctype_child_index(observation)]
+}
+
+/// The perturbations under which the DocumentType's identity stops denoting
+/// the same constructed observation. Ids are compared only inside one scope.
+fn identity_moves_under(scheme: IdentityScheme) -> BTreeSet<Perturbation> {
+    let baseline = observe_plain(accepted("A01").bytes);
+    let before = doctype_identity(&baseline, scheme, Placement::Final);
+    let mutated =
+        |mutation: Mutation| observe(accepted("A01").bytes, Budget::GENEROUS, Some(mutation));
+    let mut moved = BTreeSet::new();
+    for perturbation in ALL_PERTURBATIONS {
+        let (observation, placement) = match perturbation {
+            Perturbation::FinalPlacement => (baseline.clone(), Placement::Reversed),
+            Perturbation::AuthoredRange => (mutated(Mutation::CompleteShifted), Placement::Final),
+            Perturbation::SourceIdentity => {
+                (mutated(Mutation::SourceIdCorrupted), Placement::Final)
+            }
+            Perturbation::DocumentMode => (mutated(Mutation::QuirksOnCanonical), Placement::Final),
+        };
+        let after = doctype_identity(&observation, scheme, placement);
+        if before.same_observation(after) != Some(true) {
+            moved.insert(perturbation);
+        }
+    }
+    moved
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2394,36 +2659,32 @@ fn cd6_missing_doctype_contrast_is_observably_distinct() {
     assert_eq!(canonical.children.len(), 2);
 }
 
-/// CD7 — A/B comparison, derived from each representation's own structure.
+/// CD7 — A/B comparison. Each representation is judged on its own, against the
+/// selected theorem, inside its own result scope. No result is compared with
+/// another.
 #[test]
 fn cd7_representation_alternatives_are_compared_and_one_is_selected() {
     let mut a_failures = BTreeSet::new();
     let mut b_failures = BTreeSet::new();
     for fixture in ACCEPTED {
         let observed = observe_plain(fixture.bytes);
-        // A second source with a different id and range keeps Q6 honest.
-        let other = accepted(if fixture.id == "W05" { "A01" } else { "W05" });
-        let other_observed = observe_plain(other.bytes);
-        let a = answers_a(&project_a(&observed));
-        let b = answers_b(&project_b(&observed));
-        a_failures.extend(verdict(
-            &a,
-            fixture,
-            &answers_a(&project_a(&other_observed)),
-        ));
-        b_failures.extend(verdict(
-            &b,
-            fixture,
-            &answers_b(&project_b(&other_observed)),
-        ));
+        for scope in [SCOPE_1, SCOPE_2] {
+            let a = answers_a(&repr_a(&observed, scope));
+            let b = answers_b(&repr_b(&observed, scope));
+            a_failures.extend(verdict(&a, fixture));
+            b_failures.extend(verdict(&b, fixture));
+        }
     }
     assert!(a_failures.is_empty(), "{a_failures:?}");
+    // B fails because the normative constructed DocumentType identity and
+    // Document placement are absent, not because of any cross-result rule.
     assert_eq!(
         b_failures,
         BTreeSet::from([
             Question::Q2ChildOrdering,
             Question::Q3ThreeWayDistinction,
             Question::Q5NoSilentOmission,
+            Question::Q6ResultScopedOpaqueIdentity,
             Question::Q7ArchitectureCompatible,
         ])
     );
@@ -2438,62 +2699,192 @@ fn cd7_representation_alternatives_are_compared_and_one_is_selected() {
 }
 
 /// CD7 — B can answer only by being given a constructed identity and a Document
-/// placement, at which point it is Option A under another name.
+/// placement, at which point it is Option A under another name. The identity it
+/// receives is minted, not computed from the placement it is given.
 #[test]
 fn cd7_option_b_rescued_by_identity_and_placement_is_option_a() {
     for fixture in ACCEPTED {
         let observed = observe_plain(fixture.bytes);
-        let a = project_a(&observed);
-        let rescued = b_plus_as_a(&extend_b(&observed));
+        let minted = mint(&observed, SCOPE_1, IdentityScheme::Opaque, Placement::Final);
+        let a = project_a(&observed, &minted, Placement::Final);
+        let extended = extend_b(&observed, &minted, Placement::Final);
         assert_eq!(
-            a, rescued,
+            a,
+            b_plus_as_a(&extended),
             "{}: B plus identity and placement == A",
             fixture.id
         );
         assert!(
-            rescued
-                .nodes
+            a.nodes
                 .iter()
                 .any(|node| node.kind == NodeKind::DocumentType),
             "{}",
             fixture.id
         );
+        assert!(
+            verdict(&answers_a(&b_plus_as_a(&extended)), fixture).is_empty(),
+            "{}: the rescued B is judged exactly as A is",
+            fixture.id
+        );
+        // The rescued identity does not follow the placement it sits beside.
+        let moved = extend_b(&observed, &minted, Placement::Reversed);
+        assert_eq!(
+            extended
+                .relation_identity
+                .same_observation(moved.relation_identity),
+            Some(true),
+            "{}",
+            fixture.id
+        );
+        assert_ne!(extended.relation_placement, moved.relation_placement);
     }
 }
 
-/// CD7 — the three identity domains stay distinct, and constructed identity is
-/// neither source evidence nor browser/runtime identity.
+/// CD7 — inside one result, authored evidence, constructed identity and
+/// document mode are separate facts of separate types, and none of them is
+/// another. Nothing here compares one result's identity with another's.
 #[test]
 fn cd7_authored_mode_and_constructed_identity_are_three_facts() {
-    let upper = answers_a(&project_a(&observe_plain(accepted("A03").bytes)));
-    let lower = answers_a(&project_a(&observe_plain(accepted("A02").bytes)));
-    let crlf = answers_a(&project_a(&observe_plain(accepted("W05").bytes)));
-    // same document mode, different authored evidence
-    assert_eq!(upper.document_mode, lower.document_mode);
-    assert_eq!(crlf.document_mode, DocMode::NoQuirks);
-    assert_ne!(crlf.authored_complete, lower.authored_complete);
-    // same constructed identity across different authored evidence
-    assert_eq!(upper.constructed_identity, lower.constructed_identity);
-    assert_eq!(crlf.constructed_identity, lower.constructed_identity);
-    // mode and identity are independent of each other: `<body>` has a mode
-    // (Quirks) and no DocumentType identity at all
-    let missing = answers_a(&project_a(&observe_plain(b"<body>")));
+    use std::any::TypeId;
+    for fixture in ACCEPTED {
+        let answers = answers_a(&repr_a(&observe_plain(fixture.bytes), SCOPE_1));
+        assert!(answers.authored_complete.is_some(), "{}", fixture.id);
+        assert!(answers.constructed_identity.is_some(), "{}", fixture.id);
+        assert_eq!(answers.document_mode, DocMode::NoQuirks, "{}", fixture.id);
+        let identity = answers.constructed_identity.unwrap();
+        assert_eq!(identity.scope(), answers.scope, "{}", fixture.id);
+    }
+    // The distinction is carried by type, not by comparing integers.
+    let domains = [
+        TypeId::of::<ConstructedId>(),
+        TypeId::of::<Span>(),
+        TypeId::of::<SourceId>(),
+        TypeId::of::<DocMode>(),
+        TypeId::of::<ResultScope>(),
+        TypeId::of::<usize>(),
+        TypeId::of::<u64>(),
+    ];
+    let distinct: BTreeSet<String> = domains.iter().map(|id| format!("{id:?}")).collect();
+    assert_eq!(distinct.len(), domains.len());
+    // A mode exists without any DocumentType identity: `<body>` is Quirks and
+    // owns no DocumentType.
+    let missing = answers_a(&repr_a(&observe_plain(b"<body>"), SCOPE_1));
     assert_eq!(missing.document_mode, DocMode::Quirks);
     assert_eq!(missing.constructed_identity, None);
     assert_eq!(missing.authored_complete, None);
-    // constructed identity is not a source id or byte offset
-    let identity = lower.constructed_identity.unwrap();
-    assert_ne!(u64::from(identity.0), SOURCE_ID);
-    assert_ne!(
-        usize::try_from(identity.0).unwrap(),
-        lower.authored_complete.unwrap().range.1
+    // Authored evidence varies without a second identity domain appearing: the
+    // evidence is a `Span`, the identity is not.
+    let crlf = answers_a(&repr_a(&observe_plain(accepted("W05").bytes), SCOPE_1));
+    assert_eq!(crlf.authored_complete, Some(sp((0, 16))));
+    assert!(crlf.constructed_identity.is_some());
+}
+
+/// CD7 (I1–I4) — an identity derived from source range, source identity, final
+/// placement or document mode moves when that domain moves; the validated
+/// opaque identity moves under none of them. This is a structural separation of
+/// domains, not a claim about recovery stability: the selected slice has no
+/// placement-changing recovery, and the opaque model does not preclude that
+/// architecture invariant because it never reads placement.
+#[test]
+fn cd7_identity_is_opaque_and_independent_of_other_domains() {
+    assert_eq!(
+        identity_moves_under(IdentityScheme::Opaque),
+        BTreeSet::new()
     );
+    for (scheme, expected) in [
+        (IdentityScheme::FromPlacement, Perturbation::FinalPlacement),
+        (IdentityScheme::FromRange, Perturbation::AuthoredRange),
+        (IdentityScheme::FromSourceId, Perturbation::SourceIdentity),
+        (IdentityScheme::FromDocumentMode, Perturbation::DocumentMode),
+    ] {
+        assert_eq!(
+            identity_moves_under(scheme),
+            BTreeSet::from([expected]),
+            "{scheme:?}"
+        );
+    }
+}
+
+/// CD7 (I2) — placement is read by the representation separately from identity:
+/// re-ordering the Document children changes the placement answer and leaves the
+/// identity answer alone.
+#[test]
+fn cd7_placement_and_identity_are_separate_facts() {
+    let observed = observe_plain(accepted("C01").bytes);
+    let minted = mint(&observed, SCOPE_1, IdentityScheme::Opaque, Placement::Final);
+    let final_order = answers_a(&project_a(&observed, &minted, Placement::Final));
+    let reversed = answers_a(&project_a(&observed, &minted, Placement::Reversed));
+    assert_eq!(
+        final_order.document_child_sequence,
+        vec![ChildKind::DocumentType, ChildKind::Element(TagName::Html)]
+    );
+    assert_eq!(
+        reversed.document_child_sequence,
+        vec![ChildKind::Element(TagName::Html), ChildKind::DocumentType]
+    );
+    assert_eq!(
+        final_order
+            .constructed_identity
+            .unwrap()
+            .same_observation(reversed.constructed_identity.unwrap()),
+        Some(true)
+    );
+}
+
+/// CD7 (I3, I5) — independent result scopes do not participate in an equality
+/// theorem: each is judged alone, the model never asks for equal or unequal
+/// values across them, and such ids are explicitly not comparable.
+#[test]
+fn cd7_cross_result_identity_is_not_comparable_and_not_required() {
+    let fixture = accepted("A01");
+    let observed = observe_plain(fixture.bytes);
+    let first = answers_a(&repr_a(&observed, SCOPE_1));
+    let second = answers_a(&repr_a(&observed, SCOPE_2));
+    assert!(verdict(&first, fixture).is_empty());
+    assert!(verdict(&second, fixture).is_empty());
+    let (one, two) = (
+        first.constructed_identity.unwrap(),
+        second.constructed_identity.unwrap(),
+    );
+    assert_eq!(one.same_observation(two), None);
+    assert_eq!(two.same_observation(one), None);
+    // Within one scope a result is deterministic: rebuilding it is equal.
+    assert_eq!(repr_a(&observed, SCOPE_1), repr_a(&observed, SCOPE_1));
+    // A different parse result in the same scope is a different result; no
+    // meaning is attached to its ids relative to this one's.
+    let other = observe_plain(accepted("W05").bytes);
+    assert!(verdict(&answers_a(&repr_a(&other, SCOPE_1)), accepted("W05")).is_empty());
+}
+
+/// CD7 (I3) — the identity module exposes no conversion to or from another
+/// domain. Needles are assembled at run time so this test never matches itself.
+#[test]
+fn cd7_identity_module_has_no_conversion_to_other_domains() {
+    let own = include_str!("canonical_doctype_successor_validation.rs");
+    let begin = own.find("mod identity {").expect("identity module");
+    let end = own[begin..].find("\nuse identity::").expect("module end") + begin;
+    let module = &own[begin..end];
+    for needle in [
+        ["impl From", "<"].concat(),
+        ["impl Into", "<"].concat(),
+        ["fn val", "ue("].concat(),
+        ["fn as_", "u"].concat(),
+        ["Source", "Id"].concat(),
+        ["Span", ""].concat(),
+        ["Browser", ""].concat(),
+        ["Node", "Id"].concat(),
+    ] {
+        assert!(
+            !module.contains(&needle),
+            "identity module must not mention {needle}"
+        );
+    }
 }
 
 /// CD7 — structural non-equivalences.
 #[test]
 fn cd7_doctype_is_not_element_text_diagnostic_or_document_mode() {
-    let a = project_a(&observe_plain(accepted("C01").bytes));
+    let a = repr_a(&observe_plain(accepted("C01").bytes), SCOPE_1);
     let doctype = a
         .nodes
         .iter()
