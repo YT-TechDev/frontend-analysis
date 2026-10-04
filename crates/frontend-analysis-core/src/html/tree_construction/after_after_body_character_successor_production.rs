@@ -877,6 +877,50 @@ fn afz1_diagnostic_corruptions_are_rejected() {
     );
 }
 
+/// Falsifies: a freeze that lets an AfterAfterBody Character episode carry the
+/// predecessor AfterBody diagnostic *in addition to* the correct evidence. This
+/// is distinct from the substitution mutation in `afz1`.
+#[test]
+fn afz1b_additive_after_body_diagnostic_is_rejected() {
+    // Recovered non-whitespace: the valid AfterAfterBody diagnostic stays.
+    let frozen = Frozen::new("<body></body></html>x");
+    let mut parts = frozen.parts();
+    assert_eq!(
+        parts
+            .diagnostics
+            .iter()
+            .filter(|d| is_after_after(d))
+            .count(),
+        1
+    );
+    parts.diagnostics.push(HtmlTreeDiagnostic::new(
+        HtmlTreeDiagnosticCode::AfterBodyCharacterData,
+        frozen.trigger(3),
+        RECOVERY,
+    ));
+    assert_eq!(
+        frozen.freeze(parts),
+        Err(recovery_mismatch(3)),
+        "recovered non-whitespace with an extra AfterBody diagnostic"
+    );
+
+    // Whitespace delegation: otherwise valid (one text action, no reprocess,
+    // no AfterAfterBody diagnostic).
+    let frozen = Frozen::new("<body></body></html> ");
+    let mut parts = frozen.parts();
+    assert!(!parts.diagnostics.iter().any(is_after_after));
+    parts.diagnostics.push(HtmlTreeDiagnostic::new(
+        HtmlTreeDiagnosticCode::AfterBodyCharacterData,
+        frozen.trigger(3),
+        RECOVERY,
+    ));
+    assert_eq!(
+        frozen.freeze(parts),
+        Err(consumption_mismatch(3)),
+        "whitespace with an AfterBody diagnostic"
+    );
+}
+
 /// Falsifies: a freeze accepting a missing, duplicated or mis-attached
 /// reprocess.
 #[test]

@@ -3691,6 +3691,14 @@ fn validate_body_and_html_end_open_stack_transitions(
                 {
                     return Err(mismatch);
                 }
+                // The predecessor AfterBody diagnostic is mode-owned evidence
+                // and must never accompany an AfterAfterBody recovery.
+                if diagnostics.iter().any(|other| {
+                    other.code() == HtmlTreeDiagnosticCode::AfterBodyCharacterData
+                        && same_trigger(other.trigger(), action.trigger())
+                }) {
+                    return Err(mismatch);
+                }
                 let Some(expected_parent) = open_content.last().copied().or(body) else {
                     return Err(mismatch);
                 };
@@ -3797,8 +3805,16 @@ fn validate_body_and_html_end_open_stack_transitions(
                                 && diagnostic.trigger().token_index() == token_index
                         })
                         .count();
+                    let after_body_diagnostics = diagnostics
+                        .iter()
+                        .filter(|diagnostic| {
+                            diagnostic.code() == HtmlTreeDiagnosticCode::AfterBodyCharacterData
+                                && same_trigger(diagnostic.trigger(), action.trigger())
+                        })
+                        .count();
                     if replayed_body_character_class(action.trigger(), tokenizer_run)
                         != Some(ReplayedBodyCharacterClass::AllHtmlWhitespace)
+                        || after_body_diagnostics != 0
                         || find(nodes, *node).and_then(HtmlTreeNode::parent)
                             != Some(expected_parent)
                         || count_same_trigger(|kind| {
