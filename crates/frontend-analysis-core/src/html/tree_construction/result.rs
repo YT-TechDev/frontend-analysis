@@ -4011,19 +4011,24 @@ fn validate_body_and_html_end_open_stack_transitions(
             );
         }
     }
-    // Whitespace Character tokens immediately following an acknowledged
-    // html end tag are consumed in AfterAfterBody through InBody text
-    // insertion; each must carry exactly one text action.
+    // Every processed Character token in the contiguous run that follows an
+    // acknowledged html end tag is consumed as text, in AfterAfterBody for
+    // whitespace or in InBody after an accepted non-whitespace recovery, with
+    // exactly one text action. Only the exact U+0000 token is exempt: InBody
+    // ignores it through its own validated ignore decision. The run is
+    // bounded by the processed-token count, so a refused token is never
+    // audited, and by the first non-Character token, where replay position is
+    // no longer a pure function of the preceding Character tokens. An earlier
+    // non-whitespace recovery therefore does not end the audit.
     for html_end_token in &html_end_tokens {
         let mut index = html_end_token + 1;
         while index < processed_tokens {
             let Some(HtmlToken::Character(character)) = tokenizer_run.tokens().get(index) else {
                 break;
             };
-            if classify_replayed_characters(character.interpreted())
-                != ReplayedBodyCharacterClass::AllHtmlWhitespace
-            {
-                break;
+            if character.interpreted() == "\0" {
+                index += 1;
+                continue;
             }
             let text_actions = actions
                 .iter()

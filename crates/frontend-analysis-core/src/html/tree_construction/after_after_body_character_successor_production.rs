@@ -804,6 +804,9 @@ fn afz0_the_unmutated_reconstructions_freeze() {
         "<body></body></html>x\0",
         "<body></body></html> \0",
         "<body></body></html>\0x",
+        "<body></body></html>\0 ",
+        "<body>x</body></html>\0 ",
+        "<body>x</body></html>\0 y",
         "<body>x</body></html>y",
     ] {
         let frozen = Frozen::new(text);
@@ -1120,6 +1123,70 @@ fn afz5_recovered_nul_corruptions_are_rejected() {
         .unwrap();
     parts.actions.insert(at, text_action);
     assert!(frozen.freeze(parts).is_err(), "recovered NUL leaking text");
+}
+
+/// Falsifies: a freeze whose whitespace-text audit stops at the first
+/// non-whitespace Character token, so that a whitespace token processed after
+/// an AfterAfterBody recovery (now in InBody) is never required to carry its
+/// text action. The text node and contribution are retained; only the action
+/// is removed.
+#[test]
+fn afz7_post_recovery_whitespace_requires_its_text_action() {
+    // (source, whitespace token index, expected action: inserted?)
+    let cases: [(&'static str, usize, bool); 2] = [
+        // token 3 NUL recovers and is ignored; token 4 SPACE inserts text.
+        ("<body></body></html>\0 ", 4, true),
+        // token 4 NUL recovers and is ignored; token 5 SPACE appends to the
+        // text node created by token 1.
+        ("<body>x</body></html>\0 ", 5, false),
+    ];
+    for (text, space, inserted) in cases {
+        let frozen = Frozen::new(text);
+        assert_eq!(frozen.freeze(frozen.parts()), Ok(()), "{text:?}");
+        assert_eq!(character(&frozen.analysis, space).0, " ", "{text:?}");
+        assert_eq!(
+            after_after(&frozen.analysis).len(),
+            1,
+            "{text:?}: one recovery, for the NUL only"
+        );
+        assert_eq!(
+            text_actions(&frozen.analysis)
+                .into_iter()
+                .filter(|(_, trigger)| trigger.0 == space)
+                .map(|(is_insert, _)| is_insert)
+                .collect::<Vec<_>>(),
+            vec![inserted],
+            "{text:?}: production emits exactly this action for the space"
+        );
+
+        let mut parts = frozen.parts();
+        let before = parts.actions.len();
+        parts
+            .actions
+            .retain(|a| !(is_text(a) && a.trigger().token_index() == space));
+        assert_eq!(parts.actions.len(), before - 1);
+        assert_eq!(
+            frozen.freeze(parts),
+            Err(consumption_mismatch(space)),
+            "{text:?}: the later whitespace token's text action removed"
+        );
+    }
+}
+
+/// Falsifies: the same audit gap for a mixed aggregate. `" y"` is one emitted
+/// Character token (token 5); once the NUL recovery moved replay to InBody it
+/// is consumed as text there, not refused, and must keep its text action.
+#[test]
+fn afz7b_mixed_aggregate_after_a_recovery_keeps_its_text_action() {
+    let frozen = Frozen::new("<body>x</body></html>\0 y");
+    assert_eq!(character(&frozen.analysis, 5), (" y".to_owned(), (22, 24)));
+    assert_eq!(frozen.freeze(frozen.parts()), Ok(()));
+    assert!(frozen.analysis.is_complete());
+    let mut parts = frozen.parts();
+    parts
+        .actions
+        .retain(|a| !(is_text(a) && a.trigger().token_index() == 5));
+    assert_eq!(frozen.freeze(parts), Err(consumption_mismatch(5)));
 }
 
 /// Falsifies: a stray recovery diagnostic on a token that never recovered
