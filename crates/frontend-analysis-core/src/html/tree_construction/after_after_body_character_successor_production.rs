@@ -1189,6 +1189,119 @@ fn afz7b_mixed_aggregate_after_a_recovery_keeps_its_text_action() {
     assert_eq!(frozen.freeze(parts), Err(consumption_mismatch(5)));
 }
 
+fn is_ignore(a: &HtmlTreeAction) -> bool {
+    matches!(a.kind(), HtmlTreeActionKind::IgnoredNullCharacterToken)
+}
+
+fn is_nul_diagnostic(d: &HtmlTreeDiagnostic) -> bool {
+    d.code() == HtmlTreeDiagnosticCode::NullCharacterInBody
+}
+
+/// Removes every tree consumption fact for `token` while retaining the
+/// tokenizer token, processed-token count, coverage and completion.
+fn remove_consumption(parts: &mut HtmlDocumentShellParts, token: usize) {
+    parts
+        .diagnostics
+        .retain(|d| d.trigger().token_index() != token);
+    parts.actions.retain(|a| a.trigger().token_index() != token);
+}
+
+/// Falsifies: a freeze whose empty-set correspondence accepts a processed
+/// token with no consumption evidence at all. The expected rejection is
+/// derived from the accepted theorem (a processed token after `</html>` must be
+/// accounted for), not from production output.
+#[test]
+fn afz8_initial_token_with_total_evidence_removal_is_rejected() {
+    // Exact authored U+0000 at token 3: recovery + ignore all removed.
+    let frozen = Frozen::new("<body></body></html>\0");
+    assert_eq!(character(&frozen.analysis, 3), ("\0".to_owned(), (20, 21)));
+    assert_eq!(frozen.analysis.tokenizer_run().diagnostics().len(), 1);
+    let mut parts = frozen.parts();
+    // Exactly the four facts named by the theorem, and nothing else, for it.
+    let before = (parts.diagnostics.len(), parts.actions.len());
+    remove_consumption(&mut parts, 3);
+    assert_eq!(parts.diagnostics.len(), before.0 - 2, "recovery + NUL");
+    assert_eq!(parts.actions.len(), before.1 - 2, "reprocess + ignore");
+    assert_eq!(parts.processed_tokens, 5);
+    assert_eq!(parts.committed_prefix_end, 21);
+    assert_eq!(frozen.freeze(parts), Err(recovery_mismatch(3)));
+
+    // Not NUL-specific: the same total removal for an ordinary character.
+    let frozen = Frozen::new("<body></body></html>x");
+    let mut parts = frozen.parts();
+    remove_consumption(&mut parts, 3);
+    assert_eq!(frozen.freeze(parts), Err(recovery_mismatch(3)));
+
+    // Whitespace: its single text action is likewise required.
+    let frozen = Frozen::new("<body></body></html> ");
+    let mut parts = frozen.parts();
+    remove_consumption(&mut parts, 3);
+    assert_eq!(frozen.freeze(parts), Err(consumption_mismatch(3)));
+}
+
+/// Falsifies: a freeze that treats a later NUL like the initial one (needing a
+/// second recovery) or that lets its ignore decision vanish. Token 3 stays
+/// fully valid; only token 4's InBody consumption evidence is removed.
+#[test]
+fn afz8b_later_nul_total_ignore_removal_is_rejected() {
+    let frozen = Frozen::new("<body></body></html>\0\0");
+    assert_eq!(character(&frozen.analysis, 4), ("\0".to_owned(), (21, 22)));
+    assert_eq!(frozen.freeze(frozen.parts()), Ok(()));
+
+    // Neither action nor diagnostic: the empty-set hole.
+    let mut parts = frozen.parts();
+    parts
+        .actions
+        .retain(|a| !(is_ignore(a) && a.trigger().token_index() == 4));
+    parts
+        .diagnostics
+        .retain(|d| !(is_nul_diagnostic(d) && d.trigger().token_index() == 4));
+    assert_eq!(parts.processed_tokens, 6);
+    assert_eq!(parts.committed_prefix_end, 22);
+    assert_eq!(frozen.freeze(parts), Err(consumption_mismatch(4)));
+
+    // Action only / diagnostic only: still rejected.
+    let mut parts = frozen.parts();
+    parts
+        .diagnostics
+        .retain(|d| !(is_nul_diagnostic(d) && d.trigger().token_index() == 4));
+    assert!(frozen.freeze(parts).is_err(), "action without diagnostic");
+    let mut parts = frozen.parts();
+    parts
+        .actions
+        .retain(|a| !(is_ignore(a) && a.trigger().token_index() == 4));
+    assert!(frozen.freeze(parts).is_err(), "diagnostic without action");
+
+    // A later NUL must not carry a second recovery or reprocess.
+    let mut parts = frozen.parts();
+    parts.diagnostics.push(HtmlTreeDiagnostic::new(
+        HtmlTreeDiagnosticCode::AfterAfterBodyCharacterData,
+        frozen.trigger(4),
+        RECOVERY,
+    ));
+    parts.actions.push(HtmlTreeAction::new(
+        HtmlTreeActionKind::ReprocessedToken,
+        frozen.trigger(4),
+    ));
+    assert!(frozen.freeze(parts).is_err(), "second recovery for token 4");
+}
+
+/// Falsifies: a freeze accepting a recovered NUL that also keeps a text action.
+#[test]
+fn afz8c_processed_nul_never_carries_text() {
+    let frozen = Frozen::new("<body></body></html>\0");
+    let ordinary = Frozen::new("<body></body></html>x");
+    let text_action = ordinary
+        .parts()
+        .actions
+        .into_iter()
+        .find(is_text)
+        .expect("text action");
+    let mut parts = frozen.parts();
+    parts.actions.push(text_action);
+    assert!(frozen.freeze(parts).is_err());
+}
+
 /// Falsifies: a stray recovery diagnostic on a token that never recovered
 /// (for example the second NUL of `\0\0`).
 #[test]

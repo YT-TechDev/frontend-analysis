@@ -4012,40 +4012,101 @@ fn validate_body_and_html_end_open_stack_transitions(
         }
     }
     // Every processed Character token in the contiguous run that follows an
-    // acknowledged html end tag is consumed as text, in AfterAfterBody for
-    // whitespace or in InBody after an accepted non-whitespace recovery, with
-    // exactly one text action. Only the exact U+0000 token is exempt: InBody
-    // ignores it through its own validated ignore decision. The run is
-    // bounded by the processed-token count, so a refused token is never
-    // audited, and by the first non-Character token, where replay position is
-    // no longer a pure function of the preceding Character tokens. An earlier
-    // non-whitespace recovery therefore does not end the audit.
+    // acknowledged html end tag must be accounted for by durable evidence,
+    // derived from the retained tokenizer tokens rather than from the
+    // evidence under audit, so that deleting a token's whole consumption
+    // evidence cannot make the token disappear:
+    //
+    // - whitespace reached while replay is still AfterAfterBody: one text
+    //   action, no recovery, no reprocess;
+    // - the first non-whitespace token (the exact U+0000 included): the
+    //   AfterAfterBody -> InBody recovery, exactly one distinct diagnostic and
+    //   exactly one same-trigger reprocess;
+    // - every later token is InBody and needs no second recovery: exact
+    //   U+0000 is consumed by exactly one ignore decision (diagnostic plus
+    //   action, no text); any other token by exactly one text action.
+    //
+    // The run is bounded by the processed-token count, so a refused token is
+    // never audited, and by the first non-Character token, where replay
+    // position is no longer a function of the preceding Character tokens.
     for html_end_token in &html_end_tokens {
         let mut index = html_end_token + 1;
+        let mut after_after_body = true;
         while index < processed_tokens {
             let Some(HtmlToken::Character(character)) = tokenizer_run.tokens().get(index) else {
                 break;
             };
-            if character.interpreted() == "\0" {
-                index += 1;
-                continue;
-            }
-            let text_actions = actions
+            let is_null = character.interpreted() == "\0";
+            let whitespace = classify_replayed_characters(character.interpreted())
+                == ReplayedBodyCharacterClass::AllHtmlWhitespace;
+            let on_token = |kind: fn(&HtmlTreeActionKind) -> bool| {
+                actions
+                    .iter()
+                    .filter(|candidate| {
+                        kind(candidate.kind()) && candidate.trigger().token_index() == index
+                    })
+                    .count()
+            };
+            let text_actions = on_token(|kind| {
+                matches!(
+                    kind,
+                    HtmlTreeActionKind::InsertedTextNode { .. }
+                        | HtmlTreeActionKind::AppendedToTextNode { .. }
+                )
+            });
+            let reprocesses = on_token(|kind| matches!(kind, HtmlTreeActionKind::ReprocessedToken));
+            let recovery_diagnostics = diagnostics
                 .iter()
-                .filter(|candidate| {
-                    matches!(
-                        candidate.kind(),
-                        HtmlTreeActionKind::InsertedTextNode { .. }
-                            | HtmlTreeActionKind::AppendedToTextNode { .. }
-                    ) && candidate.trigger().token_index() == index
+                .filter(|diagnostic| {
+                    diagnostic.code() == HtmlTreeDiagnosticCode::AfterAfterBodyCharacterData
+                        && diagnostic.trigger().token_index() == index
                 })
-                .count();
-            if text_actions != 1 {
-                return Err(
-                    HtmlTreeFreezeError::AfterAfterBodyCharacterConsumptionMismatch {
-                        token_index: index,
-                    },
-                );
+                .collect::<Vec<_>>();
+            let recovery_mismatch =
+                HtmlTreeFreezeError::AfterAfterBodyCharacterRecoveryMismatch { token_index: index };
+            let consumption_mismatch =
+                HtmlTreeFreezeError::AfterAfterBodyCharacterConsumptionMismatch {
+                    token_index: index,
+                };
+
+            if after_after_body && !whitespace {
+                // The accepted transition token.
+                if !matches!(recovery_diagnostics.as_slice(), [diagnostic]
+                    if diagnostic.recovery()
+                        == HtmlTreeRecovery::SwitchedToInBodyAndReprocessedSameToken)
+                    || reprocesses != 1
+                {
+                    return Err(recovery_mismatch);
+                }
+                after_after_body = false;
+            } else if !recovery_diagnostics.is_empty() || (!after_after_body && reprocesses != 0) {
+                // Whitespace in AfterAfterBody, and every InBody token, carry
+                // no recovery evidence.
+                return Err(if whitespace {
+                    consumption_mismatch
+                } else {
+                    recovery_mismatch
+                });
+            } else if after_after_body && reprocesses != 0 {
+                return Err(consumption_mismatch);
+            }
+
+            if is_null {
+                let ignore_actions =
+                    on_token(|kind| matches!(kind, HtmlTreeActionKind::IgnoredNullCharacterToken));
+                let ignore_diagnostics = diagnostics
+                    .iter()
+                    .filter(|diagnostic| {
+                        diagnostic.code() == HtmlTreeDiagnosticCode::NullCharacterInBody
+                            && diagnostic.recovery() == HtmlTreeRecovery::IgnoredToken
+                            && diagnostic.trigger().token_index() == index
+                    })
+                    .count();
+                if ignore_actions != 1 || ignore_diagnostics != 1 || text_actions != 0 {
+                    return Err(consumption_mismatch);
+                }
+            } else if text_actions != 1 {
+                return Err(consumption_mismatch);
             }
             index += 1;
         }
