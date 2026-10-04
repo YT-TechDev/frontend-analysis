@@ -145,9 +145,10 @@ pub(super) fn add_resources(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         usage("a", 2, 1, 0, 0, 1, 0),
     ));
     // Data(NUL) commits, but diagnostic append attempted=1 is refused before
-    // replacement/recovery mutation; processed_end remains 0.
+    // the required Data UnexpectedNullCharacter diagnostic commit; processed_end
+    // remains 0 and no U+0000 token is emitted.
     fixtures.push(resource_fixture(
-        "RES-004", "diagnostic limit terminates before recovery mutation", "\0", 0,
+        "RES-004", "diagnostic limit terminates before the required Data NUL diagnostic commit", "\0", 0,
         Vec::new(), Vec::new(), Resource::Diagnostics, 0, 1,
         ByteSpan::new(0, 1), usage("\0", 1, 0, 0, 0, 0, 0),
     ));

@@ -488,6 +488,11 @@ fn project_diagnostics(analysis: &HtmlDocumentShellAnalysis) -> Vec<GoldDiagnost
             HtmlTreeDiagnosticCode::AfterBodyCharacterData => {
                 panic!("the TC-S1 predecessor GOLD never produces the TC-S2 after-body diagnostic")
             }
+            HtmlTreeDiagnosticCode::NullCharacterInBody => {
+                panic!(
+                    "the TC-S1 predecessor GOLD never produces the Data-NUL successor diagnostic"
+                )
+            }
             HtmlTreeDiagnosticCode::BodyEndTagWithOpenSelectedOrdinaryElements => {
                 panic!("the TC-S1 predecessor GOLD never produces the TC-S7 body-end diagnostic")
             }

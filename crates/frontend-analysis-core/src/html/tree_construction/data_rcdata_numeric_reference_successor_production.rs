@@ -566,10 +566,11 @@ fn nr6_return_owners_are_not_collapsed() {
     assert_eq!(texts(&analysis), vec!["A".to_owned()]);
     assert_eq!(diags(analysis.tokenizer_run()), vec![(MISSING, (11, 12))]);
 
-    // Data NUL and RCDATA NUL stay separate after a Numeric reference.
+    // Authored Data NUL (exact U+0000, no replacement) and RCDATA NUL stay
+    // separate after a Numeric reference.
     let run = lex("&#65;\0");
     assert!(complete(&run));
-    assert_eq!(chars(&run), expect(&[((0, 5), "A"), ((5, 6), "\u{fffd}")]));
+    assert_eq!(chars(&run), expect(&[((0, 5), "A"), ((5, 6), "\0")]));
     let analysis = title("&#65;\0");
     assert!(
         unsupported(analysis.tokenizer_run()),
