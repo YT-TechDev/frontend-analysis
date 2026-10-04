@@ -450,6 +450,81 @@ fn t8_a_stop_after_earlier_tokens_keeps_those_tokens_and_their_coverage() {
 }
 
 #[test]
+fn t8b_a_preprocessing_diagnostic_unit_inside_the_selected_states_keeps_the_exact_boundary() {
+    // Each source reaches a different selected Doctype* state and then meets a
+    // unit that raises a preprocessing diagnostic (U+0001 control character,
+    // U+FDD0 / U+FFFE noncharacters). Such a unit proves the source left the
+    // selected profile, so the stop must be the unchanged `<!` boundary with no
+    // diagnostic committed from inside the rejected declaration.
+    for text in [
+        // DoctypeAfterKeyword, DoctypeBeforeName (after one and two spaces).
+        "<!DOCTYPE\u{1}html>",
+        "<!DOCTYPE \u{1}html>",
+        "<!DOCTYPE  \u{1}html>",
+        // DoctypeName.
+        "<!DOCTYPE h\u{1}tml>",
+        "<!DOCTYPE ht\u{fffe}ml>",
+        // DoctypeAfterName.
+        "<!DOCTYPE html\u{fdd0}>",
+        "<!DOCTYPE html \u{1}>",
+        "<!DOCTYPE html\u{1}",
+        // A diagnostic unit after a CRLF separator, where CR/CRLF alone raise
+        // none.
+        "<!DOCTYPE\r\n\u{1}html>",
+    ] {
+        let run = run(text);
+        assert!(run.tokens().is_empty(), "{text:?}: no token may commit");
+        assert!(
+            run.diagnostics().is_empty(),
+            "{text:?}: no diagnostic from inside the declaration"
+        );
+        assert_eq!(run.usage().diagnostics(), 0, "{text:?}");
+        assert_eq!(unsupported_markup_declaration(&run), (0, 2), "{text:?}");
+        assert_eq!(run.coverage().processed_end(), 0, "{text:?}");
+    }
+}
+
+#[test]
+fn t8c_the_rollback_never_drops_below_already_committed_prefix_evidence() {
+    // `x` is committed as token 0 (0..1) before `<`; the rejected declaration
+    // then rolls back to exactly there and contributes no diagnostic.
+    for text in [
+        "x<!DOCTYPE \u{1}html>",
+        "x<!DOCTYPE html\u{fdd0}>",
+        "x<!DOCTYPE h\u{1}tml>",
+    ] {
+        let run = run(text);
+        assert_eq!(shape(&run), vec![("character", (0, 1))], "{text:?}");
+        assert!(run.diagnostics().is_empty(), "{text:?}");
+        assert_eq!(unsupported_markup_declaration(&run), (1, 3), "{text:?}");
+        assert_eq!(run.coverage().processed_end(), 1, "{text:?}");
+    }
+    // A diagnostic committed *before* the declaration is prior evidence and
+    // stays: U+0001 at 0..1 is Data with its own diagnostic, then `<!` is 1..3.
+    let run = run("\u{1}<!DOCTYPE \u{1}html>");
+    assert_eq!(shape(&run), vec![("character", (0, 1))]);
+    assert_eq!(run.diagnostics().len(), 1);
+    assert_eq!(range_of(run.diagnostics()[0].location()), (0, 1));
+    assert_eq!(unsupported_markup_declaration(&run), (1, 3));
+    assert_eq!(run.coverage().processed_end(), 1);
+}
+
+#[test]
+fn t8d_cr_and_crlf_are_not_preprocessing_diagnostics_in_the_selected_states() {
+    for case in ACCEPTED.iter().filter(|c| c.text.contains('\r')) {
+        let run = run(case.text);
+        assert!(!run.is_incomplete(), "{}", case.id);
+        assert!(run.diagnostics().is_empty(), "{}", case.id);
+        assert_eq!(
+            doctype(&run, 0).complete().fragment(),
+            case.text,
+            "{}",
+            case.id
+        );
+    }
+}
+
+#[test]
 fn t9_the_processing_instruction_stop_is_unchanged() {
     let run = run("<?x?>");
     let HtmlTokenizerCompletion::Incomplete(HtmlTokenizerIncompleteCause::UnsupportedCapability(
@@ -617,8 +692,8 @@ fn selected_prefix(bytes: &[u8]) -> Option<(usize, Range)> {
 #[test]
 fn t25_bounded_mutation_sweep_agrees_with_the_independent_matcher() {
     let alphabet: &[char] = &[
-        'x', '>', ' ', '\n', '\r', '\t', '\u{c}', '\0', '\u{1}', '!', '<', '/', '"', '\u{a0}', 'h',
-        'D', 'l',
+        'x', '>', ' ', '\n', '\r', '\t', '\u{c}', '\0', '\u{1}', '!', '<', '/', '"', '\u{a0}',
+        '\u{fdd0}', 'h', 'D', 'l',
     ];
     let mut sources: Vec<String> = ACCEPTED.iter().map(|case| case.text.to_owned()).collect();
     sources.extend([
@@ -655,6 +730,17 @@ fn t25_bounded_mutation_sweep_agrees_with_the_independent_matcher() {
             let run = run(&text);
             checked += 1;
 
+            // Boundary purity: when the leading declaration is not a selected
+            // DOCTYPE, the very first `<!` is the unchanged MarkupDeclaration
+            // stop and nothing from inside the rejected declaration is
+            // committed, whatever unit (including diagnostic-raising ones) the
+            // declaration contains.
+            if text.starts_with("<!") && selected_prefix(text.as_bytes()).is_none() {
+                assert!(run.tokens().is_empty(), "{text:?}");
+                assert!(run.diagnostics().is_empty(), "{text:?}");
+                assert_eq!(run.coverage().processed_end(), 0, "{text:?}");
+                assert_eq!(unsupported_markup_declaration(&run), (0, 2), "{text:?}");
+            }
             // Soundness: every DOCTYPE token is an exact selected DOCTYPE.
             for token in run.tokens() {
                 if let HtmlToken::Doctype(doctype) = token {

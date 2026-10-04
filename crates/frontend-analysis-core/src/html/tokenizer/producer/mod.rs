@@ -262,7 +262,18 @@ impl<'a> Engine<'a> {
                 } else {
                     let (unit, diagnostic_code) = self.cursor.advance();
                     self.current = unit;
-                    if let Some(code) = diagnostic_code
+                    if diagnostic_code.is_some() && is_selected_doctype_state(self.state) {
+                        // No unit of the selected canonical profile (ASCII
+                        // letters, ASCII whitespace, CR/CRLF, `>`) ever raises
+                        // a preprocessing diagnostic, so a reported code proves
+                        // the source left the profile. Fall back to the
+                        // unchanged MarkupDeclaration boundary before any
+                        // diagnostic evidence is committed: committing it first
+                        // would raise `min_processed_end` and make the exact
+                        // `<!` rollback impossible.
+                        preprocessing_failure =
+                            Some(self.markup_declaration_stop(self.doctype_bang_end));
+                    } else if let Some(code) = diagnostic_code
                         && let Err(stop) = self.append_preprocessing_diagnostic(code, unit)
                     {
                         preprocessing_failure = Some(stop);
@@ -2166,6 +2177,19 @@ impl<'a> Engine<'a> {
                 .expect("valid resource limit evidence");
         Step::Stop(HtmlTokenizerIncompleteCause::ResourceLimit(evidence))
     }
+}
+
+/// Whether `state` is one of the five private selected-DOCTYPE recognition
+/// states.
+fn is_selected_doctype_state(state: State) -> bool {
+    matches!(
+        state,
+        State::DoctypeKeyword
+            | State::DoctypeAfterKeyword
+            | State::DoctypeBeforeName
+            | State::DoctypeName
+            | State::DoctypeAfterName
+    )
 }
 
 /// The selected canonical DOCTYPE keyword and name, matched ASCII
