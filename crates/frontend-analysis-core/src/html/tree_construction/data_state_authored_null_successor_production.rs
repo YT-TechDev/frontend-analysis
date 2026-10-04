@@ -677,15 +677,30 @@ fn dt3_after_body_reprocesses_the_same_nul_through_in_body() {
     );
 }
 
-/// Falsifies: AfterAfterBody widening to character data.
+/// Falsifies: the AfterAfterBody recovery replacing the InBody NUL ignore
+/// fact, or a recovered authored NUL becoming text. The earlier "AfterAfterBody
+/// is not widened" control is superseded by #888.
 #[test]
-fn dt4_after_after_body_is_not_widened() {
-    let nul = analyze("<body></body></html>\0");
-    let ordinary = analyze("<body></body></html>a");
-    assert!(!nul.is_complete());
-    assert_eq!(tree_unsupported(&nul), tree_unsupported(&ordinary));
-    assert!(ignored_actions(&nul).is_empty());
-    assert!(null_diagnostics(&nul).is_empty());
+fn dt4_after_after_body_recovery_composes_with_the_in_body_nul_ignore() {
+    let analysis = analyze("<body></body></html>\0");
+    assert!(analysis.is_complete());
+    assert_eq!(ignored_actions(&analysis), vec![3]);
+    assert_eq!(
+        null_diagnostics(&analysis),
+        vec![(3, HtmlTreeRecovery::IgnoredToken)]
+    );
+    let recoveries: Vec<_> = analysis
+        .diagnostics()
+        .iter()
+        .filter(|d| d.code() == HtmlTreeDiagnosticCode::AfterAfterBodyCharacterData)
+        .map(|d| (d.trigger().token_index(), d.recovery()))
+        .collect();
+    assert_eq!(
+        recoveries,
+        vec![(3, HtmlTreeRecovery::SwitchedToInBodyAndReprocessedSameToken)]
+    );
+    assert!(texts(&analysis).is_empty());
+    no_nul_or_replacement_text(&analysis);
 }
 
 /// Falsifies: decoded Numeric U+FFFD being treated as authored NUL, or

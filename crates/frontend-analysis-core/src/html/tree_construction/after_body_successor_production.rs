@@ -427,35 +427,42 @@ fn ab6_mixed_aggregate_run_is_refused_whole_before_mutation() {
 }
 
 // ---------------------------------------------------------------------------
-// AB7: AfterAfterBody character data remains unsupported (negative pin)
+// AB7: AfterAfterBody character data is a distinct, later-accepted successor
 // ---------------------------------------------------------------------------
 
+/// The earlier negative pin (AfterAfterBody character data unsupported) is
+/// superseded by the accepted AfterAfterBody successor (#888). What stays
+/// pinned here is the vocabulary boundary: the AfterAfterBody recovery never
+/// borrows the AfterBody diagnostic.
 #[test]
-fn ab7_after_after_body_character_data_remains_unsupported() {
+fn ab7_after_after_body_character_data_uses_its_own_diagnostic_not_after_body() {
     let analysis = analyze("<body></body></html>x");
 
     assert_eq!(
         character_token_shape(&analysis, 3),
         ("x".to_owned(), (20, 21))
     );
-    assert_eq!(
-        unsupported_evidence(&analysis),
-        Some((
-            HtmlTreeCapability::UnprovedCharacterDataPosition,
-            (3, Some((20, 21)))
-        ))
-    );
-    assert!(!analysis.is_complete());
-    assert!(text_node_data(&analysis).is_none());
-    assert_eq!(analysis.node_count(), 4);
-    assert_eq!(analysis.coverage().committed_end(), 20);
+    assert!(analysis.is_complete());
     assert!(
         diagnostic_evidence(&analysis, HtmlTreeDiagnosticCode::AfterBodyCharacterData).is_empty()
     );
-    assert!(reprocess_trigger_ranges_for_token(&analysis, 3).is_empty());
+    assert_eq!(
+        diagnostic_evidence(
+            &analysis,
+            HtmlTreeDiagnosticCode::AfterAfterBodyCharacterData
+        ),
+        vec![(
+            (3, Some((20, 21))),
+            HtmlTreeRecovery::SwitchedToInBodyAndReprocessedSameToken
+        )]
+    );
+    assert_eq!(
+        reprocess_trigger_ranges_for_token(&analysis, 3),
+        vec![Some((20, 21))]
+    );
 
     let (session, _) = drive_tokens("<body></body></html>x");
-    assert_eq!(session.insertion_mode(), InsertionMode::AfterAfterBody);
+    assert_eq!(session.insertion_mode(), InsertionMode::InBody);
 }
 
 // ---------------------------------------------------------------------------

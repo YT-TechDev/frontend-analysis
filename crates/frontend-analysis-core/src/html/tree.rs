@@ -505,6 +505,7 @@ pub enum HtmlTreeDiagnosticCode {
     DuplicateHeadStartTag,
     DuplicateBodyStartTag,
     AfterBodyCharacterData,
+    AfterAfterBodyCharacterData,
     NullCharacterInBody,
     BodyEndTagWithOpenSelectedOrdinaryElements,
     HtmlEndTagWithOpenSelectedOrdinaryElements,
@@ -931,6 +932,7 @@ fn map_tree_diagnostic_code(code: tree_result::HtmlTreeDiagnosticCode) -> HtmlTr
         Internal::DuplicateHeadStartTag => Public::DuplicateHeadStartTag,
         Internal::DuplicateBodyStartTag => Public::DuplicateBodyStartTag,
         Internal::AfterBodyCharacterData => Public::AfterBodyCharacterData,
+        Internal::AfterAfterBodyCharacterData => Public::AfterAfterBodyCharacterData,
         Internal::NullCharacterInBody => Public::NullCharacterInBody,
         Internal::BodyEndTagWithOpenSelectedOrdinaryElements => {
             Public::BodyEndTagWithOpenSelectedOrdinaryElements

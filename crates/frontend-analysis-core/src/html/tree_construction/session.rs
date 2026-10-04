@@ -311,6 +311,7 @@ enum Effect {
     AcknowledgeBodyEndTagWithOpenSelectedOrdinaryElements,
     RecordHtmlEndTagWithOpenSelectedOrdinaryElements,
     RecordAfterBodyCharacterData,
+    RecordAfterAfterBodyCharacterData,
     RecordIgnoredNullCharacter,
     InsertSelectedOrdinaryElement(HtmlSelectedOrdinaryElementName),
     CloseSelectedOrdinaryElement(HtmlSelectedOrdinaryElementName),
@@ -736,8 +737,17 @@ fn classify(
         },
         InsertionMode::AfterAfterBody => match token {
             AdmittedToken::EndOfFile { .. } => Ok(ModeStep::Stop { effect: None }),
-            AdmittedToken::Characters { .. } => {
-                Err(HtmlTreeCapability::UnprovedCharacterDataPosition)
+            AdmittedToken::Characters { interpreted, .. } => {
+                match classify_character_run(interpreted) {
+                    CharacterRunClass::AllHtmlWhitespace => Ok(selected_in_body_character_step()),
+                    CharacterRunClass::AllNonHtmlWhitespace => Ok(ModeStep::Reprocess {
+                        effect: Some(Effect::RecordAfterAfterBodyCharacterData),
+                        next: InsertionMode::InBody,
+                    }),
+                    CharacterRunClass::Mixed => {
+                        Err(HtmlTreeCapability::WhitespaceSensitiveCharacterData)
+                    }
+                }
             }
             AdmittedToken::StartTag { .. } => {
                 Err(HtmlTreeCapability::UnprovedShellStartTagPosition)
@@ -1172,6 +1182,14 @@ impl HtmlTreeSession {
             Effect::RecordAfterBodyCharacterData => {
                 self.record_diagnostic(
                     HtmlTreeDiagnosticCode::AfterBodyCharacterData,
+                    trigger,
+                    HtmlTreeRecovery::SwitchedToInBodyAndReprocessedSameToken,
+                );
+                Ok(())
+            }
+            Effect::RecordAfterAfterBodyCharacterData => {
+                self.record_diagnostic(
+                    HtmlTreeDiagnosticCode::AfterAfterBodyCharacterData,
                     trigger,
                     HtmlTreeRecovery::SwitchedToInBodyAndReprocessedSameToken,
                 );

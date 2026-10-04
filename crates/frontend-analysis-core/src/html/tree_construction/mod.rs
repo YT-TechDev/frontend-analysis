@@ -80,6 +80,8 @@ pub(crate) mod result;
 pub(crate) mod session;
 
 #[cfg(test)]
+mod after_after_body_character_successor_production;
+#[cfg(test)]
 mod after_after_body_character_successor_validation;
 #[cfg(test)]
 mod after_body_successor_production;
