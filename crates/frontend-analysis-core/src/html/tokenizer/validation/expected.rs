@@ -87,6 +87,14 @@ pub(super) enum Token {
         self_closing_solidus: Option<Lexeme>,
         close_delimiter: Lexeme,
     },
+    /// The selected canonical DOCTYPE only: interpreted name `html`, public
+    /// and system identifiers Missing, force-quirks Off. Deliberately not a
+    /// DOCTYPE grammar; the model carries exactly the two authored lexemes.
+    Doctype {
+        complete: Lexeme,
+        name: Lexeme,
+        interpreted_name: String,
+    },
     EndOfFile {
         at: ByteSpan,
     },
@@ -97,6 +105,7 @@ impl Token {
         match self {
             Self::Character { source, .. } => source.span,
             Self::Tag { complete, .. } => complete.span,
+            Self::Doctype { complete, .. } => complete.span,
             Self::EndOfFile { at } => *at,
         }
     }

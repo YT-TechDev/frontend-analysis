@@ -18,7 +18,8 @@ pub(crate) use self::session::{
 };
 
 use crate::html::token::{
-    HtmlCharacterToken, HtmlEndOfFileToken, HtmlPreprocessingEvidence, HtmlTagKind, HtmlToken,
+    HtmlCharacterToken, HtmlDoctypeToken, HtmlEndOfFileToken, HtmlNameEvidence,
+    HtmlPreprocessingEvidence, HtmlTagKind, HtmlToken,
 };
 use crate::{SourceAnchor, SourceText};
 
@@ -191,6 +192,15 @@ struct Engine<'a> {
     numeric_hex_marker: Option<char>,
     /// True only when the reference consumed its authored `;`.
     numeric_semicolon: bool,
+    /// The exact raw end of the `!` that entered the selected DOCTYPE
+    /// recognition; used only to report the unchanged MarkupDeclaration
+    /// boundary if the selected profile is left.
+    doctype_bang_end: usize,
+    /// Letters of the current fixed word (`DOCTYPE` or `html`) already
+    /// consumed by the single forward cursor.
+    doctype_progress: usize,
+    /// The exact authored name range, captured by recognition itself.
+    doctype_name: (usize, usize),
 }
 
 impl<'a> Engine<'a> {
@@ -226,6 +236,9 @@ impl<'a> Engine<'a> {
             numeric_reference_end: 0,
             numeric_hex_marker: None,
             numeric_semicolon: false,
+            doctype_bang_end: 0,
+            doctype_progress: 0,
+            doctype_name: (0, 0),
         }
     }
 
@@ -249,7 +262,18 @@ impl<'a> Engine<'a> {
                 } else {
                     let (unit, diagnostic_code) = self.cursor.advance();
                     self.current = unit;
-                    if let Some(code) = diagnostic_code
+                    if diagnostic_code.is_some() && is_selected_doctype_state(self.state) {
+                        // No unit of the selected canonical profile (ASCII
+                        // letters, ASCII whitespace, CR/CRLF, `>`) ever raises
+                        // a preprocessing diagnostic, so a reported code proves
+                        // the source left the profile. Fall back to the
+                        // unchanged MarkupDeclaration boundary before any
+                        // diagnostic evidence is committed: committing it first
+                        // would raise `min_processed_end` and make the exact
+                        // `<!` rollback impossible.
+                        preprocessing_failure =
+                            Some(self.markup_declaration_stop(self.doctype_bang_end));
+                    } else if let Some(code) = diagnostic_code
                         && let Err(stop) = self.append_preprocessing_diagnostic(code, unit)
                     {
                         preprocessing_failure = Some(stop);
@@ -467,6 +491,11 @@ impl<'a> Engine<'a> {
             State::NumericCharacterReferenceEnd => {
                 internal_invariant_stop(HtmlTokenizerInvariantFailure::CursorState)
             }
+            State::DoctypeKeyword => self.step_doctype_keyword(unit),
+            State::DoctypeAfterKeyword => self.step_doctype_after_keyword(unit),
+            State::DoctypeBeforeName => self.step_doctype_before_name(unit),
+            State::DoctypeName => self.step_doctype_name(unit),
+            State::DoctypeAfterName => self.step_doctype_after_name(unit),
         }
     }
 
@@ -647,12 +676,18 @@ impl<'a> Engine<'a> {
                 Step::Continue
             }
             InputUnit::Scalar { ch: '!', end, .. } => {
-                self.processed_end = self.tag_open_start.max(self.min_processed_end);
-                let trigger = self.discovery_trigger((self.tag_open_start, end));
-                self.unsupported_input_stop(
-                    super::result::HtmlTokenizerCapability::MarkupDeclaration,
-                    trigger,
-                )
+                // Bounded, non-committing recognition only: the borrow cannot
+                // advance the cursor, and the accepted source is consumed
+                // below one unit at a time by the ordinary run loop.
+                let borrowed = self.cursor.peek_unconsumed_bytes(DOCTYPE_KEYWORD.len());
+                if borrowed.eq_ignore_ascii_case(DOCTYPE_KEYWORD.as_bytes()) {
+                    self.doctype_bang_end = end;
+                    self.doctype_progress = 0;
+                    self.state = State::DoctypeKeyword;
+                    Step::Continue
+                } else {
+                    self.markup_declaration_stop(end)
+                }
             }
             InputUnit::Scalar {
                 ch: '?',
@@ -702,6 +737,122 @@ impl<'a> Engine<'a> {
                 Step::Continue
             }
         }
+    }
+
+    /// The unchanged MarkupDeclaration unsupported boundary: coverage rolls
+    /// back to the opening `<` and the trigger names only `<!`.
+    fn markup_declaration_stop(&mut self, bang_end: usize) -> Step {
+        self.processed_end = self.tag_open_start.max(self.min_processed_end);
+        let trigger = self.discovery_trigger((self.tag_open_start, bang_end));
+        self.unsupported_input_stop(
+            super::result::HtmlTokenizerCapability::MarkupDeclaration,
+            trigger,
+        )
+    }
+
+    // ---- Selected canonical DOCTYPE ----------------------------------------
+    //
+    // Only `<!` + ASCII-CI "DOCTYPE" + ASCII whitespace+ + ASCII-CI "html" +
+    // ASCII whitespace* + `>` is recognized. Leaving that profile at any unit
+    // stops at the existing MarkupDeclaration boundary before any token is
+    // committed; nothing is accepted and validated afterward.
+
+    fn step_doctype_keyword(&mut self, unit: InputUnit) -> Step {
+        let expected = DOCTYPE_KEYWORD.as_bytes()[self.doctype_progress];
+        match unit {
+            InputUnit::Scalar { ch, .. }
+                if ch.is_ascii() && (ch as u8).eq_ignore_ascii_case(&expected) =>
+            {
+                self.doctype_progress += 1;
+                if self.doctype_progress == DOCTYPE_KEYWORD.len() {
+                    self.state = State::DoctypeAfterKeyword;
+                }
+                Step::Continue
+            }
+            // Recognition already proved these bytes; disagreement is an
+            // engine defect, not authored input.
+            _ => internal_invariant_stop(HtmlTokenizerInvariantFailure::CursorState),
+        }
+    }
+
+    fn step_doctype_after_keyword(&mut self, unit: InputUnit) -> Step {
+        match unit {
+            InputUnit::Scalar { ch, .. } if is_html_whitespace(ch) => {
+                self.state = State::DoctypeBeforeName;
+                Step::Continue
+            }
+            _ => self.markup_declaration_stop(self.doctype_bang_end),
+        }
+    }
+
+    fn step_doctype_before_name(&mut self, unit: InputUnit) -> Step {
+        match unit {
+            InputUnit::Scalar { ch, .. } if is_html_whitespace(ch) => Step::Continue,
+            InputUnit::Scalar { ch, start, .. } if ch.eq_ignore_ascii_case(&'h') => {
+                self.doctype_name = (start, start);
+                self.doctype_progress = 0;
+                self.state = State::DoctypeName;
+                self.pending_reconsume = true;
+                Step::Continue
+            }
+            _ => self.markup_declaration_stop(self.doctype_bang_end),
+        }
+    }
+
+    fn step_doctype_name(&mut self, unit: InputUnit) -> Step {
+        let expected = DOCTYPE_SELECTED_NAME.as_bytes()[self.doctype_progress];
+        match unit {
+            InputUnit::Scalar { ch, end, .. }
+                if ch.is_ascii() && (ch as u8).eq_ignore_ascii_case(&expected) =>
+            {
+                self.doctype_progress += 1;
+                self.doctype_name.1 = end;
+                if self.doctype_progress == DOCTYPE_SELECTED_NAME.len() {
+                    self.state = State::DoctypeAfterName;
+                }
+                Step::Continue
+            }
+            _ => self.markup_declaration_stop(self.doctype_bang_end),
+        }
+    }
+
+    fn step_doctype_after_name(&mut self, unit: InputUnit) -> Step {
+        match unit {
+            InputUnit::Scalar { ch, .. } if is_html_whitespace(ch) => Step::Continue,
+            InputUnit::Scalar { ch: '>', end, .. } => self.commit_selected_doctype(end),
+            _ => self.markup_declaration_stop(self.doctype_bang_end),
+        }
+    }
+
+    /// Prepares then commits the one selected DOCTYPE token. Every fallible
+    /// decision (emitted-token count, retained interpreted name bytes, and
+    /// evidence construction) happens before the infallible commit, so a
+    /// refusal can never expose a partial token or partially retained name.
+    fn commit_selected_doctype(&mut self, close_end: usize) -> Step {
+        let at = (self.processed_end, self.processed_end);
+        let name_bytes = DOCTYPE_SELECTED_NAME.len();
+        let committed = match self.preflight_token_emission(name_bytes, at) {
+            Ok(committed) => committed,
+            Err(stop) => return stop,
+        };
+        if let Err(stop) = self.try_reserve_retained(name_bytes, self.processed_end) {
+            return stop;
+        }
+        let name_anchor = self.anchor(self.doctype_name.0, self.doctype_name.1);
+        let complete = self.anchor(self.tag_open_start, close_end);
+        let Ok(name) = HtmlNameEvidence::new(name_anchor, DOCTYPE_SELECTED_NAME.to_owned()) else {
+            return internal_invariant_stop(
+                HtmlTokenizerInvariantFailure::SourceEvidenceConstruction,
+            );
+        };
+        let Ok(doctype) = HtmlDoctypeToken::new(complete, name) else {
+            return internal_invariant_stop(
+                HtmlTokenizerInvariantFailure::SourceEvidenceConstruction,
+            );
+        };
+        self.commit_token(HtmlToken::Doctype(doctype), committed);
+        self.state = State::Data;
+        Step::Continue
     }
 
     // ---- End tag open ------------------------------------------------
@@ -2028,6 +2179,24 @@ impl<'a> Engine<'a> {
     }
 }
 
+/// Whether `state` is one of the five private selected-DOCTYPE recognition
+/// states.
+fn is_selected_doctype_state(state: State) -> bool {
+    matches!(
+        state,
+        State::DoctypeKeyword
+            | State::DoctypeAfterKeyword
+            | State::DoctypeBeforeName
+            | State::DoctypeName
+            | State::DoctypeAfterName
+    )
+}
+
+/// The selected canonical DOCTYPE keyword and name, matched ASCII
+/// case-insensitively. The interpreted name is exactly the lowercase form.
+const DOCTYPE_KEYWORD: &str = "DOCTYPE";
+const DOCTYPE_SELECTED_NAME: &str = "html";
+
 fn is_html_whitespace(ch: char) -> bool {
     matches!(ch, '\t' | '\n' | '\u{000c}' | ' ')
 }
@@ -2097,6 +2266,7 @@ fn checked_token_interpreted_bytes(token: &HtmlToken) -> Option<usize> {
             }
             Some(total)
         }
+        HtmlToken::Doctype(doctype) => Some(doctype.name().interpreted().len()),
         HtmlToken::EndOfFile(_) => Some(0),
     }
 }
@@ -2104,6 +2274,7 @@ fn checked_token_interpreted_bytes(token: &HtmlToken) -> Option<usize> {
 fn token_span_end(token: &HtmlToken) -> usize {
     match token {
         HtmlToken::Character(character) => character.source().range().end(),
+        HtmlToken::Doctype(doctype) => doctype.complete().range().end(),
         HtmlToken::Tag(tag) => tag.complete().range().end(),
         HtmlToken::EndOfFile(eof) => eof.source().range().end(),
     }

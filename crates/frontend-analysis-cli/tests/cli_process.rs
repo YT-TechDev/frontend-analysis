@@ -1130,6 +1130,193 @@ nodes: 4
         assert_report(&run, &expected);
     }
 
+    // ---- #892: selected canonical DOCTYPE / Initial No-Quirks successor ----
+    //
+    // Every expectation is hand-authored from the selected theorem and
+    // hand-counted source byte offsets. `<!DOCTYPE ` is 10 bytes and `html`
+    // 4, so the name is bytes 10..14 on a single-line source.
+
+    const DOCTYPE_SHELL_TAIL: &str = "  #2 element html
+      authored evidence: none
+      synthesized: implied by document structure
+    #3 element head
+        authored evidence: none
+        synthesized: implied by document structure
+    #4 element body
+        authored evidence: none
+        synthesized: implied by document structure
+";
+
+    #[test]
+    fn canonical_doctype_with_an_implied_shell_has_no_missing_doctype() {
+        let run = html("doctype-implied", b"<!DOCTYPE html>");
+
+        let expected = head(15)
+            + "completion: complete
+coverage: committed authored prefix bytes 0..15; processed tokens 2
+tokenizer diagnostics: 0
+tree diagnostics: 0
+nodes: 5
+
+#0 document
+    authored evidence: none
+  #1 doctype html
+      authored doctype: bytes 0..15, line 1, byte column 1: \"<!DOCTYPE html>\"
+      authored name: bytes 10..14, line 1, byte column 11: \"html\"
+" + DOCTYPE_SHELL_TAIL;
+        assert_report(&run, &expected);
+        assert!(!run.stdout.contains("missing doctype"));
+    }
+
+    #[test]
+    fn canonical_doctype_with_an_explicit_shell_keeps_its_document_child_order() {
+        // `<!DOCTYPE html>` 0..15, `<html>` 15..21, `<head>` 21..27,
+        // `</head>` 27..34, `<body>` 34..40, `</body>` 40..47,
+        // `</html>` 47..54; eight tokens including the end of file.
+        let run = html(
+            "doctype-explicit",
+            b"<!DOCTYPE html><html><head></head><body></body></html>",
+        );
+
+        let expected = head(54)
+            + "completion: complete
+coverage: committed authored prefix bytes 0..54; processed tokens 8
+tokenizer diagnostics: 0
+tree diagnostics: 0
+nodes: 5
+
+#0 document
+    authored evidence: none
+  #1 doctype html
+      authored doctype: bytes 0..15, line 1, byte column 1: \"<!DOCTYPE html>\"
+      authored name: bytes 10..14, line 1, byte column 11: \"html\"
+  #2 element html
+      authored start tag: bytes 15..21, line 1, byte column 16: \"<html>\"
+      authored raw name: bytes 16..20, line 1, byte column 17: \"html\"
+    #3 element head
+        authored start tag: bytes 21..27, line 1, byte column 22: \"<head>\"
+        authored raw name: bytes 22..26, line 1, byte column 23: \"head\"
+    #4 element body
+        authored start tag: bytes 34..40, line 1, byte column 35: \"<body>\"
+        authored raw name: bytes 35..39, line 1, byte column 36: \"body\"
+";
+        assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn canonical_doctype_renders_the_exact_authored_case_spelling() {
+        let run = html("doctype-case", b"<!DoCtYpE HTML>");
+
+        let expected = head(15)
+            + "completion: complete
+coverage: committed authored prefix bytes 0..15; processed tokens 2
+tokenizer diagnostics: 0
+tree diagnostics: 0
+nodes: 5
+
+#0 document
+    authored evidence: none
+  #1 doctype html
+      authored doctype: bytes 0..15, line 1, byte column 1: \"<!DoCtYpE HTML>\"
+      authored name: bytes 10..14, line 1, byte column 11: \"HTML\"
+" + DOCTYPE_SHELL_TAIL;
+        assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn canonical_doctype_with_a_line_feed_separator_keeps_raw_evidence_and_coordinates() {
+        // `<!DOCTYPE` 0..9, LF 9..10, `html` 10..14 (line 2, column 1), `>`.
+        let run = html("doctype-lf", b"<!DOCTYPE\nhtml>");
+
+        let expected = head(15)
+            + "completion: complete
+coverage: committed authored prefix bytes 0..15; processed tokens 2
+tokenizer diagnostics: 0
+tree diagnostics: 0
+nodes: 5
+
+#0 document
+    authored evidence: none
+  #1 doctype html
+      authored doctype: bytes 0..15, line 1, byte column 1: \"<!DOCTYPE\\u{a}html>\"
+      authored name: bytes 10..14, line 2, byte column 1: \"html\"
+" + DOCTYPE_SHELL_TAIL;
+        assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn a_second_doctype_is_tree_unsupported_and_constructs_no_second_node() {
+        // The second DOCTYPE is bytes 15..30 and is refused in before-html.
+        let run = html("doctype-second", b"<!DOCTYPE html><!DOCTYPE html>");
+
+        let expected = head(30)
+            + "completion: incomplete; tree unsupported: doctype outside initial
+  trigger: bytes 15..30, line 1, byte column 16: \"<!DOCTYPE html>\"
+coverage: committed authored prefix bytes 0..15; processed tokens 1
+tokenizer diagnostics: 0
+tree diagnostics: 0
+nodes: 2
+
+#0 document
+    authored evidence: none
+  #1 doctype html
+      authored doctype: bytes 0..15, line 1, byte column 1: \"<!DOCTYPE html>\"
+      authored name: bytes 10..14, line 1, byte column 11: \"html\"
+";
+        assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn non_selected_markup_declarations_stay_tokenizer_unsupported() {
+        for (name, source, bytes, trigger) in [
+            (
+                "md-xx",
+                &b"<!xx>"[..],
+                5,
+                "bytes 0..2, line 1, byte column 1: \"<!\"",
+            ),
+            (
+                "md-svg",
+                &b"<!DOCTYPE svg>"[..],
+                14,
+                "bytes 0..2, line 1, byte column 1: \"<!\"",
+            ),
+            (
+                "md-glued",
+                &b"<!DOCTYPEhtml>"[..],
+                14,
+                "bytes 0..2, line 1, byte column 1: \"<!\"",
+            ),
+        ] {
+            let run = html(name, source);
+
+            let expected = head(bytes)
+                + &format!(
+                    "completion: incomplete; tokenizer unsupported: markup declaration (deferred)
+  trigger: {trigger}
+coverage: committed authored prefix bytes 0..0; processed tokens 0
+tokenizer diagnostics: 0
+tree diagnostics: 0
+nodes: 1
+
+#0 document
+    authored evidence: none
+"
+                );
+            assert_report(&run, &expected);
+        }
+    }
+
+    #[test]
+    fn canonical_doctype_output_is_byte_identical_across_invocations() {
+        let first = html("doctype-repeat-1", b"<!DOCTYPE html><html></html>");
+        let second = html("doctype-repeat-2", b"<!DOCTYPE html><html></html>");
+        assert_eq!(first.status, Some(0));
+        assert_eq!(first.stdout, second.stdout);
+        assert_eq!(first.stderr, second.stderr);
+        assert!(first.stdout.contains("#1 doctype html"));
+    }
+
     #[test]
     fn tokenizer_unsupported_is_distinct_from_tree_unsupported() {
         // `<!xx>` is the lower-layer MarkupDeclaration boundary (#880 sentinel

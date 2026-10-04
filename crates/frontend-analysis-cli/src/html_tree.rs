@@ -157,6 +157,19 @@ fn render_node(out: &mut String, node: &HtmlTreeNode, depth: usize) {
             let _ = writeln!(out, "{indent}#{id} document");
             let _ = writeln!(out, "{indent}    authored evidence: none");
         }
+        HtmlTreeNodeKind::DocumentType(doctype) => {
+            let _ = writeln!(out, "{indent}#{id} doctype html");
+            let _ = writeln!(
+                out,
+                "{indent}    authored doctype: {}",
+                render_evidence(doctype.complete())
+            );
+            let _ = writeln!(
+                out,
+                "{indent}    authored name: {}",
+                render_evidence(doctype.authored_name())
+            );
+        }
         HtmlTreeNodeKind::Element(element) => {
             let _ = writeln!(
                 out,
@@ -281,6 +294,7 @@ fn tree_capability(capability: HtmlTreeUnsupportedCapability) -> &'static str {
         HtmlTreeUnsupportedCapability::TitleTagOutsideSelectedLifecycle => {
             "title tag outside selected lifecycle"
         }
+        HtmlTreeUnsupportedCapability::DoctypeOutsideInitial => "doctype outside initial",
     }
 }
 

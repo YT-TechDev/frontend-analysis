@@ -179,8 +179,34 @@ impl HtmlTreeNode {
 #[derive(Debug, Clone)]
 pub enum HtmlTreeNodeKind {
     Document,
+    DocumentType(HtmlTreeDocumentType),
     Element(HtmlTreeElement),
     Text(HtmlTreeText),
+}
+
+/// The one selected canonical constructed DocumentType.
+///
+/// The type itself is the closed selected meaning: interpreted name `html`,
+/// public identifier Missing, system identifier Missing, force-quirks Off.
+/// Only the exact authored evidence is exposed; the authored spelling (case)
+/// of the name is retained by [`Self::authored_name`]. No document-mode,
+/// identifier, or force-quirks accessor exists.
+#[derive(Debug, Clone)]
+pub struct HtmlTreeDocumentType {
+    complete: SourceAnchor,
+    authored_name: SourceAnchor,
+}
+
+impl HtmlTreeDocumentType {
+    /// The exact authored `<!DOCTYPE ...>` range.
+    pub fn complete(&self) -> &SourceAnchor {
+        &self.complete
+    }
+
+    /// The exact authored spelling of the DOCTYPE name.
+    pub fn authored_name(&self) -> &SourceAnchor {
+        &self.authored_name
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -315,6 +341,7 @@ pub enum HtmlTreeUnsupportedCapability {
     TitleTagAttribute,
     SelfClosingTitleTag,
     TitleTagOutsideSelectedLifecycle,
+    DoctypeOutsideInitial,
 }
 
 #[derive(Debug, Clone)]
@@ -636,6 +663,12 @@ fn project_node(node: &tree_result::HtmlTreeNode) -> Result<HtmlTreeNode, HtmlTr
     children.extend(node.children().iter().copied().map(node_id));
     let kind = match node.kind() {
         tree_result::HtmlTreeNodeKind::Document => HtmlTreeNodeKind::Document,
+        tree_result::HtmlTreeNodeKind::DocumentType(doctype) => {
+            HtmlTreeNodeKind::DocumentType(HtmlTreeDocumentType {
+                complete: doctype.complete().clone(),
+                authored_name: doctype.authored_name().clone(),
+            })
+        }
         tree_result::HtmlTreeNodeKind::Element(element) => {
             HtmlTreeNodeKind::Element(project_element(element))
         }
@@ -839,6 +872,7 @@ fn map_tree_capability(
         Internal::TitleTagAttribute => Public::TitleTagAttribute,
         Internal::SelfClosingTitleTag => Public::SelfClosingTitleTag,
         Internal::TitleTagOutsideSelectedLifecycle => Public::TitleTagOutsideSelectedLifecycle,
+        Internal::DoctypeOutsideInitial => Public::DoctypeOutsideInitial,
     }
 }
 

@@ -3,10 +3,12 @@
 //! (Issue #890; selection record: #348 comment `5979233108`).
 //!
 //! This module is **validation only**. It changes no production behavior.
-//! Production is expected to remain unchanged and still stops canonical
-//! DOCTYPE at the tokenizer `MarkupDeclaration` boundary. Nothing here
-//! authorizes production placement or implementation, and no name in this file
-//! is production placement authority.
+//! When it was accepted, production still stopped canonical DOCTYPE at the
+//! tokenizer `MarkupDeclaration` boundary; that single baseline observation
+//! became stale when Issue #892 implemented the selected successor and has
+//! been retired. Nothing here authorizes production placement or
+//! implementation, and no name in this file is production placement
+//! authority.
 //!
 //! # Normative basis (WHATWG HTML, pin `a5e15011a00ddefd648c29e4d27734f3e7ff821f`)
 //!
@@ -40,9 +42,8 @@
 //! Expected meaning is hand-authored in [`gold`] from the theorem above. This
 //! module imports no production token, tree-construction driver/session/result,
 //! or tokenizer-diagnostic code. The only generic project primitives used are
-//! `SourceText`/`SourceAnchor`/`SourceId`, and the batch tokenizer is used in
-//! exactly one place: [`current_production_stops_at_markup_declaration`],
-//! which observes the existing boundary without defining any expectation.
+//! `SourceText`/`SourceAnchor`/`SourceId`; the production tokenizer is not
+//! used at all.
 //!
 //! Two independent statements meet and must agree:
 //!
@@ -75,12 +76,6 @@
 use std::collections::BTreeSet;
 
 use crate::{SourceAnchor, SourceId, SourceText};
-
-use super::super::tokenizer::producer::tokenize;
-use super::super::tokenizer::resource::HtmlTokenizerLimits;
-use super::super::tokenizer::result::{
-    HtmlTokenizerCapability, HtmlTokenizerCompletion, HtmlTokenizerIncompleteCause,
-};
 
 // ---------------------------------------------------------------------------
 // 1. Test-private semantic vocabulary (not production types)
@@ -3472,7 +3467,7 @@ fn cd11_gold_region_never_calls_the_model() {
 }
 
 /// CD11 — no production token, tree-construction or diagnostic type is the
-/// oracle. Only generic source primitives and the one tokenizer observation.
+/// oracle. Only generic source primitives are imported.
 #[test]
 fn cd11_imports_no_production_token_or_tree_code() {
     let own = include_str!("canonical_doctype_successor_validation.rs");
@@ -3521,30 +3516,6 @@ fn cd11_imports_no_production_token_or_tree_code() {
                     })
             }),
             "{needle} must not appear in executable test code"
-        );
-    }
-}
-
-/// CD12 — observation only: production still stops canonical DOCTYPE at the
-/// existing tokenizer boundary. This defines no expectation for the theorem.
-#[test]
-fn current_production_stops_at_markup_declaration() {
-    let limits = HtmlTokenizerLimits::new(1_024, 8_192, 1_024, 1_024, 256, 4_096, 1_024);
-    for text in [
-        "<!DOCTYPE html>",
-        "<!doctype html>",
-        "<body></body></html><!DOCTYPE html>",
-    ] {
-        let source = SourceText::new(SourceId::new(1), text.to_owned());
-        let run = tokenize(&source, limits);
-        assert!(
-            matches!(
-                run.completion(),
-                HtmlTokenizerCompletion::Incomplete(
-                    HtmlTokenizerIncompleteCause::UnsupportedCapability(unsupported)
-                ) if unsupported.capability() == HtmlTokenizerCapability::MarkupDeclaration
-            ),
-            "{text}: production boundary changed"
         );
     }
 }

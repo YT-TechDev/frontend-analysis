@@ -581,6 +581,7 @@ impl Machine {
                 self.insert_text(character.interpreted(), evidence(character.source()));
                 Ok(false)
             }
+            HtmlToken::Doctype(_) => Err(Unsupported::OutsideCandidate),
             HtmlToken::EndOfFile(eof) => {
                 if self.has_open_block() {
                     self.push_diagnostic(
@@ -753,6 +754,7 @@ fn token_end(token: &HtmlToken) -> usize {
     match token {
         HtmlToken::Character(character) => character.source().range().end(),
         HtmlToken::Tag(tag) => tag.complete().range().end(),
+        HtmlToken::Doctype(doctype) => doctype.complete().range().end(),
         HtmlToken::EndOfFile(eof) => eof.source().range().end(),
     }
 }

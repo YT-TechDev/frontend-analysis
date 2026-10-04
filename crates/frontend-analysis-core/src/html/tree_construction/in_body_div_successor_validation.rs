@@ -599,6 +599,10 @@ fn candidate_trigger(token: &HtmlToken, index: usize) -> CandidateTrigger {
             index,
             evidence: evidence(tag.complete()),
         },
+        HtmlToken::Doctype(doctype) => CandidateTrigger::Authored {
+            index,
+            evidence: evidence(doctype.complete()),
+        },
         HtmlToken::EndOfFile(_) => CandidateTrigger::EndOfFile { index },
     }
 }
@@ -631,6 +635,7 @@ fn candidate_shape(token: &HtmlToken) -> Result<CandidateTokenShape<'_>, Candida
                 }),
             }
         }
+        HtmlToken::Doctype(_) => Err(CandidateUnsupported::OutsideModelledCandidateCells),
         HtmlToken::EndOfFile(end_of_file) => Ok(CandidateTokenShape::EndOfFile {
             at: end_of_file.source().range().start(),
         }),
@@ -1982,6 +1987,9 @@ fn observed_token(token: &HtmlToken) -> ExpectedToken {
                 raw_name: span(tag.name().source()),
             },
         },
+        HtmlToken::Doctype(_) => {
+            panic!("TC-S3 predecessor fixtures must not tokenize a DOCTYPE")
+        }
         HtmlToken::EndOfFile(end_of_file) => ExpectedToken::EndOfFile {
             at: end_of_file.source().range().start(),
         },
@@ -2236,6 +2244,9 @@ fn tokenizer_emits_exact_evidence_shape_for_all_canonical_fixtures() {
                 HtmlToken::Tag(tag) => {
                     assert_eq!(tag.complete().source_id(), SourceId::new(41));
                     assert_eq!(tag.name().source().source_id(), SourceId::new(41));
+                }
+                HtmlToken::Doctype(doctype) => {
+                    assert_eq!(doctype.complete().source_id(), SourceId::new(41));
                 }
                 HtmlToken::EndOfFile(_) => {}
             }

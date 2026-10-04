@@ -188,6 +188,37 @@ fn compare_token(
                 )?;
             }
         }
+        (
+            Token::Doctype {
+                complete: expected_complete,
+                name: expected_name,
+                interpreted_name: expected_interpreted,
+            },
+            Token::Doctype {
+                complete: observed_complete,
+                name: observed_name,
+                interpreted_name: observed_interpreted,
+            },
+        ) => {
+            if expected_complete != observed_complete {
+                return Err(ObservationMismatch::new(
+                    fixture_id,
+                    format!("{prefix}.complete"),
+                ));
+            }
+            if expected_name != observed_name {
+                return Err(ObservationMismatch::new(
+                    fixture_id,
+                    format!("{prefix}.name"),
+                ));
+            }
+            if expected_interpreted != observed_interpreted {
+                return Err(ObservationMismatch::new(
+                    fixture_id,
+                    format!("{prefix}.interpreted_name"),
+                ));
+            }
+        }
         (Token::EndOfFile { at: expected_at }, Token::EndOfFile { at: observed_at }) => {
             if expected_at != observed_at {
                 return Err(ObservationMismatch::new(fixture_id, format!("{prefix}.at")));

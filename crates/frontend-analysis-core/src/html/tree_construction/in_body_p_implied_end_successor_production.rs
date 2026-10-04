@@ -154,6 +154,7 @@ fn normalized_creation_signature(
             let meaning = match node.kind() {
                 HtmlTreeNodeKind::Document => "document".to_owned(),
                 HtmlTreeNodeKind::Element(element) => format!("element:{:?}", element.name()),
+                HtmlTreeNodeKind::DocumentType(_) => "doctype".to_owned(),
                 HtmlTreeNodeKind::Text(text) => format!("text:{:?}", text.interpreted()),
             };
             let parent = node.parent().map(|id| {

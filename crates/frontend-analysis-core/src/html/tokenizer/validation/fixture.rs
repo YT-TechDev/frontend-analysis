@@ -376,6 +376,26 @@ fn validate_token(
                 }
             }
         }
+        Token::Doctype {
+            complete,
+            name,
+            interpreted_name,
+        } => {
+            validate_lexeme(fixture_id, source, complete, &format!("{path}.complete"))?;
+            validate_nested_lexeme(
+                fixture_id,
+                source,
+                complete.span,
+                name,
+                &format!("{path}.name"),
+            )?;
+            if name.span.is_empty() || interpreted_name != "html" {
+                return Err(FixtureContractError::new(
+                    fixture_id,
+                    format!("{path}.doctype_name"),
+                ));
+            }
+        }
         Token::EndOfFile { at } => validate_span(fixture_id, source, *at, path)?,
     }
     Ok(())
