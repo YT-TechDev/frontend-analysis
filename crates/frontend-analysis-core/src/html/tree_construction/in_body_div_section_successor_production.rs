@@ -1817,7 +1817,7 @@ fn predecessor_capability_meanings_are_unchanged_and_apply_to_section() {
 }
 
 #[test]
-fn the_selected_domain_is_closed_at_div_and_section() {
+fn tc_s4_negative_boundary_excludes_names_outside_the_current_selected_domain() {
     // Anything outside the dedicated Paragraph successor that merely looks
     // like a block element stays outside the selected ordinary domain. The
     // later #896 expansion admitted `article`, `aside`, `main`, `nav`,
