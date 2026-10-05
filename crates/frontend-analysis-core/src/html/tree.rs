@@ -94,6 +94,9 @@ pub struct HtmlTreeReport {
     coverage: HtmlTreeCoverage,
     tokenizer_diagnostics: Vec<HtmlTokenizerDiagnostic>,
     tree_diagnostics: Vec<HtmlTreeDiagnostic>,
+    /// Validated encounter order. Position carries no meaning beyond that
+    /// order.
+    selected_ordinary_relations: Vec<HtmlTreeSelectedOrdinaryRelation>,
 }
 
 impl HtmlTreeReport {
@@ -133,6 +136,45 @@ impl HtmlTreeReport {
     pub fn tree_diagnostics(&self) -> &[HtmlTreeDiagnostic] {
         &self.tree_diagnostics
     }
+
+    /// Validated close/recovery relations of the selected ordinary elements
+    /// (`div`, `section`, `article`, `aside`, `footer`, `header`, `main`,
+    /// `nav`), in validated encounter order. For one authored end tag the
+    /// current-to-target recovery pops precede the target's matching close.
+    ///
+    /// Absence of a relation means only that no validated relation of this
+    /// selected domain is projected for a node. It does not mean the node is
+    /// open at end of file, never closed, implicitly closed, or the target of
+    /// an unmatched end tag, and in an incomplete report it says nothing about
+    /// unprocessed input. [`Self::completion`] and [`Self::coverage`] remain
+    /// the only completeness boundary.
+    pub fn selected_ordinary_relations(&self) -> &[HtmlTreeSelectedOrdinaryRelation] {
+        &self.selected_ordinary_relations
+    }
+}
+
+/// How a selected ordinary element left the open-element state.
+///
+/// Subject and target are report-local identities resolvable through
+/// [`HtmlTreeReport::node`]; names are read from the resolved nodes. The two
+/// meanings are distinct durable facts and are never collapsed.
+#[derive(Debug, Clone)]
+pub enum HtmlTreeSelectedOrdinaryRelation {
+    /// The element's own authored end tag closed it.
+    MatchingClose {
+        node: HtmlTreeNodeId,
+        /// The exact complete authored end tag.
+        trigger: SourceAnchor,
+    },
+    /// No matching end tag of its own caused this pop: an authored end tag of
+    /// the enclosing `target` element removed it.
+    RecoveryPopByAncestorEndTag {
+        node: HtmlTreeNodeId,
+        /// The constructed ancestor the authored end tag was aimed at.
+        target: HtmlTreeNodeId,
+        /// The exact complete authored end tag of `target`.
+        trigger: SourceAnchor,
+    },
 }
 
 /// A result-local constructed creation identity.
@@ -649,6 +691,8 @@ fn project(
         processed_tokens: analysis.coverage().processed_tokens(),
     };
 
+    let selected_ordinary_relations = project_selected_ordinary_relations(analysis)?;
+
     Ok(HtmlTreeReport {
         source_id,
         root: node_id(analysis.root()),
@@ -657,7 +701,53 @@ fn project(
         coverage,
         tokenizer_diagnostics,
         tree_diagnostics,
+        selected_ordinary_relations,
     })
+}
+
+/// Projects the already freeze-validated selected ordinary close and
+/// recovery actions, preserving their encounter order. Nothing is
+/// recomputed: the freeze has proved subject, target, nearest-target
+/// selection, trigger and order. A missing authored trigger cannot occur
+/// after freeze and fails closed rather than inventing evidence.
+fn project_selected_ordinary_relations(
+    analysis: &tree_result::HtmlDocumentShellAnalysis,
+) -> Result<Vec<HtmlTreeSelectedOrdinaryRelation>, HtmlTreeCoreFailure> {
+    use tree_result::HtmlTreeActionKind as Action;
+
+    let is_relation = |action: &&tree_result::HtmlTreeAction| {
+        matches!(
+            action.kind(),
+            Action::ClosedSelectedOrdinaryElement { .. }
+                | Action::PoppedSelectedOrdinaryElementByAncestorEndTag { .. }
+        )
+    };
+    let count = analysis.actions().iter().filter(is_relation).count();
+    let mut relations = vec_with_capacity(count)?;
+    for action in analysis.actions().iter().filter(is_relation) {
+        let trigger = action
+            .trigger()
+            .authored_boundary()
+            .cloned()
+            .ok_or(HtmlTreeCoreFailure::InternalFailure)?;
+        relations.push(match action.kind() {
+            Action::ClosedSelectedOrdinaryElement { node, .. } => {
+                HtmlTreeSelectedOrdinaryRelation::MatchingClose {
+                    node: node_id(*node),
+                    trigger,
+                }
+            }
+            Action::PoppedSelectedOrdinaryElementByAncestorEndTag { node, target } => {
+                HtmlTreeSelectedOrdinaryRelation::RecoveryPopByAncestorEndTag {
+                    node: node_id(*node),
+                    target: node_id(*target),
+                    trigger,
+                }
+            }
+            _ => return Err(HtmlTreeCoreFailure::InternalFailure),
+        });
+    }
+    Ok(relations)
 }
 
 fn node_id(id: tree_result::HtmlConstructedNodeId) -> HtmlTreeNodeId {

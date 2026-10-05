@@ -844,6 +844,10 @@ nodes: 5
           authored start tag: bytes 6..11, line 1, byte column 7: \"<div>\"
           authored raw name: bytes 7..10, line 1, byte column 8: \"div\"
 
+selected ordinary relation 1: matching close
+  node: #4 div
+  trigger: bytes 11..17, line 1, byte column 12: \"</div>\"
+
 " + MISSING_DOCTYPE_AT_BODY;
         assert_report(&run, &expected);
     }
@@ -879,6 +883,13 @@ nodes: 8
             #7 text \"t\"
                 contribution 1: source bytes 23..24, line 1, byte column 24: \"t\"; interpreted \"t\"
 
+selected ordinary relation 1: matching close
+  node: #5 section
+  trigger: bytes 28..38, line 1, byte column 29: \"</section>\"
+selected ordinary relation 2: matching close
+  node: #4 div
+  trigger: bytes 38..44, line 1, byte column 39: \"</div>\"
+
 "
             + MISSING_DOCTYPE_AT_BODY;
         assert_report(&run, &expected);
@@ -910,6 +921,13 @@ nodes: 7
             authored raw name: bytes 16..19, line 1, byte column 17: \"nav\"
           #6 text \"t\"
               contribution 1: source bytes 20..21, line 1, byte column 21: \"t\"; interpreted \"t\"
+
+selected ordinary relation 1: matching close
+  node: #5 nav
+  trigger: bytes 21..27, line 1, byte column 22: \"</nav>\"
+selected ordinary relation 2: matching close
+  node: #4 article
+  trigger: bytes 27..37, line 1, byte column 28: \"</article>\"
 
 " + MISSING_DOCTYPE_AT_BODY;
         assert_report(&run, &expected);
@@ -947,8 +965,168 @@ nodes: 8
           authored start tag: bytes 55..61, line 1, byte column 56: \"<main>\"
           authored raw name: bytes 56..60, line 1, byte column 57: \"main\"
 
+selected ordinary relation 1: matching close
+  node: #4 aside
+  trigger: bytes 13..21, line 1, byte column 14: \"</aside>\"
+selected ordinary relation 2: matching close
+  node: #5 footer
+  trigger: bytes 29..38, line 1, byte column 30: \"</footer>\"
+selected ordinary relation 3: matching close
+  node: #6 header
+  trigger: bytes 46..55, line 1, byte column 47: \"</header>\"
+selected ordinary relation 4: matching close
+  node: #7 main
+  trigger: bytes 61..68, line 1, byte column 62: \"</main>\"
+
 " + MISSING_DOCTYPE_AT_BODY;
         assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn one_end_tag_renders_every_recovery_pop_then_the_matching_close() {
+        // <body>0..6 <header>6..14 <main>14..20 <aside>20..27 </header>27..36.
+        let run = html("recovery-multi", b"<body><header><main><aside></header>");
+
+        let expected = head(36)
+            + "completion: complete
+coverage: committed authored prefix bytes 0..36; processed tokens 6
+tokenizer diagnostics: 0
+tree diagnostics: 2
+nodes: 7
+
+" + SYNTHESIZED_SHELL
+            + AUTHORED_BODY
+            + "      #4 element header
+          authored start tag: bytes 6..14, line 1, byte column 7: \"<header>\"
+          authored raw name: bytes 7..13, line 1, byte column 8: \"header\"
+        #5 element main
+            authored start tag: bytes 14..20, line 1, byte column 15: \"<main>\"
+            authored raw name: bytes 15..19, line 1, byte column 16: \"main\"
+          #6 element aside
+              authored start tag: bytes 20..27, line 1, byte column 21: \"<aside>\"
+              authored raw name: bytes 21..26, line 1, byte column 22: \"aside\"
+
+selected ordinary relation 1: recovery pop by ancestor end tag
+  node: #6 aside
+  target: #4 header
+  trigger: bytes 27..36, line 1, byte column 28: \"</header>\"
+selected ordinary relation 2: recovery pop by ancestor end tag
+  node: #5 main
+  target: #4 header
+  trigger: bytes 27..36, line 1, byte column 28: \"</header>\"
+selected ordinary relation 3: matching close
+  node: #4 header
+  trigger: bytes 27..36, line 1, byte column 28: \"</header>\"
+
+" + MISSING_DOCTYPE_AT_BODY
+            + "tree diagnostic 2: misnested selected ordinary end tag
+  recovery: popped intervening selected ordinary elements and closed target
+  trigger: bytes 27..36, line 1, byte column 28: \"</header>\"
+";
+        assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn repeated_target_names_render_the_exact_target_identity() {
+        // <body>0..6 <div>6..11 <div>11..16 <nav>16..21 </div>21..27 </div>27..33.
+        let run = html("recovery-repeated", b"<body><div><div><nav></div></div>");
+
+        let expected = head(33)
+            + "completion: complete
+coverage: committed authored prefix bytes 0..33; processed tokens 7
+tokenizer diagnostics: 0
+tree diagnostics: 2
+nodes: 7
+
+" + SYNTHESIZED_SHELL
+            + AUTHORED_BODY
+            + "      #4 element div
+          authored start tag: bytes 6..11, line 1, byte column 7: \"<div>\"
+          authored raw name: bytes 7..10, line 1, byte column 8: \"div\"
+        #5 element div
+            authored start tag: bytes 11..16, line 1, byte column 12: \"<div>\"
+            authored raw name: bytes 12..15, line 1, byte column 13: \"div\"
+          #6 element nav
+              authored start tag: bytes 16..21, line 1, byte column 17: \"<nav>\"
+              authored raw name: bytes 17..20, line 1, byte column 18: \"nav\"
+
+selected ordinary relation 1: recovery pop by ancestor end tag
+  node: #6 nav
+  target: #5 div
+  trigger: bytes 21..27, line 1, byte column 22: \"</div>\"
+selected ordinary relation 2: matching close
+  node: #5 div
+  trigger: bytes 21..27, line 1, byte column 22: \"</div>\"
+selected ordinary relation 3: matching close
+  node: #4 div
+  trigger: bytes 27..33, line 1, byte column 28: \"</div>\"
+
+" + MISSING_DOCTYPE_AT_BODY
+            + "tree diagnostic 2: misnested selected ordinary end tag
+  recovery: popped intervening selected ordinary elements and closed target
+  trigger: bytes 21..27, line 1, byte column 22: \"</div>\"
+";
+        assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn unmatched_end_and_eof_open_render_no_relation_section() {
+        for (name, input) in [
+            ("unmatched-end", &b"<body></article>"[..]),
+            ("eof-open", &b"<body><article>"[..]),
+        ] {
+            let run = html(name, input);
+            assert_eq!(run.status, Some(0), "{name}");
+            assert!(
+                !run.stdout.contains("selected ordinary relation"),
+                "{name}: {}",
+                run.stdout
+            );
+            assert_eq!(run.stderr, "", "{name}");
+        }
+    }
+
+    #[test]
+    fn relation_before_an_unsupported_stop_renders_beside_the_incomplete_state() {
+        // <body>0..6 <div>6..11 </div>11..17 <span>17..23 (unsupported).
+        let run = html("relation-incomplete", b"<body><div></div><span>");
+
+        let expected = head(23)
+            + "completion: incomplete; tree unsupported: non-shell element tag
+  trigger: bytes 17..23, line 1, byte column 18: \"<span>\"
+coverage: committed authored prefix bytes 0..17; processed tokens 3
+tokenizer diagnostics: 0
+tree diagnostics: 1
+nodes: 5
+
+" + SYNTHESIZED_SHELL
+            + AUTHORED_BODY
+            + "      #4 element div
+          authored start tag: bytes 6..11, line 1, byte column 7: \"<div>\"
+          authored raw name: bytes 7..10, line 1, byte column 8: \"div\"
+
+selected ordinary relation 1: matching close
+  node: #4 div
+  trigger: bytes 11..17, line 1, byte column 12: \"</div>\"
+
+" + MISSING_DOCTYPE_AT_BODY;
+        assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn relation_rendering_is_deterministic_and_keeps_authored_end_tag_casing() {
+        // <body>0..6 <ArTiClE>6..15 </aRtIcLe>15..25.
+        let first = html("relation-case-a", b"<body><ArTiClE></aRtIcLe>");
+        let second = html("relation-case-b", b"<body><ArTiClE></aRtIcLe>");
+
+        assert_eq!(first.status, Some(0));
+        assert_eq!(first.stdout, second.stdout);
+        assert!(first.stdout.contains(
+            "selected ordinary relation 1: matching close
+  node: #4 article
+  trigger: bytes 15..25, line 1, byte column 16: \"</aRtIcLe>\"
+"
+        ));
     }
 
     #[test]
