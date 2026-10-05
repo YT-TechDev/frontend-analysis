@@ -367,8 +367,9 @@ impl fmt::Debug for HtmlParagraphElementOrigin {
 /// A bounded HTML Paragraph observation.
 ///
 /// The element name is a type invariant: this type means exactly HTML `p` and
-/// nothing else. That avoids widening the authored-only `Div | Section`
-/// domain or introducing a generic arbitrary-name element representation.
+/// nothing else. That keeps Paragraph separate from the authored-only selected
+/// ordinary domain and avoids introducing a generic arbitrary-name element
+/// representation.
 #[derive(Debug, Clone)]
 pub(crate) struct HtmlParagraphElement {
     origin: HtmlParagraphElementOrigin,
