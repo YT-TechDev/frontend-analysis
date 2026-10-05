@@ -30,9 +30,8 @@
 
 use crate::html::tree_construction::driver::construct_html_document_shell;
 use crate::html::tree_construction::result::{
-    HtmlAuthoredSource, HtmlDocumentShellAnalysis, HtmlElement, HtmlSelectedOrdinaryElementName,
-    HtmlShellElementName, HtmlTreeCompletion, HtmlTreeIncompleteCause, HtmlTreeNode,
-    HtmlTreeNodeKind,
+    HtmlAuthoredSource, HtmlDocumentShellAnalysis, HtmlElement, HtmlShellElementName,
+    HtmlTreeCompletion, HtmlTreeIncompleteCause, HtmlTreeNode, HtmlTreeNodeKind,
 };
 use crate::{SourceId, SourceText};
 
@@ -129,15 +128,12 @@ fn render_node(
                     HtmlShellElementName::Head => "head",
                     HtmlShellElementName::Body => "body",
                 },
-                // The accepted production selected ordinary frontier is
-                // exactly `{div, section}`. This projection names both so the
-                // rendering stays total and honest; it claims no generalized
-                // HTML element coverage, and the tokenizer production it
-                // gates is unchanged.
-                HtmlElement::SelectedOrdinary(selected) => match selected.name() {
-                    HtmlSelectedOrdinaryElementName::Div => "div",
-                    HtmlSelectedOrdinaryElementName::Section => "section",
-                },
+                // The accepted production selected ordinary frontier is the
+                // closed selected-name domain. This projection renders its
+                // canonical interpreted spelling so the rendering stays total
+                // and honest; it claims no generalized HTML element coverage,
+                // and the tokenizer production it gates is unchanged.
+                HtmlElement::SelectedOrdinary(selected) => selected.name().interpreted(),
                 HtmlElement::Paragraph(_) => "p",
                 HtmlElement::Style(_) => "style",
                 HtmlElement::Title(_) => "title",

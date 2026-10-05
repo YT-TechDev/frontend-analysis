@@ -199,10 +199,7 @@ fn shell_name(name: HtmlShellElementName) -> &'static str {
 }
 
 fn selected_name(name: HtmlSelectedOrdinaryElementName) -> &'static str {
-    match name {
-        HtmlSelectedOrdinaryElementName::Div => "div",
-        HtmlSelectedOrdinaryElementName::Section => "section",
-    }
+    name.interpreted()
 }
 
 /// The exact authored complete start-tag span of a selected ordinary element,
@@ -1803,8 +1800,8 @@ fn predecessor_capability_meanings_are_unchanged_and_apply_to_section() {
         // Non-P names outside the selected-ordinary and Paragraph domains
         // keep the frozen unproved-name meaning.
         ("<body><span>", HtmlTreeCapability::NonShellElementTag),
-        ("<body><article>", HtmlTreeCapability::NonShellElementTag),
-        ("<body></article>", HtmlTreeCapability::NonShellElementTag),
+        ("<body><ul>", HtmlTreeCapability::NonShellElementTag),
+        ("<body></ul>", HtmlTreeCapability::NonShellElementTag),
         ("<body a>", HtmlTreeCapability::ShellTagAttribute),
         ("<body/>", HtmlTreeCapability::SelfClosingShellTag),
     ] {
@@ -1822,11 +1819,10 @@ fn predecessor_capability_meanings_are_unchanged_and_apply_to_section() {
 #[test]
 fn the_selected_domain_is_closed_at_div_and_section() {
     // Anything outside the dedicated Paragraph successor that merely looks
-    // like a block element stays outside the selected ordinary domain.
-    for name in [
-        "span", "article", "aside", "main", "nav", "header", "footer", "sections", "divs", "sec",
-        "SECTIONS",
-    ] {
+    // like a block element stays outside the selected ordinary domain. The
+    // later #896 expansion admitted `article`, `aside`, `main`, `nav`,
+    // `header`, and `footer`, so those names are no longer refused here.
+    for name in ["span", "sections", "divs", "sec", "SECTIONS"] {
         let source = format!("<body><{name}>");
         let analysis = analyze_with(&source, 1);
         let HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::UnsupportedCapability(

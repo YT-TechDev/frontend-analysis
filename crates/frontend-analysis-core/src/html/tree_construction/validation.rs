@@ -40,12 +40,12 @@ use super::driver::{
 use super::result::{
     HtmlAuthoredSource, HtmlConstructedIdentityCounter, HtmlConstructedNodeId,
     HtmlDocumentShellAnalysis, HtmlDocumentShellParts, HtmlElement, HtmlParagraphElementOrigin,
-    HtmlSelectedOrdinaryElementName, HtmlShellClosure, HtmlShellElement, HtmlShellElementName,
-    HtmlShellElementOrigin, HtmlSynthesisCause, HtmlTextContribution, HtmlTextNode, HtmlTreeAction,
-    HtmlTreeActionKind, HtmlTreeCapability, HtmlTreeCompletion, HtmlTreeCompletionUpgrade,
-    HtmlTreeDiagnostic, HtmlTreeDiagnosticCode, HtmlTreeEvidenceRole, HtmlTreeFreezeError,
-    HtmlTreeIncompleteCause, HtmlTreeNode, HtmlTreeNodeKind, HtmlTreeRecovery,
-    HtmlTreeTokenTrigger, HtmlTreeUnsupportedCapability, freeze,
+    HtmlShellClosure, HtmlShellElement, HtmlShellElementName, HtmlShellElementOrigin,
+    HtmlSynthesisCause, HtmlTextContribution, HtmlTextNode, HtmlTreeAction, HtmlTreeActionKind,
+    HtmlTreeCapability, HtmlTreeCompletion, HtmlTreeCompletionUpgrade, HtmlTreeDiagnostic,
+    HtmlTreeDiagnosticCode, HtmlTreeEvidenceRole, HtmlTreeFreezeError, HtmlTreeIncompleteCause,
+    HtmlTreeNode, HtmlTreeNodeKind, HtmlTreeRecovery, HtmlTreeTokenTrigger,
+    HtmlTreeUnsupportedCapability, freeze,
 };
 use super::session::{
     HtmlDocumentMode, HtmlTreeSession, HtmlTreeSessionError, InsertionMode, TokenOutcome, admit,
@@ -326,10 +326,7 @@ fn project_tree(analysis: &HtmlDocumentShellAnalysis, id: HtmlConstructedNodeId)
         // TC-S4 successors have their own independent GOLD and their own
         // production correspondence tests.
         HtmlTreeNodeKind::Element(HtmlElement::SelectedOrdinary(selected)) => GoldNode::Element {
-            name: match selected.name() {
-                HtmlSelectedOrdinaryElementName::Div => "div",
-                HtmlSelectedOrdinaryElementName::Section => "section",
-            },
+            name: selected.name().interpreted(),
             origin: GoldOrigin::Authored(
                 (
                     selected.complete().range().start(),

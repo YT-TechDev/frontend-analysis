@@ -885,6 +885,73 @@ nodes: 8
     }
 
     #[test]
+    fn block_container_family_names_render_from_core_retained_meaning() {
+        // <body>0..6 <article>6..15 <nav>15..20 t20..21 </nav>21..27
+        // </article>27..37 </body>37..44.
+        let run = html(
+            "family-nested",
+            b"<body><article><nav>t</nav></article></body>",
+        );
+
+        let expected = head(44)
+            + "completion: complete
+coverage: committed authored prefix bytes 0..44; processed tokens 8
+tokenizer diagnostics: 0
+tree diagnostics: 1
+nodes: 7
+
+" + SYNTHESIZED_SHELL
+            + AUTHORED_BODY
+            + "      #4 element article
+          authored start tag: bytes 6..15, line 1, byte column 7: \"<article>\"
+          authored raw name: bytes 7..14, line 1, byte column 8: \"article\"
+        #5 element nav
+            authored start tag: bytes 15..20, line 1, byte column 16: \"<nav>\"
+            authored raw name: bytes 16..19, line 1, byte column 17: \"nav\"
+          #6 text \"t\"
+              contribution 1: source bytes 20..21, line 1, byte column 21: \"t\"; interpreted \"t\"
+
+" + MISSING_DOCTYPE_AT_BODY;
+        assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn remaining_block_container_family_names_render_as_siblings() {
+        // <body>0..6 <aside>6..13 </aside>13..21 <footer>21..29 </footer>29..38
+        // <header>38..46 </header>46..55 <main>55..61 </main>61..68
+        // </body>68..75.
+        let run = html(
+            "family-siblings",
+            b"<body><aside></aside><footer></footer><header></header><main></main></body>",
+        );
+
+        let expected = head(75)
+            + "completion: complete
+coverage: committed authored prefix bytes 0..75; processed tokens 11
+tokenizer diagnostics: 0
+tree diagnostics: 1
+nodes: 8
+
+" + SYNTHESIZED_SHELL
+            + AUTHORED_BODY
+            + "      #4 element aside
+          authored start tag: bytes 6..13, line 1, byte column 7: \"<aside>\"
+          authored raw name: bytes 7..12, line 1, byte column 8: \"aside\"
+      #5 element footer
+          authored start tag: bytes 21..29, line 1, byte column 22: \"<footer>\"
+          authored raw name: bytes 22..28, line 1, byte column 23: \"footer\"
+      #6 element header
+          authored start tag: bytes 38..46, line 1, byte column 39: \"<header>\"
+          authored raw name: bytes 39..45, line 1, byte column 40: \"header\"
+      #7 element main
+          authored start tag: bytes 55..61, line 1, byte column 56: \"<main>\"
+          authored raw name: bytes 56..60, line 1, byte column 57: \"main\"
+
+" + MISSING_DOCTYPE_AT_BODY;
+        assert_report(&run, &expected);
+    }
+
+    #[test]
     fn title_named_reference_separates_interpreted_text_from_authored_contributions() {
         // Accepted TC-S10 gold: `<title>a&amp;b</title>` is one text "a&b"
         // with contributions 7..8, 8..13 ("&amp;" -> "&"), 13..14.

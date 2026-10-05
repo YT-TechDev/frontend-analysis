@@ -183,10 +183,7 @@ fn shell_name(name: HtmlShellElementName) -> &'static str {
 /// [`tc_s3_sources_carry_no_tc_s4_heterogeneous_recovery_semantics`] asserts
 /// that explicitly rather than leaving it to the absence of an arm.
 fn selected_name(name: HtmlSelectedOrdinaryElementName) -> &'static str {
-    match name {
-        HtmlSelectedOrdinaryElementName::Div => "div",
-        HtmlSelectedOrdinaryElementName::Section => "section",
-    }
+    name.interpreted()
 }
 
 fn project_tree(
