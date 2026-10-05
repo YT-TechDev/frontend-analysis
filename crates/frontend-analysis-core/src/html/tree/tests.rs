@@ -1297,3 +1297,344 @@ fn canonical_doctype_resource_refusals_stay_resource_limited() {
     assert_eq!(limit.kind(), HtmlTreeResourceKind::TransitionSteps);
     assert_eq!((limit.limit(), limit.attempted()), (16, 17));
 }
+
+// ---- #898: selected ordinary close/recovery relation projection ----
+//
+// Every expectation below is hand-authored from the accepted #894/#895
+// lifecycle theorem and hand-counted byte offsets, never captured from the
+// projection. Identities follow creation order: with an authored `<body>`
+// first, document 0, html 1, head 2 and body 3 precede the first selected
+// element, which is #4.
+
+/// `close #n @start..end "fragment"` or `pop #n -> #t @start..end "fragment"`,
+/// in report order. Subject and target are printed as report-local ids only.
+fn relations(report: &HtmlTreeReport) -> Vec<String> {
+    report
+        .selected_ordinary_relations()
+        .iter()
+        .map(|relation| match relation {
+            HtmlTreeSelectedOrdinaryRelation::MatchingClose { node, trigger } => {
+                let (start, end, fragment) = span(trigger);
+                format!("close #{} @{start}..{end} {fragment:?}", node.value())
+            }
+            HtmlTreeSelectedOrdinaryRelation::RecoveryPopByAncestorEndTag {
+                node,
+                target,
+                trigger,
+            } => {
+                let (start, end, fragment) = span(trigger);
+                format!(
+                    "pop #{} -> #{} @{start}..{end} {fragment:?}",
+                    node.value(),
+                    target.value()
+                )
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn simple_matching_close_projects_one_relation_without_a_target() {
+    // <body>0..6 <article>6..15 </article>15..25
+    let report = analyze_text("<body><article></article>");
+
+    assert_complete(&report);
+    assert_eq!(relations(&report), [r#"close #4 @15..25 "</article>""#]);
+    let [HtmlTreeSelectedOrdinaryRelation::MatchingClose { node, trigger }] =
+        report.selected_ordinary_relations()
+    else {
+        panic!("expected exactly one matching close");
+    };
+    assert_eq!(*node, HtmlTreeNodeId(4));
+    assert_eq!(trigger.source_id(), SourceId::new(0));
+    assert_eq!(
+        element(&report, node.value()).name(),
+        HtmlTreeElementName::Article
+    );
+}
+
+#[test]
+fn same_name_nesting_closes_inner_then_outer_with_distinct_identities() {
+    // <body>0..6 <article>6..15 <article>15..24 </article>24..34 </article>34..44
+    let report = analyze_text("<body><article><article></article></article>");
+
+    assert_complete(&report);
+    assert_eq!(
+        relations(&report),
+        [
+            r#"close #5 @24..34 "</article>""#,
+            r#"close #4 @34..44 "</article>""#,
+        ]
+    );
+    assert!(report.tree_diagnostics().iter().all(|diagnostic| {
+        diagnostic.code() != HtmlTreeDiagnosticCode::MisnestedSelectedOrdinaryEndTag
+    }));
+}
+
+#[test]
+fn heterogeneous_recovery_pops_the_inner_element_then_closes_the_target() {
+    // <body>0..6 <article>6..15 <nav>15..20 </article>20..30
+    let report = analyze_text("<body><article><nav></article>");
+
+    assert_complete(&report);
+    assert_eq!(
+        relations(&report),
+        [
+            r#"pop #5 -> #4 @20..30 "</article>""#,
+            r#"close #4 @20..30 "</article>""#,
+        ]
+    );
+    assert_eq!(element(&report, 5).name(), HtmlTreeElementName::Nav);
+    assert_eq!(element(&report, 4).name(), HtmlTreeElementName::Article);
+}
+
+#[test]
+fn one_trigger_projects_every_pop_current_first_then_the_target_close() {
+    // <body>0..6 <header>6..14 <main>14..20 <aside>20..27 </header>27..36
+    let report = analyze_text("<body><header><main><aside></header>");
+
+    assert_complete(&report);
+    assert_eq!(
+        relations(&report),
+        [
+            r#"pop #6 -> #4 @27..36 "</header>""#,
+            r#"pop #5 -> #4 @27..36 "</header>""#,
+            r#"close #4 @27..36 "</header>""#,
+        ]
+    );
+    assert_eq!(element(&report, 6).name(), HtmlTreeElementName::Aside);
+    assert_eq!(element(&report, 5).name(), HtmlTreeElementName::Main);
+    assert_eq!(element(&report, 4).name(), HtmlTreeElementName::Header);
+}
+
+#[test]
+fn recovery_target_is_the_nearest_constructed_same_name_ancestor_not_the_name() {
+    // <body>0..6 <div>6..11 <div>11..16 <nav>16..21 </div>21..27 </div>27..33
+    // The first </div> targets the INNER div (#5); only the second closes #4.
+    let report = analyze_text("<body><div><div><nav></div></div>");
+
+    assert_complete(&report);
+    assert_eq!(
+        relations(&report),
+        [
+            r#"pop #6 -> #5 @21..27 "</div>""#,
+            r#"close #5 @21..27 "</div>""#,
+            r#"close #4 @27..33 "</div>""#,
+        ]
+    );
+    // Both candidate targets are `div`; identity, not name, selects #5.
+    assert_eq!(element(&report, 4).name(), HtmlTreeElementName::Div);
+    assert_eq!(element(&report, 5).name(), HtmlTreeElementName::Div);
+}
+
+#[test]
+fn independent_triggers_keep_validated_processing_order() {
+    // <body>0..6 <div>6..11 <nav>11..16 </nav>16..22 </div>22..28
+    let report = analyze_text("<body><div><nav></nav></div>");
+
+    assert_complete(&report);
+    assert_eq!(
+        relations(&report),
+        [
+            r#"close #5 @16..22 "</nav>""#,
+            r#"close #4 @22..28 "</div>""#,
+        ]
+    );
+}
+
+#[test]
+fn implied_paragraph_pop_is_not_projected_between_selected_relations() {
+    // <body>0..6 <div>6..11 <nav>11..16 <p>16..19 </div>19..25
+    // The Paragraph is outside the selected domain; only nav and div appear.
+    let report = analyze_text("<body><div><nav><p></div>");
+
+    assert_complete(&report);
+    assert_eq!(
+        relations(&report),
+        [
+            r#"pop #5 -> #4 @19..25 "</div>""#,
+            r#"close #4 @19..25 "</div>""#,
+        ]
+    );
+    assert_eq!(element(&report, 6).name(), HtmlTreeElementName::Paragraph);
+}
+
+#[test]
+fn mixed_authored_casing_keeps_the_exact_complete_end_tag_range() {
+    // <body>0..6 <ArTiClE>6..15 </aRtIcLe>15..25
+    let report = analyze_text("<body><ArTiClE></aRtIcLe>");
+
+    assert_complete(&report);
+    assert_eq!(relations(&report), [r#"close #4 @15..25 "</aRtIcLe>""#]);
+    assert_eq!(element(&report, 4).name(), HtmlTreeElementName::Article);
+}
+
+#[test]
+fn relation_trigger_carries_the_report_source_identity() {
+    let src = SourceText::new(SourceId::new(7), "<body><nav></nav>".to_owned());
+    let report = analyze_text_from(&src);
+
+    assert_eq!(report.source_id(), SourceId::new(7));
+    let [HtmlTreeSelectedOrdinaryRelation::MatchingClose { trigger, .. }] =
+        report.selected_ordinary_relations()
+    else {
+        panic!("expected exactly one matching close");
+    };
+    assert_eq!(trigger.source_id(), SourceId::new(7));
+    // <body>0..6 <nav>6..11 </nav>11..17
+    assert_eq!(span(trigger), at(11, 17, "</nav>"));
+}
+
+#[test]
+fn unmatched_end_tag_projects_no_relation_and_keeps_its_diagnostic() {
+    let report = analyze_text("<body></article>");
+
+    assert_complete(&report);
+    assert!(report.selected_ordinary_relations().is_empty());
+    assert!(report.tree_diagnostics().iter().any(|diagnostic| {
+        diagnostic.code() == HtmlTreeDiagnosticCode::UnmatchedSelectedOrdinaryEndTag
+    }));
+}
+
+#[test]
+fn end_of_file_does_not_fabricate_a_close_for_an_open_element() {
+    let report = analyze_text("<body><article>");
+
+    assert!(report.selected_ordinary_relations().is_empty());
+    assert!(report.tree_diagnostics().iter().any(|diagnostic| {
+        diagnostic.code() == HtmlTreeDiagnosticCode::OpenSelectedOrdinaryElementAtEndOfFile
+    }));
+    assert_eq!(element(&report, 4).name(), HtmlTreeElementName::Article);
+}
+
+#[test]
+fn relation_committed_before_an_unsupported_stop_stays_visible() {
+    // <body>0..6 <div>6..11 </div>11..17 <span>17..23 (unsupported)
+    let report = analyze_text("<body><div></div><span>");
+
+    let HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::TreeUnsupported(unsupported)) =
+        report.completion()
+    else {
+        panic!("expected tree unsupported, got {:?}", report.completion());
+    };
+    assert_eq!(
+        unsupported.capability(),
+        HtmlTreeUnsupportedCapability::NonShellElementTag
+    );
+    assert_eq!(span(unsupported.trigger().unwrap()), at(17, 23, "<span>"));
+    assert_eq!(relations(&report), [r#"close #4 @11..17 "</div>""#]);
+    // Coverage ends where the committed work ends; absence after it is not
+    // closure evidence.
+    assert_eq!(
+        span(report.coverage().committed_prefix()),
+        at(0, 17, "<body><div></div>")
+    );
+    assert_eq!(report.coverage().processed_tokens(), 3);
+}
+
+#[test]
+fn open_element_before_an_unsupported_stop_gets_no_relation() {
+    // <body>0..6 <div>6..11 <span>11..17 (unsupported)
+    let report = analyze_text("<body><div><span>");
+
+    assert!(matches!(
+        report.completion(),
+        HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::TreeUnsupported(_))
+    ));
+    assert!(report.selected_ordinary_relations().is_empty());
+}
+
+#[test]
+fn every_relation_resolves_through_the_report_and_no_subject_repeats() {
+    for text_source in [
+        "<body><article></article>",
+        "<body><article><article></article></article>",
+        "<body><header><main><aside></header>",
+        "<body><div><div><nav></div></div>",
+        "<body><div><nav><p></div>",
+        "<body><div><nav></nav></div><section><footer></section>",
+    ] {
+        let report = analyze_text(text_source);
+        let selected_nodes = report
+            .nodes()
+            .iter()
+            .filter(|node| {
+                matches!(
+                    node.kind(),
+                    HtmlTreeNodeKind::Element(element) if !matches!(
+                        element.name(),
+                        HtmlTreeElementName::Html
+                            | HtmlTreeElementName::Head
+                            | HtmlTreeElementName::Body
+                            | HtmlTreeElementName::Paragraph
+                            | HtmlTreeElementName::Style
+                            | HtmlTreeElementName::Title
+                    )
+                )
+            })
+            .count();
+
+        let mut subjects = Vec::new();
+        for relation in report.selected_ordinary_relations() {
+            let (node, target) = match relation {
+                HtmlTreeSelectedOrdinaryRelation::MatchingClose { node, .. } => (*node, None),
+                HtmlTreeSelectedOrdinaryRelation::RecoveryPopByAncestorEndTag {
+                    node,
+                    target,
+                    ..
+                } => (*node, Some(*target)),
+            };
+            assert!(report.node(node).is_some(), "{text_source}");
+            if let Some(target) = target {
+                assert!(report.node(target).is_some(), "{text_source}");
+                assert_ne!(node, target, "{text_source}");
+            }
+            assert!(!subjects.contains(&node), "{text_source}: repeated subject");
+            subjects.push(node);
+        }
+        // Bounded by constructed selected nodes; every closed node here.
+        assert!(subjects.len() <= selected_nodes, "{text_source}");
+    }
+}
+
+#[test]
+fn relation_projection_is_deterministic_and_independent_of_storage_order() {
+    for text_source in [
+        "<body><header><main><aside></header>",
+        "<body><div><div><nav></div></div>",
+        "<body><div></div><span>",
+    ] {
+        let src = source(text_source);
+        let first = analyze_text_from(&src);
+        let second = analyze_text_from(&src);
+        let reversed = project(
+            src.id(),
+            &construct_html_document_shell(&src, fixed_limits())
+                .unwrap()
+                .with_reversed_storage(),
+        )
+        .unwrap();
+
+        assert_eq!(relations(&first), relations(&second), "{text_source}");
+        assert_eq!(relations(&first), relations(&reversed), "{text_source}");
+    }
+}
+
+#[test]
+fn relation_domain_is_closed_to_exactly_the_two_selected_meanings() {
+    // An exhaustive match without a wildcard fails to compile if a variant is
+    // added, widening the accepted public domain unnoticed.
+    fn meaning(relation: &HtmlTreeSelectedOrdinaryRelation) -> &'static str {
+        match relation {
+            HtmlTreeSelectedOrdinaryRelation::MatchingClose { .. } => "close",
+            HtmlTreeSelectedOrdinaryRelation::RecoveryPopByAncestorEndTag { .. } => "pop",
+        }
+    }
+    let report = analyze_text("<body><article><nav></article>");
+    let meanings: Vec<_> = report
+        .selected_ordinary_relations()
+        .iter()
+        .map(meaning)
+        .collect();
+    assert_eq!(meanings, ["pop", "close"]);
+}

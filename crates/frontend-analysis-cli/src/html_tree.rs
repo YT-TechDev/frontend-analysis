@@ -13,8 +13,9 @@ use frontend_analysis_core::html::tree::{
     HtmlCharacterReferenceContext, HtmlTokenizerCapabilityAvailability,
     HtmlTokenizerDiagnosticCode, HtmlTokenizerMode, HtmlTokenizerUnsupportedCapability,
     HtmlTreeCompletion, HtmlTreeDiagnosticCode, HtmlTreeElementName, HtmlTreeIncompleteCause,
-    HtmlTreeNode, HtmlTreeNodeKind, HtmlTreeNodeProvenance, HtmlTreeRecovery, HtmlTreeReport,
-    HtmlTreeResourceKind, HtmlTreeSynthesisCause, HtmlTreeUnsupportedCapability,
+    HtmlTreeNode, HtmlTreeNodeId, HtmlTreeNodeKind, HtmlTreeNodeProvenance, HtmlTreeRecovery,
+    HtmlTreeReport, HtmlTreeResourceKind, HtmlTreeSelectedOrdinaryRelation, HtmlTreeSynthesisCause,
+    HtmlTreeUnsupportedCapability,
 };
 
 use crate::{escape_fragment, render_evidence};
@@ -53,6 +54,7 @@ pub(crate) fn render_report(source_bytes: usize, report: &HtmlTreeReport) -> Str
 
     let _ = writeln!(out);
     render_tree(&mut out, report);
+    render_selected_ordinary_relations(&mut out, report);
 
     if !report.tokenizer_diagnostics().is_empty() {
         let _ = writeln!(out);
@@ -146,6 +148,51 @@ fn render_tree(out: &mut String, report: &HtmlTreeReport) {
         for child in node.children().iter().rev() {
             pending.push((*child, depth + 1));
         }
+    }
+}
+
+/// Renders the Core-owned relation slice in the order Core supplies it.
+/// Names are resolved through the report; nothing is matched, grouped, or
+/// reordered here, and an absent relation is not described.
+fn render_selected_ordinary_relations(out: &mut String, report: &HtmlTreeReport) {
+    let relations = report.selected_ordinary_relations();
+    if relations.is_empty() {
+        return;
+    }
+    let _ = writeln!(out);
+    for (index, relation) in relations.iter().enumerate() {
+        let number = index + 1;
+        match relation {
+            HtmlTreeSelectedOrdinaryRelation::MatchingClose { node, trigger } => {
+                let _ = writeln!(out, "selected ordinary relation {number}: matching close");
+                let _ = writeln!(out, "  node: {}", node_label(report, *node));
+                let _ = writeln!(out, "  trigger: {}", render_evidence(trigger));
+            }
+            HtmlTreeSelectedOrdinaryRelation::RecoveryPopByAncestorEndTag {
+                node,
+                target,
+                trigger,
+            } => {
+                let _ = writeln!(
+                    out,
+                    "selected ordinary relation {number}: recovery pop by ancestor end tag"
+                );
+                let _ = writeln!(out, "  node: {}", node_label(report, *node));
+                let _ = writeln!(out, "  target: {}", node_label(report, *target));
+                let _ = writeln!(out, "  trigger: {}", render_evidence(trigger));
+            }
+        }
+    }
+}
+
+/// `#id name`, resolved through the report only.
+fn node_label(report: &HtmlTreeReport, id: HtmlTreeNodeId) -> String {
+    match report.node(id).map(HtmlTreeNode::kind) {
+        Some(HtmlTreeNodeKind::Element(element)) => {
+            format!("#{} {}", id.value(), element_name(element.name()))
+        }
+        Some(_) => format!("#{} <not an element>", id.value()),
+        None => format!("#{} <missing node>", id.value()),
     }
 }
 
