@@ -269,6 +269,24 @@ fn admitted_element_name(interpreted: &str) -> Option<AdmittedElementName> {
         "section" => Some(AdmittedElementName::SelectedOrdinary(
             HtmlSelectedOrdinaryElementName::Section,
         )),
+        "article" => Some(AdmittedElementName::SelectedOrdinary(
+            HtmlSelectedOrdinaryElementName::Article,
+        )),
+        "aside" => Some(AdmittedElementName::SelectedOrdinary(
+            HtmlSelectedOrdinaryElementName::Aside,
+        )),
+        "footer" => Some(AdmittedElementName::SelectedOrdinary(
+            HtmlSelectedOrdinaryElementName::Footer,
+        )),
+        "header" => Some(AdmittedElementName::SelectedOrdinary(
+            HtmlSelectedOrdinaryElementName::Header,
+        )),
+        "main" => Some(AdmittedElementName::SelectedOrdinary(
+            HtmlSelectedOrdinaryElementName::Main,
+        )),
+        "nav" => Some(AdmittedElementName::SelectedOrdinary(
+            HtmlSelectedOrdinaryElementName::Nav,
+        )),
         "p" => Some(AdmittedElementName::Paragraph),
         "style" => Some(AdmittedElementName::Style),
         "title" => Some(AdmittedElementName::Title),
@@ -816,9 +834,14 @@ fn is_implied_end_element(element: &HtmlElement) -> bool {
     match element {
         HtmlElement::Shell(_) | HtmlElement::Style(_) | HtmlElement::Title(_) => false,
         HtmlElement::SelectedOrdinary(selected) => match selected.name() {
-            HtmlSelectedOrdinaryElementName::Div | HtmlSelectedOrdinaryElementName::Section => {
-                false
-            }
+            HtmlSelectedOrdinaryElementName::Div
+            | HtmlSelectedOrdinaryElementName::Section
+            | HtmlSelectedOrdinaryElementName::Article
+            | HtmlSelectedOrdinaryElementName::Aside
+            | HtmlSelectedOrdinaryElementName::Footer
+            | HtmlSelectedOrdinaryElementName::Header
+            | HtmlSelectedOrdinaryElementName::Main
+            | HtmlSelectedOrdinaryElementName::Nav => false,
         },
         HtmlElement::Paragraph(_) => true,
     }

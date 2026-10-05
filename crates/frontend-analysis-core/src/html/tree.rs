@@ -232,6 +232,12 @@ pub enum HtmlTreeElementName {
     Body,
     Div,
     Section,
+    Article,
+    Aside,
+    Footer,
+    Header,
+    Main,
+    Nav,
     Paragraph,
     Style,
     Title,
@@ -727,6 +733,14 @@ fn project_element(element: &tree_result::HtmlElement) -> HtmlTreeElement {
                 tree_result::HtmlSelectedOrdinaryElementName::Section => {
                     HtmlTreeElementName::Section
                 }
+                tree_result::HtmlSelectedOrdinaryElementName::Article => {
+                    HtmlTreeElementName::Article
+                }
+                tree_result::HtmlSelectedOrdinaryElementName::Aside => HtmlTreeElementName::Aside,
+                tree_result::HtmlSelectedOrdinaryElementName::Footer => HtmlTreeElementName::Footer,
+                tree_result::HtmlSelectedOrdinaryElementName::Header => HtmlTreeElementName::Header,
+                tree_result::HtmlSelectedOrdinaryElementName::Main => HtmlTreeElementName::Main,
+                tree_result::HtmlSelectedOrdinaryElementName::Nav => HtmlTreeElementName::Nav,
             };
             (name, authored(selected.complete(), selected.raw_name()))
         }

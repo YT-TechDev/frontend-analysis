@@ -775,10 +775,7 @@ fn generated_blocks(
 }
 
 fn tag(name: HtmlSelectedOrdinaryElementName) -> &'static str {
-    match name {
-        HtmlSelectedOrdinaryElementName::Div => "div",
-        HtmlSelectedOrdinaryElementName::Section => "section",
-    }
+    name.interpreted()
 }
 
 #[test]

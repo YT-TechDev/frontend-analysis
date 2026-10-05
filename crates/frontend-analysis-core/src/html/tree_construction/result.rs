@@ -222,8 +222,10 @@ impl HtmlShellElement {
 ///
 /// Deliberately separate from [`HtmlShellElementName`], which stays
 /// `html`/`head`/`body` only: neither domain may be stretched to carry the
-/// other's meaning. TC-S3 closed this domain at `div`; TC-S4 extends it to
-/// exactly `div` and `section` and no further. It is still not an
+/// other's meaning. TC-S3 closed this domain at `div`; TC-S4 extended it to
+/// `div` and `section`; the block-container family expansion (#896) extends it
+/// to exactly `div`, `section`, `article`, `aside`, `footer`, `header`, `main`,
+/// and `nav` and no further. It is still not an
 /// arbitrary-name, generic ordinary-element, generic block-element, or
 /// namespace-switching representation, and membership is decided by type
 /// rather than by a stored string.
@@ -234,6 +236,12 @@ impl HtmlShellElement {
 pub(crate) enum HtmlSelectedOrdinaryElementName {
     Div,
     Section,
+    Article,
+    Aside,
+    Footer,
+    Header,
+    Main,
+    Nav,
 }
 
 impl HtmlSelectedOrdinaryElementName {
@@ -242,10 +250,16 @@ impl HtmlSelectedOrdinaryElementName {
     /// Used only to correlate a recorded closure or recovery against the
     /// retained emitted end-tag token. It is not a parser table and performs
     /// no source lookup.
-    const fn interpreted(self) -> &'static str {
+    pub(crate) const fn interpreted(self) -> &'static str {
         match self {
             Self::Div => "div",
             Self::Section => "section",
+            Self::Article => "article",
+            Self::Aside => "aside",
+            Self::Footer => "footer",
+            Self::Header => "header",
+            Self::Main => "main",
+            Self::Nav => "nav",
         }
     }
 }
@@ -353,8 +367,9 @@ impl fmt::Debug for HtmlParagraphElementOrigin {
 /// A bounded HTML Paragraph observation.
 ///
 /// The element name is a type invariant: this type means exactly HTML `p` and
-/// nothing else. That avoids widening the authored-only `Div | Section`
-/// domain or introducing a generic arbitrary-name element representation.
+/// nothing else. That keeps Paragraph separate from the authored-only selected
+/// ordinary domain and avoids introducing a generic arbitrary-name element
+/// representation.
 #[derive(Debug, Clone)]
 pub(crate) struct HtmlParagraphElement {
     origin: HtmlParagraphElementOrigin,
@@ -3373,7 +3388,10 @@ fn validate_paragraph_lifecycle(
                         action.trigger(),
                         tokenizer_run,
                         HtmlTagKind::Start,
-                        &["p", "div", "section"],
+                        &[
+                            "p", "div", "section", "article", "aside", "footer", "header", "main",
+                            "nav",
+                        ],
                     ),
                 };
                 if !valid {
@@ -3405,25 +3423,16 @@ fn validate_paragraph_lifecycle(
                         );
                     };
                     let expected = retained_start_tag_name(action.trigger(), tokenizer_run);
-                    let matches_next = matches!(
-                        (expected, next.kind()),
-                        (
-                            Some("p"),
-                            HtmlTreeActionKind::InsertedAuthoredParagraphElement { .. }
-                        ) | (
-                            Some("div"),
-                            HtmlTreeActionKind::InsertedAuthoredSelectedOrdinaryElement {
-                                name: HtmlSelectedOrdinaryElementName::Div,
-                                ..
-                            }
-                        ) | (
-                            Some("section"),
-                            HtmlTreeActionKind::InsertedAuthoredSelectedOrdinaryElement {
-                                name: HtmlSelectedOrdinaryElementName::Section,
-                                ..
-                            }
-                        )
-                    );
+                    let matches_next = match next.kind() {
+                        HtmlTreeActionKind::InsertedAuthoredParagraphElement { .. } => {
+                            expected == Some("p")
+                        }
+                        HtmlTreeActionKind::InsertedAuthoredSelectedOrdinaryElement {
+                            name,
+                            ..
+                        } => expected == Some(name.interpreted()),
+                        _ => false,
+                    };
                     if !same_trigger(next.trigger(), action.trigger()) || !matches_next {
                         return Err(
                             HtmlTreeFreezeError::ParagraphStartTriggeredInsertionMismatch {

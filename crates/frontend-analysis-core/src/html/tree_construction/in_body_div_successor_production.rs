@@ -177,16 +177,14 @@ fn shell_name(name: HtmlShellElementName) -> &'static str {
     }
 }
 
-/// Kept total over the production selected ordinary domain, which the TC-S4
-/// successor grew to `{div, section}`. No DV expectation below names
-/// `"section"`: the TC-S3 sources contain none, and
+/// Kept total over the current production selected ordinary domain. TC-S4
+/// historically grew that domain to `{div, section}`; #896 later added six
+/// more closed names. No DV expectation below names `"section"`: the TC-S3
+/// sources contain none, and
 /// [`tc_s3_sources_carry_no_tc_s4_heterogeneous_recovery_semantics`] asserts
 /// that explicitly rather than leaving it to the absence of an arm.
 fn selected_name(name: HtmlSelectedOrdinaryElementName) -> &'static str {
-    match name {
-        HtmlSelectedOrdinaryElementName::Div => "div",
-        HtmlSelectedOrdinaryElementName::Section => "section",
-    }
+    name.interpreted()
 }
 
 fn project_tree(

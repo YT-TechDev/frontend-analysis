@@ -323,10 +323,7 @@ fn node_signatures(analysis: &HtmlDocumentShellAnalysis) -> Vec<NodeSignature> {
                     NodeMeaning::Shell(name, origin)
                 }
                 HtmlTreeNodeKind::Element(HtmlElement::SelectedOrdinary(selected)) => {
-                    let name = match selected.name() {
-                        HtmlSelectedOrdinaryElementName::Div => "div",
-                        HtmlSelectedOrdinaryElementName::Section => "section",
-                    };
+                    let name = selected.name().interpreted();
                     NodeMeaning::Selected(
                         name,
                         span(selected.complete()),
