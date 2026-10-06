@@ -317,11 +317,26 @@ Accounting](#atomic-multi-diagnostic-resource-accounting). The last two,
   `ProcessingInstruction` stop with processed prefix `0`, Input trigger
   `[0,2)`, two transition steps, and no tokens or diagnostics.
 
-Every expected observation in the supplemental corpus was derived directly
-from the pinned WHATWG algorithm and the approved #109/#110/merged #111
-contracts, cross-checked against the existing `ERR-011`, `ERR-016`, and
-`ERR-017` fixtures. No production tokenizer candidate output was used as the
-gold oracle for these fixtures.
+Provenance differs by supplemental group. No production tokenizer candidate
+output was used as the gold oracle for any supplemental fixture.
+
+- **`REG-113-*`**: every expected observation was derived directly from the
+  pinned WHATWG algorithm and the approved #109/#110/merged #111 contracts,
+  cross-checked against the existing `ERR-011`, `ERR-016`, and `ERR-017`
+  fixtures.
+- **`REG-912-*`**: the expected observations were authored from the accepted
+  Processing Instruction entry successor authority: independent validation
+  #910 / PR #911 (independent review `5430986842`, #348 accepted-validation
+  checkpoint `6019943886`), production Issue #912, and the adopted production
+  placement in #348 comment `6020516996`. The pinned WHATWG algorithm
+  establishes that TagOpen `?` enters Processing Instruction handling without
+  the retired PI-entry question-mark diagnostic. The bounded refusal geometry
+  is Frontend Analysis project policy, not WHATWG-specified: the processed
+  prefix ends at `max(opener start, committed evidence floor)` and the
+  Unsupported Input trigger is the uncommitted remainder of the recognized
+  `<?` opener, as validated by #911 and adopted by #912. It is not derived
+  from the #109/#110/#111 chain or from the end-tag `REG-113-*` /
+  `ERR-011` / `ERR-016` / `ERR-017` cross-checks.
 
 `crates/frontend-analysis-core/src/html/tokenizer/validation/corpus/regressions.rs`
 holds the fixture definitions and their independent transition-dispatch
