@@ -84,9 +84,13 @@
 //!   trigger is `?` alone.
 //!
 //! The accepted result contract does not discriminate (both satisfy it); the
-//! selection rests on: (1) owned recognition - the trigger plus committed
-//! evidence tile the recognized opener without consumer reconstruction, while
-//! the alternative leaves `<` processed with no owner; (2) `<` is provisional
+//! selection rests on: (1) for PI-entry `Unsupported` completions only, owned
+//! recognition - the trigger plus committed evidence tile the recognized opener
+//! without consumer reconstruction, while the alternative leaves `<` processed
+//! with no owner (this is a comparison between those two `Unsupported`
+//! geometries, not a claim about `ResourceLimit` results: a transition refusal
+//! at TagOpen `?` legitimately processes `<` with no token or diagnostic owner
+//! and PI entry is not observed there); (2) `<` is provisional
 //! until Tag open classifies it, so no committed evidence is rolled back; (3)
 //! the accepted `<!` MarkupDeclaration unsupported boundary (`UNSUP-003`) has
 //! exactly this geometry; (4) the empty-marker trigger used by the historical
@@ -993,10 +997,7 @@ fn validate_contract(
             | Token::ProcessingInstruction { at, .. }
             | Token::Comment { at } => at,
         };
-        if at.start < previous_end
-            || at.end > observation.processed_end
-                && !matches!(token, Token::ProcessingInstruction { .. })
-        {
+        if at.start < previous_end || at.end > observation.processed_end {
             return Err(R_TOKENS);
         }
         previous_end = at.end;
@@ -1164,8 +1165,10 @@ fn opener_tiled(observation: &Observation) -> bool {
 }
 
 /// Processed bytes no committed token, diagnostic, or BOM owns. Measurement
-/// only: the accepted contract tolerates such bytes (abandoned input), which
-/// is why it cannot select the policy by itself.
+/// only: the accepted contract tolerates such bytes (abandoned input, and
+/// ordinary `ResourceLimit` coverage that includes a dispatched `<`), which is
+/// why it cannot select the policy by itself. The policy comparison applies it
+/// to PI-entry `Unsupported` completions only, never to resource refusals.
 fn unowned_processed_bytes(observation: &Observation) -> Vec<usize> {
     (observation.bom_end..observation.processed_end)
         .filter(|byte| {
@@ -1875,6 +1878,11 @@ fn rc_transition_refusal_before_tag_open_question_dispatch_observes_no_pi_entry(
         observed.recognition.is_none(),
         "PI entry must not be observed"
     );
+    // The dispatched `<` is processed here with no token or diagnostic owner.
+    // That is ordinary, accepted `ResourceLimit` coverage: the processed-byte
+    // ownership property used by the PI-entry policy comparison is scoped to
+    // `Unsupported` completions and is not required of resource refusals.
+    assert_eq!(unowned_processed_bytes(&observed), vec![0]);
 
     // With a preceding run: 2 steps are Data('a'), Data('<'); '?' is the third.
     let source = text(1, "a<?");
@@ -2145,8 +2153,11 @@ mod policy_challenge {
         }
     }
 
+    /// Scoped to PI-entry `Unsupported` completions: this compares the two
+    /// candidate geometries of that one completion. It makes no claim about
+    /// `ResourceLimit` results, whose coverage may include a dispatched `<`.
     #[test]
-    fn p2_owned_recognition_selected_tiles_the_opener_question_unit_does_not() {
+    fn p2_pi_entry_unsupported_selected_tiles_the_opener_question_unit_does_not() {
         for fixture in PI_FIXTURES {
             let source = text(1, fixture);
             let chosen = run_dialect(&source, Limits::generous(), Dialect::Selected);
@@ -2371,15 +2382,89 @@ mod wrong_models {
     #[test]
     fn w5_an_empty_trigger_is_rejected() {
         for fixture in ["<?", "<?probe>", "a<?probe>"] {
+            // `EmptyTrigger` moves coverage through the `?`, so the geometry
+            // rule is the deterministic first rejection for every fixture.
             let tag = rejected_by_theorem(Dialect::EmptyTrigger, fixture, Limits::generous());
-            assert!(
-                tag == T_GEOMETRY || tag == T_TRIGGER_EMPTY || tag == T_TILING,
-                "{fixture:?}: {tag}"
-            );
+            assert_eq!(tag, T_GEOMETRY, "{fixture:?}");
             let source = text(1, fixture);
             let observed = run_dialect(&source, Limits::generous(), Dialect::EmptyTrigger);
             assert!(!opener_tiled(&observed), "{fixture:?}");
         }
+    }
+
+    /// Builds a wrong observation for `a<?probe>` in which committed evidence
+    /// (a Character token) swallows opener bytes starting at the `<`, with
+    /// coverage, trigger, and usage kept internally consistent so only the
+    /// theorem's own rules can reject it.
+    fn swallowed_opener(
+        source: &SourceText,
+        swallowed_end: usize,
+        trigger_end: usize,
+    ) -> Observation {
+        let mut observed = run(source, Limits::generous());
+        let interpreted = source.as_str()[1..swallowed_end].to_owned();
+        observed.usage.retained_interpreted_bytes += interpreted.len();
+        observed.tokens.push(Token::Character {
+            at: evidence(source, 1, swallowed_end),
+            interpreted,
+        });
+        observed.processed_end = swallowed_end;
+        if let Completion::Unsupported { trigger, .. } = &mut observed.completion {
+            *trigger = evidence(source, swallowed_end, trigger_end);
+        }
+        observed.usage.emitted_tokens = observed.tokens.len();
+        observed
+    }
+
+    #[test]
+    fn w5a_an_empty_trigger_after_swallowed_opener_bytes_is_rejected_as_empty() {
+        // A Character token over the whole `<?` leaves nothing for the
+        // trigger: coverage and trigger are geometrically consistent
+        // (`T_GEOMETRY` passes), so the non-empty-evidence rule is reached.
+        let source = text(1, "a<?probe>");
+        let observed = swallowed_opener(&source, 3, 3);
+        assert_eq!(
+            validate_contract(&observed, &source, Limits::generous()),
+            Ok(())
+        );
+        assert_eq!(validate_theorem(&observed), Err(T_TRIGGER_EMPTY));
+    }
+
+    #[test]
+    fn w5b_an_opener_gap_owned_by_text_not_a_diagnostic_is_rejected_by_tiling() {
+        // A Character token over only the `<` leaves a non-empty trigger `?`
+        // and consistent geometry, but the `<` is owned by text rather than by
+        // a committed diagnostic, so the opener is not tiled.
+        let source = text(1, "a<?probe>");
+        let observed = swallowed_opener(&source, 2, 3);
+        assert_eq!(
+            validate_contract(&observed, &source, Limits::generous()),
+            Ok(())
+        );
+        assert!(!opener_tiled(&observed));
+        assert_eq!(validate_theorem(&observed), Err(T_TILING));
+        // The same `?`-only trigger is valid when a committed diagnostic owns
+        // the `<` (the adjacency fixture), so the rule is not over-broad.
+        let adjacency = run(&text(1, "<<?x"), Limits::generous());
+        assert_eq!(validate_theorem(&adjacency), Ok(()));
+    }
+
+    #[test]
+    fn w5c_a_pi_token_outside_coverage_is_rejected_by_the_contract_itself() {
+        // The accepted contract has no PI-token carve-out: every token lies
+        // inside the processed prefix, so a PI token beyond coverage is a
+        // contract violation before the theorem is consulted.
+        let source = text(1, "a<?probe>");
+        let mut observed = run(&source, Limits::generous());
+        observed.tokens.push(Token::ProcessingInstruction {
+            at: evidence(&source, 1, 9),
+            target: "probe".to_owned(),
+        });
+        assert!(observed.processed_end < 9);
+        assert_eq!(
+            validate_contract(&observed, &source, Limits::generous()),
+            Err(R_TOKENS)
+        );
     }
 
     #[test]
