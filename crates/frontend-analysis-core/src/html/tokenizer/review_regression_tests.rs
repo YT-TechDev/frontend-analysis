@@ -754,3 +754,228 @@ fn pending_multi_diagnostic_refusal_reports_the_atomic_operations_full_attempted
     assert_eq!(result.usage().retained_interpreted_bytes(), 2);
     assert_eq!(result.usage().peak_temporary_buffer_bytes(), 0);
 }
+
+// ---- Processing Instruction entry refusal (#912) ---------------------------
+//
+// Data `<` then TagOpen `?` recognizes Processing Instruction entry. It is
+// not a syntax error: no diagnostic is appended, nothing is emitted, and the
+// run stops as a Deferred `ProcessingInstruction` capability before any
+// target/data/EOF grammar. Expected values come from the accepted #911
+// theorem and the #912 floor-bounded opener policy, not from production
+// output.
+
+fn assert_span(actual: &SourceAnchor, source: &SourceText, start: usize, end: usize) {
+    assert_eq!(actual.source_id(), source.id());
+    assert_eq!(actual.range().start(), start);
+    assert_eq!(actual.range().end(), end);
+    assert_eq!(actual.fragment(), &source.as_str()[start..end]);
+}
+
+fn pi_stop(result: &HtmlTokenizerRunResult) -> &SourceAnchor {
+    let HtmlTokenizerCompletion::Incomplete(HtmlTokenizerIncompleteCause::UnsupportedCapability(
+        unsupported,
+    )) = result.completion()
+    else {
+        panic!("expected an unsupported-capability stop");
+    };
+    assert_eq!(
+        unsupported.capability(),
+        HtmlTokenizerCapability::ProcessingInstruction
+    );
+    assert_eq!(
+        unsupported.availability(),
+        HtmlTokenizerCapabilityAvailability::Deferred
+    );
+    let HtmlTokenizerUnsupportedTrigger::Input(trigger) = unsupported.trigger() else {
+        panic!("expected an Input trigger");
+    };
+    trigger
+}
+
+fn assert_no_pi_resources(result: &HtmlTokenizerRunResult) {
+    let usage = result.usage();
+    assert_eq!(usage.emitted_tokens(), result.tokens().len());
+    assert_eq!(usage.diagnostics(), result.diagnostics().len());
+    assert_eq!(usage.peak_temporary_buffer_bytes(), 0);
+    assert_eq!(usage.peak_attributes_per_tag(), 0);
+}
+
+#[test]
+fn pi_entry_is_a_deferred_stop_without_diagnostic_token_or_output() {
+    for (id, text, steps) in [(901, "<?", 2), (902, "<?probe>", 2)] {
+        let source = source(id, text);
+        let result = tokenize(&source, limits());
+        assert_span(pi_stop(&result), &source, 0, 2);
+        assert_eq!(pi_stop(&result).source_id(), SourceId::new(id));
+        assert_eq!(result.coverage().processed_end(), 0);
+        assert_span(
+            result.coverage().unprocessed_suffix(),
+            &source,
+            0,
+            text.len(),
+        );
+        assert!(result.tokens().is_empty(), "{text}: no token, no EOF");
+        assert!(result.diagnostics().is_empty(), "{text}: no PI diagnostic");
+        assert_eq!(result.usage().transition_steps(), steps);
+        assert_eq!(result.usage().retained_interpreted_bytes(), 0);
+        assert_no_pi_resources(&result);
+    }
+}
+
+#[test]
+fn pi_entry_never_observes_the_suffix() {
+    // Target-looking and hostile units after `<?` add no diagnostic or
+    // output and need no third dispatch.
+    let text = "<?x \"'=/>\n</body><!-- &amp; <?a?>";
+    let source = source(903, text);
+    let result = tokenize(&source, limits());
+    assert_span(pi_stop(&result), &source, 0, 2);
+    assert!(result.tokens().is_empty());
+    assert!(result.diagnostics().is_empty());
+    assert_eq!(result.usage().transition_steps(), 2);
+}
+
+#[test]
+fn pi_entry_after_text_preserves_the_prior_character_evidence() {
+    let source = source(904, "a<?probe>");
+    let result = tokenize(&source, limits());
+    assert_span(pi_stop(&result), &source, 1, 3);
+    assert_eq!(result.coverage().processed_end(), 1);
+    assert!(result.diagnostics().is_empty());
+    assert_eq!(result.tokens().len(), 1);
+    let HtmlToken::Character(character) = &result.tokens()[0] else {
+        panic!("expected the preceding Character token");
+    };
+    assert_span(character.source(), &source, 0, 1);
+    assert_eq!(character.interpreted(), "a");
+    assert_eq!(result.usage().transition_steps(), 3);
+}
+
+#[test]
+fn pi_entry_after_a_genuine_diagnostic_keeps_it_and_adds_no_pi_error() {
+    // `<1` recovers as literal `<` plus text `1`; the following `<?` then
+    // reaches PI entry with the floor at the end of the committed text.
+    let source = source(905, "<1<?probe>");
+    let result = tokenize(&source, limits());
+    assert_eq!(result.diagnostics().len(), 1);
+    assert_eq!(
+        result.diagnostics()[0].code(),
+        HtmlTokenizerDiagnosticCode::InvalidFirstCharacterOfTagName
+    );
+    assert_span(result.diagnostics()[0].location(), &source, 1, 2);
+    assert!(
+        result
+            .tokens()
+            .iter()
+            .all(|token| matches!(token, HtmlToken::Character(_)))
+    );
+    assert_span(pi_stop(&result), &source, 2, 4);
+    assert_eq!(result.coverage().processed_end(), 2);
+}
+
+#[test]
+fn pi_entry_at_a_committed_floor_triggers_only_the_question_mark() {
+    // `<<?x`: the second `<` is already committed as the diagnostic of the
+    // preceding invalid TagOpen. Nothing is rolled back and `<?` is not
+    // reconstructed: coverage ends at 2 and the trigger is exactly `?`.
+    let source = source(906, "<<?x");
+    let result = tokenize(&source, limits());
+    assert_eq!(result.diagnostics().len(), 1);
+    assert_eq!(
+        result.diagnostics()[0].code(),
+        HtmlTokenizerDiagnosticCode::InvalidFirstCharacterOfTagName
+    );
+    assert_span(result.diagnostics()[0].location(), &source, 1, 2);
+    assert_eq!(result.tokens().len(), 1);
+    let HtmlToken::Character(character) = &result.tokens()[0] else {
+        panic!("expected the committed `<` Character token");
+    };
+    assert_span(character.source(), &source, 0, 1);
+    assert_eq!(character.interpreted(), "<");
+    assert_eq!(result.coverage().processed_end(), 2);
+    assert_span(pi_stop(&result), &source, 2, 3);
+    assert_eq!(pi_stop(&result).source_id(), SourceId::new(906));
+}
+
+#[test]
+fn transition_steps_refusal_before_pi_entry_is_not_a_pi_stop() {
+    // One allowed step: Data(`<`) commits, TagOpen(`?`) is refused before
+    // PI entry is observed. The ResourceLimit result is preserved.
+    let source = source(907, "<?");
+    let result = tokenize(
+        &source,
+        HtmlTokenizerLimits::new(100, 1, 100, 100, 100, 100, 100),
+    );
+    let HtmlTokenizerCompletion::Incomplete(HtmlTokenizerIncompleteCause::ResourceLimit(limit)) =
+        result.completion()
+    else {
+        panic!("expected a TransitionSteps ResourceLimit");
+    };
+    assert_eq!(limit.resource(), HtmlTokenizerResource::TransitionSteps);
+    assert_eq!(limit.limit(), 1);
+    assert_eq!(limit.attempted(), 2);
+    assert_eq!(result.coverage().processed_end(), 1);
+    assert_eq!(result.usage().transition_steps(), 1);
+    assert!(result.tokens().is_empty());
+    assert!(result.diagnostics().is_empty());
+}
+
+#[test]
+fn zero_diagnostic_capacity_still_reaches_pi_entry_unsupported() {
+    for (id, text) in [(908, "<?"), (909, "a<?probe>")] {
+        let source = source(id, text);
+        let result = tokenize(
+            &source,
+            HtmlTokenizerLimits::new(100, 100, 100, 0, 100, 100, 100),
+        );
+        pi_stop(&result);
+        assert!(result.diagnostics().is_empty());
+        assert_eq!(result.usage().diagnostics(), 0);
+    }
+}
+
+#[test]
+fn an_earlier_diagnostic_refusal_wins_before_pi_discovery() {
+    // `<<?x` with no diagnostic capacity: the invalid-TagOpen diagnostic of
+    // the first `<` is refused before the PI opener is ever recognized.
+    let source = source(910, "<<?x");
+    let result = tokenize(
+        &source,
+        HtmlTokenizerLimits::new(100, 100, 100, 0, 100, 100, 100),
+    );
+    let HtmlTokenizerCompletion::Incomplete(HtmlTokenizerIncompleteCause::ResourceLimit(limit)) =
+        result.completion()
+    else {
+        panic!("expected a Diagnostics ResourceLimit");
+    };
+    assert_eq!(limit.resource(), HtmlTokenizerResource::Diagnostics);
+    assert!(result.diagnostics().is_empty());
+}
+
+#[test]
+fn pi_entry_does_not_widen_neighbouring_tag_open_branches() {
+    let markup = source(911, "<!x>");
+    let result = tokenize(&markup, limits());
+    let HtmlTokenizerCompletion::Incomplete(HtmlTokenizerIncompleteCause::UnsupportedCapability(
+        unsupported,
+    )) = result.completion()
+    else {
+        panic!("expected MarkupDeclaration unsupported");
+    };
+    assert_eq!(
+        unsupported.capability(),
+        HtmlTokenizerCapability::MarkupDeclaration
+    );
+    assert!(result.diagnostics().is_empty());
+
+    let end = source(912, "</>");
+    let result = tokenize(&end, limits());
+    assert_eq!(result.diagnostics().len(), 1);
+    assert_eq!(
+        result.diagnostics()[0].code(),
+        HtmlTokenizerDiagnosticCode::MissingEndTagName
+    );
+
+    let start = source(913, "<a>");
+    assert!(tokenize(&start, limits()).is_clean_complete());
+}

@@ -15,20 +15,23 @@ results.
 
 ## Initial Inventory
 
-The authority-controlled initial inventory contains exactly 71 fixtures:
+The authority-controlled initial inventory contains exactly 69 fixtures:
 
 | Prefix | Count | Responsibility |
 | --- | ---: | --- |
 | `PRE-` | 10 | UTF-8 input and preprocessing evidence |
 | `TOK-` | 13 | Clean supported token observations |
-| `ERR-` | 17 | One primary case for every approved diagnostic code |
-| `UNSUP-` | 12 | Explicit unsupported or deferred capability boundaries |
+| `ERR-` | 16 | One primary case for every approved diagnostic code |
+| `UNSUP-` | 11 | Explicit unsupported or deferred capability boundaries |
 | `RES-` | 9 | Resource and invalid-configuration states |
 | `ADV-` | 10 | Adversarial and cross-cutting invariants |
 
 The IDs are stable and contiguous within each initial category, except that
-`UNSUP-001` and `UNSUP-002` are retired historical IDs that are never reused:
-the active `UNSUP-` IDs are `UNSUP-003` through `UNSUP-014`. The meaning of
+`UNSUP-001`, `UNSUP-002`, and `UNSUP-004`, and `ERR-006`, are retired
+historical IDs that are never reused: the active `UNSUP-` IDs are `UNSUP-003`
+and `UNSUP-005` through `UNSUP-014`, and the active `ERR-` IDs are `ERR-001`
+through `ERR-005` and `ERR-007` through `ERR-017`. `ERR-006` and `UNSUP-004`
+were superseded by #912 (see "UNSUP-004 Correction (Historical, Superseded)"). The meaning of
 `UNSUP-001` was first `&x` (Deferred Data character reference), then `&#65;`
 (unsupported Numeric character reference in Data); Numeric references are supported by #880 and
 the `&#65;` case is now `TOK-013` (character token authored `0..5`,
@@ -103,7 +106,7 @@ The accounting boundary is precise:
   increment committed transition usage.
 
 `crates/frontend-analysis-core/src/html/tokenizer/validation/corpus/transition_audit.rs`
-contains an independently authored 71-entry committed-count inventory and
+contains an independently authored 69-entry committed-count inventory and
 mechanically checks exact corpus-ID and count agreement. The complete reviewable
 derivation is distributed beside the fixtures: PRE, TOK, ERR, and ADV cases
 have ordered state traces; the context-changing UNSUP group has one explicit
@@ -121,7 +124,7 @@ active. They are not temporary buffers.
 `TemporaryBufferBytes` is reserved for a genuine state-local scratch buffer
 whose contents are not yet retained output evidence, such as a future
 character-reference or script-matching temporary buffer. The first bounded Data
-capability owns no such buffer, so the initial 71-fixture corpus intentionally
+capability owns no such buffer, so the initial 69-fixture corpus intentionally
 contains no `TemporaryBufferBytes` exhaustion result. Execution coverage for
 that resource is:
 
@@ -169,28 +172,50 @@ variant, and no new public or domain type. It corrects only how many
 diagnostics one rejected atomic operation may represent in already-approved
 `HtmlTokenizerResourceLimit` evidence.
 
-## UNSUP-004 Correction
+## UNSUP-004 Correction (Historical, Superseded)
 
-The initial `UNSUP-004` fixture (`"<?x>"`, processing-instruction boundary)
-omitted the mandatory `TagOpen('?')` parse-error observation. It recorded no
-diagnostics and a trigger spanning `[0,2)`, even though `TagOpen` examining
-`?` is the same dispatch that the pinned WHATWG Tag open state requires to
-emit `UnexpectedQuestionMarkInsteadOfTagName` unconditionally, regardless of
-what follows.
+**Historical and superseded.** The correction recorded under #112 / PR #125
+rested on the premise that the pinned WHATWG Tag open state emits
+`UnexpectedQuestionMarkInsteadOfTagName` unconditionally when `?` follows
+`<`. Independent validation #910 / PR #911 falsified that premise: Processing
+Instruction entry is recognized without a PI-entry syntax diagnostic, and
+the entry stops as a Deferred `ProcessingInstruction` capability. The
+production correction authorized by #912 follows the placement adopted in #348
+comment `6020516996`.
 
-`ERR-006` (`"<?"`) already recorded that diagnostic correctly for the
-identical dispatch and served as an independent same-dispatch cross-check.
-`UNSUP-004` was corrected to match `ERR-006`'s prefix: one
-`UnexpectedQuestionMarkInsteadOfTagName` diagnostic at `[1,2)`, a processed
-prefix of `[0,2)`, and an `Unsupported(ProcessingInstruction)` trigger of
-`[2,2)`, with the trailing authored `"x>"` left in the unprocessed suffix.
-`transition_steps` remains `2`; the correction changes recorded diagnostics
-and coverage, not step accounting.
+What the historical correction recorded, preserved as a falsified premise:
+for `"<?x>"` one `UnexpectedQuestionMarkInsteadOfTagName` diagnostic at
+`[1,2)`, a processed prefix of `[0,2)`, and an `Unsupported(ProcessingInstruction)`
+trigger of `[2,2)`, cross-checked against `ERR-006` (`"<?"`) as a same-dispatch
+fixture. Those diagnostic, processed-through-`?` coverage, empty-trigger, and
+diagnostic-resource expectations are no longer current authority.
 
-The correction was derived directly from the #109/#111 approved contracts and
-the pinned WHATWG snapshot, cross-checked against `ERR-006`, and not from any
-production tokenizer's output. The stable fixture ID and the 72-fixture
-initial inventory are unchanged.
+Current treatment (#912):
+
+- `ERR-006` and `UNSUP-004` are retired and their IDs are never reused. Their
+  original meaning remains available through Git history and this note.
+- The unaffected capability, Deferred availability, and two-transition entry
+  theorem moves to two supplemental successors,
+  `REG-912-pi-entry-bare` (`"<?"`) and
+  `REG-912-pi-entry-target-unobserved` (`"<?probe>"`): processed prefix `0`,
+  `Unsupported(ProcessingInstruction)` Deferred, Input trigger `[0,2)`, two
+  transition steps, and no tokens, diagnostics, or interpreted bytes. The
+  suffix after `<?` is never observed. Their expected values are authored from
+  the accepted #911 theorem, not generated from production.
+- Coverage and trigger follow the floor-bounded opener policy: the processed
+  prefix ends at `max(opener start, committed evidence floor)` and the
+  trigger is the uncommitted remainder of the recognized `<?` opener. For
+  `<<?x` the second `<` is already committed evidence of the preceding invalid
+  tag open, so the prefix ends at `2` and the trigger is exactly `?`
+  (`[2,3)`); committed evidence is never rolled back.
+- A `TransitionSteps` refusal before TagOpen `?` means PI entry was not
+  observed; it remains a `ResourceLimit` result and is not a PI stop.
+- No new resource dimension: PI entry consumes no diagnostic capacity, token
+  slot, retained interpreted bytes, or temporary buffer.
+
+The independent #911 validator is unchanged. Production correspondence tests
+in `review_regression_tests.rs` compare actual production to these
+independently authored expectations.
 
 ## Emission-Conditioned Diagnostic Contract
 
@@ -233,30 +258,32 @@ distinction is added by the supplemental regression corpus below.
 
 ## Supplemental Regression Corpus
 
-The initial corpus (71 authority-controlled specification-derived fixtures) and the
+The initial corpus (69 authority-controlled specification-derived fixtures) and the
 supplemental regression corpus are separate inventories:
 
 | Corpus | Count | ID prefix | Mutability |
 | --- | ---: | --- | --- |
-| Initial corpus | 71 | `PRE-`, `TOK-`, `ERR-`, `UNSUP-`, `RES-`, `ADV-` | Authority-controlled; see [Initial Inventory](#initial-inventory) |
-| Supplemental regression corpus | 4 | `REG-<issue>-<slug>` | Grows by durable addition only |
+| Initial corpus | 69 | `PRE-`, `TOK-`, `ERR-`, `UNSUP-`, `RES-`, `ADV-` | Authority-controlled; see [Initial Inventory](#initial-inventory) |
+| Supplemental regression corpus | 6 | `REG-<issue>-<slug>` | Grows by durable addition only |
 | Current candidate-independent total | 75 | initial corpus plus supplemental regression corpus | — |
 
 The initial corpus never grows to absorb supplemental fixtures, and the
 supplemental corpus never renumbers or replaces an initial fixture. Adding a
 `REG-` fixture is not an "Adding or removing an initial fixture" event under
-[Initial Inventory](#initial-inventory) and needs no change to the 71-count.
+[Initial Inventory](#initial-inventory) and needs no change to the 69-count.
 
-The current supplemental inventory contains exactly four fixtures. The first
-three capture the cross-product of the [Emission-Conditioned Diagnostic
+The current supplemental inventory contains exactly six fixtures. The first
+three `REG-113-*` fixtures capture the cross-product of the [Emission-Conditioned Diagnostic
 Contract](#emission-conditioned-diagnostic-contract) with top-level
 `EmittedTokens` resource refusal, once merged #111 clarified that
 `EndTagWithAttributes` and `EndTagWithTrailingSolidus` are
 emission-conditioned while every other first-slice diagnostic code, such as
-`MissingAttributeValue`, remains observation-conditioned. The fourth captures
+`MissingAttributeValue`, remains observation-conditioned. The fourth `REG-113-*` fixture captures
 the cross-product of both emission-conditioned end-tag diagnostics with an
 atomic `Diagnostics` resource refusal, per [Atomic Multi-Diagnostic Resource
-Accounting](#atomic-multi-diagnostic-resource-accounting):
+Accounting](#atomic-multi-diagnostic-resource-accounting). The last two,
+`REG-912-*`, are the Processing Instruction entry successors described under
+"UNSUP-004 Correction (Historical, Superseded)":
 
 - `REG-113-end-tag-attributes-emission-refusal`: an authored end tag with
   attribute evidence (`z</a x>`) whose token emission is refused by an
@@ -285,12 +312,31 @@ Accounting](#atomic-multi-diagnostic-resource-accounting):
   to match the merged #111 contract already described above.
   `TransitionSteps`, `EmittedTokens`, and `AttributesPerTag` remain the only
   resources the policy still treats as exact-single-increment.
+- `REG-912-pi-entry-bare` (`<?`) and `REG-912-pi-entry-target-unobserved`
+  (`<?probe>`): Processing Instruction entry as a Deferred
+  `ProcessingInstruction` stop with processed prefix `0`, Input trigger
+  `[0,2)`, two transition steps, and no tokens or diagnostics.
 
-Every expected observation in the supplemental corpus was derived directly
-from the pinned WHATWG algorithm and the approved #109/#110/merged #111
-contracts, cross-checked against the existing `ERR-011`, `ERR-016`, and
-`ERR-017` fixtures. No production tokenizer candidate output was used as the
-gold oracle for these fixtures.
+Provenance differs by supplemental group. No production tokenizer candidate
+output was used as the gold oracle for any supplemental fixture.
+
+- **`REG-113-*`**: every expected observation was derived directly from the
+  pinned WHATWG algorithm and the approved #109/#110/merged #111 contracts,
+  cross-checked against the existing `ERR-011`, `ERR-016`, and `ERR-017`
+  fixtures.
+- **`REG-912-*`**: the expected observations were authored from the accepted
+  Processing Instruction entry successor authority: independent validation
+  #910 / PR #911 (independent review `5430986842`, #348 accepted-validation
+  checkpoint `6019943886`), production Issue #912, and the adopted production
+  placement in #348 comment `6020516996`. The pinned WHATWG algorithm
+  establishes that TagOpen `?` enters Processing Instruction handling without
+  the retired PI-entry question-mark diagnostic. The bounded refusal geometry
+  is Frontend Analysis project policy, not WHATWG-specified: the processed
+  prefix ends at `max(opener start, committed evidence floor)` and the
+  Unsupported Input trigger is the uncommitted remainder of the recognized
+  `<?` opener, as validated by #911 and adopted by #912. It is not derived
+  from the #109/#110/#111 chain or from the end-tag `REG-113-*` /
+  `ERR-011` / `ERR-016` / `ERR-017` cross-checks.
 
 `crates/frontend-analysis-core/src/html/tokenizer/validation/corpus/regressions.rs`
 holds the fixture definitions and their independent transition-dispatch
@@ -302,7 +348,7 @@ future candidate validation. All three entry points remain test-only.
 
 Future corrected defects extend this supplemental corpus with additional
 durable `REG-<issue>-<slug>` fixtures. They do not renumber or inflate the
-authority-controlled 71-fixture initial inventory documented in [Initial
+authority-controlled 69-fixture initial inventory documented in [Initial
 Inventory](#initial-inventory).
 
 ## Actual Observation and Comparison
@@ -324,10 +370,10 @@ semantic observation.
 
 #113 connects the production `tokenize` entry point to this comparison path in
 `validation/execute.rs`. Full-corpus candidate execution now runs against the
-complete 75-fixture candidate-independent corpus (71 initial plus 4
-supplemental regression fixtures). The `UNSUP-004` gold was independently
-remediated under #112 and merged by PR #125, as recorded above in "UNSUP-004
-Correction"; #113 consumes the corrected gold without modifying it. The
+complete 75-fixture candidate-independent corpus (69 initial plus 6
+supplemental regression fixtures). The historical `UNSUP-004` gold (#112 /
+PR #125) was later superseded and retired by #912, as recorded above in
+"UNSUP-004 Correction (Historical, Superseded)". The
 production tokenizer matches all 75 candidate-independent fixtures, including
 `REG-113-end-tag-atomic-diagnostics-limit-refusal` after the atomic
 `Diagnostics` preflight correction described in [Atomic Multi-Diagnostic

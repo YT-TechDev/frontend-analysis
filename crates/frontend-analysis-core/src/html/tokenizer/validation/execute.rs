@@ -40,8 +40,8 @@ fn run_fixture(fixture: &HtmlTokenizerFixture, source_id: u64) -> ObservedRun {
 #[test]
 fn all_candidate_independent_fixtures_match_the_production_tokenizer() {
     let fixtures = all_candidate_independent_corpus();
-    const INITIAL_CORPUS_COUNT: usize = 71;
-    const SUPPLEMENTAL_REGRESSION_COUNT: usize = 4;
+    const INITIAL_CORPUS_COUNT: usize = 69;
+    const SUPPLEMENTAL_REGRESSION_COUNT: usize = 6;
     assert_eq!(
         fixtures.len(),
         INITIAL_CORPUS_COUNT + SUPPLEMENTAL_REGRESSION_COUNT

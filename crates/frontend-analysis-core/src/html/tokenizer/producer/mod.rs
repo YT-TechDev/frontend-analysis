@@ -690,25 +690,17 @@ impl<'a> Engine<'a> {
                     self.markup_declaration_stop(end)
                 }
             }
-            InputUnit::Scalar {
-                ch: '?',
-                start,
-                end,
-            } => {
-                match self.append_diagnostic(
-                    HtmlTokenizerDiagnosticCode::UnexpectedQuestionMarkInsteadOfTagName,
-                    (start, end),
-                    HtmlTokenizerDiagnosticContext::TagOpen,
-                    HtmlTokenizerDiagnosticHandling::Stopped,
-                    HtmlTokenizerDiagnosticSubject::InputLocation,
-                ) {
-                    Ok(()) => {}
-                    Err(stop) => return stop,
-                }
-                self.processed_end = end;
+            InputUnit::Scalar { ch: '?', end, .. } => {
+                // Processing Instruction entry is recognized here; it is not
+                // a syntax error, so no diagnostic is appended. Coverage stops
+                // at the committed-evidence floor and the trigger is the
+                // uncommitted remainder of the cursor-recognized `<?` opener.
+                // No later target/data/EOF grammar is observed.
+                self.processed_end = self.tag_open_start.max(self.min_processed_end);
+                let trigger = self.discovery_trigger((self.tag_open_start, end));
                 self.unsupported_input_stop(
                     super::result::HtmlTokenizerCapability::ProcessingInstruction,
-                    (end, end),
+                    trigger,
                 )
             }
             InputUnit::Scalar { start, end, .. } => {

@@ -1,5 +1,5 @@
 //! Candidate-independent transition-step derivation audit for the initial
-//! 71-fixture corpus.
+//! 69-fixture corpus.
 //!
 //! # Authority
 //!
@@ -29,7 +29,7 @@
 //! Each entry below records the committed step count. The full reviewable
 //! derivation is distributed with the fixture that owns it: every PRE, TOK,
 //! ERR, and ADV fixture has an ordered state trace next to construction;
-//! UNSUP-003..004 have explicit traces (UNSUP-001 and UNSUP-002 are retired historical IDs) and UNSUP-005..014 share the documented
+//! UNSUP-003 has an explicit trace (UNSUP-001, UNSUP-002, and UNSUP-004 are retired historical IDs) and UNSUP-005..014 share the documented
 //! context-changing-name formula; every RES fixture records preprocessing,
 //! attempted/committed steps, refusal operation, attempted value, and boundary.
 //! This table mechanically proves complete ID coverage and count agreement.
@@ -46,10 +46,10 @@ pub(super) const TRANSITION_STEP_AUDIT: &[(&str, usize)] = &[
     ("ERR-001", 2), ("ERR-002", 2), ("ERR-003", 2),
     ("ERR-004", 2), // Data('<') + TagOpen(EOF); both tokens emit in TagOpen.
     ("ERR-005", 4), // One reconsume instruction; authored '1' is examined twice.
-    ("ERR-006", 2), ("ERR-007", 4), ("ERR-008", 4), ("ERR-009", 9),
+    ("ERR-007", 4), ("ERR-008", 4), ("ERR-009", 9),
     ("ERR-010", 11), ("ERR-011", 9), ("ERR-012", 13), ("ERR-013", 16),
     ("ERR-014", 12), ("ERR-015", 13), ("ERR-016", 10), ("ERR-017", 7),
-    ("UNSUP-003", 2), ("UNSUP-004", 2),
+    ("UNSUP-003", 2),
     ("UNSUP-005", 8), ("UNSUP-006", 11), ("UNSUP-007", 8), ("UNSUP-008", 6),
     ("UNSUP-009", 9), ("UNSUP-010", 10), ("UNSUP-011", 11), ("UNSUP-012", 9),
     ("UNSUP-013", 11), ("UNSUP-014", 12),
@@ -73,7 +73,7 @@ mod tests {
     #[test]
     fn transition_audit_covers_every_fixture_and_matches_corpus() {
         let fixtures = initial_corpus();
-        assert_eq!(fixtures.len(), 71);
+        assert_eq!(fixtures.len(), 69);
         assert_eq!(fixtures.len(), TRANSITION_STEP_AUDIT.len());
 
         let audit_ids: BTreeSet<&str> =

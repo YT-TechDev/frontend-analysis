@@ -10,7 +10,7 @@ mod unsupported_resources;
 use super::fixture::HtmlTokenizerFixture;
 
 pub(super) fn initial_corpus() -> Vec<HtmlTokenizerFixture> {
-    let mut fixtures = Vec::with_capacity(71);
+    let mut fixtures = Vec::with_capacity(69);
     preprocessing::add_preprocessing(&mut fixtures);
     supported::add_supported_tokens(&mut fixtures);
     diagnostics::add_diagnostics(&mut fixtures);
@@ -20,16 +20,17 @@ pub(super) fn initial_corpus() -> Vec<HtmlTokenizerFixture> {
     fixtures
 }
 
-/// Supplemental candidate-independent `REG-113-*` regression fixtures. This
-/// is a separate corpus from [`initial_corpus`]: it does not count toward,
-/// renumber, or alter the authority-controlled 71-fixture initial inventory.
+/// Supplemental candidate-independent `REG-*` regression fixtures. This
+/// is a separate corpus from [`initial_corpus`]: it currently contains
+/// `REG-113-*` and `REG-912-*` rows and does not count toward, renumber,
+/// or alter the authority-controlled 69-fixture initial inventory.
 pub(super) fn supplemental_regression_corpus() -> Vec<HtmlTokenizerFixture> {
-    let mut fixtures = Vec::with_capacity(4);
+    let mut fixtures = Vec::with_capacity(6);
     regressions::add_regressions(&mut fixtures);
     fixtures
 }
 
-/// Deterministic concatenation of the initial 71-fixture corpus followed by
+/// Deterministic concatenation of the initial 69-fixture corpus followed by
 /// the supplemental `REG-` regression corpus, for future candidate
 /// validation that wants all authoritative candidate-independent gold
 /// without redefining [`initial_corpus`].
