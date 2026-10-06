@@ -891,6 +891,46 @@ selected ordinary attribute 1:
     }
 
     #[test]
+    fn character_reference_attribute_value_renders_the_core_decoded_value() {
+        // <body>0..6 <div id="&amp;">6..22 (id="&amp;" 11..21, value 15..20)
+        // </div>22..28. The CLI renders the authored spelling and the decoded
+        // Core value; it decodes nothing itself.
+        let run = html("attr-reference", b"<body><div id=\"&amp;\"></div>");
+
+        let expected = head(28)
+            + r##"completion: complete
+coverage: committed authored prefix bytes 0..28; processed tokens 4
+tokenizer diagnostics: 0
+tree diagnostics: 1
+nodes: 5
+
+"## + SYNTHESIZED_SHELL
+            + AUTHORED_BODY
+            + r##"      #4 element div
+          authored start tag: bytes 6..22, line 1, byte column 7: "<div id=\"&amp;\">"
+          authored raw name: bytes 7..10, line 1, byte column 8: "div"
+
+selected ordinary relation 1: matching close
+  node: #4 div
+  trigger: bytes 22..28, line 1, byte column 23: "</div>"
+
+selected ordinary attribute 1:
+  node: #4 div
+  authored attribute: bytes 11..21, line 1, byte column 12: "id=\"&amp;\""
+  authored name: bytes 11..13, line 1, byte column 12: "id"
+  value syntax: double quoted
+    equals: bytes 13..14, line 1, byte column 14: "="
+    open quote: bytes 14..15, line 1, byte column 15: "\""
+    value: bytes 15..20, line 1, byte column 16: "&amp;"
+    close quote: bytes 20..21, line 1, byte column 21: "\""
+  interpreted name: "id"
+  interpreted value: "&"
+
+"## + MISSING_DOCTYPE_AT_BODY;
+        assert_report(&run, &expected);
+    }
+
+    #[test]
     fn missing_after_equals_renders_its_empty_boundary_and_empty_interpreted_value() {
         // <body>0..6 <footer a=>6..17 (a= 14..16) </footer>17..26.
         let run = html("attr-missing-after-equals", b"<body><footer a=></footer>");

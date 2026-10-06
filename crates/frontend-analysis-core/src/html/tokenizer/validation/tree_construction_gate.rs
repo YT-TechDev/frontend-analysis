@@ -3,7 +3,7 @@
 //!
 //! This gate sits beside the existing parser and Core-analysis gates and adds
 //! no fixture, generator, or gold of its own: it reuses
-//! [`super::corpus::all_candidate_independent_corpus`] (72 initial plus 4
+//! [`super::corpus::all_candidate_independent_corpus`] (71 initial plus 4
 //! supplemental `REG-` fixtures) and the existing bounded, deterministic,
 //! dependency-free 4,096-case generator without editing or copying either.
 //!
@@ -430,7 +430,7 @@ fn gold_spans(fixture: &HtmlTokenizerFixture) -> GoldSpans {
 #[test]
 fn tree_construction_holds_its_contract_over_the_candidate_independent_corpus() {
     let fixtures = all_candidate_independent_corpus();
-    const INITIAL_CORPUS_COUNT: usize = 72;
+    const INITIAL_CORPUS_COUNT: usize = 71;
     const SUPPLEMENTAL_REGRESSION_COUNT: usize = 4;
     assert_eq!(
         fixtures.len(),

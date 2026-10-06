@@ -72,7 +72,8 @@
 //! (`interpreted_pair_alone_is_not_sufficient_evidence`); (4) supported value
 //! syntaxes are not equivalent (same test and the syntax tests); (5) a
 //! ResourceLimit is not a semantic refusal; (6) an `&` value is not partially
-//! admitted (`ampersand_value_stays_at_the_attribute_value_character_reference_boundary`);
+//! admitted (historical negative control, retired by Issue #906 when production
+//! superseded that boundary);
 //! (7) same-name nesting cannot confuse association (identity GOLD); (8) a later
 //! incomplete input does not invalidate committed evidence
 //! (`committed_attribute_survives_a_later_lower_layer_stop`); (9) mixed-case
@@ -103,9 +104,9 @@ use super::super::tokenizer::diagnostic::{
 use super::super::tokenizer::producer::tokenize;
 use super::super::tokenizer::resource::{HtmlTokenizerLimits, HtmlTokenizerResource};
 use super::super::tokenizer::result::{
-    HtmlCharacterReferenceContext, HtmlTokenizerCapability, HtmlTokenizerCapabilityAvailability,
-    HtmlTokenizerCompletion, HtmlTokenizerIncompleteCause, HtmlTokenizerMode,
-    HtmlTokenizerRunResult, HtmlTokenizerUnsupportedTrigger,
+    HtmlTokenizerCapability, HtmlTokenizerCapabilityAvailability, HtmlTokenizerCompletion,
+    HtmlTokenizerIncompleteCause, HtmlTokenizerMode, HtmlTokenizerRunResult,
+    HtmlTokenizerUnsupportedTrigger,
 };
 
 const PINNED_WHATWG_COMMIT: &str = "4c5586afa4fc6f2feeebcd25be1dca017cb51298";
@@ -2698,45 +2699,6 @@ fn assert_no_selected_node(context: &str, observation: &Observation) {
 }
 
 #[test]
-fn ampersand_value_stays_at_the_attribute_value_character_reference_boundary() {
-    // (source, hand-counted offset of the `&` that stops the lower layer)
-    for (source, ampersand) in [
-        ("<body><div id=\"a&amp;b\"></div>", 16),
-        ("<body><div id='a&b'></div>", 16),
-        ("<body><div id=a&b></div>", 15),
-        ("<body><nav class=\"&#x41;\"></nav>", 18),
-    ] {
-        let observation = observe(source, 1, product_limits());
-        assert_eq!(
-            observation.lower_stop,
-            Some(LowerStop::Unsupported {
-                capability: HtmlTokenizerCapability::CharacterReference {
-                    context: HtmlCharacterReferenceContext::AttributeValue,
-                },
-                availability: HtmlTokenizerCapabilityAvailability::Deferred,
-                trigger: LowerTrigger::Input(at(SourceId::new(1), (ampersand, ampersand + 1))),
-            }),
-            "{source:?}"
-        );
-        assert_eq!(
-            observation.completion,
-            Completion::LowerLayerIncomplete(LowerLayerCategory::UnsupportedCapability),
-            "{source:?}"
-        );
-        // The start tag was never completed, so no candidate association is
-        // constructed from incomplete evidence and nothing is decoded.
-        assert_no_selected_node(source, &observation);
-        assert_eq!(observation.token_count, 1, "only <body> was emitted");
-        assert!(observation.committed_end <= observation.lower_processed_end);
-        // Not a resource failure.
-        assert_ne!(
-            observation.completion,
-            Completion::LowerLayerIncomplete(LowerLayerCategory::ResourceLimit)
-        );
-    }
-}
-
-#[test]
 fn second_attribute_is_a_resource_fact_not_a_semantic_refusal() {
     // Frozen Product vector: the second attribute reaches ResourceLimit
     // (limit 1, attempted 2) at the offset where it begins. The start tag is
@@ -3120,7 +3082,7 @@ fn committed_attribute_survives_a_later_lower_layer_stop() {
 
 #[test]
 fn lower_layer_categories_stay_distinct() {
-    let unsupported = observe("<body><div id=a&b>", 1, product_limits());
+    let unsupported = observe("<body><div id=a><!x>", 1, product_limits());
     let resource = observe("<body><div a=1 b=2>", 1, product_limits());
     let invalid = observe(
         "<body><div id=a></div>",

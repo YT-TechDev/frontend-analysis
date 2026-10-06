@@ -335,28 +335,6 @@ fn assert_abandoned(diagnostic: &HtmlTokenizerDiagnostic) {
     );
 }
 
-/// A diagnostic committed while a tag is under construction, followed by an
-/// unsupported-capability discovery before that tag ever emits, must not
-/// leave the diagnostic's subject dangling: `HtmlTokenizerRunResult::new`
-/// would otherwise reject the forward `EmittedToken` reference and the
-/// internal `.expect` in `into_result` would panic.
-#[test]
-fn active_tag_diagnostic_survives_an_unsupported_stop_before_emission() {
-    let source = source(303, "<a x x=&y");
-    let result = tokenize(&source, limits());
-    assert!(result.tokens().is_empty());
-    assert!(matches!(
-        result.completion(),
-        HtmlTokenizerCompletion::Incomplete(HtmlTokenizerIncompleteCause::UnsupportedCapability(_))
-    ));
-    assert_eq!(result.diagnostics().len(), 1);
-    assert_eq!(
-        result.diagnostics()[0].code(),
-        HtmlTokenizerDiagnosticCode::DuplicateAttribute
-    );
-    assert_abandoned(&result.diagnostics()[0]);
-}
-
 /// The same class of dangling-subject defect, but for a resource-limit stop
 /// (not an unsupported-capability release): a still-active tag is frozen,
 /// not released, yet its provisional diagnostics must still be retargeted.

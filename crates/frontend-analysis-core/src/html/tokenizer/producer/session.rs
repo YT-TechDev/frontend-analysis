@@ -788,7 +788,8 @@ impl<'a> Engine<'a> {
         }
     }
 
-    /// The character reference state, with the private Data or RCDATA return state.
+    /// The character reference state, with the private Data, RCDATA or
+    /// AttributeValue return state.
     ///
     /// `unit` is the already-materialized scalar following the authored `&`.
     /// This dispatch decides *which* branch the reference takes and costs one
@@ -877,6 +878,11 @@ impl<'a> Engine<'a> {
             // cursor returns unchanged and without a preprocessing
             // diagnostic. Nothing is consumed or committed at this point.
             return internal_invariant_stop(HtmlTokenizerInvariantFailure::CursorState);
+        }
+        if self.character_reference_return.is_attribute_value() {
+            // Discovery above is context-neutral. Everything that depends on
+            // the originating context lives in the AttributeValue helper.
+            return self.commit_attribute_named_reference(selected);
         }
         let ampersand_start = self.character_reference_start.0;
         let name_end = self.character_reference_start.1 + selected.name.len();
@@ -1014,10 +1020,26 @@ impl<'a> Engine<'a> {
                 // End transition is attempted.
                 self.numeric_reference_end = end;
                 self.numeric_semicolon = true;
+                if self.character_reference_return.is_attribute_value()
+                    && let Err(stop) = self.preflight_attribute_numeric_end()
+                {
+                    return stop;
+                }
                 self.state = State::NumericCharacterReferenceEnd;
                 Step::Continue
             }
             InputUnit::Scalar { .. } | InputUnit::Eof { .. } => {
+                if self.character_reference_return.is_attribute_value() {
+                    // The missing-semicolon observation is part of the one
+                    // prepared attribute effect: it commits with the decoded
+                    // output at Numeric End, never ahead of it.
+                    self.numeric_semicolon = false;
+                    if let Err(stop) = self.preflight_attribute_numeric_end() {
+                        return stop;
+                    }
+                    self.state = State::NumericCharacterReferenceEnd;
+                    return Step::Continue;
+                }
                 let context = if hexadecimal {
                     HtmlTokenizerDiagnosticContext::HexadecimalCharacterReference
                 } else {
@@ -1048,6 +1070,9 @@ impl<'a> Engine<'a> {
     /// The authored span ends at the last consumed prefix unit, never at the
     /// semicolonless terminator that may already be inside coverage.
     pub(super) fn step_numeric_character_reference_end(&mut self) -> Step {
+        if self.character_reference_return.is_attribute_value() {
+            return self.commit_attribute_numeric_reference();
+        }
         let site = (self.current.start(), self.current.end());
         let (scalar, recovery) = numeric_end_semantics(self.numeric_value);
         let start = self.character_reference_start.0;
@@ -1114,6 +1139,9 @@ impl<'a> Engine<'a> {
         unit: InputUnit,
         context: HtmlTokenizerDiagnosticContext,
     ) -> Step {
+        if self.character_reference_return.is_attribute_value() {
+            return self.recover_attribute_absence_of_digits(unit, context);
+        }
         let start = self.character_reference_start.0;
         let end = self.numeric_reference_end;
         // Build interpreted recovery from units owned at recognition time.
@@ -1183,7 +1211,7 @@ impl<'a> Engine<'a> {
         if let Err(stop) = self.flush_character_reference_ampersand() {
             return stop;
         }
-        if let Err(stop) = self.push_data_char(ch, start, end) {
+        if let Err(stop) = self.push_reference_run_char(ch, start, end) {
             return stop;
         }
         self.state = State::AmbiguousAmpersand;
@@ -1193,7 +1221,7 @@ impl<'a> Engine<'a> {
     pub(super) fn step_ambiguous_ampersand(&mut self, unit: InputUnit) -> Step {
         match unit {
             InputUnit::Scalar { ch, start, end } if ch.is_ascii_alphanumeric() => {
-                if let Err(stop) = self.push_data_char(ch, start, end) {
+                if let Err(stop) = self.push_reference_run_char(ch, start, end) {
                     return stop;
                 }
                 Step::Continue
@@ -1212,7 +1240,7 @@ impl<'a> Engine<'a> {
                     (start, end),
                     HtmlTokenizerDiagnosticContext::AmbiguousAmpersand,
                     HtmlTokenizerDiagnosticHandling::Continued,
-                    HtmlTokenizerDiagnosticSubject::InputLocation,
+                    self.ambiguous_ampersand_subject(),
                 ) {
                     return stop;
                 }
@@ -1240,10 +1268,311 @@ impl<'a> Engine<'a> {
     }
 
     /// Flushes the authored `&` that entered the character reference state
-    /// into the pending character-data run as ordinary text.
+    /// into the pending character-data run, or into the active attribute
+    /// value, as ordinary text.
     fn flush_character_reference_ampersand(&mut self) -> Result<(), Step> {
         let (start, end) = self.character_reference_start;
+        if self.character_reference_return.is_attribute_value() {
+            // The effect is prepared where the reference outcome becomes
+            // known: at the first unit after the `&`.
+            return self.try_append_attribute_value("&", end, end);
+        }
         self.push_data_char('&', start, end)
+    }
+
+    /// One scalar of the unresolved Ambiguous Ampersand run, routed to the
+    /// pending character-data run or to the active attribute value.
+    fn push_reference_run_char(&mut self, ch: char, start: usize, end: usize) -> Result<(), Step> {
+        if self.character_reference_return.is_attribute_value() {
+            match self.push_attribute_value_char(ch, start, end) {
+                Step::Continue => Ok(()),
+                stop => Err(stop),
+            }
+        } else {
+            self.push_data_char(ch, start, end)
+        }
+    }
+
+    /// The subject of the `;` observation that closes an unresolved candidate:
+    /// input-located in Data/RCDATA, tag-related inside an attribute value like
+    /// every other attribute-value diagnostic.
+    fn ambiguous_ampersand_subject(&self) -> HtmlTokenizerDiagnosticSubject {
+        if self.character_reference_return.is_attribute_value() {
+            self.attribute_reference_subject()
+        } else {
+            HtmlTokenizerDiagnosticSubject::InputLocation
+        }
+    }
+
+    // ---- AttributeValue character reference effects ------------------------
+    //
+    // Recognition (Named maximum match, numeric progression, Numeric End
+    // mapping) is shared with Data and RCDATA. These helpers own only what is
+    // specific to an attribute value: the output sink is the active
+    // `AttributeValueBuilder`, never a Character token, and every effect is
+    // prepared whole before authoritative consumption:
+    //
+    //   preflight (diagnostics, then retained interpreted bytes)
+    //     -> prepare diagnostic evidence
+    //     -> authoritative source consumption
+    //     -> non-refusing append and diagnostic commit
+
+    /// The tag-related subject every attribute-value diagnostic carries: the
+    /// start or end tag token under construction will be emitted at this index.
+    fn attribute_reference_subject(&self) -> HtmlTokenizerDiagnosticSubject {
+        HtmlTokenizerDiagnosticSubject::EmittedToken {
+            token_index: self.tokens.len(),
+        }
+    }
+
+    fn attribute_reference_diagnostic(
+        &self,
+        code: HtmlTokenizerDiagnosticCode,
+        location: (usize, usize),
+        context: HtmlTokenizerDiagnosticContext,
+        handling: HtmlTokenizerDiagnosticHandling,
+    ) -> Result<HtmlTokenizerDiagnostic, Step> {
+        HtmlTokenizerDiagnostic::new(
+            self.source,
+            code,
+            self.anchor(location.0, location.1),
+            context,
+            handling,
+            self.attribute_reference_subject(),
+        )
+        .map_err(|_| {
+            internal_invariant_stop(HtmlTokenizerInvariantFailure::SourceEvidenceConstruction)
+        })
+    }
+
+    /// Refuses, without mutating anything, an effect whose diagnostics or
+    /// decoded interpreted bytes do not fit. Diagnostics are checked first.
+    fn preflight_attribute_reference_effect(
+        &mut self,
+        retained_bytes: usize,
+        diagnostics: usize,
+        site: usize,
+    ) -> Result<(), Step> {
+        if diagnostics > 0 {
+            self.preflight_pending_emission_diagnostics(diagnostics, (site, site))?;
+        }
+        self.try_reserve_retained(retained_bytes, site)
+    }
+
+    /// Appends text to the active attribute value after its retained bytes
+    /// were preflighted. Non-refusing.
+    fn append_attribute_value_prepared(&mut self, text: &str, raw_end: usize) {
+        self.tag
+            .as_mut()
+            .expect("tag active")
+            .pending_value
+            .as_mut()
+            .expect("pending attribute value active")
+            .push_str(text, raw_end);
+    }
+
+    /// Preflights and appends one self-contained run: used for the literal
+    /// `&` of a reference that begins nothing.
+    fn try_append_attribute_value(
+        &mut self,
+        text: &str,
+        raw_end: usize,
+        site: usize,
+    ) -> Result<(), Step> {
+        self.try_reserve_retained(text.len(), site)?;
+        self.append_attribute_value_prepared(text, raw_end);
+        Ok(())
+    }
+
+    /// The whole Named operation for an attribute value, entered after the
+    /// context-neutral maximum match.
+    ///
+    /// A semicolonless match followed by an ASCII alphanumeric or `=` stays
+    /// literal in an attribute value and raises no diagnostic; every other
+    /// match resolves to the canonical decoded value. The follower is only
+    /// observed through the bounded borrow, never consumed.
+    fn commit_attribute_named_reference(
+        &mut self,
+        selected: named_character_reference::NamedCharacterReferenceMatch,
+    ) -> Step {
+        let ampersand_end = self.character_reference_start.1;
+        let name_length = selected.name.len();
+        let name_end = ampersand_end + name_length;
+
+        // The cursor sits after the first identifier scalar, so the byte after
+        // the matched name is the last of `name_length` unconsumed bytes.
+        let follower = self
+            .cursor
+            .peek_unconsumed_bytes(name_length)
+            .get(name_length - 1)
+            .copied();
+        let semicolon = selected.ends_with_semicolon();
+        let blocked =
+            !semicolon && follower.is_some_and(|byte| byte.is_ascii_alphanumeric() || byte == b'=');
+        let missing_semicolon = !semicolon && !blocked;
+        let retained_bytes = if blocked {
+            '&'.len_utf8() + name_length
+        } else {
+            selected.value.len()
+        };
+
+        // 1. Preflight every fallible resource decision.
+        if let Err(stop) = self.preflight_attribute_reference_effect(
+            retained_bytes,
+            usize::from(missing_semicolon),
+            ampersand_end,
+        ) {
+            return stop;
+        }
+
+        // 2. Prepare diagnostic evidence.
+        let location = (name_end - 1, name_end);
+        let missing = if missing_semicolon {
+            match self.attribute_reference_diagnostic(
+                HtmlTokenizerDiagnosticCode::MissingSemicolonAfterCharacterReference,
+                location,
+                HtmlTokenizerDiagnosticContext::NamedCharacterReference,
+                HtmlTokenizerDiagnosticHandling::Continued,
+            ) {
+                Ok(diagnostic) => Some(diagnostic),
+                Err(stop) => return stop,
+            }
+        } else {
+            None
+        };
+
+        // 3. Authoritative matched-source consumption.
+        let consumed_end = self.consume_discovered_source(name_length - 1);
+        if consumed_end != name_end {
+            return internal_invariant_stop(HtmlTokenizerInvariantFailure::CursorState);
+        }
+
+        // 4. Non-refusing commit.
+        self.processed_end = self.processed_end.max(name_end);
+        if blocked {
+            self.append_attribute_value_prepared("&", ampersand_end);
+            self.append_attribute_value_prepared(selected.name, name_end);
+        } else {
+            self.append_attribute_value_prepared(selected.value, name_end);
+        }
+        if let Some(diagnostic) = missing {
+            self.commit_prepared_diagnostic(diagnostic, location);
+        }
+        self.state = self.character_reference_return.state();
+        Step::Continue
+    }
+
+    /// Prepares the whole Numeric End effect at the terminal unit, before the
+    /// End transition: the decoded scalar's retained bytes together with every
+    /// diagnostic the reference raises (the missing-semicolon observation, then
+    /// the End recovery). Mutates nothing.
+    fn preflight_attribute_numeric_end(&mut self) -> Result<(), Step> {
+        let (scalar, recovery) = numeric_end_semantics(self.numeric_value);
+        let diagnostics = usize::from(!self.numeric_semicolon) + usize::from(recovery.is_some());
+        let site = self.processed_end;
+        self.preflight_attribute_reference_effect(scalar.len_utf8(), diagnostics, site)
+    }
+
+    /// Numeric End for an attribute value: one input-free transition whose
+    /// effect was already proven to fit at the terminal unit. The decoded
+    /// scalar and its ordered diagnostics commit together.
+    fn commit_attribute_numeric_reference(&mut self) -> Step {
+        let site = (self.current.start(), self.current.end());
+        let (scalar, recovery) = numeric_end_semantics(self.numeric_value);
+        let reference_end = self.numeric_reference_end;
+        let missing_semicolon = !self.numeric_semicolon;
+        let diagnostics = usize::from(missing_semicolon) + usize::from(recovery.is_some());
+        let at = self.processed_end;
+
+        if let Err(stop) =
+            self.preflight_attribute_reference_effect(scalar.len_utf8(), diagnostics, at)
+        {
+            return stop;
+        }
+        let missing = if missing_semicolon {
+            let context = if self.numeric_hex_marker.is_some() {
+                HtmlTokenizerDiagnosticContext::HexadecimalCharacterReference
+            } else {
+                HtmlTokenizerDiagnosticContext::DecimalCharacterReference
+            };
+            match self.attribute_reference_diagnostic(
+                HtmlTokenizerDiagnosticCode::MissingSemicolonAfterCharacterReference,
+                site,
+                context,
+                HtmlTokenizerDiagnosticHandling::Continued,
+            ) {
+                Ok(diagnostic) => Some(diagnostic),
+                Err(stop) => return stop,
+            }
+        } else {
+            None
+        };
+        let end_diagnostic = match recovery {
+            None => None,
+            Some((code, handling)) => match self.attribute_reference_diagnostic(
+                code,
+                site,
+                HtmlTokenizerDiagnosticContext::NumericCharacterReferenceEnd,
+                handling,
+            ) {
+                Ok(diagnostic) => Some(diagnostic),
+                Err(stop) => return stop,
+            },
+        };
+
+        let mut buffer = [0u8; 4];
+        self.append_attribute_value_prepared(scalar.encode_utf8(&mut buffer), reference_end);
+        for diagnostic in missing.into_iter().chain(end_diagnostic) {
+            self.commit_prepared_diagnostic(diagnostic, site);
+        }
+        self.state = self.character_reference_return.state();
+        // A semicolonless terminator was never consumed: it is reconsumed in
+        // the originating attribute value state.
+        self.pending_reconsume = missing_semicolon;
+        Step::Continue
+    }
+
+    /// Absence-of-digits recovery for an attribute value: the recognized
+    /// literal `&#` / `&#x` prefix is appended to the active value together
+    /// with its diagnostic, or neither is, and the current unit is reconsumed
+    /// by the originating attribute value state.
+    fn recover_attribute_absence_of_digits(
+        &mut self,
+        unit: InputUnit,
+        context: HtmlTokenizerDiagnosticContext,
+    ) -> Step {
+        // Static literal prefix selected from the marker owned at recognition
+        // time; source coordinates are never reread to manufacture it.
+        let prefix = match self.numeric_hex_marker {
+            None => "&#",
+            Some('x') => "&#x",
+            Some('X') => "&#X",
+            Some(_) => return internal_invariant_stop(HtmlTokenizerInvariantFailure::CursorState),
+        };
+        let end = self.numeric_reference_end;
+        let site = (unit.start(), unit.end());
+        let at = self.processed_end;
+
+        if let Err(stop) = self.preflight_attribute_reference_effect(prefix.len(), 1, at) {
+            return stop;
+        }
+        let diagnostic = match self.attribute_reference_diagnostic(
+            HtmlTokenizerDiagnosticCode::AbsenceOfDigitsInNumericCharacterReference,
+            site,
+            context,
+            HtmlTokenizerDiagnosticHandling::Recovered(
+                HtmlTokenizerRecoveryKind::FlushedLiteralCharacterReferencePrefix,
+            ),
+        ) {
+            Ok(diagnostic) => diagnostic,
+            Err(stop) => return stop,
+        };
+
+        self.append_attribute_value_prepared(prefix, end);
+        self.commit_prepared_diagnostic(diagnostic, site);
+        self.state = self.character_reference_return.state();
+        self.pending_reconsume = true;
+        Step::Continue
     }
 
     fn rcdata_unsupported_input_stop(

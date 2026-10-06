@@ -1073,12 +1073,9 @@ fn nr19_reference_span_ends_at_the_last_consumed_prefix_unit() {
 }
 
 /// Falsifies: the retired Numeric-unsupported refusals returning for the
-/// selected paths, and Numeric leaking into AttributeValue.
+/// selected paths.
 #[test]
 fn nr20_boundaries_after_numeric_support() {
-    use super::super::tokenizer::result::{
-        HtmlCharacterReferenceContext, HtmlTokenizerCapability, HtmlTokenizerUnsupportedTrigger,
-    };
     for text in ["&#65;", "<body>&#65;", "<title>&#65;</title>"] {
         let source = SourceText::new(SourceId::new(1), text.to_owned());
         let run = tokenize(&source, GENEROUS.limits());
@@ -1090,23 +1087,4 @@ fn nr20_boundaries_after_numeric_support() {
         }
         assert!(complete(&run), "{text:?}");
     }
-    // AttributeValue remains Deferred and is not a Numeric return owner.
-    let source = SourceText::new(SourceId::new(1), "<a x=\"&#65;\">".to_owned());
-    let run = tokenize(&source, GENEROUS.limits());
-    let HtmlTokenizerCompletion::Incomplete(HtmlTokenizerIncompleteCause::UnsupportedCapability(
-        unsupported,
-    )) = run.completion()
-    else {
-        panic!("AttributeValue Numeric stays unsupported");
-    };
-    assert_eq!(
-        unsupported.capability(),
-        HtmlTokenizerCapability::CharacterReference {
-            context: HtmlCharacterReferenceContext::AttributeValue,
-        }
-    );
-    assert!(matches!(
-        unsupported.trigger(),
-        HtmlTokenizerUnsupportedTrigger::Input(_)
-    ));
 }

@@ -173,9 +173,10 @@ struct Engine<'a> {
     /// reference state. Retained only for the duration of one reference: it
     /// is authored evidence, never interpreted output or a matching buffer.
     character_reference_start: (usize, usize),
-    /// The private return owner of the active character reference: Data or
-    /// RCDATA, set at the authored `&` and consulted when the reference
-    /// resolves or its unresolved run closes.
+    /// The private return owner of the active character reference: Data,
+    /// RCDATA or one of the three attribute value states, set at the authored
+    /// `&` and consulted when the reference resolves or its unresolved run
+    /// closes.
     character_reference_return: CharacterReferenceReturnState,
     /// The fixed-size Numeric accumulator: the exact value while it is at most
     /// U+10FFFF, then a permanent outside-range sentinel. Never a digit string
@@ -1419,13 +1420,17 @@ impl<'a> Engine<'a> {
                 start,
                 end,
             } => {
-                let trigger = self.discovery_trigger((start, end));
-                self.unsupported_input_stop(
-                    super::result::HtmlTokenizerCapability::CharacterReference {
-                        context: super::result::HtmlCharacterReferenceContext::AttributeValue,
-                    },
-                    trigger,
-                )
+                // The authored `&` records its exact originating attribute
+                // value state; no later state ever infers it from the
+                // builder, the decoded output, or a delimiter.
+                self.character_reference_start = (start, end);
+                self.character_reference_return = if double {
+                    CharacterReferenceReturnState::AttributeValueDoubleQuoted
+                } else {
+                    CharacterReferenceReturnState::AttributeValueSingleQuoted
+                };
+                self.state = State::CharacterReference;
+                Step::Continue
             }
             InputUnit::Scalar {
                 ch: '\0',
@@ -1493,13 +1498,11 @@ impl<'a> Engine<'a> {
                 start,
                 end,
             } => {
-                let trigger = self.discovery_trigger((start, end));
-                self.unsupported_input_stop(
-                    super::result::HtmlTokenizerCapability::CharacterReference {
-                        context: super::result::HtmlCharacterReferenceContext::AttributeValue,
-                    },
-                    trigger,
-                )
+                self.character_reference_start = (start, end);
+                self.character_reference_return =
+                    CharacterReferenceReturnState::AttributeValueUnquoted;
+                self.state = State::CharacterReference;
+                Step::Continue
             }
             InputUnit::Scalar {
                 ch: '>',

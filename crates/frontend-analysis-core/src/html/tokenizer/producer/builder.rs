@@ -127,6 +127,31 @@ impl AttributeValueBuilder {
         }
     }
 
+    /// Appends one already-preflighted run of interpreted text and moves the
+    /// authored value endpoint to `raw_end` in a single step.
+    ///
+    /// Non-refusing by construction: the caller has already reserved the
+    /// run's retained bytes (and every diagnostic it explains), so a
+    /// multi-scalar reference effect is all-or-none relative to resource
+    /// refusal and never retains a second reference-result owner.
+    pub(super) fn push_str(&mut self, text: &str, raw_end: usize) {
+        match self {
+            Self::Unquoted {
+                value_end,
+                interpreted,
+                ..
+            }
+            | Self::Quoted {
+                value_end,
+                interpreted,
+                ..
+            } => {
+                interpreted.push_str(text);
+                *value_end = raw_end;
+            }
+        }
+    }
+
     pub(super) fn interpreted_len(&self) -> usize {
         match self {
             Self::Unquoted { interpreted, .. } | Self::Quoted { interpreted, .. } => {
