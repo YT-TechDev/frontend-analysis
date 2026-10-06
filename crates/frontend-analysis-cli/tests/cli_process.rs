@@ -853,6 +853,124 @@ selected ordinary relation 1: matching close
     }
 
     #[test]
+    fn selected_ordinary_attribute_evidence_renders_core_provided_data_only() {
+        // <body>0..6 <div id="a">6..18 (id="a" 11..17) </div>18..24.
+        let run = html("attr-double", b"<body><div id=\"a\"></div>");
+
+        let expected = head(24)
+            + r##"completion: complete
+coverage: committed authored prefix bytes 0..24; processed tokens 4
+tokenizer diagnostics: 0
+tree diagnostics: 1
+nodes: 5
+
+"## + SYNTHESIZED_SHELL
+            + AUTHORED_BODY
+            + r##"      #4 element div
+          authored start tag: bytes 6..18, line 1, byte column 7: "<div id=\"a\">"
+          authored raw name: bytes 7..10, line 1, byte column 8: "div"
+
+selected ordinary relation 1: matching close
+  node: #4 div
+  trigger: bytes 18..24, line 1, byte column 19: "</div>"
+
+selected ordinary attribute 1:
+  node: #4 div
+  authored attribute: bytes 11..17, line 1, byte column 12: "id=\"a\""
+  authored name: bytes 11..13, line 1, byte column 12: "id"
+  value syntax: double quoted
+    equals: bytes 13..14, line 1, byte column 14: "="
+    open quote: bytes 14..15, line 1, byte column 15: "\""
+    value: bytes 15..16, line 1, byte column 16: "a"
+    close quote: bytes 16..17, line 1, byte column 17: "\""
+  interpreted name: "id"
+  interpreted value: "a"
+
+"## + MISSING_DOCTYPE_AT_BODY;
+        assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn missing_after_equals_renders_its_empty_boundary_and_empty_interpreted_value() {
+        // <body>0..6 <footer a=>6..17 (a= 14..16) </footer>17..26.
+        let run = html("attr-missing-after-equals", b"<body><footer a=></footer>");
+
+        let expected = head(26)
+            + r##"completion: complete
+coverage: committed authored prefix bytes 0..26; processed tokens 4
+tokenizer diagnostics: 1
+tree diagnostics: 1
+nodes: 5
+
+"## + SYNTHESIZED_SHELL
+            + AUTHORED_BODY
+            + r##"      #4 element footer
+          authored start tag: bytes 6..17, line 1, byte column 7: "<footer a=>"
+          authored raw name: bytes 7..13, line 1, byte column 8: "footer"
+
+selected ordinary relation 1: matching close
+  node: #4 footer
+  trigger: bytes 17..26, line 1, byte column 18: "</footer>"
+
+selected ordinary attribute 1:
+  node: #4 footer
+  authored attribute: bytes 14..16, line 1, byte column 15: "a="
+  authored name: bytes 14..15, line 1, byte column 15: "a"
+  value syntax: missing after equals
+    equals: bytes 15..16, line 1, byte column 16: "="
+    value boundary: bytes 16..16, line 1, byte column 17: ""
+  interpreted name: "a"
+  interpreted value: ""
+
+tokenizer diagnostic 1: missing attribute value
+  location: bytes 16..17, line 1, byte column 17: ">"
+
+"## + MISSING_DOCTYPE_AT_BODY;
+        assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn raw_nul_is_rendered_as_authored_evidence_apart_from_the_interpreted_value() {
+        // <body>0..6 <div a="NUL">6..17 (a="NUL" 11..16, NUL 14..15) </div>17..23.
+        let run = html("attr-nul", b"<body><div a=\"\0\"></div>");
+
+        let expected = head(23)
+            + r##"completion: complete
+coverage: committed authored prefix bytes 0..23; processed tokens 4
+tokenizer diagnostics: 1
+tree diagnostics: 1
+nodes: 5
+
+"## + SYNTHESIZED_SHELL
+            + AUTHORED_BODY
+            + r##"      #4 element div
+          authored start tag: bytes 6..17, line 1, byte column 7: "<div a=\"\u{0}\">"
+          authored raw name: bytes 7..10, line 1, byte column 8: "div"
+
+selected ordinary relation 1: matching close
+  node: #4 div
+  trigger: bytes 17..23, line 1, byte column 18: "</div>"
+
+selected ordinary attribute 1:
+  node: #4 div
+  authored attribute: bytes 11..16, line 1, byte column 12: "a=\"\u{0}\""
+  authored name: bytes 11..12, line 1, byte column 12: "a"
+  value syntax: double quoted
+    equals: bytes 12..13, line 1, byte column 13: "="
+    open quote: bytes 13..14, line 1, byte column 14: "\""
+    value: bytes 14..15, line 1, byte column 15: "\u{0}"
+    close quote: bytes 15..16, line 1, byte column 16: "\""
+  interpreted name: "a"
+  interpreted value: "\u{fffd}"
+
+tokenizer diagnostic 1: unexpected null character
+  location: bytes 14..15, line 1, byte column 15: "\u{0}"
+
+"## + MISSING_DOCTYPE_AT_BODY;
+        assert_report(&run, &expected);
+    }
+
+    #[test]
     fn nested_selected_elements_render_in_final_parent_child_order() {
         // <body>0..6 <div>6..11 <section>11..20 <p>20..23 t23..24 </p>24..28
         // </section>28..38 </div>38..44 </body>44..51.

@@ -408,7 +408,10 @@ fn text_stays_under_the_current_selected_element() {
 #[test]
 fn attributes_self_closing_wrong_mode_and_nearby_names_are_refused() {
     let cases = [
-        ("<body><article id=x>", "SelectedOrdinaryTagAttribute"),
+        (
+            "<body><article></article id=x>",
+            "SelectedOrdinaryTagAttribute",
+        ),
         ("<body><nav/>", "SelfClosingSelectedOrdinaryTag"),
         ("<body></body><article>", "SelectedOrdinaryTagOutsideInBody"),
         ("<body><span>", "NonShellElementTag"),
@@ -542,7 +545,7 @@ fn public_projection_maps_each_internal_name_to_its_public_variant() {
             .collect();
         assert_eq!(found, vec![variant], "{name}");
     }
-    let refused = SourceText::new(SourceId::new(3), "<body><nav id=x>".to_owned());
+    let refused = SourceText::new(SourceId::new(3), "<body><nav></nav id=x>".to_owned());
     let report = analyze_selected_document_tree(&refused).expect("report");
     assert!(matches!(
         report.completion(),

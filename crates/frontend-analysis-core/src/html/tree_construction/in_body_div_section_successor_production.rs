@@ -1450,7 +1450,7 @@ fn refusal_run(case: RefusalCase) -> ExpectedRun {
 fn ps14_an_attributed_section_start_tag_refuses_transactionally() {
     check(&refusal_run(RefusalCase {
         id: "PS14",
-        source: "<body><section id=x>",
+        source: "<body></section id=x>",
         body_children: vec![],
         tail: vec![],
         node_count: 4,
@@ -1459,7 +1459,7 @@ fn ps14_an_attributed_section_start_tag_refuses_transactionally() {
         completion: ExpectedCompletion::Unsupported {
             capability: HtmlTreeCapability::SelectedOrdinaryTagAttribute,
             token: 1,
-            trigger: Some((6, 20)),
+            trigger: Some((6, 21)),
         },
     }));
 }
@@ -1717,7 +1717,9 @@ fn identity_admission_counts_only_committed_creation_events() {
         ("<body></section>", 4),
         ("<body><section>a</div>b</section>", 6),
         ("<body><section><div></section><div></div>", 7),
-        ("<body><section id=x>", 4),
+        // One authored attribute no longer refuses a selected start tag (#902).
+        ("<body><section id=x>", 5),
+        ("<body><section></section id=x>", 5),
         ("<body><section/>", 4),
     ] {
         let analysis = analyze(source);
@@ -1770,11 +1772,11 @@ fn predecessor_capability_meanings_are_unchanged_and_apply_to_section() {
     // it covers `div`; no new capability was needed and no old one moved.
     for (source, expected) in [
         (
-            "<body><section id=x>",
+            "<body></section id=x>",
             HtmlTreeCapability::SelectedOrdinaryTagAttribute,
         ),
         (
-            "<body><div id=x>",
+            "<body></div id=x>",
             HtmlTreeCapability::SelectedOrdinaryTagAttribute,
         ),
         (

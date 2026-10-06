@@ -35,7 +35,7 @@
 
 use crate::SourceAnchor;
 
-use super::super::token::{HtmlTagKind, HtmlToken};
+use super::super::token::{HtmlTagKind, HtmlTagToken, HtmlToken};
 use super::result::{
     HtmlConstructedIdentityCounter, HtmlConstructedNodeId, HtmlDocumentShellParts,
     HtmlDocumentType, HtmlElement, HtmlParagraphClosure, HtmlParagraphElement,
@@ -214,7 +214,9 @@ pub(super) fn admit(token: &HtmlToken) -> Result<AdmittedToken<'_>, HtmlTreeCapa
             let Some(name) = admitted_element_name(tag.name().interpreted()) else {
                 return Err(HtmlTreeCapability::NonShellElementTag);
             };
-            if !tag.attributes().is_empty() {
+            if !tag.attributes().is_empty()
+                && !is_selected_ordinary_start_with_one_attribute(tag, name)
+            {
                 return Err(match name {
                     AdmittedElementName::Shell(_) => HtmlTreeCapability::ShellTagAttribute,
                     AdmittedElementName::SelectedOrdinary(_) => {
@@ -256,6 +258,20 @@ pub(super) fn admit(token: &HtmlToken) -> Result<AdmittedToken<'_>, HtmlTreeCapa
             at: end_of_file.source().range().start(),
         }),
     }
+}
+
+/// The one widened attribute boundary (#902): a SelectedOrdinary start tag
+/// carrying exactly one already tokenizer-complete attribute. The attribute
+/// evidence stays token-owned; name classification is not overloaded with it.
+/// Shell, Paragraph, Style, Title, end-tag, and any other attribute shape
+/// keep their existing refusal.
+fn is_selected_ordinary_start_with_one_attribute(
+    tag: &HtmlTagToken,
+    name: AdmittedElementName,
+) -> bool {
+    matches!(name, AdmittedElementName::SelectedOrdinary(_))
+        && tag.kind() == HtmlTagKind::Start
+        && tag.attributes().len() == 1
 }
 
 fn admitted_element_name(interpreted: &str) -> Option<AdmittedElementName> {

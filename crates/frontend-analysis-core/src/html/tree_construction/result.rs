@@ -1375,6 +1375,31 @@ pub(crate) enum HtmlTreeFreezeError {
         token_index: usize,
     },
     DuplicateSelectedOrdinaryInsertion(HtmlConstructedNodeId),
+    SelectedOrdinaryNodeWithoutInsertion(HtmlConstructedNodeId),
+    DuplicateSelectedOrdinaryInsertionToken {
+        token_index: usize,
+    },
+    SelectedOrdinaryInsertionTriggerIsNotItsStartTag {
+        node: HtmlConstructedNodeId,
+        token_index: usize,
+    },
+    SelectedOrdinaryInsertionTokenIsSelfClosing {
+        node: HtmlConstructedNodeId,
+        token_index: usize,
+    },
+    SelectedOrdinaryInsertionTokenSourceMismatch {
+        node: HtmlConstructedNodeId,
+        token_index: usize,
+    },
+    SelectedOrdinaryInsertionAuthoredStartMismatch {
+        node: HtmlConstructedNodeId,
+        token_index: usize,
+    },
+    SelectedOrdinaryInsertionAttributeCountExceedsTheorem {
+        node: HtmlConstructedNodeId,
+        token_index: usize,
+        attributes: usize,
+    },
     FinalOpenSelectedOrdinaryIsNotASelectedElement(HtmlConstructedNodeId),
     FinalOpenSelectedOrdinaryStateMismatch {
         replayed: Vec<HtmlConstructedNodeId>,
@@ -1733,6 +1758,7 @@ pub(super) fn freeze(
         processed_tokens,
     )?;
     validate_selected_ordinary_lifecycle(
+        source.id(),
         &nodes,
         &actions,
         &diagnostics,
@@ -2915,6 +2941,7 @@ fn text_action_matches(
 
 // TC-S3/TC-S4 selected-ordinary lifecycle replay.
 fn validate_selected_ordinary_lifecycle(
+    source_id: SourceId,
     nodes: &[HtmlTreeNode],
     actions: &[HtmlTreeAction],
     diagnostics: &[HtmlTreeDiagnostic],
@@ -2923,6 +2950,7 @@ fn validate_selected_ordinary_lifecycle(
 ) -> Result<(), HtmlTreeFreezeError> {
     let mut open = Vec::new();
     let mut inserted = Vec::new();
+    let mut inserted_tokens: Vec<usize> = Vec::new();
     let mut pending = None;
     let mut recovery_groups = Vec::new();
     let mut ignored_unmatched = Vec::new();
@@ -2937,6 +2965,23 @@ fn validate_selected_ordinary_lifecycle(
                         *node,
                     ));
                 }
+                validate_selected_insertion_token(
+                    source_id,
+                    nodes,
+                    *node,
+                    *name,
+                    action.trigger(),
+                    tokenizer_run,
+                )?;
+                let token_index = action.trigger().token_index();
+                if inserted_tokens.contains(&token_index) {
+                    return Err(
+                        HtmlTreeFreezeError::DuplicateSelectedOrdinaryInsertionToken {
+                            token_index,
+                        },
+                    );
+                }
+                inserted_tokens.push(token_index);
                 inserted.push(*node);
                 open.push(*node);
             }
@@ -3032,6 +3077,13 @@ fn validate_selected_ordinary_lifecycle(
         }
     }
     reject_interleaved_recovery(pending)?;
+    for node in nodes {
+        if selected_ordinary_name(nodes, node.id()).is_some() && !inserted.contains(&node.id()) {
+            return Err(HtmlTreeFreezeError::SelectedOrdinaryNodeWithoutInsertion(
+                node.id(),
+            ));
+        }
+    }
     validate_selected_ordinary_diagnostics(
         diagnostics,
         &recovery_groups,
@@ -3048,6 +3100,76 @@ fn validate_selected_ordinary_lifecycle(
             HtmlTreeFreezeError::FinalOpenSelectedOrdinaryStateMismatch {
                 replayed: open,
                 actual: final_open_selected_ordinary.to_vec(),
+            },
+        );
+    }
+    Ok(())
+}
+
+/// #902 cross-layer identity relation for one authored SelectedOrdinary
+/// insertion: node identity -> its insertion action -> the exact retained
+/// complete non-self-closing StartTag token -> that token's zero-or-one
+/// tokenizer-owned attribute evidence. Tokenizer-owned attribute syntax and
+/// anchor validity is not re-derived here; only the correspondence is.
+fn validate_selected_insertion_token(
+    source_id: SourceId,
+    nodes: &[HtmlTreeNode],
+    node: HtmlConstructedNodeId,
+    name: HtmlSelectedOrdinaryElementName,
+    trigger: &HtmlTreeTokenTrigger,
+    tokenizer_run: &HtmlTokenizerRunResult,
+) -> Result<(), HtmlTreeFreezeError> {
+    let token_index = trigger.token_index();
+    let Some(HtmlToken::Tag(tag)) = tokenizer_run.tokens().get(token_index) else {
+        return Err(
+            HtmlTreeFreezeError::SelectedOrdinaryInsertionTriggerIsNotItsStartTag {
+                node,
+                token_index,
+            },
+        );
+    };
+    if tag.complete().source_id() != source_id {
+        return Err(
+            HtmlTreeFreezeError::SelectedOrdinaryInsertionTokenSourceMismatch { node, token_index },
+        );
+    }
+    if tag.kind() != HtmlTagKind::Start
+        || tag.name().interpreted() != name.interpreted()
+        || !exact_anchor(trigger.authored_boundary(), Some(tag.complete()))
+    {
+        return Err(
+            HtmlTreeFreezeError::SelectedOrdinaryInsertionTriggerIsNotItsStartTag {
+                node,
+                token_index,
+            },
+        );
+    }
+    if tag.self_closing_solidus().is_some() {
+        return Err(
+            HtmlTreeFreezeError::SelectedOrdinaryInsertionTokenIsSelfClosing { node, token_index },
+        );
+    }
+    let agrees = match find(nodes, node).map(HtmlTreeNode::kind) {
+        Some(HtmlTreeNodeKind::Element(HtmlElement::SelectedOrdinary(selected))) => {
+            exact_anchor(Some(selected.complete()), Some(tag.complete()))
+                && exact_anchor(Some(selected.raw_name()), Some(tag.name().source()))
+        }
+        _ => false,
+    };
+    if !agrees {
+        return Err(
+            HtmlTreeFreezeError::SelectedOrdinaryInsertionAuthoredStartMismatch {
+                node,
+                token_index,
+            },
+        );
+    }
+    if tag.attributes().len() > 1 {
+        return Err(
+            HtmlTreeFreezeError::SelectedOrdinaryInsertionAttributeCountExceedsTheorem {
+                node,
+                token_index,
+                attributes: tag.attributes().len(),
             },
         );
     }
