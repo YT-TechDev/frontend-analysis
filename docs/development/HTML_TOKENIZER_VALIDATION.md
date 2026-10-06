@@ -15,25 +15,28 @@ results.
 
 ## Initial Inventory
 
-The authority-controlled initial inventory contains exactly 72 fixtures:
+The authority-controlled initial inventory contains exactly 71 fixtures:
 
 | Prefix | Count | Responsibility |
 | --- | ---: | --- |
 | `PRE-` | 10 | UTF-8 input and preprocessing evidence |
 | `TOK-` | 13 | Clean supported token observations |
 | `ERR-` | 17 | One primary case for every approved diagnostic code |
-| `UNSUP-` | 13 | Explicit unsupported or deferred capability boundaries |
+| `UNSUP-` | 12 | Explicit unsupported or deferred capability boundaries |
 | `RES-` | 9 | Resource and invalid-configuration states |
 | `ADV-` | 10 | Adversarial and cross-cutting invariants |
 
 The IDs are stable and contiguous within each initial category, except that
-`UNSUP-001` is a retired historical ID that is never reused: the active
-`UNSUP-` IDs are `UNSUP-002` through `UNSUP-014`. Its meaning was first
-`&x` (Deferred Data character reference), then `&#65;` (unsupported Numeric
-character reference in Data); Numeric references are supported by #880 and
+`UNSUP-001` and `UNSUP-002` are retired historical IDs that are never reused:
+the active `UNSUP-` IDs are `UNSUP-003` through `UNSUP-014`. The meaning of
+`UNSUP-001` was first `&x` (Deferred Data character reference), then `&#65;`
+(unsupported Numeric character reference in Data); Numeric references are supported by #880 and
 the `&#65;` case is now `TOK-013` (character token authored `0..5`,
 interpreted `A`, complete, 8 transition steps, where the input-free Numeric
-Character Reference End state costs one step).
+Character Reference End state costs one step). `UNSUP-002` (`<a x=&x>`, a
+Deferred AttributeValue character reference) was retired when #906 supported
+AttributeValue named and numeric character references (#348 comments
+`6010494758` and `6010890052`).
 
 The inventory is authority-controlled rather than literally immutable:
 capability- or risk-driven changes to the initial inventory require a focused
@@ -100,7 +103,7 @@ The accounting boundary is precise:
   increment committed transition usage.
 
 `crates/frontend-analysis-core/src/html/tokenizer/validation/corpus/transition_audit.rs`
-contains an independently authored 72-entry committed-count inventory and
+contains an independently authored 71-entry committed-count inventory and
 mechanically checks exact corpus-ID and count agreement. The complete reviewable
 derivation is distributed beside the fixtures: PRE, TOK, ERR, and ADV cases
 have ordered state traces; the context-changing UNSUP group has one explicit
@@ -118,7 +121,7 @@ active. They are not temporary buffers.
 `TemporaryBufferBytes` is reserved for a genuine state-local scratch buffer
 whose contents are not yet retained output evidence, such as a future
 character-reference or script-matching temporary buffer. The first bounded Data
-capability owns no such buffer, so the initial 72-fixture corpus intentionally
+capability owns no such buffer, so the initial 71-fixture corpus intentionally
 contains no `TemporaryBufferBytes` exhaustion result. Execution coverage for
 that resource is:
 
@@ -230,19 +233,19 @@ distinction is added by the supplemental regression corpus below.
 
 ## Supplemental Regression Corpus
 
-The initial corpus (72 authority-controlled specification-derived fixtures) and the
+The initial corpus (71 authority-controlled specification-derived fixtures) and the
 supplemental regression corpus are separate inventories:
 
 | Corpus | Count | ID prefix | Mutability |
 | --- | ---: | --- | --- |
-| Initial corpus | 72 | `PRE-`, `TOK-`, `ERR-`, `UNSUP-`, `RES-`, `ADV-` | Authority-controlled; see [Initial Inventory](#initial-inventory) |
+| Initial corpus | 71 | `PRE-`, `TOK-`, `ERR-`, `UNSUP-`, `RES-`, `ADV-` | Authority-controlled; see [Initial Inventory](#initial-inventory) |
 | Supplemental regression corpus | 4 | `REG-<issue>-<slug>` | Grows by durable addition only |
-| Current candidate-independent total | 76 | initial corpus plus supplemental regression corpus | — |
+| Current candidate-independent total | 75 | initial corpus plus supplemental regression corpus | — |
 
 The initial corpus never grows to absorb supplemental fixtures, and the
 supplemental corpus never renumbers or replaces an initial fixture. Adding a
 `REG-` fixture is not an "Adding or removing an initial fixture" event under
-[Initial Inventory](#initial-inventory) and needs no change to the 72-count.
+[Initial Inventory](#initial-inventory) and needs no change to the 71-count.
 
 The current supplemental inventory contains exactly four fixtures. The first
 three capture the cross-product of the [Emission-Conditioned Diagnostic
@@ -299,7 +302,7 @@ future candidate validation. All three entry points remain test-only.
 
 Future corrected defects extend this supplemental corpus with additional
 durable `REG-<issue>-<slug>` fixtures. They do not renumber or inflate the
-authority-controlled 72-fixture initial inventory documented in [Initial
+authority-controlled 71-fixture initial inventory documented in [Initial
 Inventory](#initial-inventory).
 
 ## Actual Observation and Comparison
@@ -321,11 +324,11 @@ semantic observation.
 
 #113 connects the production `tokenize` entry point to this comparison path in
 `validation/execute.rs`. Full-corpus candidate execution now runs against the
-complete 76-fixture candidate-independent corpus (72 initial plus 4
+complete 75-fixture candidate-independent corpus (71 initial plus 4
 supplemental regression fixtures). The `UNSUP-004` gold was independently
 remediated under #112 and merged by PR #125, as recorded above in "UNSUP-004
 Correction"; #113 consumes the corrected gold without modifying it. The
-production tokenizer matches all 76 candidate-independent fixtures, including
+production tokenizer matches all 75 candidate-independent fixtures, including
 `REG-113-end-tag-atomic-diagnostics-limit-refusal` after the atomic
 `Diagnostics` preflight correction described in [Atomic Multi-Diagnostic
 Resource Accounting](#atomic-multi-diagnostic-resource-accounting).

@@ -295,8 +295,8 @@ Test-only, all inside the nine-file envelope:
   output.
 - `crates/frontend-analysis-core/src/html/tokenizer/validation/tree_construction_gate.rs` —
   the cross-layer gate, registered beside the existing parser and
-  Core-analysis gates. It reuses the existing 76 candidate-independent
-  tokenizer fixtures (72 initial plus 4 supplemental `REG-`) and the existing
+  Core-analysis gates. It reuses the existing 75 candidate-independent
+  tokenizer fixtures (71 initial plus 4 supplemental `REG-`) and the existing
   deterministic 4,096-input generator **without editing or copying either**.
 
 ### Candidate-independent GOLD
@@ -317,7 +317,7 @@ Test-only, all inside the nine-file envelope:
 
 ### Cross-layer gate
 
-For every one of the 76 fixtures and every one of the 4,096 generated inputs,
+For every one of the 75 fixtures and every one of the 4,096 generated inputs,
 with no `catch_unwind`, so a production panic fails naturally:
 
 - panic freedom;
@@ -340,7 +340,7 @@ zero transition-step and zero emitted-token invalid configurations) and
 requires that a refused or truncated lower layer never becomes an effective
 `Complete` tree.
 
-**TC-S1 does not claim the tokenizer corpus is supported input.** 18 of the 76
+**TC-S1 does not claim the tokenizer corpus is supported input.** 18 of the 75
 candidate-independent fixtures reach effective `Complete` under TC-S1; the rest
 are honestly reported as tree-unsupported or as retained lower-layer
 incompleteness. The gate asserts a strict subset so a future change cannot

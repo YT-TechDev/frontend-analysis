@@ -1,6 +1,6 @@
 //! Supplemental candidate-independent `REG-113-*` regression fixtures.
 //!
-//! These fixtures are separate from the authority-controlled 72-fixture initial corpus
+//! These fixtures are separate from the authority-controlled 71-fixture initial corpus
 //! (`PRE-`, `TOK-`, `ERR-`, `UNSUP-`, `RES-`, `ADV-`). They capture the
 //! cross-product of emission-conditioned and observation-conditioned
 //! diagnostics with top-level `EmittedTokens` resource refusal, per the
