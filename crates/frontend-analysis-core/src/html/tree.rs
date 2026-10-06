@@ -28,6 +28,7 @@ use std::fmt;
 
 use crate::{SourceAnchor, SourceId, SourceText};
 
+use super::token::{HtmlAttributeValueSyntax, HtmlToken};
 use super::tokenizer::diagnostic as tokenizer_diagnostic;
 use super::tokenizer::resource::{HtmlTokenizerLimits, HtmlTokenizerResource};
 use super::tokenizer::result as tokenizer_result;
@@ -97,6 +98,9 @@ pub struct HtmlTreeReport {
     /// Validated encounter order. Position carries no meaning beyond that
     /// order.
     selected_ordinary_relations: Vec<HtmlTreeSelectedOrdinaryRelation>,
+    /// Validated encounter order of the committed attributed selected
+    /// ordinary start tags. Position carries no meaning beyond that order.
+    selected_ordinary_attributes: Vec<HtmlTreeSelectedOrdinaryAttribute>,
 }
 
 impl HtmlTreeReport {
@@ -151,6 +155,107 @@ impl HtmlTreeReport {
     pub fn selected_ordinary_relations(&self) -> &[HtmlTreeSelectedOrdinaryRelation] {
         &self.selected_ordinary_relations
     }
+
+    /// The one authored attribute of each committed selected ordinary element
+    /// (`div`, `section`, `article`, `aside`, `footer`, `header`, `main`,
+    /// `nav`) whose complete consumed start tag carried one, in validated
+    /// encounter order. At most one record exists per node.
+    ///
+    /// For a node the caller already knows is a committed selected ordinary
+    /// element of this report, a record means its complete consumed start tag
+    /// had that one authored attribute, and no record means that start tag had
+    /// zero attributes. That reading does not apply to unknown identities,
+    /// other element families, synthesized nodes, or input that never
+    /// completed an admitted start tag. [`Self::completion`] and
+    /// [`Self::coverage`] remain the only completeness boundary; a record
+    /// committed before a later stop stays valid.
+    pub fn selected_ordinary_attributes(&self) -> &[HtmlTreeSelectedOrdinaryAttribute] {
+        &self.selected_ordinary_attributes
+    }
+}
+
+/// The one authored attribute of one committed selected ordinary element.
+///
+/// Authored evidence (anchors, syntax) and tokenizer-interpreted values are
+/// distinct: for example raw U+0000 stays in the anchored source while the
+/// interpreted value carries U+FFFD. Interpreted values are the tokenizer's
+/// retained values, never recomputed here. Every anchor preserves its
+/// [`SourceId`].
+#[derive(Debug, Clone)]
+pub struct HtmlTreeSelectedOrdinaryAttribute {
+    node: HtmlTreeNodeId,
+    complete: SourceAnchor,
+    authored_name: SourceAnchor,
+    value_syntax: HtmlTreeAttributeValueSyntax,
+    interpreted_name: String,
+    interpreted_value: String,
+}
+
+impl HtmlTreeSelectedOrdinaryAttribute {
+    /// The report-local identity of the constructed selected ordinary element
+    /// whose consumed start tag carried this attribute.
+    pub fn node(&self) -> HtmlTreeNodeId {
+        self.node
+    }
+
+    /// The exact complete authored attribute.
+    pub fn complete(&self) -> &SourceAnchor {
+        &self.complete
+    }
+
+    /// The exact authored attribute-name spelling.
+    pub fn authored_name(&self) -> &SourceAnchor {
+        &self.authored_name
+    }
+
+    pub fn value_syntax(&self) -> &HtmlTreeAttributeValueSyntax {
+        &self.value_syntax
+    }
+
+    /// The tokenizer-retained normalized attribute name.
+    pub fn interpreted_name(&self) -> &str {
+        &self.interpreted_name
+    }
+
+    /// The tokenizer-retained interpreted attribute value. Empty for
+    /// `Missing`, `MissingAfterEquals`, and explicit empty quoted values
+    /// alike; the syntax, not this value, distinguishes them.
+    pub fn interpreted_value(&self) -> &str {
+        &self.interpreted_value
+    }
+}
+
+/// The exact authored value syntax of one attribute.
+///
+/// This enum is intentionally closed and exhaustive: the five forms are the
+/// whole validated authored-syntax domain of the selected attribute
+/// contract. It is deliberately not `#[non_exhaustive]`; a further authored
+/// syntax form would need its own evidence and compatibility authority.
+#[derive(Debug, Clone)]
+pub enum HtmlTreeAttributeValueSyntax {
+    /// No `=` and no value.
+    Missing,
+    /// `=` with no value before the end of the attribute.
+    MissingAfterEquals {
+        equals: SourceAnchor,
+        value_boundary: SourceAnchor,
+    },
+    Unquoted {
+        equals: SourceAnchor,
+        value: SourceAnchor,
+    },
+    DoubleQuoted {
+        equals: SourceAnchor,
+        open_quote: SourceAnchor,
+        value: SourceAnchor,
+        close_quote: SourceAnchor,
+    },
+    SingleQuoted {
+        equals: SourceAnchor,
+        open_quote: SourceAnchor,
+        value: SourceAnchor,
+        close_quote: SourceAnchor,
+    },
 }
 
 /// How a selected ordinary element left the open-element state.
@@ -692,6 +797,7 @@ fn project(
     };
 
     let selected_ordinary_relations = project_selected_ordinary_relations(analysis)?;
+    let selected_ordinary_attributes = project_selected_ordinary_attributes(analysis)?;
 
     Ok(HtmlTreeReport {
         source_id,
@@ -702,7 +808,95 @@ fn project(
         tokenizer_diagnostics,
         tree_diagnostics,
         selected_ordinary_relations,
+        selected_ordinary_attributes,
     })
+}
+
+/// Projects the attribute of each already freeze-validated selected ordinary
+/// insertion: node identity -> its insertion action -> the exact trigger
+/// token -> that token's tokenizer-owned attribute evidence. Freeze has
+/// proved the action/token/node correspondence; nothing is searched,
+/// rescanned, or reconstructed, and no name or tree position is consulted. A
+/// token that cannot be resolved after freeze fails closed.
+fn project_selected_ordinary_attributes(
+    analysis: &tree_result::HtmlDocumentShellAnalysis,
+) -> Result<Vec<HtmlTreeSelectedOrdinaryAttribute>, HtmlTreeCoreFailure> {
+    use tree_result::HtmlTreeActionKind as Action;
+
+    let tokens = analysis.tokenizer_run().tokens();
+    let attributed = |action: &tree_result::HtmlTreeAction| -> Result<_, HtmlTreeCoreFailure> {
+        let Action::InsertedAuthoredSelectedOrdinaryElement { node, .. } = action.kind() else {
+            return Ok(None);
+        };
+        let Some(HtmlToken::Tag(tag)) = tokens.get(action.trigger().token_index()) else {
+            return Err(HtmlTreeCoreFailure::InternalFailure);
+        };
+        Ok(tag.attributes().first().map(|attribute| (*node, attribute)))
+    };
+    let mut count = 0usize;
+    for action in analysis.actions() {
+        if attributed(action)?.is_some() {
+            count += 1;
+        }
+    }
+    let mut records = vec_with_capacity(count)?;
+    for action in analysis.actions() {
+        let Some((node, attribute)) = attributed(action)? else {
+            continue;
+        };
+        records.push(HtmlTreeSelectedOrdinaryAttribute {
+            node: node_id(node),
+            complete: attribute.complete().clone(),
+            authored_name: attribute.name().source().clone(),
+            value_syntax: project_attribute_value_syntax(attribute.value_syntax()),
+            interpreted_name: owned_str(attribute.name().interpreted())?,
+            interpreted_value: owned_str(attribute.interpreted_value())?,
+        });
+    }
+    Ok(records)
+}
+
+fn project_attribute_value_syntax(
+    syntax: &HtmlAttributeValueSyntax,
+) -> HtmlTreeAttributeValueSyntax {
+    match syntax {
+        HtmlAttributeValueSyntax::Missing => HtmlTreeAttributeValueSyntax::Missing,
+        HtmlAttributeValueSyntax::MissingAfterEquals {
+            equals,
+            value_boundary,
+        } => HtmlTreeAttributeValueSyntax::MissingAfterEquals {
+            equals: equals.clone(),
+            value_boundary: value_boundary.clone(),
+        },
+        HtmlAttributeValueSyntax::Unquoted { equals, value } => {
+            HtmlTreeAttributeValueSyntax::Unquoted {
+                equals: equals.clone(),
+                value: value.clone(),
+            }
+        }
+        HtmlAttributeValueSyntax::DoubleQuoted {
+            equals,
+            open_quote,
+            value,
+            close_quote,
+        } => HtmlTreeAttributeValueSyntax::DoubleQuoted {
+            equals: equals.clone(),
+            open_quote: open_quote.clone(),
+            value: value.clone(),
+            close_quote: close_quote.clone(),
+        },
+        HtmlAttributeValueSyntax::SingleQuoted {
+            equals,
+            open_quote,
+            value,
+            close_quote,
+        } => HtmlTreeAttributeValueSyntax::SingleQuoted {
+            equals: equals.clone(),
+            open_quote: open_quote.clone(),
+            value: value.clone(),
+            close_quote: close_quote.clone(),
+        },
+    }
 }
 
 /// Projects the already freeze-validated selected ordinary close and

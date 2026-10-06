@@ -1638,3 +1638,672 @@ fn relation_domain_is_closed_to_exactly_the_two_selected_meanings() {
         .collect();
     assert_eq!(meanings, ["pop", "close"]);
 }
+
+// ---------------------------------------------------------------------------
+// SelectedOrdinary authored attribute evidence (#902)
+//
+// Expected spans are hand-counted byte offsets of the literal source; the
+// expected fragment is always the slice of that same literal, never a value
+// read back from the report.
+// ---------------------------------------------------------------------------
+
+type Span = (usize, usize);
+
+/// Hand-authored authored-syntax expectation, independent of the public enum.
+enum Syntax {
+    Missing,
+    MissingAfterEquals {
+        equals: Span,
+        boundary: Span,
+    },
+    Unquoted {
+        equals: Span,
+        value: Span,
+    },
+    DoubleQuoted {
+        equals: Span,
+        open: Span,
+        value: Span,
+        close: Span,
+    },
+    SingleQuoted {
+        equals: Span,
+        open: Span,
+        value: Span,
+        close: Span,
+    },
+}
+
+struct Row {
+    node: u32,
+    complete: Span,
+    name: Span,
+    syntax: Syntax,
+    interpreted_name: &'static str,
+    interpreted_value: &'static str,
+}
+
+fn sliced(text: &str, (start, end): Span) -> (usize, usize, String) {
+    (start, end, text[start..end].to_owned())
+}
+
+fn assert_row(text: &str, actual: &HtmlTreeSelectedOrdinaryAttribute, expected: &Row) {
+    let label = format!("{text:?} node {}", expected.node);
+    assert_eq!(actual.node().value(), expected.node, "{label}");
+    assert_eq!(
+        span(actual.complete()),
+        sliced(text, expected.complete),
+        "{label}"
+    );
+    assert_eq!(
+        span(actual.authored_name()),
+        sliced(text, expected.name),
+        "{label}"
+    );
+    assert_eq!(
+        actual.interpreted_name(),
+        expected.interpreted_name,
+        "{label}"
+    );
+    assert_eq!(
+        actual.interpreted_value(),
+        expected.interpreted_value,
+        "{label}"
+    );
+    for anchor in [actual.complete(), actual.authored_name()] {
+        assert_eq!(anchor.source_id(), SourceId::new(0), "{label}");
+    }
+    let s = |anchor: &SourceAnchor, expected: Span| {
+        assert_eq!(anchor.source_id(), SourceId::new(0), "{label}");
+        assert_eq!(span(anchor), sliced(text, expected), "{label}");
+    };
+    match (actual.value_syntax(), &expected.syntax) {
+        (HtmlTreeAttributeValueSyntax::Missing, Syntax::Missing) => {}
+        (
+            HtmlTreeAttributeValueSyntax::MissingAfterEquals {
+                equals,
+                value_boundary,
+            },
+            Syntax::MissingAfterEquals {
+                equals: e,
+                boundary: b,
+            },
+        ) => {
+            s(equals, *e);
+            s(value_boundary, *b);
+        }
+        (
+            HtmlTreeAttributeValueSyntax::Unquoted { equals, value },
+            Syntax::Unquoted {
+                equals: e,
+                value: v,
+            },
+        ) => {
+            s(equals, *e);
+            s(value, *v);
+        }
+        (
+            HtmlTreeAttributeValueSyntax::DoubleQuoted {
+                equals,
+                open_quote,
+                value,
+                close_quote,
+            },
+            Syntax::DoubleQuoted {
+                equals: e,
+                open: o,
+                value: v,
+                close: c,
+            },
+        )
+        | (
+            HtmlTreeAttributeValueSyntax::SingleQuoted {
+                equals,
+                open_quote,
+                value,
+                close_quote,
+            },
+            Syntax::SingleQuoted {
+                equals: e,
+                open: o,
+                value: v,
+                close: c,
+            },
+        ) => {
+            s(equals, *e);
+            s(open_quote, *o);
+            s(value, *v);
+            s(close_quote, *c);
+        }
+        (actual, _) => panic!("{label}: wrong authored syntax {actual:?}"),
+    }
+}
+
+fn assert_rows(text: &str, expected: &[Row]) {
+    let report = analyze_text(text);
+    let actual = report.selected_ordinary_attributes();
+    assert_eq!(actual.len(), expected.len(), "{text:?}: row count");
+    for (actual, expected) in actual.iter().zip(expected) {
+        assert_row(text, actual, expected);
+    }
+}
+
+#[test]
+fn zero_attribute_selected_nodes_have_no_row() {
+    for text in ["<body><div></div>", "<body><nav><main></main></nav>"] {
+        let report = analyze_text(text);
+        assert_complete(&report);
+        assert!(report.selected_ordinary_attributes().is_empty(), "{text:?}");
+    }
+}
+
+#[test]
+fn double_quoted_attribute_is_projected_with_exact_anchors() {
+    // <body>0..6 <div id="a">6..18; id="a" 11..17
+    assert_rows(
+        r#"<body><div id="a"></div>"#,
+        &[Row {
+            node: 4,
+            complete: (11, 17),
+            name: (11, 13),
+            syntax: Syntax::DoubleQuoted {
+                equals: (13, 14),
+                open: (14, 15),
+                value: (15, 16),
+                close: (16, 17),
+            },
+            interpreted_name: "id",
+            interpreted_value: "a",
+        }],
+    );
+}
+
+#[test]
+fn single_quoted_attribute_is_projected_with_exact_anchors() {
+    // <section class='x y'> : name 15..20 = 20..21 ' 21..22 x y 22..25 ' 25..26
+    assert_rows(
+        "<body><section class='x y'></section>",
+        &[Row {
+            node: 4,
+            complete: (15, 26),
+            name: (15, 20),
+            syntax: Syntax::SingleQuoted {
+                equals: (20, 21),
+                open: (21, 22),
+                value: (22, 25),
+                close: (25, 26),
+            },
+            interpreted_name: "class",
+            interpreted_value: "x y",
+        }],
+    );
+}
+
+#[test]
+fn unquoted_attribute_is_projected_with_exact_anchors() {
+    // <nav data=v> : data 11..15 = 15..16 v 16..17
+    assert_rows(
+        "<body><nav data=v></nav>",
+        &[Row {
+            node: 4,
+            complete: (11, 17),
+            name: (11, 15),
+            syntax: Syntax::Unquoted {
+                equals: (15, 16),
+                value: (16, 17),
+            },
+            interpreted_name: "data",
+            interpreted_value: "v",
+        }],
+    );
+}
+
+#[test]
+fn empty_quoted_values_keep_their_quote_syntax() {
+    // <main a=""> : a 12..13 = 13..14 " 14..15 (empty 15..15) " 15..16
+    assert_rows(
+        r#"<body><main a=""></main>"#,
+        &[Row {
+            node: 4,
+            complete: (12, 16),
+            name: (12, 13),
+            syntax: Syntax::DoubleQuoted {
+                equals: (13, 14),
+                open: (14, 15),
+                value: (15, 15),
+                close: (15, 16),
+            },
+            interpreted_name: "a",
+            interpreted_value: "",
+        }],
+    );
+    // <aside a=''> : a 13..14 = 14..15 ' 15..16 (empty 16..16) ' 16..17
+    assert_rows(
+        "<body><aside a=''></aside>",
+        &[Row {
+            node: 4,
+            complete: (13, 17),
+            name: (13, 14),
+            syntax: Syntax::SingleQuoted {
+                equals: (14, 15),
+                open: (15, 16),
+                value: (16, 16),
+                close: (16, 17),
+            },
+            interpreted_name: "a",
+            interpreted_value: "",
+        }],
+    );
+}
+
+#[test]
+fn missing_and_missing_after_equals_stay_distinct_from_each_other_and_from_empty_quotes() {
+    // <header hidden> : hidden 14..20, no `=`.
+    assert_rows(
+        "<body><header hidden></header>",
+        &[Row {
+            node: 4,
+            complete: (14, 20),
+            name: (14, 20),
+            syntax: Syntax::Missing,
+            interpreted_name: "hidden",
+            interpreted_value: "",
+        }],
+    );
+    // <footer a=> : a 14..15 = 15..16, empty boundary at the attribute end.
+    assert_rows(
+        "<body><footer a=></footer>",
+        &[Row {
+            node: 4,
+            complete: (14, 16),
+            name: (14, 15),
+            syntax: Syntax::MissingAfterEquals {
+                equals: (15, 16),
+                boundary: (16, 16),
+            },
+            interpreted_name: "a",
+            interpreted_value: "",
+        }],
+    );
+}
+
+#[test]
+fn mixed_authored_case_keeps_authored_spelling_and_normalized_interpretation() {
+    // <DIV ID=A> : DIV 7..10, ID 11..13 = 13..14 A 14..15
+    let text = "<body><DIV ID=A></DIV>";
+    assert_rows(
+        text,
+        &[Row {
+            node: 4,
+            complete: (11, 15),
+            name: (11, 13),
+            syntax: Syntax::Unquoted {
+                equals: (13, 14),
+                value: (14, 15),
+            },
+            interpreted_name: "id",
+            interpreted_value: "A",
+        }],
+    );
+    let report = analyze_text(text);
+    assert_eq!(
+        report.selected_ordinary_attributes()[0]
+            .authored_name()
+            .fragment(),
+        "ID"
+    );
+    assert_eq!(element(&report, 4).name(), HtmlTreeElementName::Div);
+}
+
+#[test]
+fn all_eight_selected_names_project_one_row_each() {
+    let names = [
+        ("div", HtmlTreeElementName::Div),
+        ("section", HtmlTreeElementName::Section),
+        ("article", HtmlTreeElementName::Article),
+        ("aside", HtmlTreeElementName::Aside),
+        ("footer", HtmlTreeElementName::Footer),
+        ("header", HtmlTreeElementName::Header),
+        ("main", HtmlTreeElementName::Main),
+        ("nav", HtmlTreeElementName::Nav),
+    ];
+    for (name, expected) in names {
+        let text = format!("<body><{name} k=v></{name}>");
+        let report = analyze_text(&text);
+        assert_complete(&report);
+        // `<` at 6, name from 7, one space, then `k=v`.
+        let k = 7 + name.len() + 1;
+        let rows = report.selected_ordinary_attributes();
+        assert_eq!(rows.len(), 1, "{name}");
+        assert_eq!(element(&report, 4).name(), expected, "{name}");
+        assert_row(
+            &text,
+            &rows[0],
+            &Row {
+                node: 4,
+                complete: (k, k + 3),
+                name: (k, k + 1),
+                syntax: Syntax::Unquoted {
+                    equals: (k + 1, k + 2),
+                    value: (k + 2, k + 3),
+                },
+                interpreted_name: "k",
+                interpreted_value: "v",
+            },
+        );
+    }
+}
+
+#[test]
+fn same_name_nested_nodes_keep_their_own_attributes() {
+    // outer tag 6..26 (id="outer" 15..25), inner tag 26..46 (id="inner" 35..45)
+    assert_rows(
+        r#"<body><article id="outer"><article id="inner"></article></article>"#,
+        &[
+            Row {
+                node: 4,
+                complete: (15, 25),
+                name: (15, 17),
+                syntax: Syntax::DoubleQuoted {
+                    equals: (17, 18),
+                    open: (18, 19),
+                    value: (19, 24),
+                    close: (24, 25),
+                },
+                interpreted_name: "id",
+                interpreted_value: "outer",
+            },
+            Row {
+                node: 5,
+                complete: (35, 45),
+                name: (35, 37),
+                syntax: Syntax::DoubleQuoted {
+                    equals: (37, 38),
+                    open: (38, 39),
+                    value: (39, 44),
+                    close: (44, 45),
+                },
+                interpreted_name: "id",
+                interpreted_value: "inner",
+            },
+        ],
+    );
+}
+
+#[test]
+fn heterogeneous_nodes_keep_their_own_attributes() {
+    // article tag 6..22 (id="a" 15..21), nav tag 22..37 (class="b" 27..36)
+    let text = r#"<body><article id="a"><nav class="b"></nav></article>"#;
+    assert_rows(
+        text,
+        &[
+            Row {
+                node: 4,
+                complete: (15, 21),
+                name: (15, 17),
+                syntax: Syntax::DoubleQuoted {
+                    equals: (17, 18),
+                    open: (18, 19),
+                    value: (19, 20),
+                    close: (20, 21),
+                },
+                interpreted_name: "id",
+                interpreted_value: "a",
+            },
+            Row {
+                node: 5,
+                complete: (27, 36),
+                name: (27, 32),
+                syntax: Syntax::DoubleQuoted {
+                    equals: (32, 33),
+                    open: (33, 34),
+                    value: (34, 35),
+                    close: (35, 36),
+                },
+                interpreted_name: "class",
+                interpreted_value: "b",
+            },
+        ],
+    );
+    let report = analyze_text(text);
+    assert_eq!(element(&report, 4).name(), HtmlTreeElementName::Article);
+    assert_eq!(element(&report, 5).name(), HtmlTreeElementName::Nav);
+}
+
+#[test]
+fn one_row_per_attributed_node_and_none_for_its_zero_attribute_neighbours() {
+    // <div> 6..11 has none; <nav k=v> 11..20 has one (k 16..17 = 17..18 v 18..19).
+    assert_rows(
+        "<body><div><nav k=v></nav></div>",
+        &[Row {
+            node: 5,
+            complete: (16, 19),
+            name: (16, 17),
+            syntax: Syntax::Unquoted {
+                equals: (17, 18),
+                value: (18, 19),
+            },
+            interpreted_name: "k",
+            interpreted_value: "v",
+        }],
+    );
+}
+
+#[test]
+fn paragraph_closing_attributed_selected_start_keeps_the_new_node_identity() {
+    // <p>x then <div id=a>: node 4 = p, 5 = text, 6 = div. The start tag that
+    // implicitly closes the paragraph still keys its row to the div.
+    let text = "<body><p>x<div id=a>";
+    let report = analyze_text(text);
+    let rows = report.selected_ordinary_attributes();
+    assert_eq!(rows.len(), 1);
+    let node = report.node(rows[0].node()).expect("row node resolves");
+    let HtmlTreeNodeKind::Element(div) = node.kind() else {
+        panic!("row node is not an element")
+    };
+    assert_eq!(div.name(), HtmlTreeElementName::Div);
+    // `<div` 10..14, space 14, id 15..17, = 17..18, a 18..19.
+    assert_row(
+        text,
+        &rows[0],
+        &Row {
+            node: rows[0].node().value(),
+            complete: (15, 19),
+            name: (15, 17),
+            syntax: Syntax::Unquoted {
+                equals: (17, 18),
+                value: (18, 19),
+            },
+            interpreted_name: "id",
+            interpreted_value: "a",
+        },
+    );
+}
+
+#[test]
+fn raw_nul_stays_authored_while_the_interpreted_value_is_replacement() {
+    // <div a="\0"> : a 11..12 = 12..13 " 13..14 NUL 14..15 " 15..16
+    let text = "<body><div a=\"\u{0}\"></div>";
+    assert_rows(
+        text,
+        &[Row {
+            node: 4,
+            complete: (11, 16),
+            name: (11, 12),
+            syntax: Syntax::DoubleQuoted {
+                equals: (12, 13),
+                open: (13, 14),
+                value: (14, 15),
+                close: (15, 16),
+            },
+            interpreted_name: "a",
+            interpreted_value: "\u{fffd}",
+        }],
+    );
+    let report = analyze_text(text);
+    let HtmlTreeAttributeValueSyntax::DoubleQuoted { value, .. } =
+        report.selected_ordinary_attributes()[0].value_syntax()
+    else {
+        panic!("double quoted")
+    };
+    assert_eq!(value.fragment(), "\u{0}");
+    // Diagnostic ownership stays with the tokenizer.
+    let codes: Vec<_> = report
+        .tokenizer_diagnostics()
+        .iter()
+        .map(HtmlTokenizerDiagnostic::code)
+        .collect();
+    assert_eq!(
+        codes,
+        [HtmlTokenizerDiagnosticCode::UnexpectedNullCharacter]
+    );
+}
+
+#[test]
+fn attribute_value_character_reference_stays_a_lower_layer_stop_without_a_row() {
+    let report = analyze_text("<body><div id=\"a&amp;b\"></div>");
+    let HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::TokenizerUnsupported(unsupported)) =
+        report.completion()
+    else {
+        panic!(
+            "expected tokenizer unsupported, got {:?}",
+            report.completion()
+        );
+    };
+    assert_eq!(
+        unsupported.capability(),
+        HtmlTokenizerUnsupportedCapability::CharacterReference {
+            context: HtmlCharacterReferenceContext::AttributeValue
+        }
+    );
+    assert!(report.selected_ordinary_attributes().is_empty());
+    assert_eq!(report.nodes().len(), 4, "no selected node was constructed");
+}
+
+#[test]
+fn second_attribute_stays_a_resource_stop_without_a_row_or_node() {
+    let report = analyze_text("<body><div x y></div>");
+    let HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::ResourceLimited(limit)) =
+        report.completion()
+    else {
+        panic!("expected resource limited, got {:?}", report.completion());
+    };
+    assert_eq!(limit.kind(), HtmlTreeResourceKind::AttributesPerTag);
+    assert_eq!((limit.limit(), limit.attempted()), (1, 2));
+    assert!(report.selected_ordinary_attributes().is_empty());
+    assert_eq!(report.nodes().len(), 4);
+}
+
+#[test]
+fn a_later_unsupported_stop_keeps_the_earlier_committed_row() {
+    // <div id="a"> 6..18 commits; `<span>` then stops the run.
+    let text = r#"<body><div id="a"><span>"#;
+    let report = analyze_text(text);
+    assert!(matches!(
+        report.completion(),
+        HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::TreeUnsupported(_))
+    ));
+    assert_eq!(report.selected_ordinary_attributes().len(), 1);
+    assert_row(
+        text,
+        &report.selected_ordinary_attributes()[0],
+        &Row {
+            node: 4,
+            complete: (11, 17),
+            name: (11, 13),
+            syntax: Syntax::DoubleQuoted {
+                equals: (13, 14),
+                open: (14, 15),
+                value: (15, 16),
+                close: (16, 17),
+            },
+            interpreted_name: "id",
+            interpreted_value: "a",
+        },
+    );
+}
+
+#[test]
+fn out_of_domain_and_refused_tags_never_produce_rows() {
+    for text in [
+        "<body><p id=x>",
+        "<body><span id=x>",
+        "<body><style id=x>",
+        "<body><title id=x>",
+        "<html lang=en>",
+        "<body a>",
+        "<body><div a=\"b\"/>",
+        "<body><div></div id=x>",
+        "<body></p>",
+    ] {
+        let report = analyze_text(text);
+        assert!(report.selected_ordinary_attributes().is_empty(), "{text:?}");
+    }
+}
+
+#[test]
+fn attributed_self_closing_selected_start_keeps_the_attribute_refusal_precedence() {
+    // Outside the admitted frontier: the pre-#902 stop (attribute refusal
+    // first) is unchanged, while the non-self-closing one-attribute start is
+    // admitted.
+    for text in ["<body><div a=\"b\"/>", "<body><nav a=b />"] {
+        let report = analyze_text(text);
+        assert!(
+            matches!(
+                report.completion(),
+                HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::TreeUnsupported(u))
+                    if u.capability() == HtmlTreeUnsupportedCapability::SelectedOrdinaryTagAttribute
+            ),
+            "{text:?}: {:?}",
+            report.completion()
+        );
+        assert!(report.selected_ordinary_attributes().is_empty(), "{text:?}");
+    }
+    let admitted = analyze_text("<body><div a=\"b\"></div>");
+    assert_eq!(admitted.selected_ordinary_attributes().len(), 1);
+}
+
+#[test]
+fn attributed_end_tag_leaves_the_zero_attribute_start_without_a_row() {
+    let report = analyze_text("<body><div></div id=x>");
+    assert!(matches!(
+        report.completion(),
+        HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::TreeUnsupported(u))
+            if u.capability() == HtmlTreeUnsupportedCapability::SelectedOrdinaryTagAttribute
+    ));
+    assert!(report.selected_ordinary_attributes().is_empty());
+}
+
+#[test]
+fn attribute_projection_is_deterministic_and_does_not_change_other_report_data() {
+    let text = r#"<body><article id="o"><nav class=b></nav></article>"#;
+    let first = analyze_text(text);
+    let second = analyze_text(text);
+    assert_eq!(
+        format!("{:?}", first.selected_ordinary_attributes()),
+        format!("{:?}", second.selected_ordinary_attributes())
+    );
+    assert_eq!(outline(&first), outline(&second));
+    assert_complete(&first);
+}
+
+#[test]
+fn value_syntax_domain_is_closed_to_exactly_the_five_forms() {
+    // No wildcard arm: adding, removing, or making a variant non-exhaustive
+    // fails to compile (within-crate matching would not detect
+    // `#[non_exhaustive]`, which is checked by the public-API source audit).
+    fn form(syntax: &HtmlTreeAttributeValueSyntax) -> &'static str {
+        match syntax {
+            HtmlTreeAttributeValueSyntax::Missing => "missing",
+            HtmlTreeAttributeValueSyntax::MissingAfterEquals { .. } => "missing-after-equals",
+            HtmlTreeAttributeValueSyntax::Unquoted { .. } => "unquoted",
+            HtmlTreeAttributeValueSyntax::DoubleQuoted { .. } => "double-quoted",
+            HtmlTreeAttributeValueSyntax::SingleQuoted { .. } => "single-quoted",
+        }
+    }
+    let report = analyze_text("<body><div a></div>");
+    assert_eq!(
+        form(report.selected_ordinary_attributes()[0].value_syntax()),
+        "missing"
+    );
+}

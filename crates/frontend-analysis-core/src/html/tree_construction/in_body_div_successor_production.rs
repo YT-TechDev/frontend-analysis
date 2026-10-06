@@ -987,12 +987,12 @@ fn the_existing_coalescing_path_is_reused_unchanged_beside_a_selected_element() 
 // ---------------------------------------------------------------------------
 
 #[test]
-fn dv8a_an_attributed_selected_start_tag_refuses_transactionally() {
-    // `<body><div id=x>`
-    //  0     6          16
+fn dv8a_an_attributed_selected_end_tag_refuses_transactionally() {
+    // `<body></div id=x>`
+    //  0     6          17
     check(&ExpectedRun {
         id: "DV8a",
-        source: "<body><div id=x>",
+        source: "<body></div id=x>",
         // The predecessor shell only: the refused token created nothing.
         tree: shell_with_authored_body(vec![]),
         // Exactly the predecessor prelude: the refused token committed no
@@ -1007,7 +1007,7 @@ fn dv8a_an_attributed_selected_start_tag_refuses_transactionally() {
         completion: ExpectedCompletion::Unsupported {
             capability: HtmlTreeCapability::SelectedOrdinaryTagAttribute,
             token: 1,
-            trigger: Some((6, 16)),
+            trigger: Some((6, 17)),
         },
     });
 }
@@ -1450,7 +1450,9 @@ fn identity_admission_is_gap_free_across_the_selected_domain() {
         ("<body></div></div></div>", 4),
         ("<body><div>x", 6),
         ("<body><div>x</div>", 6),
-        ("<body><div id=x>", 4),
+        // One authored attribute no longer refuses a selected start tag (#902).
+        ("<body><div id=x>", 5),
+        ("<body><div></div id=x>", 5),
         ("<body><div/>", 4),
         ("<body></body><div>", 4),
         ("<body><div></body>", 5),
@@ -1558,7 +1560,7 @@ fn selected_support_appears_only_in_the_proved_cells() {
         ),
         // Unsupported selected syntax.
         (
-            "<body><div id=x>",
+            "<body></div id=x>",
             HtmlTreeCapability::SelectedOrdinaryTagAttribute,
         ),
         (
@@ -2613,7 +2615,7 @@ fn predecessor_capability_meanings_are_unchanged_and_selected_ones_are_distinct(
         ("<html/>", HtmlTreeCapability::SelfClosingShellTag),
         // New selected-ordinary-specific meanings.
         (
-            "<body><div id=x>",
+            "<body></div id=x>",
             HtmlTreeCapability::SelectedOrdinaryTagAttribute,
         ),
         (

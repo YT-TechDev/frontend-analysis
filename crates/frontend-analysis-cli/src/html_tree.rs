@@ -12,9 +12,10 @@ use frontend_analysis_core::SourceAnchor;
 use frontend_analysis_core::html::tree::{
     HtmlCharacterReferenceContext, HtmlTokenizerCapabilityAvailability,
     HtmlTokenizerDiagnosticCode, HtmlTokenizerMode, HtmlTokenizerUnsupportedCapability,
-    HtmlTreeCompletion, HtmlTreeDiagnosticCode, HtmlTreeElementName, HtmlTreeIncompleteCause,
-    HtmlTreeNode, HtmlTreeNodeId, HtmlTreeNodeKind, HtmlTreeNodeProvenance, HtmlTreeRecovery,
-    HtmlTreeReport, HtmlTreeResourceKind, HtmlTreeSelectedOrdinaryRelation, HtmlTreeSynthesisCause,
+    HtmlTreeAttributeValueSyntax, HtmlTreeCompletion, HtmlTreeDiagnosticCode, HtmlTreeElementName,
+    HtmlTreeIncompleteCause, HtmlTreeNode, HtmlTreeNodeId, HtmlTreeNodeKind,
+    HtmlTreeNodeProvenance, HtmlTreeRecovery, HtmlTreeReport, HtmlTreeResourceKind,
+    HtmlTreeSelectedOrdinaryAttribute, HtmlTreeSelectedOrdinaryRelation, HtmlTreeSynthesisCause,
     HtmlTreeUnsupportedCapability,
 };
 
@@ -55,6 +56,7 @@ pub(crate) fn render_report(source_bytes: usize, report: &HtmlTreeReport) -> Str
     let _ = writeln!(out);
     render_tree(&mut out, report);
     render_selected_ordinary_relations(&mut out, report);
+    render_selected_ordinary_attributes(&mut out, report);
 
     if !report.tokenizer_diagnostics().is_empty() {
         let _ = writeln!(out);
@@ -183,6 +185,105 @@ fn render_selected_ordinary_relations(out: &mut String, report: &HtmlTreeReport)
             }
         }
     }
+}
+
+/// Renders the Core-owned attribute slice in the order Core supplies it, keyed
+/// by node identity. Authored anchors, syntax, and interpreted values are
+/// printed as supplied and kept apart; the element name is resolved through the
+/// report. Nothing is rescanned, decoded, normalized, or reconstructed, and a
+/// node without a record is not described.
+fn render_selected_ordinary_attributes(out: &mut String, report: &HtmlTreeReport) {
+    let attributes = report.selected_ordinary_attributes();
+    if attributes.is_empty() {
+        return;
+    }
+    let _ = writeln!(out);
+    for (index, attribute) in attributes.iter().enumerate() {
+        render_selected_ordinary_attribute(out, report, index + 1, attribute);
+    }
+}
+
+fn render_selected_ordinary_attribute(
+    out: &mut String,
+    report: &HtmlTreeReport,
+    number: usize,
+    attribute: &HtmlTreeSelectedOrdinaryAttribute,
+) {
+    let _ = writeln!(out, "selected ordinary attribute {number}:");
+    let _ = writeln!(out, "  node: {}", node_label(report, attribute.node()));
+    let _ = writeln!(
+        out,
+        "  authored attribute: {}",
+        render_evidence(attribute.complete())
+    );
+    let _ = writeln!(
+        out,
+        "  authored name: {}",
+        render_evidence(attribute.authored_name())
+    );
+    match attribute.value_syntax() {
+        HtmlTreeAttributeValueSyntax::Missing => {
+            let _ = writeln!(out, "  value syntax: missing");
+        }
+        HtmlTreeAttributeValueSyntax::MissingAfterEquals {
+            equals,
+            value_boundary,
+        } => {
+            let _ = writeln!(out, "  value syntax: missing after equals");
+            let _ = writeln!(out, "    equals: {}", render_evidence(equals));
+            let _ = writeln!(
+                out,
+                "    value boundary: {}",
+                render_evidence(value_boundary)
+            );
+        }
+        HtmlTreeAttributeValueSyntax::Unquoted { equals, value } => {
+            let _ = writeln!(out, "  value syntax: unquoted");
+            let _ = writeln!(out, "    equals: {}", render_evidence(equals));
+            let _ = writeln!(out, "    value: {}", render_evidence(value));
+        }
+        HtmlTreeAttributeValueSyntax::DoubleQuoted {
+            equals,
+            open_quote,
+            value,
+            close_quote,
+        } => {
+            let _ = writeln!(out, "  value syntax: double quoted");
+            render_quoted(out, equals, open_quote, value, close_quote);
+        }
+        HtmlTreeAttributeValueSyntax::SingleQuoted {
+            equals,
+            open_quote,
+            value,
+            close_quote,
+        } => {
+            let _ = writeln!(out, "  value syntax: single quoted");
+            render_quoted(out, equals, open_quote, value, close_quote);
+        }
+    }
+    let _ = writeln!(
+        out,
+        "  interpreted name: \"{}\"",
+        escape_fragment(attribute.interpreted_name())
+    );
+    let _ = writeln!(
+        out,
+        "  interpreted value: \"{}\"",
+        escape_fragment(attribute.interpreted_value())
+    );
+}
+
+fn render_quoted(
+    out: &mut String,
+    equals: &SourceAnchor,
+    open_quote: &SourceAnchor,
+    value: &SourceAnchor,
+    close_quote: &SourceAnchor,
+) {
+    let _ = writeln!(out, "    equals: {}", render_evidence(equals));
+    let _ = writeln!(out, "    open quote: {}", render_evidence(open_quote));
+    let _ = writeln!(out, "    value: {}", render_evidence(value));
+    let _ = writeln!(out, "    close quote: {}", render_evidence(close_quote));
 }
 
 /// `#id name`, resolved through the report only.
