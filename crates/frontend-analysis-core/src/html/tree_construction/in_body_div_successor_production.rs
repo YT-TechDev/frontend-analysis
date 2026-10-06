@@ -987,9 +987,9 @@ fn the_existing_coalescing_path_is_reused_unchanged_beside_a_selected_element() 
 // ---------------------------------------------------------------------------
 
 #[test]
-fn dv8a_an_attributed_selected_start_tag_refuses_transactionally() {
-    // `<body><div id=x>`
-    //  0     6          16
+fn dv8a_an_attributed_selected_end_tag_refuses_transactionally() {
+    // `<body></div id=x>`
+    //  0     6          17
     check(&ExpectedRun {
         id: "DV8a",
         source: "<body></div id=x>",

@@ -1447,7 +1447,7 @@ fn refusal_run(case: RefusalCase) -> ExpectedRun {
 }
 
 #[test]
-fn ps14_an_attributed_section_start_tag_refuses_transactionally() {
+fn ps14_an_attributed_section_end_tag_refuses_transactionally() {
     check(&refusal_run(RefusalCase {
         id: "PS14",
         source: "<body></section id=x>",
