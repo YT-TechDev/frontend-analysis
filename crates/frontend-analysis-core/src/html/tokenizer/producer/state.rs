@@ -33,10 +33,11 @@ pub(super) enum State {
     RcdataLessThanSign,
     RcdataEndTagOpen,
     RcdataEndTagName,
-    /// Entered from Data or RCDATA on an authored `&`, which has already been
-    /// consumed by the single forward cursor but not yet interpreted. The
-    /// private return-state owner records which selected context resumes; this
-    /// state only chooses the branch and discovers or consumes nothing.
+    /// Entered from Data, RCDATA or an attribute value state on an authored
+    /// `&`, which has already been consumed by the single forward cursor but
+    /// not yet interpreted. The private return-state owner records which
+    /// selected context resumes; this state only chooses the branch and
+    /// discovers or consumes nothing.
     CharacterReference,
     /// The whole selected Named operation: bounded non-committing discovery,
     /// preparation, evidence construction, matched-source consumption and
@@ -74,12 +75,21 @@ pub(super) enum State {
 }
 
 /// The tokenizer-private return owner shared by the character reference
-/// states. Exactly the two selected contexts are representable: it is not a
-/// general return target, and tree construction never owns or imports it.
+/// states. It is a closed, single-slot origin record, not a general return
+/// target or stack: exactly one character reference episode is ever active,
+/// and tree construction never owns or imports it.
+///
+/// The three AttributeValue variants record the exact originating attribute
+/// value state at the authored `&`. The originating state is never inferred
+/// later from builder syntax, decoded output, source rescanning, or a
+/// delimiter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum CharacterReferenceReturnState {
     Data,
     Rcdata,
+    AttributeValueDoubleQuoted,
+    AttributeValueSingleQuoted,
+    AttributeValueUnquoted,
 }
 
 impl CharacterReferenceReturnState {
@@ -87,6 +97,20 @@ impl CharacterReferenceReturnState {
         match self {
             Self::Data => State::Data,
             Self::Rcdata => State::Rcdata,
+            Self::AttributeValueDoubleQuoted => State::AttributeValueDoubleQuoted,
+            Self::AttributeValueSingleQuoted => State::AttributeValueSingleQuoted,
+            Self::AttributeValueUnquoted => State::AttributeValueUnquoted,
+        }
+    }
+
+    /// Whether decoded output belongs to the active attribute value rather
+    /// than to document Character tokens.
+    pub(super) fn is_attribute_value(self) -> bool {
+        match self {
+            Self::Data | Self::Rcdata => false,
+            Self::AttributeValueDoubleQuoted
+            | Self::AttributeValueSingleQuoted
+            | Self::AttributeValueUnquoted => true,
         }
     }
 }

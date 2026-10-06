@@ -2160,27 +2160,6 @@ fn raw_nul_stays_authored_while_the_interpreted_value_is_replacement() {
 }
 
 #[test]
-fn attribute_value_character_reference_stays_a_lower_layer_stop_without_a_row() {
-    let report = analyze_text("<body><div id=\"a&amp;b\"></div>");
-    let HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::TokenizerUnsupported(unsupported)) =
-        report.completion()
-    else {
-        panic!(
-            "expected tokenizer unsupported, got {:?}",
-            report.completion()
-        );
-    };
-    assert_eq!(
-        unsupported.capability(),
-        HtmlTokenizerUnsupportedCapability::CharacterReference {
-            context: HtmlCharacterReferenceContext::AttributeValue
-        }
-    );
-    assert!(report.selected_ordinary_attributes().is_empty());
-    assert_eq!(report.nodes().len(), 4, "no selected node was constructed");
-}
-
-#[test]
 fn second_attribute_stays_a_resource_stop_without_a_row_or_node() {
     let report = analyze_text("<body><div x y></div>");
     let HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::ResourceLimited(limit)) =

@@ -208,8 +208,8 @@ mismatch, and containment violation.
 `crates/frontend-analysis-core/src/html/tokenizer/validation/core_analysis_gate.rs`
 is a test-only module beside the tokenizer's own candidate-independent tests,
 reusing their private fixture/gold types without widening visibility or
-duplicating the corpus. It runs the complete 76-fixture candidate-independent
-corpus (72 initial plus 4 supplemental `REG-` fixtures) and the existing
+duplicating the corpus. It runs the complete 75-fixture candidate-independent
+corpus (71 initial plus 4 supplemental `REG-` fixtures) and the existing
 bounded, deterministic, dependency-free 4,096-case generator directly through
 `SourceText -> analyze_html_explicit_start_tags(...)`, with no
 `catch_unwind`, so a production panic on any case fails the test naturally.

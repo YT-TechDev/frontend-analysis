@@ -7,20 +7,11 @@ pub(super) fn add_unsupported(fixtures: &mut Vec<HtmlTokenizerFixture>) {
     // `UNSUP-001` is a retired historical ID: it first meant `&x` ->
     // CharacterReference(Data) Deferred and then (#876) `&#65;` ->
     // NumericCharacterReferenceInData Unsupported. Numeric references are now
-    // supported (TOK-013), and the ID is never reused. Active IDs are 002..014.
-    fixtures.push(unsupported_input(
-        "UNSUP-002",
-        "character reference in an attribute value",
-        "<a x=&x>",
-        5,
-        Capability::CharacterReference(CharacterReferenceContext::AttributeValue),
-        Availability::Deferred,
-        ByteSpan::new(5, 6),
-        // Data<+TagOpen(a,reconsume)+TagName(reconsume a)+TagName(sp)+BeforeAttrName(x,create,reconsume)
-        // +AttrName(reconsume x)+AttrName(=) [7 steps, processed_end=5]
-        // +BeforeAttrValue('&',reconsume Unquoted)+Unquoted(reconsume '&', discovers capability) = 9
-        9,
-    ));
+    // supported (TOK-013), and the ID is never reused.
+    // `UNSUP-002` is likewise a retired historical ID: it meant `<a x=&x>` ->
+    // CharacterReference(AttributeValue) Deferred. AttributeValue named and
+    // numeric references are now supported (#906), and the ID is never reused.
+    // Active IDs are 003..014.
     fixtures.push(unsupported_input(
         "UNSUP-003",
         "markup declaration boundary",

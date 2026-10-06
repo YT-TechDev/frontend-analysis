@@ -17,9 +17,8 @@ use super::super::tokenizer::diagnostic::HtmlTokenizerDiagnosticCode as Diag;
 use super::super::tokenizer::producer::tokenize;
 use super::super::tokenizer::resource::{HtmlTokenizerLimits, HtmlTokenizerResource};
 use super::super::tokenizer::result::{
-    HtmlCharacterReferenceContext, HtmlTokenizerCapability, HtmlTokenizerCapabilityAvailability,
-    HtmlTokenizerCompletion, HtmlTokenizerIncompleteCause, HtmlTokenizerRunResult,
-    HtmlTokenizerUnsupportedTrigger,
+    HtmlTokenizerCapability, HtmlTokenizerCapabilityAvailability, HtmlTokenizerCompletion,
+    HtmlTokenizerIncompleteCause, HtmlTokenizerRunResult, HtmlTokenizerUnsupportedTrigger,
 };
 use super::driver::construct_html_document_shell;
 use super::result::{
@@ -354,23 +353,6 @@ fn ds10_numeric_returns_to_its_own_state_in_both_contexts() {
     assert!(body.is_complete());
     assert!(unsupported(body.tokenizer_run()).is_none());
     assert_eq!(texts(&body), vec!["A".to_owned()]);
-}
-
-/// Falsifies: AttributeValue support or its historical exception arriving
-/// through the shared states.
-#[test]
-fn ds11_attribute_value_character_references_remain_deferred() {
-    for text in ["<p id=\"&amp;\">", "<a x=&x>"] {
-        let run = lex(text);
-        let observed = unsupported(&run).unwrap_or_else(|| panic!("{text:?} unsupported"));
-        assert_eq!(
-            observed.0,
-            HtmlTokenizerCapability::CharacterReference {
-                context: HtmlCharacterReferenceContext::AttributeValue,
-            }
-        );
-        assert_eq!(observed.1, HtmlTokenizerCapabilityAvailability::Deferred);
-    }
 }
 
 /// Falsifies: Data NUL still taking the generic U+FFFD replacement path, and a

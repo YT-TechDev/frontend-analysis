@@ -20,9 +20,9 @@ use super::super::tokenizer::producer::{
 };
 use super::super::tokenizer::resource::{HtmlTokenizerLimits, HtmlTokenizerResource};
 use super::super::tokenizer::result::{
-    HtmlCharacterReferenceContext, HtmlTokenizerCapability, HtmlTokenizerCapabilityAvailability,
-    HtmlTokenizerCompletion, HtmlTokenizerIncompleteCause, HtmlTokenizerMode,
-    HtmlTokenizerRunResult, HtmlTokenizerUnsupportedTrigger,
+    HtmlTokenizerCapability, HtmlTokenizerCapabilityAvailability, HtmlTokenizerCompletion,
+    HtmlTokenizerIncompleteCause, HtmlTokenizerMode, HtmlTokenizerRunResult,
+    HtmlTokenizerUnsupportedTrigger,
 };
 use super::driver::construct_html_document_shell;
 use super::result::{
@@ -783,12 +783,6 @@ fn pf17_standalone_and_general_boundaries_remain_exactly_as_deferred_as_before()
     assert!(
         !tokenize(&data_numeric, limits()).is_incomplete(),
         "standalone Data Numeric reference now resolves"
-    );
-    expect_deferred(
-        "<p id=\"&amp;\">",
-        HtmlTokenizerCapability::CharacterReference {
-            context: HtmlCharacterReferenceContext::AttributeValue,
-        },
     );
     expect_deferred(
         "<style>x",

@@ -150,14 +150,14 @@ ECMAScript without a demonstrated cross-language invariant.
 ## Candidate-Independent and Generated Validation
 
 Production parser output is not its own oracle. Expected occurrence
-projections are derived independently by filtering the existing 76
+projections are derived independently by filtering the existing 75
 candidate-independent tokenizer fixtures (`HTML_TOKENIZER_VALIDATION.md`'s
-72-fixture initial corpus plus its 4-fixture supplemental regression corpus)
+71-fixture initial corpus plus its 4-fixture supplemental regression corpus)
 for start-tag tokens, in
 `crates/frontend-analysis-core/src/html/tokenizer/validation/parser_gate.rs`.
 This module lives beside the tokenizer's own candidate-independent tests so
 it can reuse the existing private fixture/gold types without widening their
-visibility or duplicating the 76-fixture corpus; it does not add, remove, or
+visibility or duplicating the 75-fixture corpus; it does not add, remove, or
 modify any tokenizer fixture.
 
 The same module also drives the existing bounded, deterministic, dependency-

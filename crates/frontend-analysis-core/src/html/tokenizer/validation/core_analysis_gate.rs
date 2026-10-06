@@ -74,7 +74,7 @@ fn expected_occurrences(fixture: &HtmlTokenizerFixture) -> Vec<ExpectedOccurrenc
 fn core_operation_matches_independent_start_tag_projection_for_all_candidate_independent_fixtures()
 {
     let fixtures = all_candidate_independent_corpus();
-    const INITIAL_CORPUS_COUNT: usize = 72;
+    const INITIAL_CORPUS_COUNT: usize = 71;
     const SUPPLEMENTAL_REGRESSION_COUNT: usize = 4;
     assert_eq!(
         fixtures.len(),

@@ -23,9 +23,9 @@ use super::observe::observe;
 use super::policy::validate_policy;
 
 #[test]
-fn initial_inventory_contains_exactly_72_unique_fixtures() {
+fn initial_inventory_contains_exactly_71_unique_fixtures() {
     let fixtures = initial_corpus();
-    assert_eq!(fixtures.len(), 72);
+    assert_eq!(fixtures.len(), 71);
     validate_corpus(&fixtures).unwrap();
     validate_policy(&fixtures).unwrap();
 
@@ -38,7 +38,7 @@ fn initial_inventory_contains_exactly_72_unique_fixtures() {
     assert_eq!(counts.get(&FixtureCategory::Preprocessing), Some(&10));
     assert_eq!(counts.get(&FixtureCategory::SupportedToken), Some(&13));
     assert_eq!(counts.get(&FixtureCategory::Diagnostic), Some(&17));
-    assert_eq!(counts.get(&FixtureCategory::Unsupported), Some(&13));
+    assert_eq!(counts.get(&FixtureCategory::Unsupported), Some(&12));
     assert_eq!(counts.get(&FixtureCategory::Resource), Some(&9));
     assert_eq!(counts.get(&FixtureCategory::Adversarial), Some(&10));
 }
@@ -46,13 +46,13 @@ fn initial_inventory_contains_exactly_72_unique_fixtures() {
 #[test]
 fn initial_ids_are_stable_and_contiguous_within_each_category() {
     let fixtures = initial_corpus();
-    // `UNSUP-001` is a retired historical ID that is never reused, so the
-    // active UNSUP range starts at 2.
+    // `UNSUP-001` and `UNSUP-002` are retired historical IDs that are never
+    // reused, so the active UNSUP range starts at 3.
     for (prefix, first, last) in [
         ("PRE", 1usize, 10usize),
         ("TOK", 1, 13),
         ("ERR", 1, 17),
-        ("UNSUP", 2, 14),
+        ("UNSUP", 3, 14),
         ("RES", 1, 9),
         ("ADV", 1, 10),
     ] {
@@ -81,6 +81,14 @@ fn unsup_001_is_a_retired_id_and_is_never_reused() {
         tok_013.expected.0.completion,
         Completion::Complete
     ));
+}
+
+#[test]
+fn unsup_002_is_a_retired_id_and_is_never_reused() {
+    // `<a x=&x>` was the AttributeValue character-reference boundary. #906
+    // supports that frontier, so the ID is retired like `UNSUP-001`.
+    let all = all_candidate_independent_corpus();
+    assert!(all.iter().all(|fixture| fixture.id != "UNSUP-002"));
 }
 
 #[test]
@@ -240,16 +248,18 @@ fn malformed_gold_fixture_is_rejected_before_candidate_execution() {
 fn malformed_unsupported_trigger_is_rejected_by_policy_validation() {
     let mut fixture = initial_corpus()
         .into_iter()
-        .find(|fixture| fixture.id == "UNSUP-002")
+        .find(|fixture| fixture.id == "UNSUP-003")
         .unwrap();
     let Completion::Unsupported { trigger, .. } = &mut fixture.expected.0.completion else {
-        panic!("UNSUP-002 must remain unsupported");
+        panic!("UNSUP-003 must remain unsupported");
     };
-    *trigger = UnsupportedTrigger::Input(ByteSpan::new(0, 1));
+    // UNSUP-003 processes nothing, so a trigger starting past offset 0 is not
+    // at the processed-prefix boundary.
+    *trigger = UnsupportedTrigger::Input(ByteSpan::new(1, 2));
     let error = validate_policy(std::slice::from_ref(&fixture))
         .unwrap_err()
         .to_string();
-    assert!(error.contains("UNSUP-002.completion.unsupported.input_boundary"));
+    assert!(error.contains("UNSUP-003.completion.unsupported.input_boundary"));
 }
 
 #[test]
@@ -573,15 +583,15 @@ fn supplemental_regression_corpus_contains_exactly_four_stable_reg_113_fixtures(
 
 #[test]
 fn initial_corpus_is_unaffected_by_the_supplemental_regression_layer() {
-    // The authority-controlled 72-fixture initial inventory must keep its
+    // The authority-controlled 71-fixture initial inventory must keep its
     // count after adding the REG- layer.
-    assert_eq!(initial_corpus().len(), 72);
+    assert_eq!(initial_corpus().len(), 71);
 }
 
 #[test]
-fn aggregate_candidate_independent_corpus_is_76_with_unique_ids() {
+fn aggregate_candidate_independent_corpus_is_75_with_unique_ids() {
     let aggregate = all_candidate_independent_corpus();
-    assert_eq!(aggregate.len(), 76, "72 initial + 4 supplemental");
+    assert_eq!(aggregate.len(), 75, "71 initial + 4 supplemental");
 
     let ids: Vec<&str> = aggregate.iter().map(|fixture| fixture.id).collect();
     let unique: std::collections::BTreeSet<&str> = ids.iter().copied().collect();
@@ -592,13 +602,13 @@ fn aggregate_candidate_independent_corpus_is_76_with_unique_ids() {
     );
 
     // Deterministic concatenation: initial corpus first, then supplemental.
-    assert_eq!(aggregate[71].id, "ADV-010");
+    assert_eq!(aggregate[70].id, "ADV-010");
     assert_eq!(
-        aggregate[72].id,
+        aggregate[71].id,
         "REG-113-end-tag-attributes-emission-refusal"
     );
     assert_eq!(
-        aggregate[75].id,
+        aggregate[74].id,
         "REG-113-end-tag-atomic-diagnostics-limit-refusal"
     );
 

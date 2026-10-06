@@ -27,11 +27,12 @@
 //!
 //! The #901 positive association theorem is **reused** compositionally and is
 //! not duplicated. The #901 AttributeValue `&` negative control
-//! (`UnsupportedCapability(CharacterReference(AttributeValue))`) is a
-//! **historical boundary selected for future supersession**. It is left byte
-//! for byte unchanged; `negative_control_in_901_is_preserved` pins that, and
-//! the observation tests below record that current production still stops
-//! there. Nothing here makes production pass the successor fixtures.
+//! (`UnsupportedCapability(CharacterReference(AttributeValue))`) was a
+//! **historical boundary selected for supersession**. The production successor
+//! of Issue #906 supersedes it, and exactly that one #901 test was retired
+//! there together with the observations below that recorded the old boundary.
+//! The successor semantics in this module were not changed by that retirement:
+//! production caught up to them.
 //!
 //! # What is new, and how the expected meaning is owned
 //!
@@ -61,8 +62,8 @@
 //! result, freeze, projector, or the CLI.
 //! `model_does_not_import_production_semantics` enforces this on this file's own
 //! text. The only code that touches the production tokenizer is the
-//! `observation` module, which records historical-boundary and unchanged-control
-//! observations and is never an oracle for new semantics.
+//! `observation` module, which records unchanged-control observations and is
+//! never an oracle for new semantics.
 //!
 //! # Named corpus
 //!
@@ -1196,8 +1197,7 @@ mod observation {
     use crate::html::tokenizer::producer::tokenize;
     use crate::html::tokenizer::resource::{HtmlTokenizerLimits, HtmlTokenizerResource};
     use crate::html::tokenizer::result::{
-        HtmlCharacterReferenceContext, HtmlTokenizerCapability, HtmlTokenizerCompletion,
-        HtmlTokenizerIncompleteCause, HtmlTokenizerRunResult, HtmlTokenizerUnsupportedTrigger,
+        HtmlTokenizerCompletion, HtmlTokenizerIncompleteCause, HtmlTokenizerRunResult,
     };
     use crate::{SourceId, SourceText};
 
@@ -1218,11 +1218,6 @@ mod observation {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub(super) enum Stop {
         Complete,
-        /// `UnsupportedCapability(CharacterReference(AttributeValue))` at the
-        /// given authored `&` range.
-        AttributeValueReference {
-            at: (usize, usize),
-        },
         AttributesPerTag {
             limit: usize,
             attempted: usize,
@@ -1234,19 +1229,6 @@ mod observation {
     pub(super) fn stop(run: &HtmlTokenizerRunResult) -> Stop {
         match run.completion() {
             HtmlTokenizerCompletion::Complete => Stop::Complete,
-            HtmlTokenizerCompletion::Incomplete(
-                HtmlTokenizerIncompleteCause::UnsupportedCapability(unsupported),
-            ) => match (unsupported.capability(), unsupported.trigger()) {
-                (
-                    HtmlTokenizerCapability::CharacterReference {
-                        context: HtmlCharacterReferenceContext::AttributeValue,
-                    },
-                    HtmlTokenizerUnsupportedTrigger::Input(anchor),
-                ) => Stop::AttributeValueReference {
-                    at: (anchor.range().start(), anchor.range().end()),
-                },
-                _ => Stop::Other,
-            },
             HtmlTokenizerCompletion::Incomplete(HtmlTokenizerIncompleteCause::ResourceLimit(
                 limit,
             )) if limit.resource() == HtmlTokenizerResource::AttributesPerTag => {
@@ -3502,33 +3484,6 @@ mod tests {
     // -- observation of current production (never an oracle) ----------------
 
     #[test]
-    fn production_still_stops_at_the_historical_attribute_value_boundary() {
-        // Historical boundary selected for future supersession, not the new
-        // theorem. `(source, hand-counted offset of the stopping '&')`.
-        for (source, ampersand) in [
-            ("<body><div id=\"a&amp;b\"></div>", 16),
-            ("<body><div id='a&b'></div>", 16),
-            ("<body><div id=a&b></div>", 15),
-            ("<body><nav class=\"&#x41;\"></nav>", 18),
-        ] {
-            let run = observation::run(source);
-            assert_eq!(
-                observation::stop(&run),
-                observation::Stop::AttributeValueReference {
-                    at: (ampersand, ampersand + 1)
-                },
-                "{source}"
-            );
-            // The successor model completes the same authored shapes: the
-            // model is not derived from, and does not agree with, production
-            // at this boundary.
-            let tag_end = source[6..].find('>').expect("a start tag") + 7;
-            let model = lex(&source[..tag_end]);
-            assert_eq!(model.outcome, Outcome::Complete, "{source}");
-        }
-    }
-
-    #[test]
     fn model_agrees_with_accepted_tokenizer_evidence_on_reference_free_input() {
         for (source, label) in [
             ("<body><div id=\"a\">", "double"),
@@ -3651,15 +3606,6 @@ mod tests {
         }
         // The only crate items the model uses are the anchoring primitives.
         assert!(model.contains("use crate::{SourceId, SourceText};"));
-    }
-
-    #[test]
-    fn negative_control_in_901_is_preserved() {
-        let validator = include_str!("in_body_selected_ordinary_attribute_successor_validation.rs");
-        assert!(validator.contains(
-            "fn ampersand_value_stays_at_the_attribute_value_character_reference_boundary"
-        ));
-        assert!(validator.contains("HtmlCharacterReferenceContext::AttributeValue"));
     }
 
     #[test]
