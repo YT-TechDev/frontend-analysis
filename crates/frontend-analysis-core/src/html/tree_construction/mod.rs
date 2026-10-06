@@ -148,4 +148,6 @@ mod in_head_title_rcdata_named_reference_successor_production;
 #[cfg(test)]
 mod in_head_title_rcdata_named_reference_successor_validation;
 #[cfg(test)]
+mod pi_entry_refusal_successor_validation;
+#[cfg(test)]
 mod validation;
