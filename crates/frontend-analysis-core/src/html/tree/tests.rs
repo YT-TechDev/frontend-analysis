@@ -2286,3 +2286,511 @@ fn value_syntax_domain_is_closed_to_exactly_the_five_forms() {
         "missing"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Paragraph close / implied-pop relations (#908)
+//
+// Expected rows are hand-counted from the literal fixtures. With an authored
+// `<body>` first, document 0, html 1, head 2 and body 3 precede the first
+// element, which is #4. Text nodes also consume creation identities.
+// ---------------------------------------------------------------------------
+
+/// `close #n @s..e "frag"`, `start-close #n -> #i @s..e "frag"`,
+/// `synth-close #n @s..e "frag"` or `implied-pop #n -> #t @s..e "frag"`, in
+/// report order. Node identities are printed as report-local ids only.
+fn paragraph_relations(report: &HtmlTreeReport) -> Vec<String> {
+    report
+        .paragraph_relations()
+        .iter()
+        .map(|relation| match relation {
+            HtmlTreeParagraphRelation::MatchingClose { node, trigger } => {
+                let (start, end, fragment) = span(trigger);
+                format!("close #{} @{start}..{end} {fragment:?}", node.value())
+            }
+            HtmlTreeParagraphRelation::StartTriggeredClose {
+                node,
+                inserted,
+                trigger,
+            } => {
+                let (start, end, fragment) = span(trigger);
+                format!(
+                    "start-close #{} -> #{} @{start}..{end} {fragment:?}",
+                    node.value(),
+                    inserted.value()
+                )
+            }
+            HtmlTreeParagraphRelation::SynthesizedCloseByUnmatchedEndTag { node, trigger } => {
+                let (start, end, fragment) = span(trigger);
+                format!("synth-close #{} @{start}..{end} {fragment:?}", node.value())
+            }
+            HtmlTreeParagraphRelation::ImpliedPopBySelectedOrdinaryEndTag {
+                node,
+                target,
+                trigger,
+            } => {
+                let (start, end, fragment) = span(trigger);
+                format!(
+                    "implied-pop #{} -> #{} @{start}..{end} {fragment:?}",
+                    node.value(),
+                    target.value()
+                )
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn paragraph_matching_close_projects_the_paragraph_and_its_exact_end_tag() {
+    // <body>0..6 <p>6..9 x9..10 </p>10..14
+    let report = analyze_text("<body><p>x</p>");
+
+    assert_complete(&report);
+    assert_eq!(paragraph_relations(&report), [r#"close #4 @10..14 "</p>""#]);
+    assert_eq!(element(&report, 4).name(), HtmlTreeElementName::Paragraph);
+    assert!(report.selected_ordinary_relations().is_empty());
+}
+
+#[test]
+fn paragraph_matching_close_keeps_authored_case_in_the_trigger_only() {
+    // <body>0..6 <P>6..9 x9..10 </p>10..14
+    let report = analyze_text("<body><P>x</p>");
+    assert_complete(&report);
+    assert_eq!(element(&report, 4).name(), HtmlTreeElementName::Paragraph);
+    assert_eq!(authored_spans(element(&report, 4)).1, at(7, 8, "P"));
+    assert_eq!(paragraph_relations(&report), [r#"close #4 @10..14 "</p>""#]);
+
+    // <P>6..9 x9..10 </P>10..14
+    let report = analyze_text("<body><P>x</P>");
+    assert_eq!(paragraph_relations(&report), [r#"close #4 @10..14 "</P>""#]);
+}
+
+#[test]
+fn paragraph_start_by_paragraph_closes_the_old_and_names_the_inserted_paragraph() {
+    // <body>0..6 <p>6..9 a9..10 <p>10..13 b13..14 </p>14..18
+    let report = analyze_text("<body><p>a<p>b</p>");
+
+    assert_complete(&report);
+    assert_eq!(
+        paragraph_relations(&report),
+        [
+            r#"start-close #4 -> #6 @10..13 "<p>""#,
+            r#"close #6 @14..18 "</p>""#,
+        ]
+    );
+    assert_eq!(element(&report, 6).name(), HtmlTreeElementName::Paragraph);
+    assert_eq!(authored_spans(element(&report, 6)).0, at(10, 13, "<p>"));
+}
+
+#[test]
+fn paragraph_start_by_each_selected_ordinary_name_names_the_inserted_element() {
+    // (name, expected element name, complete start-tag end). Every start tag
+    // begins at byte 10, after <body>0..6 <p>6..9 a9..10.
+    let cases = [
+        ("div", HtmlTreeElementName::Div, 15),
+        ("section", HtmlTreeElementName::Section, 19),
+        ("article", HtmlTreeElementName::Article, 19),
+        ("aside", HtmlTreeElementName::Aside, 17),
+        ("footer", HtmlTreeElementName::Footer, 18),
+        ("header", HtmlTreeElementName::Header, 18),
+        ("main", HtmlTreeElementName::Main, 16),
+        ("nav", HtmlTreeElementName::Nav, 15),
+    ];
+    for (name, expected, end) in cases {
+        let text = format!("<body><p>a<{name}>b</{name}>");
+        let report = analyze_text(&text);
+
+        assert_complete(&report);
+        let trigger = format!("<{name}>");
+        assert_eq!(
+            paragraph_relations(&report),
+            [format!("start-close #4 -> #6 @10..{end} {trigger:?}")],
+            "{text}"
+        );
+        assert_eq!(element(&report, 6).name(), expected, "{text}");
+        // The selected element's own close stays in its own slice.
+        let close_start = end + 1;
+        let close_end = close_start + name.len() + 3;
+        assert_eq!(
+            relations(&report),
+            [format!(
+                "close #6 @{close_start}..{close_end} {:?}",
+                format!("</{name}>")
+            )],
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn paragraph_start_trigger_composes_with_an_attributed_reference_bearing_start() {
+    // <body>0..6 <p>6..9 x9..10 <div id="&amp;">10..26
+    let text = r#"<body><p>x<div id="&amp;">"#;
+    let report = analyze_text(text);
+
+    assert_eq!(
+        paragraph_relations(&report),
+        [r#"start-close #4 -> #6 @10..26 "<div id=\"&amp;\">""#]
+    );
+    assert_eq!(element(&report, 6).name(), HtmlTreeElementName::Div);
+    // The attribute row stays keyed to the same div, once, with the
+    // tokenizer-interpreted value.
+    let [attribute] = report.selected_ordinary_attributes() else {
+        panic!("expected exactly one attribute row");
+    };
+    assert_eq!(attribute.node(), HtmlTreeNodeId(6));
+    assert_eq!(attribute.interpreted_name(), "id");
+    assert_eq!(attribute.interpreted_value(), "&");
+    assert_eq!(span(attribute.complete()), at(15, 25, r#"id="&amp;""#));
+}
+
+#[test]
+fn unmatched_paragraph_end_projects_the_synthesized_node_and_exact_trigger() {
+    // <body>0..6 </p>6..10
+    let report = analyze_text("<body></p>");
+
+    assert_complete(&report);
+    assert_eq!(
+        paragraph_relations(&report),
+        [r#"synth-close #4 @6..10 "</p>""#]
+    );
+    assert_synthesized(
+        element(&report, 4),
+        HtmlTreeSynthesisCause::UnmatchedParagraphEndTag,
+    );
+    // The diagnostic keeps owning classification and recovery; its trigger is
+    // the same exact end tag.
+    let unmatched: Vec<_> = report
+        .tree_diagnostics()
+        .iter()
+        .filter(|d| d.code() == HtmlTreeDiagnosticCode::UnmatchedParagraphEndTag)
+        .collect();
+    let [diagnostic] = unmatched.as_slice() else {
+        panic!("expected one unmatched-paragraph diagnostic");
+    };
+    assert_eq!(span(diagnostic.trigger().unwrap()), at(6, 10, "</p>"));
+}
+
+#[test]
+fn repeated_unmatched_paragraph_ends_pair_distinct_nodes_with_distinct_triggers() {
+    // <body>0..6 </p>6..10 </p>10..14
+    let report = analyze_text("<body></p></p>");
+
+    assert_complete(&report);
+    assert_eq!(
+        paragraph_relations(&report),
+        [
+            r#"synth-close #4 @6..10 "</p>""#,
+            r#"synth-close #5 @10..14 "</p>""#,
+        ]
+    );
+    let triggers: Vec<_> = report
+        .tree_diagnostics()
+        .iter()
+        .filter(|d| d.code() == HtmlTreeDiagnosticCode::UnmatchedParagraphEndTag)
+        .map(|d| span(d.trigger().unwrap()))
+        .collect();
+    assert_eq!(triggers, [at(6, 10, "</p>"), at(10, 14, "</p>")]);
+}
+
+#[test]
+fn selected_end_tag_implies_a_paragraph_pop_with_the_exact_target() {
+    // <body>0..6 <div>6..11 <p>11..14 x14..15 </div>15..21
+    let report = analyze_text("<body><div><p>x</div>");
+    assert_complete(&report);
+    assert_eq!(
+        paragraph_relations(&report),
+        [r#"implied-pop #5 -> #4 @15..21 "</div>""#]
+    );
+    // The pop is Paragraph-owned; the selected slice only has the div's close.
+    assert_eq!(relations(&report), [r#"close #4 @15..21 "</div>""#]);
+
+    // <body>0..6 <section>6..15 <p>15..18 x18..19 </section>19..29
+    let report = analyze_text("<body><section><p>x</section>");
+    assert_complete(&report);
+    assert_eq!(
+        paragraph_relations(&report),
+        [r#"implied-pop #5 -> #4 @19..29 "</section>""#]
+    );
+    assert_eq!(relations(&report), [r#"close #4 @19..29 "</section>""#]);
+}
+
+#[test]
+fn recovery_heavy_implied_pop_keeps_the_paragraph_slice_apart_from_selected_pops() {
+    // <body>0..6 <div>6..11 <nav>11..16 <p>16..19 </div>19..25
+    let report = analyze_text("<body><div><nav><p></div>");
+    assert_complete(&report);
+    assert_eq!(
+        paragraph_relations(&report),
+        [r#"implied-pop #6 -> #4 @19..25 "</div>""#]
+    );
+    assert_eq!(
+        relations(&report),
+        [
+            r#"pop #5 -> #4 @19..25 "</div>""#,
+            r#"close #4 @19..25 "</div>""#,
+        ]
+    );
+
+    // <body>0..6 <div>6..11 <p>11..14 a14..15 </p>15..19 <section>19..28
+    // <p>28..31 b31..32 </div>32..38
+    let report = analyze_text("<body><div><p>a</p><section><p>b</div>");
+    assert_complete(&report);
+    assert_eq!(
+        paragraph_relations(&report),
+        [
+            r#"close #5 @15..19 "</p>""#,
+            r#"implied-pop #8 -> #4 @32..38 "</div>""#,
+        ]
+    );
+    assert_eq!(
+        relations(&report),
+        [
+            r#"pop #7 -> #4 @32..38 "</div>""#,
+            r#"close #4 @32..38 "</div>""#,
+        ]
+    );
+}
+
+#[test]
+fn unmatched_selected_end_tags_leave_the_open_paragraph_unrelated() {
+    for text in [
+        "<body><p>x</div>",
+        "<body><div><p>x</section>",
+        "<body><p>x</div></nav>",
+    ] {
+        let report = analyze_text(text);
+        assert!(
+            report.paragraph_relations().is_empty(),
+            "{text}: {:?}",
+            paragraph_relations(&report)
+        );
+        // The open Paragraph stays in the tree.
+        assert!(
+            report
+                .nodes()
+                .iter()
+                .any(|n| matches!(n.kind(), HtmlTreeNodeKind::Element(e) if e.name() == HtmlTreeElementName::Paragraph)),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn refused_paragraph_shapes_project_no_relation() {
+    for (text, capability) in [
+        (
+            "<body><p id=x>",
+            HtmlTreeUnsupportedCapability::ParagraphTagAttribute,
+        ),
+        (
+            "<body><p/>",
+            HtmlTreeUnsupportedCapability::SelfClosingParagraphTag,
+        ),
+        (
+            "<body></body><p>",
+            HtmlTreeUnsupportedCapability::ParagraphTagOutsideInBody,
+        ),
+    ] {
+        let report = analyze_text(text);
+        let HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::TreeUnsupported(unsupported)) =
+            report.completion()
+        else {
+            panic!("{text}: {:?}", report.completion());
+        };
+        assert_eq!(unsupported.capability(), capability, "{text}");
+        assert!(report.paragraph_relations().is_empty(), "{text}");
+    }
+}
+
+#[test]
+fn a_refused_start_does_not_commit_a_start_triggered_close() {
+    // The second <p> carries an attribute: refused before any close commits.
+    let report = analyze_text("<body><p>a<p id=x>");
+    assert!(matches!(
+        report.completion(),
+        HtmlTreeCompletion::Incomplete(_)
+    ));
+    assert!(report.paragraph_relations().is_empty());
+
+    // Two attributes exceed the fixed per-tag tokenizer limit.
+    let report = analyze_text("<body><p>a<div a b>");
+    assert!(matches!(
+        report.completion(),
+        HtmlTreeCompletion::Incomplete(_)
+    ));
+    assert!(report.paragraph_relations().is_empty());
+}
+
+#[test]
+fn end_of_file_open_paragraph_projects_no_relation_and_no_stronger_claim() {
+    let report = analyze_text("<body><p>x");
+    assert!(report.paragraph_relations().is_empty());
+    assert_eq!(element(&report, 4).name(), HtmlTreeElementName::Paragraph);
+    // Completion and coverage, not absence, describe the report.
+    assert_eq!(span(report.coverage().committed_prefix()).0, 0);
+}
+
+#[test]
+fn body_and_html_end_handling_fabricates_no_paragraph_relation() {
+    for text in [
+        "<body></body>",
+        "<body><div></body>",
+        "<body><div></div></body></html>",
+        "<body><p></body>",
+        "<body><div><p></body>",
+        "<body><div><p></html>",
+    ] {
+        let report = analyze_text(text);
+        assert!(
+            report.paragraph_relations().is_empty(),
+            "{text}: {:?}",
+            paragraph_relations(&report)
+        );
+    }
+}
+
+#[test]
+fn paragraph_relation_committed_before_an_unsupported_stop_stays_visible() {
+    // <body>0..6 <p>6..9 x9..10 </p>10..14 <span>14..20 (unsupported)
+    let report = analyze_text("<body><p>x</p><span>");
+
+    let HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::TreeUnsupported(unsupported)) =
+        report.completion()
+    else {
+        panic!("expected tree unsupported, got {:?}", report.completion());
+    };
+    assert_eq!(
+        unsupported.capability(),
+        HtmlTreeUnsupportedCapability::NonShellElementTag
+    );
+    assert_eq!(paragraph_relations(&report), [r#"close #4 @10..14 "</p>""#]);
+    assert_eq!(
+        span(report.coverage().committed_prefix()),
+        at(0, 14, "<body><p>x</p>")
+    );
+
+    // A start-triggered close committed earlier survives as well.
+    let report = analyze_text("<body><p>a<p>b<span>");
+    assert!(matches!(
+        report.completion(),
+        HtmlTreeCompletion::Incomplete(_)
+    ));
+    assert_eq!(
+        paragraph_relations(&report),
+        [r#"start-close #4 -> #6 @10..13 "<p>""#]
+    );
+}
+
+#[test]
+fn paragraph_relation_triggers_carry_the_report_source_identity() {
+    for id in [0u64, 7] {
+        let source = SourceText::new(SourceId::new(id), "<body><p>a<p>b</p></p>".to_owned());
+        let report = analyze_text_from(&source);
+        assert_eq!(report.source_id(), SourceId::new(id));
+        assert!(!report.paragraph_relations().is_empty());
+        for relation in report.paragraph_relations() {
+            let trigger = match relation {
+                HtmlTreeParagraphRelation::MatchingClose { trigger, .. }
+                | HtmlTreeParagraphRelation::StartTriggeredClose { trigger, .. }
+                | HtmlTreeParagraphRelation::SynthesizedCloseByUnmatchedEndTag {
+                    trigger, ..
+                }
+                | HtmlTreeParagraphRelation::ImpliedPopBySelectedOrdinaryEndTag {
+                    trigger, ..
+                } => trigger,
+            };
+            assert_eq!(trigger.source_id(), SourceId::new(id));
+        }
+    }
+}
+
+#[test]
+fn paragraph_relations_remain_usable_after_the_caller_source_is_dropped() {
+    let report = {
+        let caller = source("<body><div><p>x</div></p>");
+        analyze_text_from(&caller)
+    };
+    assert_eq!(
+        paragraph_relations(&report),
+        [
+            r#"implied-pop #5 -> #4 @15..21 "</div>""#,
+            r#"synth-close #7 @21..25 "</p>""#,
+        ]
+    );
+}
+
+#[test]
+fn paragraph_relation_projection_is_independent_of_storage_order() {
+    for text in [
+        "<body><p>x</p>",
+        "<body><p>a<p>b</p>",
+        "<body><p>a<section>b</section>",
+        "<body></p></p>",
+        "<body><div><p>x</div>",
+        "<body><div><p>a</p><section><p>b</div>",
+        "<body><p>x<div id=\"&amp;\">",
+    ] {
+        let src = source(text);
+        let normal = construct_html_document_shell(&src, fixed_limits()).unwrap();
+        let reversed = construct_html_document_shell(&src, fixed_limits())
+            .unwrap()
+            .with_reversed_storage();
+        let a = project(src.id(), &normal).unwrap();
+        let b = project(src.id(), &reversed).unwrap();
+        assert!(!a.paragraph_relations().is_empty(), "{text}");
+        assert_eq!(paragraph_relations(&a), paragraph_relations(&b), "{text}");
+    }
+}
+
+#[test]
+fn paragraph_relation_domain_is_closed_to_exactly_the_four_selected_meanings() {
+    // An exhaustive match without a wildcard fails to compile if a variant is
+    // added, widening the accepted public domain unnoticed.
+    fn meaning(relation: &HtmlTreeParagraphRelation) -> &'static str {
+        match relation {
+            HtmlTreeParagraphRelation::MatchingClose { .. } => "close",
+            HtmlTreeParagraphRelation::StartTriggeredClose { .. } => "start",
+            HtmlTreeParagraphRelation::SynthesizedCloseByUnmatchedEndTag { .. } => "synth",
+            HtmlTreeParagraphRelation::ImpliedPopBySelectedOrdinaryEndTag { .. } => "pop",
+        }
+    }
+    let report = analyze_text("<body><p>a<p>b</p></p><div><p>c</div>");
+    let meanings: Vec<_> = report.paragraph_relations().iter().map(meaning).collect();
+    assert_eq!(meanings, ["start", "close", "synth", "pop"]);
+}
+
+#[test]
+fn paragraph_relations_do_not_change_selected_ordinary_relations_or_attributes() {
+    // Paragraph-free documents keep exactly their previous relation output.
+    let report = analyze_text("<body><article><nav></article>");
+    assert!(report.paragraph_relations().is_empty());
+    assert_eq!(
+        relations(&report),
+        [
+            r#"pop #5 -> #4 @20..30 "</article>""#,
+            r#"close #4 @20..30 "</article>""#,
+        ]
+    );
+}
+
+#[test]
+fn start_triggered_inserted_identity_is_not_a_creation_distance() {
+    // No text between: <body>0..6 <p>6..9 <div>9..14. The inserted element
+    // is the very next creation, not two after the closed Paragraph.
+    let report = analyze_text("<body><p><div>");
+    assert_eq!(
+        paragraph_relations(&report),
+        [r#"start-close #4 -> #5 @9..14 "<div>""#]
+    );
+
+    // Mixed distances in one document: <p>6..9 a9..10 <p>10..13 <p>13..16.
+    // #4 -> #6 across a text node, then #6 -> #7 with nothing between.
+    let report = analyze_text("<body><p>a<p><p>");
+    assert_eq!(
+        paragraph_relations(&report),
+        [
+            r#"start-close #4 -> #6 @10..13 "<p>""#,
+            r#"start-close #6 -> #7 @13..16 "<p>""#,
+        ]
+    );
+}
