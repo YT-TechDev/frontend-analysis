@@ -261,16 +261,17 @@ pub(super) fn admit(token: &HtmlToken) -> Result<AdmittedToken<'_>, HtmlTreeCapa
 }
 
 /// The one widened attribute boundary (#902): a SelectedOrdinary start tag
-/// carrying exactly one already tokenizer-complete attribute. The attribute
-/// evidence stays token-owned; name classification is not overloaded with it.
-/// Shell, Paragraph, Style, Title, end-tag, and any other attribute shape
-/// keep their existing refusal.
+/// that is not self-closing and carries exactly one already tokenizer-complete
+/// attribute. The attribute evidence stays token-owned; name classification is
+/// not overloaded with it. Shell, Paragraph, Style, Title, end-tag,
+/// self-closing, and any other attribute shape keep their existing refusal.
 fn is_selected_ordinary_start_with_one_attribute(
     tag: &HtmlTagToken,
     name: AdmittedElementName,
 ) -> bool {
     matches!(name, AdmittedElementName::SelectedOrdinary(_))
         && tag.kind() == HtmlTagKind::Start
+        && tag.self_closing_solidus().is_none()
         && tag.attributes().len() == 1
 }
 

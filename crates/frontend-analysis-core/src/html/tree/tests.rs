@@ -2242,6 +2242,28 @@ fn out_of_domain_and_refused_tags_never_produce_rows() {
 }
 
 #[test]
+fn attributed_self_closing_selected_start_keeps_the_attribute_refusal_precedence() {
+    // Outside the admitted frontier: the pre-#902 stop (attribute refusal
+    // first) is unchanged, while the non-self-closing one-attribute start is
+    // admitted.
+    for text in ["<body><div a=\"b\"/>", "<body><nav a=b />"] {
+        let report = analyze_text(text);
+        assert!(
+            matches!(
+                report.completion(),
+                HtmlTreeCompletion::Incomplete(HtmlTreeIncompleteCause::TreeUnsupported(u))
+                    if u.capability() == HtmlTreeUnsupportedCapability::SelectedOrdinaryTagAttribute
+            ),
+            "{text:?}: {:?}",
+            report.completion()
+        );
+        assert!(report.selected_ordinary_attributes().is_empty(), "{text:?}");
+    }
+    let admitted = analyze_text("<body><div a=\"b\"></div>");
+    assert_eq!(admitted.selected_ordinary_attributes().len(), 1);
+}
+
+#[test]
 fn attributed_end_tag_leaves_the_zero_attribute_start_without_a_row() {
     let report = analyze_text("<body><div></div id=x>");
     assert!(matches!(
