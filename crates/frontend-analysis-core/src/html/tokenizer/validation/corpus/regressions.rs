@@ -1,6 +1,6 @@
 //! Supplemental candidate-independent `REG-113-*` regression fixtures.
 //!
-//! These fixtures are separate from the authority-controlled 71-fixture initial corpus
+//! These fixtures are separate from the authority-controlled 69-fixture initial corpus
 //! (`PRE-`, `TOK-`, `ERR-`, `UNSUP-`, `RES-`, `ADV-`). They capture the
 //! cross-product of emission-conditioned and observation-conditioned
 //! diagnostics with top-level `EmittedTokens` resource refusal, per the
@@ -259,9 +259,54 @@ fn end_tag_atomic_diagnostics_limit_refusal() -> HtmlTokenizerFixture {
     )
 }
 
+/// `REG-912-pi-entry-bare` and `REG-912-pi-entry-target-unobserved`
+///
+/// Correspondence fixtures for the Processing Instruction entry theorem
+/// accepted by #911 and placed by #912: Data `<` then TagOpen `?` recognizes
+/// the entry, appends no diagnostic, and stops as a Deferred
+/// `ProcessingInstruction` capability whose Input trigger is the whole `<?`
+/// opener (no committed floor overlaps). Exactly two dispatches occur; later
+/// units are never observed. Expected values are authored from that theorem,
+/// not generated from production output; these supersede the retired
+/// `ERR-006` and `UNSUP-004`.
+fn pi_entry_fixture(
+    id: &'static str,
+    purpose: &'static str,
+    source: &'static str,
+) -> HtmlTokenizerFixture {
+    // Data('<') + TagOpen('?', PI entry, Deferred) = 2. Built with
+    // `incomplete` because `REG-` fixtures use `FixtureCategory::Regression`.
+    incomplete(
+        id,
+        FixtureCategory::Regression,
+        purpose,
+        source,
+        0,
+        Vec::new(),
+        Vec::new(),
+        Completion::Unsupported {
+            capability: Capability::ProcessingInstruction,
+            availability: Availability::Deferred,
+            trigger: UnsupportedTrigger::Input(ByteSpan::new(0, 2)),
+        },
+        Limits::generous(),
+        usage(source, 2, 0, 0, 0, 0, 0),
+    )
+}
+
 pub(super) fn add_regressions(fixtures: &mut Vec<HtmlTokenizerFixture>) {
     fixtures.push(end_tag_attributes_emission_refusal());
     fixtures.push(end_tag_trailing_solidus_emission_refusal());
     fixtures.push(missing_attribute_value_emission_refusal());
     fixtures.push(end_tag_atomic_diagnostics_limit_refusal());
+    fixtures.push(pi_entry_fixture(
+        "REG-912-pi-entry-bare",
+        "bare Processing Instruction entry is a Deferred capability without a syntax diagnostic",
+        "<?",
+    ));
+    fixtures.push(pi_entry_fixture(
+        "REG-912-pi-entry-target-unobserved",
+        "Processing Instruction entry stops before the unobserved target-looking suffix",
+        "<?probe>",
+    ));
 }

@@ -23,9 +23,9 @@ use super::observe::observe;
 use super::policy::validate_policy;
 
 #[test]
-fn initial_inventory_contains_exactly_71_unique_fixtures() {
+fn initial_inventory_contains_exactly_69_unique_fixtures() {
     let fixtures = initial_corpus();
-    assert_eq!(fixtures.len(), 71);
+    assert_eq!(fixtures.len(), 69);
     validate_corpus(&fixtures).unwrap();
     validate_policy(&fixtures).unwrap();
 
@@ -37,8 +37,8 @@ fn initial_inventory_contains_exactly_71_unique_fixtures() {
         });
     assert_eq!(counts.get(&FixtureCategory::Preprocessing), Some(&10));
     assert_eq!(counts.get(&FixtureCategory::SupportedToken), Some(&13));
-    assert_eq!(counts.get(&FixtureCategory::Diagnostic), Some(&17));
-    assert_eq!(counts.get(&FixtureCategory::Unsupported), Some(&12));
+    assert_eq!(counts.get(&FixtureCategory::Diagnostic), Some(&16));
+    assert_eq!(counts.get(&FixtureCategory::Unsupported), Some(&11));
     assert_eq!(counts.get(&FixtureCategory::Resource), Some(&9));
     assert_eq!(counts.get(&FixtureCategory::Adversarial), Some(&10));
 }
@@ -46,22 +46,25 @@ fn initial_inventory_contains_exactly_71_unique_fixtures() {
 #[test]
 fn initial_ids_are_stable_and_contiguous_within_each_category() {
     let fixtures = initial_corpus();
-    // `UNSUP-001` and `UNSUP-002` are retired historical IDs that are never
-    // reused, so the active UNSUP range starts at 3.
-    for (prefix, first, last) in [
-        ("PRE", 1usize, 10usize),
-        ("TOK", 1, 13),
-        ("ERR", 1, 17),
-        ("UNSUP", 3, 14),
-        ("RES", 1, 9),
-        ("ADV", 1, 10),
-    ] {
+    // `UNSUP-001`, `UNSUP-002`, `UNSUP-004`, and `ERR-006` are retired
+    // historical IDs that are never reused, so the active ranges have
+    // explicit gaps.
+    let ranges: [(&str, Vec<usize>); 6] = [
+        ("PRE", (1..=10).collect()),
+        ("TOK", (1..=13).collect()),
+        ("ERR", (1..=17).filter(|n| *n != 6).collect()),
+        ("UNSUP", (3..=14).filter(|n| *n != 4).collect()),
+        ("RES", (1..=9).collect()),
+        ("ADV", (1..=10).collect()),
+    ];
+    for (prefix, indices) in ranges {
         let actual: Vec<&str> = fixtures
             .iter()
             .filter(|fixture| fixture.id.starts_with(prefix))
             .map(|fixture| fixture.id)
             .collect();
-        let expected: Vec<String> = (first..=last)
+        let expected: Vec<String> = indices
+            .iter()
             .map(|index| format!("{prefix}-{index:03}"))
             .collect();
         assert_eq!(
@@ -81,6 +84,16 @@ fn unsup_001_is_a_retired_id_and_is_never_reused() {
         tok_013.expected.0.completion,
         Completion::Complete
     ));
+}
+
+#[test]
+fn err_006_and_unsup_004_are_retired_ids_and_are_never_reused() {
+    // #912 supersedes both: the mandatory question-mark diagnostic premise
+    // was falsified by #911. Their PI-entry capability theorem moves to the
+    // `REG-912-*` successors.
+    let all = all_candidate_independent_corpus();
+    assert!(all.iter().all(|fixture| fixture.id != "ERR-006"));
+    assert!(all.iter().all(|fixture| fixture.id != "UNSUP-004"));
 }
 
 #[test]
@@ -476,41 +489,29 @@ fn transition_steps_are_not_derivable_from_the_retired_sum_heuristic() {
     }
 }
 
+fn find_pi_entry(id: &str) -> super::fixture::HtmlTokenizerFixture {
+    find_regression(id)
+}
+
 #[test]
-fn err_006_and_unsup_004_share_the_same_tag_open_question_mark_prefix() {
-    // ERR-006 ("<?") and UNSUP-004 ("<?x>") both dispatch TagOpen on '?'.
-    // The pinned WHATWG Tag open state emits
-    // UnexpectedQuestionMarkInsteadOfTagName unconditionally on '?' before
-    // deferring to the unsupported processing-instruction boundary, so both
-    // fixtures must record an identical diagnostic and completion for that
-    // shared dispatch, independent of what follows in the source.
-    let err_006 = find("ERR-006");
-    let unsup_004 = find("UNSUP-004");
+fn pi_entry_successors_share_the_same_tag_open_question_mark_dispatch() {
+    // `<?` and `<?probe>` dispatch TagOpen on '?' identically: the entry is
+    // recognized without a syntax diagnostic, coverage stops before the
+    // opener, and the trigger is the whole `<?` opener. The suffix after the
+    // entry is never observed. This replaces the retired ERR-006 / UNSUP-004
+    // same-dispatch comparison.
+    let bare = find_pi_entry("REG-912-pi-entry-bare");
+    let target = find_pi_entry("REG-912-pi-entry-target-unobserved");
 
-    for fixture in [&err_006, &unsup_004] {
+    for fixture in [&bare, &target] {
         assert_eq!(fixture.expected.0.usage.transition_steps, 2);
-        assert_eq!(fixture.expected.0.diagnostics.len(), 1);
-
-        let diagnostic = &fixture.expected.0.diagnostics[0];
-        assert_eq!(
-            diagnostic.code,
-            DiagnosticCode::UnexpectedQuestionMarkInsteadOfTagName
-        );
-        assert_eq!(diagnostic.location, ByteSpan::new(1, 2));
-        assert_eq!(
-            diagnostic.context,
-            super::expected::DiagnosticContext::TagOpen
-        );
-        assert_eq!(
-            diagnostic.handling,
-            super::expected::DiagnosticHandling::Stopped
-        );
-        assert_eq!(
-            diagnostic.subject,
-            super::expected::DiagnosticSubject::InputLocation
-        );
-
-        assert_eq!(fixture.expected.0.coverage.processed_prefix.end, 2);
+        assert!(fixture.expected.0.diagnostics.is_empty());
+        assert!(fixture.expected.0.tokens.is_empty());
+        assert_eq!(fixture.expected.0.usage.emitted_tokens, 0);
+        assert_eq!(fixture.expected.0.usage.diagnostics, 0);
+        assert_eq!(fixture.expected.0.usage.retained_interpreted_bytes, 0);
+        assert_eq!(fixture.expected.0.usage.peak_temporary_buffer_bytes, 0);
+        assert_eq!(fixture.expected.0.coverage.processed_prefix.end, 0);
 
         let Completion::Unsupported {
             capability,
@@ -525,12 +526,16 @@ fn err_006_and_unsup_004_share_the_same_tag_open_question_mark_prefix() {
             super::expected::Capability::ProcessingInstruction
         );
         assert_eq!(*availability, super::expected::Availability::Deferred);
-        assert_eq!(*trigger, UnsupportedTrigger::Input(ByteSpan::new(2, 2)));
+        assert_eq!(*trigger, UnsupportedTrigger::Input(ByteSpan::new(0, 2)));
     }
 
     assert_eq!(
-        unsup_004.expected.0.coverage.unprocessed_suffix,
-        ByteSpan::new(2, 4)
+        bare.expected.0.coverage.unprocessed_suffix,
+        ByteSpan::new(0, 2)
+    );
+    assert_eq!(
+        target.expected.0.coverage.unprocessed_suffix,
+        ByteSpan::new(0, 8)
     );
 }
 
@@ -542,9 +547,9 @@ fn find_regression(id: &str) -> super::fixture::HtmlTokenizerFixture {
 }
 
 #[test]
-fn supplemental_regression_corpus_contains_exactly_four_stable_reg_113_fixtures() {
+fn supplemental_regression_corpus_contains_exactly_six_stable_regression_fixtures() {
     let fixtures = supplemental_regression_corpus();
-    assert_eq!(fixtures.len(), 4);
+    assert_eq!(fixtures.len(), 6);
     validate_corpus(&fixtures).unwrap();
     validate_policy(&fixtures).unwrap();
 
@@ -552,13 +557,16 @@ fn supplemental_regression_corpus_contains_exactly_four_stable_reg_113_fixtures(
     let unique: std::collections::BTreeSet<&str> = ids.iter().copied().collect();
     assert_eq!(unique.len(), ids.len(), "supplemental IDs must be unique");
     for id in &ids {
-        assert!(id.starts_with("REG-113-"), "{id} must start with REG-113-");
+        assert!(
+            id.starts_with("REG-113-") || id.starts_with("REG-912-"),
+            "{id} must start with REG-113- or REG-912-"
+        );
         assert!(
             fixtures
                 .iter()
                 .filter(|f| f.category == FixtureCategory::Regression)
                 .count()
-                == 4,
+                == 6,
             "all supplemental fixtures must use FixtureCategory::Regression"
         );
     }
@@ -570,6 +578,8 @@ fn supplemental_regression_corpus_contains_exactly_four_stable_reg_113_fixtures(
             "REG-113-end-tag-attributes-emission-refusal",
             "REG-113-end-tag-trailing-solidus-emission-refusal",
             "REG-113-missing-attribute-value-emission-refusal",
+            "REG-912-pi-entry-bare",
+            "REG-912-pi-entry-target-unobserved",
         ]
     );
 
@@ -583,15 +593,15 @@ fn supplemental_regression_corpus_contains_exactly_four_stable_reg_113_fixtures(
 
 #[test]
 fn initial_corpus_is_unaffected_by_the_supplemental_regression_layer() {
-    // The authority-controlled 71-fixture initial inventory must keep its
+    // The authority-controlled 69-fixture initial inventory must keep its
     // count after adding the REG- layer.
-    assert_eq!(initial_corpus().len(), 71);
+    assert_eq!(initial_corpus().len(), 69);
 }
 
 #[test]
 fn aggregate_candidate_independent_corpus_is_75_with_unique_ids() {
     let aggregate = all_candidate_independent_corpus();
-    assert_eq!(aggregate.len(), 75, "71 initial + 4 supplemental");
+    assert_eq!(aggregate.len(), 75, "69 initial + 6 supplemental");
 
     let ids: Vec<&str> = aggregate.iter().map(|fixture| fixture.id).collect();
     let unique: std::collections::BTreeSet<&str> = ids.iter().copied().collect();
@@ -602,15 +612,17 @@ fn aggregate_candidate_independent_corpus_is_75_with_unique_ids() {
     );
 
     // Deterministic concatenation: initial corpus first, then supplemental.
-    assert_eq!(aggregate[70].id, "ADV-010");
+    assert_eq!(aggregate[68].id, "ADV-010");
     assert_eq!(
-        aggregate[71].id,
+        aggregate[69].id,
         "REG-113-end-tag-attributes-emission-refusal"
     );
     assert_eq!(
-        aggregate[74].id,
+        aggregate[72].id,
         "REG-113-end-tag-atomic-diagnostics-limit-refusal"
     );
+    assert_eq!(aggregate[73].id, "REG-912-pi-entry-bare");
+    assert_eq!(aggregate[74].id, "REG-912-pi-entry-target-unobserved");
 
     validate_corpus(&aggregate).unwrap();
     validate_policy(&aggregate).unwrap();

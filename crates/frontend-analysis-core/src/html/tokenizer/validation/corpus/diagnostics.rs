@@ -60,24 +60,9 @@ pub(super) fn add_diagnostics(fixtures: &mut Vec<HtmlTokenizerFixture>) {
         // +Data(reconsumed '1')+Data(EOF) = 4
         4,
     ));
-    fixtures.push(incomplete(
-        "ERR-006",
-        FixtureCategory::Diagnostic,
-        "question mark after tag open records the parse error before unsupported PI recovery",
-        "<?",
-        2,
-        Vec::new(),
-        vec![diagnostic(DiagnosticCode::UnexpectedQuestionMarkInsteadOfTagName, 1, 2, DiagnosticContext::TagOpen, DiagnosticHandling::Stopped, DiagnosticSubject::InputLocation)],
-        Completion::Unsupported {
-            capability: Capability::ProcessingInstruction,
-            availability: Availability::Deferred,
-            trigger: UnsupportedTrigger::Input(ByteSpan::new(2, 2)),
-        },
-        Limits::generous(),
-        // Data(<)+TagOpen('?', UnexpectedQuestionMarkInsteadOfTagName, deferred PI) = 2
-        // (already hand-authored correctly; matches the corrected model)
-        usage("<?", 2, 0, 1, 0, 0, 0),
-    ));
+    // `ERR-006` is a retired historical ID (#912): it asserted a mandatory
+    // `UnexpectedQuestionMarkInsteadOfTagName` diagnostic on `<?`, a premise
+    // falsified by #911. The ID is never reused; see `REG-912-*`.
     fixtures.push(complete(
         "ERR-007",
         FixtureCategory::Diagnostic,
