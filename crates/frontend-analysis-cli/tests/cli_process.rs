@@ -1048,9 +1048,134 @@ selected ordinary relation 2: matching close
   node: #4 div
   trigger: bytes 38..44, line 1, byte column 39: \"</div>\"
 
+paragraph relation 1: matching close
+  node: #6 p
+  trigger: bytes 24..28, line 1, byte column 25: \"</p>\"
+
 "
             + MISSING_DOCTYPE_AT_BODY;
         assert_report(&run, &expected);
+    }
+
+    /// The Paragraph relation section as printed: from the first
+    /// `paragraph relation` line through the last of its blocks. Empty when
+    /// the section is absent.
+    fn paragraph_section(run: &Run) -> String {
+        assert_eq!(run.status, Some(0));
+        assert_eq!(run.stderr, "");
+        let lines: Vec<&str> = run.stdout.lines().collect();
+        let Some(first) = lines
+            .iter()
+            .position(|line| line.starts_with("paragraph relation "))
+        else {
+            return String::new();
+        };
+        let mut section = String::new();
+        for line in &lines[first..] {
+            if line.is_empty() {
+                break;
+            }
+            section.push_str(line);
+            section.push('\n');
+        }
+        section
+    }
+
+    #[test]
+    fn paragraph_matching_and_start_triggered_close_render_core_relations() {
+        // <body>0..6 <p>6..9 a9..10 <p>10..13 b13..14 </p>14..18.
+        let run = html("paragraph-start", b"<body><p>a<p>b</p>");
+
+        let expected = "\
+paragraph relation 1: start-triggered close
+  node: #4 p
+  inserted: #6 p
+  trigger: bytes 10..13, line 1, byte column 11: \"<p>\"
+paragraph relation 2: matching close
+  node: #6 p
+  trigger: bytes 14..18, line 1, byte column 15: \"</p>\"
+";
+        assert_eq!(paragraph_section(&run), expected);
+        assert!(run.stdout.contains("completion: complete\n"));
+        assert!(!run.stdout.contains("selected ordinary relation"));
+    }
+
+    #[test]
+    fn repeated_unmatched_paragraph_ends_render_distinct_nodes_and_triggers() {
+        // <body>0..6 </p>6..10 </p>10..14.
+        let run = html("paragraph-synth", b"<body></p></p>");
+
+        let expected = "\
+paragraph relation 1: synthesized close by unmatched end tag
+  node: #4 p
+  trigger: bytes 6..10, line 1, byte column 7: \"</p>\"
+paragraph relation 2: synthesized close by unmatched end tag
+  node: #5 p
+  trigger: bytes 10..14, line 1, byte column 11: \"</p>\"
+";
+        assert_eq!(paragraph_section(&run), expected);
+    }
+
+    #[test]
+    fn all_four_paragraph_meanings_render_in_their_own_slice_order() {
+        // <body>0..6 <div>6..11 <p>11..14 a14..15 </p>15..19 <section>19..28
+        // <p>28..31 b31..32 </div>32..38 </p>38..42.
+        let run = html(
+            "paragraph-all",
+            b"<body><div><p>a</p><section><p>b</div></p>",
+        );
+
+        let expected = "\
+paragraph relation 1: matching close
+  node: #5 p
+  trigger: bytes 15..19, line 1, byte column 16: \"</p>\"
+paragraph relation 2: implied pop by selected ordinary end tag
+  node: #8 p
+  target: #4 div
+  trigger: bytes 32..38, line 1, byte column 33: \"</div>\"
+paragraph relation 3: synthesized close by unmatched end tag
+  node: #10 p
+  trigger: bytes 38..42, line 1, byte column 39: \"</p>\"
+";
+        assert_eq!(paragraph_section(&run), expected);
+        // The selected ordinary slice keeps its own meanings and numbering;
+        // the implied pop is not among them.
+        let selected = run
+            .stdout
+            .find("selected ordinary relation 1: recovery pop")
+            .unwrap();
+        let paragraph = run.stdout.find("paragraph relation 1").unwrap();
+        assert!(selected < paragraph);
+        assert!(
+            run.stdout
+                .contains("selected ordinary relation 2: matching close\n  node: #4 div\n")
+        );
+        assert!(!run.stdout.contains("selected ordinary relation 3"));
+    }
+
+    #[test]
+    fn paragraph_relation_survives_an_incomplete_report_without_upgrading_it() {
+        // <body>0..6 <p>6..9 x9..10 </p>10..14 <span>14..20 (unsupported).
+        let run = html("paragraph-incomplete", b"<body><p>x</p><span>");
+
+        assert!(
+            run.stdout
+                .contains("completion: incomplete; tree unsupported: non-shell element tag\n")
+        );
+        let expected = "\
+paragraph relation 1: matching close
+  node: #4 p
+  trigger: bytes 10..14, line 1, byte column 11: \"</p>\"
+";
+        assert_eq!(paragraph_section(&run), expected);
+    }
+
+    #[test]
+    fn open_paragraph_at_end_of_file_prints_no_paragraph_section() {
+        let run = html("paragraph-open", b"<body><p>x");
+
+        assert_eq!(paragraph_section(&run), "");
+        assert!(!run.stdout.contains("paragraph relation"));
     }
 
     #[test]
@@ -1504,6 +1629,10 @@ nodes: 5
             + "      #4 element p
           authored evidence: none
           synthesized: unmatched paragraph end tag
+
+paragraph relation 1: synthesized close by unmatched end tag
+  node: #4 p
+  trigger: bytes 6..10, line 1, byte column 7: \"</p>\"
 
 " + MISSING_DOCTYPE_AT_BODY
             + "tree diagnostic 2: unmatched paragraph end tag

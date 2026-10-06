@@ -101,6 +101,9 @@ pub struct HtmlTreeReport {
     /// Validated encounter order of the committed attributed selected
     /// ordinary start tags. Position carries no meaning beyond that order.
     selected_ordinary_attributes: Vec<HtmlTreeSelectedOrdinaryAttribute>,
+    /// Validated Paragraph encounter order. A separate slice from the
+    /// selected ordinary relations: the two are not one timeline.
+    paragraph_relations: Vec<HtmlTreeParagraphRelation>,
 }
 
 impl HtmlTreeReport {
@@ -171,6 +174,25 @@ impl HtmlTreeReport {
     /// committed before a later stop stays valid.
     pub fn selected_ordinary_attributes(&self) -> &[HtmlTreeSelectedOrdinaryAttribute] {
         &self.selected_ordinary_attributes
+    }
+
+    /// Validated close and implied-pop relations of the Paragraph (`p`)
+    /// elements, in the Paragraph slice's own validated encounter order. For
+    /// one authored selected end tag the Paragraph implied pop is reported
+    /// here, while the selected ordinary recovery pops and matching close of
+    /// that same tag are reported by [`Self::selected_ordinary_relations`].
+    /// Positions in the two slices are not a shared timeline and no
+    /// cross-slice chronology is defined.
+    ///
+    /// Absence of a relation means only that no validated relation of this
+    /// selected Paragraph relation domain is projected. It does not mean a
+    /// Paragraph is open at end of file, never closed, synthesized,
+    /// unmatched, unsupported, unprocessed, or that the report is complete.
+    /// [`Self::completion`] and [`Self::coverage`] remain the only
+    /// completeness boundary; a relation committed before a later stop stays
+    /// valid.
+    pub fn paragraph_relations(&self) -> &[HtmlTreeParagraphRelation] {
+        &self.paragraph_relations
     }
 }
 
@@ -276,6 +298,52 @@ pub enum HtmlTreeSelectedOrdinaryRelation {
     RecoveryPopByAncestorEndTag {
         node: HtmlTreeNodeId,
         /// The constructed ancestor the authored end tag was aimed at.
+        target: HtmlTreeNodeId,
+        /// The exact complete authored end tag of `target`.
+        trigger: SourceAnchor,
+    },
+}
+
+/// How a Paragraph element left the open-element state.
+///
+/// Nodes are report-local identities resolvable through
+/// [`HtmlTreeReport::node`]; names are read from the resolved nodes. The four
+/// meanings are distinct durable facts and are never collapsed. Every trigger
+/// is exact authored source evidence. This enum is intentionally closed: the
+/// four forms are the whole validated Paragraph relation domain.
+#[derive(Debug, Clone)]
+pub enum HtmlTreeParagraphRelation {
+    /// The Paragraph's own authored `</p>` closed it.
+    MatchingClose {
+        node: HtmlTreeNodeId,
+        /// The exact complete authored end tag.
+        trigger: SourceAnchor,
+    },
+    /// An authored start tag closed the open Paragraph and inserted a new
+    /// element in the same step.
+    StartTriggeredClose {
+        /// The Paragraph that was closed.
+        node: HtmlTreeNodeId,
+        /// The Paragraph or selected ordinary element the same start tag
+        /// inserted.
+        inserted: HtmlTreeNodeId,
+        /// The exact complete authored start tag.
+        trigger: SourceAnchor,
+    },
+    /// An unmatched authored `</p>` caused the synthesized Paragraph `node`
+    /// to be created and closed. The synthesized insertion itself and the
+    /// parse-error classification stay with the node's provenance and the
+    /// tree diagnostics.
+    SynthesizedCloseByUnmatchedEndTag {
+        node: HtmlTreeNodeId,
+        /// The exact complete authored unmatched end tag.
+        trigger: SourceAnchor,
+    },
+    /// No `</p>` of its own caused this pop: the authored end tag of the
+    /// selected ordinary `target` element removed the open Paragraph.
+    ImpliedPopBySelectedOrdinaryEndTag {
+        node: HtmlTreeNodeId,
+        /// The constructed selected ordinary element the end tag was aimed at.
         target: HtmlTreeNodeId,
         /// The exact complete authored end tag of `target`.
         trigger: SourceAnchor,
@@ -798,6 +866,7 @@ fn project(
 
     let selected_ordinary_relations = project_selected_ordinary_relations(analysis)?;
     let selected_ordinary_attributes = project_selected_ordinary_attributes(analysis)?;
+    let paragraph_relations = project_paragraph_relations(analysis)?;
 
     Ok(HtmlTreeReport {
         source_id,
@@ -809,6 +878,7 @@ fn project(
         tree_diagnostics,
         selected_ordinary_relations,
         selected_ordinary_attributes,
+        paragraph_relations,
     })
 }
 
@@ -933,6 +1003,84 @@ fn project_selected_ordinary_relations(
             }
             Action::PoppedSelectedOrdinaryElementByAncestorEndTag { node, target } => {
                 HtmlTreeSelectedOrdinaryRelation::RecoveryPopByAncestorEndTag {
+                    node: node_id(*node),
+                    target: node_id(*target),
+                    trigger,
+                }
+            }
+            _ => return Err(HtmlTreeCoreFailure::InternalFailure),
+        });
+    }
+    Ok(relations)
+}
+
+/// Projects the already freeze-validated Paragraph close and implied-pop
+/// actions, preserving their encounter order. Nothing is recomputed: freeze
+/// has proved subject, closure kind, trigger shape, the synthesized node's
+/// own paired close, the implied-pop target, and that a start-triggered close
+/// is immediately followed by the insertion of the new element by the same
+/// trigger token. That following action supplies `inserted`; no source, name,
+/// creation order, or tree position is consulted. A missing authored trigger
+/// or insertion cannot occur after freeze and fails closed.
+fn project_paragraph_relations(
+    analysis: &tree_result::HtmlDocumentShellAnalysis,
+) -> Result<Vec<HtmlTreeParagraphRelation>, HtmlTreeCoreFailure> {
+    use tree_result::HtmlTreeActionKind as Action;
+
+    let actions = analysis.actions();
+    let is_relation = |action: &&tree_result::HtmlTreeAction| {
+        matches!(
+            action.kind(),
+            Action::ClosedParagraphElement { .. }
+                | Action::PoppedParagraphElementBySelectedOrdinaryEndTag { .. }
+        )
+    };
+    let count = actions.iter().filter(is_relation).count();
+    let mut relations = vec_with_capacity(count)?;
+    for (index, action) in actions.iter().enumerate() {
+        if !is_relation(&action) {
+            continue;
+        }
+        let trigger = action
+            .trigger()
+            .authored_boundary()
+            .cloned()
+            .ok_or(HtmlTreeCoreFailure::InternalFailure)?;
+        relations.push(match action.kind() {
+            Action::ClosedParagraphElement { node, closure } => match closure {
+                tree_result::HtmlParagraphClosure::MatchingEndTag => {
+                    HtmlTreeParagraphRelation::MatchingClose {
+                        node: node_id(*node),
+                        trigger,
+                    }
+                }
+                tree_result::HtmlParagraphClosure::StartTriggered => {
+                    let next = actions
+                        .get(index + 1)
+                        .ok_or(HtmlTreeCoreFailure::InternalFailure)?;
+                    if next.trigger().token_index() != action.trigger().token_index() {
+                        return Err(HtmlTreeCoreFailure::InternalFailure);
+                    }
+                    let inserted = match next.kind() {
+                        Action::InsertedAuthoredParagraphElement { node }
+                        | Action::InsertedAuthoredSelectedOrdinaryElement { node, .. } => *node,
+                        _ => return Err(HtmlTreeCoreFailure::InternalFailure),
+                    };
+                    HtmlTreeParagraphRelation::StartTriggeredClose {
+                        node: node_id(*node),
+                        inserted: node_id(inserted),
+                        trigger,
+                    }
+                }
+                tree_result::HtmlParagraphClosure::UnmatchedEndTagSynthesized => {
+                    HtmlTreeParagraphRelation::SynthesizedCloseByUnmatchedEndTag {
+                        node: node_id(*node),
+                        trigger,
+                    }
+                }
+            },
+            Action::PoppedParagraphElementBySelectedOrdinaryEndTag { node, target } => {
+                HtmlTreeParagraphRelation::ImpliedPopBySelectedOrdinaryEndTag {
                     node: node_id(*node),
                     target: node_id(*target),
                     trigger,

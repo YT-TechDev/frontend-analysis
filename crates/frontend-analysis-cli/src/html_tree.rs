@@ -14,9 +14,9 @@ use frontend_analysis_core::html::tree::{
     HtmlTokenizerDiagnosticCode, HtmlTokenizerMode, HtmlTokenizerUnsupportedCapability,
     HtmlTreeAttributeValueSyntax, HtmlTreeCompletion, HtmlTreeDiagnosticCode, HtmlTreeElementName,
     HtmlTreeIncompleteCause, HtmlTreeNode, HtmlTreeNodeId, HtmlTreeNodeKind,
-    HtmlTreeNodeProvenance, HtmlTreeRecovery, HtmlTreeReport, HtmlTreeResourceKind,
-    HtmlTreeSelectedOrdinaryAttribute, HtmlTreeSelectedOrdinaryRelation, HtmlTreeSynthesisCause,
-    HtmlTreeUnsupportedCapability,
+    HtmlTreeNodeProvenance, HtmlTreeParagraphRelation, HtmlTreeRecovery, HtmlTreeReport,
+    HtmlTreeResourceKind, HtmlTreeSelectedOrdinaryAttribute, HtmlTreeSelectedOrdinaryRelation,
+    HtmlTreeSynthesisCause, HtmlTreeUnsupportedCapability,
 };
 
 use crate::{escape_fragment, render_evidence};
@@ -56,6 +56,7 @@ pub(crate) fn render_report(source_bytes: usize, report: &HtmlTreeReport) -> Str
     let _ = writeln!(out);
     render_tree(&mut out, report);
     render_selected_ordinary_relations(&mut out, report);
+    render_paragraph_relations(&mut out, report);
     render_selected_ordinary_attributes(&mut out, report);
 
     if !report.tokenizer_diagnostics().is_empty() {
@@ -178,6 +179,61 @@ fn render_selected_ordinary_relations(out: &mut String, report: &HtmlTreeReport)
                 let _ = writeln!(
                     out,
                     "selected ordinary relation {number}: recovery pop by ancestor end tag"
+                );
+                let _ = writeln!(out, "  node: {}", node_label(report, *node));
+                let _ = writeln!(out, "  target: {}", node_label(report, *target));
+                let _ = writeln!(out, "  trigger: {}", render_evidence(trigger));
+            }
+        }
+    }
+}
+
+/// Renders the Core-owned Paragraph relation slice in the order Core supplies
+/// it. It is a separate slice from the selected ordinary relations: the
+/// numbering of the two sections is independent and implies no shared
+/// chronology. Names are resolved through the report; nothing is matched,
+/// grouped, reordered, or rescanned here, and an absent relation is not
+/// described.
+fn render_paragraph_relations(out: &mut String, report: &HtmlTreeReport) {
+    let relations = report.paragraph_relations();
+    if relations.is_empty() {
+        return;
+    }
+    let _ = writeln!(out);
+    for (index, relation) in relations.iter().enumerate() {
+        let number = index + 1;
+        match relation {
+            HtmlTreeParagraphRelation::MatchingClose { node, trigger } => {
+                let _ = writeln!(out, "paragraph relation {number}: matching close");
+                let _ = writeln!(out, "  node: {}", node_label(report, *node));
+                let _ = writeln!(out, "  trigger: {}", render_evidence(trigger));
+            }
+            HtmlTreeParagraphRelation::StartTriggeredClose {
+                node,
+                inserted,
+                trigger,
+            } => {
+                let _ = writeln!(out, "paragraph relation {number}: start-triggered close");
+                let _ = writeln!(out, "  node: {}", node_label(report, *node));
+                let _ = writeln!(out, "  inserted: {}", node_label(report, *inserted));
+                let _ = writeln!(out, "  trigger: {}", render_evidence(trigger));
+            }
+            HtmlTreeParagraphRelation::SynthesizedCloseByUnmatchedEndTag { node, trigger } => {
+                let _ = writeln!(
+                    out,
+                    "paragraph relation {number}: synthesized close by unmatched end tag"
+                );
+                let _ = writeln!(out, "  node: {}", node_label(report, *node));
+                let _ = writeln!(out, "  trigger: {}", render_evidence(trigger));
+            }
+            HtmlTreeParagraphRelation::ImpliedPopBySelectedOrdinaryEndTag {
+                node,
+                target,
+                trigger,
+            } => {
+                let _ = writeln!(
+                    out,
+                    "paragraph relation {number}: implied pop by selected ordinary end tag"
                 );
                 let _ = writeln!(out, "  node: {}", node_label(report, *node));
                 let _ = writeln!(out, "  target: {}", node_label(report, *target));
