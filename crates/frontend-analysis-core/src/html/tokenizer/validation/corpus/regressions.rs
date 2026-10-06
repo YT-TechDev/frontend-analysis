@@ -1,16 +1,22 @@
-//! Supplemental candidate-independent `REG-113-*` regression fixtures.
+//! Supplemental candidate-independent `REG-*` regression fixtures.
 //!
 //! These fixtures are separate from the authority-controlled 69-fixture initial corpus
-//! (`PRE-`, `TOK-`, `ERR-`, `UNSUP-`, `RES-`, `ADV-`). They capture the
-//! cross-product of emission-conditioned and observation-conditioned
-//! diagnostics with top-level `EmittedTokens` resource refusal, per the
-//! merged #111 emission-conditioned diagnostic contract described in
-//! `docs/development/HTML_TOKENIZER_VALIDATION.md`.
+//! (`PRE-`, `TOK-`, `ERR-`, `UNSUP-`, `RES-`, `ADV-`). Provenance differs by
+//! supplemental group, and no production tokenizer candidate output is used
+//! to author expected observations.
 //!
-//! Every expected observation here is derived directly from the pinned
-//! WHATWG algorithm and the approved #109/#110/#111 contracts, cross-checked
-//! against `ERR-011`, `ERR-016`, and `ERR-017`. No production tokenizer
-//! candidate output was used to author these values.
+//! `REG-113-*` captures the cross-product of emission-conditioned and
+//! observation-conditioned diagnostics with top-level `EmittedTokens`
+//! resource refusal. Its expected observations derive from the pinned WHATWG
+//! algorithm and the approved #109/#110/#111 contracts, cross-checked against
+//! `ERR-011`, `ERR-016`, and `ERR-017`.
+//!
+//! `REG-912-*` captures the accepted Processing Instruction entry successor.
+//! Its expected observations are authored from #910 / PR #911 (independent
+//! review 5430986842) and the production placement adopted by #912 / #348
+//! comment 6020516996. WHATWG establishes PI entry without the retired
+//! question-mark diagnostic; the floor-bounded coverage/trigger geometry is
+//! Frontend Analysis project policy validated by #911 and adopted by #912.
 
 use super::super::expected::*;
 use super::super::fixture::{FixtureCategory, HtmlTokenizerFixture};

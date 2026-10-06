@@ -20,9 +20,10 @@ pub(super) fn initial_corpus() -> Vec<HtmlTokenizerFixture> {
     fixtures
 }
 
-/// Supplemental candidate-independent `REG-113-*` regression fixtures. This
-/// is a separate corpus from [`initial_corpus`]: it does not count toward,
-/// renumber, or alter the authority-controlled 69-fixture initial inventory.
+/// Supplemental candidate-independent `REG-*` regression fixtures. This
+/// is a separate corpus from [`initial_corpus`]: it currently contains
+/// `REG-113-*` and `REG-912-*` rows and does not count toward, renumber,
+/// or alter the authority-controlled 69-fixture initial inventory.
 pub(super) fn supplemental_regression_corpus() -> Vec<HtmlTokenizerFixture> {
     let mut fixtures = Vec::with_capacity(6);
     regressions::add_regressions(&mut fixtures);
