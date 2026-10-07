@@ -1,18 +1,20 @@
 # HTML Research Evidence
 
-Status date: 2026-09-15
+Current-status review: 2026-10-08 JST (dated checkpoints remain historical)
 
 Classification: task and evidence record; non-normative.
 
 ## Current Status
 
-The current durable HTML evidence checkpoint is:
+**STRONG BOUNDED BASELINE / PAUSED / RESUMABLE ON CONCRETE TRIGGER** is the current HTML decision, adopted under [#348](https://github.com/YT-TechDev/frontend-analysis/issues/348#issuecomment-6044419612) and indexed by [#106](https://github.com/YT-TechDev/frontend-analysis/issues/106#issuecomment-6044428782). No new HTML feature or broad research frontier is selected; accepted-capability maintenance remains in scope.
 
-- [2026-09 Post-TC-S10 Accepted Baseline Checkpoint](2026-09-post-tc-s10-accepted-baseline-checkpoint.md).
+The accepted public capability is `HtmlTreeReport` / `fa html-tree` ([#864](https://github.com/YT-TechDev/frontend-analysis/issues/864)). The bounded source-backed tokenizer/parser, coordinator and tree construction retain selected authored and synthesized identities, ordinary element/attribute evidence, selected Data and AttributeValue named/numeric character references, Paragraph causal close/recovery relations and explicit completion/resource/refusal boundaries. Latest accepted HTML semantic production: the PI entry refusal correction [#912](https://github.com/YT-TechDev/frontend-analysis/issues/912) / [PR #913](https://github.com/YT-TechDev/frontend-analysis/pull/913). It does not implement general Processing Instruction parsing.
 
-The HTML workstream is currently **pauseable and accepted through TC-S10**.
-The last accepted HTML semantic production expansion is PR #400, and the durable
-post-TC-S10 provenance/resume baseline is:
+**HTML is not complete.** General HTML parsing, fragments, templates, tables/foster parenting, formatting/adoption agency, foreign content, script execution/reentrancy, browser DOM equivalence, and general public parser/serialization remain outside the accepted answer. Unsupported/incomplete coverage is not negative whole-source evidence. Follow concrete restart triggers from #348 and the [whole-project PAUSE](https://github.com/YT-TechDev/frontend-analysis/issues/104#issuecomment-6044454270).
+
+### Historical TC-S10 checkpoint (2026-09-15)
+
+The [TC-S10 evidence checkpoint](2026-09-post-tc-s10-accepted-baseline-checkpoint.md) retains exact earlier provenance and the then-current source/architecture boundary; it is not the current program-status authority:
 
 ```text
 commit: 77790be7a3e8979985fb6a045b8aff2928a8ea40
@@ -20,30 +22,7 @@ tree:   732052dc1e6993baf80f333edc49e549f581714f
 subject: docs(html): record TC-S10 research provenance (#401)
 ```
 
-TC-S9 established selected InHead `<style>` RAWTEXT tree↔tokenizer feedback.
-TC-S10 then established selected InHead `<title>` RCDATA plus Named Character
-Reference semantics, complete canonical WHATWG Named data, non-committing
-maximum-match observation, resource-atomic source consumption, and separate
-Style/Title lifecycle ownership.
-
-The later #557 compiler-identity regression-harness hardening did not expand HTML
-production semantics or reopen TC-S10.
-
-No TC-S11 or other next HTML successor is preselected by this evidence record.
-General RCDATA, `<textarea>`, Numeric Character References, script/reentrant
-parsing, fragments, templates, tables/foster parenting, active formatting /
-adoption agency, foreign content, runtime DOM correlation, public APIs, and
-serialization remain open or deferred until a focused theorem requires them.
-
-The older checkpoints remain historical evidence and are intentionally not
-rewritten to pretend later work was known at the time:
-
-- [2026-08-27 RAWTEXT Feedback and Post-TC-S8 Evidence Checkpoint](2026-08-27-rawtext-feedback-checkpoint.md)
-- [2026-08 Tree-Construction Frontier Checkpoint](2026-08-tree-construction-frontier-checkpoint.md)
-
-The sections below preserve the historical first-slice and research/architecture
-evidence that led to the accepted TC-S10 frontier. The dated 2026-09 checkpoint
-above is authoritative for current HTML resume status.
+TC-S9 established selected Style/RAWTEXT tree-directed feedback. TC-S10 established selected Title/RCDATA, canonical WHATWG Named data, non-committing maximum matching, and resource-atomic source consumption. Later #557 compiler-identity harness hardening did not expand that TC-S10 semantics. The older [RAWTEXT/Post-TC-S8](2026-08-27-rawtext-feedback-checkpoint.md) and [tree-construction frontier](2026-08-tree-construction-frontier-checkpoint.md) checkpoints are similarly historical. The research sections below retain their dated scope, not a competing live implementation frontier.
 
 ## Historical Baseline and Architecture Transition
 
@@ -121,6 +100,12 @@ Repository evidence:
 - [#394 / PR #400 — accepted TC-S10 production](https://github.com/YT-TechDev/frontend-analysis/issues/394)
 - [PR #401 — TC-S10 research provenance completion](https://github.com/YT-TechDev/frontend-analysis/pull/401)
 - [#557 — post-TC-S10 compiler-identity validation-harness hardening](https://github.com/YT-TechDev/frontend-analysis/issues/557)
+- [#864 — bounded HTML Product consumer](https://github.com/YT-TechDev/frontend-analysis/issues/864)
+- [PR #903 — selected ordinary authored attributes](https://github.com/YT-TechDev/frontend-analysis/pull/903)
+- [PR #907 — selected AttributeValue character references](https://github.com/YT-TechDev/frontend-analysis/pull/907)
+- [PR #909 — Paragraph causal close/recovery relations](https://github.com/YT-TechDev/frontend-analysis/pull/909)
+- [#912 / PR #913 — PI entry refusal correction](https://github.com/YT-TechDev/frontend-analysis/pull/913)
+- [#348 — adopted current HTML PAUSE](https://github.com/YT-TechDev/frontend-analysis/issues/348#issuecomment-6044419612)
 
 Normative external authority and the exact TC-S10 source/data pins are recorded in
 [HTML research provenance](../../provenance/html.md). Browser or third-party
@@ -355,36 +340,9 @@ copied across languages by analogy.
 
 ## OPEN Research / Architecture / Production Decisions
 
-Broad pre-architecture HTML research under #348 is complete. The following
-remain intentionally open, deferred, or separately owned:
+The earlier TC-S10 OPEN inventory is historically preserved in the [dated checkpoint](2026-09-post-tc-s10-accepted-baseline-checkpoint.md), **not** maintained as the current feature-status list. Its Numeric Character Reference, Data/AttributeValue reference, authored attribute, and Product-facing gaps have since been narrowed by accepted later work. These must not remain classified as globally unimplemented.
 
-- Numeric Character References;
-- RCDATA NUL recovery;
-- general RCDATA / `<textarea>` coordination;
-- Data-state / AttributeValue character references;
-- Script Data and script/reentrant parsing;
-- concrete constructed-node identity encoding;
-- exact immutable tree storage layout;
-- detailed recovery-trace and text-coalescing provenance representation;
-- durable token identity for future provenance edges;
-- tree-specific resource dimensions and numeric project limits;
-- fragment-context production contract;
-- templates;
-- tables and foster parenting;
-- active formatting elements / adoption agency;
-- foreign content / namespace integration;
-- broader scope and implied-end algorithms;
-- runtime DOM correlation contract;
-- public HTML API and compatibility commitments;
-- serialization/wire formats;
-- incremental/streaming parsing;
-- browser protocol integration;
-- product-facing HTML analysis surfaces; and
-- future WASM delivery/runtime contracts.
-
-These OPEN items do not invalidate the approved Candidate C architecture or the
-accepted TC-S1–TC-S10 production lineage. They remain subject to focused work
-when a concrete capability or named consumer requires them.
+Current non-claims and concrete restart triggers are in [Current Status](#current-status) and the [#348 PAUSE adoption](https://github.com/YT-TechDev/frontend-analysis/issues/348#issuecomment-6044419612). Broader HTML Standard parsing, fragments, templates, tables/foster parenting, formatting/adoption agency, foreign content, script execution, general APIs, serialization, and browser-runtime equivalence remain intentionally deferred. Dated research and production evidence continue to apply to their original bounded theorems.
 
 ## Production State
 
@@ -406,8 +364,8 @@ full HTML parser claim: NO
 ```
 
 See [2026-09 Post-TC-S10 Accepted Baseline Checkpoint](2026-09-post-tc-s10-accepted-baseline-checkpoint.md)
-for the concise current capability envelope, accepted lineage, ownership results,
-falsified assumptions, and explicit deferred boundaries.
+for the **dated TC-S10** capability envelope, accepted lineage, ownership results,
+falsified assumptions, and then-deferred boundaries; current status is at the top of this record.
 
 ## Evidence-to-Architecture Boundary
 

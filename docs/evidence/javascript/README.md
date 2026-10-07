@@ -1,62 +1,22 @@
 # JavaScript / ECMAScript Research Evidence
 
-Status date: 2026-08-14
+Current-status review: 2026-10-08 JST (historical research retains its 2026-08 date)
 
 Classification: task and evidence record; non-normative.
 
 ## Current Status
 
-Since this pre-acceptance consolidation was recorded, JavaScript Architecture
-Model v1.1 and ADR 0009 have been accepted. A subsequent post-v1.1 adversarial
-research wave covering the mature concurrency/lifecycle boundary, including
-WaiterList synchronization, Agent liveness/termination, host Job delivery, and
-the BA–BD cross-batch contradiction audit, has also completed and is now
-**closed / frozen**.
+ECMAScript is **STRONG BOUNDED BASELINE / FRONTIER EXPANSION PAUSED / RESUMABLE ON CONCRETE TRIGGER** under adopted [#688](https://github.com/YT-TechDev/frontend-analysis/issues/688#issuecomment-6043550550) and the [#108 program pointer](https://github.com/YT-TechDev/frontend-analysis/issues/108#issuecomment-6043553916). No new ES grammar, Product or broad research frontier is selected. Maintenance, accepted-capability defects and ordinary use remain in scope under [project PAUSE](https://github.com/YT-TechDev/frontend-analysis/issues/104#issuecomment-6044454270).
 
-That post-v1.1 wave found no architecture-breaking contradiction and requires no
-revision of the accepted JavaScript architecture. Representation remains
-intentionally **OPEN**. See the
-[post-v1.1 research wave closure](2026-08-post-v1.1-research-wave-closure.md).
+The accepted JavaScript Architecture Model v1.1 / ADR 0009 remains in force; the post-v1.1 adversarial research wave is closed/frozen. Latest accepted bounded grammar: [#855 / PR #856](https://github.com/YT-TechDev/frontend-analysis/pull/856), one selected zero-argument IdentifierReference call head plus one-or-more existing owner-specific additive-continuation links. The [#862 / PR #863](https://github.com/YT-TechDev/frontend-analysis/pull/863) Product `fa es-binding-refs` reports selected same-source flat top-level lexical-initializer reference-to-binding relations, retained anchors, and declaration order.
 
-A later bounded selected-qualification research/implementation wave is tracked
-separately from that architecture-research closure. Its current durable candidate
-checkpoint is the
-[post-#343 selected ECMAScript research checkpoint](2026-08-post-343-selected-ecmascript-research-checkpoint.md).
-That record is non-normative supporting research evidence for the current selected
-qualification source envelope, its `9 / 184` frozen-inventory closure, evidence
-lineage, and deferred-frontier boundaries. It does not rewrite the earlier frozen
-research-wave records or authorize a production frontier by itself.
+`Complete` (including zero relations), `UnsupportedCoverage`, selected grammar/static rejection, resource limitation, and internal failure remain distinct. No general `ResolveBinding`, TDZ, general lexical-scope, module, runtime or language-conformance claim is supported. **CURRENT AGGREGATE SELECTED-COMPLETION THEOREM: NOT ESTABLISHED**, non-blocking for the selected public Product question.
 
-The remainder of this record preserves the earlier evidence state that led to
-Architecture Model consolidation; it is not rewritten as though the later
-post-v1.1 conclusions existed before architecture acceptance.
+The [historical post-#343 checkpoint](2026-08-post-343-selected-ecmascript-research-checkpoint.md) had a selected `9 / 184` partition; it is **not current selected reachability**. The frozen structural inventory (37 audited containers, 193 identities, 183 active NormativeRule and 10 EnvelopeInactiveRule) is also not a global current selected-completion proof. Later local frontier proofs must not be promoted to that stronger claim. The [post-v1.1 research closure](2026-08-post-v1.1-research-wave-closure.md) stays historical.
 
-The current JavaScript / ECMAScript architecture research phase has completed a
-deep adversarial evidence audit covering state, control, effects,
-interprocedural analysis, async execution, modules, Realms/Agents/shared memory,
-meta-object semantics, WeakRef/finalization, and iterator cleanup.
+### Historical research position (2026-08-14)
 
-Final audit recommendation:
-
-```text
-Evidence sufficiently stable — proceed to Architecture Model consolidation
-```
-
-The audit evaluated 17 cross-cutting candidate principles:
-
-- **6** survived without further qualification;
-- **11** survived with qualification;
-- **0** required complete candidate-level abandonment.
-
-This result authorizes architecture consolidation only. It does **not** authorize
-ECMAScript production implementation, public APIs, Rust representation choices,
-parser algorithms, abstract domains, or browser/runtime integration.
-
-The final audit found and corrected an edition-discipline defect: evidence from
-the current post-2026 draft must not be represented as ECMA-262 2026 normative
-evidence. Explicit Resource Management is therefore isolated from the ES2026
-normative set and may be researched separately as post-2026/current-draft
-evidence.
+The remainder of this file retains the earlier architecture-evidence stage rather than rewriting its premises. At that stage the deep adversarial audit covered state/control/effects, interprocedural, async, modules, Realms/Agents, shared memory, meta-object behavior, WeakRef/finalization and iterator cleanup. Six of 17 cross-cutting principles survived unqualified and 11 with qualification; none required whole-candidate abandonment. The *then-current* direction was Architecture Model consolidation only, not production. The edition-discipline correction separated post-2026 draft semantics from ECMA-262 2026 normative authority.
 
 ## Evidence Baseline and Authority
 
@@ -72,6 +32,9 @@ Relevant durable repository program records:
 - [#108 — ECMAScript parser/static-semantics program](https://github.com/YT-TechDev/frontend-analysis/issues/108)
 - [#142 — project-owned ECMAScript analysis guarantee contract](https://github.com/YT-TechDev/frontend-analysis/issues/142)
 - [#144 — project-owned ECMAScript language profile model](https://github.com/YT-TechDev/frontend-analysis/issues/144)
+- [#688 — adopted ECMAScript PAUSE](https://github.com/YT-TechDev/frontend-analysis/issues/688#issuecomment-6043550550)
+- [#855 / PR #856 — last selected grammar frontier](https://github.com/YT-TechDev/frontend-analysis/pull/856)
+- [#862 / PR #863 — selected binding-reference Product](https://github.com/YT-TechDev/frontend-analysis/pull/863)
 
 Important immutable research identities already recorded by the ECMAScript
 program include:
@@ -665,9 +628,10 @@ they are not evidence that the current foundation must be discarded.
 
 ## Final Evidence Boundary
 
-The current JavaScript evidence is sufficiently stable to continue Architecture
-Model consolidation. The next work must continue architecture-first and preserve
-the OPEN set.
+At its 2026-08-14 checkpoint this evidence was sufficient to proceed toward
+Architecture Model consolidation with its OPEN representation set intact. Later
+accepted architecture and bounded production supersede that direction **as a
+current next step**, not as historical evidence; #688/#108 now own restart.
 
-No code implementation, Issue decomposition for production, parser algorithm,
-public API, or Rust type hierarchy is authorized merely by this evidence record.
+No new implementation, grammar extension, public API, or Rust representation
+is authorized merely by this historical evidence record.
