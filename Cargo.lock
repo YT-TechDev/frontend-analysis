@@ -4,11 +4,11 @@ version = 4
 
 [[package]]
 name = "frontend-analysis-cli"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "frontend-analysis-core",
 ]
 
 [[package]]
 name = "frontend-analysis-core"
-version = "0.4.0"
+version = "0.5.0"
