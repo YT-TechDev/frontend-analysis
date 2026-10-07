@@ -78,7 +78,14 @@ Both Rust packages remain `publish = false`. This state does not imply complete
 language implementations, Browser Adapters, browser protocols, analysis-result
 models, diagnostics or evidence graphs, desktop, VS Code, or web products,
 serialization, crates.io publication, or release automation. The Rust toolchain
-pin is not an MSRV guarantee. The v0.1.0 release and tag are published.
+pin is not an MSRV guarantee.
+
+The latest published GitHub/source release is `v0.1.1`. Current `main` is a
+post-`v0.1.1` accepted four-capability baseline selected for the next
+`v0.2.0` release line; `v0.2.0` is not yet published. Broad feature expansion
+is paused. Maintenance, focused correction of reproducible accepted-capability
+defects, ordinary use, and observation of concrete consumer demand remain
+active.
 
 ## Contributing
 
