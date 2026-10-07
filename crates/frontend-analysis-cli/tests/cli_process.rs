@@ -1,7 +1,8 @@
 //! Process-boundary tests for the `fa` CLI Product.
 //!
-//! Covers `fa css-selectors` (#857), `fa es-binding-refs` (#862), and
-//! `fa html-tree` (#864) in one integration-test target.
+//! Covers `fa css-selectors` (#857), `fa css-transforms` (#914),
+//! `fa es-binding-refs` (#862), and `fa html-tree` (#864) in one
+//! integration-test target.
 //!
 //! Every expected stdout/stderr text below is authored by hand from the
 //! approved output contract and hand-counted source byte offsets. None of it
@@ -237,7 +238,7 @@ fn usage_failures_exit_one_with_usage_on_stderr() {
         assert_eq!(
             run.stderr,
             format!(
-                "fa: {message}\nusage: fa css-selectors < style.css\n       \
+                "fa: {message}\nusage: fa css-selectors < style.css\n       fa css-transforms < style.css\n       \
                  fa es-binding-refs < source.js\n       fa html-tree < source.html\n"
             ),
             "{args:?}"
@@ -711,7 +712,7 @@ relation 1:
             assert_eq!(
                 run.stderr,
                 format!(
-                    "fa: {message}\nusage: fa css-selectors < style.css\n       \
+                    "fa: {message}\nusage: fa css-selectors < style.css\n       fa css-transforms < style.css\n       \
                  fa es-binding-refs < source.js\n       fa html-tree < source.html\n"
                 ),
                 "{args:?}"
@@ -1967,7 +1968,7 @@ nodes: 1
             assert_eq!(
                 run.stderr,
                 format!(
-                    "fa: {message}\nusage: fa css-selectors < style.css\n       \
+                    "fa: {message}\nusage: fa css-selectors < style.css\n       fa css-transforms < style.css\n       \
                  fa es-binding-refs < source.js\n       fa html-tree < source.html\n"
                 ),
                 "{args:?}"
@@ -1994,5 +1995,493 @@ nodes: 1
         let run = html("bom", b"\xef\xbb\xbf<body>");
         assert_eq!(run.status, Some(0));
         assert!(run.stdout.starts_with(&head(9)), "{}", run.stdout);
+    }
+}
+
+// ---- #914: `fa css-transforms` process tests ----
+//
+// Every expected text is hand-authored from the approved output contract and
+// hand-counted source byte offsets, never captured from the binary under test.
+// Single-line fixtures have byte column = byte offset + 1.
+mod css_transforms {
+    use super::{Run, fa, finish};
+    use std::process::{Command, Stdio};
+
+    fn transforms(name: &str, stdin: &[u8]) -> Run {
+        fa(&["css-transforms"], name, stdin)
+    }
+
+    fn head(bytes: usize) -> String {
+        format!(
+            "capability: css-transforms
+profile: selected direct-authored transform qualification
+source: id 0; {bytes} bytes
+"
+        )
+    }
+
+    const COMPLETE_STAGES: &str = "\
+tokenizer: complete; end of input; diagnostics 0
+parser: complete; end of tokenizer input; coverage supported for selected question; \
+diagnostics 0; recovery records 0; unsupported regions 0; discard records 0
+";
+
+    const SCOPE: &str = "\
+scope: retained ordinary declarations recognized as transform; not a source-wide \
+transform detector
+";
+
+    fn assert_report(run: &Run, expected: &str) {
+        assert_eq!(run.status, Some(0));
+        assert_eq!(run.stdout, expected);
+        assert_eq!(run.stderr, "");
+    }
+
+    #[test]
+    fn qualified_observation_renders_all_authored_evidence() {
+        // ".a{ transform: scale(1, 200%); }": `.a` 0..2, `transform` 4..13,
+        // value 15..29, declaration 4..30; 32 bytes.
+        let run = transforms("qualified", b".a{ transform: scale(1, 200%); }");
+
+        let expected = head(32)
+            + COMPLETE_STAGES
+            + SCOPE
+            + "observations: 1 selected
+observation 1: qualified by selected direct-authored profile
+  declaration: bytes 4..30, line 1, byte column 5: \"transform: scale(1, 200%);\"
+  property: bytes 4..13, line 1, byte column 5: \"transform\"
+  value: bytes 15..29, line 1, byte column 16: \"scale(1, 200%)\"
+  priority: none
+  context: bytes 0..2, line 1, byte column 1: \".a\"
+";
+        assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn invalid_value_is_reported_with_exit_zero() {
+        // "a{transform:scale(1, 2, 3);}": value 12..26, declaration 2..27;
+        // 28 bytes.
+        let run = transforms("invalid", b"a{transform:scale(1, 2, 3);}");
+
+        let expected = head(28)
+            + COMPLETE_STAGES
+            + SCOPE
+            + "observations: 1 selected
+observation 1: invalid for selected value grammar
+  declaration: bytes 2..27, line 1, byte column 3: \"transform:scale(1, 2, 3);\"
+  property: bytes 2..11, line 1, byte column 3: \"transform\"
+  value: bytes 12..26, line 1, byte column 13: \"scale(1, 2, 3)\"
+  priority: none
+  context: bytes 0..1, line 1, byte column 1: \"a\"
+";
+        assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn every_unsupported_reason_renders_distinctly_and_shares_one_context_reference() {
+        let run = transforms(
+            "unsupported",
+            b"a{transform:inherit;transform:var(--x);transform:cycle(none);\
+transform:unknownfunction(1px);transform:scale(calc(1));}",
+        );
+
+        let expected = head(118)
+            + COMPLETE_STAGES
+            + SCOPE
+            + "observations: 5 selected
+observation 1: unsupported by selected value profile (css-wide keyword)
+  declaration: bytes 2..20, line 1, byte column 3: \"transform:inherit;\"
+  property: bytes 2..11, line 1, byte column 3: \"transform\"
+  value: bytes 12..19, line 1, byte column 13: \"inherit\"
+  priority: none
+  context: bytes 0..1, line 1, byte column 1: \"a\"
+observation 2: unsupported by selected value profile (deferred substitution function)
+  declaration: bytes 20..39, line 1, byte column 21: \"transform:var(--x);\"
+  property: bytes 20..29, line 1, byte column 21: \"transform\"
+  value: bytes 30..38, line 1, byte column 31: \"var(--x)\"
+  priority: none
+  context: bytes 0..1, line 1, byte column 1 (same context as observation 1)
+observation 3: unsupported by selected value profile (whole-value function)
+  declaration: bytes 39..61, line 1, byte column 40: \"transform:cycle(none);\"
+  property: bytes 39..48, line 1, byte column 40: \"transform\"
+  value: bytes 49..60, line 1, byte column 50: \"cycle(none)\"
+  priority: none
+  context: bytes 0..1, line 1, byte column 1 (same context as observation 1)
+observation 4: unsupported by selected value profile (unselected transform function)
+  declaration: bytes 61..92, line 1, byte column 62: \"transform:unknownfunction(1px);\"
+  property: bytes 61..70, line 1, byte column 62: \"transform\"
+  value: bytes 71..91, line 1, byte column 72: \"unknownfunction(1px)\"
+  priority: none
+  context: bytes 0..1, line 1, byte column 1 (same context as observation 1)
+observation 5: unsupported by selected value profile (function-valued transform argument)
+  declaration: bytes 92..117, line 1, byte column 93: \"transform:scale(calc(1));\"
+  property: bytes 92..101, line 1, byte column 93: \"transform\"
+  value: bytes 102..116, line 1, byte column 103: \"scale(calc(1))\"
+  priority: none
+  context: bytes 0..1, line 1, byte column 1 (same context as observation 1)
+";
+        assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn duplicates_and_contexts_keep_source_order_without_cascade() {
+        let run = transforms(
+            "duplicates",
+            b"a{transform:none;color:red;transform:scale(1);transform:none;}\
+b{transform:matrix(1,0,0,1,0,0);}",
+        );
+
+        let expected = head(95)
+            + COMPLETE_STAGES
+            + SCOPE
+            + "observations: 4 selected
+observation 1: qualified by selected direct-authored profile
+  declaration: bytes 2..17, line 1, byte column 3: \"transform:none;\"
+  property: bytes 2..11, line 1, byte column 3: \"transform\"
+  value: bytes 12..16, line 1, byte column 13: \"none\"
+  priority: none
+  context: bytes 0..1, line 1, byte column 1: \"a\"
+observation 2: qualified by selected direct-authored profile
+  declaration: bytes 27..46, line 1, byte column 28: \"transform:scale(1);\"
+  property: bytes 27..36, line 1, byte column 28: \"transform\"
+  value: bytes 37..45, line 1, byte column 38: \"scale(1)\"
+  priority: none
+  context: bytes 0..1, line 1, byte column 1 (same context as observation 1)
+observation 3: qualified by selected direct-authored profile
+  declaration: bytes 46..61, line 1, byte column 47: \"transform:none;\"
+  property: bytes 46..55, line 1, byte column 47: \"transform\"
+  value: bytes 56..60, line 1, byte column 57: \"none\"
+  priority: none
+  context: bytes 0..1, line 1, byte column 1 (same context as observation 1)
+observation 4: qualified by selected direct-authored profile
+  declaration: bytes 64..94, line 1, byte column 65: \"transform:matrix(1,0,0,1,0,0);\"
+  property: bytes 64..73, line 1, byte column 65: \"transform\"
+  value: bytes 74..93, line 1, byte column 75: \"matrix(1,0,0,1,0,0)\"
+  priority: none
+  context: bytes 62..63, line 1, byte column 63: \"b\"
+";
+        assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn escaped_property_spelling_and_priority_are_rendered_from_authored_anchors() {
+        // "a{TR\41 NSFORM:none !important;}": the 12-byte authored property
+        // `TR\41 NSFORM` is 2..14, `none` 15..19, `!important` 20..30,
+        // declaration 2..31; 32 bytes. The backslash is escaped on output.
+        let run = transforms("escaped", b"a{TR\\41 NSFORM:none !important;}");
+
+        let expected = head(32)
+            + COMPLETE_STAGES
+            + SCOPE
+            + r#"observations: 1 selected
+observation 1: qualified by selected direct-authored profile
+  declaration: bytes 2..31, line 1, byte column 3: "TR\\41 NSFORM:none !important;"
+  property: bytes 2..14, line 1, byte column 3: "TR\\41 NSFORM"
+  value: bytes 15..19, line 1, byte column 16: "none"
+  priority: bytes 20..30, line 1, byte column 21: "!important"
+  context: bytes 0..1, line 1, byte column 1: "a"
+"#;
+        assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn selector_invalid_and_unsupported_contexts_do_not_gate_value_observations() {
+        // "a,,b" 0..4; declaration 5..20; "::before" 21..29; declaration
+        // 30..49; 50 bytes.
+        let run = transforms(
+            "selector-independence",
+            b"a,,b{transform:none;}::before{transform:scale(2);}",
+        );
+
+        let expected = head(50)
+            + COMPLETE_STAGES
+            + SCOPE
+            + "observations: 2 selected
+observation 1: qualified by selected direct-authored profile
+  declaration: bytes 5..20, line 1, byte column 6: \"transform:none;\"
+  property: bytes 5..14, line 1, byte column 6: \"transform\"
+  value: bytes 15..19, line 1, byte column 16: \"none\"
+  priority: none
+  context: bytes 0..4, line 1, byte column 1: \"a,,b\"
+observation 2: qualified by selected direct-authored profile
+  declaration: bytes 30..49, line 1, byte column 31: \"transform:scale(2);\"
+  property: bytes 30..39, line 1, byte column 31: \"transform\"
+  value: bytes 40..48, line 1, byte column 41: \"scale(2)\"
+  priority: none
+  context: bytes 21..29, line 1, byte column 22: \"::before\"
+";
+        assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn bom_crlf_and_multibyte_source_are_preserved_exactly() {
+        // BOM 0..3; `a` 3..4; declaration 5..20; 21 bytes.
+        let run = transforms("bom", "\u{feff}a{transform:none;}".as_bytes());
+        let expected = head(21)
+            + COMPLETE_STAGES
+            + SCOPE
+            + "observations: 1 selected
+observation 1: qualified by selected direct-authored profile
+  declaration: bytes 5..20, line 1, byte column 6: \"transform:none;\"
+  property: bytes 5..14, line 1, byte column 6: \"transform\"
+  value: bytes 15..19, line 1, byte column 16: \"none\"
+  priority: none
+  context: bytes 3..4, line 1, byte column 4: \"a\"
+";
+        assert_report(&run, &expected);
+
+        // "a{" 0..2; CRLF 2..4; declaration 4..19 on line 2; CRLF 19..21;
+        // `}` 21; 22 bytes.
+        let run = transforms("crlf", b"a{\r\ntransform:none;\r\n}");
+        let expected = head(22)
+            + COMPLETE_STAGES
+            + SCOPE
+            + "observations: 1 selected
+observation 1: qualified by selected direct-authored profile
+  declaration: bytes 4..19, line 2, byte column 1: \"transform:none;\"
+  property: bytes 4..13, line 2, byte column 1: \"transform\"
+  value: bytes 14..18, line 2, byte column 11: \"none\"
+  priority: none
+  context: bytes 0..1, line 1, byte column 1: \"a\"
+";
+        assert_report(&run, &expected);
+
+        // `é` is two bytes (0..2) and is escaped on output; declaration 3..18.
+        let run = transforms("multibyte", "é{transform:none;}".as_bytes());
+        let expected = head(19)
+            + COMPLETE_STAGES
+            + SCOPE
+            + "observations: 1 selected
+observation 1: qualified by selected direct-authored profile
+  declaration: bytes 3..18, line 1, byte column 4: \"transform:none;\"
+  property: bytes 3..12, line 1, byte column 4: \"transform\"
+  value: bytes 13..17, line 1, byte column 14: \"none\"
+  priority: none
+  context: bytes 0..2, line 1, byte column 1: \"\\u{e9}\"
+";
+        assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn zero_selected_observations_never_claim_source_wide_absence() {
+        // A root `@media` is an unsupported top-level at-rule holding authored
+        // transform text; the 30-byte region is the whole source.
+        let run = transforms("zero-unsupported", b"@media screen{transform:none;}");
+
+        let expected = head(30)
+            + "tokenizer: complete; end of input; diagnostics 0
+parser: complete; end of tokenizer input; coverage contains unsupported contexts; \
+diagnostics 0; recovery records 0; unsupported regions 1; discard records 0
+unsupported 1: top-level at-rule
+  source: bytes 0..30, line 1, byte column 1: \"@media screen{transform:none;}\"
+" + SCOPE + "observations: 0 selected
+";
+        assert_report(&run, &expected);
+        for overclaim in [
+            "no transform",
+            "no transforms",
+            "absent",
+            "does not contain",
+        ] {
+            assert!(!run.stdout.contains(overclaim), "{overclaim}");
+        }
+    }
+
+    #[test]
+    fn empty_stdin_is_a_valid_empty_source_with_zero_selected_observations() {
+        // Null stdin exercises the non-file empty-input path.
+        let output = Command::new(env!("CARGO_BIN_EXE_fa"))
+            .arg("css-transforms")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        let run = finish(output);
+
+        let expected = head(0) + COMPLETE_STAGES + SCOPE + "observations: 0 selected\n";
+        assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn nonordinary_declaration_categories_are_not_observed() {
+        let source = "@font-face{transform:none;}@page{transform:none;}\
+@keyframes k{from{transform:none;}}";
+        let run = transforms("nonordinary", source.as_bytes());
+
+        let expected = head(source.len())
+            + COMPLETE_STAGES
+            + SCOPE
+            + "observations: 0 selected
+";
+        assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn recovered_region_is_reported_as_recovery_not_as_an_observation() {
+        // "a{" 0..2; malformed "transform scale(1);" 2..21; declaration
+        // 21..36; 37 bytes.
+        let run = transforms("recovery", b"a{transform scale(1);transform:none;}");
+
+        let expected = head(37)
+            + "tokenizer: complete; end of input; diagnostics 0
+parser: complete; end of tokenizer input; coverage supported for selected question; \
+diagnostics 1; recovery records 1; unsupported regions 0; discard records 0
+recovery 1: malformed block item; authored semicolon
+  source: bytes 2..21, line 1, byte column 3: \"transform scale(1);\"
+" + SCOPE + "observations: 1 selected
+observation 1: qualified by selected direct-authored profile
+  declaration: bytes 21..36, line 1, byte column 22: \"transform:none;\"
+  property: bytes 21..30, line 1, byte column 22: \"transform\"
+  value: bytes 31..35, line 1, byte column 32: \"none\"
+  priority: none
+  context: bytes 0..1, line 1, byte column 1: \"a\"
+";
+        assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn comment_and_string_text_is_never_observed() {
+        let source = "a{/*transform:none;*/content:\"transform:none;\";}";
+        let run = transforms("comment-string", source.as_bytes());
+
+        let expected = head(source.len())
+            + COMPLETE_STAGES
+            + SCOPE
+            + "observations: 0 selected
+";
+        assert_report(&run, &expected);
+    }
+
+    #[test]
+    fn full_declaration_envelope_is_rendered_without_truncation_then_refusal_is_reported() {
+        let at_limit = format!("a{{{}}}", "transform:none;".repeat(512));
+        let run = transforms("envelope", at_limit.as_bytes());
+        assert_eq!(run.status, Some(0));
+        assert_eq!(run.stderr, "");
+        assert!(run.stdout.contains("observations: 512 selected\n"));
+        let listed = run
+            .stdout
+            .lines()
+            .filter(|line| line.starts_with("observation "))
+            .count();
+        assert_eq!(listed, 512);
+        // The 512th declaration is 2 + 15 * 511 = 7667 .. 7682.
+        assert!(run.stdout.contains(
+            "observation 512: qualified by selected direct-authored profile
+  declaration: bytes 7667..7682, line 1, byte column 7668: \"transform:none;\"
+"
+        ));
+
+        // The 513th exceeds the declaration-occurrence limit; the 512
+        // committed observations are still all rendered.
+        let over_limit = format!("a{{{}}}", "transform:none;".repeat(513));
+        let run = transforms("envelope-refused", over_limit.as_bytes());
+        assert_eq!(run.status, Some(0));
+        assert_eq!(run.stderr, "");
+        assert!(run.stdout.contains(
+            "parser: incomplete; resource limit declaration occurrences (limit 512, attempted \
+513) at byte"
+        ));
+        assert!(run.stdout.contains("observations: 512 selected\n"));
+        let listed = run
+            .stdout
+            .lines()
+            .filter(|line| line.starts_with("observation "))
+            .count();
+        assert_eq!(listed, 512);
+        assert!(!run.stdout.contains("observation 513:"));
+    }
+
+    #[test]
+    fn long_context_header_is_rendered_once_and_referenced_by_location() {
+        let header = "a".repeat(10_000);
+        let source = format!("{header}{{{}}}", "transform:none;".repeat(100));
+        let run = transforms("long-header", source.as_bytes());
+
+        assert_eq!(run.status, Some(0));
+        assert_eq!(run.stderr, "");
+        assert!(run.stdout.contains("observations: 100 selected\n"));
+        assert_eq!(run.stdout.matches(&header).count(), 1);
+        assert_eq!(
+            run.stdout
+                .matches("context: bytes 0..10000, line 1, byte column 1 (same context as observation 1)\n")
+                .count(),
+            99
+        );
+    }
+
+    #[test]
+    fn upstream_tokenizer_refusal_is_a_report_with_zero_selected_observations() {
+        for bytes in [32_769_usize, 49_152] {
+            let run = transforms("source-bytes-refusal", &vec![b'a'; bytes]);
+            let expected = head(bytes)
+                + &format!(
+                    "tokenizer: incomplete; resource limit source bytes (limit 32768, attempted \
+{bytes}) at byte 0, line 1, byte column 1; diagnostics 0
+parser: incomplete; upstream tokenizer incomplete; coverage supported for selected question; \
+diagnostics 0; recovery records 0; unsupported regions 0; discard records 0
+"
+                )
+                + SCOPE
+                + "observations: 0 selected\n";
+            assert_report(&run, &expected);
+        }
+    }
+
+    #[test]
+    fn parser_resource_refusal_without_observations_is_a_report() {
+        // The 65th `@x;` exceeds the approved 64 unsupported-region limit.
+        let run = transforms("parser-refusal", "@x;".repeat(65).as_bytes());
+
+        assert_eq!(run.status, Some(0));
+        assert_eq!(run.stderr, "");
+        assert!(run.stdout.contains(
+            "parser: incomplete; resource limit unsupported regions (limit 64, attempted 65) at \
+byte"
+        ));
+        assert!(run.stdout.contains("observations: 0 selected\n"));
+    }
+
+    #[test]
+    fn input_over_product_cap_is_rejected_before_core() {
+        let run = transforms("over-product-cap", &vec![b'a'; 49_153]);
+        assert_eq!(run.status, Some(1));
+        assert_eq!(run.stdout, "");
+        assert_eq!(run.stderr, "fa: stdin exceeds 49152 bytes\n");
+    }
+
+    #[test]
+    fn invalid_utf8_is_rejected_before_core() {
+        let run = transforms("invalid-utf8", b"a{transform:none;\xff}");
+        assert_eq!(run.status, Some(1));
+        assert_eq!(run.stdout, "");
+        assert_eq!(
+            run.stderr,
+            "fa: stdin is not valid UTF-8 (invalid sequence at byte 17)\n"
+        );
+    }
+
+    #[test]
+    fn extra_argument_is_a_usage_failure() {
+        let run = fa(&["css-transforms", "style.css"], "usage", b"a{}");
+        assert_eq!(run.status, Some(1));
+        assert_eq!(run.stdout, "");
+        assert_eq!(
+            run.stderr,
+            "fa: unexpected argument\nusage: fa css-selectors < style.css\n       \
+             fa css-transforms < style.css\n       fa es-binding-refs < source.js\n       \
+             fa html-tree < source.html\n"
+        );
+    }
+
+    #[test]
+    fn repeated_invocations_are_byte_identical() {
+        let input = b"a{transform:none;b{transform:scale(1,2,3);}}@x;a,,b{transform:var(--y);}";
+        let first = transforms("repeat-1", input);
+        let second = transforms("repeat-2", input);
+
+        assert_eq!(first.status, Some(0));
+        assert_eq!(first.status, second.status);
+        assert_eq!(first.stdout, second.stdout);
+        assert_eq!(first.stderr, second.stderr);
     }
 }

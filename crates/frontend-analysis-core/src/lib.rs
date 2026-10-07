@@ -1,5 +1,6 @@
 //! Browser-independent validated source anchoring and raw coordinate
-//! primitives, plus the narrow CSS `CoreV1` selector-analysis consumer facade.
+//! primitives, plus the narrow CSS `CoreV1` selector-analysis and selected
+//! direct-authored `transform` qualification consumer facades.
 
 // The approved HTML token, tokenizer, and tree-construction contracts remain
 // crate-private; only the narrow `html::tree` consumer facade is public
@@ -7,8 +8,9 @@
 #[allow(dead_code)]
 pub mod html;
 // The CSS tokenizer, parser, selector, and resource contracts remain
-// crate-private; only the narrow `css::selectors` CoreV1 consumer facade is
-// public (Issue #857, ADR 0011).
+// crate-private; only the narrow `css::selectors` CoreV1 consumer facade
+// (Issue #857, ADR 0011) and the narrow `css::transform` consumer facade
+// (Issue #914) are public.
 #[allow(dead_code)]
 pub mod css;
 // The ECMAScript selected-slice implementation modules remain crate-private;

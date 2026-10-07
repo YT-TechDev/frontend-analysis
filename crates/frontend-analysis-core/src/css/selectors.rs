@@ -208,7 +208,7 @@ pub struct CssTokenizerStage {
 }
 
 impl CssTokenizerStage {
-    fn project(result: &tokenizer_result::CssTokenizerRunResult) -> Self {
+    pub(crate) fn project(result: &tokenizer_result::CssTokenizerRunResult) -> Self {
         Self {
             completion: match result.completion() {
                 tokenizer_result::CssTokenizerCompletion::Complete => CssStageCompletion::Complete,
@@ -265,7 +265,7 @@ pub struct CssParserStage {
 }
 
 impl CssParserStage {
-    fn project(result: &parser_result::CssParserRunResult) -> Self {
+    pub(crate) fn project(result: &parser_result::CssParserRunResult) -> Self {
         Self {
             completion: match result.execution_completion() {
                 parser_result::CssParserExecutionCompletion::Complete => {
