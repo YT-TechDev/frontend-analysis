@@ -1,41 +1,27 @@
 # CSS Research Evidence
 
-Status date: 2026-09-14
+Current-status review: 2026-10-08 JST (dated checkpoints remain historical)
 
 Classification: task and evidence record; non-normative.
 
 ## Current Status
 
-The CSS workstream has reached a **pauseable authored-value qualification
-checkpoint** after materially extending the earlier Semantic Foundation Freeze.
+CSS is **STRONG BOUNDED BASELINE / PAUSED / RESUMABLE ON CONCRETE TRIGGER**. This is adopted under [#418](https://github.com/YT-TechDev/frontend-analysis/issues/418#issuecomment-6041412391) and indexed by [#107](https://github.com/YT-TechDev/frontend-analysis/issues/107#issuecomment-6041424955). [#914](https://github.com/YT-TechDev/frontend-analysis/issues/914) completed, [PR #915](https://github.com/YT-TechDev/frontend-analysis/pull/915) merged, and no new CSS feature or broad research frontier is selected.
 
-The current durable resume record is:
+Accepted bounded public answers:
+- `fa css-selectors`: selected `CoreV1` selector-context qualification under [ADR 0011](../../decisions/0011-establish-cli-product-and-css-core-v1-consumer-boundary.md), including source/typed outcome/stage completeness evidence.
+- `fa css-transforms`: selected direct-authored `transform` qualification of retained ordinary declarations with declaration/property/value/optional-priority and owning-context evidence (PR #915).
 
-[2026-09 Authored-Value Qualification and Transform Coverage Checkpoint](2026-09-authored-value-qualification-and-transform-coverage-checkpoint.md).
+The #184/#185 Semantic Foundation and post-freeze selected authored values remain accepted. Current-normative `transform` Function coverage is **21 / 21**, while unknown/future Function containment stays open-world. **Zero selected transform observations do not establish whole-source absence.** Neither public answer claims complete CSS, matching, specificity, cascade, CSSOM, computed/used values, layout, rendering or browser behavior; upstream incompleteness cannot be upgraded.
 
-Its accepted repository baseline is:
+The [2026-09 authored-value checkpoint](2026-09-authored-value-qualification-and-transform-coverage-checkpoint.md) is still valid at its dated baseline, not current next-step authority:
 
 ```text
 main: a5bdbe40ebfdd575ea6ea61dbffe7e7e956eeb6b
 tree: 57aeebe9e693f5e44755a0d874f9ba3055617633
 ```
 
-At that baseline, bounded authored declaration-value qualification demonstrates
-substantial direct keyword/numeric/unit/Function-argument mechanics, and current
-normative `transform` Function selected coverage is complete at **21 / 21** while
-generic unknown/future Function containment remains explicit.
-
-This does **not** claim complete CSS parsing, selectors, property/value grammar,
-CSS math, cascade, CSSOM, computed values, layout, paint, or browser-runtime
-equivalence. CSS is safe to pause and resume from the dated checkpoint; it is
-not declared complete.
-
-The earlier
-[2026-08 Semantic Foundation Status Checkpoint](2026-08-semantic-foundation-status-checkpoint.md)
-remains historical evidence for the #184/#185 source/tokenizer/parser/context and
-bounded selector foundation. Its statement that no later CSS semantic production
-had been identified was accurate on 2026-08-26 but is superseded as a
-*current-status* statement by the 2026-09 checkpoint.
+The [2026-08 Semantic Foundation checkpoint](2026-08-semantic-foundation-status-checkpoint.md) likewise remains historical. Future work uses then-LIVE main, concrete #418 restart triggers, and the [whole-project PAUSE](https://github.com/YT-TechDev/frontend-analysis/issues/104#issuecomment-6044454270), not an automatic continuation of either earlier checkpoint.
 
 ## Authoritative Evidence Sources
 
@@ -53,6 +39,10 @@ Repository evidence:
 - [#684 — final current-normative transform coverage leaf](https://github.com/YT-TechDev/frontend-analysis/issues/684)
 - [PR #685 — `perspective()` transform coverage completion](https://github.com/YT-TechDev/frontend-analysis/pull/685)
 - [#686 — 2026-09 CSS evidence checkpoint](https://github.com/YT-TechDev/frontend-analysis/issues/686)
+- [#857 / PR #858 — selector Product consumer](https://github.com/YT-TechDev/frontend-analysis/pull/858)
+- [ADR 0011 — CLI Product/Core consumer authority](../../decisions/0011-establish-cli-product-and-css-core-v1-consumer-boundary.md)
+- [#914 / PR #915 — transform Product consumer](https://github.com/YT-TechDev/frontend-analysis/pull/915)
+- [#418 — current CSS PAUSE adoption](https://github.com/YT-TechDev/frontend-analysis/issues/418#issuecomment-6041412391)
 
 Normative CSS behavior remains governed by the applicable CSSWG specifications.
 The exact specification snapshots/profile used by a capability must be recorded
@@ -366,5 +356,6 @@ contracts it consumes, which new semantic responsibility it owns, whether
 relevant normative authority changed, and whether a focused architecture/ADR
 update is required.
 
-For ordinary CSS continuation, begin from the current dated checkpoint instead
-of replaying the entire historical workstream.
+For a concrete CSS restart, begin from then-LIVE main and the adopted #418
+resume triggers. Preserve the dated checkpoints as historical evidence rather
+than treating them as current next-step authority.
