@@ -340,9 +340,57 @@ copied across languages by analogy.
 
 ## OPEN Research / Architecture / Production Decisions
 
-The earlier TC-S10 OPEN inventory is historically preserved in the [dated checkpoint](2026-09-post-tc-s10-accepted-baseline-checkpoint.md), **not** maintained as the current feature-status list. Its Numeric Character Reference, Data/AttributeValue reference, authored attribute, and Product-facing gaps have since been narrowed by accepted later work. These must not remain classified as globally unimplemented.
+This list preserves the **2026-09-15 post-TC-S10 historical OPEN
+inventory**. It is not today's unsupported-capability register. Later accepted
+work has narrowed the Numeric Character Reference, Data/AttributeValue
+character-reference, authored ordinary attribute, and Product-facing gaps
+without closing every broader class named below.
 
-Current non-claims and concrete restart triggers are in [Current Status](#current-status) and the [#348 PAUSE adoption](https://github.com/YT-TechDev/frontend-analysis/issues/348#issuecomment-6044419612). Broader HTML Standard parsing, fragments, templates, tables/foster parenting, formatting/adoption agency, foreign content, script execution, general APIs, serialization, and browser-runtime equivalence remain intentionally deferred. Dated research and production evidence continue to apply to their original bounded theorems.
+### Historical TC-S10 OPEN inventory (as recorded)
+
+
+Broad pre-architecture HTML research under #348 is complete. The following
+remain intentionally open, deferred, or separately owned:
+
+- Numeric Character References;
+- RCDATA NUL recovery;
+- general RCDATA / `<textarea>` coordination;
+- Data-state / AttributeValue character references;
+- Script Data and script/reentrant parsing;
+- concrete constructed-node identity encoding;
+- exact immutable tree storage layout;
+- detailed recovery-trace and text-coalescing provenance representation;
+- durable token identity for future provenance edges;
+- tree-specific resource dimensions and numeric project limits;
+- fragment-context production contract;
+- templates;
+- tables and foster parenting;
+- active formatting elements / adoption agency;
+- foreign content / namespace integration;
+- broader scope and implied-end algorithms;
+- runtime DOM correlation contract;
+- public HTML API and compatibility commitments;
+- serialization/wire formats;
+- incremental/streaming parsing;
+- browser protocol integration;
+- product-facing HTML analysis surfaces; and
+- future WASM delivery/runtime contracts.
+
+These OPEN items do not invalidate the approved Candidate C architecture or the
+accepted TC-S1–TC-S10 production lineage. They remain subject to focused work
+when a concrete capability or named consumer requires them.
+
+### Present-day interpretation
+
+The items above are preserved to avoid erasing historical research choices.
+In particular, any old statement that Numeric Character References,
+Data/AttributeValue references, or Product-facing HTML analysis had no accepted
+slice has been superseded within the later **selected bounded profiles**.
+Some generalizations and other listed items remain outside current coverage.
+Use [Current Status](#current-status) and the
+[#348 PAUSE adoption](https://github.com/YT-TechDev/frontend-analysis/issues/348#issuecomment-6044419612)
+for today's exact non-claims, authority and restart triggers. Dated TC-S1–TC-S10
+evidence remains valid within its original scope.
 
 ## Production State
 
