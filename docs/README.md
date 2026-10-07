@@ -79,6 +79,17 @@ selected slice in [Issue #864](https://github.com/YT-TechDev/frontend-analysis/i
 They are consumed by `fa css-selectors`, `fa css-transforms`, `fa es-binding-refs`,
 and `fa html-tree`, respectively.
 
+The project currently maintains this accepted four-capability source-analysis
+baseline under **PROJECT PAUSE / MAINTENANCE / DEMAND-GATHERING**. Broad feature
+expansion is paused; maintenance, focused correction of reproducible
+accepted-capability defects, ordinary use, and observation of concrete consumer
+demand remain active. HTML, CSS, and ECMAScript are each at bounded resumable
+stopping points rather than complete language implementations. No Browser
+Adapter, browser-runtime capability, cross-domain relation, additional Product
+surface, serialization contract, or distribution frontier is currently
+selected. The durable whole-project status is recorded in
+[#104](https://github.com/YT-TechDev/frontend-analysis/issues/104#issuecomment-6044454270).
+
 Accepted [ADR 0001](decisions/0001-repository-topology-and-workspace-ownership.md)
 owns topology and extraction review, [ADR 0002](decisions/0002-rust-bootstrap-toolchain-and-validation-policy.md)
 owns toolchain policy, [ADR 0003](decisions/0003-validated-source-anchors-first-rust-core-domain.md)
