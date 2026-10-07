@@ -202,6 +202,13 @@ contract. Any proposal follows the focused exception process in
 - [#106](https://github.com/YT-TechDev/frontend-analysis/issues/106) owns the
   first HTML parser and Core-integration workstream.
 - [#107](https://github.com/YT-TechDev/frontend-analysis/issues/107) owns the
-  later CSS workstream.
+  CSS parser/qualification program.
 - [#108](https://github.com/YT-TechDev/frontend-analysis/issues/108) owns the
-  later ECMAScript frontend and required static-semantics workstream.
+  ECMAScript frontend and selected static-semantics program.
+
+The original HTML → CSS → ECMAScript sequencing is retained as project
+history and did not authorize concurrent language-frontier expansion.
+Each workstream now has an accepted bounded capability and a current PAUSE
+checkpoint. The [#104 whole-project PAUSE](https://github.com/YT-TechDev/frontend-analysis/issues/104#issuecomment-6044454270)
+governs current work selection; these program Issues remain open as
+coordination authorities, not automatically executable feature backlogs.

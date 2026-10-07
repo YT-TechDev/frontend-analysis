@@ -2,8 +2,10 @@
 
 Classification: task and evidence record; provenance-only; non-normative.
 
-This ledger records sources actually used by the current ECMAScript research
-program. It does not restate or decide ECMAScript findings. See the
+This ledger records sources actually used by the ECMAScript research
+program. Its retained pins are historical source identities used by accepted
+bounded qualification research and validation, not a claim that a new
+ECMAScript feature frontier is active. It does not restate or decide ECMAScript findings. See the
 [JavaScript / ECMAScript evidence records](../evidence/javascript/README.md) and
 [JavaScript / ECMAScript architecture](../architecture/JAVASCRIPT_ARCHITECTURE.md)
 for their separate responsibilities.
@@ -19,8 +21,8 @@ for their separate responsibilities.
 - **URL or stable identifier:**
   <https://github.com/tc39/ecma262/commit/d89c03f2db8a597bc915b363a6518d0cc8acdbc0>
 - **Accessed / reviewed date:** 2026-08-20 (provenance review)
-- **Used for:** Primary normative baseline for the current ECMAScript Standard
-  Qualification work, including grammar, profile, and static-validity
+- **Used for:** Primary normative baseline for accepted bounded ECMAScript
+  Standard Qualification work, including grammar, profile, and static-validity
   obligations.
 - **Evidence role:** `normative`
 - **Related research / architecture:**
@@ -50,6 +52,11 @@ for their separate responsibilities.
   Analysis semantics. The current evidence contract also verifies selected path,
   Git blob, relevant frontmatter, and effective-source transformation rather
   than treating a Test262 path alone as source identity.
+  The earlier `tc39/test262@be13516fb6441b950ba8a3df97eb34062c186972`
+  in [initial architecture research evidence](../evidence/javascript/README.md)
+  served a different research audit; it is **not** this qualification challenge
+  revision. The [post-#343 evidence lineage](../evidence/javascript/2026-08-post-343-selected-ecmascript-research-checkpoint.md)
+  keeps these separate roles explicit.
 
 ### Unicode Standard 17.0.0
 

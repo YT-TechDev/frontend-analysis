@@ -299,6 +299,45 @@ status.
   historical closed PR #395 was used only as regression/challenge guidance and
   is not recorded here as an accepted production source.
 
+## Post-TC-S10 Processing Instruction entry correction (2026-10-06)
+
+### WHATWG HTML Standard — PI entry rule and original tokenizer comparison
+
+- **Source:** HTML Standard, Tag open and Processing Instruction state rules
+- **Source class:** Normative specification
+- **Authority / version:** The focused #910/#911 validator compared the
+  2026-10-06 current `whatwg/html@ba3400bb4f3d86477a5c8cfc07ff91fc0caaf21c`
+  (source blob `7875de93bb63ebd6c6aa16437147b9b7f6a51283`)
+  with the original #109 tokenizer pin
+  `whatwg/html@24c5e48bf66ea61bc199ec6338c81258275ba9c6`
+  (source blob `90c6259281b1e457f53c2bf01e85aba7a27c0d19`).
+- **URL or stable identifier:**
+  <https://github.com/whatwg/html/commit/ba3400bb4f3d86477a5c8cfc07ff91fc0caaf21c>,
+  <https://github.com/whatwg/html/commit/24c5e48bf66ea61bc199ec6338c81258275ba9c6>
+- **Accessed / reviewed date:** 2026-10-06, as recorded by the #910
+  validation research and #912 production authority; this ledger change
+  does not claim to have independently re-read the upstream sources.
+- **Used for:** Falsifying the prior assumption that `<?` necessarily
+  emits a TagOpen question-mark syntax diagnostic. At the compared rules,
+  TagOpen `?` enters PI handling without that entry diagnostic. The
+  accepted bounded parser stops at Deferred `ProcessingInstruction`;
+  source prefix, trigger geometry, and resource refusal remain separate
+  **project policy**, not WHATWG-prescribed algorithms.
+- **Evidence role:** `normative` for the PI-entry transition;
+  historical/falsified for the old #125 diagnostic premise.
+- **Related research / architecture:**
+  [#910 candidate-independent validation](https://github.com/YT-TechDev/frontend-analysis/issues/910),
+  [PR #911](https://github.com/YT-TechDev/frontend-analysis/pull/911),
+  [#912 production authority](https://github.com/YT-TechDev/frontend-analysis/issues/912),
+  [PR #913](https://github.com/YT-TechDev/frontend-analysis/pull/913),
+  [#348 accepted correction checkpoint](https://github.com/YT-TechDev/frontend-analysis/issues/348#issuecomment-6023576701),
+  [HTML tokenizer validation contract](../development/HTML_TOKENIZER_VALIDATION.md).
+- **Notes:** The relevant Tag open and PI-state sections were recorded as
+  materially unchanged between these two snapshots. The earlier TC-S10
+  source/data snapshots remain historical authorities for their own
+  bounded semantics. No general PI target/data/EOF or BogusComment support
+  follows from this correction.
+
 ## Adding Entries
 
 Use the field set defined in [Research Provenance](README.md). Add Web Platform
