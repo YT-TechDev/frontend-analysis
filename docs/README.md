@@ -69,12 +69,15 @@ internals remain crate-private, and no complete public parser API exists. The
 current Product-facing Core consumer boundaries are the narrow CSS
 `frontend_analysis_core::css::selectors` facade under accepted
 [ADR 0011](decisions/0011-establish-cli-product-and-css-core-v1-consumer-boundary.md),
+the CSS `frontend_analysis_core::css::transform` facade defined for selected
+direct-authored `transform` qualification in
+[Issue #914](https://github.com/YT-TechDev/frontend-analysis/issues/914),
 the ECMAScript `frontend_analysis_core::ecmascript::binding_refs` facade defined
 for its selected slice in [Issue #862](https://github.com/YT-TechDev/frontend-analysis/issues/862),
 and the HTML `frontend_analysis_core::html::tree` facade defined for its
 selected slice in [Issue #864](https://github.com/YT-TechDev/frontend-analysis/issues/864).
-They are consumed by `fa css-selectors`, `fa es-binding-refs`, and `fa html-tree`,
-respectively.
+They are consumed by `fa css-selectors`, `fa css-transforms`, `fa es-binding-refs`,
+and `fa html-tree`, respectively.
 
 Accepted [ADR 0001](decisions/0001-repository-topology-and-workspace-ownership.md)
 owns topology and extraction review, [ADR 0002](decisions/0002-rust-bootstrap-toolchain-and-validation-policy.md)

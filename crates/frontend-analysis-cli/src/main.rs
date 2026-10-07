@@ -1,9 +1,11 @@
 //! `fa`: the Frontend Analysis command-line Product (Issue #857, ADR 0011).
 //!
-//! Phase 1 supports exactly three commands, each reading one source from stdin:
+//! The Product supports exactly four commands, each reading one source from
+//! stdin:
 //!
 //! ```text
 //! fa css-selectors < style.css
+//! fa css-transforms < style.css
 //! fa es-binding-refs < source.js
 //! fa html-tree < source.html
 //! ```
@@ -18,6 +20,7 @@
 //! for a returned Core boundary failure.
 
 mod css_selectors;
+mod css_transforms;
 mod es_binding_refs;
 mod html_tree;
 
@@ -27,6 +30,7 @@ use std::io::{self, Read, Write};
 use std::process::ExitCode;
 
 use frontend_analysis_core::css::selectors::analyze_core_v1;
+use frontend_analysis_core::css::transform::analyze_authored_transforms;
 use frontend_analysis_core::ecmascript::binding_refs::analyze_selected_flat_lexical_binding_refs;
 use frontend_analysis_core::html::tree::analyze_selected_document_tree;
 use frontend_analysis_core::{SourceAnchor, SourceId, SourceText};
@@ -39,13 +43,15 @@ use frontend_analysis_core::{SourceAnchor, SourceId, SourceText};
 const CLI_STDIN_MAX_BYTES: usize = 49_152;
 
 const CSS_SELECTORS_COMMAND: &str = "css-selectors";
+const CSS_TRANSFORMS_COMMAND: &str = "css-transforms";
 const ES_BINDING_REFS_COMMAND: &str = "es-binding-refs";
 const HTML_TREE_COMMAND: &str = "html-tree";
-const USAGE: &str = "usage: fa css-selectors < style.css\n       fa es-binding-refs < source.js\n       fa html-tree < source.html";
+const USAGE: &str = "usage: fa css-selectors < style.css\n       fa css-transforms < style.css\n       fa es-binding-refs < source.js\n       fa html-tree < source.html";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Command {
     CssSelectors,
+    CssTransforms,
     EsBindingRefs,
     HtmlTree,
 }
@@ -108,6 +114,9 @@ fn run(
         Command::CssSelectors => analyze_core_v1(&source)
             .map(|report| css_selectors::render_report(source.as_str().len(), &report))
             .map_err(|failure| failure.to_string()),
+        Command::CssTransforms => analyze_authored_transforms(&source)
+            .map(|report| css_transforms::render_report(source.as_str().len(), &report))
+            .map_err(|failure| failure.to_string()),
         Command::EsBindingRefs => analyze_selected_flat_lexical_binding_refs(&source)
             .map(|report| es_binding_refs::render_report(source.as_str().len(), &report))
             .map_err(|failure| failure.to_string()),
@@ -138,6 +147,7 @@ fn check_command(args: &[OsString]) -> Result<Command, &'static str> {
     let command = match args.first() {
         None => return Err("missing command"),
         Some(command) if command.as_os_str() == CSS_SELECTORS_COMMAND => Command::CssSelectors,
+        Some(command) if command.as_os_str() == CSS_TRANSFORMS_COMMAND => Command::CssTransforms,
         Some(command) if command.as_os_str() == ES_BINDING_REFS_COMMAND => Command::EsBindingRefs,
         Some(command) if command.as_os_str() == HTML_TREE_COMMAND => Command::HtmlTree,
         Some(_) => return Err("unknown command"),
@@ -182,15 +192,24 @@ fn core_failure(stderr: &mut impl Write, failure: &dyn Display) -> u8 {
 /// Renders retained source evidence as its byte range, one-based start line
 /// and byte column, and the exact retained fragment escaped onto one line.
 pub(crate) fn render_evidence(anchor: &SourceAnchor) -> String {
+    format!(
+        "{}: \"{}\"",
+        render_location(anchor),
+        escape_fragment(anchor.fragment())
+    )
+}
+
+/// Renders only the already-owned location of retained source evidence: its
+/// byte range and one-based start line and byte column.
+pub(crate) fn render_location(anchor: &SourceAnchor) -> String {
     let range = anchor.range();
     let start = anchor.start_coordinate();
     format!(
-        "bytes {}..{}, line {}, byte column {}: \"{}\"",
+        "bytes {}..{}, line {}, byte column {}",
         range.start(),
         range.end(),
         start.line_index() + 1,
-        start.byte_column() + 1,
-        escape_fragment(anchor.fragment())
+        start.byte_column() + 1
     )
 }
 
@@ -229,6 +248,14 @@ mod tests {
         assert_eq!(
             check_command(&args(&["es-binding-refs"])),
             Ok(Command::EsBindingRefs)
+        );
+        assert_eq!(
+            check_command(&args(&["css-transforms"])),
+            Ok(Command::CssTransforms)
+        );
+        assert_eq!(
+            check_command(&args(&["css-transforms", "style.css"])),
+            Err("unexpected argument")
         );
         assert_eq!(check_command(&args(&["html-tree"])), Ok(Command::HtmlTree));
         assert_eq!(
@@ -292,6 +319,32 @@ mod tests {
         assert_eq!(
             String::from_utf8(stderr).unwrap(),
             "fa: failed to read stdin: permission denied\n"
+        );
+    }
+
+    #[test]
+    fn css_transforms_stdout_write_failure_is_a_product_failure() {
+        struct FailingStdout;
+        impl Write for FailingStdout {
+            fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+                Err(io::Error::from(io::ErrorKind::BrokenPipe))
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut stderr = Vec::new();
+        let status = run(
+            &args(&["css-transforms"]),
+            &mut "a{transform:none;}".as_bytes(),
+            &mut FailingStdout,
+            &mut stderr,
+        );
+
+        assert_eq!(status, 1);
+        assert_eq!(
+            String::from_utf8(stderr).unwrap(),
+            "fa: failed to write stdout: broken pipe\n"
         );
     }
 

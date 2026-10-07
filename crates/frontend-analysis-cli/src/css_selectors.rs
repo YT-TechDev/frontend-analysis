@@ -7,11 +7,11 @@ use std::fmt::Write as _;
 
 use frontend_analysis_core::css::selectors::{
     CssParserCoverage, CssParserDiscardKind, CssParserRecoveryKind, CssParserRecoveryTermination,
-    CssParserResourceKind, CssParserTermination, CssParserUnsupportedRegionKind, CssResourceKind,
-    CssResourceRefusal, CssSelectorGrammarContext, CssSelectorIndeterminateReason,
+    CssParserResourceKind, CssParserStage, CssParserTermination, CssParserUnsupportedRegionKind,
+    CssResourceKind, CssResourceRefusal, CssSelectorGrammarContext, CssSelectorIndeterminateReason,
     CssSelectorInvalidReason, CssSelectorOutcome, CssSelectorProfile, CssSelectorReport,
     CssSelectorResourceKind, CssSelectorTermination, CssSelectorUnsupportedFeature,
-    CssStageCompletion, CssTokenizerResourceKind, CssTokenizerTermination,
+    CssStageCompletion, CssTokenizerResourceKind, CssTokenizerStage, CssTokenizerTermination,
 };
 
 use crate::render_evidence;
@@ -29,73 +29,7 @@ pub(crate) fn render_report(source_bytes: usize, report: &CssSelectorReport) -> 
         report.source_id().value()
     );
 
-    let tokenizer = report.tokenizer();
-    let termination = match tokenizer.termination() {
-        CssTokenizerTermination::EndOfInput => "end of input".to_owned(),
-        CssTokenizerTermination::ResourceLimit(refusal) => render_refusal(refusal),
-    };
-    let _ = writeln!(
-        out,
-        "tokenizer: {}; {termination}; diagnostics {}",
-        completion(tokenizer.completion()),
-        tokenizer.diagnostics()
-    );
-
-    let parser = report.parser();
-    let termination = match parser.termination() {
-        CssParserTermination::EndOfTokenizerInput => "end of tokenizer input".to_owned(),
-        CssParserTermination::UpstreamTokenizerIncomplete => {
-            "upstream tokenizer incomplete".to_owned()
-        }
-        CssParserTermination::ResourceLimit(refusal) => render_refusal(refusal),
-    };
-    let coverage = match parser.coverage() {
-        CssParserCoverage::SupportedForSelectedQuestion => "supported for selected question",
-        CssParserCoverage::ContainsUnsupportedContexts => "contains unsupported contexts",
-    };
-    let _ = writeln!(
-        out,
-        "parser: {}; {termination}; coverage {coverage}; diagnostics {}; recovery records {}; \
-         unsupported regions {}; discard records {}",
-        completion(parser.completion()),
-        parser.diagnostics(),
-        parser.recovery_records(),
-        parser.unsupported_regions(),
-        parser.discard_records()
-    );
-    for (index, record) in parser.recovery().iter().enumerate() {
-        let kind = match record.kind() {
-            CssParserRecoveryKind::MalformedBlockItem => "malformed block item",
-        };
-        let termination = match record.termination() {
-            CssParserRecoveryTermination::AuthoredSemicolon => "authored semicolon",
-            CssParserRecoveryTermination::EnclosingBlockEnd => "enclosing block end",
-            CssParserRecoveryTermination::EndOfInput => "end of input",
-        };
-        let _ = writeln!(out, "recovery {}: {kind}; {termination}", index + 1);
-        let _ = writeln!(out, "  source: {}", render_evidence(record.region()));
-    }
-    for (index, record) in parser.unsupported().iter().enumerate() {
-        let kind = match record.kind() {
-            CssParserUnsupportedRegionKind::TopLevelAtRule => "top-level at-rule",
-            CssParserUnsupportedRegionKind::NestedContentRemainder => "nested content remainder",
-            CssParserUnsupportedRegionKind::NestedAtRule => "nested at-rule",
-            CssParserUnsupportedRegionKind::UnqualifiedKeyframeBlock => {
-                "unqualified keyframe block"
-            }
-        };
-        let _ = writeln!(out, "unsupported {}: {kind}", index + 1);
-        let _ = writeln!(out, "  source: {}", render_evidence(record.region()));
-    }
-    for (index, record) in parser.discard().iter().enumerate() {
-        let kind = match record.kind() {
-            CssParserDiscardKind::TopLevelCustomPropertyLikeQualifiedRule => {
-                "top-level custom-property-like qualified rule"
-            }
-        };
-        let _ = writeln!(out, "discard {}: {kind}", index + 1);
-        let _ = writeln!(out, "  source: {}", render_evidence(record.region()));
-    }
+    render_upstream_stages(&mut out, report.tokenizer(), report.parser());
 
     let selector = report.selector();
     let termination = match selector.termination() {
@@ -155,6 +89,81 @@ pub(crate) fn render_report(source_bytes: usize, report: &CssSelectorReport) -> 
         let _ = writeln!(out, "  grammar: {grammar}");
     }
     out
+}
+
+/// Renders the tokenizer and parser stage lines plus every retained
+/// source-locatable parser recovery, unsupported, and discard record. Shared
+/// with `fa css-transforms`, whose upstream stages carry the same meaning.
+pub(crate) fn render_upstream_stages(
+    out: &mut String,
+    tokenizer: &CssTokenizerStage,
+    parser: &CssParserStage,
+) {
+    let termination = match tokenizer.termination() {
+        CssTokenizerTermination::EndOfInput => "end of input".to_owned(),
+        CssTokenizerTermination::ResourceLimit(refusal) => render_refusal(refusal),
+    };
+    let _ = writeln!(
+        out,
+        "tokenizer: {}; {termination}; diagnostics {}",
+        completion(tokenizer.completion()),
+        tokenizer.diagnostics()
+    );
+
+    let termination = match parser.termination() {
+        CssParserTermination::EndOfTokenizerInput => "end of tokenizer input".to_owned(),
+        CssParserTermination::UpstreamTokenizerIncomplete => {
+            "upstream tokenizer incomplete".to_owned()
+        }
+        CssParserTermination::ResourceLimit(refusal) => render_refusal(refusal),
+    };
+    let coverage = match parser.coverage() {
+        CssParserCoverage::SupportedForSelectedQuestion => "supported for selected question",
+        CssParserCoverage::ContainsUnsupportedContexts => "contains unsupported contexts",
+    };
+    let _ = writeln!(
+        out,
+        "parser: {}; {termination}; coverage {coverage}; diagnostics {}; recovery records {}; \
+         unsupported regions {}; discard records {}",
+        completion(parser.completion()),
+        parser.diagnostics(),
+        parser.recovery_records(),
+        parser.unsupported_regions(),
+        parser.discard_records()
+    );
+    for (index, record) in parser.recovery().iter().enumerate() {
+        let kind = match record.kind() {
+            CssParserRecoveryKind::MalformedBlockItem => "malformed block item",
+        };
+        let termination = match record.termination() {
+            CssParserRecoveryTermination::AuthoredSemicolon => "authored semicolon",
+            CssParserRecoveryTermination::EnclosingBlockEnd => "enclosing block end",
+            CssParserRecoveryTermination::EndOfInput => "end of input",
+        };
+        let _ = writeln!(out, "recovery {}: {kind}; {termination}", index + 1);
+        let _ = writeln!(out, "  source: {}", render_evidence(record.region()));
+    }
+    for (index, record) in parser.unsupported().iter().enumerate() {
+        let kind = match record.kind() {
+            CssParserUnsupportedRegionKind::TopLevelAtRule => "top-level at-rule",
+            CssParserUnsupportedRegionKind::NestedContentRemainder => "nested content remainder",
+            CssParserUnsupportedRegionKind::NestedAtRule => "nested at-rule",
+            CssParserUnsupportedRegionKind::UnqualifiedKeyframeBlock => {
+                "unqualified keyframe block"
+            }
+        };
+        let _ = writeln!(out, "unsupported {}: {kind}", index + 1);
+        let _ = writeln!(out, "  source: {}", render_evidence(record.region()));
+    }
+    for (index, record) in parser.discard().iter().enumerate() {
+        let kind = match record.kind() {
+            CssParserDiscardKind::TopLevelCustomPropertyLikeQualifiedRule => {
+                "top-level custom-property-like qualified rule"
+            }
+        };
+        let _ = writeln!(out, "discard {}: {kind}", index + 1);
+        let _ = writeln!(out, "  source: {}", render_evidence(record.region()));
+    }
 }
 
 fn completion(completion: CssStageCompletion) -> &'static str {

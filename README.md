@@ -35,19 +35,26 @@ applicable topology, toolchain, crate-boundary, source-anchor, and raw
 source-coordinate decisions.
 
 The `frontend-analysis-cli` Product package provides one browser-independent
-binary, `fa`, with three capability-oriented commands. Each reads authored
+binary, `fa`, with four capability-oriented commands. Each reads authored
 UTF-8 source from stdin and prints deterministic human-readable text:
 
 ```bash
 fa css-selectors < style.css
+fa css-transforms < style.css
 fa es-binding-refs < source.js
 fa html-tree < source.html
 ```
 
 These are narrow Product capabilities, not complete language implementations:
 
-- **CSS:** classifies retained selector-list contexts under the bounded CSS
-  `CoreV1` selected profile.
+- **CSS selectors:** classifies retained selector-list contexts under the bounded
+  CSS `CoreV1` selected profile.
+- **CSS transforms:** reports the selected direct-authored `transform`
+  qualification of retained ordinary declarations, with the authored
+  declaration, property, value, priority, and owning context evidence. It is not
+  a source-wide transform detector: zero selected observations do not establish
+  that the source contains no `transform`, and it makes no selector, cascade,
+  computed-value, or browser-applicability claim.
 - **ECMAScript:** reports selected same-source lexical binding-reference
   relationships for the accepted flat top-level lexical-binding initializer
   profile.
