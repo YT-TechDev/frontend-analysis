@@ -14,7 +14,11 @@ Accepted bounded public answers:
 
 The #184/#185 Semantic Foundation and post-freeze selected authored values remain accepted. Current-normative `transform` Function coverage is **21 / 21**, while unknown/future Function containment stays open-world. **Zero selected transform observations do not establish whole-source absence.** Neither public answer claims complete CSS, matching, specificity, cascade, CSSOM, computed/used values, layout, rendering or browser behavior; upstream incompleteness cannot be upgraded.
 
-The [2026-09 authored-value checkpoint](2026-09-authored-value-qualification-and-transform-coverage-checkpoint.md) is still valid at its dated baseline, not current next-step authority:
+The current Product/semantic lineage is indexed in the
+[post-v0.2.0 accepted evidence checkpoint](../2026-10-08-post-v0.2.0-accepted-evidence-checkpoint.md).
+The [2026-09 authored-value checkpoint](2026-09-authored-value-qualification-and-transform-coverage-checkpoint.md)
+remains the dated **pre-Product** authored-value/transform semantics record,
+not the current consumer baseline or next-step authority:
 
 ```text
 main: a5bdbe40ebfdd575ea6ea61dbffe7e7e956eeb6b
@@ -39,7 +43,8 @@ Repository evidence:
 - [#684 — final current-normative transform coverage leaf](https://github.com/YT-TechDev/frontend-analysis/issues/684)
 - [PR #685 — `perspective()` transform coverage completion](https://github.com/YT-TechDev/frontend-analysis/pull/685)
 - [#686 — 2026-09 CSS evidence checkpoint](https://github.com/YT-TechDev/frontend-analysis/issues/686)
-- [#857 / PR #858 — selector Product consumer](https://github.com/YT-TechDev/frontend-analysis/pull/858)
+- [#857 / PR #859 — selector Product implementation](https://github.com/YT-TechDev/frontend-analysis/pull/859)
+- [PR #858 — ADR 0011 proposed Product/Core boundary](https://github.com/YT-TechDev/frontend-analysis/pull/858)
 - [ADR 0011 — CLI Product/Core consumer authority](../../decisions/0011-establish-cli-product-and-css-core-v1-consumer-boundary.md)
 - [#914 / PR #915 — transform Product consumer](https://github.com/YT-TechDev/frontend-analysis/pull/915)
 - [#418 — current CSS PAUSE adoption](https://github.com/YT-TechDev/frontend-analysis/issues/418#issuecomment-6041412391)

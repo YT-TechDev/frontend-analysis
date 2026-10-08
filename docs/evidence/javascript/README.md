@@ -14,6 +14,10 @@ The accepted JavaScript Architecture Model v1.1 / ADR 0009 remains in force; the
 
 The [historical post-#343 checkpoint](2026-08-post-343-selected-ecmascript-research-checkpoint.md) had a selected `9 / 184` partition; it is **not current selected reachability**. The frozen structural inventory (37 audited containers, 193 identities, 183 active NormativeRule and 10 EnvelopeInactiveRule) is also not a global current selected-completion proof. Later local frontier proofs must not be promoted to that stronger claim. The [post-v1.1 research closure](2026-08-post-v1.1-research-wave-closure.md) stays historical.
 
+The [post-v0.2.0 accepted evidence checkpoint](../2026-10-08-post-v0.2.0-accepted-evidence-checkpoint.md)
+indexes the later accepted selected grammar and Product/PAUSE evidence without
+promoting the frozen first-envelope inventory to a current completion theorem.
+
 ### Historical research position (2026-08-14)
 
 The remainder of this file retains the earlier architecture-evidence stage rather than rewriting its premises. At that stage the deep adversarial audit covered state/control/effects, interprocedural, async, modules, Realms/Agents, shared memory, meta-object behavior, WeakRef/finalization and iterator cleanup. Six of 17 cross-cutting principles survived unqualified and 11 with qualification; none required whole-candidate abandonment. The *then-current* direction was Architecture Model consolidation only, not production. The edition-discipline correction separated post-2026 draft semantics from ECMA-262 2026 normative authority.
@@ -577,9 +581,9 @@ areas including:
 A later design may select one of these only after the owning capability and
 compatibility boundary justify it.
 
-## Current Architecture-Consolidation Direction
+## Historical Architecture-Consolidation Direction (2026-08-14)
 
-The evidence currently supports a responsibility model in which:
+The earlier evidence supported a responsibility model in which:
 
 ```text
 Source + provenance + explicit qualification context
