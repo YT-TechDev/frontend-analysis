@@ -80,7 +80,7 @@ models, diagnostics or evidence graphs, desktop, VS Code, or web products,
 serialization, crates.io publication, or release automation. The Rust toolchain
 pin is not an MSRV guarantee.
 
-The latest published GitHub/source release is `v0.2.0`, which records the
+The latest published GitHub/source release is `v0.2.1`, which records the
 accepted four-capability source-analysis baseline. Broad feature expansion is
 paused. Maintenance, focused correction of reproducible accepted-capability
 defects, ordinary use, and observation of concrete consumer demand remain
