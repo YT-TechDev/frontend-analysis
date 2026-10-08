@@ -12,6 +12,10 @@ The accepted public capability is `HtmlTreeReport` / `fa html-tree` ([#864](http
 
 **HTML is not complete.** General HTML parsing, fragments, templates, tables/foster parenting, formatting/adoption agency, foreign content, script execution/reentrancy, browser DOM equivalence, and general public parser/serialization remain outside the accepted answer. Unsupported/incomplete coverage is not negative whole-source evidence. Follow concrete restart triggers from #348 and the [whole-project PAUSE](https://github.com/YT-TechDev/frontend-analysis/issues/104#issuecomment-6044454270).
 
+The [post-v0.2.0 accepted evidence checkpoint](../2026-10-08-post-v0.2.0-accepted-evidence-checkpoint.md)
+links the accepted post-TC-S10 semantic/Product changes to their focused
+validation/merge lineage; the historical TC-S10 research remains unchanged.
+
 ### Historical TC-S10 checkpoint (2026-09-15)
 
 The [TC-S10 evidence checkpoint](2026-09-post-tc-s10-accepted-baseline-checkpoint.md) retains exact earlier provenance and the then-current source/architecture boundary; it is not the current program-status authority:

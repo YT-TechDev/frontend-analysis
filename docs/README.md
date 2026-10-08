@@ -81,6 +81,10 @@ and `fa html-tree`, respectively.
 
 The latest published GitHub/source release is [`v0.2.0`](https://github.com/YT-TechDev/frontend-analysis/releases/tag/v0.2.0). It records the accepted four-command source-analysis baseline, not crates.io publication or complete language conformance.
 
+The [current accepted evidence checkpoint](evidence/2026-10-08-post-v0.2.0-accepted-evidence-checkpoint.md)
+indexes the later merged semantics/Product lineage, historical research limits,
+and accepted PAUSE decisions without changing them.
+
 The project currently maintains this accepted four-capability source-analysis
 baseline under **PROJECT PAUSE / MAINTENANCE / DEMAND-GATHERING**. Broad feature
 expansion is paused; maintenance, focused correction of reproducible

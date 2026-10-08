@@ -53,6 +53,11 @@ toolchain-policy authority, or language-semantic authority.
 
 ## Current Language Records
 
+The [2026-10-08 post-v0.2.0 accepted evidence checkpoint](2026-10-08-post-v0.2.0-accepted-evidence-checkpoint.md) reconciles the four accepted Product answers, post-2026-09/08
+implementation and validation lineage, historical evidence limits, exact main
+object, and current project/domain PAUSE authority. It adds no new semantic
+validation or global completeness theorem.
+
 The [2026-10-08 whole-project PAUSE adoption](https://github.com/YT-TechDev/frontend-analysis/issues/104#issuecomment-6044454270) governs the accepted four-command [v0.2.0 GitHub/source release](https://github.com/YT-TechDev/frontend-analysis/releases/tag/v0.2.0): maintain accepted capabilities, correct reproducible defects, use the Product, and observe concrete demand. No new implementation or broad research frontier is selected.
 
 | Domain | Current evidence state | Record |
